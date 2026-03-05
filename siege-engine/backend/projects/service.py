@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from sqlalchemy.orm import Session
 
 from backend.config import settings
@@ -12,6 +14,10 @@ from backend.models import (
 )
 from backend.pipeline.defaults import DEFAULT_STAGES
 
+_CLAUDE_MD_TEMPLATE = (
+    Path(__file__).resolve().parent.parent / "cli" / "claude_md_template.md"
+).read_text()
+
 
 def create_project(
     db: Session, name: str, description: str | None, project_doc_content: str
@@ -23,6 +29,15 @@ def create_project(
     # Init git repo
     repo_path = git_manager.init_repo(project.id)
     project.git_repo_path = repo_path
+
+    # Write CLAUDE.md to give CLI context about the project
+    claude_md = _CLAUDE_MD_TEMPLATE.format(
+        project_name=name,
+        project_description=description or "",
+    )
+    git_manager.commit_artifact(
+        project.id, claude_md, "CLAUDE.md", "Add CLAUDE.md for CLI context",
+    )
 
     # Create project doc artifact
     artifact = Artifact(

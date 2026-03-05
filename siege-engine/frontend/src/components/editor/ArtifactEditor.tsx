@@ -1,12 +1,33 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import Markdown from 'react-markdown';
 import { useProjectStore } from '../../store/projectStore';
+import { usePipelineStore } from '../../store/pipelineStore';
 import type { Artifact } from '../../types/project';
 
-export function ArtifactEditor({ artifact }: { artifact: Artifact }) {
+const REVISABLE_STATUSES = new Set(['approved', 'stale']);
+
+type EditorTab = 'document' | 'feedback';
+
+export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
   const { updateArtifact } = useProjectStore();
+  const { reviseArtifact } = usePipelineStore();
   const [editing, setEditing] = useState(false);
   const [content, setContent] = useState(artifact.content || '');
   const [saving, setSaving] = useState(false);
+  const [showRevise, setShowRevise] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  const [submittingRevision, setSubmittingRevision] = useState(false);
+  const [activeTab, setActiveTab] = useState<EditorTab>('document');
+
+  const canRevise = REVISABLE_STATUSES.has(artifact.status);
+  const hasFeedbackDoc = !!(artifact.ai_review_feedback as any)?.document;
+
+  // Reset tab when artifact changes and feedback is gone
+  useEffect(() => {
+    if (!hasFeedbackDoc && activeTab === 'feedback') {
+      setActiveTab('document');
+    }
+  }, [artifact.id, hasFeedbackDoc]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -18,11 +39,32 @@ export function ArtifactEditor({ artifact }: { artifact: Artifact }) {
     }
   };
 
+  const handleRevise = async () => {
+    if (!feedback.trim()) return;
+    setSubmittingRevision(true);
+    try {
+      await reviseArtifact(projectId, artifact.id, feedback);
+      setFeedback('');
+      setShowRevise(false);
+    } finally {
+      setSubmittingRevision(false);
+    }
+  };
+
+  const proseClasses = `flex-1 p-3 md:p-4 overflow-auto prose prose-invert prose-sm max-w-none
+    prose-headings:text-gray-100 prose-p:text-gray-300 prose-li:text-gray-300
+    prose-strong:text-white prose-code:text-blue-300 prose-code:bg-gray-800
+    prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none
+    prose-code:after:content-none prose-pre:bg-gray-800 prose-pre:border prose-pre:border-gray-700
+    prose-a:text-blue-400 prose-blockquote:border-gray-600 prose-blockquote:text-gray-400
+    prose-hr:border-gray-700 prose-th:text-gray-200 prose-td:text-gray-300`;
+
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
-        <div>
-          <span className="text-sm font-medium text-white">{artifact.name}</span>
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between px-3 py-2 border-b border-gray-700 gap-2">
+        <div className="min-w-0">
+          <span className="text-sm font-medium text-white truncate">{artifact.name}</span>
           <span className="text-xs text-gray-400 ml-2">v{artifact.version}</span>
           <span
             className={`text-xs ml-2 px-1.5 py-0.5 rounded ${
@@ -44,7 +86,7 @@ export function ArtifactEditor({ artifact }: { artifact: Artifact }) {
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded disabled:opacity-50"
+                className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
               >
                 {saving ? 'Saving...' : 'Save'}
               </button>
@@ -53,32 +95,108 @@ export function ArtifactEditor({ artifact }: { artifact: Artifact }) {
                   setContent(artifact.content || '');
                   setEditing(false);
                 }}
-                className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded"
+                className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
               >
                 Cancel
               </button>
             </>
           ) : (
-            <button
-              onClick={() => setEditing(true)}
-              className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded"
-            >
-              Edit
-            </button>
+            <>
+              <button
+                onClick={() => setEditing(true)}
+                className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+              >
+                Edit
+              </button>
+              {canRevise && (
+                <button
+                  onClick={() => setShowRevise(!showRevise)}
+                  className={`px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 ${
+                    showRevise
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                      : 'bg-gray-600 hover:bg-gray-500 text-white'
+                  }`}
+                >
+                  {showRevise ? 'Cancel Revision' : 'Request AI Revision'}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      {editing ? (
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          className="flex-1 w-full p-3 bg-gray-900 text-white font-mono text-sm resize-none focus:outline-none"
-        />
+      {/* Tab bar - only shown when feedback document exists */}
+      {hasFeedbackDoc && (
+        <div className="border-b border-gray-700 px-3 flex gap-4 shrink-0">
+          <button
+            onClick={() => setActiveTab('document')}
+            className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
+              activeTab === 'document'
+                ? 'border-blue-500 text-white'
+                : 'border-transparent text-gray-400 hover:text-white'
+            }`}
+          >
+            Document
+          </button>
+          <button
+            onClick={() => setActiveTab('feedback')}
+            className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
+              activeTab === 'feedback'
+                ? 'border-blue-500 text-white'
+                : 'border-transparent text-gray-400 hover:text-white'
+            }`}
+          >
+            AI Feedback
+          </button>
+        </div>
+      )}
+
+      {/* Revision request section - only on document tab */}
+      {showRevise && activeTab === 'document' && (
+        <div className="px-3 py-2 border-b border-gray-700 bg-gray-800/50 space-y-2">
+          <label className="block text-xs text-gray-400">
+            Describe what changes you want the AI to make:
+          </label>
+          <textarea
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            className="w-full h-24 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+            placeholder="e.g. Add more detail about error handling, restructure the data flow section..."
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleRevise}
+              disabled={submittingRevision || !feedback.trim()}
+              className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              {submittingRevision ? 'Submitting...' : 'Submit for AI Revision'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Content area */}
+      {activeTab === 'document' ? (
+        <>
+          {editing ? (
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              className="flex-1 w-full p-3 bg-gray-900 text-white font-mono text-sm resize-none focus:outline-none"
+            />
+          ) : (
+            <div className={proseClasses}>
+              <Markdown>{artifact.content || 'No content'}</Markdown>
+            </div>
+          )}
+        </>
       ) : (
-        <pre className="flex-1 p-3 overflow-auto text-sm text-gray-200 whitespace-pre-wrap font-mono">
-          {artifact.content || 'No content'}
-        </pre>
+        /* AI Feedback document tab */
+        <div className={proseClasses}>
+          <Markdown>
+            {(artifact.ai_review_feedback as any)?.document || 'No feedback available'}
+          </Markdown>
+        </div>
       )}
     </div>
   );

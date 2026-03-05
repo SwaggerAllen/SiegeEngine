@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useProjectStore } from '../store/projectStore';
 import { usePipelineStore } from '../store/pipelineStore';
 import { useAuthStore } from '../store/authStore';
+import { useDAGStore } from '../store/dagStore';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { PipelineDAG } from '../components/dag/PipelineDAG';
 import { PipelineControls } from '../components/pipeline/PipelineControls';
@@ -12,22 +13,27 @@ import { ReviewPanel } from '../components/pipeline/ReviewPanel';
 import { InvitePanel } from '../components/auth/InvitePanel';
 import { PromptEditorPanel } from '../components/pipeline/PromptEditorPanel';
 import { ProjectSettingsPanel } from '../components/project/ProjectSettingsPanel';
+import { ChatPanel } from '../components/chat/ChatPanel';
 import api from '../api/client';
 
-type Tab = 'pipeline' | 'prompts' | 'settings';
+type Tab = 'pipeline' | 'prompts' | 'chat' | 'settings';
 
 export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
   const { currentProject, fetchProject, selectedArtifact, clearSelection } =
     useProjectStore();
-  const { executions, fetchConfig, fetchStatus } = usePipelineStore();
+  const { executions, fetchConfig, fetchStatus, reset: resetPipeline } = usePipelineStore();
   const { user } = useAuthStore();
+  const { editPromptStageKey, setEditPromptStageKey } = useDAGStore();
   const { connected } = useWebSocket(projectId);
   const [showInvites, setShowInvites] = useState(false);
   const [showPRDialog, setShowPRDialog] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('pipeline');
+  const [paneExpanded, setPaneExpanded] = useState(false);
+  const [initialStageKey, setInitialStageKey] = useState<string | null>(null);
 
   useEffect(() => {
+    resetPipeline();
     if (projectId) {
       fetchProject(projectId);
       fetchConfig(projectId);
@@ -35,6 +41,15 @@ export function ProjectDashboardPage() {
     }
     return () => clearSelection();
   }, [projectId]);
+
+  // When a DAG node's "Edit" prompt button is clicked, switch to prompts tab
+  useEffect(() => {
+    if (editPromptStageKey) {
+      setInitialStageKey(editPromptStageKey);
+      setActiveTab('prompts');
+      setEditPromptStageKey(null);
+    }
+  }, [editPromptStageKey]);
 
   if (!projectId) return null;
 
@@ -48,21 +63,21 @@ export function ProjectDashboardPage() {
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white">
       {/* Header */}
-      <header className="border-b border-gray-700 px-4 py-3 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-4">
-          <Link to="/projects" className="text-gray-400 hover:text-white text-sm">
+      <header className="border-b border-gray-700 px-3 md:px-4 py-2 md:py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-2 md:gap-4 min-w-0">
+          <Link to="/projects" className="text-gray-400 hover:text-white text-sm shrink-0">
             &larr; Projects
           </Link>
-          <h1 className="text-lg font-bold">
+          <h1 className="text-sm md:text-lg font-bold truncate">
             {currentProject?.name || 'Loading...'}
           </h1>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4 flex-wrap">
           <PipelineControls projectId={projectId} />
           {hasRemote && (
             <button
               onClick={() => setShowPRDialog(true)}
-              className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded"
+              className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded min-h-[44px] md:min-h-0"
             >
               Open PR
             </button>
@@ -70,7 +85,7 @@ export function ProjectDashboardPage() {
           {isAdmin && (
             <button
               onClick={() => setShowInvites(true)}
-              className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded"
+              className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded min-h-[44px] md:min-h-0"
             >
               Invites
             </button>
@@ -85,11 +100,11 @@ export function ProjectDashboardPage() {
 
       {/* Tab bar */}
       <div className="border-b border-gray-700 px-4 flex gap-4 shrink-0">
-        {(['pipeline', 'prompts', 'settings'] as Tab[]).map((tab) => (
+        {(['pipeline', 'prompts', 'chat', 'settings'] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`py-2 text-sm border-b-2 capitalize ${
+            className={`py-2 text-sm border-b-2 capitalize min-h-[44px] md:min-h-0 ${
               activeTab === tab
                 ? 'border-blue-500 text-white'
                 : 'border-transparent text-gray-400 hover:text-white'
@@ -102,23 +117,51 @@ export function ProjectDashboardPage() {
 
       {/* Main content */}
       {activeTab === 'pipeline' ? (
-        <div className="flex-1 flex overflow-hidden">
-          <div className="w-3/5 border-r border-gray-700">
-            <PipelineDAG projectId={projectId} />
-          </div>
-          <div className="w-2/5 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+          {!paneExpanded && (
+            <div className="h-64 md:h-auto md:w-3/5 border-b md:border-b-0 md:border-r border-gray-700 shrink-0 md:shrink">
+              <PipelineDAG projectId={projectId} />
+            </div>
+          )}
+          <div className={`flex-1 ${paneExpanded ? 'w-full' : 'md:w-2/5'} flex flex-col overflow-hidden`}>
             {selectedArtifact ? (
               <div className="flex-1 flex flex-col overflow-hidden">
-                <div className="flex-1 overflow-auto">
-                  <ArtifactEditor artifact={selectedArtifact} />
+                <div className="flex items-center justify-end px-3 py-1 border-b border-gray-700 shrink-0">
+                  <button
+                    onClick={() => setPaneExpanded(!paneExpanded)}
+                    className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs rounded"
+                    title={paneExpanded ? 'Collapse pane' : 'Expand to full width'}
+                  >
+                    {paneExpanded ? '⇥ Collapse' : '⇤ Expand'}
+                  </button>
                 </div>
-                <div className="shrink-0 p-3 border-t border-gray-700 overflow-auto max-h-64">
-                  <ReviewPanel
-                    projectId={projectId}
-                    artifact={selectedArtifact}
-                    execution={selectedExecution}
-                  />
-                </div>
+                {paneExpanded && selectedExecution?.status === 'awaiting_review' ? (
+                  <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+                    <div className="flex-1 md:w-2/3 overflow-auto border-b md:border-b-0 md:border-r border-gray-700">
+                      <ArtifactEditor artifact={selectedArtifact} projectId={projectId} />
+                    </div>
+                    <div className="md:w-1/3 overflow-auto p-3">
+                      <ReviewPanel
+                        projectId={projectId}
+                        artifact={selectedArtifact}
+                        execution={selectedExecution}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex-1 overflow-auto">
+                      <ArtifactEditor artifact={selectedArtifact} projectId={projectId} />
+                    </div>
+                    <div className="shrink-0 p-3 border-t border-gray-700 overflow-auto max-h-64">
+                      <ReviewPanel
+                        projectId={projectId}
+                        artifact={selectedArtifact}
+                        execution={selectedExecution}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
               <div className="flex-1 flex flex-col">
@@ -134,7 +177,15 @@ export function ProjectDashboardPage() {
         </div>
       ) : activeTab === 'prompts' ? (
         <div className="flex-1 overflow-hidden">
-          <PromptEditorPanel projectId={projectId} />
+          <PromptEditorPanel
+            projectId={projectId}
+            initialStageKey={initialStageKey}
+            onStageKeyConsumed={() => setInitialStageKey(null)}
+          />
+        </div>
+      ) : activeTab === 'chat' ? (
+        <div className="flex-1 overflow-hidden">
+          <ChatPanel projectId={projectId} />
         </div>
       ) : (
         <div className="flex-1 overflow-auto">
@@ -178,11 +229,11 @@ function PRDialog({ projectId, onClose }: { projectId: string; onClose: () => vo
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-lg p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-white">Open Pull Request</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl">
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl min-h-[44px] min-w-[44px]">
             &times;
           </button>
         </div>

@@ -3,6 +3,8 @@ import { usePipelineStore } from '../../store/pipelineStore';
 import type { Artifact } from '../../types/project';
 import type { StageExecution } from '../../types/pipeline';
 
+type ReviewTab = 'ai' | 'feedback';
+
 interface ReviewPanelProps {
   projectId: string;
   artifact: Artifact;
@@ -15,6 +17,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const [editedContent, setEditedContent] = useState('');
   const [showEditor, setShowEditor] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [activeTab, setActiveTab] = useState<ReviewTab>('ai');
 
   if (!execution || execution.status !== 'awaiting_review') return null;
 
@@ -28,27 +31,74 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         notes || undefined,
         showEditor && editedContent ? editedContent : undefined
       );
+      // Clear form for next review cycle
+      setNotes('');
+      setEditedContent('');
+      setShowEditor(false);
     } finally {
       setSubmitting(false);
     }
   };
 
+  const feedback = artifact.ai_review_feedback as any;
+  const hasDocument = !!feedback?.document;
+
   return (
-    <div className="border-t border-gray-700 pt-4 mt-4 space-y-3">
+    <div className="space-y-3">
       <h4 className="text-sm font-semibold text-yellow-400">Review Required</h4>
 
-      {artifact.ai_review_feedback && (
+      {/* Tabs */}
+      <div className="flex border-b border-gray-700">
+        <button
+          onClick={() => setActiveTab('ai')}
+          className={`py-1.5 px-3 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
+            activeTab === 'ai'
+              ? 'border-blue-500 text-white'
+              : 'border-transparent text-gray-400 hover:text-white'
+          }`}
+        >
+          AI Review
+        </button>
+        <button
+          onClick={() => setActiveTab('feedback')}
+          className={`py-1.5 px-3 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
+            activeTab === 'feedback'
+              ? 'border-blue-500 text-white'
+              : 'border-transparent text-gray-400 hover:text-white'
+          }`}
+        >
+          Your Feedback
+        </button>
+      </div>
+
+      {/* AI Review tab */}
+      {activeTab === 'ai' && feedback && (
         <div className="bg-gray-800 p-3 rounded text-sm">
           <p className="text-gray-400 mb-1">AI Review:</p>
           <p className="text-white">
-            Quality: {(artifact.ai_review_feedback as any).overall_quality}/10
+            Quality: {feedback.overall_quality}/10
           </p>
           <p className="text-white">
-            Recommendation: {(artifact.ai_review_feedback as any).recommendation}
+            Recommendation:{' '}
+            <span
+              className={
+                feedback.recommendation === 'approve'
+                  ? 'text-green-400'
+                  : 'text-yellow-400'
+              }
+            >
+              {feedback.recommendation}
+            </span>
           </p>
-          {(artifact.ai_review_feedback as any).issues?.length > 0 && (
+          {hasDocument && (
+            <p className="text-gray-400 text-xs mt-2">
+              See the "AI Feedback" tab in the editor for the full review document.
+            </p>
+          )}
+          {/* Backward compatibility: show old-format issues if present */}
+          {!hasDocument && feedback.issues?.length > 0 && (
             <ul className="mt-1 space-y-1">
-              {(artifact.ai_review_feedback as any).issues.map(
+              {feedback.issues.map(
                 (issue: any, i: number) => (
                   <li key={i} className="text-gray-300 text-xs">
                     <span
@@ -71,46 +121,57 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         </div>
       )}
 
-      <div>
-        <label className="block text-xs text-gray-400 mb-1">Review Notes (optional)</label>
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          className="w-full h-20 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
-          placeholder="Add feedback for re-generation..."
-        />
-      </div>
+      {activeTab === 'ai' && !feedback && (
+        <p className="text-gray-500 text-xs">No AI review feedback available.</p>
+      )}
 
-      <div className="flex items-center gap-2">
+      {/* Your Feedback tab */}
+      {activeTab === 'feedback' && (
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Review Notes (optional)</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full h-28 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+              placeholder="Add feedback for re-generation..."
+            />
+          </div>
+
+          {showEditor && (
+            <textarea
+              value={editedContent || artifact.content || ''}
+              onChange={(e) => setEditedContent(e.target.value)}
+              className="w-full h-48 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
+            />
+          )}
+
+          <button
+            onClick={() => setShowEditor(!showEditor)}
+            className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+          >
+            {showEditor ? 'Hide Editor' : 'Edit & Approve'}
+          </button>
+        </div>
+      )}
+
+      {/* Persistent action buttons */}
+      <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
         <button
           onClick={() => handleAction('approved')}
           disabled={submitting}
-          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50"
+          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
         >
           Approve
         </button>
         <button
           onClick={() => handleAction('rejected')}
           disabled={submitting}
-          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50"
+          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
         >
           Reject & Re-generate
         </button>
-        <button
-          onClick={() => setShowEditor(!showEditor)}
-          className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded"
-        >
-          {showEditor ? 'Hide Editor' : 'Edit & Approve'}
-        </button>
       </div>
-
-      {showEditor && (
-        <textarea
-          value={editedContent || artifact.content || ''}
-          onChange={(e) => setEditedContent(e.target.value)}
-          className="w-full h-64 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
-        />
-      )}
     </div>
   );
 }

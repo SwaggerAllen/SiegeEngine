@@ -5,18 +5,18 @@ export function PipelineControls({ projectId }: { projectId: string }) {
     usePipelineStore();
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       {!isRunning ? (
         <>
           <button
             onClick={() => startPipeline(projectId, 'gated')}
-            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded"
+            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0"
           >
             Start (Gated)
           </button>
           <button
             onClick={() => startPipeline(projectId, 'async')}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded"
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0"
           >
             Start (Async)
           </button>
@@ -24,7 +24,7 @@ export function PipelineControls({ projectId }: { projectId: string }) {
       ) : (
         <button
           onClick={() => cancelPipeline(projectId)}
-          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded"
+          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0"
         >
           Cancel
         </button>

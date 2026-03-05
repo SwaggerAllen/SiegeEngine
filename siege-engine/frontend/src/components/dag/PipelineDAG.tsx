@@ -31,7 +31,7 @@ export function PipelineDAG({ projectId }: { projectId: string }) {
     g.setDefaultEdgeLabel(() => ({}));
     g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
 
-    rawNodes.forEach((n) => g.setNode(n.id, { width: 200, height: 70 }));
+    rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
     rawEdges.forEach((e) => g.setEdge(e.source, e.target));
     dagre.layout(g);
 
@@ -39,7 +39,7 @@ export function PipelineDAG({ projectId }: { projectId: string }) {
       const pos = g.node(n.id);
       return {
         ...n,
-        position: { x: pos.x - 100, y: pos.y - 35 },
+        position: { x: pos.x - 110, y: pos.y - 50 },
       };
     });
   }, [rawNodes, rawEdges]);
@@ -54,8 +54,12 @@ export function PipelineDAG({ projectId }: { projectId: string }) {
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: any) => {
-      selectArtifact(node.id);
-      fetchArtifact(node.id);
+      // Only load artifact details for nodes that have an artifact
+      const hasArtifact = node.data?.has_artifact;
+      if (hasArtifact) {
+        selectArtifact(node.id);
+        fetchArtifact(node.id);
+      }
     },
     [selectArtifact, fetchArtifact]
   );
@@ -63,7 +67,7 @@ export function PipelineDAG({ projectId }: { projectId: string }) {
   if (rawNodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500">
-        No artifacts yet. Start the pipeline to generate artifacts.
+        Loading pipeline stages...
       </div>
     );
   }
@@ -89,8 +93,11 @@ export function PipelineDAG({ projectId }: { projectId: string }) {
             approved: '#22c55e',
             awaiting_review: '#eab308',
             generating: '#3b82f6',
+            running: '#3b82f6',
+            ai_reviewing: '#a855f7',
             stale: '#f97316',
             rejected: '#ef4444',
+            failed: '#ef4444',
             pending: '#6b7280',
           };
           return colors[status] || '#6b7280';

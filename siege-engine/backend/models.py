@@ -71,11 +71,14 @@ class ArtifactStatus(str, enum.Enum):
 
 class ArtifactType(str, enum.Enum):
     PROJECT_DOC = "project_doc"
+    SYSTEM_REQUIREMENTS = "system_requirements"
+    COMPONENT_REQUIREMENTS = "component_requirements"
     SYSTEM_ARCHITECTURE = "system_architecture"
     COMPONENT_ARCHITECTURE = "component_architecture"
     HIGH_LEVEL_PLAN = "high_level_plan"
     COMPONENT_PLAN = "component_plan"
     CODE = "code"
+    CODE_REVIEW = "code_review"
 
 
 class GitHubCredential(Base):
@@ -223,6 +226,7 @@ class PipelineConfig(Base):
         String(100), default="claude-sonnet-4-20250514"
     )
     default_temperature: Mapped[float] = mapped_column(Float, default=0.3)
+    review_prompt_overrides: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     project: Mapped["Project"] = relationship(back_populates="pipeline_config")
     stages: Mapped[list["StageDefinition"]] = relationship(

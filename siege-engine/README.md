@@ -1,11 +1,12 @@
 # SiegeEngine
 
-AI-powered project scaffolding pipeline. Generates system architectures, component designs, implementation plans, and code through a multi-stage pipeline with human review gates.
+AI-powered project scaffolding pipeline. Generates system architectures, component designs, implementation plans, and code through a multi-stage pipeline with human review gates. Uses the Claude CLI for all generation with web research capabilities, and includes an interactive chat interface for project-level conversations.
 
 ## Prerequisites
 
 - Python 3.11+
-- Node.js 18+
+- Node.js 20+
+- [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
 - An [Anthropic API key](https://console.anthropic.com/)
 
 ## Setup
@@ -50,6 +51,32 @@ The frontend runs at `http://localhost:5173` and proxies API calls to the backen
 
 Open `http://localhost:5173` and register. The first user is automatically an admin. Subsequent users require an invite link (generated from the admin's dashboard).
 
+## Pipeline Stages
+
+The pipeline runs 8 stages, each with optional AI review and human review gates:
+
+1. **System Requirements** — gather and document project requirements
+2. **System Architecture** — design the overall system architecture
+3. **Component Requirements** — per-component requirements (fan-out)
+4. **Component Architectures** — per-component architecture (fan-out)
+5. **High Level Plan** — overall implementation plan
+6. **Component Plans** — per-component implementation plans (fan-out)
+7. **Code Generation** — generate code with full tool access (fan-out)
+8. **Code Review & Fix** — automated code review and fixes (fan-out)
+
+Document stages (1-6) use the Claude CLI with web research tools (`WebFetch`, `WebSearch`). Code stages (7-8) run in the project's git repo with full tool access (bash, file editing, etc.).
+
+## Features
+
+- **Interactive Chat** — project-level chat tab powered by Claude CLI with access to the project's git repo
+- **Prompt Editor** — customize system messages, context templates, and model settings per stage
+- **AI Review** — configurable AI review generates detailed feedback documents
+- **Human Review Gates** — approve, reject with feedback, or edit & approve at each stage
+- **DAG Visualization** — interactive pipeline graph with real-time status updates
+- **Mobile Responsive** — full touch-friendly mobile layout
+- **GitHub Integration** — push branches and open PRs from the UI
+- **Fly.io Deployment** — production-ready with Dockerfile and deployment guide
+
 ## GitHub Integration (Optional)
 
 To enable pushing branches and opening PRs from the UI:
@@ -69,6 +96,8 @@ To enable pushing branches and opening PRs from the UI:
 ```
 backend/
   auth/          # JWT auth, registration, invite links
+  chat/          # Chat WebSocket endpoint + session management
+  cli/           # Claude CLI manager + structured data extractor
   config.py      # All settings (env vars with SIEGE_ prefix)
   database.py    # SQLAlchemy + SQLite setup
   dag/           # DAG traversal, staleness propagation
@@ -87,7 +116,7 @@ backend/
 frontend/
   src/
     api/         # Axios client
-    components/  # React components (DAG, editor, panels)
+    components/  # React components (DAG, editor, chat, panels)
     hooks/       # WebSocket hook
     pages/       # Login, project list, dashboard
     store/       # Zustand stores
@@ -104,14 +133,19 @@ All settings use the `SIEGE_` env prefix. See `backend/config.py` for defaults.
 | `SIEGE_JWT_SECRET_KEY` | *(required)* | JWT signing secret |
 | `SIEGE_DEFAULT_MODEL` | `claude-sonnet-4-20250514` | Default LLM model |
 | `SIEGE_DEFAULT_TEMPERATURE` | `0.3` | Default LLM temperature |
-| `SIEGE_MAX_CONCURRENT_LLM_CALLS` | `5` | Max parallel LLM requests |
-| `SIEGE_LLM_RETRY_MAX_ATTEMPTS` | `3` | Retries on rate limit |
-| `SIEGE_LLM_RETRY_BASE_DELAY` | `1.0` | Base delay (seconds) for retry backoff |
+| `SIEGE_MAX_CONCURRENT_LLM_CALLS` | `5` | Max parallel CLI invocations |
+| `SIEGE_CLI_TIMEOUT_DOCUMENT` | `300` | Timeout (seconds) for document generation |
+| `SIEGE_CLI_TIMEOUT_CODE` | `900` | Timeout (seconds) for code generation/review |
+| `SIEGE_CLI_MAX_BUDGET_CODE` | `5.0` | Max USD per code gen/review invocation |
 | `SIEGE_DATABASE_URL` | `sqlite:///data/siege_engine.db` | Database connection string |
 | `SIEGE_JWT_EXPIRY_HOURS` | `24` | Token lifetime |
 | `SIEGE_GITHUB_CLIENT_ID` | *(empty)* | GitHub OAuth client ID |
 | `SIEGE_GITHUB_CLIENT_SECRET` | *(empty)* | GitHub OAuth client secret |
 | `SIEGE_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins |
+
+## Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for Fly.io deployment instructions.
 
 ## Development
 

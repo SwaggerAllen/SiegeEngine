@@ -1,1 +1,26 @@
 @import "tailwindcss";
+
+/* Spinner animation for active pipeline stages */
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.stage-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  animation: spin-slow 1.2s linear infinite;
+}
+
+.stage-spinner--blue {
+  border-top-color: #60a5fa;
+  border-right-color: #60a5fa;
+}
+
+.stage-spinner--purple {
+  border-top-color: #c084fc;
+  border-right-color: #c084fc;
+}

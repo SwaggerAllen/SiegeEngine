@@ -1,9 +1,20 @@
+export interface PromptInfo {
+  stage_key: string;
+  model: string | null;
+  has_custom_config: boolean;
+  template_key: string;
+}
+
 export interface DAGNodeData {
   label: string;
   artifact_type: string;
   status: string;
   component_key: string | null;
   version: number;
+  stage_key: string;
+  is_active: boolean;
+  has_artifact: boolean;
+  prompt_info?: PromptInfo | null;
 }
 
 export interface DAGResponse {

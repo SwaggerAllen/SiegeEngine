@@ -1,9 +1,11 @@
 import json
+import logging
 import re
 
-from langchain_anthropic import ChatAnthropic
 from sqlalchemy.orm import Session
 
+from backend.cli.manager import cli_manager
+from backend.config import settings
 from backend.git_manager.service import git_manager
 from backend.models import (
     Artifact,
@@ -12,26 +14,33 @@ from backend.models import (
     ArtifactType,
     StageDefinition,
 )
-from backend.pipeline.llm_limiter import rate_limited_invoke
 from backend.pipeline.nodes.code_extractor import extract_code_files
 from backend.pipeline.prompts import PROMPT_REGISTRY
 
+logger = logging.getLogger(__name__)
+
 # Map stage output types to artifact types
 ARTIFACT_TYPE_MAP = {
+    "system_requirements": ArtifactType.SYSTEM_REQUIREMENTS,
+    "component_requirements": ArtifactType.COMPONENT_REQUIREMENTS,
     "system_architecture": ArtifactType.SYSTEM_ARCHITECTURE,
     "component_architecture": ArtifactType.COMPONENT_ARCHITECTURE,
     "high_level_plan": ArtifactType.HIGH_LEVEL_PLAN,
     "component_plan": ArtifactType.COMPONENT_PLAN,
     "code": ArtifactType.CODE,
+    "code_review": ArtifactType.CODE_REVIEW,
 }
 
 # Map artifact types to git file paths
 FILE_PATH_MAP = {
+    "system_requirements": "requirements/system_requirements.md",
+    "component_requirements": "requirements/components/{component_key}.md",
     "system_architecture": "architecture/system_architecture.md",
     "component_architecture": "architecture/components/{component_key}.md",
     "high_level_plan": "plans/high_level_plan.md",
     "component_plan": "plans/components/{component_key}.md",
     "code": "code/{component_key}/generated_code.md",
+    "code_review": "code/{component_key}/code_review.md",
 }
 
 
@@ -46,8 +55,12 @@ async def generate(
     """
     Run AI generation for a stage. Returns (content, artifact_id).
     """
+    logger.info("generate() called: template=%s, component=%s, input_keys=%s",
+                stage_def.prompt_template_key, component_key, list(input_artifacts.keys()))
+
     prompt_class = PROMPT_REGISTRY.get(stage_def.prompt_template_key)
     if not prompt_class:
+        logger.error("Unknown prompt template: %s", stage_def.prompt_template_key)
         raise ValueError(f"Unknown prompt template: {stage_def.prompt_template_key}")
 
     prompt = prompt_class()
@@ -71,18 +84,41 @@ async def generate(
         prompt_config=prompt_config_dict,
     )
 
-    # Use prompt config overrides if available, then stage def, then defaults
+    # Model selection: prompt config > stage def > default
     model_name = (pc.model if pc and pc.model else None) or stage_def.model_override or "claude-sonnet-4-20250514"
-    temperature = (pc.temperature if pc and pc.temperature is not None else None) or stage_def.temperature_override or 0.3
-    max_tokens = pc.max_tokens if pc else 8192
 
-    model = ChatAnthropic(
+    # Extract system and user messages for CLI invocation
+    system_msg = next((m["content"] for m in messages if m["role"] == "system"), None)
+    user_msgs = [m["content"] for m in messages if m["role"] == "user"]
+    user_prompt = "\n\n".join(user_msgs)
+
+    # Determine CLI settings based on stage type
+    is_code_stage = stage_def.output_artifact_type in ("code", "code_review")
+    project_id = stage_def.pipeline_config.project_id
+
+    if is_code_stage:
+        working_dir = str(git_manager.base_path / project_id)
+        tools = "default"
+        timeout = settings.cli_timeout_code
+        max_budget = settings.cli_max_budget_code
+    else:
+        working_dir = None
+        tools = "WebFetch,WebSearch"  # Research tools for document generation
+        timeout = settings.cli_timeout_document
+        max_budget = None
+
+    logger.info("CLI generate: model=%s, tools=%s, is_code=%s, messages=%d",
+                model_name, tools, is_code_stage, len(messages))
+    content = await cli_manager.generate(
+        prompt=user_prompt,
+        system_prompt=system_msg,
+        working_dir=working_dir,
         model=model_name,
-        temperature=temperature,
-        max_tokens=max_tokens,
+        tools=tools,
+        timeout=timeout,
+        max_budget_usd=max_budget,
     )
-    response = await rate_limited_invoke(model, messages)
-    content = response.content
+    logger.info("CLI response received: %d chars", len(content) if content else 0)
 
     # Determine file path
     file_path_template = FILE_PATH_MAP.get(stage_def.output_artifact_type, "artifacts/{stage_key}.md")
@@ -217,10 +253,13 @@ def extract_components(content: str) -> list[dict]:
 
 def _stage_key_to_type(stage_key: str) -> str:
     mapping = {
+        "system_requirements": "system_requirements",
+        "component_requirements": "component_requirements",
         "system_architecture": "system_architecture",
         "component_architectures": "component_architecture",
         "high_level_plan": "high_level_plan",
         "component_plans": "component_plan",
         "code_generation": "code",
+        "code_review": "code_review",
     }
     return mapping.get(stage_key, stage_key)

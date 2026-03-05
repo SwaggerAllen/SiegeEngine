@@ -1,62 +1,70 @@
-import json
+import logging
 
-from langchain_anthropic import ChatAnthropic
-
+from backend.cli.extractor import extractor
+from backend.cli.manager import cli_manager
+from backend.config import settings
 from backend.models import StageDefinition
-from backend.pipeline.llm_limiter import rate_limited_invoke
+from backend.pipeline.prompts import PROMPT_REGISTRY
+
+logger = logging.getLogger(__name__)
 
 
 async def ai_review(
     stage_def: StageDefinition,
     generated_content: str,
     input_artifacts: dict[str, str],
+    review_prompt_overrides: dict | None = None,
 ) -> dict:
     """
-    Run AI review on generated content. Returns structured feedback.
+    Run AI review on generated content via CLI.
+    Returns structured feedback with a full review document.
     """
-    review_prompt = [
-        {
-            "role": "system",
-            "content": """You are a senior technical reviewer. Review the following artifact
-for completeness, consistency with inputs, quality, and correctness.
+    prompt_class = PROMPT_REGISTRY["ai_review"]
+    prompt = prompt_class()
 
-Provide structured feedback as JSON with keys:
-- overall_quality: 1-10
-- issues: list of {"severity": "high"|"medium"|"low", "description": "...", "suggestion": "..."}
-- strengths: list of strings
-- recommendation: "approve" | "revise"
+    # Build the input dict for the review prompt
+    review_inputs = {
+        **input_artifacts,
+        "artifact_content": generated_content,
+        "stage_name": stage_def.display_name,
+    }
 
-Return ONLY the JSON object.""",
-        },
-        {
-            "role": "user",
-            "content": f"ARTIFACT TO REVIEW ({stage_def.display_name}):\n\n{generated_content}\n\n"
-            f"INPUT CONTEXT:\n\n{json.dumps(input_artifacts)[:4000]}",
-        },
-    ]
-
-    model = ChatAnthropic(
-        model="claude-sonnet-4-20250514",
-        temperature=0.1,
-        max_tokens=4096,
-    )
-    response = await rate_limited_invoke(model, review_prompt)
-
-    # Parse JSON from response
-    try:
-        # Try to extract JSON from the response
-        content = response.content
-        # Handle markdown code block wrapping
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0]
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0]
-        return json.loads(content)
-    except (json.JSONDecodeError, IndexError):
-        return {
-            "overall_quality": 5,
-            "issues": [],
-            "strengths": [],
-            "recommendation": "approve",
-            "raw_feedback": response.content,
+    # Use overrides if provided (from PipelineConfig.review_prompt_overrides)
+    prompt_config_dict = None
+    if review_prompt_overrides:
+        prompt_config_dict = {
+            "system_message": review_prompt_overrides.get("system_message"),
+            "output_format_instructions": review_prompt_overrides.get("output_format_instructions"),
+            "context_template": review_prompt_overrides.get("context_template"),
         }
+
+    messages = prompt.build(
+        input_artifacts=review_inputs,
+        prompt_config=prompt_config_dict,
+    )
+
+    # Model selection: from overrides, fall back to defaults
+    model_name = (review_prompt_overrides or {}).get("model") or "claude-sonnet-4-20250514"
+
+    # Extract system and user messages for CLI
+    system_msg = next((m["content"] for m in messages if m["role"] == "system"), None)
+    user_msgs = [m["content"] for m in messages if m["role"] == "user"]
+    user_prompt = "\n\n".join(user_msgs)
+
+    logger.info("CLI ai_review: model=%s", model_name)
+    content = await cli_manager.generate(
+        prompt=user_prompt,
+        system_prompt=system_msg,
+        model=model_name,
+        tools="",  # No tools needed for review — just prompt → response
+        timeout=settings.cli_timeout_document,
+    )
+
+    # Extract recommendation from the review document
+    recommendation = await extractor.extract_recommendation(content)
+
+    return {
+        "document": content,
+        "overall_quality": recommendation.get("overall_quality", 5),
+        "recommendation": recommendation.get("recommendation", "approve"),
+    }

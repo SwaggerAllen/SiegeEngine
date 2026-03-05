@@ -1,8 +1,11 @@
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from jose import JWTError
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from backend.auth.routes import get_current_user
 from backend.auth.service import decode_token
@@ -28,6 +31,7 @@ from backend.pipeline.schemas import (
     PromptConfigUpdate,
     RegenerateRequest,
     ResumeRequest,
+    ReviseRequest,
     StageExecutionResponse,
 )
 from backend.websocket.manager import ws_manager
@@ -101,14 +105,25 @@ async def start_pipeline(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    engine = PipelineEngine(db)
     mode = ExecutionMode(req.execution_mode) if req.execution_mode else None
+    logger.info("POST /start: project_id=%s, execution_mode=%s", project_id, mode)
 
-    # Run pipeline in background
-    run_id_future = asyncio.ensure_future(engine.start_pipeline(project_id, mode))
+    # Run pipeline in a background task with its own DB session.
+    # The request session (db) is closed when the route returns, so the
+    # background task must create a fresh session to avoid DetachedInstanceError.
+    async def _run():
+        from backend.database import SessionLocal
 
-    # Wait briefly to get the run_id
-    await asyncio.sleep(0.1)
+        bg_db = SessionLocal()
+        try:
+            engine = PipelineEngine(bg_db)
+            await engine.start_pipeline(project_id, mode)
+        except Exception:
+            logger.exception("Pipeline execution failed for project_id=%s", project_id)
+        finally:
+            bg_db.close()
+
+    asyncio.ensure_future(_run())
 
     return {"status": "started", "message": "Pipeline execution started"}
 
@@ -120,11 +135,49 @@ async def resume_stage(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    engine = PipelineEngine(db)
-    await engine.resume_stage(
-        req.execution_id, req.action, req.notes, req.edited_content
-    )
+    # Run in a background task with its own DB session so that
+    # rejection → regeneration (LLM call) doesn't block the request
+    # and the session isn't closed mid-generation.
+    async def _run():
+        from backend.database import SessionLocal
+
+        bg_db = SessionLocal()
+        try:
+            engine = PipelineEngine(bg_db)
+            await engine.resume_stage(
+                req.execution_id, req.action, req.notes, req.edited_content
+            )
+        except Exception:
+            logger.exception("resume_stage failed for execution_id=%s", req.execution_id)
+        finally:
+            bg_db.close()
+
+    asyncio.ensure_future(_run())
     return {"status": "resumed"}
+
+
+@router.post("/{project_id}/revise")
+async def revise_artifact(
+    project_id: str,
+    req: ReviseRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Revise an approved artifact with AI using human feedback."""
+    async def _run():
+        from backend.database import SessionLocal
+
+        bg_db = SessionLocal()
+        try:
+            engine = PipelineEngine(bg_db)
+            await engine.revise_artifact(req.artifact_id, req.feedback)
+        except Exception:
+            logger.exception("revise_artifact failed for artifact_id=%s", req.artifact_id)
+        finally:
+            bg_db.close()
+
+    asyncio.ensure_future(_run())
+    return {"status": "revision_started"}
 
 
 @router.post("/{project_id}/regenerate")
@@ -254,6 +307,47 @@ def list_prompt_configs(
                     "max_tokens": 8192,
                 },
             })
+
+    # Append the AI Review prompt entry
+    ai_review_prompt_class = PROMPT_REGISTRY.get("ai_review")
+    if ai_review_prompt_class:
+        tmpl = ai_review_prompt_class()
+        overrides = config.review_prompt_overrides
+        if overrides:
+            result.append({
+                "stage_key": "__ai_review__",
+                "display_name": "AI Review",
+                "has_custom_config": True,
+                "config": {
+                    "id": None,
+                    "stage_definition_id": None,
+                    "system_message": overrides.get("system_message", tmpl.default_system_message),
+                    "output_format_instructions": overrides.get("output_format_instructions", tmpl.default_output_format),
+                    "context_template": overrides.get("context_template", tmpl.default_context_template),
+                    "revision_instructions": "",
+                    "model": overrides.get("model"),
+                    "temperature": overrides.get("temperature"),
+                    "max_tokens": overrides.get("max_tokens", 8192),
+                },
+            })
+        else:
+            result.append({
+                "stage_key": "__ai_review__",
+                "display_name": "AI Review",
+                "has_custom_config": False,
+                "config": {
+                    "id": None,
+                    "stage_definition_id": None,
+                    "system_message": tmpl.default_system_message,
+                    "output_format_instructions": tmpl.default_output_format,
+                    "context_template": tmpl.default_context_template,
+                    "revision_instructions": "",
+                    "model": None,
+                    "temperature": None,
+                    "max_tokens": 8192,
+                },
+            })
+
     return result
 
 
@@ -264,6 +358,25 @@ def get_prompt_config(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
+    # Handle AI review prompt separately
+    if stage_key == "__ai_review__":
+        config = db.query(PipelineConfig).filter_by(project_id=project_id).first()
+        if not config:
+            raise HTTPException(404, "Pipeline config not found")
+        tmpl = PROMPT_REGISTRY["ai_review"]()
+        overrides = config.review_prompt_overrides or {}
+        return {
+            "id": None,
+            "stage_definition_id": None,
+            "system_message": overrides.get("system_message", tmpl.default_system_message),
+            "output_format_instructions": overrides.get("output_format_instructions", tmpl.default_output_format),
+            "context_template": overrides.get("context_template", tmpl.default_context_template),
+            "revision_instructions": "",
+            "model": overrides.get("model"),
+            "temperature": overrides.get("temperature"),
+            "max_tokens": overrides.get("max_tokens", 8192),
+        }
+
     stage_def = _get_stage_def(db, project_id, stage_key)
     pc = stage_def.prompt_config
     prompt_class = PROMPT_REGISTRY.get(stage_def.prompt_template_key)
@@ -304,6 +417,40 @@ def update_prompt_config(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
+    # Handle AI review prompt separately
+    if stage_key == "__ai_review__":
+        config = db.query(PipelineConfig).filter_by(project_id=project_id).first()
+        if not config:
+            raise HTTPException(404, "Pipeline config not found")
+        overrides = config.review_prompt_overrides or {}
+        if req.system_message is not None:
+            overrides["system_message"] = req.system_message
+        if req.output_format_instructions is not None:
+            overrides["output_format_instructions"] = req.output_format_instructions
+        if req.context_template is not None:
+            overrides["context_template"] = req.context_template
+        if req.model is not None:
+            overrides["model"] = req.model
+        if req.temperature is not None:
+            overrides["temperature"] = req.temperature
+        if req.max_tokens is not None:
+            overrides["max_tokens"] = req.max_tokens
+        config.review_prompt_overrides = overrides
+        db.commit()
+        db.refresh(config)
+        tmpl = PROMPT_REGISTRY["ai_review"]()
+        return {
+            "id": None,
+            "stage_definition_id": None,
+            "system_message": overrides.get("system_message", tmpl.default_system_message),
+            "output_format_instructions": overrides.get("output_format_instructions", tmpl.default_output_format),
+            "context_template": overrides.get("context_template", tmpl.default_context_template),
+            "revision_instructions": "",
+            "model": overrides.get("model"),
+            "temperature": overrides.get("temperature"),
+            "max_tokens": overrides.get("max_tokens", 8192),
+        }
+
     stage_def = _get_stage_def(db, project_id, stage_key)
     pc = stage_def.prompt_config
 
@@ -358,6 +505,15 @@ def reset_prompt_config(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
+    # Handle AI review prompt separately
+    if stage_key == "__ai_review__":
+        config = db.query(PipelineConfig).filter_by(project_id=project_id).first()
+        if not config:
+            raise HTTPException(404, "Pipeline config not found")
+        config.review_prompt_overrides = None
+        db.commit()
+        return {"status": "reset"}
+
     stage_def = _get_stage_def(db, project_id, stage_key)
     pc = stage_def.prompt_config
     if pc:

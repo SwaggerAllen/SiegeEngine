@@ -8,10 +8,12 @@ interface PipelineState {
   isRunning: boolean;
   isPaused: boolean;
   pausedStage: string | null;
+  reset: () => void;
   fetchConfig: (projectId: string) => Promise<void>;
   fetchStatus: (projectId: string) => Promise<void>;
   startPipeline: (projectId: string, mode?: string) => Promise<void>;
   resumeStage: (projectId: string, executionId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
+  reviseArtifact: (projectId: string, artifactId: string, feedback: string) => Promise<void>;
   cancelPipeline: (projectId: string) => Promise<void>;
   updateFromWS: (event: WSEvent) => void;
 }
@@ -22,6 +24,8 @@ export const usePipelineStore = create<PipelineState>((set) => ({
   isRunning: false,
   isPaused: false,
   pausedStage: null,
+
+  reset: () => set({ config: null, executions: [], isRunning: false, isPaused: false, pausedStage: null }),
 
   fetchConfig: async (projectId) => {
     const config = await pipelineApi.getPipelineConfig(projectId);
@@ -34,13 +38,26 @@ export const usePipelineStore = create<PipelineState>((set) => ({
   },
 
   startPipeline: async (projectId, mode) => {
+    console.log('[Pipeline] Starting pipeline:', projectId, 'mode:', mode);
     set({ isRunning: true, isPaused: false, pausedStage: null });
-    await pipelineApi.startPipeline(projectId, mode);
+    try {
+      const result = await pipelineApi.startPipeline(projectId, mode);
+      console.log('[Pipeline] Start response:', result);
+    } catch (err) {
+      console.error('[Pipeline] Start failed:', err);
+      set({ isRunning: false });
+      throw err;
+    }
   },
 
   resumeStage: async (projectId, executionId, action, notes, editedContent) => {
     await pipelineApi.resumeStage(projectId, executionId, action, notes, editedContent);
     set({ isPaused: false, pausedStage: null });
+  },
+
+  reviseArtifact: async (projectId, artifactId, feedback) => {
+    set({ isRunning: true });
+    await pipelineApi.reviseArtifact(projectId, artifactId, feedback);
   },
 
   cancelPipeline: async (projectId) => {
@@ -50,6 +67,9 @@ export const usePipelineStore = create<PipelineState>((set) => ({
 
   updateFromWS: (event) => {
     switch (event.type) {
+      case 'stage_started':
+        set({ isRunning: true, isPaused: false, pausedStage: null });
+        break;
       case 'pipeline_completed':
         set({ isRunning: false, isPaused: false, pausedStage: null });
         break;

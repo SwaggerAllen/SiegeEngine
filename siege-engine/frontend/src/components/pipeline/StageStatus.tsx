@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { StageExecution } from '../../types/pipeline';
 
 const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
@@ -10,6 +11,44 @@ const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
   skipped: { bg: 'bg-gray-500', text: 'Skipped' },
   failed: { bg: 'bg-red-700', text: 'Failed' },
 };
+
+function ExecutionRow({ exec }: { exec: StageExecution }) {
+  const [expanded, setExpanded] = useState(false);
+  const badge = STATUS_BADGES[exec.status] || STATUS_BADGES.pending;
+
+  return (
+    <div key={exec.id} className="text-xs">
+      <div className="flex items-center gap-2">
+        <span className={`px-1.5 py-0.5 rounded text-white shrink-0 ${badge.bg}`}>
+          {badge.text}
+        </span>
+        {exec.component_key && (
+          <span className="text-gray-400 shrink-0">{exec.component_key}</span>
+        )}
+        {exec.error_message && (
+          <>
+            <span
+              className={`text-red-400 ${expanded ? '' : 'truncate'} min-w-0`}
+            >
+              {expanded ? '' : exec.error_message}
+            </span>
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="text-gray-500 hover:text-gray-300 shrink-0 ml-auto"
+            >
+              {expanded ? '▲' : '▼'}
+            </button>
+          </>
+        )}
+      </div>
+      {exec.error_message && expanded && (
+        <pre className="mt-1 p-2 bg-gray-900 rounded text-red-400 whitespace-pre-wrap break-words text-xs max-h-60 overflow-auto">
+          {exec.error_message}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 export function StageStatusList({ executions }: { executions: StageExecution[] }) {
   if (executions.length === 0) return null;
@@ -30,22 +69,9 @@ export function StageStatusList({ executions }: { executions: StageExecution[] }
             {stageKey.replace(/_/g, ' ')}
           </div>
           <div className="space-y-1">
-            {execs.map((exec) => {
-              const badge = STATUS_BADGES[exec.status] || STATUS_BADGES.pending;
-              return (
-                <div key={exec.id} className="flex items-center gap-2 text-xs">
-                  <span className={`px-1.5 py-0.5 rounded text-white ${badge.bg}`}>
-                    {badge.text}
-                  </span>
-                  {exec.component_key && (
-                    <span className="text-gray-400">{exec.component_key}</span>
-                  )}
-                  {exec.error_message && (
-                    <span className="text-red-400 truncate">{exec.error_message}</span>
-                  )}
-                </div>
-              );
-            })}
+            {execs.map((exec) => (
+              <ExecutionRow key={exec.id} exec={exec} />
+            ))}
           </div>
         </div>
       ))}

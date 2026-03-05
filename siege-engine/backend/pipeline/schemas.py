@@ -12,6 +12,11 @@ class ResumeRequest(BaseModel):
     edited_content: str | None = None
 
 
+class ReviseRequest(BaseModel):
+    artifact_id: str
+    feedback: str
+
+
 class RegenerateRequest(BaseModel):
     artifact_ids: list[str]
 

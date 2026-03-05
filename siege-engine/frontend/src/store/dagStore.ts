@@ -7,14 +7,17 @@ interface DAGState {
   nodes: Node[];
   edges: Edge[];
   selectedArtifactId: string | null;
+  editPromptStageKey: string | null;
   fetchDAG: (projectId: string) => Promise<void>;
   selectArtifact: (id: string | null) => void;
+  setEditPromptStageKey: (key: string | null) => void;
 }
 
 export const useDAGStore = create<DAGState>((set) => ({
   nodes: [],
   edges: [],
   selectedArtifactId: null,
+  editPromptStageKey: null,
 
   fetchDAG: async (projectId) => {
     const data: DAGResponse = await pipelineApi.getDAG(projectId);
@@ -36,4 +39,5 @@ export const useDAGStore = create<DAGState>((set) => ({
   },
 
   selectArtifact: (id) => set({ selectedArtifactId: id }),
+  setEditPromptStageKey: (key) => set({ editPromptStageKey: key }),
 }));

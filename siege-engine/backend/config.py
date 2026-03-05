@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings
 
 
@@ -23,6 +25,12 @@ class Settings(BaseSettings):
     llm_retry_max_attempts: int = 3
     llm_retry_base_delay: float = 1.0
 
+    # Claude CLI
+    cli_timeout_document: int = 300   # 5 min for document stages
+    cli_timeout_code: int = 900       # 15 min for code gen/review
+    cli_max_turns_code: int = 25      # Unused directly — CLI manages turns via budget
+    cli_max_budget_code: float = 5.0  # Max USD per code gen/review invocation
+
     # GitHub OAuth
     github_client_id: str = ""
     github_client_secret: str = ""
@@ -34,3 +42,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Fallback: accept ANTHROPIC_API_KEY directly from environment
+if not settings.anthropic_api_key:
+    settings.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY", "")

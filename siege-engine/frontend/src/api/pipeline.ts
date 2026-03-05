@@ -40,6 +40,18 @@ export async function resumeStage(
   return data;
 }
 
+export async function reviseArtifact(
+  projectId: string,
+  artifactId: string,
+  feedback: string
+) {
+  const { data } = await api.post(`/pipeline/${projectId}/revise`, {
+    artifact_id: artifactId,
+    feedback,
+  });
+  return data;
+}
+
 export async function regenerateArtifacts(
   projectId: string,
   artifactIds: string[]
