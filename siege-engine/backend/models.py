@@ -111,6 +111,7 @@ class Project(Base):
     remote_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     github_repo_slug: Mapped[str | None] = mapped_column(String(200), nullable=True)
     git_repo_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    auto_push_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -126,6 +127,9 @@ class Project(Base):
         back_populates="project", cascade="all, delete-orphan"
     )
     component_definitions: Mapped[list["ComponentDefinition"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    pipeline_runs: Mapped[list["PipelineRun"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
 
@@ -239,6 +243,21 @@ class FanOutStrategy(str, enum.Enum):
     LEAF = "leaf"
 
 
+class StopPoint(str, enum.Enum):
+    AFTER_ALL = "after_all"
+    BEFORE_CODE = "before_code"
+    AT_FAN_OUT = "at_fan_out"
+    AFTER_TRIPLETS = "after_triplets"
+
+
+class PipelineRunStatus(str, enum.Enum):
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class PipelineConfig(Base):
     __tablename__ = "pipeline_configs"
 
@@ -263,6 +282,34 @@ class PipelineConfig(Base):
         cascade="all, delete-orphan",
         order_by="StageDefinition.order_index",
     )
+
+
+class PipelineRun(Base):
+    __tablename__ = "pipeline_runs"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id"), nullable=False
+    )
+    run_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_id: Mapped[str] = mapped_column(
+        String, unique=True, nullable=False, default=lambda: str(uuid.uuid4())
+    )
+    status: Mapped[PipelineRunStatus] = mapped_column(
+        Enum(PipelineRunStatus), default=PipelineRunStatus.RUNNING
+    )
+    human_review: Mapped[bool] = mapped_column(Boolean, default=True)
+    ai_loops: Mapped[int] = mapped_column(Integer, default=1)
+    stop_point: Mapped[StopPoint] = mapped_column(
+        Enum(StopPoint), default=StopPoint.AFTER_ALL
+    )
+    git_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    project: Mapped["Project"] = relationship(back_populates="pipeline_runs")
 
 
 class StageDefinition(Base):

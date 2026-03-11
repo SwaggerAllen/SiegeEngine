@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from jose import JWTError
@@ -11,14 +12,19 @@ from backend.auth.routes import get_current_user
 from backend.auth.service import decode_token
 from backend.dag.service import get_regeneration_order, get_stale_artifacts
 from backend.database import get_db
+from sqlalchemy import func
+
 from backend.models import (
     ExecutionMode,
     PipelineConfig,
+    PipelineRun,
+    PipelineRunStatus,
     Project,
     PromptConfig,
     StageDefinition,
     StageExecution,
     StageStatus,
+    StopPoint,
     User,
 )
 from backend.pipeline.engine import PipelineEngine
@@ -27,6 +33,7 @@ from backend.pipeline.defaults import DEFAULT_STAGES
 from backend.pipeline.schemas import (
     PipelineConfigResponse,
     PipelineConfigUpdate,
+    PipelineRunResponse,
     PipelineStartRequest,
     PromptConfigResponse,
     PromptConfigUpdate,
@@ -110,19 +117,40 @@ async def start_pipeline(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    mode = ExecutionMode(req.execution_mode) if req.execution_mode else None
-    logger.info("POST /start: project_id=%s, execution_mode=%s", project_id, mode)
+    # Compute next sequential run number for this project
+    max_num = (
+        db.query(func.max(PipelineRun.run_number))
+        .filter_by(project_id=project_id)
+        .scalar()
+    ) or 0
+    run_number = max_num + 1
+
+    pipeline_run = PipelineRun(
+        project_id=project_id,
+        run_number=run_number,
+        human_review=req.human_review,
+        ai_loops=req.ai_loops,
+        stop_point=StopPoint(req.stop_point),
+    )
+    db.add(pipeline_run)
+    db.commit()
+    db.refresh(pipeline_run)
+
+    logger.info(
+        "POST /start: project_id=%s, run_number=%d, human_review=%s, ai_loops=%d, stop_point=%s",
+        project_id, run_number, req.human_review, req.ai_loops, req.stop_point,
+    )
+
+    pipeline_run_id = pipeline_run.id
 
     # Run pipeline in a background task with its own DB session.
-    # The request session (db) is closed when the route returns, so the
-    # background task must create a fresh session to avoid DetachedInstanceError.
     async def _run():
         from backend.database import SessionLocal
 
         bg_db = SessionLocal()
         try:
             engine = PipelineEngine(bg_db)
-            await engine.start_pipeline(project_id, mode)
+            await engine.start_pipeline(project_id, pipeline_run_id=pipeline_run_id)
         except Exception:
             logger.exception("Pipeline execution failed for project_id=%s", project_id)
         finally:
@@ -130,7 +158,11 @@ async def start_pipeline(
 
     asyncio.ensure_future(_run())
 
-    return {"status": "started", "message": "Pipeline execution started"}
+    return {
+        "status": "started",
+        "run_number": run_number,
+        "run_id": pipeline_run.run_id,
+    }
 
 
 @router.post("/{project_id}/resume")
@@ -246,8 +278,81 @@ def cancel_pipeline(
     for e in running:
         e.status = StageStatus.FAILED
         e.error_message = "Cancelled by user"
+
+    # Also mark any active PipelineRun as cancelled
+    active_runs = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id, status=PipelineRunStatus.RUNNING)
+        .all()
+    )
+    for r in active_runs:
+        r.status = PipelineRunStatus.CANCELLED
+        r.completed_at = datetime.utcnow()
+
     db.commit()
     return {"status": "cancelled", "cancelled_count": len(running)}
+
+
+# ──── Pipeline Runs ────
+
+
+@router.get("/{project_id}/runs")
+def list_runs(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    runs = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id)
+        .order_by(PipelineRun.run_number.desc())
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "run_number": r.run_number,
+            "run_id": r.run_id,
+            "status": r.status.value,
+            "human_review": r.human_review,
+            "ai_loops": r.ai_loops,
+            "stop_point": r.stop_point.value,
+            "git_commit_sha": r.git_commit_sha,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+        }
+        for r in runs
+    ]
+
+
+@router.get("/{project_id}/runs/{run_number}/state")
+def get_run_state(
+    project_id: str,
+    run_number: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return the siege-state.json manifest for a specific completed run."""
+    pipeline_run = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id, run_number=run_number)
+        .first()
+    )
+    if not pipeline_run:
+        raise HTTPException(404, f"Run #{run_number} not found")
+    if not pipeline_run.git_commit_sha:
+        raise HTTPException(404, f"Run #{run_number} has no checkpoint commit")
+
+    try:
+        from backend.git_manager.service import git_manager
+        import json
+
+        content = git_manager.get_file_at_commit(
+            project_id, "siege-state.json", pipeline_run.git_commit_sha
+        )
+        return json.loads(content)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to load run state: {e}")
 
 
 # ──── Stage Definition Config ────

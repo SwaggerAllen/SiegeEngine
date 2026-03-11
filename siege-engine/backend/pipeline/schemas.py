@@ -2,7 +2,9 @@ from pydantic import BaseModel
 
 
 class PipelineStartRequest(BaseModel):
-    execution_mode: str | None = None  # "gated" or "async"
+    human_review: bool = True
+    ai_loops: int = 1  # Number of AI self-improvement loops (generate→review cycles)
+    stop_point: str = "after_all"  # "after_all", "before_code", "at_fan_out", "after_triplets"
 
 
 class ResumeRequest(BaseModel):
@@ -96,5 +98,20 @@ class StageExecutionResponse(BaseModel):
     completed_at: str | None
     error_message: str | None
     run_id: str
+
+    model_config = {"from_attributes": True}
+
+
+class PipelineRunResponse(BaseModel):
+    id: str
+    run_number: int
+    run_id: str
+    status: str
+    human_review: bool
+    ai_loops: int
+    stop_point: str
+    git_commit_sha: str | None
+    started_at: str | None
+    completed_at: str | None
 
     model_config = {"from_attributes": True}

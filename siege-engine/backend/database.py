@@ -38,6 +38,15 @@ def _migrate_missing_columns():
                     "ALTER TABLE pipeline_configs ADD COLUMN review_prompt_overrides JSON"
                 ))
 
+    # Project.auto_push_enabled
+    if inspector.has_table("projects"):
+        columns = [c["name"] for c in inspector.get_columns("projects")]
+        if "auto_push_enabled" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE projects ADD COLUMN auto_push_enabled BOOLEAN DEFAULT 0"
+                ))
+
 
 def get_db():
     db = SessionLocal()

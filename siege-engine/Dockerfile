@@ -10,8 +10,8 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install Node.js (required for Claude CLI) and git
-RUN apt-get update && apt-get install -y curl git && \
+# Install Node.js (required for Claude CLI), git, and gosu (for dropping root privileges)
+RUN apt-get update && apt-get install -y curl git gosu && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g @anthropic-ai/claude-code && \
@@ -41,5 +41,6 @@ ENV SIEGE_DATABASE_URL=sqlite:////data/siege_engine.db
 ENV SIEGE_GIT_REPOS_BASE_PATH=/data/repos
 
 EXPOSE 8000
-USER claude
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["docker-entrypoint.sh"]

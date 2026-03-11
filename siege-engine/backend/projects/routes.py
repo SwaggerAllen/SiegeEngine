@@ -72,6 +72,9 @@ def get_project(
         "id": project.id,
         "name": project.name,
         "description": project.description,
+        "remote_url": project.remote_url,
+        "github_repo_slug": project.github_repo_slug,
+        "auto_push_enabled": project.auto_push_enabled,
         "git_repo_path": project.git_repo_path,
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
@@ -212,6 +215,7 @@ def get_artifact_history(
 class SetRemoteRequest(BaseModel):
     remote_url: str
     github_repo_slug: str | None = None
+    auto_push_enabled: bool | None = None
 
 
 class OpenPRRequest(BaseModel):
@@ -234,9 +238,15 @@ def set_remote(
 
     project.remote_url = req.remote_url
     project.github_repo_slug = req.github_repo_slug
+    if req.auto_push_enabled is not None:
+        project.auto_push_enabled = req.auto_push_enabled
     git_manager.add_remote(project_id, req.remote_url)
     db.commit()
-    return {"status": "remote_configured", "remote_url": req.remote_url}
+    return {
+        "status": "remote_configured",
+        "remote_url": req.remote_url,
+        "auto_push_enabled": project.auto_push_enabled,
+    }
 
 
 @router.post("/{project_id}/push")

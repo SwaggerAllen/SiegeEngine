@@ -23,10 +23,13 @@ from backend.models import (
     ExecutionMode,
     FanOutStrategy,
     PipelineConfig,
+    PipelineRun,
+    PipelineRunStatus,
     Project,
     StageDefinition,
     StageExecution,
     StageStatus,
+    StopPoint,
 )
 from backend.pipeline.nodes.ai_review import ai_review
 from backend.pipeline.nodes.extract_components import (
@@ -63,10 +66,10 @@ class PipelineEngine:
         self.db = db
 
     async def start_pipeline(
-        self, project_id: str, execution_mode: ExecutionMode | None = None
+        self, project_id: str, pipeline_run_id: str | None = None,
     ) -> str:
         """Start a pipeline run. Returns run_id."""
-        logger.info("start_pipeline called for project_id=%s, execution_mode=%s", project_id, execution_mode)
+        logger.info("start_pipeline called for project_id=%s, pipeline_run_id=%s", project_id, pipeline_run_id)
 
         project = self.db.get(Project, project_id)
         if not project or not project.pipeline_config:
@@ -74,19 +77,61 @@ class PipelineEngine:
             raise ValueError("Project or pipeline config not found")
 
         config = project.pipeline_config
-        if execution_mode:
-            config.execution_mode = execution_mode
-            self.db.flush()
 
-        run_id = str(uuid.uuid4())
+        # Load PipelineRun if provided (new flow), otherwise legacy fallback
+        pipeline_run = self.db.get(PipelineRun, pipeline_run_id) if pipeline_run_id else None
+        run_id = pipeline_run.run_id if pipeline_run else str(uuid.uuid4())
+
         stages = sorted(config.stages, key=lambda s: s.order_index)
-        logger.info("Pipeline run_id=%s starting with %d stages: %s", run_id, len(stages), [s.stage_key for s in stages])
+        logger.info(
+            "Pipeline run_id=%s (run #%s) starting with %d stages: %s",
+            run_id, pipeline_run.run_number if pipeline_run else "?",
+            len(stages), [s.stage_key for s in stages],
+        )
 
-        await self._find_and_execute_next(project_id, run_id, config)
+        await self._find_and_execute_next(project_id, run_id, config, pipeline_run)
         return run_id
 
+    def _should_pause(
+        self, stage_def: StageDefinition, pipeline_run: PipelineRun | None,
+    ) -> bool:
+        """Determine if the pipeline should pause after executing this stage."""
+        if not pipeline_run:
+            # Legacy fallback — pause at every human-review stage
+            return stage_def.human_review_enabled
+
+        stop = pipeline_run.stop_point
+
+        # Branching stages always pause if human review is on
+        if stage_def.stage_key in BRANCHING_STAGES and pipeline_run.human_review:
+            return True
+
+        if stop == StopPoint.AFTER_ALL:
+            return pipeline_run.human_review and stage_def.human_review_enabled
+
+        elif stop == StopPoint.BEFORE_CODE:
+            if stage_def.stage_key in ("code_generation", "code_review"):
+                return True
+            return pipeline_run.human_review and stage_def.human_review_enabled
+
+        elif stop == StopPoint.AT_FAN_OUT:
+            if stage_def.stage_key in BRANCHING_STAGES:
+                return True
+            return pipeline_run.human_review and stage_def.human_review_enabled
+
+        elif stop == StopPoint.AFTER_TRIPLETS:
+            triplet_ends = {"high_level_plan", "component_plans", "sub_component_plans"}
+            if stage_def.stage_key in triplet_ends:
+                return True
+            if stage_def.stage_key in BRANCHING_STAGES:
+                return True
+            return pipeline_run.human_review and stage_def.human_review_enabled
+
+        return False
+
     async def _find_and_execute_next(
-        self, project_id: str, run_id: str, config: PipelineConfig
+        self, project_id: str, run_id: str, config: PipelineConfig,
+        pipeline_run: PipelineRun | None = None,
     ):
         """Find the next executable work item across all stages and execute it."""
         stages = sorted(config.stages, key=lambda s: s.order_index)
@@ -155,7 +200,7 @@ class PipelineEngine:
 
                 await self._run_stage(
                     project_id, stage_def, input_artifacts, None, execution, run_id,
-                    human_notes=rejected_notes, config=config,
+                    human_notes=rejected_notes, config=config, pipeline_run=pipeline_run,
                 )
 
                 if execution.status == StageStatus.FAILED:
@@ -170,13 +215,9 @@ class PipelineEngine:
                     if stage_def.stage_key not in BRANCHING_STAGES:
                         await self._post_generation_hook(project_id, stage_def, None, execution)
 
-                # Pause: GATED mode pauses at human-review stages; branching stages always pause
+                # Check if pipeline should pause at this stage
                 if execution.status == StageStatus.AWAITING_REVIEW:
-                    should_pause = (
-                        (config.execution_mode == ExecutionMode.GATED and stage_def.human_review_enabled)
-                        or stage_def.stage_key in BRANCHING_STAGES
-                    )
-                    if should_pause:
+                    if self._should_pause(stage_def, pipeline_run):
                         await ws_manager.broadcast(project_id, {
                             "type": "pipeline_paused",
                             "stage_key": stage_def.stage_key,
@@ -217,7 +258,7 @@ class PipelineEngine:
 
                     await self._run_stage(
                         project_id, stage_def, input_artifacts, entity_key, execution, run_id,
-                        human_notes=rejected_notes, config=config,
+                        human_notes=rejected_notes, config=config, pipeline_run=pipeline_run,
                     )
 
                     if execution.status == StageStatus.FAILED:
@@ -236,12 +277,8 @@ class PipelineEngine:
                     })
                     return
 
-                # Pause: GATED mode pauses at human-review stages; branching stages always pause
-                should_pause = (
-                    (config.execution_mode == ExecutionMode.GATED and stage_def.human_review_enabled)
-                    or stage_def.stage_key in BRANCHING_STAGES
-                )
-                if should_pause:
+                # Check if pipeline should pause at this stage
+                if self._should_pause(stage_def, pipeline_run):
                     awaiting_review = (
                         self.db.query(StageExecution)
                         .filter_by(
@@ -263,9 +300,42 @@ class PipelineEngine:
 
         # If we get here, all stages are complete
         logger.info("Pipeline run_id=%s completed successfully", run_id)
+
+        git_commit_sha = None
+        if pipeline_run:
+            pipeline_run.status = PipelineRunStatus.COMPLETED
+            pipeline_run.completed_at = datetime.utcnow()
+            self.db.commit()
+
+            # Git checkpoint: commit siege-state.json + any remaining changes
+            try:
+                from backend.pipeline.checkpoint import build_siege_state
+                from backend.git_manager.service import git_manager
+
+                siege_state = build_siege_state(self.db, project_id, pipeline_run)
+                git_commit_sha = git_manager.checkpoint_run(
+                    project_id, siege_state,
+                    f"Run #{pipeline_run.run_number} completed",
+                )
+                pipeline_run.git_commit_sha = git_commit_sha
+                self.db.commit()
+
+                # Auto-push if configured
+                project = self.db.get(Project, project_id)
+                if project and project.auto_push_enabled and project.remote_url:
+                    try:
+                        git_manager.push_current_branch(project_id)
+                        logger.info("Auto-pushed run #%d for project %s", pipeline_run.run_number, project_id)
+                    except Exception as push_err:
+                        logger.warning("Auto-push failed for project %s: %s", project_id, push_err)
+            except Exception as ckpt_err:
+                logger.error("Checkpoint failed for run #%d: %s", pipeline_run.run_number, ckpt_err)
+
         await ws_manager.broadcast(project_id, {
             "type": "pipeline_completed",
             "run_id": run_id,
+            "run_number": pipeline_run.run_number if pipeline_run else None,
+            "git_commit_sha": git_commit_sha,
         })
 
     def _stage_fully_complete(
@@ -792,7 +862,10 @@ class PipelineEngine:
         if not config:
             return
 
-        await self._find_and_execute_next(execution.project_id, execution.run_id, config)
+        pipeline_run = self._lookup_pipeline_run(execution.run_id) if execution.run_id else None
+        await self._find_and_execute_next(
+            execution.project_id, execution.run_id, config, pipeline_run
+        )
 
     def _cascade_reject_downstream(
         self, project_id: str, run_id: str,
@@ -1063,6 +1136,14 @@ class PipelineEngine:
                 "error": str(e),
             })
 
+    def _lookup_pipeline_run(self, run_id: str) -> PipelineRun | None:
+        """Look up a PipelineRun by its run_id."""
+        return (
+            self.db.query(PipelineRun)
+            .filter_by(run_id=run_id)
+            .first()
+        )
+
     async def retry_stage(self, execution: StageExecution):
         """Re-run a failed stage execution."""
         project_id = execution.project_id
@@ -1081,6 +1162,8 @@ class PipelineEngine:
         if not stage_def:
             raise ValueError(f"Stage definition not found: {execution.stage_key}")
 
+        pipeline_run = self._lookup_pipeline_run(execution.run_id) if execution.run_id else None
+
         input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
         execution.status = StageStatus.RUNNING
         execution.error_message = None
@@ -1089,7 +1172,7 @@ class PipelineEngine:
 
         await self._run_stage(
             project_id, stage_def, input_artifacts, execution.component_key, execution,
-            execution.run_id or str(uuid.uuid4()), config=config,
+            execution.run_id or str(uuid.uuid4()), config=config, pipeline_run=pipeline_run,
         )
 
     async def _run_stage(
@@ -1102,6 +1185,7 @@ class PipelineEngine:
         run_id: str,
         human_notes: str | None = None,
         config: PipelineConfig | None = None,
+        pipeline_run: PipelineRun | None = None,
     ):
         """Run a single stage (generate -> ai_review -> set status)."""
         logger.info("_run_stage: stage=%s component=%s execution_id=%s human_notes=%s",
@@ -1146,26 +1230,33 @@ class PipelineEngine:
                     artifact.ai_review_feedback = feedback
                     artifact.status = ArtifactStatus.AI_REVIEWING
 
-                # Async double-loop: refine with AI feedback in a second pass
-                if (config and config.execution_mode == ExecutionMode.ASYNC and feedback):
-                    await ws_manager.broadcast(project_id, {
-                        "type": "stage_progress",
-                        "stage_key": stage_def.stage_key,
-                        "component_key": component_key,
-                        "step": "regenerating_with_feedback",
-                        "message": f"Refining {stage_def.display_name} with AI feedback...",
-                    })
+                # Self-improvement loops: refine with AI feedback
+                ai_loops = pipeline_run.ai_loops if pipeline_run else 1
+                if feedback and ai_loops > 1:
+                    for loop_i in range(1, ai_loops):
+                        await ws_manager.broadcast(project_id, {
+                            "type": "stage_progress",
+                            "stage_key": stage_def.stage_key,
+                            "component_key": component_key,
+                            "step": "self_improvement",
+                            "message": f"Self-improvement loop {loop_i + 1}/{ai_loops} for {stage_def.display_name}...",
+                        })
 
-                    content, artifact_id = await generate(
-                        stage_def, input_artifacts, component_key, self.db,
-                        feedback=feedback,
-                        human_notes=human_notes,
-                    )
-                    execution.artifact_id = artifact_id
+                        content, artifact_id = await generate(
+                            stage_def, input_artifacts, component_key, self.db,
+                            feedback=feedback,
+                            human_notes=human_notes,
+                        )
+                        execution.artifact_id = artifact_id
 
-                    artifact = self.db.get(Artifact, artifact_id)
-                    if artifact:
-                        artifact.ai_review_feedback = feedback
+                        # Re-review
+                        feedback = await ai_review(
+                            stage_def, content, input_artifacts,
+                            review_prompt_overrides=stage_def.pipeline_config.review_prompt_overrides,
+                        )
+                        artifact = self.db.get(Artifact, artifact_id)
+                        if artifact:
+                            artifact.ai_review_feedback = feedback
 
             if stage_def.human_review_enabled:
                 execution.status = StageStatus.AWAITING_REVIEW

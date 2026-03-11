@@ -18,6 +18,7 @@ class ProjectResponse(BaseModel):
     description: str | None
     remote_url: str | None = None
     github_repo_slug: str | None = None
+    auto_push_enabled: bool = False
     git_repo_path: str
     created_at: str
     updated_at: str

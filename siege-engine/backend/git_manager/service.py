@@ -1,8 +1,12 @@
+import json
+import logging
 from pathlib import Path
 
 from git import Repo
 
 from backend.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class GitManager:
@@ -120,6 +124,55 @@ class GitManager:
     def get_current_branch(self, project_id: str) -> str:
         repo = self._get_repo(project_id)
         return repo.active_branch.name
+
+    def checkpoint_run(
+        self,
+        project_id: str,
+        siege_state: dict,
+        message: str,
+    ) -> str:
+        """Write siege-state.json, stage all working tree changes, and commit.
+
+        Individual artifacts are already committed during generation via
+        commit_artifact(), so this checkpoint commit captures the JSON manifest
+        plus any remaining uncommitted changes.  The resulting commit SHA
+        represents the complete repo state at the end of the run.
+        """
+        repo = self._get_repo(project_id)
+        manifest_path = Path(repo.working_dir) / "siege-state.json"
+        manifest_path.write_text(
+            json.dumps(siege_state, indent=2), encoding="utf-8"
+        )
+        # Stage everything — manifest + any stragglers
+        repo.git.add(A=True)
+        commit = repo.index.commit(message)
+        logger.info(
+            "Checkpoint commit %s for project %s: %s",
+            commit.hexsha[:8], project_id, message,
+        )
+        return commit.hexsha
+
+    def get_file_at_commit(
+        self, project_id: str, file_path: str, commit_sha: str
+    ) -> str:
+        """Read a file from a specific commit (wrapper around get_file_at_version)."""
+        return self.get_file_at_version(project_id, file_path, commit_sha)
+
+    def push_current_branch(
+        self,
+        project_id: str,
+        remote: str = "origin",
+        auth_url: str | None = None,
+    ) -> str:
+        """Push the current branch (HEAD) to the remote."""
+        repo = self._get_repo(project_id)
+        try:
+            branch_name = repo.active_branch.name
+        except TypeError:
+            branch_name = "main"
+        push_target = auth_url or remote
+        result = repo.git.push(push_target, f"{branch_name}:{branch_name}")
+        return str(result or "pushed")
 
     def delete_repo(self, project_id: str):
         import shutil
