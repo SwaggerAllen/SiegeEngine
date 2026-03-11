@@ -9,6 +9,7 @@ vi.mock('../../store/pipelineStore', () => ({
   usePipelineStore: vi.fn(() => ({
     isRunning: false,
     isPaused: false,
+    currentRunNumber: null,
     startPipeline: mockStartPipeline,
     cancelPipeline: mockCancelPipeline,
   })),
@@ -20,6 +21,7 @@ function mockStoreValues(values: Record<string, unknown>) {
   vi.mocked(usePipelineStore).mockReturnValue({
     isRunning: false,
     isPaused: false,
+    currentRunNumber: null,
     startPipeline: mockStartPipeline,
     cancelPipeline: mockCancelPipeline,
     ...values,
@@ -33,11 +35,10 @@ describe('PipelineControls', () => {
     mockStoreValues({});
   });
 
-  it('shows Start (Gated) and Start (Async) buttons when not running', () => {
+  it('shows Start Run button when not running', () => {
     render(<PipelineControls projectId="proj-1" />);
 
-    expect(screen.getByText('Start (Gated)')).toBeInTheDocument();
-    expect(screen.getByText('Start (Async)')).toBeInTheDocument();
+    expect(screen.getByText('Start Run')).toBeInTheDocument();
     expect(screen.queryByText('Cancel')).not.toBeInTheDocument();
   });
 
@@ -46,15 +47,21 @@ describe('PipelineControls', () => {
     render(<PipelineControls projectId="proj-1" />);
 
     expect(screen.getByText('Cancel')).toBeInTheDocument();
-    expect(screen.queryByText('Start (Gated)')).not.toBeInTheDocument();
-    expect(screen.queryByText('Start (Async)')).not.toBeInTheDocument();
+    expect(screen.queryByText('Start Run')).not.toBeInTheDocument();
   });
 
-  it('shows "Pipeline paused for review" when isPaused', () => {
+  it('shows run number badge when running with a current run', () => {
+    mockStoreValues({ isRunning: true, currentRunNumber: 3 });
+    render(<PipelineControls projectId="proj-1" />);
+
+    expect(screen.getByText('Run #3')).toBeInTheDocument();
+  });
+
+  it('shows "Paused for review" when isPaused', () => {
     mockStoreValues({ isRunning: true, isPaused: true });
     render(<PipelineControls projectId="proj-1" />);
 
-    expect(screen.getByText('Pipeline paused for review')).toBeInTheDocument();
+    expect(screen.getByText('Paused for review')).toBeInTheDocument();
   });
 
   it('shows "Running..." when running but not paused', () => {
@@ -69,22 +76,32 @@ describe('PipelineControls', () => {
     expect(screen.queryByText('Running...')).not.toBeInTheDocument();
   });
 
-  it('calls startPipeline with "gated" when Start (Gated) is clicked', async () => {
+  it('opens config panel when Start Run is clicked', async () => {
     const user = userEvent.setup();
     render(<PipelineControls projectId="proj-1" />);
 
-    await user.click(screen.getByText('Start (Gated)'));
+    await user.click(screen.getByText('Start Run'));
 
-    expect(mockStartPipeline).toHaveBeenCalledWith('proj-1', 'gated');
+    expect(screen.getByText('Run Configuration')).toBeInTheDocument();
+    expect(screen.getByText('Include human review')).toBeInTheDocument();
+    expect(screen.getByText('AI self-improvement loops')).toBeInTheDocument();
+    expect(screen.getByText('Pause at')).toBeInTheDocument();
   });
 
-  it('calls startPipeline with "async" when Start (Async) is clicked', async () => {
+  it('calls startPipeline with default options when Start is clicked', async () => {
     const user = userEvent.setup();
     render(<PipelineControls projectId="proj-1" />);
 
-    await user.click(screen.getByText('Start (Async)'));
+    // Open config panel
+    await user.click(screen.getByText('Start Run'));
+    // Click Start button in panel
+    await user.click(screen.getByRole('button', { name: 'Start' }));
 
-    expect(mockStartPipeline).toHaveBeenCalledWith('proj-1', 'async');
+    expect(mockStartPipeline).toHaveBeenCalledWith('proj-1', {
+      human_review: true,
+      ai_loops: 1,
+      stop_point: 'after_all',
+    });
   });
 
   it('calls cancelPipeline when Cancel is clicked', async () => {

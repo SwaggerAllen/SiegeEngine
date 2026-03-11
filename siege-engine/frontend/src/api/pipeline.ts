@@ -1,5 +1,5 @@
 import api from './client';
-import type { PipelineConfig, StageDefinition } from '../types/pipeline';
+import type { PipelineConfig, PipelineRun, PipelineStartOptions, StageDefinition } from '../types/pipeline';
 
 export async function getPipelineConfig(projectId: string): Promise<PipelineConfig> {
   const { data } = await api.get(`/pipeline/${projectId}/config`);
@@ -16,11 +16,19 @@ export async function updatePipelineConfig(
 
 export async function startPipeline(
   projectId: string,
-  executionMode?: string
+  options?: PipelineStartOptions
 ) {
-  const { data } = await api.post(`/pipeline/${projectId}/start`, {
-    execution_mode: executionMode,
-  });
+  const { data } = await api.post(`/pipeline/${projectId}/start`, options || {});
+  return data;
+}
+
+export async function listRuns(projectId: string): Promise<PipelineRun[]> {
+  const { data } = await api.get(`/pipeline/${projectId}/runs`);
+  return data;
+}
+
+export async function getRunState(projectId: string, runNumber: number) {
+  const { data } = await api.get(`/pipeline/${projectId}/runs/${runNumber}/state`);
   return data;
 }
 

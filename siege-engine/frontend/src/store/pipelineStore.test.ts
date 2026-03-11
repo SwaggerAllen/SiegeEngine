@@ -8,6 +8,8 @@ vi.mock('../api/pipeline', () => ({
   resumeStage: vi.fn(),
   reviseArtifact: vi.fn(),
   cancelPipeline: vi.fn(),
+  listRuns: vi.fn(),
+  getRunState: vi.fn(),
 }));
 
 import * as pipelineApi from '../api/pipeline';
@@ -18,6 +20,11 @@ const initialState = {
   isRunning: false,
   isPaused: false,
   pausedStage: null,
+  currentRunNumber: null,
+  runs: [],
+  selectedRunNumber: null,
+  historicalState: null,
+  isViewingHistory: false,
 };
 
 describe('pipelineStore', () => {
@@ -50,6 +57,15 @@ describe('pipelineStore', () => {
       expect(state.pausedStage).toBeNull();
     });
 
+    it('updates currentRunNumber from pipeline_completed event', () => {
+      usePipelineStore.setState({ isRunning: true, currentRunNumber: null });
+      const event: WSEvent = { type: 'pipeline_completed', run_id: 'run-1', run_number: 5 };
+
+      usePipelineStore.getState().updateFromWS(event);
+
+      expect(usePipelineStore.getState().currentRunNumber).toBe(5);
+    });
+
     it('sets isPaused=true and pausedStage on pipeline_paused event', () => {
       usePipelineStore.setState({ isRunning: true });
       const event: WSEvent = { type: 'pipeline_paused', stage_key: 'extract_components', run_id: 'run-1' };
@@ -74,20 +90,30 @@ describe('pipelineStore', () => {
   });
 
   describe('startPipeline', () => {
-    it('sets isRunning=true and calls API with mode', async () => {
-      vi.mocked(pipelineApi.startPipeline).mockResolvedValue(undefined);
+    it('sets isRunning=true and calls API with options', async () => {
+      vi.mocked(pipelineApi.startPipeline).mockResolvedValue({ run_number: 1, run_id: 'r-1' });
+      vi.mocked(pipelineApi.listRuns).mockResolvedValue([
+        { id: 'r1', run_number: 1, run_id: 'r-1', status: 'running', human_review: true, ai_loops: 2, stop_point: 'after_all', git_commit_sha: null, started_at: '2024-01-01', completed_at: null },
+      ]);
 
-      await usePipelineStore.getState().startPipeline('proj-1', 'gated');
+      const options = { human_review: true, ai_loops: 2, stop_point: 'after_all' };
+      await usePipelineStore.getState().startPipeline('proj-1', options);
+
+      // Allow fetchRuns to settle
+      await vi.waitFor(() => {
+        expect(pipelineApi.listRuns).toHaveBeenCalled();
+      });
 
       expect(usePipelineStore.getState().isRunning).toBe(true);
-      expect(pipelineApi.startPipeline).toHaveBeenCalledWith('proj-1', 'gated');
+      expect(usePipelineStore.getState().currentRunNumber).toBe(1);
+      expect(pipelineApi.startPipeline).toHaveBeenCalledWith('proj-1', options);
     });
 
     it('resets isRunning=false if API call fails', async () => {
       vi.mocked(pipelineApi.startPipeline).mockRejectedValue(new Error('fail'));
 
       await expect(
-        usePipelineStore.getState().startPipeline('proj-1', 'async')
+        usePipelineStore.getState().startPipeline('proj-1', { human_review: false, ai_loops: 1, stop_point: 'after_all' })
       ).rejects.toThrow('fail');
 
       expect(usePipelineStore.getState().isRunning).toBe(false);
@@ -98,6 +124,7 @@ describe('pipelineStore', () => {
     it('resets all running state', async () => {
       usePipelineStore.setState({ isRunning: true, isPaused: true, pausedStage: 'design' });
       vi.mocked(pipelineApi.cancelPipeline).mockResolvedValue(undefined);
+      vi.mocked(pipelineApi.listRuns).mockResolvedValue([]);
 
       await usePipelineStore.getState().cancelPipeline('proj-1');
 
@@ -123,9 +150,55 @@ describe('pipelineStore', () => {
     });
   });
 
+  describe('fetchRuns', () => {
+    it('populates runs and detects active run', async () => {
+      const runs = [
+        { id: 'r2', run_number: 2, run_id: 'rid-2', status: 'running', human_review: true, ai_loops: 1, stop_point: 'after_all', git_commit_sha: null, started_at: '2024-01-02', completed_at: null },
+        { id: 'r1', run_number: 1, run_id: 'rid-1', status: 'completed', human_review: true, ai_loops: 1, stop_point: 'after_all', git_commit_sha: 'abc123', started_at: '2024-01-01', completed_at: '2024-01-01' },
+      ];
+      vi.mocked(pipelineApi.listRuns).mockResolvedValue(runs);
+
+      await usePipelineStore.getState().fetchRuns('proj-1');
+
+      const state = usePipelineStore.getState();
+      expect(state.runs).toEqual(runs);
+      expect(state.currentRunNumber).toBe(2);
+    });
+  });
+
+  describe('selectRun', () => {
+    it('fetches historical state when selecting a run', async () => {
+      const mockState = { run_number: 1, artifacts: [] };
+      vi.mocked(pipelineApi.getRunState).mockResolvedValue(mockState);
+
+      await usePipelineStore.getState().selectRun('proj-1', 1);
+
+      const state = usePipelineStore.getState();
+      expect(state.selectedRunNumber).toBe(1);
+      expect(state.historicalState).toEqual(mockState);
+      expect(state.isViewingHistory).toBe(true);
+    });
+
+    it('clears history when selecting null (live view)', async () => {
+      usePipelineStore.setState({ selectedRunNumber: 1, historicalState: {}, isViewingHistory: true });
+
+      await usePipelineStore.getState().selectRun('proj-1', null);
+
+      const state = usePipelineStore.getState();
+      expect(state.selectedRunNumber).toBeNull();
+      expect(state.historicalState).toBeNull();
+      expect(state.isViewingHistory).toBe(false);
+    });
+  });
+
   describe('reset', () => {
     it('clears all state to initial values', () => {
-      usePipelineStore.setState({ isRunning: true, isPaused: true, pausedStage: 'x', executions: [{ id: '1' } as never] });
+      usePipelineStore.setState({
+        isRunning: true, isPaused: true, pausedStage: 'x',
+        executions: [{ id: '1' } as never],
+        currentRunNumber: 3, runs: [{ id: 'r' } as never],
+        selectedRunNumber: 1, historicalState: {}, isViewingHistory: true,
+      });
 
       usePipelineStore.getState().reset();
 
@@ -135,6 +208,11 @@ describe('pipelineStore', () => {
       expect(state.isRunning).toBe(false);
       expect(state.isPaused).toBe(false);
       expect(state.pausedStage).toBeNull();
+      expect(state.currentRunNumber).toBeNull();
+      expect(state.runs).toEqual([]);
+      expect(state.selectedRunNumber).toBeNull();
+      expect(state.historicalState).toBeNull();
+      expect(state.isViewingHistory).toBe(false);
     });
   });
 });

@@ -33,13 +33,32 @@ export interface StageExecution {
   run_id: string;
 }
 
+export interface PipelineStartOptions {
+  human_review?: boolean;
+  ai_loops?: number;
+  stop_point?: string;
+}
+
+export interface PipelineRun {
+  id: string;
+  run_number: number;
+  run_id: string;
+  status: string;
+  human_review: boolean;
+  ai_loops: number;
+  stop_point: string;
+  git_commit_sha: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
 export type WSEvent =
   | { type: 'stage_started'; stage_key: string; component_key?: string }
   | { type: 'stage_progress'; stage_key: string; step: string; component_key?: string; message: string }
   | { type: 'stage_awaiting_review'; stage_key: string; component_key?: string; artifact_id: string }
   | { type: 'stage_completed'; stage_key: string; component_key?: string; artifact_id?: string; status?: string }
   | { type: 'stage_failed'; stage_key: string; component_key?: string; error: string }
-  | { type: 'pipeline_completed'; run_id: string }
+  | { type: 'pipeline_completed'; run_id: string; run_number?: number; git_commit_sha?: string }
   | { type: 'pipeline_paused'; stage_key: string; run_id: string; message?: string }
   | { type: 'staleness_propagated'; stale_artifact_ids: string[] }
   | { type: 'feedback_saved'; stage_key: string; component_key?: string; execution_id: string };

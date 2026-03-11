@@ -15,6 +15,7 @@ import { PromptEditorPanel } from '../components/pipeline/PromptEditorPanel';
 import { StageConfigPanel } from '../components/pipeline/StageConfigPanel';
 import { ProjectSettingsPanel } from '../components/project/ProjectSettingsPanel';
 import { ChatPanel } from '../components/chat/ChatPanel';
+import { RunSelector } from '../components/pipeline/RunSelector';
 import api from '../api/client';
 
 type Tab = 'documents' | 'pipeline' | 'prompts' | 'chat' | 'settings';
@@ -23,7 +24,7 @@ export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
   const { currentProject, fetchProject, selectedArtifact, clearSelection } =
     useProjectStore();
-  const { executions, fetchConfig, fetchStatus, reset: resetPipeline } = usePipelineStore();
+  const { executions, fetchConfig, fetchStatus, fetchRuns, currentRunNumber, isRunning, isViewingHistory, reset: resetPipeline } = usePipelineStore();
   const { user } = useAuthStore();
   const { editPromptStageKey, setEditPromptStageKey, selectedStageKey } = useDAGStore();
   const { connected } = useWebSocket(projectId);
@@ -39,6 +40,7 @@ export function ProjectDashboardPage() {
       fetchProject(projectId);
       fetchConfig(projectId);
       fetchStatus(projectId);
+      fetchRuns(projectId);
     }
     return () => clearSelection();
   }, [projectId]);
@@ -72,10 +74,21 @@ export function ProjectDashboardPage() {
           <h1 className="text-sm md:text-lg font-bold truncate">
             {currentProject?.name || 'Loading...'}
           </h1>
+          {isRunning && currentRunNumber && (
+            <span className="text-xs bg-blue-600/30 text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/30 shrink-0">
+              Run #{currentRunNumber}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 md:gap-4 flex-wrap">
-          <PipelineControls projectId={projectId} />
-          {hasRemote && (
+          <RunSelector projectId={projectId} />
+          {!isViewingHistory && <PipelineControls projectId={projectId} />}
+          {isViewingHistory && (
+            <span className="text-xs bg-yellow-600/30 text-yellow-300 px-2 py-0.5 rounded-full border border-yellow-500/30">
+              Viewing history (read-only)
+            </span>
+          )}
+          {hasRemote && !isViewingHistory && (
             <button
               onClick={() => setShowPRDialog(true)}
               className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded min-h-[44px] md:min-h-0"

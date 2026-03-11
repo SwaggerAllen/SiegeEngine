@@ -9,6 +9,7 @@ interface GitHubStatus {
 export function ProjectSettingsPanel({ projectId }: { projectId: string }) {
   const [remoteUrl, setRemoteUrl] = useState('');
   const [repoSlug, setRepoSlug] = useState('');
+  const [autoPush, setAutoPush] = useState(false);
   const [ghStatus, setGhStatus] = useState<GitHubStatus | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -18,6 +19,7 @@ export function ProjectSettingsPanel({ projectId }: { projectId: string }) {
     api.get(`/projects/${projectId}`).then(({ data }) => {
       setRemoteUrl(data.remote_url || '');
       setRepoSlug(data.github_repo_slug || '');
+      setAutoPush(data.auto_push_enabled || false);
     }).catch(() => setMessage('Failed to load project settings'));
     // Check GitHub connection
     api.get('/github/status').then(({ data }) => setGhStatus(data)).catch(() => {});
@@ -30,6 +32,7 @@ export function ProjectSettingsPanel({ projectId }: { projectId: string }) {
       await api.post(`/projects/${projectId}/remote`, {
         remote_url: remoteUrl,
         github_repo_slug: repoSlug,
+        auto_push_enabled: autoPush,
       });
       setMessage('Remote saved');
     } catch (err: any) {
@@ -98,6 +101,15 @@ export function ProjectSettingsPanel({ projectId }: { projectId: string }) {
             className="w-full px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 focus:border-blue-500 focus:outline-none text-sm"
           />
         </div>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={autoPush}
+            onChange={(e) => setAutoPush(e.target.checked)}
+            className="w-4 h-4 rounded border-gray-500 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
+          />
+          <span className="text-sm text-gray-300">Auto-push after each completed run</span>
+        </label>
         <button
           onClick={saveRemote}
           disabled={saving}
