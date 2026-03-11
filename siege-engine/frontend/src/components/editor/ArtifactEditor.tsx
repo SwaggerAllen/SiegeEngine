@@ -21,7 +21,6 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
 
   const canRevise = REVISABLE_STATUSES.has(artifact.status);
   const reviewFeedback = artifact.ai_review_feedback as any;
-  const hasFeedbackDoc = !!reviewFeedback?.document;
 
   // Reset tab when artifact changes and feedback is gone
   useEffect(() => {

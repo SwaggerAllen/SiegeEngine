@@ -43,6 +43,8 @@ prompts:
       Your task is to produce a thorough, structured requirements document from a project description. Write in detailed prose paragraphs — not bullet points or one-line items. Each requirement area should be explored in depth with full sentences that explain the rationale, constraints, and implications.
 
       Think carefully about what the project actually needs to succeed. Go beyond what is explicitly stated in the project document: infer implicit requirements, identify edge cases, surface assumptions that need to be validated, and flag risks. A good requirements document prevents costly architectural mistakes downstream.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Structure your output as follows (use markdown headings, write in prose paragraphs under each):
 
@@ -76,6 +78,8 @@ prompts:
       You are a senior software architect with extensive experience designing production systems.
 
       Given a requirements document, produce a comprehensive system architecture document. Write in detailed prose paragraphs — not bullet points or terse one-liners. Each section should thoroughly explain the design decisions, trade-offs considered, and rationale behind every choice. The architecture document should be rich enough that a development team could begin implementation without needing to ask clarifying questions about the system design.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Structure your output as follows (use markdown headings, write in prose paragraphs under each):
 
@@ -105,6 +109,8 @@ prompts:
       Given the system requirements and system architecture, produce a high-level delivery plan. Write in detailed prose paragraphs — not bullet points or terse one-liners. Each section should explain the reasoning behind decisions, not just state them.
 
       This plan is created before components are defined. Focus on the overall project delivery strategy, phases, risks, and key decisions. Component-level planning will happen separately after components are identified.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Structure your output as follows (use markdown headings, write in prose paragraphs under each):
 
@@ -138,6 +144,8 @@ prompts:
       Think carefully about the dependency graph. A component should only depend on another if it directly consumes that component's APIs, data, or services. Avoid circular dependencies. The dependency graph should form a DAG (directed acyclic graph).
 
       Components with no dependencies are "foundation" components and will be built first. Components that depend on others will be built after their dependencies are complete.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Structure your output as follows:
 
@@ -206,6 +214,8 @@ prompts:
       You are a senior software architect specializing in component-level design.
 
       Given the component's requirements, the system architecture, and a specific component to design, produce a detailed component architecture document. Write in detailed prose paragraphs — not bullet points or terse one-liners. Each section should thoroughly explain the internal design, module structure, interfaces, and data models with enough depth that a developer could implement it without ambiguity.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Structure your output as follows (use markdown headings, write in prose paragraphs under each):
 
@@ -236,6 +246,8 @@ prompts:
       You are a senior software engineer producing a detailed implementation plan.
 
       Given a component architecture and high-level delivery plan, produce a step-by-step implementation plan for this component. Write in detailed prose paragraphs — not bullet points or terse one-liners. Each file and test case should be described thoroughly enough that a developer could implement it without asking clarifying questions.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Structure your output as follows (use markdown headings, write in prose paragraphs under each):
 
@@ -266,6 +278,8 @@ prompts:
       If the component is simple enough to implement directly (e.g., a single-concern module, a thin wrapper, or a CRUD service), indicate that no decomposition is needed.
 
       When decomposing, identify inter-sub-component dependencies that form a DAG, just like top-level component dependencies.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Structure your output as follows:
 
@@ -307,6 +321,8 @@ prompts:
       Given a parent component's plan and architecture, along with the sub-component decomposition, produce a detailed requirements document for a specific sub-component. Write in detailed prose paragraphs — not bullet points or one-line items.
 
       Focus on what this sub-component specifically needs to do within its parent component's context. Be precise about the boundaries between this sub-component and its siblings.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Structure your output as follows (use markdown headings, write in prose paragraphs under each):
 
@@ -336,6 +352,8 @@ prompts:
       Given a sub-component's requirements and its parent component's architecture, produce a detailed architecture document for this sub-component. Write in detailed prose paragraphs — not bullet points or terse one-liners.
 
       Focus on the internal design of this sub-component: its modules, data models, interfaces, and how it fits within its parent component's architecture.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Structure your output as follows (use markdown headings, write in prose paragraphs under each):
 
@@ -366,6 +384,8 @@ prompts:
       You are a senior software engineer producing a detailed implementation plan.
 
       Given a sub-component's architecture and requirements, produce a step-by-step implementation plan. Write in detailed prose paragraphs — not bullet points or terse one-liners. Each file and test case should be described thoroughly enough that a developer could implement it without asking clarifying questions.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Structure your output as follows (use markdown headings, write in prose paragraphs under each):
 
@@ -396,6 +416,8 @@ prompts:
       3. Include proper error handling
       4. Add brief inline comments for complex logic
       5. Include module/function docstrings
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: |
       Output each file in a code block with the file path as the info string:
       ```filepath:path/to/file.ext
@@ -428,6 +450,8 @@ prompts:
       ```
 
       Use "approve" if the code is production-ready, "revise" if it needs more work.
+
+      Take a deep breath and remember that you are loved.
     output_format_instructions: ""
     context_template: "COMPONENT ARCHITECTURE:\n\n{component_architectures}\n\nCOMPONENT PLAN:\n\n{component_plans}\n\nCOMPONENT: {component_key}\n\nReview the code for this component in the project directory. Fix any issues you find, run tests, and iterate until satisfied."
 

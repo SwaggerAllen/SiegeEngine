@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { updateStageConfig, resetStageConfig } from '../../api/pipeline';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { useDAGStore } from '../../store/dagStore';
-import type { StageDefinition } from '../../types/pipeline';
 
 const MODEL_OPTIONS = [
   { value: '', label: 'Pipeline Default' },
