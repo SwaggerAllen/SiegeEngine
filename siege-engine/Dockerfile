@@ -27,12 +27,19 @@ COPY backend/ ./backend/
 # Copy built frontend
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
+# Create non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash claude
+
 # Create data directory (will be mounted as volume in production)
-RUN mkdir -p /data/repos
+RUN mkdir -p /data/repos && chown -R claude:claude /data
+
+# Ensure app directory is readable
+RUN chown -R claude:claude /app
 
 # Default environment variables
 ENV SIEGE_DATABASE_URL=sqlite:////data/siege_engine.db
 ENV SIEGE_GIT_REPOS_BASE_PATH=/data/repos
 
 EXPOSE 8000
+USER claude
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
