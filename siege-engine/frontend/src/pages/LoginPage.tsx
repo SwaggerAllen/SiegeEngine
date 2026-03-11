@@ -17,7 +17,9 @@ export function LoginPage() {
   const [showRegister, setShowRegister] = useState(false);
 
   useEffect(() => {
-    checkStatus();
+    checkStatus().catch(() => {
+      setError('Unable to reach the server. Please check that the backend is running.');
+    });
   }, []);
 
   useEffect(() => {
@@ -48,7 +50,13 @@ export function LoginPage() {
       }
       navigate('/projects');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Authentication failed');
+      if (err.response?.data?.detail) {
+        setError(err.response.data.detail);
+      } else if (err.request && !err.response) {
+        setError('Unable to reach the server. Please check your connection.');
+      } else {
+        setError('Authentication failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -95,7 +103,11 @@ export function LoginPage() {
               required
             />
           </div>
-          {error && <p className="text-red-400 text-sm">{error}</p>}
+          {error && (
+            <div className="bg-red-900/40 border border-red-500/50 rounded px-3 py-2">
+              <p className="text-red-400 text-sm">{error}</p>
+            </div>
+          )}
           <button
             type="submit"
             disabled={loading || (!!inviteToken && inviteValid === false)}

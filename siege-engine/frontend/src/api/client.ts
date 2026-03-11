@@ -17,14 +17,16 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Clear both localStorage and Zustand store
-      localStorage.removeItem('siege_engine_token');
-      localStorage.removeItem('siege_engine_user');
-      // Lazy import to avoid circular deps
-      import('../store/authStore').then(({ useAuthStore }) => {
-        useAuthStore.getState().logout();
-      });
-      window.location.href = '/login';
+      // Don't intercept 401s from auth endpoints — let LoginPage handle those
+      const url = error.config?.url || '';
+      if (!url.startsWith('/auth/login') && !url.startsWith('/auth/register')) {
+        localStorage.removeItem('siege_engine_token');
+        localStorage.removeItem('siege_engine_user');
+        import('../store/authStore').then(({ useAuthStore }) => {
+          useAuthStore.getState().logout();
+        });
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
