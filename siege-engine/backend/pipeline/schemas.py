@@ -7,7 +7,7 @@ class PipelineStartRequest(BaseModel):
 
 class ResumeRequest(BaseModel):
     execution_id: str
-    action: str  # "approved" or "rejected"
+    action: str  # "approved", "rejected", or "save_feedback"
     notes: str | None = None
     edited_content: str | None = None
 
@@ -32,8 +32,18 @@ class StageDefinitionResponse(BaseModel):
     ai_review_enabled: bool
     human_review_enabled: bool
     prompt_template_key: str
+    model_override: str | None
+    temperature_override: float | None
 
     model_config = {"from_attributes": True}
+
+
+class StageDefinitionUpdate(BaseModel):
+    display_name: str | None = None
+    model_override: str | None = None
+    temperature_override: float | None = None
+    ai_review_enabled: bool | None = None
+    human_review_enabled: bool | None = None
 
 
 class PipelineConfigResponse(BaseModel):

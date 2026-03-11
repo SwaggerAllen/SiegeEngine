@@ -5,21 +5,22 @@ from abc import ABC, abstractmethod
 class PromptTemplate(ABC):
     """Base prompt template. Subclasses define default prompts."""
 
-    # Subclasses can set these for PromptConfig seeding
+    # Defaults are loaded from defaults.yaml at import time via __init__.py.
+    # These empty strings serve as fallbacks if YAML loading is skipped.
     default_system_message: str = ""
     default_output_format: str = ""
     default_context_template: str = "{input_artifacts}"
-    default_revision_instructions: str = (
-        "REVISION REQUESTED.\n"
-        "Address all issues raised in the feedback and produce an improved version."
-    )
+    default_revision_instructions: str = ""
+    formatting_guidance: str = ""
 
     @property
     def full_system_message(self) -> str:
-        """System message + output format instructions combined."""
+        """System message + output format instructions + formatting guidance combined."""
+        parts = [self.default_system_message]
         if self.default_output_format:
-            return f"{self.default_system_message}\n\n{self.default_output_format}"
-        return self.default_system_message
+            parts.append(self.default_output_format)
+        parts.append(self.formatting_guidance)
+        return "\n\n".join(parts)
 
     @abstractmethod
     def build(
@@ -47,6 +48,9 @@ class PromptTemplate(ABC):
 
         if output_fmt:
             system_msg = f"{system_msg}\n\n{output_fmt}"
+
+        # Always append formatting guidance
+        system_msg = f"{system_msg}\n\n{self.formatting_guidance}"
 
         # Build the context from template
         artifacts_text = "\n\n".join(

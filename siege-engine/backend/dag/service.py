@@ -7,6 +7,8 @@ from backend.models import (
     Artifact,
     ArtifactDependency,
     ArtifactStatus,
+    ArtifactType,
+    ComponentDefinition,
     PipelineConfig,
     StageDefinition,
     StageExecution,
@@ -112,12 +114,30 @@ def _build_prompt_info(stage_def: StageDefinition) -> dict:
     }
 
 
-def get_dag_visualization_data(db: Session, project_id: str) -> dict:
-    """Build DAG visualisation from stage definitions (always visible) + artifacts.
+def _derive_stage_status(stage_execs: list) -> tuple[str, bool]:
+    """Derive aggregate status and is_active flag from a stage's executions."""
+    if not stage_execs:
+        return "pending", False
+    if any(e.status == StageStatus.RUNNING for e in stage_execs):
+        return "running", True
+    if any(e.status == StageStatus.AI_REVIEW for e in stage_execs):
+        return "ai_reviewing", True
+    if any(e.status == StageStatus.AWAITING_REVIEW for e in stage_execs):
+        return "awaiting_review", False
+    if all(e.status == StageStatus.APPROVED for e in stage_execs):
+        return "approved", False
+    if any(e.status == StageStatus.APPROVED for e in stage_execs):
+        return "approved", False
+    if any(e.status == StageStatus.FAILED for e in stage_execs):
+        return "failed", False
+    return "pending", False
 
-    Before the pipeline runs, stage definition placeholder nodes are shown.
-    Once artifacts are created, they replace the placeholder for their stage.
-    Fan-out stages expand to per-component nodes when artifacts exist.
+
+def get_dag_visualization_data(db: Session, project_id: str) -> dict:
+    """Build workflow DAG from stage definitions.
+
+    Shows one node per stage definition (workflow steps).
+    Never expands to per-artifact or per-component nodes.
     """
     config = db.query(PipelineConfig).filter_by(project_id=project_id).first()
     if not config:
@@ -125,7 +145,90 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
 
     stages = sorted(config.stages, key=lambda s: s.order_index)
 
-    # Fetch artifacts and executions
+    executions = (
+        db.query(StageExecution)
+        .filter_by(project_id=project_id)
+        .all()
+    )
+    key_to_execs: dict[str, list] = defaultdict(list)
+    for exc in executions:
+        key_to_execs[exc.stage_key].append(exc)
+
+    nodes: list[dict] = []
+    for stage_def in stages:
+        stage_execs = key_to_execs.get(stage_def.stage_key, [])
+        status, is_active = _derive_stage_status(stage_execs)
+
+        node_id = f"stage_{stage_def.stage_key}"
+        nodes.append({
+            "id": node_id,
+            "type": "stageNode",
+            "data": {
+                "label": stage_def.display_name,
+                "artifact_type": stage_def.output_artifact_type,
+                "status": status,
+                "component_key": None,
+                "version": 0,
+                "stage_key": stage_def.stage_key,
+                "is_active": is_active,
+                "has_artifact": False,
+                "prompt_info": _build_prompt_info(stage_def),
+            },
+            "position": {"x": 0, "y": 0},
+        })
+
+    # Build edges from input_stage_keys (one node per stage, simple)
+    edges: list[dict] = []
+    edge_idx = 0
+    for stage_def in stages:
+        tgt_id = f"stage_{stage_def.stage_key}"
+        for input_key in stage_def.input_stage_keys:
+            src_id = f"stage_{input_key}"
+            tgt_node = next((n for n in nodes if n["id"] == tgt_id), None)
+            src_node = next((n for n in nodes if n["id"] == src_id), None)
+            if not src_node or not tgt_node:
+                continue
+            is_animated = (
+                src_node["data"].get("is_active", False)
+                or tgt_node["data"].get("is_active", False)
+            )
+            edges.append({
+                "id": f"edge_{edge_idx}",
+                "source": src_id,
+                "target": tgt_id,
+                "type": "default",
+                "animated": is_animated,
+            })
+            edge_idx += 1
+
+    return {"nodes": nodes, "edges": edges}
+
+
+def _find_artifact_node(
+    nodes: list[dict], artifact_type: str, component_key: str
+) -> dict | None:
+    """Find a node by artifact type and component key."""
+    for node in nodes:
+        if (
+            node["data"].get("artifact_type") == artifact_type
+            and node["data"].get("component_key") == component_key
+        ):
+            return node
+    return None
+
+
+def get_documents_dag(db: Session, project_id: str) -> dict:
+    """Build documents DAG showing artifact lineage.
+
+    Only shows documents that actually exist — the project document as root,
+    then generated artifacts. Stages with no artifacts yet are omitted entirely.
+    """
+    config = db.query(PipelineConfig).filter_by(project_id=project_id).first()
+    if not config:
+        return {"nodes": [], "edges": []}
+
+    stages = sorted(config.stages, key=lambda s: s.order_index)
+
     artifacts = db.execute(
         select(Artifact).where(Artifact.project_id == project_id)
     ).scalars().all()
@@ -145,49 +248,42 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
         key_to_execs[exc.stage_key].append(exc)
 
     nodes: list[dict] = []
-    # Map stage_key → list of node IDs produced for that stage
     stage_to_node_ids: dict[str, list[str]] = {}
 
+    # Add project document as root node
+    project_docs = type_to_artifacts.get(ArtifactType.PROJECT_DOC.value, [])
+    if project_docs:
+        doc = project_docs[0]
+        nodes.append({
+            "id": doc.id,
+            "type": "stageNode",
+            "data": {
+                "label": doc.name,
+                "artifact_type": doc.artifact_type.value,
+                "status": doc.status.value,
+                "component_key": None,
+                "version": doc.version,
+                "stage_key": "project_doc",
+                "is_active": False,
+                "has_artifact": True,
+                "prompt_info": None,
+            },
+            "position": {"x": 0, "y": 0},
+        })
+        stage_to_node_ids["project_doc"] = [doc.id]
+
+    # Build nodes only for stages that have generated artifacts
     for stage_def in stages:
         stage_arts = type_to_artifacts.get(stage_def.output_artifact_type, [])
+        if not stage_arts:
+            continue  # Skip stages with no artifacts
+
         stage_execs = key_to_execs.get(stage_def.stage_key, [])
-
-        if len(stage_arts) > 1:
-            # Fan-out stage with multiple artifacts — show each component
-            node_ids = []
-            for art in stage_arts:
-                matching_exec = next(
-                    (e for e in stage_execs if e.component_key == art.component_key),
-                    None,
-                )
-                is_active = bool(
-                    matching_exec
-                    and matching_exec.status in (StageStatus.RUNNING, StageStatus.AI_REVIEW)
-                )
-                nodes.append({
-                    "id": art.id,
-                    "type": "stageNode",
-                    "data": {
-                        "label": art.name,
-                        "artifact_type": art.artifact_type.value,
-                        "status": art.status.value,
-                        "component_key": art.component_key,
-                        "version": art.version,
-                        "stage_key": stage_def.stage_key,
-                        "is_active": is_active,
-                        "has_artifact": True,
-                        "prompt_info": _build_prompt_info(stage_def),
-                    },
-                    "position": {"x": 0, "y": 0},
-                })
-                node_ids.append(art.id)
-            stage_to_node_ids[stage_def.stage_key] = node_ids
-
-        elif len(stage_arts) == 1:
-            # Single artifact exists for this stage
-            art = stage_arts[0]
+        node_ids = []
+        for art in stage_arts:
             matching_exec = next(
-                (e for e in stage_execs if e.artifact_id == art.id), None
+                (e for e in stage_execs if e.component_key == art.component_key or e.artifact_id == art.id),
+                None,
             )
             is_active = bool(
                 matching_exec
@@ -209,55 +305,23 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
                 },
                 "position": {"x": 0, "y": 0},
             })
-            stage_to_node_ids[stage_def.stage_key] = [art.id]
+            node_ids.append(art.id)
+        stage_to_node_ids[stage_def.stage_key] = node_ids
 
-        else:
-            # No artifacts yet — show placeholder node from stage definition
-            status = "pending"
-            is_active = False
-            if stage_execs:
-                if any(e.status == StageStatus.RUNNING for e in stage_execs):
-                    status = "running"
-                    is_active = True
-                elif any(e.status == StageStatus.AI_REVIEW for e in stage_execs):
-                    status = "ai_reviewing"
-                    is_active = True
-                elif any(e.status == StageStatus.AWAITING_REVIEW for e in stage_execs):
-                    status = "awaiting_review"
-                elif any(e.status == StageStatus.APPROVED for e in stage_execs):
-                    status = "approved"
-                elif any(e.status == StageStatus.FAILED for e in stage_execs):
-                    status = "failed"
-
-            node_id = f"stage_{stage_def.stage_key}"
-            nodes.append({
-                "id": node_id,
-                "type": "stageNode",
-                "data": {
-                    "label": stage_def.display_name,
-                    "artifact_type": stage_def.output_artifact_type,
-                    "status": status,
-                    "component_key": None,
-                    "version": 0,
-                    "stage_key": stage_def.stage_key,
-                    "is_active": is_active,
-                    "has_artifact": False,
-                    "prompt_info": _build_prompt_info(stage_def),
-                },
-                "position": {"x": 0, "y": 0},
-            })
-            stage_to_node_ids[stage_def.stage_key] = [node_id]
-
-    # Build edges from stage input_stage_keys
+    # Build edges only between stages that have nodes
     edges: list[dict] = []
     edge_idx = 0
     for stage_def in stages:
         target_ids = stage_to_node_ids.get(stage_def.stage_key, [])
-        for input_key in stage_def.input_stage_keys:
+        if not target_ids:
+            continue
+
+        input_keys = stage_def.input_stage_keys if stage_def.input_stage_keys else ["project_doc"]
+
+        for input_key in input_keys:
             source_ids = stage_to_node_ids.get(input_key, [])
             for src_id in source_ids:
                 for tgt_id in target_ids:
-                    # For component-specific nodes, only connect matching components
                     src_node = next((n for n in nodes if n["id"] == src_id), None)
                     tgt_node = next((n for n in nodes if n["id"] == tgt_id), None)
                     if not src_node or not tgt_node:
@@ -265,7 +329,9 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
                     src_comp = src_node["data"]["component_key"]
                     tgt_comp = tgt_node["data"]["component_key"]
                     if src_comp and tgt_comp and src_comp != tgt_comp:
-                        continue
+                        # Allow parent→child edges (e.g., "auth_service" → "auth_service.token_manager")
+                        if not (tgt_comp.startswith(src_comp + ".") or src_comp.startswith(tgt_comp + ".")):
+                            continue
 
                     is_animated = (
                         src_node["data"].get("is_active", False)
@@ -279,5 +345,39 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
                         "animated": is_animated,
                     })
                     edge_idx += 1
+
+    # Add cross-component dependency edges from ComponentDefinition
+    comp_defs = (
+        db.query(ComponentDefinition)
+        .filter_by(project_id=project_id)
+        .all()
+    )
+    for comp_def in comp_defs:
+        for dep_key in (comp_def.dependencies or []):
+            if comp_def.parent_key:
+                # Sub-component dependency
+                src_type = ArtifactType.SUB_COMPONENT_PLAN.value
+                tgt_type = ArtifactType.SUB_COMPONENT_REQUIREMENTS.value
+                dep_full_key = f"{comp_def.parent_key}.{dep_key}"
+                comp_full_key = f"{comp_def.parent_key}.{comp_def.key}"
+            else:
+                # Top-level component dependency
+                src_type = ArtifactType.COMPONENT_PLAN.value
+                tgt_type = ArtifactType.COMPONENT_REQUIREMENTS.value
+                dep_full_key = dep_key
+                comp_full_key = comp_def.key
+
+            src_node = _find_artifact_node(nodes, src_type, dep_full_key)
+            tgt_node = _find_artifact_node(nodes, tgt_type, comp_full_key)
+            if src_node and tgt_node:
+                edges.append({
+                    "id": f"dep_edge_{edge_idx}",
+                    "source": src_node["id"],
+                    "target": tgt_node["id"],
+                    "type": "default",
+                    "animated": False,
+                    "style": {"strokeDasharray": "5 5", "stroke": "#818cf8"},
+                })
+                edge_idx += 1
 
     return {"nodes": nodes, "edges": edges}

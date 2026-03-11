@@ -1,5 +1,5 @@
 import api from './client';
-import type { PipelineConfig } from '../types/pipeline';
+import type { PipelineConfig, StageDefinition } from '../types/pipeline';
 
 export async function getPipelineConfig(projectId: string): Promise<PipelineConfig> {
   const { data } = await api.get(`/pipeline/${projectId}/config`);
@@ -77,7 +77,29 @@ export async function getDAG(projectId: string) {
   return data;
 }
 
+export async function getDocumentsDAG(projectId: string) {
+  const { data } = await api.get(`/dag/${projectId}/documents`);
+  return data;
+}
+
 export async function getStaleArtifacts(projectId: string) {
   const { data } = await api.get(`/dag/${projectId}/stale`);
+  return data;
+}
+
+export async function updateStageConfig(
+  projectId: string,
+  stageKey: string,
+  updates: Partial<Pick<StageDefinition, 'display_name' | 'model_override' | 'temperature_override' | 'ai_review_enabled' | 'human_review_enabled'>>
+): Promise<StageDefinition> {
+  const { data } = await api.put(`/pipeline/${projectId}/stages/${stageKey}`, updates);
+  return data;
+}
+
+export async function resetStageConfig(
+  projectId: string,
+  stageKey: string
+): Promise<StageDefinition> {
+  const { data } = await api.post(`/pipeline/${projectId}/stages/${stageKey}/reset`);
   return data;
 }

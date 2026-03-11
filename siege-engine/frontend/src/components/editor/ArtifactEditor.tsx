@@ -20,14 +20,15 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   const [activeTab, setActiveTab] = useState<EditorTab>('document');
 
   const canRevise = REVISABLE_STATUSES.has(artifact.status);
-  const hasFeedbackDoc = !!(artifact.ai_review_feedback as any)?.document;
+  const reviewFeedback = artifact.ai_review_feedback as any;
+  const hasFeedbackDoc = !!reviewFeedback?.document;
 
   // Reset tab when artifact changes and feedback is gone
   useEffect(() => {
-    if (!hasFeedbackDoc && activeTab === 'feedback') {
+    if (!reviewFeedback && activeTab === 'feedback') {
       setActiveTab('document');
     }
-  }, [artifact.id, hasFeedbackDoc]);
+  }, [artifact.id, reviewFeedback]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -52,7 +53,11 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   };
 
   const proseClasses = `flex-1 p-3 md:p-4 overflow-auto prose prose-invert prose-sm max-w-none
-    prose-headings:text-gray-100 prose-p:text-gray-300 prose-li:text-gray-300
+    prose-headings:text-gray-100
+    prose-h2:text-lg prose-h2:font-bold prose-h2:mt-8 prose-h2:mb-3 prose-h2:border-b prose-h2:border-gray-700 prose-h2:pb-2
+    prose-h3:text-base prose-h3:font-semibold prose-h3:mt-6 prose-h3:mb-2
+    prose-p:text-gray-300 prose-p:my-3 prose-p:leading-relaxed
+    prose-li:text-gray-300
     prose-strong:text-white prose-code:text-blue-300 prose-code:bg-gray-800
     prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none
     prose-code:after:content-none prose-pre:bg-gray-800 prose-pre:border prose-pre:border-gray-700
@@ -125,8 +130,8 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
         </div>
       </div>
 
-      {/* Tab bar - only shown when feedback document exists */}
-      {hasFeedbackDoc && (
+      {/* Tab bar - shown when any AI review feedback exists */}
+      {reviewFeedback && (
         <div className="border-b border-gray-700 px-3 flex gap-4 shrink-0">
           <button
             onClick={() => setActiveTab('document')}
@@ -191,11 +196,54 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
           )}
         </>
       ) : (
-        /* AI Feedback document tab */
-        <div className={proseClasses}>
-          <Markdown>
-            {(artifact.ai_review_feedback as any)?.document || 'No feedback available'}
-          </Markdown>
+        /* AI Feedback tab: summary + full document */
+        <div className="flex-1 overflow-auto">
+          {/* AI Review summary */}
+          {reviewFeedback && (
+            <div className="mx-3 mt-3 bg-gray-800 p-3 rounded text-sm">
+              <div className="flex items-center gap-3">
+                <span className="text-gray-400">Quality:</span>
+                <span className="text-white font-medium">{reviewFeedback.overall_quality}/10</span>
+                <span className="text-gray-400 ml-2">Recommendation:</span>
+                <span
+                  className={`font-medium ${
+                    reviewFeedback.recommendation === 'approve'
+                      ? 'text-green-400'
+                      : 'text-yellow-400'
+                  }`}
+                >
+                  {reviewFeedback.recommendation}
+                </span>
+              </div>
+              {/* Backward compatibility: show old-format issues if present */}
+              {!reviewFeedback.document && reviewFeedback.issues?.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {reviewFeedback.issues.map((issue: any, i: number) => (
+                    <li key={i} className="text-gray-300 text-xs">
+                      <span
+                        className={`font-medium ${
+                          issue.severity === 'high'
+                            ? 'text-red-400'
+                            : issue.severity === 'medium'
+                            ? 'text-yellow-400'
+                            : 'text-green-400'
+                        }`}
+                      >
+                        [{issue.severity}]
+                      </span>{' '}
+                      {issue.description}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {/* Full review document */}
+          <div className={proseClasses}>
+            <Markdown>
+              {reviewFeedback?.document || 'No feedback available'}
+            </Markdown>
+          </div>
         </div>
       )}
     </div>

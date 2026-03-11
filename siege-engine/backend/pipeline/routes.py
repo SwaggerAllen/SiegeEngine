@@ -23,6 +23,7 @@ from backend.models import (
 )
 from backend.pipeline.engine import PipelineEngine
 from backend.pipeline.prompts import PROMPT_REGISTRY
+from backend.pipeline.defaults import DEFAULT_STAGES
 from backend.pipeline.schemas import (
     PipelineConfigResponse,
     PipelineConfigUpdate,
@@ -32,6 +33,8 @@ from backend.pipeline.schemas import (
     RegenerateRequest,
     ResumeRequest,
     ReviseRequest,
+    StageDefinitionResponse,
+    StageDefinitionUpdate,
     StageExecutionResponse,
 )
 from backend.websocket.manager import ws_manager
@@ -65,6 +68,8 @@ def get_config(
                 "ai_review_enabled": s.ai_review_enabled,
                 "human_review_enabled": s.human_review_enabled,
                 "prompt_template_key": s.prompt_template_key,
+                "model_override": s.model_override,
+                "temperature_override": s.temperature_override,
             }
             for s in config.stages
         ],
@@ -243,6 +248,59 @@ def cancel_pipeline(
         e.error_message = "Cancelled by user"
     db.commit()
     return {"status": "cancelled", "cancelled_count": len(running)}
+
+
+# ──── Stage Definition Config ────
+
+
+@router.put("/{project_id}/stages/{stage_key}", response_model=StageDefinitionResponse)
+def update_stage_config(
+    project_id: str,
+    stage_key: str,
+    req: StageDefinitionUpdate,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    stage_def = _get_stage_def(db, project_id, stage_key)
+
+    if req.display_name is not None:
+        stage_def.display_name = req.display_name
+    if req.ai_review_enabled is not None:
+        stage_def.ai_review_enabled = req.ai_review_enabled
+    if req.human_review_enabled is not None:
+        stage_def.human_review_enabled = req.human_review_enabled
+    # Nullable overrides: use model_fields_set to distinguish "omitted" from "set to null"
+    if "model_override" in req.model_fields_set:
+        stage_def.model_override = req.model_override
+    if "temperature_override" in req.model_fields_set:
+        stage_def.temperature_override = req.temperature_override
+
+    db.commit()
+    db.refresh(stage_def)
+    return StageDefinitionResponse.model_validate(stage_def)
+
+
+@router.post("/{project_id}/stages/{stage_key}/reset", response_model=StageDefinitionResponse)
+def reset_stage_config(
+    project_id: str,
+    stage_key: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    stage_def = _get_stage_def(db, project_id, stage_key)
+    defaults = next((s for s in DEFAULT_STAGES if s["stage_key"] == stage_key), None)
+    if not defaults:
+        raise HTTPException(404, f"No defaults found for stage '{stage_key}'")
+
+    stage_def.display_name = defaults["display_name"]
+    stage_def.model_override = defaults.get("model_override")
+    stage_def.temperature_override = defaults.get("temperature_override")
+    stage_def.ai_review_enabled = defaults.get("ai_review_enabled", True)
+    stage_def.human_review_enabled = defaults.get("human_review_enabled", True)
+
+    db.commit()
+    db.refresh(stage_def)
+    return StageDefinitionResponse.model_validate(stage_def)
 
 
 # ──── Prompt Config CRUD ────

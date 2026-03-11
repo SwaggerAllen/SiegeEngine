@@ -9,6 +9,8 @@ export interface StageDefinition {
   ai_review_enabled: boolean;
   human_review_enabled: boolean;
   prompt_template_key: string;
+  model_override: string | null;
+  temperature_override: number | null;
 }
 
 export interface PipelineConfig {
@@ -39,4 +41,5 @@ export type WSEvent =
   | { type: 'stage_failed'; stage_key: string; component_key?: string; error: string }
   | { type: 'pipeline_completed'; run_id: string }
   | { type: 'pipeline_paused'; stage_key: string; run_id: string; message?: string }
-  | { type: 'staleness_propagated'; stale_artifact_ids: string[] };
+  | { type: 'staleness_propagated'; stale_artifact_ids: string[] }
+  | { type: 'feedback_saved'; stage_key: string; component_key?: string; execution_id: string };

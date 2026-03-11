@@ -16,13 +16,34 @@ import { StageNode } from './StageNode';
 
 const nodeTypes = { stageNode: StageNode };
 
-export function PipelineDAG({ projectId }: { projectId: string }) {
-  const { nodes: rawNodes, edges: rawEdges, fetchDAG, selectArtifact } = useDAGStore();
+interface PipelineDAGProps {
+  projectId: string;
+  variant?: 'pipeline' | 'documents';
+}
+
+export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
+  const {
+    nodes: pipelineNodes,
+    edges: pipelineEdges,
+    docNodes,
+    docEdges,
+    fetchDAG,
+    fetchDocumentsDAG,
+    selectArtifact,
+    selectStage,
+  } = useDAGStore();
   const { fetchArtifact } = useProjectStore();
 
+  const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
+  const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
+
   useEffect(() => {
-    fetchDAG(projectId);
-  }, [projectId]);
+    if (variant === 'documents') {
+      fetchDocumentsDAG(projectId);
+    } else {
+      fetchDAG(projectId);
+    }
+  }, [projectId, variant]);
 
   const layoutedNodes = useMemo(() => {
     if (rawNodes.length === 0) return [];
@@ -54,20 +75,23 @@ export function PipelineDAG({ projectId }: { projectId: string }) {
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: any) => {
-      // Only load artifact details for nodes that have an artifact
-      const hasArtifact = node.data?.has_artifact;
-      if (hasArtifact) {
-        selectArtifact(node.id);
-        fetchArtifact(node.id);
+      if (variant === 'pipeline') {
+        selectStage(node.data?.stage_key ?? null);
+      } else {
+        const hasArtifact = node.data?.has_artifact;
+        if (hasArtifact) {
+          selectArtifact(node.id);
+          fetchArtifact(node.id);
+        }
       }
     },
-    [selectArtifact, fetchArtifact]
+    [variant, selectStage, selectArtifact, fetchArtifact]
   );
 
   if (rawNodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500">
-        Loading pipeline stages...
+        {variant === 'documents' ? 'Loading documents...' : 'Loading pipeline stages...'}
       </div>
     );
   }
@@ -88,6 +112,11 @@ export function PipelineDAG({ projectId }: { projectId: string }) {
       <MiniMap
         className="!bg-gray-800"
         nodeColor={(n) => {
+          const artifactType = n.data?.artifact_type as string;
+          // Branching/extraction nodes get indigo color
+          if (artifactType === 'component_map' || artifactType === 'sub_component_map') {
+            return '#818cf8';
+          }
           const status = n.data?.status as string;
           const colors: Record<string, string> = {
             approved: '#22c55e',

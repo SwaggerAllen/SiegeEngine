@@ -2,21 +2,33 @@ import json
 import logging
 import re
 
-from langchain_anthropic import ChatAnthropic
-
-from backend.pipeline.llm_limiter import rate_limited_invoke
-
 logger = logging.getLogger(__name__)
 
 
 def parse_components_from_content(content: str) -> list[dict]:
-    """Try to parse components from a tagged code block or raw JSON array."""
+    """Parse components from a ```components tagged code block or raw JSON."""
     # Try ```components block first
     pattern = r"```components\s*\n(.*?)```"
     match = re.search(pattern, content, re.DOTALL)
     if match:
         try:
-            return json.loads(match.group(1))
+            data = json.loads(match.group(1))
+            # Handle both formats: raw list or {"components": [...]}
+            if isinstance(data, dict) and "components" in data:
+                return data["components"]
+            if isinstance(data, list):
+                return data
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback: find JSON object with "components" key
+    pattern = r'\{[\s\S]*?"components"[\s\S]*?\}'
+    match = re.search(pattern, content)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            if isinstance(data, dict) and "components" in data:
+                return data["components"]
         except json.JSONDecodeError:
             pass
 
@@ -32,105 +44,102 @@ def parse_components_from_content(content: str) -> list[dict]:
     return []
 
 
-async def llm_extract_components(content: str, model_name: str) -> list[dict]:
-    """Ask the LLM to extract components from architecture content."""
-    model = ChatAnthropic(
-        model=model_name,
-        temperature=0.0,
-        max_tokens=4096,
-    )
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "Extract the list of components from the following system architecture document. "
-                "Return ONLY a JSON array of objects, each with a 'key' (snake_case identifier) "
-                "and 'name' (human-readable name). Example: "
-                '[{"key": "auth_service", "name": "Authentication Service"}]. '
-                "Return ONLY the JSON array, no other text."
-            ),
-        },
-        {"role": "user", "content": content[:8000]},
-    ]
-    response = await rate_limited_invoke(model, messages)
-    text = response.content
-    # Strip markdown fences if present
-    if "```json" in text:
-        text = text.split("```json")[1].split("```")[0]
-    elif "```" in text:
-        text = text.split("```")[1].split("```")[0]
-    try:
-        return json.loads(text.strip())
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse LLM component extraction response")
-        return []
+def parse_sub_components_from_content(content: str) -> dict:
+    """Parse sub-component extraction result.
 
-
-def _sorted_keys(components: list[dict]) -> list[str]:
-    """Return sorted list of component keys."""
-    return sorted(c.get("key", "") for c in components)
-
-
-def components_match(a: list[dict], b: list[dict]) -> bool:
-    """Check if two component lists have the same keys (order-independent)."""
-    return _sorted_keys(a) == _sorted_keys(b)
-
-
-def majority_vote(a: list[dict], b: list[dict], c: list[dict]) -> list[dict]:
-    """Return the result from whichever two of three lists agree on keys."""
-    keys_a = _sorted_keys(a)
-    keys_b = _sorted_keys(b)
-    keys_c = _sorted_keys(c)
-
-    if keys_a == keys_b:
-        return a
-    if keys_a == keys_c:
-        return a
-    if keys_b == keys_c:
-        return b
-
-    # No exact match — pick the pair with the most overlap
-    overlap_ab = len(set(keys_a) & set(keys_b))
-    overlap_ac = len(set(keys_a) & set(keys_c))
-    overlap_bc = len(set(keys_b) & set(keys_c))
-    best = max(overlap_ab, overlap_ac, overlap_bc)
-    if best == overlap_ab:
-        return a
-    if best == overlap_ac:
-        return a
-    return b
-
-
-async def extract_components_robust(content: str, model_name: str) -> list[dict]:
+    Returns dict with keys:
+        needs_decomposition: bool
+        components: list[dict]
     """
-    Robust component extraction: parse, then verify with a second LLM call.
-    If results disagree, run a third call as tiebreaker.
-    All results are sorted by key before comparison.
+    # Try ```components block first
+    pattern = r"```components\s*\n(.*?)```"
+    match = re.search(pattern, content, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(1))
+            if isinstance(data, dict):
+                return {
+                    "needs_decomposition": data.get("needs_decomposition", False),
+                    "components": data.get("components", []),
+                }
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback: find JSON object with "needs_decomposition" key
+    pattern = r'\{[\s\S]*?"needs_decomposition"[\s\S]*?\}'
+    match = re.search(pattern, content)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            return {
+                "needs_decomposition": data.get("needs_decomposition", False),
+                "components": data.get("components", []),
+            }
+        except json.JSONDecodeError:
+            pass
+
+    return {"needs_decomposition": False, "components": []}
+
+
+SETUP_COMPONENT = {
+    "key": "project_setup",
+    "name": "Project Setup & Scaffolding",
+    "description": (
+        "Initial project scaffolding: directory structure, configuration files, "
+        "dependency management, shared utilities, base classes, and any other "
+        "foundational setup that other components depend on."
+    ),
+    "dependencies": [],
+}
+
+
+def inject_setup_component(components: list[dict]) -> list[dict]:
+    """Ensure a project_setup component is at the front of the list."""
+    existing_keys = {c.get("key", "") for c in components}
+    if "project_setup" not in existing_keys:
+        return [SETUP_COMPONENT.copy()] + components
+    # Already present — move it to the front
+    setup = next(c for c in components if c.get("key") == "project_setup")
+    others = [c for c in components if c.get("key") != "project_setup"]
+    return [setup] + others
+
+
+def validate_dependency_dag(components: list[dict]) -> list[str]:
+    """Validate that component dependencies form a DAG (no cycles).
+
+    Returns list of error messages (empty if valid).
     """
-    # 1. Parse attempt from the generated content
-    result_1 = parse_components_from_content(content)
+    errors = []
+    keys = {c.get("key", "") for c in components}
 
-    # 2. If parse fails, ask LLM to extract
-    if not result_1:
-        result_1 = await llm_extract_components(content, model_name)
+    for comp in components:
+        for dep in comp.get("dependencies", []):
+            if dep not in keys:
+                errors.append(
+                    f"Component '{comp.get('key')}' depends on unknown key '{dep}'"
+                )
+            if dep == comp.get("key"):
+                errors.append(f"Component '{comp.get('key')}' depends on itself")
 
-    # 3. Second independent extraction
-    result_2 = await llm_extract_components(content, model_name)
+    # Check for cycles using DFS
+    adj = {c.get("key", ""): c.get("dependencies", []) for c in components}
+    visited = set()
+    in_stack = set()
 
-    # 4. Sort both by key, then compare
-    result_1.sort(key=lambda c: c.get("key", ""))
-    result_2.sort(key=lambda c: c.get("key", ""))
+    def dfs(node):
+        if node in in_stack:
+            errors.append(f"Circular dependency detected involving '{node}'")
+            return
+        if node in visited:
+            return
+        in_stack.add(node)
+        for dep in adj.get(node, []):
+            if dep in keys:
+                dfs(dep)
+        in_stack.discard(node)
+        visited.add(node)
 
-    if components_match(result_1, result_2):
-        logger.info("Component extraction: 2 runs agree (%d components)", len(result_1))
-        return result_1
+    for key in keys:
+        dfs(key)
 
-    # 5. Tiebreaker: third extraction
-    logger.info("Component extraction: mismatch, running tiebreaker")
-    result_3 = await llm_extract_components(content, model_name)
-    result_3.sort(key=lambda c: c.get("key", ""))
-
-    # 6. Majority vote
-    winner = majority_vote(result_1, result_2, result_3)
-    logger.info("Component extraction: tiebreaker resolved (%d components)", len(winner))
-    return winner
+    return errors

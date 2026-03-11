@@ -36,8 +36,14 @@ const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
 
 export function StageNode({ data }: { data: DAGNodeData }) {
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
-  const colorClass = STATUS_COLORS[data.status] || STATUS_COLORS.pending;
-  const statusLabel = STATUS_LABELS[data.status] || data.status.replace('_', ' ');
+  const isInputDoc = data.artifact_type === 'project_doc';
+  const isBranchingNode = data.artifact_type === 'component_map' || data.artifact_type === 'sub_component_map';
+  const colorClass = isInputDoc
+    ? 'bg-cyan-900 border-cyan-400'
+    : isBranchingNode
+    ? 'bg-indigo-900 border-indigo-400'
+    : STATUS_COLORS[data.status] || STATUS_COLORS.pending;
+  const statusLabel = isInputDoc ? 'Input' : isBranchingNode && data.status === 'pending' ? 'Branching' : (STATUS_LABELS[data.status] || data.status.replace('_', ' '));
   const pi = data.prompt_info;
   const isProcessing = data.is_active || ACTIVE_STATUSES.has(data.status);
   const spinnerColor = data.status === 'ai_reviewing' ? 'stage-spinner--purple' : 'stage-spinner--blue';

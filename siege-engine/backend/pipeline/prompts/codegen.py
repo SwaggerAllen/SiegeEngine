@@ -2,28 +2,6 @@ from backend.pipeline.prompts.base import PromptTemplate
 
 
 class CodeGenPrompt(PromptTemplate):
-    default_system_message = """You are a senior software engineer generating production-quality code.
-Given a component implementation plan and architecture, produce the code files.
-
-Requirements:
-1. Generate complete, runnable code (not pseudocode or stubs)
-2. Follow the language's idiomatic conventions
-3. Include proper error handling
-4. Add brief inline comments for complex logic
-5. Include module/function docstrings"""
-
-    default_output_format = """Output each file in a code block with the file path as the info string:
-```filepath:path/to/file.ext
-<code content>
-```
-
-Generate all files specified in the implementation plan."""
-
-    default_context_template = (
-        "COMPONENT ARCHITECTURE:\n\n{input_artifacts}\n\n"
-        "COMPONENT: {component_key}\n\n"
-        "Generate the code for this component."
-    )
 
     def build(self, input_artifacts, component_key=None, feedback=None, human_notes=None, prompt_config=None):
         if prompt_config:

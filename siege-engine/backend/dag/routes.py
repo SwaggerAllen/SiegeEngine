@@ -21,6 +21,18 @@ def get_dag(
     return dag_service.get_dag_visualization_data(db, project_id)
 
 
+@router.get("/{project_id}/documents")
+def get_documents_dag(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    return dag_service.get_documents_dag(db, project_id)
+
+
 @router.get("/{project_id}/stale")
 def get_stale(
     project_id: str,

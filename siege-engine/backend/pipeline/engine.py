@@ -1,19 +1,16 @@
 """
 Pipeline engine that orchestrates stage execution.
 
-Instead of building a single LangGraph graph for the entire pipeline,
-we use a simpler orchestration approach: iterate through stages in order,
-run each one (with fan-out for component stages), and pause at review gates.
-
-This is more maintainable and debuggable than a deeply nested LangGraph graph,
-while still using LangGraph's LLM integration via langchain-anthropic.
+Uses a "find next ready work" approach instead of linear stage iteration.
+For fan-out stages, components are processed in dependency order — a component's
+documents are only generated after all its upstream dependency components have
+completed their full document cycle and received human approval.
 """
 
 import logging
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -22,6 +19,7 @@ from backend.models import (
     Artifact,
     ArtifactStatus,
     ArtifactType,
+    ComponentDefinition,
     ExecutionMode,
     FanOutStrategy,
     PipelineConfig,
@@ -31,9 +29,33 @@ from backend.models import (
     StageStatus,
 )
 from backend.pipeline.nodes.ai_review import ai_review
-from backend.pipeline.nodes.extract_components import extract_components_robust
+from backend.pipeline.nodes.extract_components import (
+    inject_setup_component,
+    parse_components_from_content,
+    parse_sub_components_from_content,
+    validate_dependency_dag,
+)
 from backend.pipeline.nodes.generate import generate
 from backend.websocket.manager import ws_manager
+
+
+# Stage keys grouped by level for readiness checks
+COMPONENT_STAGE_ORDER = [
+    "component_requirements", "component_architectures", "component_plans",
+]
+SUB_COMPONENT_STAGE_ORDER = [
+    "sub_component_requirements", "sub_component_architectures", "sub_component_plans",
+]
+
+# Extraction stages that define downstream branching structure —
+# always pause for human review regardless of execution mode.
+BRANCHING_STAGES = {"extract_components", "extract_sub_components"}
+
+# Map stage keys to the artifact type they produce (for readiness checks)
+_STAGE_TO_PLAN_TYPE = {
+    "component_plans": ArtifactType.COMPONENT_PLAN,
+    "sub_component_plans": ArtifactType.SUB_COMPONENT_PLAN,
+}
 
 
 class PipelineEngine:
@@ -59,63 +81,67 @@ class PipelineEngine:
         run_id = str(uuid.uuid4())
         stages = sorted(config.stages, key=lambda s: s.order_index)
         logger.info("Pipeline run_id=%s starting with %d stages: %s", run_id, len(stages), [s.stage_key for s in stages])
-        components: list[dict] = []
+
+        await self._find_and_execute_next(project_id, run_id, config)
+        return run_id
+
+    async def _find_and_execute_next(
+        self, project_id: str, run_id: str, config: PipelineConfig
+    ):
+        """Find the next executable work item across all stages and execute it."""
+        stages = sorted(config.stages, key=lambda s: s.order_index)
 
         for stage_def in stages:
-            logger.info("Processing stage: %s (order=%d, fan_out=%s)", stage_def.stage_key, stage_def.order_index, stage_def.fan_out_strategy.value)
-            # Gather input artifacts
-            input_artifacts = self._gather_inputs(project_id, stage_def)
+            # Check if stage is fully complete
+            if self._stage_fully_complete(project_id, stage_def, run_id):
+                continue
 
-            stage_failed = False
+            # Check if any executions are still awaiting review
+            awaiting = (
+                self.db.query(StageExecution)
+                .filter_by(
+                    project_id=project_id,
+                    stage_key=stage_def.stage_key,
+                    run_id=run_id,
+                )
+                .filter(StageExecution.status.in_([
+                    StageStatus.AWAITING_REVIEW,
+                    StageStatus.RUNNING,
+                    StageStatus.AI_REVIEW,
+                ]))
+                .count()
+            )
+            if awaiting > 0:
+                logger.info("Stage %s has %d pending executions, pausing", stage_def.stage_key, awaiting)
+                await ws_manager.broadcast(project_id, {
+                    "type": "pipeline_paused",
+                    "stage_key": stage_def.stage_key,
+                    "run_id": run_id,
+                    "message": f"Awaiting review for {stage_def.display_name}",
+                })
+                return
 
-            if stage_def.fan_out_strategy == FanOutStrategy.COMPONENT:
-                # Need components list
-                if not components:
-                    # Extract from system architecture
-                    logger.info("Extracting components from system architecture for fan-out")
-                    sys_arch = self._get_artifact_content(
-                        project_id, ArtifactType.SYSTEM_ARCHITECTURE
+            fan_out = stage_def.fan_out_strategy
+
+            if fan_out == FanOutStrategy.NONE:
+                # Single artifact stage — check if already has an execution
+                existing = (
+                    self.db.query(StageExecution)
+                    .filter_by(
+                        project_id=project_id,
+                        stage_key=stage_def.stage_key,
+                        run_id=run_id,
                     )
-                    if sys_arch:
-                        components = await extract_components_robust(
-                            sys_arch, config.default_model
-                        )
-                        logger.info("Extracted %d components: %s", len(components), [c.get("key", c) if isinstance(c, dict) else c for c in components])
+                    .filter(StageExecution.status.notin_([StageStatus.REJECTED]))
+                    .first()
+                )
+                if existing:
+                    # Already has a non-rejected execution but stage not complete
+                    # (could be failed) — skip to avoid re-running
+                    continue
 
-                if not components:
-                    logger.warning("No components found for fan-out stage %s", stage_def.stage_key)
-                    await ws_manager.broadcast(project_id, {
-                        "type": "stage_failed",
-                        "stage_key": stage_def.stage_key,
-                        "error": "No components found for fan-out",
-                    })
-                    stage_failed = True
-                else:
-                    # Fan out: run sequentially to avoid SQLAlchemy session conflicts
-                    for comp in components:
-                        comp_key = comp["key"] if isinstance(comp, dict) else comp
-                        logger.info("Fan-out: running stage %s for component %s", stage_def.stage_key, comp_key)
-                        rejected_notes = self._get_rejected_notes(project_id, stage_def, comp_key)
-                        execution = StageExecution(
-                            project_id=project_id,
-                            stage_key=stage_def.stage_key,
-                            component_key=comp_key,
-                            status=StageStatus.RUNNING,
-                            started_at=datetime.utcnow(),
-                            run_id=run_id,
-                        )
-                        self.db.add(execution)
-                        self.db.flush()
-
-                        await self._run_stage(
-                            project_id, stage_def, input_artifacts, comp_key, execution, run_id,
-                            human_notes=rejected_notes,
-                        )
-                        if execution.status == StageStatus.FAILED:
-                            stage_failed = True
-                            break
-            else:
-                # Single artifact stage
+                # Execute single stage
+                input_artifacts = self._gather_inputs(project_id, stage_def)
                 rejected_notes = self._get_rejected_notes(project_id, stage_def)
                 execution = StageExecution(
                     project_id=project_id,
@@ -129,25 +155,94 @@ class PipelineEngine:
 
                 await self._run_stage(
                     project_id, stage_def, input_artifacts, None, execution, run_id,
-                    human_notes=rejected_notes,
+                    human_notes=rejected_notes, config=config,
                 )
+
                 if execution.status == StageStatus.FAILED:
-                    stage_failed = True
+                    logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
+                    await ws_manager.broadcast(project_id, {
+                        "type": "pipeline_completed", "run_id": run_id,
+                    })
+                    return
 
-            # Stop the pipeline if a stage failed
-            if stage_failed:
-                logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
-                await ws_manager.broadcast(project_id, {
-                    "type": "pipeline_completed",
-                    "run_id": run_id,
-                })
-                return run_id
+                # Post-generation hooks (deferred for branching stages until approval)
+                if execution.status in (StageStatus.AWAITING_REVIEW, StageStatus.APPROVED):
+                    if stage_def.stage_key not in BRANCHING_STAGES:
+                        await self._post_generation_hook(project_id, stage_def, None, execution)
 
-            # In gated mode, check if we need to pause for review
-            if config.execution_mode == ExecutionMode.GATED:
-                if stage_def.human_review_enabled:
-                    # Check if any execution for this stage is awaiting review
-                    awaiting = (
+                # Pause: GATED mode pauses at human-review stages; branching stages always pause
+                if execution.status == StageStatus.AWAITING_REVIEW:
+                    should_pause = (
+                        (config.execution_mode == ExecutionMode.GATED and stage_def.human_review_enabled)
+                        or stage_def.stage_key in BRANCHING_STAGES
+                    )
+                    if should_pause:
+                        await ws_manager.broadcast(project_id, {
+                            "type": "pipeline_paused",
+                            "stage_key": stage_def.stage_key,
+                            "run_id": run_id,
+                            "message": f"Awaiting review for {stage_def.display_name}",
+                        })
+                        return
+
+            elif fan_out in (FanOutStrategy.COMPONENT, FanOutStrategy.SUB_COMPONENT, FanOutStrategy.LEAF):
+                ready = self._get_ready_entities(project_id, stage_def, run_id)
+                if not ready:
+                    # No entities ready — either waiting on upstream deps or no entities exist
+                    # Check if there are ANY entities that could potentially be ready
+                    all_entities = self._get_all_entities_for_stage(project_id, stage_def)
+                    if not all_entities:
+                        # No entities at all — skip this stage (e.g., no sub-components)
+                        logger.info("No entities for stage %s, skipping", stage_def.stage_key)
+                        continue
+                    # Entities exist but none are ready — blocked on upstream deps
+                    logger.info("Stage %s: entities exist but none ready, blocked on upstream", stage_def.stage_key)
+                    return
+
+                # Execute ready entities
+                stage_failed = False
+                for entity_key in ready:
+                    input_artifacts = self._gather_inputs(project_id, stage_def, entity_key)
+                    rejected_notes = self._get_rejected_notes(project_id, stage_def, entity_key)
+                    execution = StageExecution(
+                        project_id=project_id,
+                        stage_key=stage_def.stage_key,
+                        component_key=entity_key,
+                        status=StageStatus.RUNNING,
+                        started_at=datetime.utcnow(),
+                        run_id=run_id,
+                    )
+                    self.db.add(execution)
+                    self.db.flush()
+
+                    await self._run_stage(
+                        project_id, stage_def, input_artifacts, entity_key, execution, run_id,
+                        human_notes=rejected_notes, config=config,
+                    )
+
+                    if execution.status == StageStatus.FAILED:
+                        stage_failed = True
+                        break
+
+                    # Post-generation hooks (deferred for branching stages until approval)
+                    if execution.status in (StageStatus.AWAITING_REVIEW, StageStatus.APPROVED):
+                        if stage_def.stage_key not in BRANCHING_STAGES:
+                            await self._post_generation_hook(project_id, stage_def, entity_key, execution)
+
+                if stage_failed:
+                    logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
+                    await ws_manager.broadcast(project_id, {
+                        "type": "pipeline_completed", "run_id": run_id,
+                    })
+                    return
+
+                # Pause: GATED mode pauses at human-review stages; branching stages always pause
+                should_pause = (
+                    (config.execution_mode == ExecutionMode.GATED and stage_def.human_review_enabled)
+                    or stage_def.stage_key in BRANCHING_STAGES
+                )
+                if should_pause:
+                    awaiting_review = (
                         self.db.query(StageExecution)
                         .filter_by(
                             project_id=project_id,
@@ -157,24 +252,405 @@ class PipelineEngine:
                         )
                         .count()
                     )
-                    logger.info("Gated mode: stage %s has %d executions awaiting review", stage_def.stage_key, awaiting)
-                    if awaiting > 0:
-                        # Pipeline pauses here. Will be resumed via resume_stage()
-                        logger.info("Pipeline paused at stage %s for human review", stage_def.stage_key)
+                    if awaiting_review > 0:
                         await ws_manager.broadcast(project_id, {
                             "type": "pipeline_paused",
                             "stage_key": stage_def.stage_key,
                             "run_id": run_id,
                             "message": f"Awaiting review for {stage_def.display_name}",
                         })
-                        return run_id
+                        return
 
+        # If we get here, all stages are complete
         logger.info("Pipeline run_id=%s completed successfully", run_id)
         await ws_manager.broadcast(project_id, {
             "type": "pipeline_completed",
             "run_id": run_id,
         })
-        return run_id
+
+    def _stage_fully_complete(
+        self, project_id: str, stage_def: StageDefinition, run_id: str
+    ) -> bool:
+        """Check if a stage is fully complete (all expected entities approved)."""
+        fan_out = stage_def.fan_out_strategy
+
+        if fan_out == FanOutStrategy.NONE:
+            approved = (
+                self.db.query(StageExecution)
+                .filter_by(
+                    project_id=project_id,
+                    stage_key=stage_def.stage_key,
+                    run_id=run_id,
+                    status=StageStatus.APPROVED,
+                )
+                .count()
+            )
+            return approved > 0
+
+        # Fan-out stages: check if ALL entities have approved executions
+        all_entities = self._get_all_entities_for_stage(project_id, stage_def)
+        if not all_entities:
+            # No entities yet — stage isn't complete but also can't have work
+            # For extract_sub_components with COMPONENT fan-out, check if all components done
+            return False
+
+        for entity_key in all_entities:
+            approved = (
+                self.db.query(StageExecution)
+                .filter_by(
+                    project_id=project_id,
+                    stage_key=stage_def.stage_key,
+                    run_id=run_id,
+                    component_key=entity_key,
+                    status=StageStatus.APPROVED,
+                )
+                .count()
+            )
+            if approved == 0:
+                return False
+
+        return True
+
+    def _get_all_entities_for_stage(
+        self, project_id: str, stage_def: StageDefinition
+    ) -> list[str]:
+        """Get all entity keys that should be processed for a fan-out stage."""
+        fan_out = stage_def.fan_out_strategy
+
+        if fan_out == FanOutStrategy.COMPONENT:
+            comps = self._get_components(project_id)
+            # Inject setup component for relevant stages
+            if stage_def.stage_key in ("component_plans", "code_generation", "code_review"):
+                comps = inject_setup_component(comps)
+            return [c["key"] for c in comps]
+
+        elif fan_out == FanOutStrategy.SUB_COMPONENT:
+            return [sc.key for sc in self._get_sub_component_defs(project_id)]
+
+        elif fan_out == FanOutStrategy.LEAF:
+            return self._get_leaf_keys(project_id)
+
+        return []
+
+    def _get_ready_entities(
+        self, project_id: str, stage_def: StageDefinition, run_id: str
+    ) -> list[str]:
+        """Get entity keys that are ready to be processed for a fan-out stage."""
+        fan_out = stage_def.fan_out_strategy
+        ready = []
+
+        if fan_out == FanOutStrategy.COMPONENT:
+            comps = self._get_components(project_id)
+            if stage_def.stage_key in ("component_plans", "code_generation", "code_review"):
+                comps = inject_setup_component(comps)
+
+            for comp in comps:
+                key = comp["key"]
+                if self._is_component_ready(project_id, key, stage_def, run_id, comp.get("dependencies", [])):
+                    ready.append(key)
+
+        elif fan_out == FanOutStrategy.SUB_COMPONENT:
+            sub_comps = self._get_sub_component_defs(project_id)
+            for sc in sub_comps:
+                # Sub-component key in artifacts is "parent_key.sub_key"
+                full_key = f"{sc.parent_key}.{sc.key}"
+                deps = sc.dependencies or []
+                # Deps are sibling keys, need full paths
+                full_deps = [f"{sc.parent_key}.{d}" for d in deps]
+                if self._is_sub_component_ready(project_id, full_key, sc.parent_key, stage_def, run_id, full_deps):
+                    ready.append(full_key)
+
+        elif fan_out == FanOutStrategy.LEAF:
+            leaves = self._get_leaf_keys(project_id)
+            for leaf_key in leaves:
+                if self._is_leaf_ready(project_id, leaf_key, stage_def, run_id):
+                    ready.append(leaf_key)
+
+        return ready
+
+    def _is_component_ready(
+        self, project_id: str, comp_key: str, stage_def: StageDefinition,
+        run_id: str, dependencies: list[str]
+    ) -> bool:
+        """Check if a component is ready for a given stage."""
+        # 1. Not already processed (non-rejected execution exists)
+        existing = (
+            self.db.query(StageExecution)
+            .filter_by(
+                project_id=project_id,
+                stage_key=stage_def.stage_key,
+                run_id=run_id,
+                component_key=comp_key,
+            )
+            .filter(StageExecution.status.notin_([StageStatus.REJECTED]))
+            .first()
+        )
+        if existing:
+            return False
+
+        # 2. All upstream dependency components have approved plans
+        for dep_key in dependencies:
+            if not self._has_approved_artifact(project_id, ArtifactType.COMPONENT_PLAN, dep_key):
+                return False
+
+        # 3. Own prior component stages are approved
+        if stage_def.stage_key in COMPONENT_STAGE_ORDER:
+            current_idx = COMPONENT_STAGE_ORDER.index(stage_def.stage_key)
+            for prior_key in COMPONENT_STAGE_ORDER[:current_idx]:
+                if not self._has_approved_execution(project_id, prior_key, comp_key, run_id):
+                    return False
+
+        # 4. For extract_sub_components, component_plans must be approved
+        if stage_def.stage_key == "extract_sub_components":
+            if not self._has_approved_artifact(project_id, ArtifactType.COMPONENT_PLAN, comp_key):
+                return False
+
+        return True
+
+    def _is_sub_component_ready(
+        self, project_id: str, full_key: str, parent_key: str,
+        stage_def: StageDefinition, run_id: str, full_deps: list[str]
+    ) -> bool:
+        """Check if a sub-component is ready for a given stage."""
+        # 1. Not already processed
+        existing = (
+            self.db.query(StageExecution)
+            .filter_by(
+                project_id=project_id,
+                stage_key=stage_def.stage_key,
+                run_id=run_id,
+                component_key=full_key,
+            )
+            .filter(StageExecution.status.notin_([StageStatus.REJECTED]))
+            .first()
+        )
+        if existing:
+            return False
+
+        # 2. All dependency sub-components have approved plans
+        for dep_key in full_deps:
+            if not self._has_approved_artifact(project_id, ArtifactType.SUB_COMPONENT_PLAN, dep_key):
+                return False
+
+        # 3. Own prior sub-component stages are approved
+        if stage_def.stage_key in SUB_COMPONENT_STAGE_ORDER:
+            current_idx = SUB_COMPONENT_STAGE_ORDER.index(stage_def.stage_key)
+            for prior_key in SUB_COMPONENT_STAGE_ORDER[:current_idx]:
+                if not self._has_approved_execution(project_id, prior_key, full_key, run_id):
+                    return False
+
+        # 4. Parent extract_sub_components must be approved
+        if not self._has_approved_execution(project_id, "extract_sub_components", parent_key, run_id):
+            return False
+
+        return True
+
+    def _is_leaf_ready(
+        self, project_id: str, leaf_key: str, stage_def: StageDefinition, run_id: str
+    ) -> bool:
+        """Check if a leaf entity is ready for code generation/review."""
+        # 1. Not already processed
+        existing = (
+            self.db.query(StageExecution)
+            .filter_by(
+                project_id=project_id,
+                stage_key=stage_def.stage_key,
+                run_id=run_id,
+                component_key=leaf_key,
+            )
+            .filter(StageExecution.status.notin_([StageStatus.REJECTED]))
+            .first()
+        )
+        if existing:
+            return False
+
+        # 2. Check if leaf's plan is approved
+        if "." in leaf_key:
+            # Sub-component leaf
+            if not self._has_approved_artifact(project_id, ArtifactType.SUB_COMPONENT_PLAN, leaf_key):
+                return False
+        else:
+            # Top-level component leaf
+            if not self._has_approved_artifact(project_id, ArtifactType.COMPONENT_PLAN, leaf_key):
+                return False
+
+        # 3. For code_review, code_generation must be approved
+        if stage_def.stage_key == "code_review":
+            if not self._has_approved_execution(project_id, "code_generation", leaf_key, run_id):
+                return False
+
+        return True
+
+    def _has_approved_artifact(
+        self, project_id: str, artifact_type: ArtifactType, component_key: str
+    ) -> bool:
+        """Check if an approved artifact exists."""
+        return (
+            self.db.query(Artifact)
+            .filter_by(
+                project_id=project_id,
+                artifact_type=artifact_type,
+                component_key=component_key,
+                status=ArtifactStatus.APPROVED,
+            )
+            .count()
+        ) > 0
+
+    def _has_approved_execution(
+        self, project_id: str, stage_key: str, component_key: str, run_id: str
+    ) -> bool:
+        """Check if an approved execution exists for a stage+component."""
+        return (
+            self.db.query(StageExecution)
+            .filter_by(
+                project_id=project_id,
+                stage_key=stage_key,
+                run_id=run_id,
+                component_key=component_key,
+                status=StageStatus.APPROVED,
+            )
+            .count()
+        ) > 0
+
+    def _get_components(self, project_id: str) -> list[dict]:
+        """Get top-level components from ComponentDefinition table."""
+        defs = (
+            self.db.query(ComponentDefinition)
+            .filter_by(project_id=project_id)
+            .filter(ComponentDefinition.parent_key.is_(None))
+            .all()
+        )
+        return [
+            {
+                "key": d.key,
+                "name": d.name,
+                "description": d.description,
+                "dependencies": d.dependencies or [],
+            }
+            for d in defs
+        ]
+
+    def _get_sub_component_defs(self, project_id: str) -> list[ComponentDefinition]:
+        """Get all sub-components from ComponentDefinition table."""
+        return (
+            self.db.query(ComponentDefinition)
+            .filter_by(project_id=project_id)
+            .filter(ComponentDefinition.parent_key.isnot(None))
+            .all()
+        )
+
+    def _get_leaf_keys(self, project_id: str) -> list[str]:
+        """Get leaf entity keys (components without sub-components + all sub-components)."""
+        all_defs = (
+            self.db.query(ComponentDefinition)
+            .filter_by(project_id=project_id)
+            .all()
+        )
+
+        top_level = [d for d in all_defs if d.parent_key is None]
+        sub_comps = [d for d in all_defs if d.parent_key is not None]
+        parent_keys = {d.parent_key for d in sub_comps}
+
+        leaves = []
+        # Top-level components that have no sub-components
+        for d in top_level:
+            if d.key not in parent_keys:
+                leaves.append(d.key)
+        # All sub-components
+        for d in sub_comps:
+            leaves.append(f"{d.parent_key}.{d.key}")
+
+        return leaves
+
+    def _store_components(self, project_id: str, content: str):
+        """Parse extract_components output and create ComponentDefinition records."""
+        components = parse_components_from_content(content)
+        if not components:
+            logger.warning("No components parsed from extract_components output")
+            return
+
+        errors = validate_dependency_dag(components)
+        if errors:
+            logger.warning("Component dependency validation errors: %s", errors)
+
+        # Inject setup component
+        components = inject_setup_component(components)
+
+        # Clear existing top-level components for this project
+        (
+            self.db.query(ComponentDefinition)
+            .filter_by(project_id=project_id)
+            .filter(ComponentDefinition.parent_key.is_(None))
+            .delete()
+        )
+
+        for comp in components:
+            cd = ComponentDefinition(
+                project_id=project_id,
+                key=comp["key"],
+                name=comp.get("name", comp["key"]),
+                description=comp.get("description"),
+                parent_key=None,
+                dependencies=comp.get("dependencies", []),
+            )
+            self.db.add(cd)
+
+        self.db.flush()
+        logger.info("Stored %d top-level components for project %s", len(components), project_id)
+
+    def _store_sub_components(self, project_id: str, parent_key: str, content: str):
+        """Parse extract_sub_components output and create sub-ComponentDefinition records."""
+        result = parse_sub_components_from_content(content)
+
+        if not result.get("needs_decomposition", False):
+            logger.info("Component %s does not need sub-component decomposition", parent_key)
+            return
+
+        sub_components = result.get("components", [])
+        if not sub_components:
+            return
+
+        errors = validate_dependency_dag(sub_components)
+        if errors:
+            logger.warning("Sub-component dependency validation errors for %s: %s", parent_key, errors)
+
+        # Clear existing sub-components for this parent
+        (
+            self.db.query(ComponentDefinition)
+            .filter_by(project_id=project_id, parent_key=parent_key)
+            .delete()
+        )
+
+        for comp in sub_components:
+            cd = ComponentDefinition(
+                project_id=project_id,
+                key=comp["key"],
+                name=comp.get("name", comp["key"]),
+                description=comp.get("description"),
+                parent_key=parent_key,
+                dependencies=comp.get("dependencies", []),
+            )
+            self.db.add(cd)
+
+        self.db.flush()
+        logger.info("Stored %d sub-components for %s in project %s", len(sub_components), parent_key, project_id)
+
+    async def _post_generation_hook(
+        self, project_id: str, stage_def: StageDefinition,
+        component_key: str | None, execution: StageExecution
+    ):
+        """Run post-generation hooks for extraction stages."""
+        if not execution.artifact_id:
+            return
+
+        artifact = self.db.get(Artifact, execution.artifact_id)
+        if not artifact or not artifact.content:
+            return
+
+        if stage_def.stage_key == "extract_components":
+            self._store_components(project_id, artifact.content)
+        elif stage_def.stage_key == "extract_sub_components" and component_key:
+            self._store_sub_components(project_id, component_key, artifact.content)
 
     async def resume_stage(
         self,
@@ -211,7 +687,23 @@ class PipelineEngine:
                 "execution_id": execution_id,
             })
 
-            # Check if all executions for this stage+run are resolved
+            # Run post-generation hooks (e.g., store components after approval)
+            config = (
+                self.db.query(PipelineConfig)
+                .filter_by(project_id=execution.project_id)
+                .first()
+            )
+            if config:
+                stage_def = next(
+                    (s for s in config.stages if s.stage_key == execution.stage_key),
+                    None,
+                )
+                if stage_def:
+                    await self._post_generation_hook(
+                        execution.project_id, stage_def, execution.component_key, execution
+                    )
+
+            # Find and execute next available work
             await self._check_and_continue(execution)
 
         elif action == "rejected":
@@ -219,8 +711,6 @@ class PipelineEngine:
                         execution.stage_key, execution_id)
             execution.status = StageStatus.REJECTED
 
-            # Accumulate all prior review notes so the full history is
-            # available to the next generation pass.
             accumulated_notes = notes
             if execution.artifact_id:
                 artifact = self.db.get(Artifact, execution.artifact_id)
@@ -232,6 +722,25 @@ class PipelineEngine:
                     elif prior:
                         accumulated_notes = prior
                     artifact.human_review_notes = accumulated_notes
+
+            # Cascade-reject downstream AWAITING_REVIEW nodes
+            config = (
+                self.db.query(PipelineConfig)
+                .filter_by(project_id=execution.project_id)
+                .first()
+            )
+            stale_artifact_ids = []
+            if config:
+                stage_def = next(
+                    (s for s in config.stages if s.stage_key == execution.stage_key),
+                    None,
+                )
+                if stage_def:
+                    stale_artifact_ids = self._cascade_reject_downstream(
+                        execution.project_id, execution.run_id,
+                        stage_def.order_index, config,
+                    )
+
             self.db.commit()
 
             await ws_manager.broadcast(execution.project_id, {
@@ -242,53 +751,95 @@ class PipelineEngine:
                 "execution_id": execution_id,
             })
 
-            # Re-run the stage with accumulated feedback
+            if stale_artifact_ids:
+                await ws_manager.broadcast(execution.project_id, {
+                    "type": "staleness_propagated",
+                    "stale_artifact_ids": stale_artifact_ids,
+                })
+
             await self._regenerate_stage(execution, accumulated_notes)
 
+        elif action == "save_feedback":
+            logger.info("Saving feedback for stage %s (execution=%s)",
+                        execution.stage_key, execution_id)
+            if execution.artifact_id:
+                artifact = self.db.get(Artifact, execution.artifact_id)
+                if artifact:
+                    prior = artifact.human_review_notes
+                    if prior and notes:
+                        artifact.human_review_notes = f"{prior}\n\n---\n\n{notes}"
+                    elif notes:
+                        artifact.human_review_notes = notes
+                    if edited_content:
+                        artifact.content = edited_content
+                        artifact.version += 1
+            self.db.commit()
+
+            await ws_manager.broadcast(execution.project_id, {
+                "type": "feedback_saved",
+                "stage_key": execution.stage_key,
+                "component_key": execution.component_key,
+                "execution_id": execution_id,
+            })
+
     async def _check_and_continue(self, execution: StageExecution):
-        """Check if all executions for a stage are done, then continue pipeline."""
-        pending = (
-            self.db.query(StageExecution)
-            .filter_by(
-                project_id=execution.project_id,
-                stage_key=execution.stage_key,
-                run_id=execution.run_id,
-            )
-            .filter(StageExecution.status.in_([
-                StageStatus.AWAITING_REVIEW,
-                StageStatus.RUNNING,
-                StageStatus.PENDING,
-            ]))
-            .count()
+        """After approval, find and execute the next available work."""
+        config = (
+            self.db.query(PipelineConfig)
+            .filter_by(project_id=execution.project_id)
+            .first()
         )
+        if not config:
+            return
 
-        if pending == 0:
-            # All executions for this stage are done, continue pipeline
-            config = (
-                self.db.query(PipelineConfig)
-                .filter_by(project_id=execution.project_id)
-                .first()
-            )
-            if not config:
-                return
+        await self._find_and_execute_next(execution.project_id, execution.run_id, config)
 
-            stages = sorted(config.stages, key=lambda s: s.order_index)
-            current_idx = next(
-                (i for i, s in enumerate(stages) if s.stage_key == execution.stage_key),
-                -1,
-            )
+    def _cascade_reject_downstream(
+        self, project_id: str, run_id: str,
+        rejected_stage_order_index: int, config: PipelineConfig,
+    ) -> list[str]:
+        """Cascade-reject downstream AWAITING_REVIEW executions, mark their artifacts STALE.
 
-            if current_idx < len(stages) - 1:
-                # There are more stages - continue from next stage
-                remaining_stages = stages[current_idx + 1:]
-                await self._continue_pipeline(
-                    execution.project_id, execution.run_id, remaining_stages, config
+        Returns list of stale artifact IDs for WS broadcast.
+        """
+        stages = sorted(config.stages, key=lambda s: s.order_index)
+        stale_artifact_ids: list[str] = []
+
+        for stage_def in stages:
+            if stage_def.order_index <= rejected_stage_order_index:
+                continue
+
+            downstream_execs = (
+                self.db.query(StageExecution)
+                .filter_by(
+                    project_id=project_id,
+                    stage_key=stage_def.stage_key,
+                    run_id=run_id,
+                    status=StageStatus.AWAITING_REVIEW,
                 )
+                .all()
+            )
+
+            for exc in downstream_execs:
+                logger.info(
+                    "Cascade-rejecting downstream execution %s (stage=%s, component=%s)",
+                    exc.id, exc.stage_key, exc.component_key,
+                )
+                exc.status = StageStatus.REJECTED
+
+                if exc.artifact_id:
+                    artifact = self.db.get(Artifact, exc.artifact_id)
+                    if artifact:
+                        artifact.status = ArtifactStatus.STALE
+                        stale_artifact_ids.append(artifact.id)
+
+        self.db.flush()
+        return stale_artifact_ids
 
     async def _regenerate_stage(
         self, old_execution: StageExecution, human_notes: str | None
     ):
-        """Re-run a rejected stage with human feedback, then continue the pipeline."""
+        """Re-run a rejected stage with human feedback."""
         project_id = old_execution.project_id
         config = (
             self.db.query(PipelineConfig)
@@ -307,9 +858,8 @@ class PipelineEngine:
             logger.error("Cannot regenerate: stage def not found for %s", old_execution.stage_key)
             return
 
-        input_artifacts = self._gather_inputs(project_id, stage_def)
+        input_artifacts = self._gather_inputs(project_id, stage_def, old_execution.component_key)
 
-        # Create a new execution for the regeneration
         run_id = old_execution.run_id or str(uuid.uuid4())
         new_execution = StageExecution(
             project_id=project_id,
@@ -336,15 +886,10 @@ class PipelineEngine:
 
         try:
             content, artifact_id = await generate(
-                stage_def,
-                input_artifacts,
-                old_execution.component_key,
-                self.db,
+                stage_def, input_artifacts, old_execution.component_key, self.db,
                 human_notes=human_notes,
             )
             new_execution.artifact_id = artifact_id
-            logger.info("Regeneration complete: artifact_id=%s, content length=%d",
-                        artifact_id, len(content) if content else 0)
 
             # AI Review
             if stage_def.ai_review_enabled:
@@ -367,7 +912,6 @@ class PipelineEngine:
                     artifact.ai_review_feedback = feedback
                     artifact.status = ArtifactStatus.AI_REVIEWING
 
-            # Set to awaiting review (goes back to human review gate)
             if stage_def.human_review_enabled:
                 new_execution.status = StageStatus.AWAITING_REVIEW
                 artifact = self.db.get(Artifact, artifact_id)
@@ -420,7 +964,6 @@ class PipelineEngine:
         if not config:
             raise ValueError("Pipeline config not found")
 
-        # Find the stage definition that produces this artifact type
         stage_def = next(
             (s for s in config.stages
              if s.output_artifact_type == artifact.artifact_type.value),
@@ -431,21 +974,18 @@ class PipelineEngine:
                 f"No stage definition for artifact type: {artifact.artifact_type.value}"
             )
 
-        # Accumulate feedback with any prior notes
         prior = artifact.human_review_notes
         if prior and feedback:
             accumulated = f"{prior}\n\n---\n\n{feedback}"
         else:
             accumulated = feedback or prior
 
-        # Mark artifact as generating
         artifact.status = ArtifactStatus.GENERATING
         artifact.human_review_notes = accumulated
         self.db.flush()
 
-        input_artifacts = self._gather_inputs(project_id, stage_def)
+        input_artifacts = self._gather_inputs(project_id, stage_def, artifact.component_key)
 
-        # Create a new execution
         run_id = str(uuid.uuid4())
         execution = StageExecution(
             project_id=project_id,
@@ -469,17 +1009,11 @@ class PipelineEngine:
 
         try:
             content, new_artifact_id = await generate(
-                stage_def,
-                input_artifacts,
-                artifact.component_key,
-                self.db,
+                stage_def, input_artifacts, artifact.component_key, self.db,
                 human_notes=accumulated,
             )
             execution.artifact_id = new_artifact_id
-            logger.info("Revision complete: artifact_id=%s, content length=%d",
-                        new_artifact_id, len(content) if content else 0)
 
-            # AI Review
             if stage_def.ai_review_enabled:
                 await ws_manager.broadcast(project_id, {
                     "type": "stage_progress",
@@ -500,7 +1034,6 @@ class PipelineEngine:
                     updated_artifact.ai_review_feedback = ai_feedback
                     updated_artifact.status = ArtifactStatus.AI_REVIEWING
 
-            # Always go back to awaiting review for revisions
             execution.status = StageStatus.AWAITING_REVIEW
             updated_artifact = self.db.get(Artifact, new_artifact_id)
             if updated_artifact:
@@ -520,7 +1053,6 @@ class PipelineEngine:
             execution.status = StageStatus.FAILED
             execution.error_message = str(e)
             execution.completed_at = datetime.utcnow()
-            # Restore artifact to approved so the user can try again
             artifact.status = ArtifactStatus.APPROVED
             self.db.commit()
 
@@ -530,106 +1062,6 @@ class PipelineEngine:
                 "component_key": artifact.component_key,
                 "error": str(e),
             })
-
-    async def _continue_pipeline(
-        self,
-        project_id: str,
-        run_id: str,
-        remaining_stages: list[StageDefinition],
-        config: PipelineConfig,
-    ):
-        """Continue pipeline execution from a specific stage."""
-        components: list[dict] = []
-
-        for stage_def in remaining_stages:
-            input_artifacts = self._gather_inputs(project_id, stage_def)
-
-            stage_failed = False
-
-            if stage_def.fan_out_strategy == FanOutStrategy.COMPONENT:
-                if not components:
-                    sys_arch = self._get_artifact_content(
-                        project_id, ArtifactType.SYSTEM_ARCHITECTURE
-                    )
-                    if sys_arch:
-                        components = await extract_components_robust(
-                            sys_arch, config.default_model
-                        )
-
-                if not components:
-                    stage_failed = True
-                else:
-                    for comp in components:
-                        comp_key = comp["key"] if isinstance(comp, dict) else comp
-                        rejected_notes = self._get_rejected_notes(project_id, stage_def, comp_key)
-                        execution = StageExecution(
-                            project_id=project_id,
-                            stage_key=stage_def.stage_key,
-                            component_key=comp_key,
-                            status=StageStatus.RUNNING,
-                            started_at=datetime.utcnow(),
-                            run_id=run_id,
-                        )
-                        self.db.add(execution)
-                        self.db.flush()
-
-                        await self._run_stage(
-                            project_id, stage_def, input_artifacts, comp_key, execution, run_id,
-                            human_notes=rejected_notes,
-                        )
-                        if execution.status == StageStatus.FAILED:
-                            stage_failed = True
-                            break
-            else:
-                rejected_notes = self._get_rejected_notes(project_id, stage_def)
-                execution = StageExecution(
-                    project_id=project_id,
-                    stage_key=stage_def.stage_key,
-                    status=StageStatus.RUNNING,
-                    started_at=datetime.utcnow(),
-                    run_id=run_id,
-                )
-                self.db.add(execution)
-                self.db.flush()
-
-                await self._run_stage(
-                    project_id, stage_def, input_artifacts, None, execution, run_id,
-                    human_notes=rejected_notes,
-                )
-                if execution.status == StageStatus.FAILED:
-                    stage_failed = True
-
-            if stage_failed:
-                logger.error("Pipeline stopped during continuation: stage %s failed", stage_def.stage_key)
-                await ws_manager.broadcast(project_id, {
-                    "type": "pipeline_completed",
-                    "run_id": run_id,
-                })
-                return
-
-            if config.execution_mode == ExecutionMode.GATED and stage_def.human_review_enabled:
-                awaiting = (
-                    self.db.query(StageExecution)
-                    .filter_by(
-                        project_id=project_id,
-                        stage_key=stage_def.stage_key,
-                        run_id=run_id,
-                        status=StageStatus.AWAITING_REVIEW,
-                    )
-                    .count()
-                )
-                if awaiting > 0:
-                    await ws_manager.broadcast(project_id, {
-                        "type": "pipeline_paused",
-                        "stage_key": stage_def.stage_key,
-                        "run_id": run_id,
-                    })
-                    return
-
-        await ws_manager.broadcast(project_id, {
-            "type": "pipeline_completed",
-            "run_id": run_id,
-        })
 
     async def retry_stage(self, execution: StageExecution):
         """Re-run a failed stage execution."""
@@ -649,7 +1081,7 @@ class PipelineEngine:
         if not stage_def:
             raise ValueError(f"Stage definition not found: {execution.stage_key}")
 
-        input_artifacts = self._gather_inputs(project_id, stage_def)
+        input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
         execution.status = StageStatus.RUNNING
         execution.error_message = None
         execution.retry_count = (execution.retry_count or 0) + 1
@@ -657,7 +1089,7 @@ class PipelineEngine:
 
         await self._run_stage(
             project_id, stage_def, input_artifacts, execution.component_key, execution,
-            execution.run_id or str(uuid.uuid4()),
+            execution.run_id or str(uuid.uuid4()), config=config,
         )
 
     async def _run_stage(
@@ -669,15 +1101,15 @@ class PipelineEngine:
         execution: StageExecution,
         run_id: str,
         human_notes: str | None = None,
+        config: PipelineConfig | None = None,
     ):
-        """Run a single stage (generate → ai_review → set status)."""
+        """Run a single stage (generate -> ai_review -> set status)."""
         logger.info("_run_stage: stage=%s component=%s execution_id=%s human_notes=%s",
                      stage_def.stage_key, component_key, execution.id,
                      f"{len(human_notes)} chars" if human_notes else "None")
         logger.info("  input_artifacts keys: %s", list(input_artifacts.keys()))
 
         try:
-            # Broadcast progress
             await ws_manager.broadcast(project_id, {
                 "type": "stage_progress",
                 "stage_key": stage_def.stage_key,
@@ -686,14 +1118,11 @@ class PipelineEngine:
                 "message": f"Generating {stage_def.display_name}...",
             })
 
-            # Generate
-            logger.info("  Calling generate() for stage=%s component=%s", stage_def.stage_key, component_key)
             content, artifact_id = await generate(
                 stage_def, input_artifacts, component_key, self.db,
                 human_notes=human_notes,
             )
             execution.artifact_id = artifact_id
-            logger.info("  generate() returned artifact_id=%s, content length=%d", artifact_id, len(content) if content else 0)
 
             # AI Review
             if stage_def.ai_review_enabled:
@@ -717,8 +1146,27 @@ class PipelineEngine:
                     artifact.ai_review_feedback = feedback
                     artifact.status = ArtifactStatus.AI_REVIEWING
 
-            # Set to awaiting review
-            logger.info("  Stage %s: human_review=%s ai_review=%s", stage_def.stage_key, stage_def.human_review_enabled, stage_def.ai_review_enabled)
+                # Async double-loop: refine with AI feedback in a second pass
+                if (config and config.execution_mode == ExecutionMode.ASYNC and feedback):
+                    await ws_manager.broadcast(project_id, {
+                        "type": "stage_progress",
+                        "stage_key": stage_def.stage_key,
+                        "component_key": component_key,
+                        "step": "regenerating_with_feedback",
+                        "message": f"Refining {stage_def.display_name} with AI feedback...",
+                    })
+
+                    content, artifact_id = await generate(
+                        stage_def, input_artifacts, component_key, self.db,
+                        feedback=feedback,
+                        human_notes=human_notes,
+                    )
+                    execution.artifact_id = artifact_id
+
+                    artifact = self.db.get(Artifact, artifact_id)
+                    if artifact:
+                        artifact.ai_review_feedback = feedback
+
             if stage_def.human_review_enabled:
                 execution.status = StageStatus.AWAITING_REVIEW
                 artifact = self.db.get(Artifact, artifact_id)
@@ -759,26 +1207,34 @@ class PipelineEngine:
     def _get_rejected_notes(
         self, project_id: str, stage_def: StageDefinition, component_key: str | None = None,
     ) -> str | None:
-        """If this stage has a rejected artifact with human_review_notes, return them."""
+        """If this stage has a rejected/stale artifact with human_review_notes, return them.
+
+        Checks both REJECTED (direct rejection) and STALE (cascade-rejected with
+        saved feedback) artifacts so that saved feedback survives upstream rejections.
+        """
         artifact_type_val = stage_def.output_artifact_type
         query = (
             self.db.query(Artifact)
-            .filter_by(project_id=project_id, status=ArtifactStatus.REJECTED)
+            .filter_by(project_id=project_id)
+            .filter(Artifact.status.in_([ArtifactStatus.REJECTED, ArtifactStatus.STALE]))
             .filter(Artifact.artifact_type == artifact_type_val)
         )
         if component_key:
             query = query.filter_by(component_key=component_key)
         artifact = query.first()
         if artifact and artifact.human_review_notes:
-            logger.info("Found rejected artifact %s with review notes for stage %s",
-                        artifact.id, stage_def.stage_key)
             return artifact.human_review_notes
         return None
 
     def _gather_inputs(
-        self, project_id: str, stage_def: StageDefinition
+        self, project_id: str, stage_def: StageDefinition, component_key: str | None = None
     ) -> dict[str, str]:
-        """Gather input artifact contents for a stage."""
+        """Gather input artifact contents for a stage.
+
+        For sub-component stages (component_key contains '.'), automatically
+        resolves parent-level inputs by the parent key and sub-component-level
+        inputs by the full key.
+        """
         inputs: dict[str, str] = {}
 
         if not stage_def.input_stage_keys:
@@ -793,13 +1249,50 @@ class PipelineEngine:
             )
             if project_doc:
                 inputs["project_doc"] = project_doc.content or ""
-        else:
-            for stage_key in stage_def.input_stage_keys:
-                artifact_type_val = _stage_key_to_artifact_type(stage_key)
+            return inputs
+
+        # Determine if this is a sub-component entity
+        parent_key = None
+        if component_key and "." in component_key:
+            parent_key = component_key.split(".")[0]
+
+        for stage_key in stage_def.input_stage_keys:
+            artifact_type = _stage_key_to_artifact_type(stage_key)
+
+            # Determine which component_key to filter by
+            filter_key = None
+            if component_key:
+                if _is_sub_component_stage(stage_key) and parent_key:
+                    # Sub-component input for sub-component entity → use full key
+                    filter_key = component_key
+                elif _is_component_stage(stage_key) and parent_key:
+                    # Component-level input for sub-component entity → use parent key
+                    filter_key = parent_key
+                elif _is_component_stage(stage_key) or _is_sub_component_stage(stage_key):
+                    # Component-level input for component entity
+                    filter_key = component_key
+
+            if filter_key:
+                artifact = (
+                    self.db.query(Artifact)
+                    .filter_by(
+                        project_id=project_id,
+                        artifact_type=artifact_type,
+                        component_key=filter_key,
+                    )
+                    .filter(Artifact.status.in_([
+                        ArtifactStatus.APPROVED,
+                        ArtifactStatus.AWAITING_REVIEW,
+                    ]))
+                    .first()
+                )
+                if artifact and artifact.content:
+                    inputs[stage_key] = artifact.content
+            else:
+                # Project-level or aggregated input
                 artifacts = (
                     self.db.query(Artifact)
-                    .filter_by(project_id=project_id)
-                    .filter(Artifact.artifact_type == artifact_type_val)
+                    .filter_by(project_id=project_id, artifact_type=artifact_type)
                     .filter(Artifact.status.in_([
                         ArtifactStatus.APPROVED,
                         ArtifactStatus.AWAITING_REVIEW,
@@ -809,7 +1302,6 @@ class PipelineEngine:
                 if len(artifacts) == 1:
                     inputs[stage_key] = artifacts[0].content or ""
                 elif len(artifacts) > 1:
-                    # Multiple (fan-out results) - concatenate
                     combined = "\n\n---\n\n".join(
                         f"### {a.component_key or a.name}\n\n{a.content}"
                         for a in artifacts
@@ -830,6 +1322,25 @@ class PipelineEngine:
         return artifact.content if artifact else None
 
 
+# Helper functions
+
+_COMPONENT_STAGES = {
+    "component_requirements", "component_architectures", "component_plans",
+    "extract_sub_components",
+}
+_SUB_COMPONENT_STAGES = {
+    "sub_component_requirements", "sub_component_architectures", "sub_component_plans",
+}
+
+
+def _is_component_stage(stage_key: str) -> bool:
+    return stage_key in _COMPONENT_STAGES
+
+
+def _is_sub_component_stage(stage_key: str) -> bool:
+    return stage_key in _SUB_COMPONENT_STAGES
+
+
 def _stage_key_to_artifact_type(stage_key: str) -> ArtifactType:
     mapping = {
         "system_requirements": ArtifactType.SYSTEM_REQUIREMENTS,
@@ -838,6 +1349,11 @@ def _stage_key_to_artifact_type(stage_key: str) -> ArtifactType:
         "component_architectures": ArtifactType.COMPONENT_ARCHITECTURE,
         "high_level_plan": ArtifactType.HIGH_LEVEL_PLAN,
         "component_plans": ArtifactType.COMPONENT_PLAN,
+        "extract_components": ArtifactType.COMPONENT_MAP,
+        "extract_sub_components": ArtifactType.SUB_COMPONENT_MAP,
+        "sub_component_requirements": ArtifactType.SUB_COMPONENT_REQUIREMENTS,
+        "sub_component_architectures": ArtifactType.SUB_COMPONENT_ARCHITECTURE,
+        "sub_component_plans": ArtifactType.SUB_COMPONENT_PLAN,
         "code_generation": ArtifactType.CODE,
         "code_review": ArtifactType.CODE_REVIEW,
     }

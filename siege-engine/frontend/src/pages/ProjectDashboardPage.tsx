@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useProjectStore } from '../store/projectStore';
 import { usePipelineStore } from '../store/pipelineStore';
@@ -12,11 +12,12 @@ import { ArtifactEditor } from '../components/editor/ArtifactEditor';
 import { ReviewPanel } from '../components/pipeline/ReviewPanel';
 import { InvitePanel } from '../components/auth/InvitePanel';
 import { PromptEditorPanel } from '../components/pipeline/PromptEditorPanel';
+import { StageConfigPanel } from '../components/pipeline/StageConfigPanel';
 import { ProjectSettingsPanel } from '../components/project/ProjectSettingsPanel';
 import { ChatPanel } from '../components/chat/ChatPanel';
 import api from '../api/client';
 
-type Tab = 'pipeline' | 'prompts' | 'chat' | 'settings';
+type Tab = 'documents' | 'pipeline' | 'prompts' | 'chat' | 'settings';
 
 export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -24,11 +25,11 @@ export function ProjectDashboardPage() {
     useProjectStore();
   const { executions, fetchConfig, fetchStatus, reset: resetPipeline } = usePipelineStore();
   const { user } = useAuthStore();
-  const { editPromptStageKey, setEditPromptStageKey } = useDAGStore();
+  const { editPromptStageKey, setEditPromptStageKey, selectedStageKey } = useDAGStore();
   const { connected } = useWebSocket(projectId);
   const [showInvites, setShowInvites] = useState(false);
   const [showPRDialog, setShowPRDialog] = useState(false);
-  const [activeTab, setActiveTab] = useState<Tab>('pipeline');
+  const [activeTab, setActiveTab] = useState<Tab>('documents');
   const [paneExpanded, setPaneExpanded] = useState(false);
   const [initialStageKey, setInitialStageKey] = useState<string | null>(null);
 
@@ -100,7 +101,7 @@ export function ProjectDashboardPage() {
 
       {/* Tab bar */}
       <div className="border-b border-gray-700 px-4 flex gap-4 shrink-0">
-        {(['pipeline', 'prompts', 'chat', 'settings'] as Tab[]).map((tab) => (
+        {(['documents', 'pipeline', 'prompts', 'chat', 'settings'] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -116,11 +117,11 @@ export function ProjectDashboardPage() {
       </div>
 
       {/* Main content */}
-      {activeTab === 'pipeline' ? (
+      {activeTab === 'documents' || activeTab === 'pipeline' ? (
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
           {!paneExpanded && (
             <div className="h-64 md:h-auto md:w-3/5 border-b md:border-b-0 md:border-r border-gray-700 shrink-0 md:shrink">
-              <PipelineDAG projectId={projectId} />
+              <PipelineDAG projectId={projectId} variant={activeTab === 'documents' ? 'documents' : 'pipeline'} />
             </div>
           )}
           <div className={`flex-1 ${paneExpanded ? 'w-full' : 'md:w-2/5'} flex flex-col overflow-hidden`}>
@@ -163,14 +164,20 @@ export function ProjectDashboardPage() {
                   </>
                 )}
               </div>
+            ) : activeTab === 'pipeline' && selectedStageKey ? (
+              <StageConfigPanel projectId={projectId} stageKey={selectedStageKey} />
             ) : (
               <div className="flex-1 flex flex-col">
                 <div className="p-4 text-gray-500 text-sm">
-                  Select an artifact node in the DAG to view details
+                  {activeTab === 'documents'
+                    ? 'Select a document node to view or edit'
+                    : 'Select a stage node to configure it'}
                 </div>
-                <div className="p-4 border-t border-gray-700 overflow-auto">
-                  <StageStatusList executions={executions} />
-                </div>
+                {activeTab === 'pipeline' && (
+                  <div className="p-4 border-t border-gray-700 overflow-auto">
+                    <StageStatusList executions={executions} />
+                  </div>
+                )}
               </div>
             )}
           </div>

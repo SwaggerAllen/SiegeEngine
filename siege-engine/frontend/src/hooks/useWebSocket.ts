@@ -7,7 +7,7 @@ import type { WSEvent } from '../types/pipeline';
 export function useWebSocket(projectId: string | undefined) {
   const wsRef = useRef<WebSocket | null>(null);
   const { updateFromWS } = usePipelineStore();
-  const { fetchDAG, selectArtifact } = useDAGStore();
+  const { fetchDAG, fetchDocumentsDAG, selectArtifact } = useDAGStore();
   const { fetchArtifact } = useProjectStore();
   const [connected, setConnected] = useState(false);
   const { fetchStatus } = usePipelineStore();
@@ -57,6 +57,7 @@ export function useWebSocket(projectId: string | undefined) {
         data.type === 'staleness_propagated'
       ) {
         fetchDAG(projectId);
+        fetchDocumentsDAG(projectId);
         fetchStatus(projectId);
       }
 

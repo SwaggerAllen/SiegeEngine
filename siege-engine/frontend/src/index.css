@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* Spinner animation for active pipeline stages */
 @keyframes spin-slow {
