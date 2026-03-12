@@ -81,12 +81,6 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           />
         )}
 
-        <button
-          onClick={() => setShowEditor(!showEditor)}
-          className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-        >
-          {showEditor ? 'Hide Editor' : 'Edit & Approve'}
-        </button>
       </div>
 
       {/* Action buttons */}
@@ -111,6 +105,12 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
         >
           Reject & Re-generate
+        </button>
+        <button
+          onClick={() => setShowEditor(!showEditor)}
+          className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+        >
+          {showEditor ? 'Hide Editor' : 'Edit & Approve'}
         </button>
       </div>
     </div>

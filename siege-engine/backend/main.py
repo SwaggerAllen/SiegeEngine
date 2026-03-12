@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
-from backend.database import SessionLocal, init_db
+from backend.database import SessionLocal, engine, init_db
 
 # Configure logging for the whole backend
 logging.basicConfig(
@@ -38,10 +38,57 @@ async def lifespan(app: FastAPI):
     Path(settings.git_repos_base_path).mkdir(parents=True, exist_ok=True)
     init_db()
 
+    # Log database diagnostics so we can tell if the volume mounted correctly
+    _log_db_diagnostics()
+
     # Startup recovery: mark any in-flight executions as failed
     _recover_crashed_executions()
 
     yield
+
+    # Graceful shutdown: checkpoint WAL so all data is in the main DB file
+    # This prevents data loss when Fly.io stops the machine during deploys
+    logger.info("Shutting down — checkpointing SQLite WAL...")
+    try:
+        from sqlalchemy import text as _text
+        with engine.begin() as conn:
+            conn.execute(_text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        engine.dispose()
+        logger.info("SQLite WAL checkpointed and connections closed.")
+    except Exception as e:
+        logger.error("Failed to checkpoint WAL on shutdown: %s", e)
+
+
+def _log_db_diagnostics():
+    """Log database file info at startup to help debug persistence issues."""
+    from sqlalchemy import text as _text
+
+    db_url = settings.database_url
+    logger.info("Database URL: %s", db_url)
+
+    # Extract file path from sqlite URL
+    if db_url.startswith("sqlite:///"):
+        db_path = db_url.replace("sqlite:///", "/", 1) if db_url.startswith("sqlite:////") else db_url.replace("sqlite:///", "", 1)
+        db_file = Path(db_path)
+        if db_file.exists():
+            size_kb = db_file.stat().st_size / 1024
+            logger.info("Database file: %s (%.1f KB)", db_file, size_kb)
+        else:
+            logger.warning("Database file does not exist yet: %s (fresh deploy?)", db_file)
+
+    # Count projects and users as a sanity check
+    db = SessionLocal()
+    try:
+        from backend.models import Project, User
+        project_count = db.query(Project).count()
+        user_count = db.query(User).count()
+        logger.info("Database contains %d projects, %d users", project_count, user_count)
+        if project_count == 0 and user_count == 0:
+            logger.warning("Database is empty — volume may not have mounted correctly!")
+    except Exception as e:
+        logger.error("Failed to query database diagnostics: %s", e)
+    finally:
+        db.close()
 
 
 def _recover_crashed_executions():

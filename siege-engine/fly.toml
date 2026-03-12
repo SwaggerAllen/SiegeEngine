@@ -8,6 +8,9 @@ primary_region = 'iad'
 
 [build]
 
+[deploy]
+  strategy = 'immediate'
+
 [env]
   SIEGE_CORS_ORIGINS = '["https://siege-engine.fly.dev"]'
   SIEGE_DATABASE_URL = 'sqlite:////data/siege_engine.db'
