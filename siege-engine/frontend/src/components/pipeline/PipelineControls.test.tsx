@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { PipelineControls } from './PipelineControls';
 
 const mockStartPipeline = vi.fn();
+const mockResumePipeline = vi.fn();
 const mockCancelPipeline = vi.fn();
 
 vi.mock('../../store/pipelineStore', () => ({
@@ -10,7 +11,9 @@ vi.mock('../../store/pipelineStore', () => ({
     isRunning: false,
     isPaused: false,
     currentRunNumber: null,
+    runs: [],
     startPipeline: mockStartPipeline,
+    resumeRun: mockResumePipeline,
     cancelPipeline: mockCancelPipeline,
   })),
 }));
@@ -22,7 +25,9 @@ function mockStoreValues(values: Record<string, unknown>) {
     isRunning: false,
     isPaused: false,
     currentRunNumber: null,
+    runs: [],
     startPipeline: mockStartPipeline,
+    resumeRun: mockResumePipeline,
     cancelPipeline: mockCancelPipeline,
     ...values,
   } as ReturnType<typeof usePipelineStore>);
@@ -31,6 +36,7 @@ function mockStoreValues(values: Record<string, unknown>) {
 describe('PipelineControls', () => {
   beforeEach(() => {
     mockStartPipeline.mockReset();
+    mockResumePipeline.mockReset();
     mockCancelPipeline.mockReset();
     mockStoreValues({});
   });
@@ -112,5 +118,45 @@ describe('PipelineControls', () => {
     await user.click(screen.getByText('Cancel'));
 
     expect(mockCancelPipeline).toHaveBeenCalledWith('proj-1');
+  });
+
+  it('shows Resume button when there is a completed run', () => {
+    mockStoreValues({
+      runs: [{ id: '1', run_number: 1, status: 'completed', run_id: 'r-1' }],
+    });
+    render(<PipelineControls projectId="proj-1" />);
+
+    expect(screen.getByText('Resume')).toBeInTheDocument();
+  });
+
+  it('does not show Resume button when there are no completed runs', () => {
+    mockStoreValues({ runs: [] });
+    render(<PipelineControls projectId="proj-1" />);
+
+    expect(screen.queryByText('Resume')).not.toBeInTheDocument();
+  });
+
+  it('calls resumeRun when Resume config panel is used', async () => {
+    const user = userEvent.setup();
+    mockStoreValues({
+      runs: [{ id: '1', run_number: 1, status: 'completed', run_id: 'r-1' }],
+    });
+    render(<PipelineControls projectId="proj-1" />);
+
+    // Click Resume button to open config panel
+    await user.click(screen.getByText('Resume'));
+
+    // Should show resume-specific header
+    expect(screen.getByText('Resume Run')).toBeInTheDocument();
+
+    // Click the Resume confirm button inside the panel (second one — the first is the trigger)
+    const resumeBtns = screen.getAllByRole('button', { name: 'Resume' });
+    await user.click(resumeBtns[resumeBtns.length - 1]);
+
+    expect(mockResumePipeline).toHaveBeenCalledWith('proj-1', {
+      human_review: true,
+      ai_loops: 1,
+      stop_point: 'after_all',
+    });
   });
 });

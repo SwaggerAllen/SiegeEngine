@@ -18,6 +18,7 @@ interface PipelineState {
   fetchStatus: (projectId: string) => Promise<void>;
   fetchRuns: (projectId: string) => Promise<void>;
   startPipeline: (projectId: string, options?: PipelineStartOptions) => Promise<void>;
+  resumeRun: (projectId: string, options?: PipelineStartOptions) => Promise<void>;
   resumeStage: (projectId: string, executionId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
   reviseArtifact: (projectId: string, artifactId: string, feedback: string) => Promise<void>;
   cancelPipeline: (projectId: string) => Promise<void>;
@@ -76,6 +77,21 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       get().fetchRuns(projectId);
     } catch (err) {
       console.error('[Pipeline] Start failed:', err);
+      set({ isRunning: false });
+      throw err;
+    }
+  },
+
+  resumeRun: async (projectId, options) => {
+    console.log('[Pipeline] Resuming run:', projectId, 'options:', options);
+    set({ isRunning: true, isPaused: false, pausedStage: null });
+    try {
+      const result = await pipelineApi.resumeRun(projectId, options);
+      console.log('[Pipeline] Resume run response:', result);
+      set({ currentRunNumber: result.run_number });
+      get().fetchRuns(projectId);
+    } catch (err) {
+      console.error('[Pipeline] Resume run failed:', err);
       set({ isRunning: false });
       throw err;
     }

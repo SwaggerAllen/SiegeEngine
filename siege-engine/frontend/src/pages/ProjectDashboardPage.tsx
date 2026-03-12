@@ -65,8 +65,8 @@ export function ProjectDashboardPage() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white">
-      {/* Header */}
-      <header className="border-b border-gray-700 px-3 md:px-4 py-2 md:py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
+      {/* Header — hidden on mobile when artifact pane is expanded */}
+      <header className={`border-b border-gray-700 px-3 md:px-4 py-2 md:py-3 flex flex-wrap items-center justify-between gap-2 shrink-0 ${paneExpanded ? 'hidden md:flex' : ''}`}>
         <div className="flex items-center gap-2 md:gap-4 min-w-0">
           <Link to="/projects" className="text-gray-400 hover:text-white text-sm shrink-0">
             &larr; Projects
@@ -112,8 +112,8 @@ export function ProjectDashboardPage() {
         </div>
       </header>
 
-      {/* Tab bar */}
-      <div className="border-b border-gray-700 px-4 flex gap-4 shrink-0">
+      {/* Tab bar — hidden on mobile when artifact pane is expanded */}
+      <div className={`border-b border-gray-700 px-4 flex gap-4 shrink-0 ${paneExpanded ? 'hidden md:flex' : ''}`}>
         {(['documents', 'pipeline', 'prompts', 'chat', 'settings'] as Tab[]).map((tab) => (
           <button
             key={tab}

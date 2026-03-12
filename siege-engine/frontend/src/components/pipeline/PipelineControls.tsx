@@ -10,13 +10,19 @@ const STOP_POINT_OPTIONS = [
 ];
 
 export function PipelineControls({ projectId }: { projectId: string }) {
-  const { isRunning, isPaused, currentRunNumber, startPipeline, cancelPipeline } =
+  const { isRunning, isPaused, currentRunNumber, runs, startPipeline, resumeRun, cancelPipeline } =
     usePipelineStore();
   const [showConfig, setShowConfig] = useState(false);
+  const [configMode, setConfigMode] = useState<'start' | 'resume'>('start');
   const [humanReview, setHumanReview] = useState(true);
   const [aiLoops, setAiLoops] = useState(1);
   const [stopPoint, setStopPoint] = useState('after_all');
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Check if there's a previous run to resume from
+  const hasCompletedRun = runs.some(
+    (r) => r.status === 'completed' || r.status === 'paused' || r.status === 'cancelled' || r.status === 'failed'
+  );
 
   // Close popover on outside click
   useEffect(() => {
@@ -30,22 +36,31 @@ export function PipelineControls({ projectId }: { projectId: string }) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showConfig]);
 
-  const handleStart = async () => {
+  const openConfig = (mode: 'start' | 'resume') => {
+    setConfigMode(mode);
+    setShowConfig(true);
+  };
+
+  const handleConfirm = async () => {
     const options: PipelineStartOptions = {
       human_review: humanReview,
       ai_loops: aiLoops,
       stop_point: stopPoint,
     };
     setShowConfig(false);
-    await startPipeline(projectId, options);
+    if (configMode === 'resume') {
+      await resumeRun(projectId, options);
+    } else {
+      await startPipeline(projectId, options);
+    }
   };
 
   return (
     <div className="flex items-center gap-2 relative">
       {!isRunning ? (
-        <div ref={panelRef}>
+        <div ref={panelRef} className="flex items-center gap-1.5">
           <button
-            onClick={() => setShowConfig(!showConfig)}
+            onClick={() => openConfig('start')}
             className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
           >
             <span>Start Run</span>
@@ -54,9 +69,28 @@ export function PipelineControls({ projectId }: { projectId: string }) {
             </svg>
           </button>
 
+          {hasCompletedRun && (
+            <button
+              onClick={() => openConfig('resume')}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>Resume</span>
+            </button>
+          )}
+
           {showConfig && (
             <div className="absolute top-full mt-1 right-0 z-50 w-72 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-white">Run Configuration</h3>
+              <h3 className="text-sm font-semibold text-white">
+                {configMode === 'resume' ? 'Resume Run' : 'Run Configuration'}
+              </h3>
+              {configMode === 'resume' && (
+                <p className="text-xs text-gray-400">
+                  Continues from the last run, re-processing stale and in-review nodes.
+                </p>
+              )}
 
               {/* Human Review Toggle */}
               <label className="flex items-center gap-2 cursor-pointer">
@@ -100,12 +134,16 @@ export function PipelineControls({ projectId }: { projectId: string }) {
                 </select>
               </div>
 
-              {/* Start Button */}
+              {/* Confirm Button */}
               <button
-                onClick={handleStart}
-                className="w-full py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded font-medium"
+                onClick={handleConfirm}
+                className={`w-full py-1.5 text-white text-sm rounded font-medium ${
+                  configMode === 'resume'
+                    ? 'bg-blue-600 hover:bg-blue-700'
+                    : 'bg-green-600 hover:bg-green-700'
+                }`}
               >
-                Start
+                {configMode === 'resume' ? 'Resume' : 'Start'}
               </button>
             </div>
           )}

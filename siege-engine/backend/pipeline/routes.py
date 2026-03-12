@@ -39,6 +39,7 @@ from backend.pipeline.schemas import (
     PromptConfigUpdate,
     RegenerateRequest,
     ResumeRequest,
+    ResumeRunRequest,
     ReviseRequest,
     StageDefinitionResponse,
     StageDefinitionUpdate,
@@ -162,6 +163,83 @@ async def start_pipeline(
         "status": "started",
         "run_number": run_number,
         "run_id": pipeline_run.run_id,
+    }
+
+
+@router.post("/{project_id}/resume-run")
+async def resume_run(
+    project_id: str,
+    req: ResumeRunRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Start a new run that continues where the last run left off.
+
+    Carries over approved + in-review executions from the most recent run,
+    then re-processes any stale or missing nodes.
+    """
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    # Find the most recent run (completed, paused, cancelled, or failed)
+    prev_run = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id)
+        .order_by(PipelineRun.run_number.desc())
+        .first()
+    )
+    if not prev_run:
+        raise HTTPException(400, "No previous run to resume from")
+    if prev_run.status == PipelineRunStatus.RUNNING:
+        raise HTTPException(400, "Previous run is still active — cancel it first")
+
+    # Compute next run number
+    max_num = (
+        db.query(func.max(PipelineRun.run_number))
+        .filter_by(project_id=project_id)
+        .scalar()
+    ) or 0
+    run_number = max_num + 1
+
+    pipeline_run = PipelineRun(
+        project_id=project_id,
+        run_number=run_number,
+        human_review=req.human_review,
+        ai_loops=req.ai_loops,
+        stop_point=StopPoint(req.stop_point),
+    )
+    db.add(pipeline_run)
+    db.commit()
+    db.refresh(pipeline_run)
+
+    logger.info(
+        "POST /resume-run: project_id=%s, run_number=%d, resuming from run #%d (run_id=%s)",
+        project_id, run_number, prev_run.run_number, prev_run.run_id,
+    )
+
+    pipeline_run_id = pipeline_run.id
+    prev_run_id = prev_run.run_id
+
+    async def _run():
+        from backend.database import SessionLocal
+
+        bg_db = SessionLocal()
+        try:
+            engine = PipelineEngine(bg_db)
+            await engine.resume_run(project_id, pipeline_run_id, prev_run_id)
+        except Exception:
+            logger.exception("Resume run failed for project_id=%s", project_id)
+        finally:
+            bg_db.close()
+
+    asyncio.ensure_future(_run())
+
+    return {
+        "status": "resumed",
+        "run_number": run_number,
+        "run_id": pipeline_run.run_id,
+        "resumed_from": prev_run.run_number,
     }
 
 

@@ -19,6 +19,12 @@ class ReviseRequest(BaseModel):
     feedback: str
 
 
+class ResumeRunRequest(BaseModel):
+    human_review: bool = True
+    ai_loops: int = 1
+    stop_point: str = "after_all"
+
+
 class RegenerateRequest(BaseModel):
     artifact_ids: list[str]
 

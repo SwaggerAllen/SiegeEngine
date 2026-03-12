@@ -3,8 +3,9 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
@@ -92,4 +93,18 @@ app.include_router(chat_router, prefix="/api/chat", tags=["chat"])
 # Serve SPA static files (production build)
 spa_path = Path("frontend/dist")
 if spa_path.exists():
-    app.mount("/", StaticFiles(directory=str(spa_path), html=True), name="spa")
+    # Mount static assets (JS, CSS, images) at /assets
+    assets_path = spa_path / "assets"
+    if assets_path.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_path)), name="assets")
+
+    # Serve other static files (favicon, etc.) and SPA catch-all
+    @app.get("/{full_path:path}")
+    async def serve_spa(request: Request, full_path: str):
+        """Serve static files if they exist, otherwise return index.html for SPA routing."""
+        # Try to serve the exact file first (e.g., favicon.ico, robots.txt)
+        file_path = spa_path / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(file_path)
+        # Fall back to index.html for all SPA routes
+        return FileResponse(spa_path / "index.html")

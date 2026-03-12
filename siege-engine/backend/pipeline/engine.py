@@ -92,6 +92,96 @@ class PipelineEngine:
         await self._find_and_execute_next(project_id, run_id, config, pipeline_run)
         return run_id
 
+    async def resume_run(
+        self, project_id: str, pipeline_run_id: str, prev_run_id: str,
+    ) -> str:
+        """Resume a pipeline by carrying over work from a previous run.
+
+        Copies APPROVED + AWAITING_REVIEW executions from the previous run,
+        so the engine only re-processes stale/failed/missing nodes.
+        """
+        logger.info(
+            "resume_run called: project_id=%s, pipeline_run_id=%s, prev_run_id=%s",
+            project_id, pipeline_run_id, prev_run_id,
+        )
+
+        project = self.db.get(Project, project_id)
+        if not project or not project.pipeline_config:
+            raise ValueError("Project or pipeline config not found")
+
+        config = project.pipeline_config
+        pipeline_run = self.db.get(PipelineRun, pipeline_run_id)
+        if not pipeline_run:
+            raise ValueError("PipelineRun not found")
+
+        new_run_id = pipeline_run.run_id
+
+        # Find all executions from the previous run that should carry over
+        prev_executions = (
+            self.db.query(StageExecution)
+            .filter_by(project_id=project_id, run_id=prev_run_id)
+            .filter(StageExecution.status.in_([
+                StageStatus.APPROVED,
+                StageStatus.AWAITING_REVIEW,
+            ]))
+            .all()
+        )
+
+        # Check which artifacts are stale — these should NOT be carried over
+        stale_artifact_ids = set()
+        stale_artifacts = (
+            self.db.query(Artifact)
+            .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
+            .all()
+        )
+        for art in stale_artifacts:
+            stale_artifact_ids.add(art.id)
+
+        carried = 0
+        review_carried = 0
+        for prev_exec in prev_executions:
+            # Skip executions whose artifacts are stale
+            if prev_exec.artifact_id and prev_exec.artifact_id in stale_artifact_ids:
+                logger.info(
+                    "Skipping stale execution %s (stage=%s, component=%s)",
+                    prev_exec.id, prev_exec.stage_key, prev_exec.component_key,
+                )
+                continue
+
+            # Create a copy for the new run
+            new_exec = StageExecution(
+                project_id=project_id,
+                stage_key=prev_exec.stage_key,
+                component_key=prev_exec.component_key,
+                status=prev_exec.status,
+                artifact_id=prev_exec.artifact_id,
+                started_at=prev_exec.started_at,
+                completed_at=prev_exec.completed_at,
+                run_id=new_run_id,
+                retry_count=0,
+            )
+            self.db.add(new_exec)
+            if prev_exec.status == StageStatus.AWAITING_REVIEW:
+                review_carried += 1
+            else:
+                carried += 1
+
+        self.db.commit()
+        logger.info(
+            "Carried over %d approved + %d in-review executions from prev run %s to new run %s",
+            carried, review_carried, prev_run_id, new_run_id,
+        )
+
+        stages = sorted(config.stages, key=lambda s: s.order_index)
+        logger.info(
+            "Resume run_id=%s (run #%s) with %d stages: %s",
+            new_run_id, pipeline_run.run_number,
+            len(stages), [s.stage_key for s in stages],
+        )
+
+        await self._find_and_execute_next(project_id, new_run_id, config, pipeline_run)
+        return new_run_id
+
     def _should_pause(
         self, stage_def: StageDefinition, pipeline_run: PipelineRun | None,
     ) -> bool:
@@ -133,16 +223,23 @@ class PipelineEngine:
         self, project_id: str, run_id: str, config: PipelineConfig,
         pipeline_run: PipelineRun | None = None,
     ):
-        """Find the next executable work item across all stages and execute it."""
+        """Find the next executable work item across all stages and execute it.
+
+        Scans the full DAG rather than stopping at the first incomplete stage,
+        so downstream entities whose dependencies are met can progress even while
+        sibling entities in earlier stages are still awaiting review.
+        """
         stages = sorted(config.stages, key=lambda s: s.order_index)
+        has_pending_work = False
+        did_execute = False
 
         for stage_def in stages:
             # Check if stage is fully complete
             if self._stage_fully_complete(project_id, stage_def, run_id):
                 continue
 
-            # Check if any executions are still awaiting review
-            awaiting = (
+            # Check if any executions are still in-flight or awaiting review
+            pending_count = (
                 self.db.query(StageExecution)
                 .filter_by(
                     project_id=project_id,
@@ -156,15 +253,13 @@ class PipelineEngine:
                 ]))
                 .count()
             )
-            if awaiting > 0:
-                logger.info("Stage %s has %d pending executions, pausing", stage_def.stage_key, awaiting)
-                await ws_manager.broadcast(project_id, {
-                    "type": "pipeline_paused",
-                    "stage_key": stage_def.stage_key,
-                    "run_id": run_id,
-                    "message": f"Awaiting review for {stage_def.display_name}",
-                })
-                return
+            if pending_count > 0:
+                # Stage has pending work — note it but DON'T stop.
+                # Continue scanning downstream stages for entities whose
+                # dependencies are already met.
+                has_pending_work = True
+                logger.info("Stage %s has %d pending executions, scanning downstream", stage_def.stage_key, pending_count)
+                continue
 
             fan_out = stage_def.fan_out_strategy
 
@@ -183,6 +278,7 @@ class PipelineEngine:
                 if existing:
                     # Already has a non-rejected execution but stage not complete
                     # (could be failed) — skip to avoid re-running
+                    has_pending_work = True
                     continue
 
                 # Execute single stage
@@ -197,6 +293,7 @@ class PipelineEngine:
                 )
                 self.db.add(execution)
                 self.db.flush()
+                did_execute = True
 
                 await self._run_stage(
                     project_id, stage_def, input_artifacts, None, execution, run_id,
@@ -217,6 +314,7 @@ class PipelineEngine:
 
                 # Check if pipeline should pause at this stage
                 if execution.status == StageStatus.AWAITING_REVIEW:
+                    has_pending_work = True
                     if self._should_pause(stage_def, pipeline_run):
                         await ws_manager.broadcast(project_id, {
                             "type": "pipeline_paused",
@@ -229,16 +327,18 @@ class PipelineEngine:
             elif fan_out in (FanOutStrategy.COMPONENT, FanOutStrategy.SUB_COMPONENT, FanOutStrategy.LEAF):
                 ready = self._get_ready_entities(project_id, stage_def, run_id)
                 if not ready:
-                    # No entities ready — either waiting on upstream deps or no entities exist
-                    # Check if there are ANY entities that could potentially be ready
+                    # No entities ready — check if any entities exist at all
                     all_entities = self._get_all_entities_for_stage(project_id, stage_def)
                     if not all_entities:
                         # No entities at all — skip this stage (e.g., no sub-components)
                         logger.info("No entities for stage %s, skipping", stage_def.stage_key)
                         continue
-                    # Entities exist but none are ready — blocked on upstream deps
-                    logger.info("Stage %s: entities exist but none ready, blocked on upstream", stage_def.stage_key)
-                    return
+                    # Entities exist but none are ready — blocked on upstream deps.
+                    # Continue scanning instead of stopping — downstream stages
+                    # for already-approved entities may still be runnable.
+                    has_pending_work = True
+                    logger.info("Stage %s: entities exist but none ready, scanning downstream", stage_def.stage_key)
+                    continue
 
                 # Execute ready entities
                 stage_failed = False
@@ -255,6 +355,7 @@ class PipelineEngine:
                     )
                     self.db.add(execution)
                     self.db.flush()
+                    did_execute = True
 
                     await self._run_stage(
                         project_id, stage_def, input_artifacts, entity_key, execution, run_id,
@@ -290,6 +391,7 @@ class PipelineEngine:
                         .count()
                     )
                     if awaiting_review > 0:
+                        has_pending_work = True
                         await ws_manager.broadcast(project_id, {
                             "type": "pipeline_paused",
                             "stage_key": stage_def.stage_key,
@@ -297,6 +399,10 @@ class PipelineEngine:
                             "message": f"Awaiting review for {stage_def.display_name}",
                         })
                         return
+
+        # If pending work exists, the pipeline isn't finished — just no new work to do
+        if has_pending_work:
+            return
 
         # If we get here, all stages are complete
         logger.info("Pipeline run_id=%s completed successfully", run_id)
@@ -1069,7 +1175,8 @@ class PipelineEngine:
             run_id=run_id,
         )
         self.db.add(execution)
-        self.db.flush()
+        # Commit so other sessions (DAG endpoint) can see the GENERATING/RUNNING status
+        self.db.commit()
 
         logger.info("Revising artifact %s (stage=%s, component=%s) with feedback",
                      artifact_id, stage_def.stage_key, artifact.component_key)
@@ -1192,6 +1299,9 @@ class PipelineEngine:
                      stage_def.stage_key, component_key, execution.id,
                      f"{len(human_notes)} chars" if human_notes else "None")
         logger.info("  input_artifacts keys: %s", list(input_artifacts.keys()))
+
+        # Commit the RUNNING execution so other sessions (DAG endpoint) can see it
+        self.db.commit()
 
         try:
             await ws_manager.broadcast(project_id, {

@@ -22,6 +22,14 @@ export async function startPipeline(
   return data;
 }
 
+export async function resumeRun(
+  projectId: string,
+  options?: PipelineStartOptions
+) {
+  const { data } = await api.post(`/pipeline/${projectId}/resume-run`, options || {});
+  return data;
+}
+
 export async function listRuns(projectId: string): Promise<PipelineRun[]> {
   const { data } = await api.get(`/pipeline/${projectId}/runs`);
   return data;
