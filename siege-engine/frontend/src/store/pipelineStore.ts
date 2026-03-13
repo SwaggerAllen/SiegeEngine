@@ -60,6 +60,8 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       set({
         runs,
         currentRunNumber: activeRun?.run_number ?? (runs.length > 0 ? runs[0].run_number : null),
+        isRunning: activeRun?.status === 'running' || activeRun?.status === 'paused',
+        isPaused: activeRun?.status === 'paused',
       });
     } catch (err) {
       console.error('[Pipeline] Failed to fetch runs:', err);
