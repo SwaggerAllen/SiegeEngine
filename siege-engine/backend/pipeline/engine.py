@@ -68,7 +68,12 @@ class PipelineEngine:
     async def start_pipeline(
         self, project_id: str, pipeline_run_id: str | None = None,
     ) -> str:
-        """Start a pipeline run. Returns run_id."""
+        """Start a pipeline run. Returns run_id.
+
+        Carries over APPROVED (non-stale) executions from the most recent run
+        so that already-approved work is preserved.  Only non-approved stages
+        (awaiting review, rejected, failed, pending) are re-processed.
+        """
         logger.info("start_pipeline called for project_id=%s, pipeline_run_id=%s", project_id, pipeline_run_id)
 
         project = self.db.get(Project, project_id)
@@ -81,6 +86,48 @@ class PipelineEngine:
         # Load PipelineRun if provided (new flow), otherwise legacy fallback
         pipeline_run = self.db.get(PipelineRun, pipeline_run_id) if pipeline_run_id else None
         run_id = pipeline_run.run_id if pipeline_run else str(uuid.uuid4())
+
+        # Carry over APPROVED executions from the most recent previous run
+        # so we don't regenerate already-approved artifacts.
+        prev_run = (
+            self.db.query(PipelineRun)
+            .filter_by(project_id=project_id)
+            .filter(PipelineRun.id != pipeline_run_id)
+            .order_by(PipelineRun.run_number.desc())
+            .first()
+        )
+        if prev_run:
+            stale_artifact_ids = {
+                a.id for a in
+                self.db.query(Artifact)
+                .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
+                .all()
+            }
+            prev_approved = (
+                self.db.query(StageExecution)
+                .filter_by(project_id=project_id, run_id=prev_run.run_id,
+                           status=StageStatus.APPROVED)
+                .all()
+            )
+            carried = 0
+            for prev_exec in prev_approved:
+                if prev_exec.artifact_id and prev_exec.artifact_id in stale_artifact_ids:
+                    continue
+                new_exec = StageExecution(
+                    project_id=project_id,
+                    stage_key=prev_exec.stage_key,
+                    component_key=prev_exec.component_key,
+                    status=StageStatus.APPROVED,
+                    artifact_id=prev_exec.artifact_id,
+                    started_at=prev_exec.started_at,
+                    completed_at=prev_exec.completed_at,
+                    run_id=run_id,
+                    retry_count=0,
+                )
+                self.db.add(new_exec)
+                carried += 1
+            self.db.commit()
+            logger.info("Carried over %d approved executions from run %s", carried, prev_run.run_id)
 
         stages = sorted(config.stages, key=lambda s: s.order_index)
         logger.info(
@@ -879,6 +926,21 @@ class PipelineEngine:
                         execution.project_id, stage_def, execution.component_key, execution
                     )
 
+                    # If this stage was regenerated, downstream approved artifacts are
+                    # stale because they were built on the old version.  Invalidate
+                    # their executions so _find_and_execute_next picks them up.
+                    if (execution.retry_count or 0) > 0:
+                        stale_ids = self._invalidate_stale_downstream(
+                            execution.project_id, execution.run_id,
+                            stage_def.order_index, config,
+                        )
+                        if stale_ids:
+                            self.db.commit()
+                            await ws_manager.broadcast(execution.project_id, {
+                                "type": "staleness_propagated",
+                                "stale_artifact_ids": stale_ids,
+                            })
+
             # Find and execute next available work
             await self._check_and_continue(execution)
 
@@ -1016,6 +1078,49 @@ class PipelineEngine:
         self.db.flush()
         return stale_artifact_ids
 
+    def _invalidate_stale_downstream(
+        self, project_id: str, run_id: str,
+        approved_stage_order_index: int, config: PipelineConfig,
+    ) -> list[str]:
+        """After approving a regenerated stage, invalidate downstream APPROVED
+        executions so they get re-processed with the updated upstream content.
+
+        Returns list of stale artifact IDs for WS broadcast.
+        """
+        stages = sorted(config.stages, key=lambda s: s.order_index)
+        stale_artifact_ids: list[str] = []
+
+        for stage_def in stages:
+            if stage_def.order_index <= approved_stage_order_index:
+                continue
+
+            downstream_execs = (
+                self.db.query(StageExecution)
+                .filter_by(
+                    project_id=project_id,
+                    stage_key=stage_def.stage_key,
+                    run_id=run_id,
+                    status=StageStatus.APPROVED,
+                )
+                .all()
+            )
+
+            for exc in downstream_execs:
+                logger.info(
+                    "Invalidating stale downstream execution %s (stage=%s, component=%s)",
+                    exc.id, exc.stage_key, exc.component_key,
+                )
+                exc.status = StageStatus.REJECTED
+
+                if exc.artifact_id:
+                    artifact = self.db.get(Artifact, exc.artifact_id)
+                    if artifact:
+                        artifact.status = ArtifactStatus.STALE
+                        stale_artifact_ids.append(artifact.id)
+
+        self.db.flush()
+        return stale_artifact_ids
+
     async def _regenerate_stage(
         self, old_execution: StageExecution, human_notes: str | None
     ):
@@ -1040,6 +1145,12 @@ class PipelineEngine:
 
         input_artifacts = self._gather_inputs(project_id, stage_def, old_execution.component_key)
 
+        # Set artifact status to GENERATING so the DAG node shows the loading animation
+        if old_execution.artifact_id:
+            artifact = self.db.get(Artifact, old_execution.artifact_id)
+            if artifact:
+                artifact.status = ArtifactStatus.GENERATING
+
         run_id = old_execution.run_id or str(uuid.uuid4())
         new_execution = StageExecution(
             project_id=project_id,
@@ -1051,17 +1162,16 @@ class PipelineEngine:
             retry_count=(old_execution.retry_count or 0) + 1,
         )
         self.db.add(new_execution)
-        self.db.flush()
+        # Commit so DAG endpoint sees GENERATING status
+        self.db.commit()
 
         logger.info("Regenerating stage %s (component=%s) with human feedback, new execution=%s",
                      old_execution.stage_key, old_execution.component_key, new_execution.id)
 
         await ws_manager.broadcast(project_id, {
-            "type": "stage_progress",
+            "type": "stage_started",
             "stage_key": old_execution.stage_key,
             "component_key": old_execution.component_key,
-            "step": "regenerating",
-            "message": f"Regenerating {stage_def.display_name} with feedback...",
         })
 
         try:

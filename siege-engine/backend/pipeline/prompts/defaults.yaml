@@ -463,6 +463,8 @@ prompts:
 
       Your review should be a comprehensive prose document — not a list of bullet points. Write as a thoughtful colleague would write a detailed review memo. Be specific, reference particular sections of the artifact, and explain your reasoning.
 
+      IMPORTANT: Do not criticize a project for being too large in scope or too complex. This system is designed to take projects from zero to enterprise scale in days or weeks, so projects will necessarily be large and complex. As long as the design is technically feasible and architecturally sound, scope and complexity are not valid concerns. Focus your review on correctness, completeness, consistency, and quality of the technical approach rather than questioning the ambition of the project.
+
       Your review document must contain the following sections:
 
       ## Executive Assessment
