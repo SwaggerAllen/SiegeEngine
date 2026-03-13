@@ -27,7 +27,7 @@ export function ProjectDashboardPage() {
   const { executions, fetchConfig, fetchStatus, fetchRuns, currentRunNumber, isRunning, isViewingHistory, reset: resetPipeline } = usePipelineStore();
   const { user } = useAuthStore();
   const { editPromptStageKey, setEditPromptStageKey, selectedStageKey } = useDAGStore();
-  const { connected } = useWebSocket(projectId);
+  const { connected, reconnect } = useWebSocket(projectId);
   const [showInvites, setShowInvites] = useState(false);
   const [showPRDialog, setShowPRDialog] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('documents');
@@ -104,11 +104,17 @@ export function ProjectDashboardPage() {
               Invites
             </button>
           )}
-          <span
-            className={`text-xs ${connected ? 'text-green-400' : 'text-red-400'}`}
-          >
-            {connected ? 'WS Connected' : 'WS Disconnected'}
-          </span>
+          {connected ? (
+            <span className="text-xs text-green-400">WS Connected</span>
+          ) : (
+            <button
+              onClick={reconnect}
+              className="text-xs text-yellow-400 animate-pulse hover:text-yellow-300 cursor-pointer"
+              title="Click to reconnect now"
+            >
+              WS Reconnecting...
+            </button>
+          )}
         </div>
       </header>
 

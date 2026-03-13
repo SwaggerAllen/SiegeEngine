@@ -17,15 +17,11 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const [submitting, setSubmitting] = useState(false);
   const [feedbackSaved, setFeedbackSaved] = useState(false);
 
-  // Pre-populate notes with existing human_review_notes
+  // Reset to blank when switching artifacts
   useEffect(() => {
-    if (artifact.human_review_notes) {
-      setNotes(artifact.human_review_notes);
-    } else {
-      setNotes('');
-    }
+    setNotes('');
     setFeedbackSaved(false);
-  }, [artifact.id, artifact.human_review_notes]);
+  }, [artifact.id]);
 
   if (!execution || execution.status !== 'awaiting_review') return null;
 
@@ -55,12 +51,6 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   return (
     <div className="space-y-3">
       <h4 className="text-sm font-semibold text-yellow-400">Your Feedback</h4>
-
-      {artifact.human_review_notes && (
-        <div className="text-xs text-blue-400 flex items-center gap-1">
-          <span>Feedback saved on this artifact</span>
-        </div>
-      )}
 
       <div className="space-y-3">
         <div>
