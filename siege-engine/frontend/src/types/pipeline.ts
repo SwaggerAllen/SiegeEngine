@@ -61,4 +61,4 @@ export type WSEvent =
   | { type: 'pipeline_completed'; run_id: string; run_number?: number; git_commit_sha?: string }
   | { type: 'pipeline_paused'; stage_key: string; run_id: string; message?: string }
   | { type: 'staleness_propagated'; stale_artifact_ids: string[] }
-  | { type: 'feedback_saved'; stage_key: string; component_key?: string; execution_id: string };
+  | { type: 'feedback_saved'; stage_key: string; component_key?: string; execution_id: string; artifact_id?: string };

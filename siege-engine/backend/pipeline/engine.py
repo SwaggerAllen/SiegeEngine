@@ -956,6 +956,7 @@ class PipelineEngine:
                 "stage_key": execution.stage_key,
                 "component_key": execution.component_key,
                 "execution_id": execution_id,
+                "artifact_id": execution.artifact_id,
             })
 
     async def _check_and_continue(self, execution: StageExecution):

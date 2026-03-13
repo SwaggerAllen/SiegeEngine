@@ -56,8 +56,13 @@ export function ProjectDashboardPage() {
 
   if (!projectId) return null;
 
+  // Prefer an awaiting_review execution so the approve button shows when the
+  // artifact is in review.  Multiple executions can exist for the same artifact
+  // across pipeline runs; without this preference, find() may return an older
+  // approved/rejected one, hiding the review panel.
   const selectedExecution = selectedArtifact
-    ? executions.find((e) => e.artifact_id === selectedArtifact.id)
+    ? executions.find((e) => e.artifact_id === selectedArtifact.id && e.status === 'awaiting_review')
+      || executions.find((e) => e.artifact_id === selectedArtifact.id)
     : undefined;
 
   const isAdmin = user?.role === 'admin';
