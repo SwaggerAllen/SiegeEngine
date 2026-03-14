@@ -29,6 +29,11 @@ class RegenerateRequest(BaseModel):
     artifact_ids: list[str]
 
 
+class PromptPreviewRequest(BaseModel):
+    artifact_id: str
+    human_notes: str | None = None  # Optional draft feedback for "what-if" preview
+
+
 class StageDefinitionResponse(BaseModel):
     id: str
     stage_key: str

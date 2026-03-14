@@ -2,15 +2,19 @@ import { useEffect, useState } from 'react';
 import Markdown from 'react-markdown';
 import { useProjectStore } from '../../store/projectStore';
 import { usePipelineStore } from '../../store/pipelineStore';
+import { useAuthStore } from '../../store/authStore';
 import type { Artifact } from '../../types/project';
+import { CommentsPanel } from '../comments/CommentsPanel';
 
 const REVISABLE_STATUSES = new Set(['approved', 'stale']);
 
-type EditorTab = 'document' | 'feedback';
+type EditorTab = 'document' | 'feedback' | 'comments';
 
 export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
   const { updateArtifact } = useProjectStore();
   const { reviseArtifact } = usePipelineStore();
+  const { user } = useAuthStore();
+  const isViewer = user?.role === 'viewer';
   const [editing, setEditing] = useState(false);
   const [content, setContent] = useState(artifact.content || '');
   const [saving, setSaving] = useState(false);
@@ -19,7 +23,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   const [submittingRevision, setSubmittingRevision] = useState(false);
   const [activeTab, setActiveTab] = useState<EditorTab>('document');
 
-  const canRevise = REVISABLE_STATUSES.has(artifact.status);
+  const canRevise = !isViewer && REVISABLE_STATUSES.has(artifact.status);
   const reviewFeedback = artifact.ai_review_feedback as any;
 
   // Reset tab when artifact changes and feedback is gone
@@ -84,64 +88,66 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
             {artifact.status}
           </span>
         </div>
-        <div className="flex gap-2">
-          {editing ? (
-            <>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-              >
-                {saving ? 'Saving...' : 'Save'}
-              </button>
-              <button
-                onClick={() => {
-                  setContent(artifact.content || '');
-                  setEditing(false);
-                }}
-                className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => setEditing(true)}
-                className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-              >
-                Edit
-              </button>
-              {canRevise && (
+        {!isViewer && (
+          <div className="flex gap-2">
+            {editing ? (
+              <>
                 <button
-                  onClick={() => setShowRevise(!showRevise)}
-                  className={`px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 ${
-                    showRevise
-                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                      : 'bg-gray-600 hover:bg-gray-500 text-white'
-                  }`}
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
                 >
-                  {showRevise ? 'Cancel Revision' : 'Request AI Revision'}
+                  {saving ? 'Saving...' : 'Save'}
                 </button>
-              )}
-            </>
-          )}
-        </div>
+                <button
+                  onClick={() => {
+                    setContent(artifact.content || '');
+                    setEditing(false);
+                  }}
+                  className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setEditing(true)}
+                  className="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+                >
+                  Edit
+                </button>
+                {canRevise && (
+                  <button
+                    onClick={() => setShowRevise(!showRevise)}
+                    className={`px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 ${
+                      showRevise
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                        : 'bg-gray-600 hover:bg-gray-500 text-white'
+                    }`}
+                  >
+                    {showRevise ? 'Cancel Revision' : 'Request AI Revision'}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Tab bar - shown when any AI review feedback exists */}
-      {reviewFeedback && (
-        <div className="border-b border-gray-700 px-3 flex gap-4 shrink-0">
-          <button
-            onClick={() => setActiveTab('document')}
-            className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
-              activeTab === 'document'
-                ? 'border-blue-500 text-white'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
-          >
-            Document
-          </button>
+      {/* Tab bar */}
+      <div className="border-b border-gray-700 px-3 flex gap-4 shrink-0">
+        <button
+          onClick={() => setActiveTab('document')}
+          className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
+            activeTab === 'document'
+              ? 'border-blue-500 text-white'
+              : 'border-transparent text-gray-400 hover:text-white'
+          }`}
+        >
+          Document
+        </button>
+        {!isViewer && reviewFeedback && (
           <button
             onClick={() => setActiveTab('feedback')}
             className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
@@ -152,8 +158,18 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
           >
             AI Feedback
           </button>
-        </div>
-      )}
+        )}
+        <button
+          onClick={() => setActiveTab('comments')}
+          className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
+            activeTab === 'comments'
+              ? 'border-blue-500 text-white'
+              : 'border-transparent text-gray-400 hover:text-white'
+          }`}
+        >
+          Comments
+        </button>
+      </div>
 
       {/* Revision request section - only on document tab */}
       {showRevise && activeTab === 'document' && (
@@ -194,7 +210,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
             </div>
           )}
         </>
-      ) : (
+      ) : activeTab === 'feedback' ? (
         /* AI Feedback tab: summary + full document */
         <div className="flex-1 overflow-auto">
           {/* AI Review summary */}
@@ -244,6 +260,9 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
             </Markdown>
           </div>
         </div>
+      ) : (
+        /* Comments tab */
+        <CommentsPanel projectId={projectId} artifactId={artifact.id} />
       )}
     </div>
   );

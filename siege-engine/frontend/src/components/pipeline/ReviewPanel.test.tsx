@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ReviewPanel } from './ReviewPanel';
 import type { Artifact } from '../../types/project';
@@ -10,6 +10,28 @@ vi.mock('../../store/pipelineStore', () => ({
   usePipelineStore: vi.fn(() => ({
     resumeStage: mockResumeStage,
   })),
+}));
+
+vi.mock('../../store/authStore', () => ({
+  useAuthStore: vi.fn(() => ({
+    user: { id: 'user-1', username: 'admin', role: 'admin' },
+  })),
+}));
+
+vi.mock('../../api/comments', () => ({
+  listComments: vi.fn().mockResolvedValue([]),
+  createComment: vi.fn().mockResolvedValue({}),
+}));
+
+vi.mock('../../api/pipeline', () => ({
+  getPromptPreview: vi.fn().mockResolvedValue({
+    messages: [
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: 'Generate requirements.' },
+    ],
+    model: 'claude-sonnet-4-20250514',
+    temperature: 1.0,
+  }),
 }));
 
 const baseArtifact: Artifact = {
@@ -46,19 +68,19 @@ describe('ReviewPanel', () => {
     mockResumeStage.mockReset();
   });
 
-  it('renders nothing when execution is undefined', () => {
-    const { container } = render(
+  it('renders Comments section when execution is undefined', () => {
+    render(
       <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={undefined} />
     );
-    expect(container.innerHTML).toBe('');
+    expect(screen.getByText('Comments')).toBeInTheDocument();
   });
 
-  it('renders nothing when execution.status is not awaiting_review', () => {
+  it('renders Comments section when execution.status is not awaiting_review', () => {
     const approvedExecution = { ...awaitingExecution, status: 'approved' };
-    const { container } = render(
+    render(
       <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={approvedExecution} />
     );
-    expect(container.innerHTML).toBe('');
+    expect(screen.getByText('Comments')).toBeInTheDocument();
   });
 
   it('renders Approve, Save Feedback, and Reject buttons when awaiting_review', () => {
@@ -70,13 +92,12 @@ describe('ReviewPanel', () => {
     expect(screen.getByText('Reject & Re-generate')).toBeInTheDocument();
   });
 
-  it('pre-populates notes from artifact.human_review_notes', () => {
-    const artifactWithNotes = { ...baseArtifact, human_review_notes: 'Fix formatting' };
+  it('starts with empty notes textarea (no pre-population)', () => {
     render(
-      <ReviewPanel projectId="proj-1" artifact={artifactWithNotes} execution={awaitingExecution} />
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
     );
     const textarea = screen.getByPlaceholderText('Add feedback for re-generation...');
-    expect(textarea).toHaveValue('Fix formatting');
+    expect(textarea).toHaveValue('');
   });
 
   it('disables Save Feedback when notes are empty', () => {
@@ -144,11 +165,48 @@ describe('ReviewPanel', () => {
     );
   });
 
-  it('shows "Feedback saved on this artifact" indicator when human_review_notes exists', () => {
-    const artifactWithNotes = { ...baseArtifact, human_review_notes: 'Prior notes' };
+  it('shows "Feedback Saved" after save_feedback action', async () => {
+    const user = userEvent.setup();
+    mockResumeStage.mockResolvedValue(undefined);
+
     render(
-      <ReviewPanel projectId="proj-1" artifact={artifactWithNotes} execution={awaitingExecution} />
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
     );
-    expect(screen.getByText('Feedback saved on this artifact')).toBeInTheDocument();
+
+    const textarea = screen.getByPlaceholderText('Add feedback for re-generation...');
+    await user.type(textarea, 'Some feedback');
+    await user.click(screen.getByText('Save Feedback'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Feedback Saved')).toBeInTheDocument();
+    });
+  });
+
+  it('renders Preview Prompt button when awaiting_review', () => {
+    render(
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+    );
+    expect(screen.getByText('Preview Prompt')).toBeInTheDocument();
+  });
+
+  it('shows prompt preview when Preview Prompt is clicked', async () => {
+    const user = userEvent.setup();
+    render(
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+    );
+
+    await user.click(screen.getByText('Preview Prompt'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Prompt Preview')).toBeInTheDocument();
+    });
+  });
+
+  it('shows Feedback and Comments tabs when awaiting_review', () => {
+    render(
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+    );
+    expect(screen.getByText('Feedback')).toBeInTheDocument();
+    expect(screen.getByText('Comments')).toBeInTheDocument();
   });
 });

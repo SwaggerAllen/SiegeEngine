@@ -13,6 +13,7 @@ interface PipelineState {
   selectedRunNumber: number | null;
   historicalState: Record<string, unknown> | null;
   isViewingHistory: boolean;
+  lastWSEvent: WSEvent | null;
   reset: () => void;
   fetchConfig: (projectId: string) => Promise<void>;
   fetchStatus: (projectId: string) => Promise<void>;
@@ -37,10 +38,11 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   selectedRunNumber: null,
   historicalState: null,
   isViewingHistory: false,
+  lastWSEvent: null,
 
   reset: () => set({
     config: null, executions: [], isRunning: false, isPaused: false, pausedStage: null,
-    currentRunNumber: null, runs: [], selectedRunNumber: null, historicalState: null, isViewingHistory: false,
+    currentRunNumber: null, runs: [], selectedRunNumber: null, historicalState: null, isViewingHistory: false, lastWSEvent: null,
   }),
 
   fetchConfig: async (projectId) => {
@@ -130,6 +132,9 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   },
 
   updateFromWS: (event) => {
+    // Always store the latest event so subscribers (e.g. CommentsPanel) can react
+    set({ lastWSEvent: event });
+
     switch (event.type) {
       case 'stage_started':
         set({ isRunning: true, isPaused: false, pausedStage: null });

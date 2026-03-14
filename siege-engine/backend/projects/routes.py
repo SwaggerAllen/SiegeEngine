@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from backend.auth.routes import get_current_user
+from backend.auth.routes import get_current_user, _require_writer
 from backend.database import get_db
 from backend.git_manager.service import git_manager
 from backend.github.service import GitHubService
@@ -45,7 +45,7 @@ def list_projects(
 def create_project(
     req: ProjectCreate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     project = service.create_project(db, req.name, req.description, req.project_doc_content)
     return {
@@ -98,7 +98,7 @@ def update_project(
     project_id: str,
     req: ProjectUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     project = service.update_project(db, project_id, req.name, req.description)
     if not project:
@@ -118,7 +118,7 @@ def update_project(
 def delete_project(
     project_id: str,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     if not service.delete_project(db, project_id):
         raise HTTPException(404, "Project not found")
@@ -144,7 +144,7 @@ def update_artifact(
     artifact_id: str,
     req: ArtifactUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     artifact = db.get(Artifact, artifact_id)
     if not artifact:
@@ -230,7 +230,7 @@ def set_remote(
     project_id: str,
     req: SetRemoteRequest,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     project = db.get(Project, project_id)
     if not project:
@@ -253,7 +253,7 @@ def set_remote(
 def push_project(
     project_id: str,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(_require_writer),
 ):
     project = db.get(Project, project_id)
     if not project or not project.remote_url:
@@ -277,7 +277,7 @@ async def open_pr(
     project_id: str,
     req: OpenPRRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(_require_writer),
 ):
     project = db.get(Project, project_id)
     if not project or not project.github_repo_slug:

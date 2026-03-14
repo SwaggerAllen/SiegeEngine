@@ -119,3 +119,26 @@ export async function resetStageConfig(
   const { data } = await api.post(`/pipeline/${projectId}/stages/${stageKey}/reset`);
   return data;
 }
+
+export interface PromptPreviewMessage {
+  role: string;
+  content: string;
+}
+
+export interface PromptPreview {
+  messages: PromptPreviewMessage[];
+  model: string;
+  temperature: number;
+}
+
+export async function getPromptPreview(
+  projectId: string,
+  artifactId: string,
+  humanNotes?: string,
+): Promise<PromptPreview> {
+  const { data } = await api.post(`/pipeline/${projectId}/prompt-preview`, {
+    artifact_id: artifactId,
+    human_notes: humanNotes ?? null,
+  });
+  return data;
+}

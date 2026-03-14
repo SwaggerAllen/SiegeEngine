@@ -23,6 +23,10 @@ class UserResponse(BaseModel):
     role: str
 
 
+class CreateInviteRequest(BaseModel):
+    role: str = "member"
+
+
 class InviteResponse(BaseModel):
     id: str
     token: str
@@ -30,3 +34,4 @@ class InviteResponse(BaseModel):
     expires_at: str
     used: bool
     created_at: str
+    role: str

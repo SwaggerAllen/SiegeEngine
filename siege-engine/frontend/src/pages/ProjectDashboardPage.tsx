@@ -5,6 +5,7 @@ import { usePipelineStore } from '../store/pipelineStore';
 import { useAuthStore } from '../store/authStore';
 import { useDAGStore } from '../store/dagStore';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { useVisibilityRefresh } from '../hooks/useVisibilityRefresh';
 import { PipelineDAG } from '../components/dag/PipelineDAG';
 import { PipelineControls } from '../components/pipeline/PipelineControls';
 import { StageStatusList } from '../components/pipeline/StageStatus';
@@ -28,6 +29,7 @@ export function ProjectDashboardPage() {
   const { user } = useAuthStore();
   const { editPromptStageKey, setEditPromptStageKey, selectedStageKey } = useDAGStore();
   const { connected, reconnect } = useWebSocket(projectId);
+  useVisibilityRefresh(projectId, reconnect);
   const [showInvites, setShowInvites] = useState(false);
   const [showPRDialog, setShowPRDialog] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('documents');
@@ -66,7 +68,11 @@ export function ProjectDashboardPage() {
     : undefined;
 
   const isAdmin = user?.role === 'admin';
+  const isViewer = user?.role === 'viewer';
   const hasRemote = !!currentProject?.remote_url;
+  const visibleTabs: Tab[] = isViewer
+    ? ['documents', 'pipeline', 'chat']
+    : ['documents', 'pipeline', 'prompts', 'chat', 'settings'];
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white">
@@ -87,13 +93,13 @@ export function ProjectDashboardPage() {
         </div>
         <div className="flex items-center gap-2 md:gap-4 flex-wrap">
           <RunSelector projectId={projectId} />
-          {!isViewingHistory && <PipelineControls projectId={projectId} />}
+          {!isViewer && !isViewingHistory && <PipelineControls projectId={projectId} />}
           {isViewingHistory && (
             <span className="text-xs bg-yellow-600/30 text-yellow-300 px-2 py-0.5 rounded-full border border-yellow-500/30">
               Viewing history (read-only)
             </span>
           )}
-          {hasRemote && !isViewingHistory && (
+          {!isViewer && hasRemote && !isViewingHistory && (
             <button
               onClick={() => setShowPRDialog(true)}
               className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded min-h-[44px] md:min-h-0"
@@ -125,7 +131,7 @@ export function ProjectDashboardPage() {
 
       {/* Tab bar — hidden on mobile when artifact pane is expanded */}
       <div className={`border-b border-gray-700 px-4 flex gap-4 shrink-0 ${paneExpanded ? 'hidden md:flex' : ''}`}>
-        {(['documents', 'pipeline', 'prompts', 'chat', 'settings'] as Tab[]).map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}

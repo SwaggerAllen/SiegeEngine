@@ -44,6 +44,9 @@ async def lifespan(app: FastAPI):
     # Startup recovery: mark any in-flight executions as failed
     _recover_crashed_executions()
 
+    # One-time migration: move human_review_notes → ArtifactComment records
+    _migrate_feedback_to_comments()
+
     yield
 
     # Graceful shutdown: checkpoint WAL so all data is in the main DB file
@@ -112,6 +115,61 @@ def _recover_crashed_executions():
         db.close()
 
 
+def _migrate_feedback_to_comments():
+    """One-time migration: move human_review_notes into ArtifactComment records."""
+    from backend.models import Artifact, ArtifactComment
+
+    db = SessionLocal()
+    try:
+        artifacts_with_notes = (
+            db.query(Artifact)
+            .filter(Artifact.human_review_notes.isnot(None))
+            .filter(Artifact.human_review_notes != "")
+            .all()
+        )
+        if not artifacts_with_notes:
+            return
+
+        logger.info("Migrating human_review_notes for %d artifacts", len(artifacts_with_notes))
+        for artifact in artifacts_with_notes:
+            # Split accumulated notes by --- dividers into individual entries
+            entries = [
+                e.strip()
+                for e in artifact.human_review_notes.split("\n\n---\n\n")
+                if e.strip()
+            ]
+            for entry in entries:
+                # Idempotent: skip if this exact feedback already exists
+                existing = (
+                    db.query(ArtifactComment)
+                    .filter_by(
+                        artifact_id=artifact.id,
+                        comment_type="feedback",
+                        content=entry,
+                    )
+                    .first()
+                )
+                if not existing:
+                    comment = ArtifactComment(
+                        artifact_id=artifact.id,
+                        project_id=artifact.project_id,
+                        author_id=None,  # No author info in legacy data
+                        content=entry,
+                        comment_type="feedback",
+                        artifact_version=artifact.version,
+                    )
+                    db.add(comment)
+            # Clear the old field
+            artifact.human_review_notes = None
+        db.commit()
+        logger.info("Feedback migration complete")
+    except Exception as e:
+        logger.error("Feedback migration failed: %s", e)
+        db.rollback()
+    finally:
+        db.close()
+
+
 app = FastAPI(title="SiegeEngine", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
@@ -129,6 +187,7 @@ from backend.pipeline.routes import router as pipeline_router  # noqa: E402
 from backend.dag.routes import router as dag_router  # noqa: E402
 from backend.github.oauth import router as github_router  # noqa: E402
 from backend.chat.routes import router as chat_router  # noqa: E402
+from backend.comments.routes import router as comments_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(project_router, prefix="/api/projects", tags=["projects"])
@@ -136,6 +195,7 @@ app.include_router(pipeline_router, prefix="/api/pipeline", tags=["pipeline"])
 app.include_router(dag_router, prefix="/api/dag", tags=["dag"])
 app.include_router(github_router, prefix="/api/github", tags=["github"])
 app.include_router(chat_router, prefix="/api/chat", tags=["chat"])
+app.include_router(comments_router, prefix="/api/comments", tags=["comments"])
 
 # Serve SPA static files (production build)
 spa_path = Path("frontend/dist")

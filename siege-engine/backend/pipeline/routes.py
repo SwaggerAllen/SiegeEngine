@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-from backend.auth.routes import get_current_user
+from backend.auth.routes import get_current_user, _require_writer
 from backend.auth.service import decode_token
 from backend.dag.service import get_regeneration_order, get_stale_artifacts
 from backend.database import get_db
@@ -37,6 +37,7 @@ from backend.pipeline.schemas import (
     PipelineStartRequest,
     PromptConfigResponse,
     PromptConfigUpdate,
+    PromptPreviewRequest,
     RegenerateRequest,
     ResumeRequest,
     ResumeRunRequest,
@@ -89,7 +90,7 @@ def update_config(
     project_id: str,
     req: PipelineConfigUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     config = db.query(PipelineConfig).filter_by(project_id=project_id).first()
     if not config:
@@ -112,7 +113,7 @@ async def start_pipeline(
     project_id: str,
     req: PipelineStartRequest,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     project = db.get(Project, project_id)
     if not project:
@@ -171,7 +172,7 @@ async def resume_run(
     project_id: str,
     req: ResumeRunRequest,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     """Start a new run that continues where the last run left off.
 
@@ -248,11 +249,13 @@ async def resume_stage(
     project_id: str,
     req: ResumeRequest,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     # Run in a background task with its own DB session so that
     # rejection → regeneration (LLM call) doesn't block the request
     # and the session isn't closed mid-generation.
+    user_id = _user.id
+
     async def _run():
         from backend.database import SessionLocal
 
@@ -260,7 +263,8 @@ async def resume_stage(
         try:
             engine = PipelineEngine(bg_db)
             await engine.resume_stage(
-                req.execution_id, req.action, req.notes, req.edited_content
+                req.execution_id, req.action, req.notes, req.edited_content,
+                user_id=user_id,
             )
         except Exception:
             logger.exception("resume_stage failed for execution_id=%s", req.execution_id)
@@ -276,16 +280,18 @@ async def revise_artifact(
     project_id: str,
     req: ReviseRequest,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     """Revise an approved artifact with AI using human feedback."""
+    user_id = _user.id
+
     async def _run():
         from backend.database import SessionLocal
 
         bg_db = SessionLocal()
         try:
             engine = PipelineEngine(bg_db)
-            await engine.revise_artifact(req.artifact_id, req.feedback)
+            await engine.revise_artifact(req.artifact_id, req.feedback, user_id=user_id)
         except Exception:
             logger.exception("revise_artifact failed for artifact_id=%s", req.artifact_id)
         finally:
@@ -300,7 +306,7 @@ async def regenerate(
     project_id: str,
     req: RegenerateRequest,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     order = get_regeneration_order(db, req.artifact_ids)
     return {
@@ -308,6 +314,58 @@ async def regenerate(
         "order": order,
         "levels": len(order),
     }
+
+
+@router.post("/{project_id}/prompt-preview")
+def prompt_preview(
+    project_id: str,
+    req: PromptPreviewRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return the full interpolated prompt that would be sent to the LLM."""
+    from backend.models import Artifact, ArtifactComment
+    from backend.pipeline.nodes.generate import build_prompt_messages
+
+    artifact = db.get(Artifact, req.artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    if artifact.project_id != project_id:
+        raise HTTPException(status_code=403, detail="Artifact does not belong to this project")
+
+    config = db.query(PipelineConfig).filter_by(project_id=project_id).first()
+    if not config:
+        raise HTTPException(status_code=404, detail="Pipeline config not found")
+
+    stage_def = next(
+        (s for s in config.stages if s.output_artifact_type == artifact.artifact_type.value),
+        None,
+    )
+    if not stage_def:
+        raise HTTPException(status_code=404, detail="No stage definition for this artifact type")
+
+    # Gather input artifacts the same way the engine does
+    engine = PipelineEngine(db)
+    input_artifacts = engine._gather_inputs(project_id, stage_def, artifact.component_key)
+
+    # Build feedback from comments table (feedback-only)
+    feedback_notes = engine._get_feedback_notes(req.artifact_id)
+    # Allow draft feedback override for "what-if" preview
+    if req.human_notes is not None:
+        if feedback_notes:
+            effective_notes = f"{feedback_notes}\n\n---\n\n{req.human_notes}"
+        else:
+            effective_notes = req.human_notes
+    else:
+        effective_notes = feedback_notes
+
+    result = build_prompt_messages(
+        stage_def, input_artifacts, artifact.component_key,
+        feedback=artifact.ai_review_feedback if hasattr(artifact, 'ai_review_feedback') else None,
+        human_notes=effective_notes,
+    )
+
+    return result
 
 
 @router.get("/{project_id}/status")
@@ -344,7 +402,7 @@ def get_status(
 def cancel_pipeline(
     project_id: str,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     # Mark all running/pending executions as failed
     running = (
@@ -442,7 +500,7 @@ def update_stage_config(
     stage_key: str,
     req: StageDefinitionUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     stage_def = _get_stage_def(db, project_id, stage_key)
 
@@ -468,7 +526,7 @@ def reset_stage_config(
     project_id: str,
     stage_key: str,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     stage_def = _get_stage_def(db, project_id, stage_key)
     defaults = next((s for s in DEFAULT_STAGES if s["stage_key"] == stage_key), None)
@@ -656,7 +714,7 @@ def update_prompt_config(
     stage_key: str,
     req: PromptConfigUpdate,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     # Handle AI review prompt separately
     if stage_key == "__ai_review__":
@@ -744,7 +802,7 @@ def reset_prompt_config(
     project_id: str,
     stage_key: str,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     # Handle AI review prompt separately
     if stage_key == "__ai_review__":
@@ -768,7 +826,7 @@ async def retry_stage(
     project_id: str,
     execution_id: str,
     db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(_require_writer),
 ):
     execution = db.get(StageExecution, execution_id)
     if not execution or execution.project_id != project_id:

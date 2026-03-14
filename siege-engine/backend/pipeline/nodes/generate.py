@@ -54,23 +54,20 @@ FILE_PATH_MAP = {
 }
 
 
-async def generate(
+def build_prompt_messages(
     stage_def: StageDefinition,
     input_artifacts: dict[str, str],
     component_key: str | None,
-    db: Session,
     feedback: dict | None = None,
     human_notes: str | None = None,
-) -> tuple[str, str]:
+) -> dict:
     """
-    Run AI generation for a stage. Returns (content, artifact_id).
-    """
-    logger.info("generate() called: template=%s, component=%s, input_keys=%s",
-                stage_def.prompt_template_key, component_key, list(input_artifacts.keys()))
+    Dry-run prompt build. Returns {messages, model, temperature}.
 
+    Used by both generate() and the prompt-preview endpoint.
+    """
     prompt_class = PROMPT_REGISTRY.get(stage_def.prompt_template_key)
     if not prompt_class:
-        logger.error("Unknown prompt template: %s", stage_def.prompt_template_key)
         raise ValueError(f"Unknown prompt template: {stage_def.prompt_template_key}")
 
     prompt = prompt_class()
@@ -96,6 +93,34 @@ async def generate(
 
     # Model selection: prompt config > stage def > default
     model_name = (pc.model if pc and pc.model else None) or stage_def.model_override or "claude-sonnet-4-20250514"
+
+    return {
+        "messages": messages,
+        "model": model_name,
+        "temperature": 1.0,
+    }
+
+
+async def generate(
+    stage_def: StageDefinition,
+    input_artifacts: dict[str, str],
+    component_key: str | None,
+    db: Session,
+    feedback: dict | None = None,
+    human_notes: str | None = None,
+) -> tuple[str, str]:
+    """
+    Run AI generation for a stage. Returns (content, artifact_id).
+    """
+    logger.info("generate() called: template=%s, component=%s, input_keys=%s",
+                stage_def.prompt_template_key, component_key, list(input_artifacts.keys()))
+
+    result = build_prompt_messages(
+        stage_def, input_artifacts, component_key,
+        feedback=feedback, human_notes=human_notes,
+    )
+    messages = result["messages"]
+    model_name = result["model"]
 
     # Extract system and user messages for CLI invocation
     system_msg = next((m["content"] for m in messages if m["role"] == "system"), None)

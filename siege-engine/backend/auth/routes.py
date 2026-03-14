@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.auth import service as auth_service
 from backend.auth.schemas import (
+    CreateInviteRequest,
     InviteResponse,
     LoginRequest,
     RegisterRequest,
@@ -38,6 +39,13 @@ def get_current_user(
 def _require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(403, "Admin access required")
+    return user
+
+
+def _require_writer(user: User = Depends(get_current_user)) -> User:
+    """Allow admin and member roles; reject viewers."""
+    if user.role == "viewer":
+        raise HTTPException(403, "Viewers cannot perform write operations")
     return user
 
 
@@ -76,7 +84,7 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     user = User(
         username=req.username,
         password_hash=auth_service.hash_password(req.password),
-        role="admin" if is_first_user else "member",
+        role="admin" if is_first_user else (invite.role if invite else "member"),
         invited_by=invite.created_by if invite else None,
     )
     db.add(user)
@@ -117,15 +125,19 @@ def auth_status(db: Session = Depends(get_db)):
 
 @router.post("/invites", response_model=InviteResponse)
 def create_invite(
+    req: CreateInviteRequest = CreateInviteRequest(),
     db: Session = Depends(get_db),
     user: User = Depends(_require_admin),
 ):
+    if req.role not in ("member", "viewer"):
+        raise HTTPException(400, "Role must be 'member' or 'viewer'")
     token = secrets.token_urlsafe(32)
     expires_at = datetime.utcnow() + timedelta(hours=24)
     invite = InviteLink(
         token=token,
         created_by=user.id,
         expires_at=expires_at,
+        role=req.role,
     )
     db.add(invite)
     db.commit()
@@ -137,6 +149,7 @@ def create_invite(
         "expires_at": invite.expires_at.isoformat(),
         "used": invite.used,
         "created_at": invite.created_at.isoformat(),
+        "role": invite.role,
     }
 
 
@@ -160,6 +173,7 @@ def list_invites(
             "expires_at": inv.expires_at.isoformat(),
             "used": inv.used,
             "created_at": inv.created_at.isoformat(),
+            "role": inv.role,
         }
         for inv in invites
     ]

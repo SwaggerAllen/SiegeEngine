@@ -53,6 +53,34 @@ class InviteLink(Base):
     used_by: Mapped[str | None] = mapped_column(
         ForeignKey("users.id"), nullable=True
     )
+    role: Mapped[str] = mapped_column(String(20), default="member")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ──── Comments ────
+
+
+class ArtifactComment(Base):
+    __tablename__ = "artifact_comments"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    artifact_id: Mapped[str] = mapped_column(String, nullable=False)  # NO FK — persists across regenerations
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id"), nullable=False
+    )
+    author_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True  # null for system events
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    comment_type: Mapped[str] = mapped_column(
+        String(20), default="comment"
+    )  # 'comment' | 'system_event'
+    parent_id: Mapped[str | None] = mapped_column(
+        ForeignKey("artifact_comments.id"), nullable=True
+    )
+    artifact_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

@@ -8,12 +8,14 @@ interface Invite {
   expires_at: string;
   used: boolean;
   created_at: string;
+  role: string;
 }
 
 export function InvitePanel({ onClose }: { onClose: () => void }) {
   const [invites, setInvites] = useState<Invite[]>([]);
   const [loading, setLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [inviteRole, setInviteRole] = useState<'member' | 'viewer'>('member');
 
   const fetchInvites = async () => {
     const { data } = await api.get('/auth/invites');
@@ -27,7 +29,7 @@ export function InvitePanel({ onClose }: { onClose: () => void }) {
   const createInvite = async () => {
     setLoading(true);
     try {
-      await api.post('/auth/invites');
+      await api.post('/auth/invites', { role: inviteRole });
       await fetchInvites();
     } finally {
       setLoading(false);
@@ -59,13 +61,23 @@ export function InvitePanel({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        <button
-          onClick={createInvite}
-          disabled={loading}
-          className="w-full mb-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm disabled:opacity-50"
-        >
-          {loading ? 'Generating...' : 'Generate Invite Link'}
-        </button>
+        <div className="flex gap-2 mb-4">
+          <select
+            value={inviteRole}
+            onChange={(e) => setInviteRole(e.target.value as 'member' | 'viewer')}
+            className="flex-1 px-3 py-2 bg-gray-700 text-white rounded border border-gray-600 text-sm focus:border-blue-500 focus:outline-none"
+          >
+            <option value="member">Member (full access)</option>
+            <option value="viewer">Viewer (read-only)</option>
+          </select>
+          <button
+            onClick={createInvite}
+            disabled={loading}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm disabled:opacity-50 whitespace-nowrap"
+          >
+            {loading ? 'Generating...' : 'Generate Invite'}
+          </button>
+        </div>
 
         {invites.length === 0 ? (
           <p className="text-gray-500 text-sm text-center">No active invites</p>
@@ -77,9 +89,18 @@ export function InvitePanel({ onClose }: { onClose: () => void }) {
                 className="bg-gray-700 p-3 rounded flex items-center justify-between"
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white font-mono truncate">
-                    {window.location.origin}{inv.url}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm text-white font-mono truncate">
+                      {window.location.origin}{inv.url}
+                    </p>
+                    <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 ${
+                      inv.role === 'viewer'
+                        ? 'bg-purple-900 text-purple-300'
+                        : 'bg-blue-900 text-blue-300'
+                    }`}>
+                      {inv.role}
+                    </span>
+                  </div>
                   <p className="text-xs text-gray-400">
                     Expires: {new Date(inv.expires_at).toLocaleString()}
                   </p>

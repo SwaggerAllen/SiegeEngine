@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 from backend.models import (
     Artifact,
+    ArtifactComment,
     ArtifactStatus,
     ArtifactType,
     ComponentDefinition,
@@ -881,6 +882,7 @@ class PipelineEngine:
         action: str,
         notes: str | None = None,
         edited_content: str | None = None,
+        user_id: str | None = None,
     ):
         """Resume a paused stage after human review."""
         execution = self.db.get(StageExecution, execution_id)
@@ -896,7 +898,17 @@ class PipelineEngine:
                         artifact.content = edited_content
                         artifact.version += 1
                     artifact.status = ArtifactStatus.APPROVED
-                    artifact.human_review_notes = notes
+
+                    # Store feedback as a comment record (not on artifact field)
+                    if notes and notes.strip():
+                        self.db.add(ArtifactComment(
+                            artifact_id=execution.artifact_id,
+                            project_id=execution.project_id,
+                            author_id=user_id,
+                            content=notes.strip(),
+                            comment_type="feedback",
+                            artifact_version=artifact.version,
+                        ))
 
             execution.status = StageStatus.APPROVED
             execution.completed_at = datetime.utcnow()
@@ -949,17 +961,22 @@ class PipelineEngine:
                         execution.stage_key, execution_id)
             execution.status = StageStatus.REJECTED
 
-            accumulated_notes = notes
             if execution.artifact_id:
                 artifact = self.db.get(Artifact, execution.artifact_id)
                 if artifact:
                     artifact.status = ArtifactStatus.REJECTED
-                    prior = artifact.human_review_notes
-                    if prior and notes:
-                        accumulated_notes = f"{prior}\n\n---\n\n{notes}"
-                    elif prior:
-                        accumulated_notes = prior
-                    artifact.human_review_notes = accumulated_notes
+
+            # Store feedback as a comment record
+            if notes and notes.strip() and execution.artifact_id:
+                art = self.db.get(Artifact, execution.artifact_id)
+                self.db.add(ArtifactComment(
+                    artifact_id=execution.artifact_id,
+                    project_id=execution.project_id,
+                    author_id=user_id,
+                    content=notes.strip(),
+                    comment_type="feedback",
+                    artifact_version=art.version if art else None,
+                ))
 
             # Cascade-reject downstream AWAITING_REVIEW nodes
             config = (
@@ -995,7 +1012,7 @@ class PipelineEngine:
                     "stale_artifact_ids": stale_artifact_ids,
                 })
 
-            await self._regenerate_stage(execution, accumulated_notes)
+            await self._regenerate_stage(execution)
 
         elif action == "save_feedback":
             logger.info("Saving feedback for stage %s (execution=%s)",
@@ -1003,14 +1020,20 @@ class PipelineEngine:
             if execution.artifact_id:
                 artifact = self.db.get(Artifact, execution.artifact_id)
                 if artifact:
-                    prior = artifact.human_review_notes
-                    if prior and notes:
-                        artifact.human_review_notes = f"{prior}\n\n---\n\n{notes}"
-                    elif notes:
-                        artifact.human_review_notes = notes
                     if edited_content:
                         artifact.content = edited_content
                         artifact.version += 1
+
+                    # Store feedback as a comment record
+                    if notes and notes.strip():
+                        self.db.add(ArtifactComment(
+                            artifact_id=execution.artifact_id,
+                            project_id=execution.project_id,
+                            author_id=user_id,
+                            content=notes.strip(),
+                            comment_type="feedback",
+                            artifact_version=artifact.version,
+                        ))
             self.db.commit()
 
             await ws_manager.broadcast(execution.project_id, {
@@ -1121,10 +1144,8 @@ class PipelineEngine:
         self.db.flush()
         return stale_artifact_ids
 
-    async def _regenerate_stage(
-        self, old_execution: StageExecution, human_notes: str | None
-    ):
-        """Re-run a rejected stage with human feedback."""
+    async def _regenerate_stage(self, old_execution: StageExecution):
+        """Re-run a rejected stage with human feedback from ArtifactComment records."""
         project_id = old_execution.project_id
         config = (
             self.db.query(PipelineConfig)
@@ -1175,11 +1196,25 @@ class PipelineEngine:
         })
 
         try:
+            feedback_notes = self._get_feedback_notes(old_execution.artifact_id)
             content, artifact_id = await generate(
                 stage_def, input_artifacts, old_execution.component_key, self.db,
-                human_notes=human_notes,
+                human_notes=feedback_notes,
             )
             new_execution.artifact_id = artifact_id
+
+            # Insert regeneration divider comment
+            regen_artifact = self.db.get(Artifact, artifact_id)
+            if regen_artifact:
+                divider = ArtifactComment(
+                    artifact_id=artifact_id,
+                    project_id=project_id,
+                    author_id=None,
+                    content=f"Artifact regenerated to v{regen_artifact.version}",
+                    comment_type="system_event",
+                    artifact_version=regen_artifact.version,
+                )
+                self.db.add(divider)
 
             # AI Review
             if stage_def.ai_review_enabled:
@@ -1239,7 +1274,7 @@ class PipelineEngine:
                 "error": str(e),
             })
 
-    async def revise_artifact(self, artifact_id: str, feedback: str):
+    async def revise_artifact(self, artifact_id: str, feedback: str, user_id: str | None = None):
         """Revise an approved/stale artifact using AI with human feedback."""
         artifact = self.db.get(Artifact, artifact_id)
         if not artifact:
@@ -1264,14 +1299,22 @@ class PipelineEngine:
                 f"No stage definition for artifact type: {artifact.artifact_type.value}"
             )
 
-        prior = artifact.human_review_notes
-        if prior and feedback:
-            accumulated = f"{prior}\n\n---\n\n{feedback}"
-        else:
-            accumulated = feedback or prior
+        # Store the new feedback as an ArtifactComment
+        if feedback and feedback.strip():
+            self.db.add(ArtifactComment(
+                artifact_id=artifact_id,
+                project_id=project_id,
+                author_id=user_id,
+                content=feedback.strip(),
+                comment_type="feedback",
+                artifact_version=artifact.version,
+            ))
+            self.db.flush()
+
+        # Build accumulated feedback from all feedback comments
+        accumulated = self._get_feedback_notes(artifact_id)
 
         artifact.status = ArtifactStatus.GENERATING
-        artifact.human_review_notes = accumulated
         self.db.flush()
 
         input_artifacts = self._gather_inputs(project_id, stage_def, artifact.component_key)
@@ -1304,6 +1347,19 @@ class PipelineEngine:
                 human_notes=accumulated,
             )
             execution.artifact_id = new_artifact_id
+
+            # Insert revision divider comment
+            revised_artifact = self.db.get(Artifact, new_artifact_id)
+            if revised_artifact:
+                divider = ArtifactComment(
+                    artifact_id=artifact_id,
+                    project_id=project_id,
+                    author_id=None,
+                    content=f"Artifact revised to v{revised_artifact.version}",
+                    comment_type="system_event",
+                    artifact_version=revised_artifact.version,
+                )
+                self.db.add(divider)
 
             if stage_def.ai_review_enabled:
                 await ws_manager.broadcast(project_id, {
@@ -1516,10 +1572,25 @@ class PipelineEngine:
                 "error": str(e),
             })
 
+    def _get_feedback_notes(self, artifact_id: str) -> str | None:
+        """Build accumulated feedback from ArtifactComment records (feedback only).
+
+        Queries only comment_type='feedback' — never regular comments or system events.
+        """
+        feedbacks = (
+            self.db.query(ArtifactComment)
+            .filter_by(artifact_id=artifact_id, comment_type="feedback")
+            .order_by(ArtifactComment.created_at.asc())
+            .all()
+        )
+        if not feedbacks:
+            return None
+        return "\n\n---\n\n".join(f.content for f in feedbacks)
+
     def _get_rejected_notes(
         self, project_id: str, stage_def: StageDefinition, component_key: str | None = None,
     ) -> str | None:
-        """If this stage has a rejected/stale artifact with human_review_notes, return them.
+        """If this stage has a rejected/stale artifact with feedback comments, return them.
 
         Checks both REJECTED (direct rejection) and STALE (cascade-rejected with
         saved feedback) artifacts so that saved feedback survives upstream rejections.
@@ -1534,8 +1605,8 @@ class PipelineEngine:
         if component_key:
             query = query.filter_by(component_key=component_key)
         artifact = query.first()
-        if artifact and artifact.human_review_notes:
-            return artifact.human_review_notes
+        if artifact:
+            return self._get_feedback_notes(artifact.id)
         return None
 
     def _gather_inputs(
