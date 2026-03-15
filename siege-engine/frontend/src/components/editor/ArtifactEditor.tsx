@@ -4,13 +4,15 @@ import { useProjectStore } from '../../store/projectStore';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { useAuthStore } from '../../store/authStore';
 import { getArtifactHistory, getArtifactVersion } from '../../api/projects';
+import { getPromptPreview } from '../../api/pipeline';
 import type { ArtifactVersion } from '../../api/projects';
+import type { PromptPreview } from '../../api/pipeline';
 import type { Artifact } from '../../types/project';
 import { CommentsPanel } from '../comments/CommentsPanel';
 
 const REVISABLE_STATUSES = new Set(['approved', 'stale']);
 
-type EditorTab = 'document' | 'feedback' | 'comments';
+type EditorTab = 'document' | 'feedback' | 'comments' | 'prompt';
 
 export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
   const { updateArtifact } = useProjectStore();
@@ -28,6 +30,8 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   const [viewingSha, setViewingSha] = useState<string | null>(null);
   const [historicalContent, setHistoricalContent] = useState<string | null>(null);
   const [loadingVersion, setLoadingVersion] = useState(false);
+  const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
+  const [loadingPrompt, setLoadingPrompt] = useState(false);
 
   const canRevise = !isViewer && REVISABLE_STATUSES.has(artifact.status);
   const reviewFeedback = artifact.ai_review_feedback as any;
@@ -38,7 +42,19 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
     if (!reviewFeedback && activeTab === 'feedback') {
       setActiveTab('document');
     }
+    setPromptPreview(null);
   }, [artifact.id, reviewFeedback]);
+
+  // Fetch prompt preview when tab is selected
+  useEffect(() => {
+    if (activeTab !== 'prompt') return;
+    if (promptPreview) return; // already loaded for this artifact
+    setLoadingPrompt(true);
+    getPromptPreview(projectId, artifact.id)
+      .then(setPromptPreview)
+      .catch((err) => console.error('Prompt preview failed:', err))
+      .finally(() => setLoadingPrompt(false));
+  }, [activeTab, projectId, artifact.id, promptPreview]);
 
   // Fetch version history when artifact changes
   useEffect(() => {
@@ -245,6 +261,18 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
         >
           Comments
         </button>
+        {!isViewer && (
+          <button
+            onClick={() => setActiveTab('prompt')}
+            className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
+              activeTab === 'prompt'
+                ? 'border-purple-500 text-white'
+                : 'border-transparent text-gray-400 hover:text-white'
+            }`}
+          >
+            Prompt Preview
+          </button>
+        )}
       </div>
 
       {/* Revision request section - only on document tab, not while viewing history */}
@@ -365,10 +393,55 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
             </Markdown>
           </div>
         </div>
+      ) : activeTab === 'prompt' ? (
+        /* Prompt Preview tab */
+        <div className="flex-1 overflow-auto p-3 space-y-3">
+          {loadingPrompt ? (
+            <div className="text-sm text-gray-400">Loading prompt preview...</div>
+          ) : promptPreview ? (
+            <PromptPreviewPanel preview={promptPreview} />
+          ) : (
+            <div className="text-sm text-gray-400">No prompt preview available.</div>
+          )}
+        </div>
       ) : (
         /* Comments tab */
         <CommentsPanel projectId={projectId} artifactId={artifact.id} />
       )}
+    </div>
+  );
+}
+
+function PromptPreviewPanel({ preview }: { preview: PromptPreview }) {
+  const roleColors: Record<string, string> = {
+    system: 'text-purple-400 bg-purple-950/30 border-purple-700/40',
+    user: 'text-blue-400 bg-blue-950/30 border-blue-700/40',
+    assistant: 'text-green-400 bg-green-950/30 border-green-700/40',
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-semibold text-purple-400 uppercase tracking-wide">
+          Prompt Preview
+        </h4>
+        <span className="text-xs text-gray-500">
+          {preview.model} &middot; temp {preview.temperature}
+        </span>
+      </div>
+      {preview.messages.map((msg, i) => (
+        <div
+          key={i}
+          className={`rounded border p-2 ${roleColors[msg.role] || 'text-gray-300 bg-gray-800 border-gray-600'}`}
+        >
+          <div className="text-xs font-semibold uppercase mb-1 opacity-70">
+            {msg.role}
+          </div>
+          <pre className="text-xs whitespace-pre-wrap break-words font-mono leading-relaxed max-h-64 overflow-auto">
+            {msg.content}
+          </pre>
+        </div>
+      ))}
     </div>
   );
 }

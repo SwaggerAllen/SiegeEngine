@@ -23,17 +23,6 @@ vi.mock('../../api/comments', () => ({
   createComment: vi.fn().mockResolvedValue({}),
 }));
 
-vi.mock('../../api/pipeline', () => ({
-  getPromptPreview: vi.fn().mockResolvedValue({
-    messages: [
-      { role: 'system', content: 'You are a helpful assistant.' },
-      { role: 'user', content: 'Generate requirements.' },
-    ],
-    model: 'claude-sonnet-4-20250514',
-    temperature: 1.0,
-  }),
-}));
-
 const baseArtifact: Artifact = {
   id: 'art-1',
   project_id: 'proj-1',
@@ -180,26 +169,6 @@ describe('ReviewPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Feedback Saved')).toBeInTheDocument();
-    });
-  });
-
-  it('renders Preview Prompt button when awaiting_review', () => {
-    render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
-    );
-    expect(screen.getByText('Preview Prompt')).toBeInTheDocument();
-  });
-
-  it('shows prompt preview when Preview Prompt is clicked', async () => {
-    const user = userEvent.setup();
-    render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
-    );
-
-    await user.click(screen.getByText('Preview Prompt'));
-
-    await waitFor(() => {
-      expect(screen.getByText('Prompt Preview')).toBeInTheDocument();
     });
   });
 
