@@ -46,6 +46,7 @@ const baseArtifact: Artifact = {
   ai_review_feedback: null,
   human_review_notes: null,
   file_path: null,
+  git_commit_sha: null,
   language: null,
   created_at: '2025-01-01T00:00:00Z',
   updated_at: '2025-01-01T00:00:00Z',
