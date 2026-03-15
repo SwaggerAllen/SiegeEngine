@@ -117,6 +117,7 @@ def _recover_crashed_executions():
 
 def _migrate_feedback_to_comments():
     """One-time migration: move human_review_notes into ArtifactComment records."""
+    import re
     from backend.models import Artifact, ArtifactComment
 
     db = SessionLocal()
@@ -131,13 +132,26 @@ def _migrate_feedback_to_comments():
             return
 
         logger.info("Migrating human_review_notes for %d artifacts", len(artifacts_with_notes))
+        total_migrated = 0
         for artifact in artifacts_with_notes:
-            # Split accumulated notes by --- dividers into individual entries
+            raw = artifact.human_review_notes
+            logger.info(
+                "  Artifact %s (v%d): human_review_notes is %d chars",
+                artifact.id, artifact.version, len(raw),
+            )
+
+            # Split accumulated notes by --- dividers.
+            # Handle variations: \n\n---\n\n, \r\n\r\n---\r\n\r\n, \n---\n, etc.
             entries = [
                 e.strip()
-                for e in artifact.human_review_notes.split("\n\n---\n\n")
+                for e in re.split(r"\r?\n\r?\n---\r?\n\r?\n|\r?\n---\r?\n", raw)
                 if e.strip()
             ]
+            logger.info(
+                "  Split into %d entries for artifact %s",
+                len(entries), artifact.id,
+            )
+
             for entry in entries:
                 # Idempotent: skip if this exact feedback already exists
                 existing = (
@@ -159,10 +173,11 @@ def _migrate_feedback_to_comments():
                         artifact_version=artifact.version,
                     )
                     db.add(comment)
+                    total_migrated += 1
             # Clear the old field
             artifact.human_review_notes = None
         db.commit()
-        logger.info("Feedback migration complete")
+        logger.info("Feedback migration complete: %d entries migrated", total_migrated)
     except Exception as e:
         logger.error("Feedback migration failed: %s", e)
         db.rollback()
