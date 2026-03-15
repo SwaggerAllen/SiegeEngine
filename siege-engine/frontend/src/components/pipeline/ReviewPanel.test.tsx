@@ -202,11 +202,15 @@ describe('ReviewPanel', () => {
     });
   });
 
-  it('shows Feedback and Comments tabs when awaiting_review', () => {
+  it('shows feedback controls and comments together when awaiting_review', async () => {
     render(
       <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
     );
-    expect(screen.getByText('Feedback')).toBeInTheDocument();
-    expect(screen.getByText('Comments')).toBeInTheDocument();
+    // Feedback textarea
+    expect(screen.getByPlaceholderText('Add feedback for re-generation...')).toBeInTheDocument();
+    // Comment input (from CommentsPanel) — wait for async load
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Add a comment...')).toBeInTheDocument();
+    });
   });
 });

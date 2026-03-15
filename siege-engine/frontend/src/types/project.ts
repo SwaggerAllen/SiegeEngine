@@ -36,6 +36,7 @@ export interface Artifact {
   ai_review_feedback: Record<string, unknown> | null;
   human_review_notes: string | null;
   file_path: string | null;
+  git_commit_sha: string | null;
   language: string | null;
   created_at: string;
   updated_at: string;

@@ -8,8 +8,6 @@ import { CommentsPanel } from '../comments/CommentsPanel';
 import type { Artifact } from '../../types/project';
 import type { StageExecution } from '../../types/pipeline';
 
-type ReviewTab = 'feedback' | 'comments';
-
 interface ReviewPanelProps {
   projectId: string;
   artifact: Artifact;
@@ -25,7 +23,6 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const [showEditor, setShowEditor] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [feedbackSaved, setFeedbackSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<ReviewTab>('feedback');
   const [feedbackCount, setFeedbackCount] = useState(0);
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
@@ -101,112 +98,85 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     );
   }
 
-  // Admin/Member + awaiting_review: tabbed Feedback / Comments
+  // Admin/Member + awaiting_review: feedback controls + comments inline
   if (isAwaitingReview) {
     return (
       <div className="space-y-3">
-        {/* Tab bar */}
-        <div className="flex gap-4 border-b border-gray-700">
+        {/* Feedback input */}
+        <div className="space-y-3">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-gray-400">Review Notes (optional)</label>
+              {feedbackCount > 0 && (
+                <span className="text-xs text-orange-400">
+                  {feedbackCount} previous feedback{feedbackCount !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+            <textarea
+              value={notes}
+              onChange={(e) => { setNotes(e.target.value); setFeedbackSaved(false); }}
+              className="w-full h-14 md:h-28 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+              placeholder="Add feedback for re-generation..."
+            />
+          </div>
+
+          {showEditor && (
+            <textarea
+              value={editedContent || artifact.content || ''}
+              onChange={(e) => setEditedContent(e.target.value)}
+              className="w-full h-48 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
+            />
+          )}
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
           <button
-            onClick={() => setActiveTab('feedback')}
-            className={`pb-1.5 text-sm border-b-2 ${
-              activeTab === 'feedback'
-                ? 'border-yellow-500 text-yellow-400 font-semibold'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
+            onClick={() => handleAction('approved')}
+            disabled={submitting}
+            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
           >
-            Feedback
+            Approve
           </button>
           <button
-            onClick={() => setActiveTab('comments')}
-            className={`pb-1.5 text-sm border-b-2 ${
-              activeTab === 'comments'
-                ? 'border-blue-500 text-blue-400 font-semibold'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
+            onClick={() => handleAction('save_feedback')}
+            disabled={submitting || !notes.trim()}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
           >
-            Comments
+            {feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+          </button>
+          <button
+            onClick={() => handleAction('rejected')}
+            disabled={submitting}
+            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            Reject & Re-generate
+          </button>
+          <button
+            onClick={() => setShowEditor(!showEditor)}
+            className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+          >
+            {showEditor ? 'Hide Editor' : 'Edit & Approve'}
+          </button>
+          <button
+            onClick={handlePreviewPrompt}
+            disabled={loadingPreview}
+            className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {loadingPreview ? 'Loading...' : showPreview ? 'Hide Prompt' : 'Preview Prompt'}
           </button>
         </div>
 
-        {activeTab === 'feedback' ? (
-          <>
-            <div className="space-y-3">
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs text-gray-400">Review Notes (optional)</label>
-                  {feedbackCount > 0 && (
-                    <button
-                      onClick={() => setActiveTab('comments')}
-                      className="text-xs text-orange-400 hover:text-orange-300"
-                    >
-                      {feedbackCount} previous feedback{feedbackCount !== 1 ? 's' : ''}
-                    </button>
-                  )}
-                </div>
-                <textarea
-                  value={notes}
-                  onChange={(e) => { setNotes(e.target.value); setFeedbackSaved(false); }}
-                  className="w-full h-14 md:h-28 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
-                  placeholder="Add feedback for re-generation..."
-                />
-              </div>
-
-              {showEditor && (
-                <textarea
-                  value={editedContent || artifact.content || ''}
-                  onChange={(e) => setEditedContent(e.target.value)}
-                  className="w-full h-48 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
-                />
-              )}
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
-              <button
-                onClick={() => handleAction('approved')}
-                disabled={submitting}
-                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-              >
-                Approve
-              </button>
-              <button
-                onClick={() => handleAction('save_feedback')}
-                disabled={submitting || !notes.trim()}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-              >
-                {feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
-              </button>
-              <button
-                onClick={() => handleAction('rejected')}
-                disabled={submitting}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-              >
-                Reject & Re-generate
-              </button>
-              <button
-                onClick={() => setShowEditor(!showEditor)}
-                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-              >
-                {showEditor ? 'Hide Editor' : 'Edit & Approve'}
-              </button>
-              <button
-                onClick={handlePreviewPrompt}
-                disabled={loadingPreview}
-                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-              >
-                {loadingPreview ? 'Loading...' : showPreview ? 'Hide Prompt' : 'Preview Prompt'}
-              </button>
-            </div>
-
-            {/* Prompt preview */}
-            {showPreview && promptPreview && (
-              <PromptPreviewPanel preview={promptPreview} />
-            )}
-          </>
-        ) : (
-          <CommentsPanel projectId={projectId} artifactId={artifact.id} compact />
+        {/* Prompt preview */}
+        {showPreview && promptPreview && (
+          <PromptPreviewPanel preview={promptPreview} />
         )}
+
+        {/* Comments timeline (always visible) */}
+        <div className="border-t border-gray-700 pt-2">
+          <CommentsPanel projectId={projectId} artifactId={artifact.id} compact />
+        </div>
       </div>
     );
   }

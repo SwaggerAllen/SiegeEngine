@@ -54,7 +54,21 @@ export async function getArtifactDiff(artifactId: string) {
   return data;
 }
 
-export async function getArtifactHistory(artifactId: string) {
+export interface ArtifactVersion {
+  sha: string;
+  message: string;
+  timestamp: string;
+}
+
+export async function getArtifactHistory(artifactId: string): Promise<ArtifactVersion[]> {
   const { data } = await api.get(`/projects/artifacts/${artifactId}/history`);
+  return data;
+}
+
+export async function getArtifactVersion(
+  artifactId: string,
+  commitSha: string
+): Promise<{ content: string; sha: string }> {
+  const { data } = await api.get(`/projects/artifacts/${artifactId}/versions/${commitSha}`);
   return data;
 }

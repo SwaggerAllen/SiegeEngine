@@ -3,6 +3,8 @@ import Markdown from 'react-markdown';
 import { useProjectStore } from '../../store/projectStore';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { useAuthStore } from '../../store/authStore';
+import { getArtifactHistory, getArtifactVersion } from '../../api/projects';
+import type { ArtifactVersion } from '../../api/projects';
 import type { Artifact } from '../../types/project';
 import { CommentsPanel } from '../comments/CommentsPanel';
 
@@ -22,9 +24,14 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   const [feedback, setFeedback] = useState('');
   const [submittingRevision, setSubmittingRevision] = useState(false);
   const [activeTab, setActiveTab] = useState<EditorTab>('document');
+  const [history, setHistory] = useState<ArtifactVersion[]>([]);
+  const [viewingSha, setViewingSha] = useState<string | null>(null);
+  const [historicalContent, setHistoricalContent] = useState<string | null>(null);
+  const [loadingVersion, setLoadingVersion] = useState(false);
 
   const canRevise = !isViewer && REVISABLE_STATUSES.has(artifact.status);
   const reviewFeedback = artifact.ai_review_feedback as any;
+  const isViewingHistory = viewingSha !== null;
 
   // Reset tab when artifact changes and feedback is gone
   useEffect(() => {
@@ -32,6 +39,51 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
       setActiveTab('document');
     }
   }, [artifact.id, reviewFeedback]);
+
+  // Fetch version history when artifact changes
+  useEffect(() => {
+    setViewingSha(null);
+    setHistoricalContent(null);
+    if (artifact.file_path) {
+      getArtifactHistory(artifact.id)
+        .then(setHistory)
+        .catch(() => setHistory([]));
+    } else {
+      setHistory([]);
+    }
+  }, [artifact.id, artifact.version, artifact.file_path]);
+
+  // Parse version number from commit message (e.g. "Generate System Requirements v3" → 3)
+  const parseVersion = (message: string): string | null => {
+    const match = message.match(/v(\d+)/i);
+    return match ? match[1] : null;
+  };
+
+  // Format timestamp for display
+  const formatDate = (ts: string): string => {
+    const d = new Date(ts);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+      ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  };
+
+  const handleVersionChange = async (sha: string) => {
+    if (!sha) {
+      // Back to current
+      setViewingSha(null);
+      setHistoricalContent(null);
+      return;
+    }
+    setLoadingVersion(true);
+    try {
+      const result = await getArtifactVersion(artifact.id, sha);
+      setViewingSha(sha);
+      setHistoricalContent(result.content);
+    } catch (err) {
+      console.error('Failed to load version:', err);
+    } finally {
+      setLoadingVersion(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -71,11 +123,35 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
     <div className="h-full flex flex-col">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between px-3 py-2 border-b border-gray-700 gap-2">
-        <div className="min-w-0">
+        <div className="min-w-0 flex items-center gap-2">
           <span className="text-sm font-medium text-white truncate">{artifact.name}</span>
-          <span className="text-xs text-gray-400 ml-2">v{artifact.version}</span>
+          {history.length > 1 ? (
+            <select
+              value={viewingSha || ''}
+              onChange={(e) => handleVersionChange(e.target.value)}
+              disabled={loadingVersion}
+              className="text-xs bg-gray-700 text-gray-200 border border-gray-600 rounded px-1.5 py-0.5 focus:outline-none focus:border-blue-500 disabled:opacity-50 cursor-pointer"
+            >
+              <option value="">v{artifact.version} (current)</option>
+              {history.map((entry) => {
+                const vNum = parseVersion(entry.message);
+                const label = vNum
+                  ? `v${vNum} — ${formatDate(entry.timestamp)}`
+                  : `${formatDate(entry.timestamp)}`;
+                // Skip the first entry if it matches current version's SHA
+                if (entry.sha === artifact.git_commit_sha) return null;
+                return (
+                  <option key={entry.sha} value={entry.sha}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+          ) : (
+            <span className="text-xs text-gray-400">v{artifact.version}</span>
+          )}
           <span
-            className={`text-xs ml-2 px-1.5 py-0.5 rounded ${
+            className={`text-xs px-1.5 py-0.5 rounded ${
               artifact.status === 'approved'
                 ? 'bg-green-900 text-green-300'
                 : artifact.status === 'stale'
@@ -88,7 +164,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
             {artifact.status}
           </span>
         </div>
-        {!isViewer && (
+        {!isViewer && !isViewingHistory && (
           <div className="flex gap-2">
             {editing ? (
               <>
@@ -171,8 +247,8 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
         </button>
       </div>
 
-      {/* Revision request section - only on document tab */}
-      {showRevise && activeTab === 'document' && (
+      {/* Revision request section - only on document tab, not while viewing history */}
+      {showRevise && activeTab === 'document' && !isViewingHistory && (
         <div className="px-3 py-2 border-b border-gray-700 bg-gray-800/50 space-y-2">
           <label className="block text-xs text-gray-400">
             Describe what changes you want the AI to make:
@@ -195,10 +271,39 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
         </div>
       )}
 
+      {/* Historical version banner */}
+      {isViewingHistory && activeTab === 'document' && (
+        <div className="flex items-center gap-3 px-3 py-2 bg-amber-900/30 border-b border-amber-700/50">
+          <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span className="text-xs text-amber-300">
+            Viewing historical version
+            {(() => {
+              const entry = history.find((h) => h.sha === viewingSha);
+              if (!entry) return '';
+              const vNum = parseVersion(entry.message);
+              return vNum ? ` (v${vNum})` : '';
+            })()}
+            {' — read only'}
+          </span>
+          <button
+            onClick={() => handleVersionChange('')}
+            className="ml-auto text-xs text-amber-400 hover:text-amber-200 underline"
+          >
+            Back to current
+          </button>
+        </div>
+      )}
+
       {/* Content area */}
       {activeTab === 'document' ? (
         <>
-          {editing ? (
+          {isViewingHistory ? (
+            <div className={proseClasses}>
+              <Markdown>{historicalContent || 'Loading...'}</Markdown>
+            </div>
+          ) : editing ? (
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}

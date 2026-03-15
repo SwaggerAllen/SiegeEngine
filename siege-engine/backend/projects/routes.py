@@ -209,6 +209,27 @@ def get_artifact_history(
     return git_manager.get_file_history(artifact.project_id, artifact.file_path)
 
 
+@router.get("/artifacts/{artifact_id}/versions/{commit_sha}")
+def get_artifact_version(
+    artifact_id: str,
+    commit_sha: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    artifact = db.get(Artifact, artifact_id)
+    if not artifact:
+        raise HTTPException(404, "Artifact not found")
+    if not artifact.file_path:
+        raise HTTPException(400, "Artifact has no file path")
+
+    content = git_manager.get_file_at_version(
+        artifact.project_id, artifact.file_path, commit_sha
+    )
+    if content is None:
+        raise HTTPException(404, "Version not found")
+    return {"content": content, "sha": commit_sha}
+
+
 # ── Remote / GitHub PR endpoints ──
 
 
@@ -354,6 +375,7 @@ def _artifact_to_dict(artifact: Artifact) -> dict:
         "ai_review_feedback": artifact.ai_review_feedback,
         "human_review_notes": artifact.human_review_notes,
         "file_path": artifact.file_path,
+        "git_commit_sha": artifact.git_commit_sha,
         "language": artifact.language,
         "created_at": artifact.created_at.isoformat(),
         "updated_at": artifact.updated_at.isoformat(),
