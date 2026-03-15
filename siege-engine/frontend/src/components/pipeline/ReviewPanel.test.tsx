@@ -20,7 +20,6 @@ vi.mock('../../store/authStore', () => ({
 
 vi.mock('../../api/comments', () => ({
   listComments: vi.fn().mockResolvedValue([]),
-  createComment: vi.fn().mockResolvedValue({}),
 }));
 
 const baseArtifact: Artifact = {
@@ -58,19 +57,19 @@ describe('ReviewPanel', () => {
     mockResumeStage.mockReset();
   });
 
-  it('renders Comments section when execution is undefined', () => {
-    render(
+  it('renders nothing when execution is undefined', () => {
+    const { container } = render(
       <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={undefined} />
     );
-    expect(screen.getByText('Comments')).toBeInTheDocument();
+    expect(container.innerHTML).toBe('');
   });
 
-  it('renders Comments section when execution.status is not awaiting_review', () => {
+  it('renders nothing when execution.status is not awaiting_review', () => {
     const approvedExecution = { ...awaitingExecution, status: 'approved' };
-    render(
+    const { container } = render(
       <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={approvedExecution} />
     );
-    expect(screen.getByText('Comments')).toBeInTheDocument();
+    expect(container.innerHTML).toBe('');
   });
 
   it('renders Approve, Save Feedback, and Reject buttons when awaiting_review', () => {
@@ -169,18 +168,6 @@ describe('ReviewPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Feedback Saved')).toBeInTheDocument();
-    });
-  });
-
-  it('shows feedback controls and comments together when awaiting_review', async () => {
-    render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
-    );
-    // Feedback textarea
-    expect(screen.getByPlaceholderText('Add feedback for re-generation...')).toBeInTheDocument();
-    // Comment input (from CommentsPanel) — wait for async load
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('Add a comment...')).toBeInTheDocument();
     });
   });
 });

@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { useAuthStore } from '../../store/authStore';
 import { listComments } from '../../api/comments';
-import { CommentsPanel } from '../comments/CommentsPanel';
 import type { Artifact } from '../../types/project';
 import type { StageExecution } from '../../types/pipeline';
 
@@ -60,92 +59,72 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     }
   };
 
-  // Viewers always see just the comment input
-  if (isViewer) {
-    return (
-      <div className="space-y-2">
-        <h4 className="text-sm font-semibold text-gray-300">Comments</h4>
-        <CommentsPanel projectId={projectId} artifactId={artifact.id} compact />
-      </div>
-    );
+  // Viewers or non-awaiting_review: nothing to show
+  if (isViewer || !isAwaitingReview) {
+    return null;
   }
 
-  // Admin/Member + awaiting_review: feedback controls + comments inline
-  if (isAwaitingReview) {
-    return (
-      <div className="space-y-3">
-        {/* Feedback input */}
-        <div className="space-y-3">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs text-gray-400">Review Notes (optional)</label>
-              {feedbackCount > 0 && (
-                <span className="text-xs text-orange-400">
-                  {feedbackCount} previous feedback{feedbackCount !== 1 ? 's' : ''}
-                </span>
-              )}
-            </div>
-            <textarea
-              value={notes}
-              onChange={(e) => { setNotes(e.target.value); setFeedbackSaved(false); }}
-              className="w-full h-14 md:h-28 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
-              placeholder="Add feedback for re-generation..."
-            />
-          </div>
-
-          {showEditor && (
-            <textarea
-              value={editedContent || artifact.content || ''}
-              onChange={(e) => setEditedContent(e.target.value)}
-              className="w-full h-48 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
-            />
-          )}
-        </div>
-
-        {/* Action buttons */}
-        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
-          <button
-            onClick={() => handleAction('approved')}
-            disabled={submitting}
-            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-          >
-            Approve
-          </button>
-          <button
-            onClick={() => handleAction('save_feedback')}
-            disabled={submitting || !notes.trim()}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-          >
-            {feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
-          </button>
-          <button
-            onClick={() => handleAction('rejected')}
-            disabled={submitting}
-            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-          >
-            Reject & Re-generate
-          </button>
-          <button
-            onClick={() => setShowEditor(!showEditor)}
-            className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-          >
-            {showEditor ? 'Hide Editor' : 'Edit & Approve'}
-          </button>
-        </div>
-
-        {/* Comments timeline (always visible) */}
-        <div className="border-t border-gray-700 pt-2">
-          <CommentsPanel projectId={projectId} artifactId={artifact.id} compact />
-        </div>
-      </div>
-    );
-  }
-
-  // Admin/Member + NOT awaiting_review: compact comment input only
+  // Admin/Member + awaiting_review: feedback controls only
   return (
-    <div className="space-y-2">
-      <h4 className="text-sm font-semibold text-gray-300">Comments</h4>
-      <CommentsPanel projectId={projectId} artifactId={artifact.id} compact />
+    <div className="space-y-3">
+      {/* Feedback input */}
+      <div className="space-y-3">
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs text-gray-400">Review Notes (optional)</label>
+            {feedbackCount > 0 && (
+              <span className="text-xs text-orange-400">
+                {feedbackCount} previous feedback{feedbackCount !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+          <textarea
+            value={notes}
+            onChange={(e) => { setNotes(e.target.value); setFeedbackSaved(false); }}
+            className="w-full h-14 md:h-28 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+            placeholder="Add feedback for re-generation..."
+          />
+        </div>
+
+        {showEditor && (
+          <textarea
+            value={editedContent || artifact.content || ''}
+            onChange={(e) => setEditedContent(e.target.value)}
+            className="w-full h-48 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
+          />
+        )}
+      </div>
+
+      {/* Action buttons */}
+      <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
+        <button
+          onClick={() => handleAction('approved')}
+          disabled={submitting}
+          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+        >
+          Approve
+        </button>
+        <button
+          onClick={() => handleAction('save_feedback')}
+          disabled={submitting || !notes.trim()}
+          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+        >
+          {feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+        </button>
+        <button
+          onClick={() => handleAction('rejected')}
+          disabled={submitting}
+          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+        >
+          Reject & Re-generate
+        </button>
+        <button
+          onClick={() => setShowEditor(!showEditor)}
+          className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+        >
+          {showEditor ? 'Hide Editor' : 'Edit & Approve'}
+        </button>
+      </div>
     </div>
   );
 }
