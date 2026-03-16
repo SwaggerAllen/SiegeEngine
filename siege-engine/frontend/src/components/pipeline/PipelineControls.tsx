@@ -21,6 +21,7 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
   const [stopPoint, setStopPoint] = useState('after_all');
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [checkingPR, setCheckingPR] = useState(false);
+  const [prCleared, setPrCleared] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLDivElement>(null);
 
@@ -71,11 +72,21 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
   const handleCheckPR = async () => {
     setCheckingPR(true);
     try {
-      await checkBlockingPR(projectId);
+      const stillBlocking = await checkBlockingPR(projectId);
+      if (!stillBlocking) {
+        setPrCleared(true);
+      }
     } finally {
       setCheckingPR(false);
     }
   };
+
+  // Auto-dismiss the "PR resolved" message
+  useEffect(() => {
+    if (!prCleared) return;
+    const timer = setTimeout(() => setPrCleared(false), 4000);
+    return () => clearTimeout(timer);
+  }, [prCleared]);
 
   // Blocking PR banner
   if (blockingPR && !isRunning) {
@@ -241,6 +252,9 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
             </div>
           )}
         </div>
+      )}
+      {prCleared && (
+        <span className="text-green-400 text-xs">PR resolved — runs unblocked</span>
       )}
       {isPaused && (
         <span className="text-yellow-400 text-sm">Paused for review</span>
