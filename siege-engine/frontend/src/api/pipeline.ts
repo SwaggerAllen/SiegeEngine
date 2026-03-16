@@ -83,8 +83,26 @@ export async function getPipelineStatus(projectId: string) {
   return data;
 }
 
-export async function cancelPipeline(projectId: string) {
-  const { data } = await api.post(`/pipeline/${projectId}/cancel`);
+export async function cancelPipeline(
+  projectId: string,
+  options?: { open_pr?: boolean; pr_title?: string; pr_body?: string; base_branch?: string }
+) {
+  const { data } = await api.post(`/pipeline/${projectId}/cancel`, options || {});
+  return data;
+}
+
+export async function getBlockingPR(projectId: string) {
+  const { data } = await api.get(`/pipeline/${projectId}/blocking-pr`);
+  return data as { blocking_pr_url: string | null; blocking_pr_number: number | null };
+}
+
+export async function checkBlockingPR(projectId: string) {
+  const { data } = await api.post(`/pipeline/${projectId}/blocking-pr/check`);
+  return data as { blocking: boolean; pr_state?: string; blocking_pr_url?: string; blocking_pr_number?: number };
+}
+
+export async function dismissBlockingPR(projectId: string) {
+  const { data } = await api.post(`/pipeline/${projectId}/blocking-pr/dismiss`);
   return data;
 }
 

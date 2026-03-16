@@ -33,6 +33,7 @@ from backend.pipeline.engine import PipelineEngine
 from backend.pipeline.prompts import PROMPT_REGISTRY
 from backend.pipeline.defaults import DEFAULT_STAGES
 from backend.pipeline.schemas import (
+    CancelRequest,
     PipelineConfigResponse,
     PipelineConfigUpdate,
     PipelineRunResponse,
@@ -51,6 +52,19 @@ from backend.pipeline.schemas import (
 from backend.websocket.manager import ws_manager
 
 router = APIRouter()
+
+
+def _check_blocking_pr(project: Project):
+    """Raise 409 if this project has an unresolved blocking PR."""
+    if project.blocking_pr_url:
+        raise HTTPException(
+            409,
+            detail={
+                "message": "A blocking PR must be merged or closed before starting a new run.",
+                "blocking_pr_url": project.blocking_pr_url,
+                "blocking_pr_number": project.blocking_pr_number,
+            },
+        )
 
 
 @router.get("/{project_id}/config", response_model=PipelineConfigResponse)
@@ -120,6 +134,7 @@ async def start_pipeline(
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
+    _check_blocking_pr(project)
 
     # Compute next sequential run number for this project
     max_num = (
@@ -184,6 +199,7 @@ async def resume_run(
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
+    _check_blocking_pr(project)
 
     # Find the most recent run (completed, paused, cancelled, or failed)
     prev_run = (
@@ -401,11 +417,16 @@ def get_status(
 
 
 @router.post("/{project_id}/cancel")
-def cancel_pipeline(
+async def cancel_pipeline(
     project_id: str,
+    req: CancelRequest = CancelRequest(),
     db: Session = Depends(get_db),
-    _user: User = Depends(_require_writer),
+    user: User = Depends(_require_writer),
 ):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
     # Mark all running/pending executions as failed
     running = (
         db.query(StageExecution)
@@ -438,7 +459,123 @@ def cancel_pipeline(
         r.completed_at = datetime.utcnow()
 
     db.commit()
-    return {"status": "cancelled", "cancelled_count": len(running)}
+
+    result = {"status": "cancelled", "cancelled_count": len(running)}
+
+    # Optionally open a blocking PR
+    if req.open_pr:
+        if not project.github_repo_slug:
+            raise HTTPException(400, "Project has no GitHub repo configured")
+
+        from backend.models import GitHubCredential
+        from backend.git_manager.service import git_manager
+        from backend.github.service import GitHubService
+
+        cred = db.query(GitHubCredential).filter_by(user_id=user.id).first()
+        if not cred:
+            raise HTTPException(400, "GitHub not connected. Connect via Settings.")
+
+        run_label = active_runs[0].run_number if active_runs else "cancelled"
+        branch = f"siege-engine/{project.name.lower().replace(' ', '-')}"
+        pr_title = req.pr_title or f"Cancelled run #{run_label} — review before continuing"
+        pr_body = req.pr_body or "This PR was created when a pipeline run was cancelled. Merge or close it to unblock new runs."
+
+        auth_url = None
+        if project.remote_url and project.remote_url.startswith("https://"):
+            auth_url = project.remote_url.replace(
+                "https://", f"https://x-access-token:{cred.access_token}@"
+            )
+        git_manager.push_branch(project_id, branch, auth_url=auth_url)
+
+        gh = GitHubService(cred.access_token)
+        pr = await gh.create_pr(
+            project.github_repo_slug, pr_title, pr_body, branch, req.base_branch,
+        )
+
+        project.blocking_pr_url = pr.get("html_url")
+        project.blocking_pr_number = pr.get("number")
+        db.commit()
+
+        result["pr_url"] = project.blocking_pr_url
+        result["pr_number"] = project.blocking_pr_number
+
+    return result
+
+
+@router.get("/{project_id}/blocking-pr")
+def get_blocking_pr(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    return {
+        "blocking_pr_url": project.blocking_pr_url,
+        "blocking_pr_number": project.blocking_pr_number,
+    }
+
+
+@router.post("/{project_id}/blocking-pr/check")
+async def check_blocking_pr(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(_require_writer),
+):
+    """Check the blocking PR on GitHub; clear it if merged or closed."""
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if not project.blocking_pr_url:
+        return {"blocking": False}
+
+    if not project.github_repo_slug or not project.blocking_pr_number:
+        # No way to check — clear it
+        project.blocking_pr_url = None
+        project.blocking_pr_number = None
+        db.commit()
+        return {"blocking": False}
+
+    from backend.models import GitHubCredential
+    from backend.github.service import GitHubService
+
+    cred = db.query(GitHubCredential).filter_by(user_id=user.id).first()
+    if not cred:
+        raise HTTPException(400, "GitHub not connected. Connect via Settings.")
+
+    gh = GitHubService(cred.access_token)
+    pr = await gh.get_pr_status(project.github_repo_slug, project.blocking_pr_number)
+    state = pr.get("state")
+
+    if state != "open":
+        project.blocking_pr_url = None
+        project.blocking_pr_number = None
+        db.commit()
+        return {"blocking": False, "pr_state": state}
+
+    return {
+        "blocking": True,
+        "pr_state": state,
+        "blocking_pr_url": project.blocking_pr_url,
+        "blocking_pr_number": project.blocking_pr_number,
+    }
+
+
+@router.post("/{project_id}/blocking-pr/dismiss")
+def dismiss_blocking_pr(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Manually dismiss the blocking PR requirement without checking GitHub."""
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    project.blocking_pr_url = None
+    project.blocking_pr_number = None
+    db.commit()
+    return {"status": "dismissed"}
 
 
 # ──── Pipeline Runs ────

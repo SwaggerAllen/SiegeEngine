@@ -140,6 +140,8 @@ class Project(Base):
     github_repo_slug: Mapped[str | None] = mapped_column(String(200), nullable=True)
     git_repo_path: Mapped[str] = mapped_column(String(500), nullable=False)
     auto_push_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    blocking_pr_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    blocking_pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

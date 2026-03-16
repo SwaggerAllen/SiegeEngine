@@ -9,15 +9,20 @@ const STOP_POINT_OPTIONS = [
   { value: 'after_triplets', label: 'After each req\u2192arch\u2192plan group' },
 ];
 
-export function PipelineControls({ projectId }: { projectId: string }) {
-  const { isRunning, isPaused, currentRunNumber, runs, startPipeline, resumeRun, cancelPipeline } =
-    usePipelineStore();
+export function PipelineControls({ projectId, hasGitHub }: { projectId: string; hasGitHub?: boolean }) {
+  const {
+    isRunning, isPaused, currentRunNumber, runs, blockingPR,
+    startPipeline, resumeRun, cancelPipeline, checkBlockingPR, dismissBlockingPR,
+  } = usePipelineStore();
   const [showConfig, setShowConfig] = useState(false);
   const [configMode, setConfigMode] = useState<'start' | 'resume'>('start');
   const [humanReview, setHumanReview] = useState(true);
   const [aiLoops, setAiLoops] = useState(1);
   const [stopPoint, setStopPoint] = useState('after_all');
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [checkingPR, setCheckingPR] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLDivElement>(null);
 
   // Check if there's a previous run to resume from
   const hasCompletedRun = runs.some(
@@ -26,15 +31,18 @@ export function PipelineControls({ projectId }: { projectId: string }) {
 
   // Close popover on outside click
   useEffect(() => {
-    if (!showConfig) return;
+    if (!showConfig && !showCancelDialog) return;
     const handleClick = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+      if (showConfig && panelRef.current && !panelRef.current.contains(e.target as Node)) {
         setShowConfig(false);
+      }
+      if (showCancelDialog && cancelRef.current && !cancelRef.current.contains(e.target as Node)) {
+        setShowCancelDialog(false);
       }
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [showConfig]);
+  }, [showConfig, showCancelDialog]);
 
   const openConfig = (mode: 'start' | 'resume') => {
     setConfigMode(mode);
@@ -54,6 +62,52 @@ export function PipelineControls({ projectId }: { projectId: string }) {
       await startPipeline(projectId, options);
     }
   };
+
+  const handleCancel = async (openPR: boolean) => {
+    setShowCancelDialog(false);
+    await cancelPipeline(projectId, openPR ? { open_pr: true } : undefined);
+  };
+
+  const handleCheckPR = async () => {
+    setCheckingPR(true);
+    try {
+      await checkBlockingPR(projectId);
+    } finally {
+      setCheckingPR(false);
+    }
+  };
+
+  // Blocking PR banner
+  if (blockingPR && !isRunning) {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-yellow-900/40 border border-yellow-600/50 rounded text-xs">
+          <svg className="w-3.5 h-3.5 text-yellow-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span className="text-yellow-300">
+            Blocked by{' '}
+            <a href={blockingPR.url} target="_blank" rel="noreferrer" className="underline hover:text-yellow-100">
+              PR #{blockingPR.number}
+            </a>
+          </span>
+          <button
+            onClick={handleCheckPR}
+            disabled={checkingPR}
+            className="px-2 py-0.5 bg-yellow-700 hover:bg-yellow-600 text-white rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {checkingPR ? 'Checking...' : 'Check PR'}
+          </button>
+          <button
+            onClick={() => dismissBlockingPR(projectId)}
+            className="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded min-h-[44px] md:min-h-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-2 relative">
@@ -149,9 +203,9 @@ export function PipelineControls({ projectId }: { projectId: string }) {
           )}
         </div>
       ) : (
-        <>
+        <div ref={cancelRef} className="relative flex items-center gap-2">
           <button
-            onClick={() => cancelPipeline(projectId)}
+            onClick={() => setShowCancelDialog(true)}
             className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0"
           >
             Cancel
@@ -161,7 +215,32 @@ export function PipelineControls({ projectId }: { projectId: string }) {
               Run #{currentRunNumber}
             </span>
           )}
-        </>
+
+          {showCancelDialog && (
+            <div className="absolute top-full mt-1 right-0 z-50 w-64 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold text-white">Cancel Run</h3>
+              <p className="text-xs text-gray-400">
+                All in-progress nodes will be marked as failed.
+              </p>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => handleCancel(false)}
+                  className="w-full py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded"
+                >
+                  Cancel Run
+                </button>
+                {hasGitHub && (
+                  <button
+                    onClick={() => handleCancel(true)}
+                    className="w-full py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm rounded"
+                  >
+                    Cancel &amp; Open PR
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       )}
       {isPaused && (
         <span className="text-yellow-400 text-sm">Paused for review</span>

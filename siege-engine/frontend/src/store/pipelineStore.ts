@@ -2,6 +2,11 @@ import { create } from 'zustand';
 import * as pipelineApi from '../api/pipeline';
 import type { PipelineConfig, PipelineRun, PipelineStartOptions, StageExecution, WSEvent } from '../types/pipeline';
 
+export interface BlockingPR {
+  url: string;
+  number: number;
+}
+
 interface PipelineState {
   config: PipelineConfig | null;
   executions: StageExecution[];
@@ -14,15 +19,19 @@ interface PipelineState {
   historicalState: Record<string, unknown> | null;
   isViewingHistory: boolean;
   lastWSEvent: WSEvent | null;
+  blockingPR: BlockingPR | null;
   reset: () => void;
   fetchConfig: (projectId: string) => Promise<void>;
   fetchStatus: (projectId: string) => Promise<void>;
   fetchRuns: (projectId: string) => Promise<void>;
+  fetchBlockingPR: (projectId: string) => Promise<void>;
   startPipeline: (projectId: string, options?: PipelineStartOptions) => Promise<void>;
   resumeRun: (projectId: string, options?: PipelineStartOptions) => Promise<void>;
   resumeStage: (projectId: string, executionId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
   reviseArtifact: (projectId: string, artifactId: string, feedback: string) => Promise<void>;
-  cancelPipeline: (projectId: string) => Promise<void>;
+  cancelPipeline: (projectId: string, options?: { open_pr?: boolean; pr_title?: string; pr_body?: string; base_branch?: string }) => Promise<void>;
+  checkBlockingPR: (projectId: string) => Promise<boolean>;
+  dismissBlockingPR: (projectId: string) => Promise<void>;
   retryStage: (projectId: string, executionId: string) => Promise<void>;
   forceRestartStage: (projectId: string, executionId: string) => Promise<void>;
   selectRun: (projectId: string, runNumber: number | null) => Promise<void>;
@@ -41,10 +50,11 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   historicalState: null,
   isViewingHistory: false,
   lastWSEvent: null,
+  blockingPR: null,
 
   reset: () => set({
     config: null, executions: [], isRunning: false, isPaused: false, pausedStage: null,
-    currentRunNumber: null, runs: [], selectedRunNumber: null, historicalState: null, isViewingHistory: false, lastWSEvent: null,
+    currentRunNumber: null, runs: [], selectedRunNumber: null, historicalState: null, isViewingHistory: false, lastWSEvent: null, blockingPR: null,
   }),
 
   fetchConfig: async (projectId) => {
@@ -69,6 +79,19 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       });
     } catch (err) {
       console.error('[Pipeline] Failed to fetch runs:', err);
+    }
+  },
+
+  fetchBlockingPR: async (projectId) => {
+    try {
+      const data = await pipelineApi.getBlockingPR(projectId);
+      set({
+        blockingPR: data.blocking_pr_url
+          ? { url: data.blocking_pr_url, number: data.blocking_pr_number! }
+          : null,
+      });
+    } catch (err) {
+      console.error('[Pipeline] Failed to fetch blocking PR:', err);
     }
   },
 
@@ -113,10 +136,27 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     await pipelineApi.reviseArtifact(projectId, artifactId, feedback);
   },
 
-  cancelPipeline: async (projectId) => {
-    await pipelineApi.cancelPipeline(projectId);
+  cancelPipeline: async (projectId, options) => {
+    const result = await pipelineApi.cancelPipeline(projectId, options);
     set({ isRunning: false, isPaused: false, pausedStage: null });
+    if (result.pr_url) {
+      set({ blockingPR: { url: result.pr_url, number: result.pr_number } });
+    }
     get().fetchRuns(projectId);
+  },
+
+  checkBlockingPR: async (projectId) => {
+    const result = await pipelineApi.checkBlockingPR(projectId);
+    if (!result.blocking) {
+      set({ blockingPR: null });
+      return false;
+    }
+    return true;
+  },
+
+  dismissBlockingPR: async (projectId) => {
+    await pipelineApi.dismissBlockingPR(projectId);
+    set({ blockingPR: null });
   },
 
   retryStage: async (projectId, executionId) => {
