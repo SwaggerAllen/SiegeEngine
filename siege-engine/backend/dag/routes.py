@@ -5,7 +5,10 @@ from backend.auth.routes import get_current_user
 from backend.dag import service as dag_service
 from backend.database import get_db
 from backend.models import Artifact, ArtifactType, ComponentDefinition, Project, User
-from backend.pipeline.nodes.extract_components import parse_components_from_content
+from backend.pipeline.nodes.extract_components import (
+    inject_setup_component,
+    parse_components_from_content,
+)
 
 router = APIRouter()
 
@@ -73,6 +76,9 @@ def get_components(
         if not artifact or not artifact.content:
             return []
         components = parse_components_from_content(artifact.content)
+
+    # Always ensure setup component is present (mirrors engine injection)
+    components = inject_setup_component(components)
 
     # Build dependents map (reverse of dependencies)
     dependents: dict[str, list[str]] = {}
