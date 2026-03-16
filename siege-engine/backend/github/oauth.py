@@ -41,12 +41,19 @@ def github_authorize(user: User = Depends(get_current_user)):
     state = secrets.token_urlsafe(32)
     _oauth_states[user.id] = {"state": state, "created_at": time.time()}
 
+    # Build redirect URI from configured CORS origin (the frontend URL)
+    redirect_uri = ""
+    if settings.cors_origins:
+        redirect_uri = f"{settings.cors_origins[0].rstrip('/')}/github/callback"
+
     url = (
         f"{GITHUB_AUTHORIZE_URL}"
         f"?client_id={settings.github_client_id}"
         f"&scope=repo"
         f"&state={state}"
     )
+    if redirect_uri:
+        url += f"&redirect_uri={redirect_uri}"
     return {"authorize_url": url}
 
 

@@ -25,7 +25,7 @@ export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
   const { currentProject, fetchProject, selectedArtifact, clearSelection } =
     useProjectStore();
-  const { executions, fetchConfig, fetchStatus, fetchRuns, currentRunNumber, isRunning, isViewingHistory, reset: resetPipeline } = usePipelineStore();
+  const { executions, fetchConfig, fetchStatus, fetchRuns, fetchBlockingPR, currentRunNumber, isRunning, isViewingHistory, reset: resetPipeline } = usePipelineStore();
   const { user } = useAuthStore();
   const { editPromptStageKey, setEditPromptStageKey, selectedStageKey } = useDAGStore();
   const { connected, reconnect } = useWebSocket(projectId);
@@ -43,6 +43,7 @@ export function ProjectDashboardPage() {
       fetchConfig(projectId);
       fetchStatus(projectId);
       fetchRuns(projectId);
+      fetchBlockingPR(projectId);
     }
     return () => clearSelection();
   }, [projectId]);
@@ -102,7 +103,7 @@ export function ProjectDashboardPage() {
         </div>
         <div className="flex items-center gap-2 md:gap-4 flex-wrap">
           <RunSelector projectId={projectId} />
-          {!isViewer && !isViewingHistory && <PipelineControls projectId={projectId} />}
+          {!isViewer && !isViewingHistory && <PipelineControls projectId={projectId} hasGitHub={!!currentProject?.github_repo_slug} />}
           {isViewingHistory && (
             <span className="text-xs bg-yellow-600/30 text-yellow-300 px-2 py-0.5 rounded-full border border-yellow-500/30">
               Viewing history (read-only)
@@ -206,14 +207,14 @@ export function ProjectDashboardPage() {
             ) : activeTab === 'pipeline' && selectedStageKey ? (
               <StageConfigPanel projectId={projectId} stageKey={selectedStageKey} />
             ) : (
-              <div className="flex-1 flex flex-col">
-                <div className="p-4 text-gray-500 text-sm">
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="p-4 text-gray-500 text-sm shrink-0">
                   {activeTab === 'documents'
                     ? 'Select a document node to view or edit'
                     : 'Select a stage node to configure it'}
                 </div>
                 {activeTab === 'pipeline' && (
-                  <div className="p-4 border-t border-gray-700 overflow-auto">
+                  <div className="flex-1 p-4 border-t border-gray-700 overflow-auto min-h-0">
                     <StageStatusList executions={executions} projectId={projectId} />
                   </div>
                 )}

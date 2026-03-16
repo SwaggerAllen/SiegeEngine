@@ -55,6 +55,16 @@ def _migrate_missing_columns():
                 conn.execute(text(
                     "ALTER TABLE projects ADD COLUMN auto_push_enabled BOOLEAN DEFAULT 0"
                 ))
+        if "blocking_pr_url" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE projects ADD COLUMN blocking_pr_url VARCHAR(500)"
+                ))
+        if "blocking_pr_number" not in columns:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE projects ADD COLUMN blocking_pr_number INTEGER"
+                ))
 
 
 def get_db():

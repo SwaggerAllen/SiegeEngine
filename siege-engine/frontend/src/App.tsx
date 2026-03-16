@@ -5,6 +5,7 @@ import { LoginPage } from './pages/LoginPage';
 import { ProjectListPage } from './pages/ProjectListPage';
 import { ProjectCreatePage } from './pages/ProjectCreatePage';
 import { ProjectDashboardPage } from './pages/ProjectDashboardPage';
+import { GitHubCallbackPage } from './pages/GitHubCallbackPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
@@ -26,6 +27,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/github/callback" element={<GitHubCallbackPage />} />
         <Route
           path="/projects"
           element={

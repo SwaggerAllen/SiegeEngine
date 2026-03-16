@@ -25,6 +25,13 @@ class ResumeRunRequest(BaseModel):
     stop_point: str = "after_all"
 
 
+class CancelRequest(BaseModel):
+    open_pr: bool = False
+    pr_title: str | None = None
+    pr_body: str | None = None
+    base_branch: str = "main"
+
+
 class RegenerateRequest(BaseModel):
     artifact_ids: list[str]
 
