@@ -11,8 +11,10 @@ interface ReviewPanelProps {
   execution: StageExecution | undefined;
 }
 
+const RESTARTABLE_STATUSES = new Set(['running', 'ai_review', 'failed']);
+
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
-  const { resumeStage } = usePipelineStore();
+  const { resumeStage, forceRestartStage } = usePipelineStore();
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
   const [notes, setNotes] = useState('');
@@ -21,8 +23,10 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const [submitting, setSubmitting] = useState(false);
   const [feedbackSaved, setFeedbackSaved] = useState(false);
   const [feedbackCount, setFeedbackCount] = useState(0);
+  const [restarting, setRestarting] = useState(false);
 
   const isAwaitingReview = execution?.status === 'awaiting_review';
+  const isRestartable = execution && RESTARTABLE_STATUSES.has(execution.status);
 
   // Reset to blank when switching artifacts; fetch feedback count
   useEffect(() => {
@@ -59,7 +63,46 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     }
   };
 
-  // Viewers or non-awaiting_review: nothing to show
+  const handleRestart = async () => {
+    if (!execution) return;
+    setRestarting(true);
+    try {
+      await forceRestartStage(projectId, execution.id);
+    } catch (err) {
+      console.error('Force restart failed:', err);
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  // Show restart button for stuck/failed stages
+  if (!isViewer && isRestartable && !isAwaitingReview) {
+    const statusLabel = execution!.status === 'failed' ? 'Failed' :
+                        execution!.status === 'ai_review' ? 'Stuck in AI Review' : 'Stuck (Running)';
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-sm">
+          <span className={`px-2 py-1 rounded text-white ${
+            execution!.status === 'failed' ? 'bg-red-700' : 'bg-blue-600 animate-pulse'
+          }`}>
+            {statusLabel}
+          </span>
+          {execution!.error_message && (
+            <span className="text-red-400 text-xs truncate">{execution!.error_message}</span>
+          )}
+        </div>
+        <button
+          onClick={handleRestart}
+          disabled={restarting}
+          className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+        >
+          {restarting ? 'Restarting...' : '⟳ Force Restart Stage'}
+        </button>
+      </div>
+    );
+  }
+
+  // Viewers or non-actionable: nothing to show
   if (isViewer || !isAwaitingReview) {
     return null;
   }
