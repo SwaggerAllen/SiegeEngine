@@ -207,14 +207,14 @@ export function ProjectDashboardPage() {
             ) : activeTab === 'pipeline' && selectedStageKey ? (
               <StageConfigPanel projectId={projectId} stageKey={selectedStageKey} />
             ) : (
-              <div className="flex-1 flex flex-col">
-                <div className="p-4 text-gray-500 text-sm">
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="p-4 text-gray-500 text-sm shrink-0">
                   {activeTab === 'documents'
                     ? 'Select a document node to view or edit'
                     : 'Select a stage node to configure it'}
                 </div>
                 {activeTab === 'pipeline' && (
-                  <div className="p-4 border-t border-gray-700 overflow-auto">
+                  <div className="flex-1 p-4 border-t border-gray-700 overflow-auto min-h-0">
                     <StageStatusList executions={executions} projectId={projectId} />
                   </div>
                 )}
