@@ -42,11 +42,15 @@ export function ProjectSettingsPanel({ projectId }: { projectId: string }) {
     }
   };
 
-  const connectGitHub = async () => {
-    try {
-      const { data } = await api.get('/github/authorize');
-      // Open popup for GitHub OAuth
-      const popup = window.open(data.authorize_url, 'github-oauth', 'width=600,height=700');
+  const connectGitHub = () => {
+    // Open popup immediately in the click handler to avoid popup blocker.
+    // Browsers block window.open if called after an async gap.
+    const popup = window.open('about:blank', 'github-oauth', 'width=600,height=700');
+
+    api.get('/github/authorize').then(({ data }) => {
+      if (popup) {
+        popup.location.href = data.authorize_url;
+      }
 
       // Listen for the callback page to post the code back
       const handleMessage = async (event: MessageEvent) => {
@@ -72,9 +76,10 @@ export function ProjectSettingsPanel({ projectId }: { projectId: string }) {
           window.removeEventListener('message', handleMessage);
         }
       }, 1000);
-    } catch {
+    }).catch(() => {
+      popup?.close();
       setMessage('Failed to start GitHub connection');
-    }
+    });
   };
 
   return (
