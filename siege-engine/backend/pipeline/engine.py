@@ -44,9 +44,12 @@ from backend.pipeline.nodes.generate import generate
 from backend.websocket.manager import ws_manager
 
 
-# Stage keys grouped by level for readiness checks
+# Stage keys grouped by level for readiness checks.
+# component_plans comes after extract_sub_components because it only
+# runs for leaf components (those that produced no sub-components).
 COMPONENT_STAGE_ORDER = [
-    "component_requirements", "component_architectures", "component_plans",
+    "component_requirements", "component_architectures",
+    "extract_sub_components", "component_plans",
 ]
 SUB_COMPONENT_STAGE_ORDER = [
     "sub_component_requirements", "sub_component_architectures", "sub_component_plans",
@@ -544,9 +547,14 @@ class PipelineEngine:
 
         if fan_out == FanOutStrategy.COMPONENT:
             comps = self._get_components(project_id)
-            # Inject setup component for relevant stages
             if stage_def.stage_key in ("component_plans", "code_generation", "code_review"):
                 comps = inject_setup_component(comps)
+            # component_plans only applies to leaf components (no sub-components)
+            if stage_def.stage_key == "component_plans":
+                parent_keys = {
+                    d.parent_key for d in self._get_sub_component_defs(project_id)
+                }
+                comps = [c for c in comps if c["key"] not in parent_keys]
             return [c["key"] for c in comps]
 
         elif fan_out == FanOutStrategy.SUB_COMPONENT:
@@ -568,6 +576,15 @@ class PipelineEngine:
             comps = self._get_components(project_id)
             if stage_def.stage_key in ("component_plans", "code_generation", "code_review"):
                 comps = inject_setup_component(comps)
+
+            # component_plans only applies to leaf components (no sub-components).
+            # Components that produced sub-components are planned at the
+            # sub-component level instead.
+            if stage_def.stage_key == "component_plans":
+                parent_keys = {
+                    d.parent_key for d in self._get_sub_component_defs(project_id)
+                }
+                comps = [c for c in comps if c["key"] not in parent_keys]
 
             for comp in comps:
                 key = comp["key"]
@@ -613,9 +630,11 @@ class PipelineEngine:
         if existing:
             return False
 
-        # 2. All upstream dependency components have approved plans
+        # 2. All upstream dependency components have approved architectures
+        # (and plans, for stages after component_plans — but non-leaf
+        #  components won't have plans so we only require architectures)
         for dep_key in dependencies:
-            if not self._has_approved_artifact(project_id, ArtifactType.COMPONENT_PLAN, dep_key):
+            if not self._has_approved_artifact(project_id, ArtifactType.COMPONENT_ARCHITECTURE, dep_key):
                 return False
 
         # 3. Own prior component stages are approved
@@ -624,11 +643,6 @@ class PipelineEngine:
             for prior_key in COMPONENT_STAGE_ORDER[:current_idx]:
                 if not self._has_approved_execution(project_id, prior_key, comp_key, run_id):
                     return False
-
-        # 4. For extract_sub_components, component_plans must be approved
-        if stage_def.stage_key == "extract_sub_components":
-            if not self._has_approved_artifact(project_id, ArtifactType.COMPONENT_PLAN, comp_key):
-                return False
 
         return True
 
@@ -1218,8 +1232,11 @@ class PipelineEngine:
         self, project_id: str, run_id: str,
         approved_stage_order_index: int, config: PipelineConfig,
     ) -> list[str]:
-        """After approving a regenerated stage, invalidate downstream APPROVED
-        executions so they get re-processed with the updated upstream content.
+        """After approving a regenerated stage, mark downstream artifacts as
+        STALE so the user knows they were built on old content.
+
+        Executions are kept as APPROVED so that auto-generation does NOT
+        re-trigger.  The user must explicitly regenerate stale nodes.
 
         Returns list of stale artifact IDs for WS broadcast.
         """
@@ -1242,15 +1259,13 @@ class PipelineEngine:
             )
 
             for exc in downstream_execs:
-                logger.info(
-                    "Invalidating stale downstream execution %s (stage=%s, component=%s)",
-                    exc.id, exc.stage_key, exc.component_key,
-                )
-                exc.status = StageStatus.REJECTED
-
                 if exc.artifact_id:
                     artifact = self.db.get(Artifact, exc.artifact_id)
                     if artifact:
+                        logger.info(
+                            "Marking downstream artifact %s as stale (stage=%s, component=%s)",
+                            artifact.id, exc.stage_key, exc.component_key,
+                        )
                         artifact.status = ArtifactStatus.STALE
                         stale_artifact_ids.append(artifact.id)
 
