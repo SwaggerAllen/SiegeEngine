@@ -69,45 +69,112 @@ def _migrate_missing_columns():
 
 
 def _migrate_stage_order():
-    """Reorder stages: move component_plans after extract_sub_components.
+    """Sync stage definitions with DEFAULT_STAGES.
 
-    Old order: ..., component_plans(6), extract_sub_components(7), ...
-    New order: ..., extract_sub_components(6), component_plans(7), ...
-
-    Also update extract_sub_components input_stage_keys to no longer
-    require component_plans (it now takes component_architectures +
-    component_requirements).
+    - Removes the high_level_plan stage (and its artifacts/executions)
+    - Reindexes all stages to match DEFAULT_STAGES order
+    - Updates input_stage_keys for stages whose inputs changed
+    - Cleans up component_plan artifacts for non-leaf components
     """
+    import json
+
     from backend.pipeline.defaults import DEFAULT_STAGES
 
     new_order = {s["stage_key"]: s["order_index"] for s in DEFAULT_STAGES}
-    new_inputs = {s["stage_key"]: s["input_stage_keys"] for s in DEFAULT_STAGES}
+    new_inputs = {s["stage_key"]: json.dumps(s["input_stage_keys"]) for s in DEFAULT_STAGES}
+    valid_keys = set(new_order.keys())
 
     with engine.begin() as conn:
-        # Check if stage_definitions table exists
         inspector = inspect(engine)
         if not inspector.has_table("stage_definitions"):
             return
 
+        # 1. Sync every stage definition: update order + inputs, delete removed
         rows = conn.execute(text(
             "SELECT id, stage_key, order_index, input_stage_keys "
-            "FROM stage_definitions WHERE stage_key IN ('component_plans', 'extract_sub_components')"
+            "FROM stage_definitions"
         )).fetchall()
 
-        for row in rows:
-            sid, skey, current_order, _ = row
-            target_order = new_order.get(skey)
-            target_inputs = new_inputs.get(skey)
-            if target_order is not None and current_order != target_order:
-                import json
+        for sid, skey, current_order, current_inputs in rows:
+            if skey not in valid_keys:
+                # Stage was removed (e.g. high_level_plan) — delete it
+                conn.execute(text(
+                    "DELETE FROM stage_definitions WHERE id = :id"
+                ), {"id": sid})
+                continue
+
+            target_order = new_order[skey]
+            target_inputs = new_inputs[skey]
+            if current_order != target_order or current_inputs != target_inputs:
                 conn.execute(text(
                     "UPDATE stage_definitions SET order_index = :order_index, "
                     "input_stage_keys = :input_keys WHERE id = :id"
-                ), {
-                    "order_index": target_order,
-                    "input_keys": json.dumps(target_inputs),
-                    "id": sid,
-                })
+                ), {"order_index": target_order, "input_keys": target_inputs, "id": sid})
+
+        # 2. Clean up artifacts/executions for removed stages
+        _cleanup_artifacts_for_type(conn, inspector, "high_level_plan")
+        conn.execute(text(
+            "DELETE FROM stage_executions WHERE stage_key = 'high_level_plan'"
+        ))
+
+        # 3. Clean up component_plan artifacts for non-leaf components
+        if not inspector.has_table("component_definitions"):
+            return
+
+        parent_keys = conn.execute(text(
+            "SELECT DISTINCT parent_key FROM component_definitions "
+            "WHERE parent_key IS NOT NULL"
+        )).fetchall()
+        non_leaf_keys = [r[0] for r in parent_keys]
+        if not non_leaf_keys:
+            return
+
+        placeholders = ", ".join(f":k{i}" for i in range(len(non_leaf_keys)))
+        params = {f"k{i}": k for i, k in enumerate(non_leaf_keys)}
+
+        orphan_ids = conn.execute(text(
+            f"SELECT id FROM artifacts "
+            f"WHERE artifact_type = 'component_plan' "
+            f"AND component_key IN ({placeholders})"
+        ), params).fetchall()
+        _delete_artifact_ids(conn, inspector, [r[0] for r in orphan_ids])
+
+        conn.execute(text(
+            f"DELETE FROM stage_executions "
+            f"WHERE stage_key = 'component_plans' "
+            f"AND component_key IN ({placeholders})"
+        ), params)
+
+
+def _cleanup_artifacts_for_type(conn, inspector, artifact_type: str):
+    """Delete all artifacts of a given type and their related records."""
+    art_ids = conn.execute(text(
+        "SELECT id FROM artifacts WHERE artifact_type = :atype"
+    ), {"atype": artifact_type}).fetchall()
+    _delete_artifact_ids(conn, inspector, [r[0] for r in art_ids])
+
+
+def _delete_artifact_ids(conn, inspector, art_ids: list[str]):
+    """Delete artifacts by ID along with their dependency edges and comments."""
+    if not art_ids:
+        return
+    ph = ", ".join(f":a{i}" for i in range(len(art_ids)))
+    params = {f"a{i}": aid for i, aid in enumerate(art_ids)}
+
+    conn.execute(text(
+        f"DELETE FROM artifact_dependencies "
+        f"WHERE upstream_artifact_id IN ({ph}) "
+        f"OR downstream_artifact_id IN ({ph})"
+    ), params)
+
+    if inspector.has_table("artifact_comments"):
+        conn.execute(text(
+            f"DELETE FROM artifact_comments WHERE artifact_id IN ({ph})"
+        ), params)
+
+    conn.execute(text(
+        f"DELETE FROM artifacts WHERE id IN ({ph})"
+    ), params)
 
 
 def get_db():

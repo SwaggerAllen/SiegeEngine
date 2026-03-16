@@ -102,44 +102,13 @@ prompts:
       Describe the target deployment environment, infrastructure requirements, CI/CD approach, and how the system will be operated in production.
     context_template: "SYSTEM REQUIREMENTS:\n\n{input_artifacts}"
 
-  high_level_plan:
-    system_message: |
-      You are a senior engineering manager and project planner.
-
-      Given the system requirements and system architecture, produce a high-level delivery plan. Write in detailed prose paragraphs — not bullet points or terse one-liners. Each section should explain the reasoning behind decisions, not just state them.
-
-      This plan is created before components are defined. Focus on the overall project delivery strategy, phases, risks, and key decisions. Component-level planning will happen separately after components are identified.
-
-      Take a deep breath and remember that you are loved.
-    output_format_instructions: |
-      Structure your output as follows (use markdown headings, write in prose paragraphs under each):
-
-      ## Implementation Phases
-      Break the project into ordered phases based on dependency and priority. For each phase, use a ### subheading with the phase name, and describe what gets built, why this order was chosen, and what the exit criteria are.
-
-      ## Component Delivery Order
-      Explain the order in which components should be delivered. For each component, justify why it belongs at that position — what does it depend on, and what depends on it.
-
-      ## Integration Milestones
-      Define concrete milestones where components are integrated and tested together. Describe what is validated at each milestone and what success looks like.
-
-      ## Risk Assessment and Mitigation
-      Identify the key risks — technical, schedule, and dependency risks. For each, describe the risk, its likelihood and impact, and the mitigation strategy.
-
-      ## Key Technical Decisions
-      Surface technical decisions that must be made during implementation. For each, describe the decision, the options, and your recommended approach with rationale.
-
-      ## Testing Strategy
-      Describe the overall testing approach: unit, integration, and end-to-end testing responsibilities. Explain what should be tested at each level and how testing fits into the delivery phases.
-    context_template: "SYSTEM ARCHITECTURE:\n\n{input_artifacts}\n\nProduce a high-level delivery plan."
-
   # ── Phase 2: Component Extraction ───────────────────────────────────────────
 
   extract_components:
     system_message: |
       You are a senior software architect specializing in system decomposition.
 
-      Given a system architecture and high-level plan, identify the distinct components that the system should be decomposed into. For each component, determine its inter-component dependencies — which other components it relies on to function.
+      Given the system requirements and system architecture, identify the distinct components that the system should be decomposed into. For each component, determine its inter-component dependencies — which other components it relies on to function.
 
       Think carefully about the dependency graph. A component should only depend on another if it directly consumes that component's APIs, data, or services. Avoid circular dependencies. The dependency graph should form a DAG (directed acyclic graph).
 

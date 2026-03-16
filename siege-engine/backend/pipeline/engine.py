@@ -262,7 +262,7 @@ class PipelineEngine:
             return pipeline_run.human_review and stage_def.human_review_enabled
 
         elif stop == StopPoint.AFTER_TRIPLETS:
-            triplet_ends = {"high_level_plan", "component_plans", "sub_component_plans"}
+            triplet_ends = {"component_plans", "sub_component_plans"}
             if stage_def.stage_key in triplet_ends:
                 return True
             if stage_def.stage_key in BRANCHING_STAGES:
@@ -1873,7 +1873,6 @@ def _stage_key_to_artifact_type(stage_key: str) -> ArtifactType:
         "component_requirements": ArtifactType.COMPONENT_REQUIREMENTS,
         "system_architecture": ArtifactType.SYSTEM_ARCHITECTURE,
         "component_architectures": ArtifactType.COMPONENT_ARCHITECTURE,
-        "high_level_plan": ArtifactType.HIGH_LEVEL_PLAN,
         "component_plans": ArtifactType.COMPONENT_PLAN,
         "extract_components": ArtifactType.COMPONENT_MAP,
         "extract_sub_components": ArtifactType.SUB_COMPONENT_MAP,

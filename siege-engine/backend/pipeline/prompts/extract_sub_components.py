@@ -7,14 +7,14 @@ class ExtractSubComponentsPrompt(PromptTemplate):
         if prompt_config:
             return self._build_from_config(input_artifacts, component_key, feedback, human_notes, prompt_config)
 
-        component_plan = input_artifacts.get("component_plans", "")
         component_arch = input_artifacts.get("component_architectures", "")
+        component_reqs = input_artifacts.get("component_requirements", "")
 
         context_parts = []
         if component_arch:
             context_parts.append(f"COMPONENT ARCHITECTURE:\n\n{component_arch}")
-        if component_plan:
-            context_parts.append(f"COMPONENT PLAN:\n\n{component_plan}")
+        if component_reqs:
+            context_parts.append(f"COMPONENT REQUIREMENTS:\n\n{component_reqs}")
 
         messages = [
             {"role": "system", "content": self.full_system_message},
