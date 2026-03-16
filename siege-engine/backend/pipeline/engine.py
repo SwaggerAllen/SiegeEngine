@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 from backend.models import (
     Artifact,
     ArtifactComment,
+    ArtifactDependency,
     ArtifactStatus,
     ArtifactType,
     ComponentDefinition,
@@ -800,27 +801,139 @@ class PipelineEngine:
         # Inject setup component
         components = inject_setup_component(components)
 
-        # Clear existing top-level components for this project
-        (
+        # Detect removed components before clearing
+        old_defs = (
             self.db.query(ComponentDefinition)
             .filter_by(project_id=project_id)
             .filter(ComponentDefinition.parent_key.is_(None))
-            .delete()
+            .all()
         )
+        old_keys = {d.key for d in old_defs}
+        new_keys = {c["key"] for c in components}
+        removed_keys = old_keys - new_keys
 
-        for comp in components:
-            cd = ComponentDefinition(
-                project_id=project_id,
-                key=comp["key"],
-                name=comp.get("name", comp["key"]),
-                description=comp.get("description"),
-                parent_key=None,
-                dependencies=comp.get("dependencies", []),
+        # Clean up orphaned artifacts and executions for removed components
+        if removed_keys:
+            logger.info(
+                "Components removed from project %s: %s",
+                project_id, removed_keys,
             )
-            self.db.add(cd)
+            for key in removed_keys:
+                # Delete artifacts with this component_key
+                orphaned_arts = (
+                    self.db.query(Artifact)
+                    .filter_by(project_id=project_id, component_key=key)
+                    .all()
+                )
+                orphan_art_ids = {a.id for a in orphaned_arts}
+
+                # Delete dependency edges referencing these artifacts
+                if orphan_art_ids:
+                    (
+                        self.db.query(ArtifactDependency)
+                        .filter(
+                            (ArtifactDependency.upstream_artifact_id.in_(orphan_art_ids))
+                            | (ArtifactDependency.downstream_artifact_id.in_(orphan_art_ids))
+                        )
+                        .delete(synchronize_session="fetch")
+                    )
+
+                # Delete comments on orphaned artifacts
+                if orphan_art_ids:
+                    (
+                        self.db.query(ArtifactComment)
+                        .filter(ArtifactComment.artifact_id.in_(orphan_art_ids))
+                        .delete(synchronize_session="fetch")
+                    )
+
+                # Delete executions referencing these artifacts
+                (
+                    self.db.query(StageExecution)
+                    .filter_by(project_id=project_id, component_key=key)
+                    .delete()
+                )
+
+                # Delete the artifacts themselves
+                for art in orphaned_arts:
+                    self.db.delete(art)
+
+                # Also clean up sub-components under this parent
+                (
+                    self.db.query(ComponentDefinition)
+                    .filter_by(project_id=project_id, parent_key=key)
+                    .delete()
+                )
+
+                # Clean up sub-component artifacts (component_key like "removed_key.%")
+                sub_arts = (
+                    self.db.query(Artifact)
+                    .filter_by(project_id=project_id)
+                    .filter(Artifact.component_key.like(f"{key}.%"))
+                    .all()
+                )
+                sub_art_ids = {a.id for a in sub_arts}
+                if sub_art_ids:
+                    (
+                        self.db.query(ArtifactDependency)
+                        .filter(
+                            (ArtifactDependency.upstream_artifact_id.in_(sub_art_ids))
+                            | (ArtifactDependency.downstream_artifact_id.in_(sub_art_ids))
+                        )
+                        .delete(synchronize_session="fetch")
+                    )
+                    (
+                        self.db.query(ArtifactComment)
+                        .filter(ArtifactComment.artifact_id.in_(sub_art_ids))
+                        .delete(synchronize_session="fetch")
+                    )
+                (
+                    self.db.query(StageExecution)
+                    .filter_by(project_id=project_id)
+                    .filter(StageExecution.component_key.like(f"{key}.%"))
+                    .delete(synchronize_session="fetch")
+                )
+                for art in sub_arts:
+                    self.db.delete(art)
+
+        # Upsert: update existing, create new, leave removed already cleaned up above
+        old_def_by_key = {d.key: d for d in old_defs}
+        added = 0
+        updated = 0
+        for comp in components:
+            existing = old_def_by_key.get(comp["key"])
+            if existing:
+                # Update metadata if changed, but preserve the record
+                existing.name = comp.get("name", comp["key"])
+                existing.description = comp.get("description")
+                existing.dependencies = comp.get("dependencies", [])
+                updated += 1
+            else:
+                cd = ComponentDefinition(
+                    project_id=project_id,
+                    key=comp["key"],
+                    name=comp.get("name", comp["key"]),
+                    description=comp.get("description"),
+                    parent_key=None,
+                    dependencies=comp.get("dependencies", []),
+                )
+                self.db.add(cd)
+                added += 1
+
+        # Delete ComponentDefinition records for removed keys (artifacts already cleaned above)
+        if removed_keys:
+            (
+                self.db.query(ComponentDefinition)
+                .filter_by(project_id=project_id)
+                .filter(ComponentDefinition.parent_key.is_(None))
+                .filter(ComponentDefinition.key.in_(removed_keys))
+                .delete(synchronize_session="fetch")
+            )
 
         self.db.flush()
-        logger.info("Stored %d top-level components for project %s", len(components), project_id)
+        logger.info(
+            "Components for project %s: %d added, %d updated, %d removed",
+            project_id, added, updated, len(removed_keys),
+        )
 
     def _store_sub_components(self, project_id: str, parent_key: str, content: str):
         """Parse extract_sub_components output and create sub-ComponentDefinition records."""

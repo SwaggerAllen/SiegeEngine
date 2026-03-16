@@ -137,6 +137,7 @@ export interface ComponentInfo {
   description: string | null;
   dependencies: string[];
   dependents: string[];
+  change: 'new' | 'existing' | 'removed' | null;
 }
 
 export async function getComponents(projectId: string): Promise<ComponentInfo[]> {

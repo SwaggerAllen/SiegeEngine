@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import { getComponents, type ComponentInfo } from '../../api/pipeline';
 
+const CHANGE_BADGES: Record<string, { label: string; className: string }> = {
+  new: { label: 'New', className: 'bg-green-900/50 text-green-300 border-green-600/40' },
+  existing: { label: 'Existing', className: 'bg-gray-700/50 text-gray-300 border-gray-500/40' },
+  removed: { label: 'Removed', className: 'bg-red-900/50 text-red-300 border-red-600/40' },
+};
+
 export function ComponentDependencyList({ projectId }: { projectId: string }) {
   const [components, setComponents] = useState<ComponentInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,6 +37,7 @@ export function ComponentDependencyList({ projectId }: { projectId: string }) {
 
   // Build a lookup for resolving keys to names
   const keyToName = new Map(components.map((c) => [c.key, c.name]));
+  const hasAnyChanges = components.some((c) => c.change);
 
   if (loading) {
     return <div className="p-4 text-sm text-gray-400">Loading components...</div>;
@@ -42,14 +49,30 @@ export function ComponentDependencyList({ projectId }: { projectId: string }) {
 
   return (
     <div className="flex-1 overflow-auto p-3 space-y-1">
+      {hasAnyChanges && (
+        <div className="flex items-center gap-2 px-1 pb-2 text-xs text-gray-500">
+          <span>Showing changes vs. previous extraction</span>
+        </div>
+      )}
       {components.map((comp) => {
         const isOpen = expanded.has(comp.key);
         const hasDeps = comp.dependencies.length > 0;
         const hasDepnts = comp.dependents.length > 0;
         const hasDetails = hasDeps || hasDepnts || comp.description;
+        const badge = comp.change ? CHANGE_BADGES[comp.change] : null;
+        const isRemoved = comp.change === 'removed';
 
         return (
-          <div key={comp.key} className="border border-gray-700 rounded">
+          <div
+            key={comp.key}
+            className={`border rounded ${
+              isRemoved
+                ? 'border-red-800/50 opacity-60'
+                : comp.change === 'new'
+                ? 'border-green-700/50'
+                : 'border-gray-700'
+            }`}
+          >
             <button
               onClick={() => hasDetails && toggle(comp.key)}
               className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm ${
@@ -67,8 +90,15 @@ export function ComponentDependencyList({ projectId }: { projectId: string }) {
                 </svg>
               )}
               {!hasDetails && <span className="w-3 shrink-0" />}
-              <span className="text-white font-medium truncate">{comp.name}</span>
+              <span className={`font-medium truncate ${isRemoved ? 'line-through text-gray-400' : 'text-white'}`}>
+                {comp.name}
+              </span>
               <span className="text-xs text-gray-500 shrink-0">{comp.key}</span>
+              {badge && (
+                <span className={`text-xs px-1.5 py-0.5 rounded border shrink-0 ${badge.className}`}>
+                  {badge.label}
+                </span>
+              )}
               {hasDeps && (
                 <span className="ml-auto text-xs text-gray-500 shrink-0">
                   {comp.dependencies.length} dep{comp.dependencies.length !== 1 ? 's' : ''}
