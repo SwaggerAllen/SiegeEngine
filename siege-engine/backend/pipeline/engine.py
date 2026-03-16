@@ -1218,8 +1218,11 @@ class PipelineEngine:
         self, project_id: str, run_id: str,
         approved_stage_order_index: int, config: PipelineConfig,
     ) -> list[str]:
-        """After approving a regenerated stage, invalidate downstream APPROVED
-        executions so they get re-processed with the updated upstream content.
+        """After approving a regenerated stage, mark downstream artifacts as
+        STALE so the user knows they were built on old content.
+
+        Executions are kept as APPROVED so that auto-generation does NOT
+        re-trigger.  The user must explicitly regenerate stale nodes.
 
         Returns list of stale artifact IDs for WS broadcast.
         """
@@ -1242,15 +1245,13 @@ class PipelineEngine:
             )
 
             for exc in downstream_execs:
-                logger.info(
-                    "Invalidating stale downstream execution %s (stage=%s, component=%s)",
-                    exc.id, exc.stage_key, exc.component_key,
-                )
-                exc.status = StageStatus.REJECTED
-
                 if exc.artifact_id:
                     artifact = self.db.get(Artifact, exc.artifact_id)
                     if artifact:
+                        logger.info(
+                            "Marking downstream artifact %s as stale (stage=%s, component=%s)",
+                            artifact.id, exc.stage_key, exc.component_key,
+                        )
                         artifact.status = ArtifactStatus.STALE
                         stale_artifact_ids.append(artifact.id)
 
