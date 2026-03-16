@@ -4,7 +4,8 @@ from sqlalchemy.orm import Session
 from backend.auth.routes import get_current_user
 from backend.dag import service as dag_service
 from backend.database import get_db
-from backend.models import ComponentDefinition, Project, User
+from backend.models import Artifact, ArtifactType, ComponentDefinition, Project, User
+from backend.pipeline.nodes.extract_components import parse_components_from_content
 
 router = APIRouter()
 
@@ -43,28 +44,51 @@ def get_components(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    comps = (
+    # Try DB records first (available after component_map is approved)
+    comp_defs = (
         db.query(ComponentDefinition)
         .filter_by(project_id=project_id)
         .filter(ComponentDefinition.parent_key.is_(None))
         .all()
     )
 
+    if comp_defs:
+        components = [
+            {
+                "key": c.key,
+                "name": c.name,
+                "description": c.description,
+                "dependencies": c.dependencies or [],
+            }
+            for c in comp_defs
+        ]
+    else:
+        # Fall back to parsing the component_map artifact content directly
+        # (available during review, before approval stores DB records)
+        artifact = (
+            db.query(Artifact)
+            .filter_by(project_id=project_id, artifact_type=ArtifactType.COMPONENT_MAP)
+            .first()
+        )
+        if not artifact or not artifact.content:
+            return []
+        components = parse_components_from_content(artifact.content)
+
     # Build dependents map (reverse of dependencies)
     dependents: dict[str, list[str]] = {}
-    for comp in comps:
-        for dep_key in (comp.dependencies or []):
-            dependents.setdefault(dep_key, []).append(comp.key)
+    for comp in components:
+        for dep_key in (comp.get("dependencies") or []):
+            dependents.setdefault(dep_key, []).append(comp["key"])
 
     return [
         {
-            "key": c.key,
-            "name": c.name,
-            "description": c.description,
-            "dependencies": c.dependencies or [],
-            "dependents": dependents.get(c.key, []),
+            "key": c["key"],
+            "name": c.get("name", c["key"]),
+            "description": c.get("description"),
+            "dependencies": c.get("dependencies") or [],
+            "dependents": dependents.get(c["key"], []),
         }
-        for c in comps
+        for c in components
     ]
 
 
