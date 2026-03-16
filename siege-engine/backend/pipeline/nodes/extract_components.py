@@ -94,13 +94,21 @@ SETUP_COMPONENT = {
 
 
 def inject_setup_component(components: list[dict]) -> list[dict]:
-    """Ensure a project_setup component is at the front of the list."""
+    """Ensure a project_setup component is at the front and all others depend on it."""
     existing_keys = {c.get("key", "") for c in components}
     if "project_setup" not in existing_keys:
-        return [SETUP_COMPONENT.copy()] + components
-    # Already present — move it to the front
-    setup = next(c for c in components if c.get("key") == "project_setup")
-    others = [c for c in components if c.get("key") != "project_setup"]
+        setup = SETUP_COMPONENT.copy()
+        others = list(components)
+    else:
+        setup = next(c for c in components if c.get("key") == "project_setup")
+        others = [c for c in components if c.get("key") != "project_setup"]
+
+    # Ensure every non-setup component lists project_setup as a dependency
+    for comp in others:
+        deps = comp.get("dependencies") or []
+        if "project_setup" not in deps:
+            comp["dependencies"] = ["project_setup"] + list(deps)
+
     return [setup] + others
 
 
