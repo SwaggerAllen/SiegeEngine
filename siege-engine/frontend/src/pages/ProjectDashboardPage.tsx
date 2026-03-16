@@ -205,7 +205,7 @@ export function ProjectDashboardPage() {
                 </div>
                 {activeTab === 'pipeline' && (
                   <div className="p-4 border-t border-gray-700 overflow-auto">
-                    <StageStatusList executions={executions} />
+                    <StageStatusList executions={executions} projectId={projectId} />
                   </div>
                 )}
               </div>

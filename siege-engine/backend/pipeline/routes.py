@@ -15,6 +15,8 @@ from backend.database import get_db
 from sqlalchemy import func
 
 from backend.models import (
+    Artifact,
+    ArtifactStatus,
     ExecutionMode,
     PipelineConfig,
     PipelineRun,
@@ -837,6 +839,57 @@ async def retry_stage(
     engine = PipelineEngine(db)
     await engine.retry_stage(execution)
     return {"status": "retrying", "execution_id": execution_id}
+
+
+@router.post("/{project_id}/force-restart/{execution_id}")
+async def force_restart_stage(
+    project_id: str,
+    execution_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Force-restart a stuck execution (running/ai_review/generating).
+
+    Resets the execution and its artifact to failed state, then immediately
+    retries. Use this when a CLI process died without triggering error handling.
+    """
+    execution = db.get(StageExecution, execution_id)
+    if not execution or execution.project_id != project_id:
+        raise HTTPException(404, "Execution not found")
+
+    stuck_statuses = {"running", "ai_review"}
+    if execution.status.value not in stuck_statuses:
+        raise HTTPException(
+            400,
+            f"Can only force-restart stuck executions (running/ai_review), "
+            f"current status: {execution.status.value}",
+        )
+
+    # Reset the execution to failed state
+    execution.status = StageStatus.FAILED
+    execution.error_message = "Force-restarted by user"
+    execution.completed_at = datetime.utcnow()
+
+    # Reset any associated artifact stuck in generating/ai_reviewing
+    if execution.artifact_id:
+        artifact = db.get(Artifact, execution.artifact_id)
+        if artifact and artifact.status.value in ("generating", "ai_reviewing"):
+            artifact.status = ArtifactStatus.PENDING
+
+    db.flush()
+
+    # Broadcast so the UI updates immediately
+    await ws_manager.broadcast(project_id, {
+        "type": "stage_failed",
+        "stage_key": execution.stage_key,
+        "component_key": execution.component_key,
+        "error": "Force-restarted by user",
+    })
+
+    # Now retry using the existing retry logic
+    engine = PipelineEngine(db)
+    await engine.retry_stage(execution)
+    return {"status": "force_restarted", "execution_id": execution_id}
 
 
 @router.websocket("/{project_id}/ws")

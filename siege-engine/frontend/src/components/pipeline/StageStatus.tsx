@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { StageExecution } from '../../types/pipeline';
+import { usePipelineStore } from '../../store/pipelineStore';
 
 const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
   pending: { bg: 'bg-gray-600', text: 'Pending' },
@@ -12,9 +13,40 @@ const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
   failed: { bg: 'bg-red-700', text: 'Failed' },
 };
 
-function ExecutionRow({ exec }: { exec: StageExecution }) {
+const STUCK_STATUSES = new Set(['running', 'ai_review']);
+
+function ExecutionRow({ exec, projectId }: { exec: StageExecution; projectId?: string }) {
   const [expanded, setExpanded] = useState(false);
+  const [actionInProgress, setActionInProgress] = useState(false);
   const badge = STATUS_BADGES[exec.status] || STATUS_BADGES.pending;
+  const { retryStage, forceRestartStage } = usePipelineStore();
+
+  const handleRetry = async () => {
+    if (!projectId) return;
+    setActionInProgress(true);
+    try {
+      await retryStage(projectId, exec.id);
+    } catch (err) {
+      console.error('Retry failed:', err);
+    } finally {
+      setActionInProgress(false);
+    }
+  };
+
+  const handleForceRestart = async () => {
+    if (!projectId) return;
+    setActionInProgress(true);
+    try {
+      await forceRestartStage(projectId, exec.id);
+    } catch (err) {
+      console.error('Force restart failed:', err);
+    } finally {
+      setActionInProgress(false);
+    }
+  };
+
+  const canRetry = projectId && exec.status === 'failed';
+  const canForceRestart = projectId && STUCK_STATUSES.has(exec.status);
 
   return (
     <div key={exec.id} className="text-xs">
@@ -40,6 +72,26 @@ function ExecutionRow({ exec }: { exec: StageExecution }) {
             </button>
           </>
         )}
+        {canForceRestart && (
+          <button
+            onClick={handleForceRestart}
+            disabled={actionInProgress}
+            className="ml-auto px-1.5 py-0.5 rounded text-white bg-orange-600 hover:bg-orange-500 disabled:opacity-50 shrink-0"
+            title="Force restart this stuck stage"
+          >
+            {actionInProgress ? '...' : '⟳ Restart'}
+          </button>
+        )}
+        {canRetry && (
+          <button
+            onClick={handleRetry}
+            disabled={actionInProgress}
+            className="ml-auto px-1.5 py-0.5 rounded text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 shrink-0"
+            title="Retry this failed stage"
+          >
+            {actionInProgress ? '...' : '↻ Retry'}
+          </button>
+        )}
       </div>
       {exec.error_message && expanded && (
         <pre className="mt-1 p-2 bg-gray-900 rounded text-red-400 whitespace-pre-wrap break-words text-xs max-h-60 overflow-auto">
@@ -50,7 +102,7 @@ function ExecutionRow({ exec }: { exec: StageExecution }) {
   );
 }
 
-export function StageStatusList({ executions }: { executions: StageExecution[] }) {
+export function StageStatusList({ executions, projectId }: { executions: StageExecution[]; projectId?: string }) {
   if (executions.length === 0) return null;
 
   // Group by stage_key
@@ -70,7 +122,7 @@ export function StageStatusList({ executions }: { executions: StageExecution[] }
           </div>
           <div className="space-y-1">
             {execs.map((exec) => (
-              <ExecutionRow key={exec.id} exec={exec} />
+              <ExecutionRow key={exec.id} exec={exec} projectId={projectId} />
             ))}
           </div>
         </div>

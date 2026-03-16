@@ -88,6 +88,16 @@ export async function cancelPipeline(projectId: string) {
   return data;
 }
 
+export async function retryStage(projectId: string, executionId: string) {
+  const { data } = await api.post(`/pipeline/${projectId}/retry/${executionId}`);
+  return data;
+}
+
+export async function forceRestartStage(projectId: string, executionId: string) {
+  const { data } = await api.post(`/pipeline/${projectId}/force-restart/${executionId}`);
+  return data;
+}
+
 export async function getDAG(projectId: string) {
   const { data } = await api.get(`/dag/${projectId}`);
   return data;

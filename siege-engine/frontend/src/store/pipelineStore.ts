@@ -23,6 +23,8 @@ interface PipelineState {
   resumeStage: (projectId: string, executionId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
   reviseArtifact: (projectId: string, artifactId: string, feedback: string) => Promise<void>;
   cancelPipeline: (projectId: string) => Promise<void>;
+  retryStage: (projectId: string, executionId: string) => Promise<void>;
+  forceRestartStage: (projectId: string, executionId: string) => Promise<void>;
   selectRun: (projectId: string, runNumber: number | null) => Promise<void>;
   updateFromWS: (event: WSEvent) => void;
 }
@@ -115,6 +117,18 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     await pipelineApi.cancelPipeline(projectId);
     set({ isRunning: false, isPaused: false, pausedStage: null });
     get().fetchRuns(projectId);
+  },
+
+  retryStage: async (projectId, executionId) => {
+    await pipelineApi.retryStage(projectId, executionId);
+    set({ isRunning: true });
+    get().fetchStatus(projectId);
+  },
+
+  forceRestartStage: async (projectId, executionId) => {
+    await pipelineApi.forceRestartStage(projectId, executionId);
+    set({ isRunning: true });
+    get().fetchStatus(projectId);
   },
 
   selectRun: async (projectId, runNumber) => {
