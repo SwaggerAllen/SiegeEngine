@@ -31,6 +31,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   const [viewingSha, setViewingSha] = useState<string | null>(null);
   const [historicalContent, setHistoricalContent] = useState<string | null>(null);
   const [loadingVersion, setLoadingVersion] = useState(false);
+  const [restoringVersion, setRestoringVersion] = useState(false);
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [loadingPrompt, setLoadingPrompt] = useState(false);
 
@@ -122,6 +123,18 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
       setShowRevise(false);
     } finally {
       setSubmittingRevision(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    if (!historicalContent) return;
+    setRestoringVersion(true);
+    try {
+      await updateArtifact(artifact.id, historicalContent);
+      setViewingSha(null);
+      setHistoricalContent(null);
+    } finally {
+      setRestoringVersion(false);
     }
   };
 
@@ -329,12 +342,23 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
             })()}
             {' — read only'}
           </span>
-          <button
-            onClick={() => handleVersionChange('')}
-            className="ml-auto text-xs text-amber-400 hover:text-amber-200 underline"
-          >
-            Back to current
-          </button>
+          <div className="ml-auto flex items-center gap-3">
+            {!isViewer && (
+              <button
+                onClick={handleRestore}
+                disabled={restoringVersion}
+                className="text-xs px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded disabled:opacity-50"
+              >
+                {restoringVersion ? 'Restoring...' : 'Restore this version'}
+              </button>
+            )}
+            <button
+              onClick={() => handleVersionChange('')}
+              className="text-xs text-amber-400 hover:text-amber-200 underline"
+            >
+              Back to current
+            </button>
+          </div>
         </div>
       )}
 
