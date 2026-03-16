@@ -857,11 +857,11 @@ async def force_restart_stage(
     if not execution or execution.project_id != project_id:
         raise HTTPException(404, "Execution not found")
 
-    stuck_statuses = {"running", "ai_review"}
-    if execution.status.value not in stuck_statuses:
+    restartable_statuses = {"running", "ai_review", "failed"}
+    if execution.status.value not in restartable_statuses:
         raise HTTPException(
             400,
-            f"Can only force-restart stuck executions (running/ai_review), "
+            f"Can only force-restart stuck or failed executions (running/ai_review/failed), "
             f"current status: {execution.status.value}",
         )
 

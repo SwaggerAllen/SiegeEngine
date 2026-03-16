@@ -1438,6 +1438,12 @@ class PipelineEngine:
 
         pipeline_run = self._lookup_pipeline_run(execution.run_id) if execution.run_id else None
 
+        # Reset any artifact stuck in generating/ai_reviewing from a previous failed attempt
+        if execution.artifact_id:
+            artifact = self.db.get(Artifact, execution.artifact_id)
+            if artifact and artifact.status in (ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING):
+                artifact.status = ArtifactStatus.PENDING
+
         input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
         execution.status = StageStatus.RUNNING
         execution.error_message = None
@@ -1563,6 +1569,15 @@ class PipelineEngine:
             execution.status = StageStatus.FAILED
             execution.error_message = str(e)
             execution.completed_at = datetime.utcnow()
+
+            # Reset any artifact stuck in generating/ai_reviewing
+            if execution.artifact_id:
+                stuck_artifact = self.db.get(Artifact, execution.artifact_id)
+                if stuck_artifact and stuck_artifact.status in (
+                    ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING
+                ):
+                    stuck_artifact.status = ArtifactStatus.PENDING
+
             self.db.commit()
 
             await ws_manager.broadcast(project_id, {

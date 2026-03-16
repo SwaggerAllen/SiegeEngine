@@ -13,25 +13,13 @@ const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
   failed: { bg: 'bg-red-700', text: 'Failed' },
 };
 
-const STUCK_STATUSES = new Set(['running', 'ai_review']);
+const RESTARTABLE_STATUSES = new Set(['running', 'ai_review', 'failed']);
 
 function ExecutionRow({ exec, projectId }: { exec: StageExecution; projectId?: string }) {
   const [expanded, setExpanded] = useState(false);
   const [actionInProgress, setActionInProgress] = useState(false);
   const badge = STATUS_BADGES[exec.status] || STATUS_BADGES.pending;
-  const { retryStage, forceRestartStage } = usePipelineStore();
-
-  const handleRetry = async () => {
-    if (!projectId) return;
-    setActionInProgress(true);
-    try {
-      await retryStage(projectId, exec.id);
-    } catch (err) {
-      console.error('Retry failed:', err);
-    } finally {
-      setActionInProgress(false);
-    }
-  };
+  const { forceRestartStage } = usePipelineStore();
 
   const handleForceRestart = async () => {
     if (!projectId) return;
@@ -45,8 +33,7 @@ function ExecutionRow({ exec, projectId }: { exec: StageExecution; projectId?: s
     }
   };
 
-  const canRetry = projectId && exec.status === 'failed';
-  const canForceRestart = projectId && STUCK_STATUSES.has(exec.status);
+  const canForceRestart = projectId && RESTARTABLE_STATUSES.has(exec.status);
 
   return (
     <div key={exec.id} className="text-xs">
@@ -77,19 +64,9 @@ function ExecutionRow({ exec, projectId }: { exec: StageExecution; projectId?: s
             onClick={handleForceRestart}
             disabled={actionInProgress}
             className="ml-auto px-1.5 py-0.5 rounded text-white bg-orange-600 hover:bg-orange-500 disabled:opacity-50 shrink-0"
-            title="Force restart this stuck stage"
+            title="Force restart this stage"
           >
             {actionInProgress ? '...' : '⟳ Restart'}
-          </button>
-        )}
-        {canRetry && (
-          <button
-            onClick={handleRetry}
-            disabled={actionInProgress}
-            className="ml-auto px-1.5 py-0.5 rounded text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 shrink-0"
-            title="Retry this failed stage"
-          >
-            {actionInProgress ? '...' : '↻ Retry'}
           </button>
         )}
       </div>
