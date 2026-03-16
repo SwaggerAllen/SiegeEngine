@@ -47,29 +47,31 @@ export function ProjectSettingsPanel({ projectId }: { projectId: string }) {
       const { data } = await api.get('/github/authorize');
       // Open popup for GitHub OAuth
       const popup = window.open(data.authorize_url, 'github-oauth', 'width=600,height=700');
-      // Poll the popup for the redirect back with code & state
-      const poll = setInterval(async () => {
-        try {
-          if (!popup || popup.closed) {
-            clearInterval(poll);
-            return;
+
+      // Listen for the callback page to post the code back
+      const handleMessage = async (event: MessageEvent) => {
+        if (event.origin !== window.location.origin) return;
+        if (event.data?.type !== 'github-oauth') return;
+        window.removeEventListener('message', handleMessage);
+        const { code, state } = event.data;
+        if (code && state) {
+          try {
+            const { data: result } = await api.post('/github/connect', { code, state });
+            setGhStatus({ connected: true, github_username: result.github_username });
+          } catch {
+            setMessage('Failed to complete GitHub connection');
           }
-          const popupUrl = popup.location.href;
-          if (popupUrl.includes('code=')) {
-            clearInterval(poll);
-            popup.close();
-            const url = new URL(popupUrl);
-            const code = url.searchParams.get('code');
-            const state = url.searchParams.get('state');
-            if (code && state) {
-              const { data: result } = await api.post('/github/connect', { code, state });
-              setGhStatus({ connected: true, github_username: result.github_username });
-            }
-          }
-        } catch {
-          // Cross-origin errors are expected while on github.com
         }
-      }, 500);
+      };
+      window.addEventListener('message', handleMessage);
+
+      // Clean up listener if popup is closed without completing
+      const checkClosed = setInterval(() => {
+        if (!popup || popup.closed) {
+          clearInterval(checkClosed);
+          window.removeEventListener('message', handleMessage);
+        }
+      }, 1000);
     } catch {
       setMessage('Failed to start GitHub connection');
     }
