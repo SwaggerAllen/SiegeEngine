@@ -11,7 +11,7 @@ from backend.pipeline.prompts.component_arch import ComponentArchPrompt
 from backend.pipeline.prompts.component_plan import ComponentPlanPrompt
 from backend.pipeline.prompts.extract_components import ExtractComponentsPrompt
 from backend.pipeline.prompts.extract_sub_components import ExtractSubComponentsPrompt
-from backend.pipeline.prompts.high_level_plan import HighLevelPlanPrompt
+
 from backend.pipeline.prompts.requirements import (
     ComponentRequirementsPrompt,
     SystemRequirementsPrompt,
@@ -25,7 +25,6 @@ PROMPT_REGISTRY: dict[str, type[PromptTemplate]] = {
     "component_requirements": ComponentRequirementsPrompt,
     "architecture": ArchitecturePrompt,
     "component_arch": ComponentArchPrompt,
-    "high_level_plan": HighLevelPlanPrompt,
     "component_plan": ComponentPlanPrompt,
     "extract_components": ExtractComponentsPrompt,
     "extract_sub_components": ExtractSubComponentsPrompt,
