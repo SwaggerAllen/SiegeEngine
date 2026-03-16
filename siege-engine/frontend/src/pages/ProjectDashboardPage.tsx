@@ -62,9 +62,18 @@ export function ProjectDashboardPage() {
   // artifact is in review.  Multiple executions can exist for the same artifact
   // across pipeline runs; without this preference, find() may return an older
   // approved/rejected one, hiding the review panel.
+  //
+  // Also match by component_key for stuck/failed executions whose artifact_id
+  // is null (e.g., generation died before creating the artifact record).
   const selectedExecution = selectedArtifact
     ? executions.find((e) => e.artifact_id === selectedArtifact.id && e.status === 'awaiting_review')
       || executions.find((e) => e.artifact_id === selectedArtifact.id)
+      || executions.find((e) =>
+          !e.artifact_id
+          && e.component_key === (selectedArtifact.component_key ?? null)
+          && ['running', 'ai_review', 'failed'].includes(e.status)
+          && ['generating', 'ai_reviewing', 'pending'].includes(selectedArtifact.status)
+        )
     : undefined;
 
   const isAdmin = user?.role === 'admin';
@@ -134,7 +143,7 @@ export function ProjectDashboardPage() {
         {visibleTabs.map((tab) => (
           <button
             key={tab}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => { setActiveTab(tab); clearSelection(); }}
             className={`py-2 text-sm border-b-2 capitalize min-h-[44px] md:min-h-0 ${
               activeTab === tab
                 ? 'border-blue-500 text-white'
@@ -166,7 +175,7 @@ export function ProjectDashboardPage() {
                     {paneExpanded ? '⇥ Collapse' : '⇤ Expand'}
                   </button>
                 </div>
-                {paneExpanded && selectedExecution?.status === 'awaiting_review' ? (
+                {paneExpanded && selectedExecution && ['awaiting_review', 'running', 'ai_review', 'failed'].includes(selectedExecution.status) ? (
                   <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                     <div className="flex-1 md:w-2/3 overflow-auto border-b md:border-b-0 md:border-r border-gray-700">
                       <ArtifactEditor artifact={selectedArtifact} projectId={projectId} />
