@@ -46,12 +46,15 @@ export function StageNode({ data }: { data: DAGNodeData }) {
 
   const isInputDoc = data.artifact_type === 'project_doc';
   const isBranchingNode = data.artifact_type === 'component_map' || data.artifact_type === 'sub_component_map';
+  const isPlaceholder = !data.has_artifact && data.is_active;
   const colorClass = isInputDoc
     ? 'bg-cyan-900 border-cyan-400'
     : isBranchingNode
     ? 'bg-indigo-900 border-indigo-400'
+    : isPlaceholder
+    ? 'bg-blue-900/60 border-blue-400 border-dashed animate-pulse'
     : STATUS_COLORS[data.status] || STATUS_COLORS.pending;
-  const statusLabel = isInputDoc ? 'Input' : isBranchingNode && data.status === 'pending' ? 'Branching' : (STATUS_LABELS[data.status] || data.status.replace('_', ' '));
+  const statusLabel = isPlaceholder ? 'Generating...' : isInputDoc ? 'Input' : isBranchingNode && data.status === 'pending' ? 'Branching' : (STATUS_LABELS[data.status] || data.status.replace('_', ' '));
   const pi = data.prompt_info;
   const isProcessing = data.is_active || ACTIVE_STATUSES.has(data.status);
   const spinnerColor = data.status === 'ai_reviewing' ? 'stage-spinner--purple' : 'stage-spinner--blue';

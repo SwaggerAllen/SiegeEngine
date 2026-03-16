@@ -272,14 +272,13 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
         })
         stage_to_node_ids["project_doc"] = [doc.id]
 
-    # Build nodes only for stages that have generated artifacts
+    # Build nodes for stages with artifacts, plus placeholders for running executions
     for stage_def in stages:
         stage_arts = type_to_artifacts.get(stage_def.output_artifact_type, [])
-        if not stage_arts:
-            continue  # Skip stages with no artifacts
-
         stage_execs = key_to_execs.get(stage_def.stage_key, [])
         node_ids = []
+
+        # Nodes for existing artifacts
         for art in stage_arts:
             matching_exec = next(
                 (e for e in stage_execs if e.component_key == art.component_key or e.artifact_id == art.id),
@@ -308,7 +307,45 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                 "position": {"x": 0, "y": 0},
             })
             node_ids.append(art.id)
-        stage_to_node_ids[stage_def.stage_key] = node_ids
+
+        # Placeholder nodes for running/reviewing executions with no artifact yet
+        art_comp_keys = {art.component_key for art in stage_arts}
+        for exc in stage_execs:
+            if exc.status not in (StageStatus.RUNNING, StageStatus.AI_REVIEW):
+                continue
+            if exc.component_key in art_comp_keys:
+                continue  # Already has an artifact node
+            # Also skip if a None-keyed artifact already exists for non-fan-out stages
+            if exc.component_key is None and None in art_comp_keys:
+                continue
+
+            placeholder_id = f"placeholder_{exc.id}"
+            label = stage_def.display_name
+            if exc.component_key:
+                label = f"{label} - {exc.component_key}"
+            status = "generating" if exc.status == StageStatus.RUNNING else "ai_reviewing"
+            nodes.append({
+                "id": placeholder_id,
+                "type": "stageNode",
+                "data": {
+                    "label": label,
+                    "artifact_type": stage_def.output_artifact_type,
+                    "status": status,
+                    "component_key": exc.component_key,
+                    "version": 0,
+                    "stage_key": stage_def.stage_key,
+                    "is_active": True,
+                    "has_artifact": False,
+                    "prompt_info": _build_prompt_info(stage_def),
+                    "execution_id": exc.id,
+                    "execution_status": exc.status.value,
+                },
+                "position": {"x": 0, "y": 0},
+            })
+            node_ids.append(placeholder_id)
+
+        if node_ids:
+            stage_to_node_ids[stage_def.stage_key] = node_ids
 
     # Build edges only between stages that have nodes
     edges: list[dict] = []
