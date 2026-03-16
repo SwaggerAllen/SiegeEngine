@@ -302,6 +302,8 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                     "is_active": is_active,
                     "has_artifact": True,
                     "prompt_info": _build_prompt_info(stage_def),
+                    "execution_id": matching_exec.id if matching_exec else None,
+                    "execution_status": matching_exec.status.value if matching_exec else None,
                 },
                 "position": {"x": 0, "y": 0},
             })

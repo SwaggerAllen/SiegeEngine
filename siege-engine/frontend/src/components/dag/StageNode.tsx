@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { DAGNodeData } from '../../types/dag';
 import { useDAGStore } from '../../store/dagStore';
+import { usePipelineStore } from '../../store/pipelineStore';
+import { useParams } from 'react-router-dom';
 
 const STATUS_COLORS: Record<string, string> = {
   pending: 'bg-gray-700 border-gray-500',
@@ -33,9 +36,14 @@ function formatModelName(model: string): string {
 }
 
 const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
+const RESTARTABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'failed']);
 
 export function StageNode({ data }: { data: DAGNodeData }) {
+  const { id: projectId } = useParams<{ id: string }>();
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
+  const { forceRestartStage } = usePipelineStore();
+  const [restarting, setRestarting] = useState(false);
+
   const isInputDoc = data.artifact_type === 'project_doc';
   const isBranchingNode = data.artifact_type === 'component_map' || data.artifact_type === 'sub_component_map';
   const colorClass = isInputDoc
@@ -48,10 +56,30 @@ export function StageNode({ data }: { data: DAGNodeData }) {
   const isProcessing = data.is_active || ACTIVE_STATUSES.has(data.status);
   const spinnerColor = data.status === 'ai_reviewing' ? 'stage-spinner--purple' : 'stage-spinner--blue';
 
+  const canRestart = !!(
+    projectId
+    && data.execution_id
+    && data.execution_status
+    && RESTARTABLE_EXEC_STATUSES.has(data.execution_status)
+  );
+
   const handleEditPrompt = (e: React.MouseEvent) => {
     e.stopPropagation(); // don't trigger node click (artifact select)
     if (pi) {
       setEditPromptStageKey(pi.stage_key);
+    }
+  };
+
+  const handleRestart = async (e: React.MouseEvent) => {
+    e.stopPropagation(); // don't trigger node click
+    if (!projectId || !data.execution_id) return;
+    setRestarting(true);
+    try {
+      await forceRestartStage(projectId, data.execution_id);
+    } catch (err) {
+      console.error('Force restart failed:', err);
+    } finally {
+      setRestarting(false);
     }
   };
 
@@ -77,6 +105,15 @@ export function StageNode({ data }: { data: DAGNodeData }) {
           <span className="text-gray-500">v{data.version}</span>
         )}
       </div>
+      {canRestart && (
+        <button
+          onClick={handleRestart}
+          disabled={restarting}
+          className="mt-2 w-full px-2 py-1 bg-orange-600 hover:bg-orange-500 text-white text-xs rounded disabled:opacity-50"
+        >
+          {restarting ? 'Restarting...' : '⟳ Restart'}
+        </button>
+      )}
       {pi && (
         <>
           <div className="border-t border-white/10 my-1.5" />

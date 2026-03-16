@@ -15,6 +15,8 @@ export interface DAGNodeData {
   is_active: boolean;
   has_artifact: boolean;
   prompt_info?: PromptInfo | null;
+  execution_id?: string | null;
+  execution_status?: string | null;
 }
 
 export interface DAGResponse {
