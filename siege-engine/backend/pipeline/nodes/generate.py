@@ -185,6 +185,7 @@ async def generate(
         existing.content = content
         existing.status = ArtifactStatus.GENERATING
         existing.version += 1
+        existing.ai_review_feedback = None
         artifact = existing
     else:
         artifact = Artifact(
