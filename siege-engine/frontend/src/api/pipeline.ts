@@ -131,6 +131,19 @@ export async function getStaleArtifacts(projectId: string) {
   return data;
 }
 
+export interface ComponentInfo {
+  key: string;
+  name: string;
+  description: string | null;
+  dependencies: string[];
+  dependents: string[];
+}
+
+export async function getComponents(projectId: string): Promise<ComponentInfo[]> {
+  const { data } = await api.get(`/dag/${projectId}/components`);
+  return data;
+}
+
 export async function updateStageConfig(
   projectId: string,
   stageKey: string,

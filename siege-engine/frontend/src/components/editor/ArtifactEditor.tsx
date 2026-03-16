@@ -9,10 +9,11 @@ import type { ArtifactVersion } from '../../api/projects';
 import type { PromptPreview } from '../../api/pipeline';
 import type { Artifact } from '../../types/project';
 import { CommentsPanel } from '../comments/CommentsPanel';
+import { ComponentDependencyList } from './ComponentDependencyList';
 
 const REVISABLE_STATUSES = new Set(['approved', 'stale']);
 
-type EditorTab = 'document' | 'feedback' | 'comments' | 'prompt';
+type EditorTab = 'document' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
 
 export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
   const { updateArtifact } = useProjectStore();
@@ -36,6 +37,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   const canRevise = !isViewer && REVISABLE_STATUSES.has(artifact.status);
   const reviewFeedback = artifact.ai_review_feedback as any;
   const isViewingHistory = viewingSha !== null;
+  const isComponentMap = artifact.artifact_type === 'component_map';
 
   // Reset tab when artifact changes and feedback is gone
   useEffect(() => {
@@ -261,6 +263,18 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
         >
           Comments
         </button>
+        {isComponentMap && (
+          <button
+            onClick={() => setActiveTab('dependencies')}
+            className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
+              activeTab === 'dependencies'
+                ? 'border-indigo-500 text-white'
+                : 'border-transparent text-gray-400 hover:text-white'
+            }`}
+          >
+            Dependencies
+          </button>
+        )}
         {!isViewer && (
           <button
             onClick={() => setActiveTab('prompt')}
@@ -404,6 +418,8 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
             <div className="text-sm text-gray-400">No prompt preview available.</div>
           )}
         </div>
+      ) : activeTab === 'dependencies' ? (
+        <ComponentDependencyList projectId={projectId} />
       ) : (
         /* Comments tab */
         <CommentsPanel projectId={projectId} artifactId={artifact.id} />

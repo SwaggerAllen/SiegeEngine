@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from backend.auth.routes import get_current_user
 from backend.dag import service as dag_service
 from backend.database import get_db
-from backend.models import Project, User
+from backend.models import ComponentDefinition, Project, User
 
 router = APIRouter()
 
@@ -31,6 +31,41 @@ def get_documents_dag(
     if not project:
         raise HTTPException(404, "Project not found")
     return dag_service.get_documents_dag(db, project_id)
+
+
+@router.get("/{project_id}/components")
+def get_components(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    comps = (
+        db.query(ComponentDefinition)
+        .filter_by(project_id=project_id)
+        .filter(ComponentDefinition.parent_key.is_(None))
+        .all()
+    )
+
+    # Build dependents map (reverse of dependencies)
+    dependents: dict[str, list[str]] = {}
+    for comp in comps:
+        for dep_key in (comp.dependencies or []):
+            dependents.setdefault(dep_key, []).append(comp.key)
+
+    return [
+        {
+            "key": c.key,
+            "name": c.name,
+            "description": c.description,
+            "dependencies": c.dependencies or [],
+            "dependents": dependents.get(c.key, []),
+        }
+        for c in comps
+    ]
 
 
 @router.get("/{project_id}/stale")
