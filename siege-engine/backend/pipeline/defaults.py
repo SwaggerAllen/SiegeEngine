@@ -48,7 +48,7 @@ DEFAULT_STAGES = [
         "ai_review_enabled": True,
         "human_review_enabled": True,
     },
-    # ── Phase 3: Component-Level Documents (fan-out per component) ──
+    # ── Phase 3: Component-Level Architecture (fan-out per component) ──
     {
         "stage_key": "component_requirements",
         "display_name": "Component Requirements",
@@ -73,10 +73,26 @@ DEFAULT_STAGES = [
         "ai_review_enabled": True,
         "human_review_enabled": True,
     },
+    # ── Phase 4: Sub-Component Extraction (fan-out per component) ──
+    {
+        "stage_key": "extract_sub_components",
+        "display_name": "Sub-Component Extraction",
+        "order_index": 6,
+        "output_artifact_type": "sub_component_map",
+        "input_stage_keys": ["component_architectures", "component_requirements"],
+        "fan_out_strategy": "component",
+        "prompt_template_key": "extract_sub_components",
+        "model_override": "claude-opus-4-20250514",
+        "ai_review_enabled": True,
+        "human_review_enabled": True,
+    },
+    # ── Phase 5: Component Plans (fan-out per component, LEAF ONLY) ──
+    # Only runs for components that produced NO sub-components.
+    # Components with sub-components are planned at the sub-component level.
     {
         "stage_key": "component_plans",
         "display_name": "Component Plans",
-        "order_index": 6,
+        "order_index": 7,
         "output_artifact_type": "component_plan",
         "input_stage_keys": ["component_architectures", "component_requirements"],
         "fan_out_strategy": "component",
@@ -84,26 +100,13 @@ DEFAULT_STAGES = [
         "ai_review_enabled": True,
         "human_review_enabled": True,
     },
-    # ── Phase 4: Sub-Component Extraction (fan-out per component) ──
-    {
-        "stage_key": "extract_sub_components",
-        "display_name": "Sub-Component Extraction",
-        "order_index": 7,
-        "output_artifact_type": "sub_component_map",
-        "input_stage_keys": ["component_plans"],
-        "fan_out_strategy": "component",
-        "prompt_template_key": "extract_sub_components",
-        "model_override": "claude-opus-4-20250514",
-        "ai_review_enabled": True,
-        "human_review_enabled": True,
-    },
-    # ── Phase 5: Sub-Component Documents (fan-out per sub-component, conditional) ──
+    # ── Phase 6: Sub-Component Documents (fan-out per sub-component) ──
     {
         "stage_key": "sub_component_requirements",
         "display_name": "Sub-Component Requirements",
         "order_index": 8,
         "output_artifact_type": "sub_component_requirements",
-        "input_stage_keys": ["extract_sub_components", "component_plans", "component_architectures"],
+        "input_stage_keys": ["extract_sub_components", "component_architectures"],
         "fan_out_strategy": "sub_component",
         "prompt_template_key": "sub_component_requirements",
         "model_override": "claude-opus-4-20250514",
@@ -134,7 +137,7 @@ DEFAULT_STAGES = [
         "ai_review_enabled": True,
         "human_review_enabled": True,
     },
-    # ── Phase 6: Implementation (fan-out per leaf entity) ──
+    # ── Phase 7: Implementation (fan-out per leaf entity) ──
     {
         "stage_key": "code_generation",
         "display_name": "Code Generation",

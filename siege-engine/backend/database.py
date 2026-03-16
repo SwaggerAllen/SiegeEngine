@@ -24,6 +24,7 @@ def init_db():
         conn.execute(text("PRAGMA journal_mode=WAL"))
         conn.execute(text("PRAGMA busy_timeout=30000"))
     _migrate_missing_columns()
+    _migrate_stage_order()
 
 
 def _migrate_missing_columns():
@@ -65,6 +66,48 @@ def _migrate_missing_columns():
                 conn.execute(text(
                     "ALTER TABLE projects ADD COLUMN blocking_pr_number INTEGER"
                 ))
+
+
+def _migrate_stage_order():
+    """Reorder stages: move component_plans after extract_sub_components.
+
+    Old order: ..., component_plans(6), extract_sub_components(7), ...
+    New order: ..., extract_sub_components(6), component_plans(7), ...
+
+    Also update extract_sub_components input_stage_keys to no longer
+    require component_plans (it now takes component_architectures +
+    component_requirements).
+    """
+    from backend.pipeline.defaults import DEFAULT_STAGES
+
+    new_order = {s["stage_key"]: s["order_index"] for s in DEFAULT_STAGES}
+    new_inputs = {s["stage_key"]: s["input_stage_keys"] for s in DEFAULT_STAGES}
+
+    with engine.begin() as conn:
+        # Check if stage_definitions table exists
+        inspector = inspect(engine)
+        if not inspector.has_table("stage_definitions"):
+            return
+
+        rows = conn.execute(text(
+            "SELECT id, stage_key, order_index, input_stage_keys "
+            "FROM stage_definitions WHERE stage_key IN ('component_plans', 'extract_sub_components')"
+        )).fetchall()
+
+        for row in rows:
+            sid, skey, current_order, _ = row
+            target_order = new_order.get(skey)
+            target_inputs = new_inputs.get(skey)
+            if target_order is not None and current_order != target_order:
+                import json
+                conn.execute(text(
+                    "UPDATE stage_definitions SET order_index = :order_index, "
+                    "input_stage_keys = :input_keys WHERE id = :id"
+                ), {
+                    "order_index": target_order,
+                    "input_keys": json.dumps(target_inputs),
+                    "id": sid,
+                })
 
 
 def get_db():
