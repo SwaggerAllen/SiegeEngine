@@ -47,40 +47,91 @@ def get_components(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    # Try DB records first (available after component_map is approved)
+    # Always load existing DB records
     comp_defs = (
         db.query(ComponentDefinition)
         .filter_by(project_id=project_id)
         .filter(ComponentDefinition.parent_key.is_(None))
         .all()
     )
+    existing_by_key = {c.key: c for c in comp_defs}
 
-    if comp_defs:
+    # Try to parse the latest component_map artifact for pending/review content
+    artifact = (
+        db.query(Artifact)
+        .filter_by(project_id=project_id, artifact_type=ArtifactType.COMPONENT_MAP)
+        .first()
+    )
+
+    is_reviewing = artifact and artifact.status.value in (
+        "awaiting_review", "generating", "ai_reviewing",
+    )
+
+    if artifact and artifact.content:
+        parsed = parse_components_from_content(artifact.content)
+        parsed = inject_setup_component(parsed)
+    else:
+        parsed = []
+
+    if is_reviewing and existing_by_key:
+        # Merge: show new components from artifact + existing DB components
+        # so reviewer can see the full picture and spot duplicates
+        parsed_keys = {c["key"] for c in parsed}
+        existing_keys = set(existing_by_key.keys())
+
+        components = []
+        # Components in the new extraction
+        for c in parsed:
+            components.append({
+                "key": c["key"],
+                "name": c.get("name", c["key"]),
+                "description": c.get("description"),
+                "dependencies": c.get("dependencies") or [],
+                "change": "existing" if c["key"] in existing_keys else "new",
+            })
+        # Components in the old set that are NOT in the new extraction
+        for key, cd in existing_by_key.items():
+            if key not in parsed_keys:
+                components.append({
+                    "key": cd.key,
+                    "name": cd.name,
+                    "description": cd.description,
+                    "dependencies": cd.dependencies or [],
+                    "change": "removed",
+                })
+    elif existing_by_key:
+        # Not reviewing — just show DB records
         components = [
             {
                 "key": c.key,
                 "name": c.name,
                 "description": c.description,
                 "dependencies": c.dependencies or [],
+                "change": None,
             }
             for c in comp_defs
         ]
+        components = inject_setup_component(components)
+        # Re-tag after inject (inject returns dicts, not models)
+        for c in components:
+            if "change" not in c:
+                c["change"] = None
+    elif parsed:
+        # First extraction, no existing DB records
+        components = [
+            {
+                "key": c["key"],
+                "name": c.get("name", c["key"]),
+                "description": c.get("description"),
+                "dependencies": c.get("dependencies") or [],
+                "change": "new",
+            }
+            for c in parsed
+        ]
     else:
-        # Fall back to parsing the component_map artifact content directly
-        # (available during review, before approval stores DB records)
-        artifact = (
-            db.query(Artifact)
-            .filter_by(project_id=project_id, artifact_type=ArtifactType.COMPONENT_MAP)
-            .first()
-        )
-        if not artifact or not artifact.content:
-            return []
-        components = parse_components_from_content(artifact.content)
+        return []
 
-    # Always ensure setup component is present (mirrors engine injection)
-    components = inject_setup_component(components)
-
-    # Build dependents map (reverse of dependencies)
+    # Build dependents map (reverse of dependencies) across all components
     dependents: dict[str, list[str]] = {}
     for comp in components:
         for dep_key in (comp.get("dependencies") or []):
@@ -93,6 +144,7 @@ def get_components(
             "description": c.get("description"),
             "dependencies": c.get("dependencies") or [],
             "dependents": dependents.get(c["key"], []),
+            "change": c.get("change"),
         }
         for c in components
     ]

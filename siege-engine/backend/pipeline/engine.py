@@ -895,27 +895,45 @@ class PipelineEngine:
                 for art in sub_arts:
                     self.db.delete(art)
 
-        # Clear existing top-level component definitions
-        (
-            self.db.query(ComponentDefinition)
-            .filter_by(project_id=project_id)
-            .filter(ComponentDefinition.parent_key.is_(None))
-            .delete()
-        )
-
+        # Upsert: update existing, create new, leave removed already cleaned up above
+        old_def_by_key = {d.key: d for d in old_defs}
+        added = 0
+        updated = 0
         for comp in components:
-            cd = ComponentDefinition(
-                project_id=project_id,
-                key=comp["key"],
-                name=comp.get("name", comp["key"]),
-                description=comp.get("description"),
-                parent_key=None,
-                dependencies=comp.get("dependencies", []),
+            existing = old_def_by_key.get(comp["key"])
+            if existing:
+                # Update metadata if changed, but preserve the record
+                existing.name = comp.get("name", comp["key"])
+                existing.description = comp.get("description")
+                existing.dependencies = comp.get("dependencies", [])
+                updated += 1
+            else:
+                cd = ComponentDefinition(
+                    project_id=project_id,
+                    key=comp["key"],
+                    name=comp.get("name", comp["key"]),
+                    description=comp.get("description"),
+                    parent_key=None,
+                    dependencies=comp.get("dependencies", []),
+                )
+                self.db.add(cd)
+                added += 1
+
+        # Delete ComponentDefinition records for removed keys (artifacts already cleaned above)
+        if removed_keys:
+            (
+                self.db.query(ComponentDefinition)
+                .filter_by(project_id=project_id)
+                .filter(ComponentDefinition.parent_key.is_(None))
+                .filter(ComponentDefinition.key.in_(removed_keys))
+                .delete(synchronize_session="fetch")
             )
-            self.db.add(cd)
 
         self.db.flush()
-        logger.info("Stored %d top-level components for project %s", len(components), project_id)
+        logger.info(
+            "Components for project %s: %d added, %d updated, %d removed",
+            project_id, added, updated, len(removed_keys),
+        )
 
     def _store_sub_components(self, project_id: str, parent_key: str, content: str):
         """Parse extract_sub_components output and create sub-ComponentDefinition records."""
