@@ -417,6 +417,16 @@ def cancel_pipeline(
         e.status = StageStatus.FAILED
         e.error_message = "Cancelled by user"
 
+    # Reset in-progress artifacts back to pending so they don't stay stuck
+    in_progress_artifacts = (
+        db.query(Artifact)
+        .filter_by(project_id=project_id)
+        .filter(Artifact.status.in_([ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING]))
+        .all()
+    )
+    for a in in_progress_artifacts:
+        a.status = ArtifactStatus.PENDING
+
     # Also mark any active PipelineRun as cancelled
     active_runs = (
         db.query(PipelineRun)
