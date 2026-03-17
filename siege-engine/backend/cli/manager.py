@@ -136,6 +136,7 @@ class CLIManager:
         model: str | None = None,
         session_id: str | None = None,
         resume: bool = False,
+        tools: str | None = None,
     ):
         """
         Run claude CLI and yield streaming JSON output lines.
@@ -152,6 +153,8 @@ class CLIManager:
             args.extend(["--system-prompt", system_prompt])
         if model:
             args.extend(["--model", model])
+        if tools is not None:
+            args.extend(["--tools", tools])
         if session_id and not resume:
             args.extend(["--session-id", session_id])
 

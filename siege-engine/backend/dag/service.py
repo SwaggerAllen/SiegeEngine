@@ -10,6 +10,7 @@ from backend.models import (
     ArtifactType,
     ComponentDefinition,
     PipelineConfig,
+    PipelineRun,
     StageDefinition,
     StageExecution,
     StageStatus,
@@ -114,21 +115,40 @@ def _build_prompt_info(stage_def: StageDefinition) -> dict:
     }
 
 
+def _latest_executions(stage_execs: list) -> list:
+    """Keep only the most recent execution per component_key.
+
+    When a stage is retried, multiple executions exist for the same
+    component_key.  Only the latest one reflects the current state.
+    """
+    best: dict[str | None, StageExecution] = {}
+    for e in stage_execs:
+        prev = best.get(e.component_key)
+        if prev is None or (e.started_at or e.completed_at) and (
+            not prev.started_at or (e.started_at and e.started_at > prev.started_at)
+        ):
+            best[e.component_key] = e
+    return list(best.values())
+
+
 def _derive_stage_status(stage_execs: list) -> tuple[str, bool]:
     """Derive aggregate status and is_active flag from a stage's executions."""
     if not stage_execs:
         return "pending", False
-    if any(e.status == StageStatus.RUNNING for e in stage_execs):
+    # Only consider the latest execution per component to avoid stale
+    # FAILED / AWAITING_REVIEW entries from retries masking current state.
+    latest = _latest_executions(stage_execs)
+    if any(e.status == StageStatus.RUNNING for e in latest):
         return "running", True
-    if any(e.status == StageStatus.AI_REVIEW for e in stage_execs):
+    if any(e.status == StageStatus.AI_REVIEW for e in latest):
         return "ai_reviewing", True
-    if any(e.status == StageStatus.FAILED for e in stage_execs):
+    if any(e.status == StageStatus.FAILED for e in latest):
         return "failed", False
-    if any(e.status == StageStatus.AWAITING_REVIEW for e in stage_execs):
+    if any(e.status == StageStatus.AWAITING_REVIEW for e in latest):
         return "awaiting_review", False
-    if all(e.status == StageStatus.APPROVED for e in stage_execs):
+    if all(e.status == StageStatus.APPROVED for e in latest):
         return "approved", False
-    if any(e.status == StageStatus.APPROVED for e in stage_execs):
+    if any(e.status == StageStatus.APPROVED for e in latest):
         return "awaiting_review", False
     return "pending", False
 
@@ -145,11 +165,19 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
 
     stages = sorted(config.stages, key=lambda s: s.order_index)
 
-    executions = (
-        db.query(StageExecution)
+    # Only consider executions from the latest pipeline run so that old
+    # FAILED / AWAITING_REVIEW records don't mask the current state.
+    latest_run = (
+        db.query(PipelineRun)
         .filter_by(project_id=project_id)
-        .all()
+        .order_by(PipelineRun.run_number.desc())
+        .first()
     )
+    exec_query = db.query(StageExecution).filter_by(project_id=project_id)
+    if latest_run:
+        exec_query = exec_query.filter_by(run_id=latest_run.run_id)
+    executions = exec_query.all()
+
     key_to_execs: dict[str, list] = defaultdict(list)
     for exc in executions:
         key_to_execs[exc.stage_key].append(exc)
@@ -232,11 +260,18 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
     artifacts = db.execute(
         select(Artifact).where(Artifact.project_id == project_id)
     ).scalars().all()
-    executions = (
-        db.query(StageExecution)
+
+    # Only consider executions from the latest pipeline run.
+    latest_run = (
+        db.query(PipelineRun)
         .filter_by(project_id=project_id)
-        .all()
+        .order_by(PipelineRun.run_number.desc())
+        .first()
     )
+    exec_query = db.query(StageExecution).filter_by(project_id=project_id)
+    if latest_run:
+        exec_query = exec_query.filter_by(run_id=latest_run.run_id)
+    executions = exec_query.all()
 
     # Build lookups
     type_to_artifacts: dict[str, list] = defaultdict(list)

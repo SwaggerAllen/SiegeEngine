@@ -32,7 +32,7 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
     selectArtifact,
     selectStage,
   } = useDAGStore();
-  const { fetchArtifact } = useProjectStore();
+  const { fetchArtifact, clearSelection } = useProjectStore();
 
   const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
   const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
@@ -88,6 +88,12 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
     [variant, selectStage, selectArtifact, fetchArtifact]
   );
 
+  const onPaneClick = useCallback(() => {
+    selectStage(null);
+    selectArtifact(null);
+    clearSelection();
+  }, [selectStage, selectArtifact, clearSelection]);
+
   if (rawNodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500">
@@ -104,6 +110,7 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       onNodeClick={onNodeClick}
+      onPaneClick={onPaneClick}
       fitView
       className="bg-gray-900"
     >
