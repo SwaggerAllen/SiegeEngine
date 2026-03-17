@@ -395,13 +395,13 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
         for dep_key in (comp_def.dependencies or []):
             if comp_def.parent_key:
                 # Sub-component dependency
-                src_type = ArtifactType.SUB_COMPONENT_PLAN.value
+                src_type = ArtifactType.SUB_COMPONENT_ARCHITECTURE.value
                 tgt_type = ArtifactType.SUB_COMPONENT_REQUIREMENTS.value
                 dep_full_key = f"{comp_def.parent_key}.{dep_key}"
                 comp_full_key = f"{comp_def.parent_key}.{comp_def.key}"
             else:
                 # Top-level component dependency
-                src_type = ArtifactType.COMPONENT_PLAN.value
+                src_type = ArtifactType.COMPONENT_ARCHITECTURE.value
                 tgt_type = ArtifactType.COMPONENT_REQUIREMENTS.value
                 dep_full_key = dep_key
                 comp_full_key = comp_def.key

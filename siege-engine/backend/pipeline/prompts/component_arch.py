@@ -15,6 +15,9 @@ class ComponentArchPrompt(PromptTemplate):
             context_parts.append(f"COMPONENT REQUIREMENTS:\n\n{comp_reqs}")
         if system_arch:
             context_parts.append(f"SYSTEM ARCHITECTURE:\n\n{system_arch}")
+        dep_archs = input_artifacts.get("dependency_architectures", "")
+        if dep_archs:
+            context_parts.append(f"DEPENDENCY COMPONENT ARCHITECTURES:\n\n{dep_archs}")
 
         messages = [
             {"role": "system", "content": self.full_system_message},

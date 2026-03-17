@@ -15,6 +15,9 @@ class SubComponentPlanPrompt(PromptTemplate):
             context_parts.append(f"SUB-COMPONENT ARCHITECTURE:\n\n{sub_comp_arch}")
         if sub_comp_reqs:
             context_parts.append(f"SUB-COMPONENT REQUIREMENTS:\n\n{sub_comp_reqs}")
+        dep_archs = input_artifacts.get("dependency_architectures", "")
+        if dep_archs:
+            context_parts.append(f"DEPENDENCY SUB-COMPONENT ARCHITECTURES:\n\n{dep_archs}")
 
         messages = [
             {"role": "system", "content": self.full_system_message},
