@@ -122,14 +122,14 @@ def _derive_stage_status(stage_execs: list) -> tuple[str, bool]:
         return "running", True
     if any(e.status == StageStatus.AI_REVIEW for e in stage_execs):
         return "ai_reviewing", True
+    if any(e.status == StageStatus.FAILED for e in stage_execs):
+        return "failed", False
     if any(e.status == StageStatus.AWAITING_REVIEW for e in stage_execs):
         return "awaiting_review", False
     if all(e.status == StageStatus.APPROVED for e in stage_execs):
         return "approved", False
     if any(e.status == StageStatus.APPROVED for e in stage_execs):
-        return "approved", False
-    if any(e.status == StageStatus.FAILED for e in stage_execs):
-        return "failed", False
+        return "awaiting_review", False
     return "pending", False
 
 
