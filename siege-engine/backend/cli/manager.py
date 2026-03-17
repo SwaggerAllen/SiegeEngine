@@ -66,7 +66,7 @@ class CLIManager:
         timeout: int,
         max_budget_usd: float | None,
     ) -> str:
-        args = ["claude", "-p", prompt, "--output-format", "text"]
+        args = ["claude", "-p", "--output-format", "text"]
 
         if system_prompt:
             args.extend(["--system-prompt", system_prompt])
@@ -97,6 +97,7 @@ class CLIManager:
 
         proc = await asyncio.create_subprocess_exec(
             *args,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=working_dir,
@@ -105,7 +106,7 @@ class CLIManager:
 
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout,
+                proc.communicate(input=prompt.encode("utf-8")), timeout=timeout,
             )
         except asyncio.TimeoutError:
             proc.kill()

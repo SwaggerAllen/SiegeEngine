@@ -1335,9 +1335,11 @@ class PipelineEngine:
         input_artifacts = self._gather_inputs(project_id, stage_def, old_execution.component_key)
 
         # Set artifact status to GENERATING so the DAG node shows the loading animation
+        original_artifact_status = None
         if old_execution.artifact_id:
             artifact = self.db.get(Artifact, old_execution.artifact_id)
             if artifact:
+                original_artifact_status = artifact.status
                 artifact.status = ArtifactStatus.GENERATING
 
         run_id = old_execution.run_id or str(uuid.uuid4())
@@ -1433,6 +1435,15 @@ class PipelineEngine:
             new_execution.status = StageStatus.FAILED
             new_execution.error_message = str(e)
             new_execution.completed_at = datetime.utcnow()
+
+            # Reset artifact stuck in GENERATING back to its pre-regeneration status
+            if old_execution.artifact_id:
+                stuck_artifact = self.db.get(Artifact, old_execution.artifact_id)
+                if stuck_artifact and stuck_artifact.status in (
+                    ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING
+                ):
+                    stuck_artifact.status = original_artifact_status or ArtifactStatus.REJECTED
+
             self.db.commit()
 
             await ws_manager.broadcast(project_id, {
