@@ -14,10 +14,32 @@ interface AuthState {
   checkTokenExpiry: () => void;
 }
 
+function getInitialAuth(): { token: string | null; user: AuthState['user']; isAuthenticated: boolean } {
+  try {
+    const token = localStorage.getItem('siege_engine_token');
+    const userStr = localStorage.getItem('siege_engine_user');
+    if (token && userStr) {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      if (payload.exp && payload.exp * 1000 < Date.now()) {
+        localStorage.removeItem('siege_engine_token');
+        localStorage.removeItem('siege_engine_user');
+        return { token: null, user: null, isAuthenticated: false };
+      }
+      return { token, user: JSON.parse(userStr), isAuthenticated: true };
+    }
+  } catch {
+    localStorage.removeItem('siege_engine_token');
+    localStorage.removeItem('siege_engine_user');
+  }
+  return { token: null, user: null, isAuthenticated: false };
+}
+
+const initialAuth = getInitialAuth();
+
 export const useAuthStore = create<AuthState>((set) => ({
-  token: null,
-  user: null,
-  isAuthenticated: false,
+  token: initialAuth.token,
+  user: initialAuth.user,
+  isAuthenticated: initialAuth.isAuthenticated,
   hasUser: null,
 
   checkTokenExpiry: () => {
