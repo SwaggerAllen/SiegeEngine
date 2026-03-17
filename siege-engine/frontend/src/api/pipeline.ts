@@ -127,6 +127,11 @@ export async function retryStage(projectId: string, executionId: string) {
   return data;
 }
 
+export async function cancelStage(projectId: string, executionId: string) {
+  const { data } = await api.post(`/pipeline/${projectId}/cancel-stage/${executionId}`);
+  return data;
+}
+
 export async function forceRestartStage(projectId: string, executionId: string) {
   const { data } = await api.post(`/pipeline/${projectId}/force-restart/${executionId}`);
   return data;

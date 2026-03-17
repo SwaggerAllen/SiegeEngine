@@ -37,12 +37,14 @@ function formatModelName(model: string): string {
 
 const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
 const RESTARTABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'failed']);
+const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function StageNode({ data }: { data: DAGNodeData }) {
   const { id: projectId } = useParams<{ id: string }>();
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
-  const { forceRestartStage } = usePipelineStore();
+  const { forceRestartStage, cancelStage } = usePipelineStore();
   const [restarting, setRestarting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const isInputDoc = data.artifact_type === 'project_doc';
   const isBranchingNode = data.artifact_type === 'component_map' || data.artifact_type === 'sub_component_map';
@@ -66,6 +68,13 @@ export function StageNode({ data }: { data: DAGNodeData }) {
     && RESTARTABLE_EXEC_STATUSES.has(data.execution_status)
   );
 
+  const canCancel = !!(
+    projectId
+    && data.execution_id
+    && data.execution_status
+    && CANCELABLE_EXEC_STATUSES.has(data.execution_status)
+  );
+
   const handleEditPrompt = (e: React.MouseEvent) => {
     e.stopPropagation(); // don't trigger node click (artifact select)
     if (pi) {
@@ -83,6 +92,19 @@ export function StageNode({ data }: { data: DAGNodeData }) {
       console.error('Force restart failed:', err);
     } finally {
       setRestarting(false);
+    }
+  };
+
+  const handleCancel = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!projectId || !data.execution_id) return;
+    setCancelling(true);
+    try {
+      await cancelStage(projectId, data.execution_id);
+    } catch (err) {
+      console.error('Cancel stage failed:', err);
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -108,7 +130,16 @@ export function StageNode({ data }: { data: DAGNodeData }) {
           <span className="text-gray-500">v{data.version}</span>
         )}
       </div>
-      {canRestart && (
+      {canCancel && (
+        <button
+          onClick={handleCancel}
+          disabled={cancelling}
+          className="mt-2 w-full px-2 py-1 bg-red-700 hover:bg-red-600 text-white text-xs rounded disabled:opacity-50"
+        >
+          {cancelling ? 'Cancelling...' : '✕ Cancel'}
+        </button>
+      )}
+      {canRestart && !canCancel && (
         <button
           onClick={handleRestart}
           disabled={restarting}

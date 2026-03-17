@@ -1182,6 +1182,15 @@ class PipelineEngine:
             return
 
         pipeline_run = self._lookup_pipeline_run(execution.run_id) if execution.run_id else None
+        if not pipeline_run:
+            # This execution came from a one-off revision (revise_artifact)
+            # or has no associated run — don't continue the pipeline.
+            logger.info(
+                "No PipelineRun for run_id=%s (likely a revision), skipping continuation",
+                execution.run_id,
+            )
+            return
+
         await self._find_and_execute_next(
             execution.project_id, execution.run_id, config, pipeline_run
         )
@@ -1455,6 +1464,7 @@ class PipelineEngine:
                 "type": "stage_completed",
                 "stage_key": artifact.artifact_type.value,
                 "component_key": artifact.component_key,
+                "artifact_id": artifact_id,
                 "status": "approved",
             })
             return
