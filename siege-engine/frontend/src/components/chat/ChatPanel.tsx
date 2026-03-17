@@ -157,7 +157,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
           <div className="flex items-center justify-center h-full">
             <p className="text-gray-500 text-sm text-center">
               Chat with Claude about this project.<br />
-              Claude has access to the project's git repository.
+              Claude has read-only access to the project's git repository.
             </p>
           </div>
         )}

@@ -30,6 +30,7 @@ class ChatSession:
             working_dir=self.working_dir,
             session_id=self.session_id,
             resume=resume,
+            tools="Read,Glob,Grep",
         ):
             yield line
 
