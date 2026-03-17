@@ -102,6 +102,11 @@ export function useWebSocket(projectId: string | undefined) {
       if (data.type === 'feedback_saved' && data.artifact_id) {
         fetchArtifact(data.artifact_id);
       }
+
+      // Refresh selected artifact when a stage completes (e.g. stale → approved)
+      if (data.type === 'stage_completed' && data.artifact_id) {
+        fetchArtifact(data.artifact_id);
+      }
     };
 
     wsRef.current = ws;

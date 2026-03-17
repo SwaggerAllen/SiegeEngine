@@ -1455,6 +1455,7 @@ class PipelineEngine:
                 "type": "stage_completed",
                 "stage_key": artifact.artifact_type.value,
                 "component_key": artifact.component_key,
+                "artifact_id": artifact_id,
                 "status": "approved",
             })
             return
