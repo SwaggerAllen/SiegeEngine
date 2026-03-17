@@ -68,6 +68,22 @@ export async function reviseArtifact(
   return data;
 }
 
+export async function resolveStale(
+  projectId: string,
+  artifactId: string,
+  action: string,
+  notes?: string,
+  editedContent?: string
+) {
+  const { data } = await api.post(`/pipeline/${projectId}/resolve-stale`, {
+    artifact_id: artifactId,
+    action,
+    notes,
+    edited_content: editedContent,
+  });
+  return data;
+}
+
 export async function regenerateArtifacts(
   projectId: string,
   artifactIds: string[]

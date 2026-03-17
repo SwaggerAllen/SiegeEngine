@@ -176,7 +176,10 @@ export function ProjectDashboardPage() {
                     {paneExpanded ? '⇥ Collapse' : '⇤ Expand'}
                   </button>
                 </div>
-                {paneExpanded && selectedExecution && ['awaiting_review', 'running', 'ai_review', 'failed'].includes(selectedExecution.status) ? (
+                {paneExpanded && (
+                  (selectedExecution && ['awaiting_review', 'running', 'ai_review', 'failed'].includes(selectedExecution.status))
+                  || selectedArtifact.status === 'stale'
+                ) ? (
                   <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                     <div className="flex-1 md:w-2/3 overflow-auto border-b md:border-b-0 md:border-r border-gray-700">
                       <ArtifactEditor artifact={selectedArtifact} projectId={projectId} />
