@@ -10,14 +10,20 @@ class ComponentPlanPrompt(PromptTemplate):
         component_arch = input_artifacts.get("component_architectures", "")
         component_reqs = input_artifacts.get("component_requirements", "")
         component_map = input_artifacts.get("extract_components", "")
+        dep_archs = input_artifacts.get("dependency_architectures", "")
+        context = (
+            f"COMPONENT MAP:\n\n{component_map}\n\n"
+            f"COMPONENT ARCHITECTURE:\n\n{component_arch}\n\n"
+            f"COMPONENT REQUIREMENTS:\n\n{component_reqs}"
+        )
+        if dep_archs:
+            context += f"\n\nDEPENDENCY COMPONENT ARCHITECTURES:\n\n{dep_archs}"
         messages = [
             {"role": "system", "content": self.full_system_message},
             {
                 "role": "user",
-                "content": f"COMPONENT MAP:\n\n{component_map}\n\n"
-                f"COMPONENT ARCHITECTURE:\n\n{component_arch}\n\n"
-                f"COMPONENT REQUIREMENTS:\n\n{component_reqs}\n\n"
-                f"COMPONENT: {component_key}\n\n"
+                "content": context
+                + f"\n\nCOMPONENT: {component_key}\n\n"
                 "Produce a detailed implementation plan for this component.",
             },
         ]
