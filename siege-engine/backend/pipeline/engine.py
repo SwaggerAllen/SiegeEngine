@@ -75,9 +75,8 @@ class PipelineEngine:
     ) -> str:
         """Start a pipeline run. Returns run_id.
 
-        Carries over APPROVED (non-stale) executions from the most recent run
-        so that already-approved work is preserved.  Only non-approved stages
-        (awaiting review, rejected, failed, pending) are re-processed.
+        Carries over APPROVED (non-stale) executions so that already-approved
+        work is preserved.  Only non-approved stages are re-processed.
         """
         logger.info("start_pipeline called for project_id=%s, pipeline_run_id=%s", project_id, pipeline_run_id)
 
@@ -92,47 +91,8 @@ class PipelineEngine:
         pipeline_run = self.db.get(PipelineRun, pipeline_run_id) if pipeline_run_id else None
         run_id = pipeline_run.run_id if pipeline_run else str(uuid.uuid4())
 
-        # Carry over APPROVED executions from the most recent previous run
-        # so we don't regenerate already-approved artifacts.
-        prev_run = (
-            self.db.query(PipelineRun)
-            .filter_by(project_id=project_id)
-            .filter(PipelineRun.id != pipeline_run_id)
-            .order_by(PipelineRun.run_number.desc())
-            .first()
-        )
-        if prev_run:
-            stale_artifact_ids = {
-                a.id for a in
-                self.db.query(Artifact)
-                .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
-                .all()
-            }
-            prev_approved = (
-                self.db.query(StageExecution)
-                .filter_by(project_id=project_id, run_id=prev_run.run_id,
-                           status=StageStatus.APPROVED)
-                .all()
-            )
-            carried = 0
-            for prev_exec in prev_approved:
-                if prev_exec.artifact_id and prev_exec.artifact_id in stale_artifact_ids:
-                    continue
-                new_exec = StageExecution(
-                    project_id=project_id,
-                    stage_key=prev_exec.stage_key,
-                    component_key=prev_exec.component_key,
-                    status=StageStatus.APPROVED,
-                    artifact_id=prev_exec.artifact_id,
-                    started_at=prev_exec.started_at,
-                    completed_at=prev_exec.completed_at,
-                    run_id=run_id,
-                    retry_count=0,
-                )
-                self.db.add(new_exec)
-                carried += 1
-            self.db.commit()
-            logger.info("Carried over %d approved executions from run %s", carried, prev_run.run_id)
+        carried = self._carry_over_approved(project_id, run_id)
+        logger.info("Carried over %d approved executions into run %s", carried, run_id)
 
         stages = sorted(config.stages, key=lambda s: s.order_index)
         logger.info(
@@ -149,8 +109,8 @@ class PipelineEngine:
     ) -> str:
         """Resume a pipeline by carrying over work from a previous run.
 
-        Copies APPROVED + AWAITING_REVIEW executions from the previous run,
-        so the engine only re-processes stale/failed/missing nodes.
+        Carries over APPROVED executions (non-stale) from across all runs,
+        plus AWAITING_REVIEW executions from the specific previous run.
         """
         logger.info(
             "resume_run called: project_id=%s, pipeline_run_id=%s, prev_run_id=%s",
@@ -168,44 +128,43 @@ class PipelineEngine:
 
         new_run_id = pipeline_run.run_id
 
-        # Find all executions from the previous run that should carry over
-        prev_executions = (
-            self.db.query(StageExecution)
-            .filter_by(project_id=project_id, run_id=prev_run_id)
-            .filter(StageExecution.status.in_([
-                StageStatus.APPROVED,
-                StageStatus.AWAITING_REVIEW,
-            ]))
-            .all()
-        )
+        # Carry over all approved work (searches across all runs)
+        carried = self._carry_over_approved(project_id, new_run_id)
 
-        # Check which artifacts are stale — these should NOT be carried over
-        stale_artifact_ids = set()
-        stale_artifacts = (
+        # Additionally carry over AWAITING_REVIEW executions from the previous run
+        stale_artifact_ids = {
+            a.id for a in
             self.db.query(Artifact)
             .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
             .all()
+        }
+        review_execs = (
+            self.db.query(StageExecution)
+            .filter_by(project_id=project_id, run_id=prev_run_id,
+                       status=StageStatus.AWAITING_REVIEW)
+            .all()
         )
-        for art in stale_artifacts:
-            stale_artifact_ids.add(art.id)
-
-        carried = 0
         review_carried = 0
-        for prev_exec in prev_executions:
-            # Skip executions whose artifacts are stale
+        for prev_exec in review_execs:
             if prev_exec.artifact_id and prev_exec.artifact_id in stale_artifact_ids:
-                logger.info(
-                    "Skipping stale execution %s (stage=%s, component=%s)",
-                    prev_exec.id, prev_exec.stage_key, prev_exec.component_key,
-                )
                 continue
-
-            # Create a copy for the new run
+            # Check we didn't already carry this over as approved
+            already = (
+                self.db.query(StageExecution)
+                .filter_by(
+                    project_id=project_id, run_id=new_run_id,
+                    stage_key=prev_exec.stage_key,
+                    component_key=prev_exec.component_key,
+                )
+                .first()
+            )
+            if already:
+                continue
             new_exec = StageExecution(
                 project_id=project_id,
                 stage_key=prev_exec.stage_key,
                 component_key=prev_exec.component_key,
-                status=prev_exec.status,
+                status=StageStatus.AWAITING_REVIEW,
                 artifact_id=prev_exec.artifact_id,
                 started_at=prev_exec.started_at,
                 completed_at=prev_exec.completed_at,
@@ -213,15 +172,12 @@ class PipelineEngine:
                 retry_count=0,
             )
             self.db.add(new_exec)
-            if prev_exec.status == StageStatus.AWAITING_REVIEW:
-                review_carried += 1
-            else:
-                carried += 1
+            review_carried += 1
 
         self.db.commit()
         logger.info(
-            "Carried over %d approved + %d in-review executions from prev run %s to new run %s",
-            carried, review_carried, prev_run_id, new_run_id,
+            "Carried over %d approved + %d in-review executions into run %s",
+            carried, review_carried, new_run_id,
         )
 
         stages = sorted(config.stages, key=lambda s: s.order_index)
@@ -233,6 +189,81 @@ class PipelineEngine:
 
         await self._find_and_execute_next(project_id, new_run_id, config, pipeline_run)
         return new_run_id
+
+    def _carry_over_approved(self, project_id: str, new_run_id: str) -> int:
+        """Carry over the most recent APPROVED execution for each (stage, component)
+        across ALL previous runs.  Skips executions whose artifact is currently STALE.
+
+        Returns the number of executions carried over.
+        """
+        from sqlalchemy import func
+
+        stale_artifact_ids = {
+            a.id for a in
+            self.db.query(Artifact)
+            .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
+            .all()
+        }
+
+        # For each (stage_key, component_key), find the most recent APPROVED
+        # execution across all runs (by completed_at desc).
+        # Use a subquery to get the max id per group.
+        subq = (
+            self.db.query(
+                StageExecution.stage_key,
+                func.coalesce(StageExecution.component_key, "").label("ck"),
+                func.max(StageExecution.completed_at).label("max_completed"),
+            )
+            .filter_by(project_id=project_id, status=StageStatus.APPROVED)
+            .filter(StageExecution.run_id != new_run_id)
+            .group_by(StageExecution.stage_key, func.coalesce(StageExecution.component_key, ""))
+            .subquery()
+        )
+
+        best_execs = (
+            self.db.query(StageExecution)
+            .filter_by(project_id=project_id, status=StageStatus.APPROVED)
+            .filter(StageExecution.run_id != new_run_id)
+            .join(
+                subq,
+                (StageExecution.stage_key == subq.c.stage_key)
+                & (func.coalesce(StageExecution.component_key, "") == subq.c.ck)
+                & (StageExecution.completed_at == subq.c.max_completed),
+            )
+            .all()
+        )
+
+        carried = 0
+        seen = set()
+        for prev_exec in best_execs:
+            key = (prev_exec.stage_key, prev_exec.component_key)
+            if key in seen:
+                continue  # deduplicate ties
+            seen.add(key)
+
+            if prev_exec.artifact_id and prev_exec.artifact_id in stale_artifact_ids:
+                logger.info(
+                    "Skipping stale execution (stage=%s, component=%s, artifact=%s)",
+                    prev_exec.stage_key, prev_exec.component_key, prev_exec.artifact_id,
+                )
+                continue
+
+            new_exec = StageExecution(
+                project_id=project_id,
+                stage_key=prev_exec.stage_key,
+                component_key=prev_exec.component_key,
+                status=StageStatus.APPROVED,
+                artifact_id=prev_exec.artifact_id,
+                started_at=prev_exec.started_at,
+                completed_at=prev_exec.completed_at,
+                run_id=new_run_id,
+                retry_count=0,
+            )
+            self.db.add(new_exec)
+            carried += 1
+
+        self.db.commit()
+        return carried
 
     def _should_pause(
         self, stage_def: StageDefinition, pipeline_run: PipelineRun | None,
