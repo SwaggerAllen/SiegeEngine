@@ -1018,6 +1018,48 @@ async def retry_stage(
     return {"status": "retrying", "execution_id": execution_id}
 
 
+@router.post("/{project_id}/cancel-stage/{execution_id}")
+async def cancel_stage(
+    project_id: str,
+    execution_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Cancel a single running/pending/ai_review stage execution."""
+    execution = db.get(StageExecution, execution_id)
+    if not execution or execution.project_id != project_id:
+        raise HTTPException(404, "Execution not found")
+
+    cancelable = {"running", "ai_review", "pending"}
+    if execution.status.value not in cancelable:
+        raise HTTPException(
+            400,
+            f"Can only cancel running/pending/ai_review executions, "
+            f"current status: {execution.status.value}",
+        )
+
+    execution.status = StageStatus.FAILED
+    execution.error_message = "Cancelled by user"
+    execution.completed_at = datetime.utcnow()
+
+    # Reset any associated artifact stuck in generating/ai_reviewing
+    if execution.artifact_id:
+        artifact = db.get(Artifact, execution.artifact_id)
+        if artifact and artifact.status.value in ("generating", "ai_reviewing"):
+            artifact.status = ArtifactStatus.PENDING
+
+    db.commit()
+
+    await ws_manager.broadcast(project_id, {
+        "type": "stage_failed",
+        "stage_key": execution.stage_key,
+        "component_key": execution.component_key,
+        "error": "Cancelled by user",
+    })
+
+    return {"status": "cancelled", "execution_id": execution_id}
+
+
 @router.post("/{project_id}/force-restart/{execution_id}")
 async def force_restart_stage(
     project_id: str,
