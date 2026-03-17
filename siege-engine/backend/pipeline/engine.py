@@ -1402,6 +1402,71 @@ class PipelineEngine:
                 "error": str(e),
             })
 
+    async def resolve_stale(
+        self,
+        artifact_id: str,
+        action: str,
+        notes: str | None = None,
+        edited_content: str | None = None,
+        user_id: str | None = None,
+    ):
+        """Handle approve/reject/save_feedback for a stale artifact."""
+        artifact = self.db.get(Artifact, artifact_id)
+        if not artifact:
+            raise ValueError("Artifact not found")
+        if artifact.status != ArtifactStatus.STALE:
+            raise ValueError(f"Artifact is not stale (status={artifact.status.value})")
+
+        project_id = artifact.project_id
+
+        if action == "save_feedback":
+            if edited_content:
+                artifact.content = edited_content
+                artifact.version += 1
+            if notes and notes.strip():
+                self.db.add(ArtifactComment(
+                    artifact_id=artifact_id,
+                    project_id=project_id,
+                    author_id=user_id,
+                    content=notes.strip(),
+                    comment_type="feedback",
+                    artifact_version=artifact.version,
+                ))
+            self.db.commit()
+            return
+
+        if action == "approved":
+            if edited_content:
+                artifact.content = edited_content
+                artifact.version += 1
+            if notes and notes.strip():
+                self.db.add(ArtifactComment(
+                    artifact_id=artifact_id,
+                    project_id=project_id,
+                    author_id=user_id,
+                    content=notes.strip(),
+                    comment_type="feedback",
+                    artifact_version=artifact.version,
+                ))
+            artifact.status = ArtifactStatus.APPROVED
+            self.db.commit()
+
+            await ws_manager.broadcast(project_id, {
+                "type": "stage_completed",
+                "stage_key": artifact.artifact_type.value,
+                "component_key": artifact.component_key,
+                "status": "approved",
+            })
+            return
+
+        if action == "rejected":
+            # Save feedback, then regenerate via revise_artifact
+            feedback = notes.strip() if notes and notes.strip() else "Regenerate this artifact."
+            await self.revise_artifact(artifact_id, feedback, user_id=user_id)
+            return
+
+        raise ValueError(f"Unknown action: {action}")
+
     async def revise_artifact(self, artifact_id: str, feedback: str, user_id: str | None = None):
         """Revise an approved/stale artifact using AI with human feedback."""
         artifact = self.db.get(Artifact, artifact_id)

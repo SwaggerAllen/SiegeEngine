@@ -19,6 +19,13 @@ class ReviseRequest(BaseModel):
     feedback: str
 
 
+class ResolveStaleRequest(BaseModel):
+    artifact_id: str
+    action: str  # "approved", "rejected", or "save_feedback"
+    notes: str | None = None
+    edited_content: str | None = None
+
+
 class ResumeRunRequest(BaseModel):
     human_review: bool = True
     ai_loops: int = 1

@@ -42,6 +42,7 @@ from backend.pipeline.schemas import (
     PromptConfigUpdate,
     PromptPreviewRequest,
     RegenerateRequest,
+    ResolveStaleRequest,
     ResumeRequest,
     ResumeRunRequest,
     ReviseRequest,
@@ -317,6 +318,35 @@ async def revise_artifact(
 
     asyncio.ensure_future(_run())
     return {"status": "revision_started"}
+
+
+@router.post("/{project_id}/resolve-stale")
+async def resolve_stale(
+    project_id: str,
+    req: ResolveStaleRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Approve, reject, or save feedback on a stale artifact."""
+    user_id = _user.id
+
+    async def _run():
+        from backend.database import SessionLocal
+
+        bg_db = SessionLocal()
+        try:
+            engine = PipelineEngine(bg_db)
+            await engine.resolve_stale(
+                req.artifact_id, req.action, req.notes, req.edited_content,
+                user_id=user_id,
+            )
+        except Exception:
+            logger.exception("resolve_stale failed for artifact_id=%s", req.artifact_id)
+        finally:
+            bg_db.close()
+
+    asyncio.ensure_future(_run())
+    return {"status": "resolving"}
 
 
 @router.post("/{project_id}/regenerate")

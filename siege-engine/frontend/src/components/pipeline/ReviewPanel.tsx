@@ -12,9 +12,10 @@ interface ReviewPanelProps {
 }
 
 const RESTARTABLE_STATUSES = new Set(['running', 'ai_review', 'failed']);
+const REGENERATING_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
-  const { resumeStage, forceRestartStage } = usePipelineStore();
+  const { resumeStage, resolveStale, forceRestartStage } = usePipelineStore();
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
   const [notes, setNotes] = useState('');
@@ -27,6 +28,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
 
   const isAwaitingReview = execution?.status === 'awaiting_review';
   const isRestartable = execution && RESTARTABLE_STATUSES.has(execution.status);
+  const isStale = artifact.status === 'stale';
+  const isBeingRegenerated = isStale && execution && REGENERATING_STATUSES.has(execution.status);
 
   // Reset to blank when switching artifacts; fetch feedback count
   useEffect(() => {
@@ -45,6 +48,30 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
       await resumeStage(
         projectId,
         execution.id,
+        action,
+        notes || undefined,
+        showEditor && editedContent ? editedContent : undefined
+      );
+      if (action === 'save_feedback') {
+        setFeedbackSaved(true);
+        setFeedbackCount((c) => c + 1);
+      } else {
+        setNotes('');
+        setEditedContent('');
+        setShowEditor(false);
+        setFeedbackSaved(false);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleStaleAction = async (action: string) => {
+    setSubmitting(true);
+    try {
+      await resolveStale(
+        projectId,
+        artifact.id,
         action,
         notes || undefined,
         showEditor && editedContent ? editedContent : undefined
@@ -98,6 +125,81 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         >
           {restarting ? 'Restarting...' : '⟳ Force Restart Stage'}
         </button>
+      </div>
+    );
+  }
+
+  // Stale artifacts that are NOT being regenerated: show approve/reject UI
+  if (!isViewer && isStale && !isBeingRegenerated) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="px-2 py-1 rounded bg-orange-900 text-orange-300">
+            Stale
+          </span>
+          <span className="text-xs text-gray-400">
+            Upstream inputs have changed since this was generated.
+          </span>
+        </div>
+
+        {/* Feedback input */}
+        <div className="space-y-3">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-gray-400">Review Notes (optional)</label>
+              {feedbackCount > 0 && (
+                <span className="text-xs text-orange-400">
+                  {feedbackCount} previous feedback{feedbackCount !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+            <textarea
+              value={notes}
+              onChange={(e) => { setNotes(e.target.value); setFeedbackSaved(false); }}
+              className="w-full h-14 md:h-28 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+              placeholder="Add feedback for re-generation..."
+            />
+          </div>
+
+          {showEditor && (
+            <textarea
+              value={editedContent || artifact.content || ''}
+              onChange={(e) => setEditedContent(e.target.value)}
+              className="w-full h-48 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
+            />
+          )}
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
+          <button
+            onClick={() => handleStaleAction('approved')}
+            disabled={submitting}
+            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            Approve
+          </button>
+          <button
+            onClick={() => handleStaleAction('save_feedback')}
+            disabled={submitting || !notes.trim()}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+          </button>
+          <button
+            onClick={() => handleStaleAction('rejected')}
+            disabled={submitting}
+            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            Reject & Re-generate
+          </button>
+          <button
+            onClick={() => setShowEditor(!showEditor)}
+            className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+          >
+            {showEditor ? 'Hide Editor' : 'Edit & Approve'}
+          </button>
+        </div>
       </div>
     );
   }

@@ -29,6 +29,7 @@ interface PipelineState {
   resumeRun: (projectId: string, options?: PipelineStartOptions) => Promise<void>;
   resumeStage: (projectId: string, executionId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
   reviseArtifact: (projectId: string, artifactId: string, feedback: string) => Promise<void>;
+  resolveStale: (projectId: string, artifactId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
   cancelPipeline: (projectId: string, options?: { open_pr?: boolean; pr_title?: string; pr_body?: string; base_branch?: string }) => Promise<void>;
   checkBlockingPR: (projectId: string) => Promise<boolean>;
   dismissBlockingPR: (projectId: string) => Promise<void>;
@@ -134,6 +135,13 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   reviseArtifact: async (projectId, artifactId, feedback) => {
     set({ isRunning: true });
     await pipelineApi.reviseArtifact(projectId, artifactId, feedback);
+  },
+
+  resolveStale: async (projectId, artifactId, action, notes, editedContent) => {
+    await pipelineApi.resolveStale(projectId, artifactId, action, notes, editedContent);
+    if (action === 'rejected') {
+      set({ isRunning: true });
+    }
   },
 
   cancelPipeline: async (projectId, options) => {
