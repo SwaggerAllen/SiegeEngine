@@ -19,6 +19,16 @@ class ChatSession:
         self.working_dir = working_dir
         self.message_count = 0
 
+    # All default tools except file-writing ones (Edit, Write, NotebookEdit).
+    CHAT_TOOLS = "Bash,Read,Glob,Grep,WebFetch,WebSearch,Agent,TodoWrite"
+    CHAT_SYSTEM_PROMPT = (
+        "You have read-only access to this repository. "
+        "Do NOT use Bash to create, modify, or delete any files or directories "
+        "(no rm, mv, cp, touch, mkdir, sed -i, tee, redirects like > or >>, etc.). "
+        "Only use Bash for read-only commands such as git log, git diff, ls, find, "
+        "grep, cat, head, tail, wc, etc."
+    )
+
     async def send_message(self, message: str):
         """Send a message and yield streaming response chunks."""
         self.message_count += 1
@@ -30,7 +40,8 @@ class ChatSession:
             working_dir=self.working_dir,
             session_id=self.session_id,
             resume=resume,
-            tools="Read,Glob,Grep",
+            tools=self.CHAT_TOOLS,
+            system_prompt=self.CHAT_SYSTEM_PROMPT if not resume else None,
         ):
             yield line
 
