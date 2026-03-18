@@ -24,6 +24,9 @@ _WORKER_ID = str(uuid.uuid4())[:8]
 # Shutdown event
 _shutdown_event = asyncio.Event()
 
+# Notify event — set by enqueue() to wake the worker immediately
+_job_notify = asyncio.Event()
+
 
 def enqueue(
     db: Session,
@@ -42,6 +45,8 @@ def enqueue(
     db.add(job)
     db.commit()
     logger.info(f"Enqueued job {job.id} type={job_type}")
+    # Wake the worker loop — safe to call from sync code on the event loop
+    _job_notify.set()
     return job.id
 
 
@@ -81,54 +86,69 @@ def recover_stale_jobs(db: Session) -> int:
     return count
 
 
-def _claim_next(db: Session) -> Job | None:
-    """Atomically claim the next queued job. Returns None if queue is empty."""
-    # Read-only check first to avoid unnecessary write locks
-    has_queued = db.execute(
-        text("SELECT 1 FROM jobs WHERE status = 'queued' LIMIT 1")
-    ).first()
-    if not has_queued:
-        return None
+def _claim_next_sync() -> tuple[str, str, dict] | None:
+    """Synchronous: claim the next queued job. Returns (job_id, job_type, payload) or None.
 
-    # Atomic claim with write lock
-    now = datetime.utcnow()
-    result = db.execute(
-        text(
-            "UPDATE jobs SET status = 'running', locked_by = :worker, locked_at = :now "
-            "WHERE id = ("
-            "  SELECT id FROM jobs WHERE status = 'queued' "
-            "  ORDER BY priority ASC, created_at ASC LIMIT 1"
-            ") RETURNING id"
-        ),
-        {"worker": _WORKER_ID, "now": now},
-    )
-    row = result.first()
-    db.commit()
-    if not row:
-        return None
-    return db.get(Job, row[0])
+    Runs in a thread pool to avoid blocking the event loop.
+    """
+    db = SessionLocal()
+    try:
+        has_queued = db.execute(
+            text("SELECT 1 FROM jobs WHERE status = 'queued' LIMIT 1")
+        ).first()
+        if not has_queued:
+            return None
+
+        now = datetime.utcnow()
+        result = db.execute(
+            text(
+                "UPDATE jobs SET status = 'running', locked_by = :worker, locked_at = :now "
+                "WHERE id = ("
+                "  SELECT id FROM jobs WHERE status = 'queued' "
+                "  ORDER BY priority ASC, created_at ASC LIMIT 1"
+                ") RETURNING id"
+            ),
+            {"worker": _WORKER_ID, "now": now},
+        )
+        row = result.first()
+        db.commit()
+        if not row:
+            return None
+        job = db.get(Job, row[0])
+        if not job:
+            return None
+        return job.id, job.job_type, dict(job.payload)
+    finally:
+        db.close()
 
 
-def _complete_job(db: Session, job: Job, error: str | None = None) -> None:
-    """Mark a job as completed or failed."""
-    if error:
-        job.retry_count += 1
-        if job.retry_count <= job.max_retries:
-            job.status = "queued"
-            job.locked_by = None
-            job.locked_at = None
-            job.error_message = error
-            logger.warning(f"Job {job.id} failed (retry {job.retry_count}/{job.max_retries}): {error}")
+def _complete_job_sync(job_id: str, error: str | None = None) -> None:
+    """Synchronous: mark a job as completed or failed. Runs in a thread pool."""
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if not job or job.status != "running":
+            return
+        if error:
+            job.retry_count += 1
+            if job.retry_count <= job.max_retries:
+                job.status = "queued"
+                job.locked_by = None
+                job.locked_at = None
+                job.error_message = error
+                logger.warning(f"Job {job.id} failed (retry {job.retry_count}/{job.max_retries}): {error}")
+            else:
+                job.status = "failed"
+                job.error_message = error
+                job.completed_at = datetime.utcnow()
+                logger.error(f"Job {job.id} permanently failed: {error}")
         else:
-            job.status = "failed"
-            job.error_message = error
+            job.status = "completed"
             job.completed_at = datetime.utcnow()
-            logger.error(f"Job {job.id} permanently failed: {error}")
-    else:
-        job.status = "completed"
-        job.completed_at = datetime.utcnow()
-        logger.info(f"Job {job.id} completed")
-    db.commit()
+            logger.info(f"Job {job.id} completed")
+        db.commit()
+    finally:
+        db.close()
 
 
 # ── Job Handlers ──────────────────────────────────────────────────────────────
@@ -243,51 +263,46 @@ _JOB_HANDLERS = {
 
 # ── Worker Loop ───────────────────────────────────────────────────────────────
 
-async def worker_loop(poll_interval: float = 2.0) -> None:
-    """Main worker loop. Polls the job queue and executes jobs.
+async def worker_loop(poll_interval: float = 5.0) -> None:
+    """Main worker loop. Waits for job notifications, polls in a thread.
 
-    Runs as an asyncio task within the server process.
+    DB operations run in asyncio.to_thread() so they never block the event loop.
     """
     logger.info(f"Job queue worker started (id={_WORKER_ID})")
 
     while not _shutdown_event.is_set():
-        db = SessionLocal()
+        # Wait for either a job notification or the poll timeout
+        _job_notify.clear()
         try:
-            job = _claim_next(db)
-        finally:
-            db.close()
+            await asyncio.wait_for(_shutdown_event.wait(), timeout=poll_interval)
+            break  # Shutdown signaled
+        except asyncio.TimeoutError:
+            pass
 
-        if job is None:
-            try:
-                await asyncio.wait_for(_shutdown_event.wait(), timeout=poll_interval)
-                break  # Shutdown signaled
-            except asyncio.TimeoutError:
-                continue
+        # Also check if we were notified
+        if _shutdown_event.is_set():
+            break
 
-        handler = _JOB_HANDLERS.get(job.job_type)
+        # Poll for jobs in a thread to avoid blocking the event loop
+        claimed = await asyncio.to_thread(_claim_next_sync)
+        if claimed is None:
+            continue
+
+        job_id, job_type, payload = claimed
+
+        handler = _JOB_HANDLERS.get(job_type)
         if not handler:
-            db = SessionLocal()
-            try:
-                job = db.get(Job, job.id)
-                _complete_job(db, job, error=f"Unknown job type: {job.job_type}")
-            finally:
-                db.close()
+            await asyncio.to_thread(_complete_job_sync, job_id, f"Unknown job type: {job_type}")
             continue
 
         error = None
         try:
-            await handler(job.payload)
+            await handler(payload)
         except Exception as e:
-            logger.exception(f"Job {job.id} ({job.job_type}) failed")
+            logger.exception(f"Job {job_id} ({job_type}) failed")
             error = str(e)[:1000]
 
-        db = SessionLocal()
-        try:
-            job = db.get(Job, job.id)
-            if job and job.status == "running":
-                _complete_job(db, job, error=error)
-        finally:
-            db.close()
+        await asyncio.to_thread(_complete_job_sync, job_id, error)
 
     logger.info("Job queue worker stopped")
 
