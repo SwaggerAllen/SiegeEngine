@@ -56,9 +56,13 @@ def init_db():
 
         inspector = inspect(engine)
         if inspector.has_table("projects"):
-            # Existing database — stamp it at head without running migrations
-            logger.info("Stamping existing database at Alembic head revision")
-            command.stamp(alembic_cfg, "head")
+            # Existing database — stamp at the initial migration (which matches
+            # the pre-Alembic schema), then upgrade to apply new migrations
+            initial_rev = script.get_base()
+            logger.info("Stamping existing database at initial revision %s", initial_rev)
+            command.stamp(alembic_cfg, initial_rev)
+            logger.info("Upgrading to head to apply new migrations")
+            command.upgrade(alembic_cfg, "head")
         else:
             # Fresh database — run all migrations
             logger.info("Running initial Alembic migrations")
