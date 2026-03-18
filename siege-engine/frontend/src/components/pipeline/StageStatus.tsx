@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { StageExecution } from '../../types/pipeline';
+import { RESTARTABLE_STATUSES } from '../../types/pipeline';
 import { usePipelineStore } from '../../store/pipelineStore';
 
 const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
@@ -12,8 +13,6 @@ const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
   skipped: { bg: 'bg-gray-500', text: 'Skipped' },
   failed: { bg: 'bg-red-700', text: 'Failed' },
 };
-
-const RESTARTABLE_STATUSES = new Set(['running', 'ai_review', 'failed']);
 
 function ExecutionRow({ exec, projectId }: { exec: StageExecution; projectId?: string }) {
   const [expanded, setExpanded] = useState(false);

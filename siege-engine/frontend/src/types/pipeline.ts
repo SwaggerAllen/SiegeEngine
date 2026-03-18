@@ -23,6 +23,11 @@ export interface PipelineConfig {
 
 export type StageExecutionStatus = 'running' | 'awaiting_review' | 'approved' | 'rejected' | 'failed' | 'ai_review';
 
+/** Execution statuses that allow a force-restart action. */
+export const RESTARTABLE_STATUSES: ReadonlySet<string> = new Set<string>([
+  'running', 'ai_review', 'failed', 'rejected',
+]);
+
 export interface StageExecution {
   id: string;
   stage_key: string;

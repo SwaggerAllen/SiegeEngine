@@ -3,6 +3,7 @@ import { Handle, Position } from '@xyflow/react';
 import type { DAGNodeData } from '../../types/dag';
 import { useDAGStore } from '../../store/dagStore';
 import { usePipelineStore } from '../../store/pipelineStore';
+import { RESTARTABLE_STATUSES } from '../../types/pipeline';
 import { useParams } from 'react-router-dom';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -36,7 +37,6 @@ function formatModelName(model: string): string {
 }
 
 const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
-const RESTARTABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'failed', 'rejected']);
 const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function StageNode({ data }: { data: DAGNodeData }) {
@@ -65,7 +65,7 @@ export function StageNode({ data }: { data: DAGNodeData }) {
     projectId
     && data.execution_id
     && data.execution_status
-    && RESTARTABLE_EXEC_STATUSES.has(data.execution_status)
+    && RESTARTABLE_STATUSES.has(data.execution_status)
   );
 
   const canCancel = !!(
