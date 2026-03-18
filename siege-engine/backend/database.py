@@ -71,6 +71,12 @@ def init_db():
         logger.info(f"Upgrading database from {current_rev} to {head_rev}")
         command.upgrade(alembic_cfg, "head")
 
+    # Safety net: create any tables that Alembic missed (e.g. if a previous
+    # deploy stamped head without actually running migrations).
+    import backend.models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
+
     _migrate_stage_order()
 
 
