@@ -1658,6 +1658,15 @@ class PipelineEngine:
             artifact.status = ArtifactStatus.APPROVED
             self.db.commit()
 
+            # Run post-generation hooks to sync ComponentDefinition records
+            # (e.g., when a stale component_map is approved with edits)
+            if artifact.artifact_type.value == "component_map":
+                self._store_components(project_id, artifact.content)
+                self.db.commit()
+            elif artifact.artifact_type.value == "sub_component_map" and artifact.component_key:
+                self._store_sub_components(project_id, artifact.component_key, artifact.content)
+                self.db.commit()
+
             await ws_manager.broadcast(
                 project_id,
                 {
