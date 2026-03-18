@@ -4,6 +4,7 @@ import { useAuthStore } from '../../store/authStore';
 import { listComments } from '../../api/comments';
 import type { Artifact } from '../../types/project';
 import type { StageExecution } from '../../types/pipeline';
+import { RESTARTABLE_STATUSES } from '../../types/pipeline';
 
 interface ReviewPanelProps {
   projectId: string;
@@ -11,7 +12,6 @@ interface ReviewPanelProps {
   execution: StageExecution | undefined;
 }
 
-const RESTARTABLE_STATUSES = new Set(['running', 'ai_review', 'failed', 'rejected']);
 const REGENERATING_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
