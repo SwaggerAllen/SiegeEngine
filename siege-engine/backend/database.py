@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from backend.config import settings
@@ -18,50 +18,50 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    """Initialize database: run Alembic migrations, enable WAL, sync stages."""
+    import logging
+
+    from alembic import command
+    from alembic.config import Config
+    from alembic.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    logger = logging.getLogger(__name__)
+
     # Enable WAL mode for better concurrent access
     with engine.begin() as conn:
         conn.execute(text("PRAGMA journal_mode=WAL"))
         conn.execute(text("PRAGMA busy_timeout=30000"))
-    _migrate_missing_columns()
+
+    # Run Alembic migrations
+    alembic_cfg = Config("alembic.ini")
+    alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
+
+    script = ScriptDirectory.from_config(alembic_cfg)
+    head_rev = script.get_current_head()
+
+    with engine.connect() as conn:
+        context = MigrationContext.configure(conn)
+        current_rev = context.get_current_revision()
+
+    if current_rev is None:
+        # Check if tables already exist (pre-Alembic database)
+        from sqlalchemy import inspect
+
+        inspector = inspect(engine)
+        if inspector.has_table("projects"):
+            # Existing database — stamp it at head without running migrations
+            logger.info("Stamping existing database at Alembic head revision")
+            command.stamp(alembic_cfg, "head")
+        else:
+            # Fresh database — run all migrations
+            logger.info("Running initial Alembic migrations")
+            command.upgrade(alembic_cfg, "head")
+    elif current_rev != head_rev:
+        logger.info(f"Upgrading database from {current_rev} to {head_rev}")
+        command.upgrade(alembic_cfg, "head")
+
     _migrate_stage_order()
-
-
-def _migrate_missing_columns():
-    """Add columns that create_all won't add to existing tables (SQLite limitation)."""
-    inspector = inspect(engine)
-    # PipelineConfig.review_prompt_overrides
-    if inspector.has_table("pipeline_configs"):
-        columns = [c["name"] for c in inspector.get_columns("pipeline_configs")]
-        if "review_prompt_overrides" not in columns:
-            with engine.begin() as conn:
-                conn.execute(
-                    text("ALTER TABLE pipeline_configs ADD COLUMN review_prompt_overrides JSON")
-                )
-
-    # InviteLink.role
-    if inspector.has_table("invite_links"):
-        columns = [c["name"] for c in inspector.get_columns("invite_links")]
-        if "role" not in columns:
-            with engine.begin() as conn:
-                conn.execute(
-                    text("ALTER TABLE invite_links ADD COLUMN role VARCHAR(20) DEFAULT 'member'")
-                )
-
-    # Project.auto_push_enabled
-    if inspector.has_table("projects"):
-        columns = [c["name"] for c in inspector.get_columns("projects")]
-        if "auto_push_enabled" not in columns:
-            with engine.begin() as conn:
-                conn.execute(
-                    text("ALTER TABLE projects ADD COLUMN auto_push_enabled BOOLEAN DEFAULT 0")
-                )
-        if "blocking_pr_url" not in columns:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE projects ADD COLUMN blocking_pr_url VARCHAR(500)"))
-        if "blocking_pr_number" not in columns:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE projects ADD COLUMN blocking_pr_number INTEGER"))
 
 
 def _migrate_stage_order():
@@ -73,6 +73,8 @@ def _migrate_stage_order():
     - Cleans up component_plan artifacts for non-leaf components
     """
     import json
+
+    from sqlalchemy import inspect
 
     from backend.pipeline.defaults import DEFAULT_STAGES
 
