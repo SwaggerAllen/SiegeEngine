@@ -41,3 +41,6 @@ class Project(Base):
     pipeline_runs: Mapped[list["PipelineRun"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    input_documents: Mapped[list["InputDocument"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )

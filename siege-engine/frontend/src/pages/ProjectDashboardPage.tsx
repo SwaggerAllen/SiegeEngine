@@ -16,10 +16,11 @@ import { PromptEditorPanel } from '../components/pipeline/PromptEditorPanel';
 import { StageConfigPanel } from '../components/pipeline/StageConfigPanel';
 import { ProjectSettingsPanel } from '../components/project/ProjectSettingsPanel';
 import { ChatPanel } from '../components/chat/ChatPanel';
+import InputDocsPanel from '../components/input-docs/InputDocsPanel';
 import { RunSelector } from '../components/pipeline/RunSelector';
 import api from '../api/client';
 
-type Tab = 'documents' | 'pipeline' | 'prompts' | 'chat' | 'settings';
+type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings';
 
 export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -82,7 +83,7 @@ export function ProjectDashboardPage() {
   const hasRemote = !!currentProject?.remote_url;
   const visibleTabs: Tab[] = isViewer
     ? ['documents', 'pipeline', 'chat']
-    : ['documents', 'pipeline', 'prompts', 'chat', 'settings'];
+    : ['documents', 'pipeline', 'prompts', 'input-docs', 'chat', 'settings'];
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white">
@@ -232,6 +233,10 @@ export function ProjectDashboardPage() {
             initialStageKey={initialStageKey}
             onStageKeyConsumed={() => setInitialStageKey(null)}
           />
+        </div>
+      ) : activeTab === 'input-docs' ? (
+        <div className="flex-1 overflow-hidden">
+          <InputDocsPanel projectId={projectId} />
         </div>
       ) : activeTab === 'chat' ? (
         <div className="flex-1 overflow-hidden">

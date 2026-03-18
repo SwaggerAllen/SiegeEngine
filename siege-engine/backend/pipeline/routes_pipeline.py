@@ -177,6 +177,60 @@ async def resume_run(
     }
 
 
+@pipeline_router.post("/{project_id}/propagate")
+async def propagate_changes(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Regenerate stale artifacts after input document changes.
+
+    Creates a propagation run where all regenerated artifacts land in
+    AWAITING_REVIEW regardless of the human_review setting, so the user
+    can review all changes that resulted from the input change.
+    """
+    project = _get_project_or_404(db, project_id)
+    _check_blocking_pr(project)
+
+    # Count stale artifacts
+    stale_count = (
+        db.query(Artifact)
+        .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
+        .count()
+    )
+    if stale_count == 0:
+        raise HTTPException(400, "No stale artifacts to propagate")
+
+    max_num = (
+        db.query(func.max(PipelineRun.run_number)).filter_by(project_id=project_id).scalar()
+    ) or 0
+    run_number = max_num + 1
+
+    pipeline_run = PipelineRun(
+        project_id=project_id,
+        run_number=run_number,
+        human_review=False,
+        propagation_run=True,
+        stop_point=StopPoint.AFTER_ALL,
+    )
+    db.add(pipeline_run)
+    db.commit()
+    db.refresh(pipeline_run)
+
+    enqueue(db, "resume_run", {
+        "project_id": project_id,
+        "pipeline_run_id": pipeline_run.id,
+        "prev_run_id": pipeline_run.run_id,
+    })
+
+    return {
+        "status": "propagating",
+        "run_number": run_number,
+        "run_id": pipeline_run.run_id,
+        "stale_count": stale_count,
+    }
+
+
 @pipeline_router.post("/{project_id}/cancel")
 async def cancel_pipeline(
     project_id: str,

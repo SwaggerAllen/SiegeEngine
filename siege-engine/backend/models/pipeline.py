@@ -51,6 +51,7 @@ class PipelineRun(Base):
     human_review: Mapped[bool] = mapped_column(Boolean, default=True)
     ai_loops: Mapped[int] = mapped_column(Integer, default=1)
     stop_point: Mapped[StopPoint] = mapped_column(Enum(StopPoint), default=StopPoint.AFTER_ALL)
+    propagation_run: Mapped[bool] = mapped_column(Boolean, default=False)
     git_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
