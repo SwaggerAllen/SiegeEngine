@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from backend.models import StageStatus, StopPoint
+from backend.models import StopPoint
 from backend.pipeline.engine import BRANCHING_STAGES, PipelineEngine
 
 

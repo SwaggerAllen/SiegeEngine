@@ -17,6 +17,22 @@ from backend.models import (
 )
 
 
+def _get_latest_run_executions(
+    db: Session, project_id: str
+) -> tuple[PipelineRun | None, list[StageExecution]]:
+    """Return (latest_run, executions) for a project, scoped to the latest run."""
+    latest_run = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id)
+        .order_by(PipelineRun.run_number.desc())
+        .first()
+    )
+    exec_query = db.query(StageExecution).filter_by(project_id=project_id)
+    if latest_run:
+        exec_query = exec_query.filter_by(run_id=latest_run.run_id)
+    return latest_run, exec_query.all()
+
+
 def build_dependency_graph(db: Session, project_id: str) -> dict[str, list[str]]:
     deps = (
         db.execute(
@@ -175,16 +191,7 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
 
     # Only consider executions from the latest pipeline run so that old
     # FAILED / AWAITING_REVIEW records don't mask the current state.
-    latest_run = (
-        db.query(PipelineRun)
-        .filter_by(project_id=project_id)
-        .order_by(PipelineRun.run_number.desc())
-        .first()
-    )
-    exec_query = db.query(StageExecution).filter_by(project_id=project_id)
-    if latest_run:
-        exec_query = exec_query.filter_by(run_id=latest_run.run_id)
-    executions = exec_query.all()
+    _, executions = _get_latest_run_executions(db, project_id)
 
     key_to_execs: dict[str, list] = defaultdict(list)
     for exc in executions:
@@ -271,16 +278,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
     )
 
     # Only consider executions from the latest pipeline run.
-    latest_run = (
-        db.query(PipelineRun)
-        .filter_by(project_id=project_id)
-        .order_by(PipelineRun.run_number.desc())
-        .first()
-    )
-    exec_query = db.query(StageExecution).filter_by(project_id=project_id)
-    if latest_run:
-        exec_query = exec_query.filter_by(run_id=latest_run.run_id)
-    executions = exec_query.all()
+    _, executions = _get_latest_run_executions(db, project_id)
 
     # Build lookups
     type_to_artifacts: dict[str, list] = defaultdict(list)

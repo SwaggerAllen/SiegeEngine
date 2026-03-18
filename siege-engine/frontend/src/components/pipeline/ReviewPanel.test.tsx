@@ -5,10 +5,14 @@ import type { Artifact } from '../../types/project';
 import type { StageExecution } from '../../types/pipeline';
 
 const mockResumeStage = vi.fn();
+const mockPruneArtifact = vi.fn();
 
 vi.mock('../../store/pipelineStore', () => ({
   usePipelineStore: vi.fn(() => ({
     resumeStage: mockResumeStage,
+    resolveStale: vi.fn(),
+    forceRestartStage: vi.fn(),
+    pruneArtifact: mockPruneArtifact,
   })),
 }));
 
@@ -55,19 +59,28 @@ const awaitingExecution: StageExecution = {
 describe('ReviewPanel', () => {
   beforeEach(() => {
     mockResumeStage.mockReset();
+    mockPruneArtifact.mockReset();
   });
 
-  it('renders nothing when execution is undefined', () => {
-    const { container } = render(
+  it('renders prune button when execution is undefined (non-input artifact)', () => {
+    render(
       <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={undefined} />
     );
-    expect(container.innerHTML).toBe('');
+    expect(screen.getByText('🗑 Prune Node')).toBeInTheDocument();
   });
 
-  it('renders nothing when execution.status is not awaiting_review', () => {
-    const approvedExecution = { ...awaitingExecution, status: 'approved' };
-    const { container } = render(
+  it('renders prune button when execution.status is not awaiting_review', () => {
+    const approvedExecution = { ...awaitingExecution, status: 'approved' as const };
+    render(
       <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={approvedExecution} />
+    );
+    expect(screen.getByText('🗑 Prune Node')).toBeInTheDocument();
+  });
+
+  it('renders nothing for input doc artifacts', () => {
+    const inputArtifact = { ...baseArtifact, artifact_type: 'project_doc' };
+    const { container } = render(
+      <ReviewPanel projectId="proj-1" artifact={inputArtifact} execution={undefined} />
     );
     expect(container.innerHTML).toBe('');
   });

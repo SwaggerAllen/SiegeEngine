@@ -7,7 +7,7 @@ const CHANGE_BADGES: Record<string, { label: string; className: string }> = {
   removed: { label: 'Removed', className: 'bg-red-900/50 text-red-300 border-red-600/40' },
 };
 
-export function ComponentDependencyList({ projectId }: { projectId: string }) {
+export function ComponentDependencyList({ projectId, refreshKey }: { projectId: string; refreshKey?: number }) {
   const [components, setComponents] = useState<ComponentInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -24,7 +24,7 @@ export function ComponentDependencyList({ projectId }: { projectId: string }) {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [projectId]);
+  }, [projectId, refreshKey]);
 
   const toggle = (key: string) => {
     setExpanded((prev) => {

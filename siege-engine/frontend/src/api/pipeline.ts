@@ -137,6 +137,11 @@ export async function forceRestartStage(projectId: string, executionId: string) 
   return data;
 }
 
+export async function pruneArtifact(projectId: string, artifactId: string) {
+  const { data } = await api.delete(`/pipeline/${projectId}/prune/${artifactId}`);
+  return data;
+}
+
 export async function getDAG(projectId: string) {
   const { data } = await api.get(`/dag/${projectId}`);
   return data;

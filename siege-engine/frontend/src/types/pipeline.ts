@@ -21,11 +21,13 @@ export interface PipelineConfig {
   stages: StageDefinition[];
 }
 
+export type StageExecutionStatus = 'running' | 'awaiting_review' | 'approved' | 'rejected' | 'failed' | 'ai_review';
+
 export interface StageExecution {
   id: string;
   stage_key: string;
   component_key: string | null;
-  status: string;
+  status: StageExecutionStatus;
   artifact_id: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -39,11 +41,13 @@ export interface PipelineStartOptions {
   stop_point?: string;
 }
 
+export type PipelineRunStatus = 'running' | 'completed' | 'cancelled' | 'failed' | 'paused';
+
 export interface PipelineRun {
   id: string;
   run_number: number;
   run_id: string;
-  status: string;
+  status: PipelineRunStatus;
   human_review: boolean;
   ai_loops: number;
   stop_point: string;
@@ -62,4 +66,5 @@ export type WSEvent =
   | { type: 'pipeline_paused'; stage_key: string; run_id: string; message?: string }
   | { type: 'staleness_propagated'; stale_artifact_ids: string[] }
   | { type: 'feedback_saved'; stage_key: string; component_key?: string; execution_id: string; artifact_id?: string }
-  | { type: 'comment_added'; artifact_id: string; comment_id: string };
+  | { type: 'comment_added'; artifact_id: string; comment_id: string }
+  | { type: 'artifact_pruned'; artifact_id: string };

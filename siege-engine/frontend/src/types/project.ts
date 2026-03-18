@@ -15,11 +15,13 @@ export interface ProjectDetail extends Project {
   artifacts: ArtifactSummary[];
 }
 
+export type ArtifactStatus = 'generating' | 'awaiting_review' | 'approved' | 'stale' | 'ai_reviewing';
+
 export interface ArtifactSummary {
   id: string;
   name: string;
   artifact_type: string;
-  status: string;
+  status: ArtifactStatus;
   component_key: string | null;
   version: number;
 }
@@ -31,7 +33,7 @@ export interface Artifact {
   name: string;
   component_key: string | null;
   content: string | null;
-  status: string;
+  status: ArtifactStatus;
   version: number;
   ai_review_feedback: Record<string, unknown> | null;
   human_review_notes: string | null;

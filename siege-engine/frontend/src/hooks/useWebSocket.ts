@@ -84,7 +84,8 @@ export function useWebSocket(projectId: string | undefined) {
         data.type === 'pipeline_paused' ||
         data.type === 'staleness_propagated' ||
         data.type === 'feedback_saved' ||
-        data.type === 'comment_added'
+        data.type === 'comment_added' ||
+        data.type === 'artifact_pruned'
       ) {
         fetchDAG(projectId);
         fetchDocumentsDAG(projectId);

@@ -15,7 +15,7 @@ const RESTARTABLE_STATUSES = new Set(['running', 'ai_review', 'failed']);
 const REGENERATING_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
-  const { resumeStage, resolveStale, forceRestartStage } = usePipelineStore();
+  const { resumeStage, resolveStale, forceRestartStage, pruneArtifact } = usePipelineStore();
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
   const [notes, setNotes] = useState('');
@@ -25,11 +25,15 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const [feedbackSaved, setFeedbackSaved] = useState(false);
   const [feedbackCount, setFeedbackCount] = useState(0);
   const [restarting, setRestarting] = useState(false);
+  const [pruning, setPruning] = useState(false);
 
   const isAwaitingReview = execution?.status === 'awaiting_review';
   const isRestartable = execution && RESTARTABLE_STATUSES.has(execution.status);
   const isStale = artifact.status === 'stale';
   const isBeingRegenerated = isStale && execution && REGENERATING_STATUSES.has(execution.status);
+  const isInputDoc = artifact.artifact_type === 'project_doc';
+  const isGenerating = artifact.status === 'generating' || artifact.status === 'ai_reviewing';
+  const canPrune = !isViewer && !isInputDoc && !isGenerating;
 
   // Reset to blank when switching artifacts; fetch feedback count
   useEffect(() => {
@@ -99,6 +103,20 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
       console.error('Force restart failed:', err);
     } finally {
       setRestarting(false);
+    }
+  };
+
+  const handlePrune = async () => {
+    if (!window.confirm('Are you sure you want to prune this artifact? This will permanently delete it and its associated records.')) {
+      return;
+    }
+    setPruning(true);
+    try {
+      await pruneArtifact(projectId, artifact.id);
+    } catch (err) {
+      console.error('Prune failed:', err);
+    } finally {
+      setPruning(false);
     }
   };
 
@@ -199,14 +217,34 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           >
             {showEditor ? 'Hide Editor' : 'Edit & Approve'}
           </button>
+          {canPrune && (
+            <button
+              onClick={handlePrune}
+              disabled={pruning}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
+            >
+              {pruning ? 'Pruning...' : '🗑 Prune'}
+            </button>
+          )}
         </div>
       </div>
     );
   }
 
-  // Viewers or non-actionable: nothing to show
+  // Viewers or non-actionable: show prune button only
   if (isViewer || !isAwaitingReview) {
-    return null;
+    if (!canPrune) return null;
+    return (
+      <div className="pt-2 border-t border-gray-700">
+        <button
+          onClick={handlePrune}
+          disabled={pruning}
+          className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
+        >
+          {pruning ? 'Pruning...' : '🗑 Prune Node'}
+        </button>
+      </div>
+    );
   }
 
   // Admin/Member + awaiting_review: feedback controls only
@@ -269,6 +307,15 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         >
           {showEditor ? 'Hide Editor' : 'Edit & Approve'}
         </button>
+        {canPrune && (
+          <button
+            onClick={handlePrune}
+            disabled={pruning}
+            className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
+          >
+            {pruning ? 'Pruning...' : '🗑 Prune'}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -153,8 +153,8 @@ describe('pipelineStore', () => {
   describe('fetchRuns', () => {
     it('populates runs and detects active run', async () => {
       const runs = [
-        { id: 'r2', run_number: 2, run_id: 'rid-2', status: 'running', human_review: true, ai_loops: 1, stop_point: 'after_all', git_commit_sha: null, started_at: '2024-01-02', completed_at: null },
-        { id: 'r1', run_number: 1, run_id: 'rid-1', status: 'completed', human_review: true, ai_loops: 1, stop_point: 'after_all', git_commit_sha: 'abc123', started_at: '2024-01-01', completed_at: '2024-01-01' },
+        { id: 'r2', run_number: 2, run_id: 'rid-2', status: 'running' as const, human_review: true, ai_loops: 1, stop_point: 'after_all', git_commit_sha: null, started_at: '2024-01-02', completed_at: null },
+        { id: 'r1', run_number: 1, run_id: 'rid-1', status: 'completed' as const, human_review: true, ai_loops: 1, stop_point: 'after_all', git_commit_sha: 'abc123', started_at: '2024-01-01', completed_at: '2024-01-01' },
       ];
       vi.mocked(pipelineApi.listRuns).mockResolvedValue(runs);
 
