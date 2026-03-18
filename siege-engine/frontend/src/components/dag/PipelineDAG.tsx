@@ -43,7 +43,7 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
     } else {
       fetchDAG(projectId);
     }
-  }, [projectId, variant]);
+  }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
 
   const layoutedNodes = useMemo(() => {
     if (rawNodes.length === 0) return [];
@@ -71,7 +71,7 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
   useEffect(() => {
     setNodes(layoutedNodes);
     setEdges(rawEdges);
-  }, [layoutedNodes, rawEdges]);
+  }, [layoutedNodes, rawEdges, setNodes, setEdges]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: { id: string; data?: { stage_key?: string; has_artifact?: boolean } }) => {

@@ -57,7 +57,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
       setActiveTab('document');
     }
     setPromptPreview(null);
-  }, [artifact.id, reviewFeedback]);
+  }, [artifact.id, reviewFeedback, activeTab]);
 
   // Fetch prompt preview when tab is selected
   useEffect(() => {

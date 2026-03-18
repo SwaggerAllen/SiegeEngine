@@ -46,7 +46,7 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
       });
       setSaved(false);
     }
-  }, [stageKey, stageDef?.id]);
+  }, [stageKey, stageDef]);
 
   const handleSave = async () => {
     if (!form) return;

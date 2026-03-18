@@ -20,7 +20,7 @@ export function LoginPage() {
     checkStatus().catch(() => {
       setError('Unable to reach the server. Please check that the backend is running.');
     });
-  }, []);
+  }, [checkStatus]);
 
   useEffect(() => {
     if (inviteToken) {
@@ -33,7 +33,7 @@ export function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated) navigate('/projects');
-  }, [isAuthenticated]);
+  }, [isAuthenticated, navigate]);
 
   // First user (no users yet) = always show register
   const isFirstUser = hasUser === false;

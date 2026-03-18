@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
 
 interface PromptConfig {
@@ -43,18 +43,18 @@ export function PromptEditorPanel({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const fetchPrompts = async () => {
+  const fetchPrompts = useCallback(async () => {
     const { data } = await api.get(`/pipeline/${projectId}/prompts`);
     setStages(data);
     if (!selectedKey && data.length > 0) {
       setSelectedKey(data[0].stage_key);
       setForm({ ...data[0].config });
     }
-  };
+  }, [projectId, selectedKey]);
 
   useEffect(() => {
     fetchPrompts();
-  }, [projectId]);
+  }, [projectId, fetchPrompts]);
 
   // Pre-select a stage when navigated from DAG node "Edit" button
   useEffect(() => {
@@ -67,7 +67,7 @@ export function PromptEditorPanel({
       }
       onStageKeyConsumed?.();
     }
-  }, [initialStageKey, stages]);
+  }, [initialStageKey, stages, onStageKeyConsumed]);
 
   useEffect(() => {
     const stage = stages.find((s) => s.stage_key === selectedKey);
@@ -75,7 +75,7 @@ export function PromptEditorPanel({
       setForm({ ...stage.config });
       setSaved(false);
     }
-  }, [selectedKey]);
+  }, [selectedKey, stages]);
 
   const handleSave = async () => {
     if (!selectedKey || !form) return;

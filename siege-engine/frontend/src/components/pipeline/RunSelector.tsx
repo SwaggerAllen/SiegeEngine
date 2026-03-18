@@ -10,7 +10,7 @@ export function RunSelector({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     fetchRuns(projectId);
-  }, [projectId]);
+  }, [projectId, fetchRuns]);
 
   // Close dropdown on outside click
   useEffect(() => {

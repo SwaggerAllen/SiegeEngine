@@ -21,7 +21,7 @@ export default function App() {
     // Check token expiry every 60 seconds
     const interval = setInterval(checkTokenExpiry, 60_000);
     return () => clearInterval(interval);
-  }, []);
+  }, [loadFromStorage, checkTokenExpiry]);
 
   return (
     <BrowserRouter>

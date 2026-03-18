@@ -46,7 +46,7 @@ export function ProjectDashboardPage() {
       fetchBlockingPR(projectId);
     }
     return () => clearSelection();
-  }, [projectId]);
+  }, [projectId, resetPipeline, fetchProject, fetchConfig, fetchStatus, fetchRuns, fetchBlockingPR, clearSelection]);
 
   // When a DAG node's "Edit" prompt button is clicked, switch to prompts tab
   useEffect(() => {
@@ -55,7 +55,7 @@ export function ProjectDashboardPage() {
       setActiveTab('prompts');
       setEditPromptStageKey(null);
     }
-  }, [editPromptStageKey]);
+  }, [editPromptStageKey, setEditPromptStageKey]);
 
   if (!projectId) return null;
 
