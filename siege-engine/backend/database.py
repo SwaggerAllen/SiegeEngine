@@ -77,7 +77,29 @@ def init_db():
 
     Base.metadata.create_all(bind=engine)
 
+    # Safety net: add columns that create_all can't add to existing tables.
+    _add_missing_columns()
+
     _migrate_stage_order()
+
+
+def _add_missing_columns():
+    """Add new columns to existing tables that create_all won't handle."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+
+    _ensure_column(inspector, "pipeline_runs", "propagation_run", "BOOLEAN DEFAULT 0")
+
+
+def _ensure_column(inspector, table: str, column: str, col_def: str):
+    """Add a column to a table if it doesn't exist."""
+    if not inspector.has_table(table):
+        return
+    columns = [c["name"] for c in inspector.get_columns(table)]
+    if column not in columns:
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"))
 
 
 def _migrate_stage_order():
