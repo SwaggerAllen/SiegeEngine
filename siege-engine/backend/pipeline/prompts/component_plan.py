@@ -9,20 +9,23 @@ class ComponentPlanPrompt(PromptTemplate):
         feedback=None,
         human_notes=None,
         prompt_config=None,
+        current_content=None,
+        upstream_changes=None,
     ):
         if prompt_config:
             return self._build_from_config(
-                input_artifacts, component_key, feedback, human_notes, prompt_config
+                input_artifacts, component_key, feedback, human_notes, prompt_config,
+                current_content=current_content, upstream_changes=upstream_changes
             )
 
         component_arch = input_artifacts.get("component_architectures", "")
-        component_reqs = input_artifacts.get("component_requirements", "")
+        system_reqs = input_artifacts.get("system_requirements", "")
         component_map = input_artifacts.get("extract_components", "")
         dep_archs = input_artifacts.get("dependency_architectures", "")
         context = (
             f"COMPONENT MAP:\n\n{component_map}\n\n"
             f"COMPONENT ARCHITECTURE:\n\n{component_arch}\n\n"
-            f"COMPONENT REQUIREMENTS:\n\n{component_reqs}"
+            f"SYSTEM REQUIREMENTS:\n\n{system_reqs}"
         )
         if dep_archs:
             context += f"\n\nDEPENDENCY COMPONENT ARCHITECTURES:\n\n{dep_archs}"
@@ -34,4 +37,4 @@ class ComponentPlanPrompt(PromptTemplate):
                 "Produce a detailed implementation plan for this component.",
             },
         ]
-        return self._inject_feedback(messages, feedback, human_notes)
+        return self._inject_feedback(messages, feedback, human_notes, current_content, upstream_changes)

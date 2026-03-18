@@ -132,6 +132,7 @@ def update_config(
     return get_config(project_id, db, _user)
 
 
+from backend.pipeline.routes_input_docs import input_docs_router  # noqa: E402
 from backend.pipeline.routes_pipeline import pipeline_router  # noqa: E402
 from backend.pipeline.routes_prompt import prompt_router  # noqa: E402
 from backend.pipeline.routes_stage import stage_router  # noqa: E402
@@ -139,3 +140,4 @@ from backend.pipeline.routes_stage import stage_router  # noqa: E402
 router.include_router(pipeline_router)
 router.include_router(stage_router)
 router.include_router(prompt_router)
+router.include_router(input_docs_router)

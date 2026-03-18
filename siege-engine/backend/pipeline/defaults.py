@@ -39,23 +39,11 @@ DEFAULT_STAGES = [
     },
     # ── Phase 3: Component-Level Architecture (fan-out per component) ──
     {
-        "stage_key": "component_requirements",
-        "display_name": "Component Requirements",
-        "order_index": 3,
-        "output_artifact_type": "component_requirements",
-        "input_stage_keys": ["extract_components", "system_requirements", "system_architecture"],
-        "fan_out_strategy": "component",
-        "prompt_template_key": "component_requirements",
-        "model_override": "claude-opus-4-20250514",
-        "ai_review_enabled": True,
-        "human_review_enabled": True,
-    },
-    {
         "stage_key": "component_architectures",
         "display_name": "Component Architectures",
-        "order_index": 4,
+        "order_index": 3,
         "output_artifact_type": "component_architecture",
-        "input_stage_keys": ["component_requirements", "system_architecture"],
+        "input_stage_keys": ["extract_components", "system_requirements", "system_architecture"],
         "fan_out_strategy": "component",
         "prompt_template_key": "component_arch",
         "model_override": "claude-opus-4-20250514",
@@ -66,9 +54,9 @@ DEFAULT_STAGES = [
     {
         "stage_key": "extract_sub_components",
         "display_name": "Sub-Component Extraction",
-        "order_index": 5,
+        "order_index": 4,
         "output_artifact_type": "sub_component_map",
-        "input_stage_keys": ["component_architectures", "component_requirements"],
+        "input_stage_keys": ["component_architectures", "system_requirements"],
         "fan_out_strategy": "component",
         "prompt_template_key": "extract_sub_components",
         "model_override": "claude-opus-4-20250514",
@@ -81,11 +69,11 @@ DEFAULT_STAGES = [
     {
         "stage_key": "component_plans",
         "display_name": "Component Plans",
-        "order_index": 6,
+        "order_index": 5,
         "output_artifact_type": "component_plan",
         "input_stage_keys": [
             "component_architectures",
-            "component_requirements",
+            "system_requirements",
             "extract_components",
         ],
         "fan_out_strategy": "component",
@@ -95,23 +83,11 @@ DEFAULT_STAGES = [
     },
     # ── Phase 6: Sub-Component Documents (fan-out per sub-component) ──
     {
-        "stage_key": "sub_component_requirements",
-        "display_name": "Sub-Component Requirements",
-        "order_index": 7,
-        "output_artifact_type": "sub_component_requirements",
-        "input_stage_keys": ["extract_sub_components", "component_architectures"],
-        "fan_out_strategy": "sub_component",
-        "prompt_template_key": "sub_component_requirements",
-        "model_override": "claude-opus-4-20250514",
-        "ai_review_enabled": True,
-        "human_review_enabled": True,
-    },
-    {
         "stage_key": "sub_component_architectures",
         "display_name": "Sub-Component Architectures",
-        "order_index": 8,
+        "order_index": 6,
         "output_artifact_type": "sub_component_architecture",
-        "input_stage_keys": ["sub_component_requirements", "component_architectures"],
+        "input_stage_keys": ["extract_sub_components", "component_architectures", "system_requirements"],
         "fan_out_strategy": "sub_component",
         "prompt_template_key": "sub_component_arch",
         "model_override": "claude-opus-4-20250514",
@@ -121,9 +97,9 @@ DEFAULT_STAGES = [
     {
         "stage_key": "sub_component_plans",
         "display_name": "Sub-Component Plans",
-        "order_index": 9,
+        "order_index": 7,
         "output_artifact_type": "sub_component_plan",
-        "input_stage_keys": ["sub_component_architectures", "sub_component_requirements"],
+        "input_stage_keys": ["sub_component_architectures", "component_architectures"],
         "fan_out_strategy": "sub_component",
         "prompt_template_key": "sub_component_plan",
         "model_override": "claude-opus-4-20250514",
@@ -134,7 +110,7 @@ DEFAULT_STAGES = [
     {
         "stage_key": "code_generation",
         "display_name": "Code Generation",
-        "order_index": 10,
+        "order_index": 8,
         "output_artifact_type": "code",
         "input_stage_keys": [
             "component_plans",
@@ -150,7 +126,7 @@ DEFAULT_STAGES = [
     {
         "stage_key": "code_review",
         "display_name": "Code Review & Fix",
-        "order_index": 11,
+        "order_index": 9,
         "output_artifact_type": "code_review",
         "input_stage_keys": [
             "code_generation",

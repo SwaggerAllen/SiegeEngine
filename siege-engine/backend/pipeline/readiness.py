@@ -21,13 +21,11 @@ logger = logging.getLogger(__name__)
 
 # Stage keys grouped by level for readiness checks.
 COMPONENT_STAGE_ORDER = [
-    "component_requirements",
     "component_architectures",
     "extract_sub_components",
     "component_plans",
 ]
 SUB_COMPONENT_STAGE_ORDER = [
-    "sub_component_requirements",
     "sub_component_architectures",
     "sub_component_plans",
 ]

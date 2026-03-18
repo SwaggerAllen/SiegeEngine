@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -47,7 +48,26 @@ async def lifespan(app: FastAPI):
     # One-time migration: move human_review_notes → ArtifactComment records
     _migrate_feedback_to_comments()
 
+    # Recover stale jobs and start the job queue worker
+    from backend.pipeline.queue import recover_stale_jobs, shutdown_worker, worker_loop
+
+    db = SessionLocal()
+    try:
+        recover_stale_jobs(db)
+    finally:
+        db.close()
+
+    worker_task = asyncio.create_task(worker_loop())
+
     yield
+
+    # Stop the job queue worker
+    shutdown_worker()
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
 
     # Graceful shutdown: checkpoint WAL so all data is in the main DB file
     # This prevents data loss when Fly.io stops the machine during deploys

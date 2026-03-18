@@ -142,6 +142,19 @@ export async function pruneArtifact(projectId: string, artifactId: string) {
   return data;
 }
 
+export interface ArtifactDiff {
+  diff: string;
+  from_version: number;
+  to_version: number;
+  from_sha: string;
+  to_sha: string;
+}
+
+export async function getArtifactDiff(projectId: string, artifactId: string): Promise<ArtifactDiff> {
+  const { data } = await api.get(`/pipeline/${projectId}/artifacts/${artifactId}/diff`);
+  return data;
+}
+
 export async function getDAG(projectId: string) {
   const { data } = await api.get(`/dag/${projectId}`);
   return data;

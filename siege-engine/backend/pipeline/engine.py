@@ -721,8 +721,13 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         if artifact:
                             artifact.ai_review_feedback = feedback
 
-            should_await_review = stage_def.human_review_enabled and (
-                not pipeline_run or pipeline_run.human_review
+            # Determine if this stage should pause for review
+            is_propagation = pipeline_run and pipeline_run.propagation_run
+            should_await_review = (
+                # Normal behavior: pause if human review enabled for this run
+                (stage_def.human_review_enabled and (not pipeline_run or pipeline_run.human_review))
+                # Propagation runs: always pause for review so user can inspect changes
+                or is_propagation
             )
             if should_await_review:
                 self._mark_awaiting_review(execution, artifact_id)
@@ -837,6 +842,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             )
             if project_doc:
                 inputs["project_doc"] = project_doc.content or ""
+            # Include input documents for the first stage
+            inputs = self._inject_input_documents(project_id, "system_requirements", inputs)
             return inputs
 
         # Determine if this is a sub-component entity
@@ -975,6 +982,29 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 if dep_parts:
                     inputs["dependency_architectures"] = "\n\n---\n\n".join(dep_parts)
 
+        # Inject input documents for stages that opt in
+        inputs = self._inject_input_documents(project_id, stage_def.stage_key, inputs)
+
+        return inputs
+
+    def _inject_input_documents(
+        self, project_id: str, stage_key: str, inputs: dict[str, str]
+    ) -> dict[str, str]:
+        """Add input documents configured to inject into this stage."""
+        from backend.models import InputDocument
+
+        docs = (
+            self.db.query(InputDocument)
+            .filter_by(project_id=project_id)
+            .all()
+        )
+        matching = [d for d in docs if stage_key in (d.inject_into_stages or [])]
+        if matching:
+            doc_parts = [
+                f"### {d.name} ({d.doc_type})\n\n{d.content}"
+                for d in matching
+            ]
+            inputs["input_documents"] = "\n\n---\n\n".join(doc_parts)
         return inputs
 
     def _get_artifact_content(self, project_id: str, artifact_type: ArtifactType) -> str | None:
@@ -989,13 +1019,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 # Helper functions
 
 _COMPONENT_STAGES = {
-    "component_requirements",
     "component_architectures",
     "component_plans",
     "extract_sub_components",
 }
 _SUB_COMPONENT_STAGES = {
-    "sub_component_requirements",
     "sub_component_architectures",
     "sub_component_plans",
 }

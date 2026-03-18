@@ -11,23 +11,17 @@ from backend.pipeline.prompts.component_arch import ComponentArchPrompt
 from backend.pipeline.prompts.component_plan import ComponentPlanPrompt
 from backend.pipeline.prompts.extract_components import ExtractComponentsPrompt
 from backend.pipeline.prompts.extract_sub_components import ExtractSubComponentsPrompt
-from backend.pipeline.prompts.requirements import (
-    ComponentRequirementsPrompt,
-    SystemRequirementsPrompt,
-)
+from backend.pipeline.prompts.requirements import SystemRequirementsPrompt
 from backend.pipeline.prompts.sub_component_architecture import SubComponentArchPrompt
 from backend.pipeline.prompts.sub_component_plan import SubComponentPlanPrompt
-from backend.pipeline.prompts.sub_component_requirements import SubComponentRequirementsPrompt
 
 PROMPT_REGISTRY: dict[str, type[PromptTemplate]] = {
     "system_requirements": SystemRequirementsPrompt,
-    "component_requirements": ComponentRequirementsPrompt,
     "architecture": ArchitecturePrompt,
     "component_arch": ComponentArchPrompt,
     "component_plan": ComponentPlanPrompt,
     "extract_components": ExtractComponentsPrompt,
     "extract_sub_components": ExtractSubComponentsPrompt,
-    "sub_component_requirements": SubComponentRequirementsPrompt,
     "sub_component_arch": SubComponentArchPrompt,
     "sub_component_plan": SubComponentPlanPrompt,
     "codegen": CodeGenPrompt,

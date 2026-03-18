@@ -10,10 +10,11 @@ import type { PromptPreview } from '../../api/pipeline';
 import type { Artifact } from '../../types/project';
 import { CommentsPanel } from '../comments/CommentsPanel';
 import { ComponentDependencyList } from './ComponentDependencyList';
+import DiffView from './DiffView';
 
 const REVISABLE_STATUSES = new Set(['approved', 'stale']);
 
-type EditorTab = 'document' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
+type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
 
 export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
   const { updateArtifact } = useProjectStore();
@@ -265,6 +266,18 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
         >
           Document
         </button>
+        {artifact.version > 1 && (
+          <button
+            onClick={() => setActiveTab('diff')}
+            className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
+              activeTab === 'diff'
+                ? 'border-yellow-500 text-white'
+                : 'border-transparent text-gray-400 hover:text-white'
+            }`}
+          >
+            Diff
+          </button>
+        )}
         {!isViewer && reviewFeedback && (
           <button
             onClick={() => setActiveTab('feedback')}
@@ -442,6 +455,8 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
             </Markdown>
           </div>
         </div>
+      ) : activeTab === 'diff' ? (
+        <DiffView projectId={projectId} artifactId={artifact.id} artifactVersion={artifact.version} />
       ) : activeTab === 'prompt' ? (
         /* Prompt Preview tab */
         <div className="flex-1 overflow-auto p-3 space-y-3">

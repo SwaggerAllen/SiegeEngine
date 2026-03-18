@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import datetime
 
@@ -10,7 +9,7 @@ from sqlalchemy.orm import Session
 from backend.auth.routes import _require_writer, get_current_user
 from backend.auth.service import decode_token
 from backend.dag.service import get_regeneration_order
-from backend.database import SessionLocal, get_db
+from backend.database import get_db
 from backend.models import (
     Artifact,
     ArtifactStatus,
@@ -24,6 +23,7 @@ from backend.models import (
     User,
 )
 from backend.pipeline.engine import PipelineEngine
+from backend.pipeline.queue import enqueue
 from backend.pipeline.schemas import (
     CancelRequest,
     PipelineStartRequest,
@@ -43,26 +43,6 @@ def _get_project_or_404(db: Session, project_id: str) -> Project:
     if not project:
         raise HTTPException(404, "Project not found")
     return project
-
-
-def _run_in_background(coro_factory, log_msg: str = "Background task failed") -> None:
-    """Schedule a coroutine factory to run in a background asyncio task.
-
-    The factory receives a PipelineEngine and should return a coroutine.
-    Each invocation gets its own DB session.
-    """
-
-    async def _run():
-        bg_db = SessionLocal()
-        try:
-            engine = PipelineEngine(bg_db)
-            await coro_factory(engine)
-        except Exception:
-            logger.exception(log_msg)
-        finally:
-            bg_db.close()
-
-    asyncio.ensure_future(_run())
 
 
 def _check_blocking_pr(project: Project):
@@ -116,11 +96,10 @@ async def start_pipeline(
 
     pipeline_run_id = pipeline_run.id
 
-    # Run pipeline in a background task with its own DB session.
-    _run_in_background(
-        lambda eng: eng.start_pipeline(project_id, pipeline_run_id=pipeline_run_id),
-        f"Pipeline execution failed for project_id={project_id}",
-    )
+    enqueue(db, "start_pipeline", {
+        "project_id": project_id,
+        "pipeline_run_id": pipeline_run_id,
+    })
 
     return {
         "status": "started",
@@ -184,16 +163,71 @@ async def resume_run(
     pipeline_run_id = pipeline_run.id
     prev_run_id = prev_run.run_id
 
-    _run_in_background(
-        lambda eng: eng.resume_run(project_id, pipeline_run_id, prev_run_id),
-        f"Resume run failed for project_id={project_id}",
-    )
+    enqueue(db, "resume_run", {
+        "project_id": project_id,
+        "pipeline_run_id": pipeline_run_id,
+        "prev_run_id": prev_run_id,
+    })
 
     return {
         "status": "resumed",
         "run_number": run_number,
         "run_id": pipeline_run.run_id,
         "resumed_from": prev_run.run_number,
+    }
+
+
+@pipeline_router.post("/{project_id}/propagate")
+async def propagate_changes(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Regenerate stale artifacts after input document changes.
+
+    Creates a propagation run where all regenerated artifacts land in
+    AWAITING_REVIEW regardless of the human_review setting, so the user
+    can review all changes that resulted from the input change.
+    """
+    project = _get_project_or_404(db, project_id)
+    _check_blocking_pr(project)
+
+    # Count stale artifacts
+    stale_count = (
+        db.query(Artifact)
+        .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
+        .count()
+    )
+    if stale_count == 0:
+        raise HTTPException(400, "No stale artifacts to propagate")
+
+    max_num = (
+        db.query(func.max(PipelineRun.run_number)).filter_by(project_id=project_id).scalar()
+    ) or 0
+    run_number = max_num + 1
+
+    pipeline_run = PipelineRun(
+        project_id=project_id,
+        run_number=run_number,
+        human_review=False,
+        propagation_run=True,
+        stop_point=StopPoint.AFTER_ALL,
+    )
+    db.add(pipeline_run)
+    db.commit()
+    db.refresh(pipeline_run)
+
+    enqueue(db, "resume_run", {
+        "project_id": project_id,
+        "pipeline_run_id": pipeline_run.id,
+        "prev_run_id": pipeline_run.run_id,
+    })
+
+    return {
+        "status": "propagating",
+        "run_number": run_number,
+        "run_id": pipeline_run.run_id,
+        "stale_count": stale_count,
     }
 
 
@@ -538,8 +572,7 @@ async def retry_stage(
     if execution.status.value != "failed":
         raise HTTPException(400, "Can only retry failed executions")
 
-    engine = PipelineEngine(db)
-    await engine.retry_stage(execution)
+    enqueue(db, "retry_stage", {"execution_id": execution_id})
     return {"status": "retrying", "execution_id": execution_id}
 
 
@@ -573,6 +606,43 @@ async def prune_artifact(
         },
     )
     return {"status": "pruned", "artifact_id": artifact_id}
+
+
+@pipeline_router.get("/{project_id}/artifacts/{artifact_id}/diff")
+async def get_artifact_diff(
+    project_id: str,
+    artifact_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Get a unified diff between the current and previous version of an artifact."""
+    from backend.git_manager.service import git_manager
+
+    artifact = db.get(Artifact, artifact_id)
+    if not artifact or artifact.project_id != project_id:
+        raise HTTPException(404, "Artifact not found")
+
+    if not artifact.file_path or not artifact.git_commit_sha:
+        raise HTTPException(400, "Artifact has no version history")
+
+    # Get the file history to find the previous version
+    history = git_manager.get_file_history(project_id, artifact.file_path)
+    if len(history) < 2:
+        raise HTTPException(400, "No previous version to diff against")
+
+    # Current version is history[0], previous is history[1]
+    current_sha = history[0]["sha"]
+    previous_sha = history[1]["sha"]
+
+    diff_text = git_manager.get_diff(project_id, previous_sha, current_sha, artifact.file_path)
+
+    return {
+        "diff": diff_text,
+        "from_version": artifact.version - 1,
+        "to_version": artifact.version,
+        "from_sha": previous_sha,
+        "to_sha": current_sha,
+    }
 
 
 @pipeline_router.websocket("/{project_id}/ws")

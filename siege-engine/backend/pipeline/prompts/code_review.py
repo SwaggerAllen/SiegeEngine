@@ -9,10 +9,13 @@ class CodeReviewPrompt(PromptTemplate):
         feedback=None,
         human_notes=None,
         prompt_config=None,
+        current_content=None,
+        upstream_changes=None,
     ):
         if prompt_config:
             return self._build_from_config(
-                input_artifacts, component_key, feedback, human_notes, prompt_config
+                input_artifacts, component_key, feedback, human_notes, prompt_config,
+                current_content=current_content, upstream_changes=upstream_changes
             )
 
         component_plan = input_artifacts.get("component_plans", "")
@@ -31,4 +34,4 @@ class CodeReviewPrompt(PromptTemplate):
                 "and iterate until the code is production-ready.",
             },
         ]
-        return self._inject_feedback(messages, feedback, human_notes)
+        return self._inject_feedback(messages, feedback, human_notes, current_content, upstream_changes)
