@@ -36,7 +36,7 @@ function formatModelName(model: string): string {
 }
 
 const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
-const RESTARTABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'failed']);
+const RESTARTABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'failed', 'rejected']);
 const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function StageNode({ data }: { data: DAGNodeData }) {

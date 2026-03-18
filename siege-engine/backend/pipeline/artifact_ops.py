@@ -121,6 +121,26 @@ class ArtifactOpsMixin:
                 if artifact:
                     artifact.status = ArtifactStatus.REJECTED
 
+            # Also reject carried-over copies of this execution in other runs.
+            # When a new pipeline run starts, _carry_over_approved duplicates
+            # APPROVED executions into the new run.  If the user then rejects
+            # the original, the copy stays APPROVED, causing the pipeline DAG
+            # to show "approved" while the artifact is actually rejected.
+            carried_copies = (
+                self.db.query(StageExecution)
+                .filter(
+                    StageExecution.project_id == execution.project_id,
+                    StageExecution.stage_key == execution.stage_key,
+                    StageExecution.component_key == execution.component_key,
+                    StageExecution.status == StageStatus.APPROVED,
+                    StageExecution.id != execution.id,
+                    StageExecution.artifact_id == execution.artifact_id,
+                )
+                .all()
+            )
+            for copy in carried_copies:
+                copy.status = StageStatus.REJECTED
+
             if notes and notes.strip() and execution.artifact_id:
                 art = self.db.get(Artifact, execution.artifact_id)
                 self.db.add(
