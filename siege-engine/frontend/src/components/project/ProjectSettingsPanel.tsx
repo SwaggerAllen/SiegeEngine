@@ -35,8 +35,9 @@ export function ProjectSettingsPanel({ projectId }: { projectId: string }) {
         auto_push_enabled: autoPush,
       });
       setMessage('Remote saved');
-    } catch (err: any) {
-      setMessage(err.response?.data?.detail || 'Failed to save');
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setMessage(detail || 'Failed to save');
     } finally {
       setSaving(false);
     }

@@ -123,7 +123,7 @@ describe('pipelineStore', () => {
   describe('cancelPipeline', () => {
     it('resets all running state', async () => {
       usePipelineStore.setState({ isRunning: true, isPaused: true, pausedStage: 'design' });
-      vi.mocked(pipelineApi.cancelPipeline).mockResolvedValue(undefined);
+      vi.mocked(pipelineApi.cancelPipeline).mockResolvedValue({ status: 'cancelled' });
       vi.mocked(pipelineApi.listRuns).mockResolvedValue([]);
 
       await usePipelineStore.getState().cancelPipeline('proj-1');
@@ -132,7 +132,7 @@ describe('pipelineStore', () => {
       expect(state.isRunning).toBe(false);
       expect(state.isPaused).toBe(false);
       expect(state.pausedStage).toBeNull();
-      expect(pipelineApi.cancelPipeline).toHaveBeenCalledWith('proj-1');
+      expect(pipelineApi.cancelPipeline).toHaveBeenCalledWith('proj-1', undefined);
     });
   });
 

@@ -36,7 +36,10 @@ def create_project(
         project_description=description or "",
     )
     git_manager.commit_artifact(
-        project.id, claude_md, "CLAUDE.md", "Add CLAUDE.md for CLI context",
+        project.id,
+        claude_md,
+        "CLAUDE.md",
+        "Add CLAUDE.md for CLI context",
     )
 
     # Create project doc artifact

@@ -46,12 +46,7 @@ def github_authorize(user: User = Depends(get_current_user)):
     if settings.cors_origins:
         redirect_uri = f"{settings.cors_origins[0].rstrip('/')}/github/callback"
 
-    url = (
-        f"{GITHUB_AUTHORIZE_URL}"
-        f"?client_id={settings.github_client_id}"
-        f"&scope=repo"
-        f"&state={state}"
-    )
+    url = f"{GITHUB_AUTHORIZE_URL}?client_id={settings.github_client_id}&scope=repo&state={state}"
     if redirect_uri:
         url += f"&redirect_uri={redirect_uri}"
     return {"authorize_url": url}
@@ -97,6 +92,7 @@ async def github_connect(
 
     # Get GitHub username
     from backend.github.service import GitHubService
+
     gh = GitHubService(access_token)
     gh_user = await gh.get_user()
 

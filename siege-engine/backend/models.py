@@ -5,13 +5,13 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Enum,
     Float,
     ForeignKey,
     Integer,
-    JSON,
     String,
     Text,
 )
@@ -19,40 +19,29 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
 
-
 # ──── Auth ────
 
 
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(20), default="member")
-    invited_by: Mapped[str | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
-    )
+    invited_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class InviteLink(Base):
     __tablename__ = "invite_links"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    created_by: Mapped[str] = mapped_column(
-        ForeignKey("users.id"), nullable=False
-    )
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False)
-    used_by: Mapped[str | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
-    )
+    used_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     role: Mapped[str] = mapped_column(String(20), default="member")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -63,23 +52,20 @@ class InviteLink(Base):
 class ArtifactComment(Base):
     __tablename__ = "artifact_comments"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    artifact_id: Mapped[str] = mapped_column(String, nullable=False)  # NO FK — persists across regenerations
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id"), nullable=False
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    artifact_id: Mapped[str] = mapped_column(
+        String, nullable=False
+    )  # NO FK — persists across regenerations
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
     author_id: Mapped[str | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True  # null for system events
+        ForeignKey("users.id"),
+        nullable=True,  # null for system events
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     comment_type: Mapped[str] = mapped_column(
         String(20), default="comment"
     )  # 'comment' | 'system_event'
-    parent_id: Mapped[str | None] = mapped_column(
-        ForeignKey("artifact_comments.id"), nullable=True
-    )
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey("artifact_comments.id"), nullable=True)
     artifact_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -117,12 +103,8 @@ class ArtifactType(str, enum.Enum):
 class GitHubCredential(Base):
     __tablename__ = "github_credentials"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id"), unique=True, nullable=False
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True, nullable=False)
     access_token: Mapped[str] = mapped_column(String(500), nullable=False)
     github_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -131,9 +113,7 @@ class GitHubCredential(Base):
 class Project(Base):
     __tablename__ = "projects"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     remote_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -167,15 +147,9 @@ class Project(Base):
 class Artifact(Base):
     __tablename__ = "artifacts"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id"), nullable=False
-    )
-    artifact_type: Mapped[ArtifactType] = mapped_column(
-        Enum(ArtifactType), nullable=False
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    artifact_type: Mapped[ArtifactType] = mapped_column(Enum(ArtifactType), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     component_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -209,15 +183,9 @@ class Artifact(Base):
 class ArtifactDependency(Base):
     __tablename__ = "artifact_dependencies"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    upstream_artifact_id: Mapped[str] = mapped_column(
-        ForeignKey("artifacts.id"), nullable=False
-    )
-    downstream_artifact_id: Mapped[str] = mapped_column(
-        ForeignKey("artifacts.id"), nullable=False
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    upstream_artifact_id: Mapped[str] = mapped_column(ForeignKey("artifacts.id"), nullable=False)
+    downstream_artifact_id: Mapped[str] = mapped_column(ForeignKey("artifacts.id"), nullable=False)
     stage_key: Mapped[str] = mapped_column(String(100), nullable=False)
 
     upstream_artifact: Mapped["Artifact"] = relationship(
@@ -231,12 +199,8 @@ class ArtifactDependency(Base):
 class ComponentDefinition(Base):
     __tablename__ = "component_definitions"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id"), nullable=False
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
     key: Mapped[str] = mapped_column(String(100), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -291,18 +255,12 @@ class PipelineRunStatus(str, enum.Enum):
 class PipelineConfig(Base):
     __tablename__ = "pipeline_configs"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id"), unique=True, nullable=False
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), unique=True, nullable=False)
     execution_mode: Mapped[ExecutionMode] = mapped_column(
         Enum(ExecutionMode), default=ExecutionMode.GATED
     )
-    default_model: Mapped[str] = mapped_column(
-        String(100), default="claude-sonnet-4-20250514"
-    )
+    default_model: Mapped[str] = mapped_column(String(100), default="claude-sonnet-4-20250514")
     default_temperature: Mapped[float] = mapped_column(Float, default=0.3)
     review_prompt_overrides: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
@@ -317,12 +275,8 @@ class PipelineConfig(Base):
 class PipelineRun(Base):
     __tablename__ = "pipeline_runs"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id"), nullable=False
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
     run_number: Mapped[int] = mapped_column(Integer, nullable=False)
     run_id: Mapped[str] = mapped_column(
         String, unique=True, nullable=False, default=lambda: str(uuid.uuid4())
@@ -332,9 +286,7 @@ class PipelineRun(Base):
     )
     human_review: Mapped[bool] = mapped_column(Boolean, default=True)
     ai_loops: Mapped[int] = mapped_column(Integer, default=1)
-    stop_point: Mapped[StopPoint] = mapped_column(
-        Enum(StopPoint), default=StopPoint.AFTER_ALL
-    )
+    stop_point: Mapped[StopPoint] = mapped_column(Enum(StopPoint), default=StopPoint.AFTER_ALL)
     git_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -345,9 +297,7 @@ class PipelineRun(Base):
 class StageDefinition(Base):
     __tablename__ = "stage_definitions"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     pipeline_config_id: Mapped[str] = mapped_column(
         ForeignKey("pipeline_configs.id"), nullable=False
     )
@@ -359,18 +309,14 @@ class StageDefinition(Base):
     fan_out_strategy: Mapped[FanOutStrategy] = mapped_column(
         Enum(FanOutStrategy), default=FanOutStrategy.NONE
     )
-    fan_out_source_field: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )
+    fan_out_source_field: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_review_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     human_review_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     model_override: Mapped[str | None] = mapped_column(String(100), nullable=True)
     temperature_override: Mapped[float | None] = mapped_column(Float, nullable=True)
     prompt_template_key: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    pipeline_config: Mapped["PipelineConfig"] = relationship(
-        back_populates="stages"
-    )
+    pipeline_config: Mapped["PipelineConfig"] = relationship(back_populates="stages")
     prompt_config: Mapped["PromptConfig | None"] = relationship(
         back_populates="stage_definition",
         uselist=False,
@@ -381,9 +327,7 @@ class StageDefinition(Base):
 class PromptConfig(Base):
     __tablename__ = "prompt_configs"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     stage_definition_id: Mapped[str] = mapped_column(
         ForeignKey("stage_definitions.id"), unique=True, nullable=False
     )
@@ -399,31 +343,19 @@ class PromptConfig(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    stage_definition: Mapped["StageDefinition"] = relationship(
-        back_populates="prompt_config"
-    )
+    stage_definition: Mapped["StageDefinition"] = relationship(back_populates="prompt_config")
 
 
 class StageExecution(Base):
     __tablename__ = "stage_executions"
 
-    id: Mapped[str] = mapped_column(
-        String, primary_key=True, default=lambda: str(uuid.uuid4())
-    )
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id"), nullable=False
-    )
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
     stage_key: Mapped[str] = mapped_column(String(100), nullable=False)
     component_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    status: Mapped[StageStatus] = mapped_column(
-        Enum(StageStatus), default=StageStatus.PENDING
-    )
-    artifact_id: Mapped[str | None] = mapped_column(
-        ForeignKey("artifacts.id"), nullable=True
-    )
-    langgraph_thread_id: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )
+    status: Mapped[StageStatus] = mapped_column(Enum(StageStatus), default=StageStatus.PENDING)
+    artifact_id: Mapped[str | None] = mapped_column(ForeignKey("artifacts.id"), nullable=True)
+    langgraph_thread_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

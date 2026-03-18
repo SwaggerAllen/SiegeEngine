@@ -35,8 +35,19 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [loadingPrompt, setLoadingPrompt] = useState(false);
 
+  interface ReviewIssue {
+    severity: string;
+    description: string;
+  }
+  interface ReviewFeedback {
+    overall_quality?: string;
+    recommendation?: string;
+    document?: unknown;
+    issues?: ReviewIssue[];
+  }
+
   const canRevise = !isViewer && REVISABLE_STATUSES.has(artifact.status);
-  const reviewFeedback = artifact.ai_review_feedback as any;
+  const reviewFeedback = artifact.ai_review_feedback as ReviewFeedback | null;
   const isViewingHistory = viewingSha !== null;
   const isComponentMap = artifact.artifact_type === 'component_map';
 
@@ -404,7 +415,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
               {/* Backward compatibility: show old-format issues if present */}
               {!reviewFeedback.document && reviewFeedback.issues?.length > 0 && (
                 <ul className="mt-2 space-y-1">
-                  {reviewFeedback.issues.map((issue: any, i: number) => (
+                  {reviewFeedback.issues.map((issue: ReviewIssue, i: number) => (
                     <li key={i} className="text-gray-300 text-xs">
                       <span
                         className={`font-medium ${

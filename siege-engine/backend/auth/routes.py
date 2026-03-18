@@ -65,11 +65,7 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
         # Require a valid invite token
         if not req.invite_token:
             raise HTTPException(400, "Invite token required for registration")
-        invite = (
-            db.query(InviteLink)
-            .filter_by(token=req.invite_token, used=False)
-            .first()
-        )
+        invite = db.query(InviteLink).filter_by(token=req.invite_token, used=False).first()
         if not invite:
             raise HTTPException(400, "Invalid invite token")
         if invite.expires_at < datetime.utcnow():

@@ -1,12 +1,9 @@
 """Chat service managing Claude CLI subprocess sessions per project."""
 
-import asyncio
-import json
 import logging
 import uuid
 
 from backend.cli.manager import CLIManager
-from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -52,16 +49,15 @@ class ChatService:
     def __init__(self):
         self._sessions: dict[str, ChatSession] = {}
 
-    def get_or_create_session(
-        self, project_id: str, working_dir: str
-    ) -> ChatSession:
+    def get_or_create_session(self, project_id: str, working_dir: str) -> ChatSession:
         """Get existing session for project or create a new one."""
         if project_id not in self._sessions:
             session_id = str(uuid.uuid4())
             self._sessions[project_id] = ChatSession(session_id, working_dir)
             logger.info(
                 "Created chat session %s for project %s",
-                session_id, project_id,
+                session_id,
+                project_id,
             )
         return self._sessions[project_id]
 

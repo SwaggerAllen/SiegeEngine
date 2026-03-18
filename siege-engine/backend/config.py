@@ -26,9 +26,9 @@ class Settings(BaseSettings):
     llm_retry_base_delay: float = 1.0
 
     # Claude CLI
-    cli_timeout_document: int = 600   # 10 min for document stages
-    cli_timeout_code: int = 1800      # 30 min for code gen/review
-    cli_max_turns_code: int = 25      # Unused directly — CLI manages turns via budget
+    cli_timeout_document: int = 600  # 10 min for document stages
+    cli_timeout_code: int = 1800  # 30 min for code gen/review
+    cli_max_turns_code: int = 25  # Unused directly — CLI manages turns via budget
     cli_max_budget_code: float = 5.0  # Max USD per code gen/review invocation
 
     # GitHub OAuth

@@ -90,7 +90,11 @@ def build_prompt_messages(
     )
 
     # Model selection: prompt config > stage def > default
-    model_name = (pc.model if pc and pc.model else None) or stage_def.model_override or "claude-sonnet-4-20250514"
+    model_name = (
+        (pc.model if pc and pc.model else None)
+        or stage_def.model_override
+        or "claude-sonnet-4-20250514"
+    )
 
     return {
         "messages": messages,
@@ -110,12 +114,19 @@ async def generate(
     """
     Run AI generation for a stage. Returns (content, artifact_id).
     """
-    logger.info("generate() called: template=%s, component=%s, input_keys=%s",
-                stage_def.prompt_template_key, component_key, list(input_artifacts.keys()))
+    logger.info(
+        "generate() called: template=%s, component=%s, input_keys=%s",
+        stage_def.prompt_template_key,
+        component_key,
+        list(input_artifacts.keys()),
+    )
 
     result = build_prompt_messages(
-        stage_def, input_artifacts, component_key,
-        feedback=feedback, human_notes=human_notes,
+        stage_def,
+        input_artifacts,
+        component_key,
+        feedback=feedback,
+        human_notes=human_notes,
     )
     messages = result["messages"]
     model_name = result["model"]
@@ -140,8 +151,13 @@ async def generate(
         timeout = settings.cli_timeout_document
         max_budget = None
 
-    logger.info("CLI generate: model=%s, tools=%s, is_code=%s, messages=%d",
-                model_name, tools, is_code_stage, len(messages))
+    logger.info(
+        "CLI generate: model=%s, tools=%s, is_code=%s, messages=%d",
+        model_name,
+        tools,
+        is_code_stage,
+        len(messages),
+    )
     content = await cli_manager.generate(
         prompt=user_prompt,
         system_prompt=system_msg,
@@ -154,16 +170,16 @@ async def generate(
     logger.info("CLI response received: %d chars", len(content) if content else 0)
 
     # Determine file path
-    file_path_template = FILE_PATH_MAP.get(stage_def.output_artifact_type, "artifacts/{stage_key}.md")
+    file_path_template = FILE_PATH_MAP.get(
+        stage_def.output_artifact_type, "artifacts/{stage_key}.md"
+    )
     file_path = file_path_template.format(
         component_key=component_key or "default",
         stage_key=stage_def.stage_key,
     )
 
     # Create or update artifact
-    artifact_type = ARTIFACT_TYPE_MAP.get(
-        stage_def.output_artifact_type, ArtifactType.CODE
-    )
+    artifact_type = ARTIFACT_TYPE_MAP.get(stage_def.output_artifact_type, ArtifactType.CODE)
     artifact_name = stage_def.display_name
     if component_key:
         artifact_name = f"{stage_def.display_name} - {component_key}"
@@ -227,9 +243,7 @@ async def generate(
             db.query(Artifact)
             .filter_by(project_id=project_id)
             .filter(
-                Artifact.artifact_type.in_(
-                    [at for at in ArtifactType if at.value != "project_doc"]
-                )
+                Artifact.artifact_type.in_([at for at in ArtifactType if at.value != "project_doc"])
             )
             .all()
         )

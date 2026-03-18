@@ -29,7 +29,9 @@ def _comment_to_dict(comment: ArtifactComment, db: Session) -> dict:
         "author": {
             "id": author.id,
             "username": author.username,
-        } if author else None,
+        }
+        if author
+        else None,
         "content": comment.content,
         "comment_type": comment.comment_type,
         "parent_id": comment.parent_id,
@@ -93,11 +95,16 @@ def create_comment(
     # Broadcast to connected clients
     try:
         loop = asyncio.get_event_loop()
-        loop.create_task(ws_manager.broadcast(project_id, {
-            "type": "comment_added",
-            "artifact_id": artifact_id,
-            "comment_id": comment.id,
-        }))
+        loop.create_task(
+            ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "comment_added",
+                    "artifact_id": artifact_id,
+                    "comment_id": comment.id,
+                },
+            )
+        )
     except RuntimeError:
         pass  # No event loop running (e.g. in tests)
 

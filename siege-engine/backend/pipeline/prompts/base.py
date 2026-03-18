@@ -30,8 +30,7 @@ class PromptTemplate(ABC):
         feedback: dict | None = None,
         human_notes: str | None = None,
         prompt_config: dict | None = None,
-    ) -> list[dict]:
-        ...
+    ) -> list[dict]: ...
 
     def _build_from_config(
         self,
@@ -53,9 +52,7 @@ class PromptTemplate(ABC):
         system_msg = f"{system_msg}\n\n{self.formatting_guidance}"
 
         # Build the context from template
-        artifacts_text = "\n\n".join(
-            f"### {k}\n{v}" for k, v in input_artifacts.items()
-        )
+        artifacts_text = "\n\n".join(f"### {k}\n{v}" for k, v in input_artifacts.items())
         user_content = ctx_template.replace("{input_artifacts}", artifacts_text)
         if component_key:
             user_content = user_content.replace("{component_key}", component_key)
@@ -66,7 +63,9 @@ class PromptTemplate(ABC):
         ]
 
         if feedback or human_notes:
-            revision = prompt_config.get("revision_instructions") or self.default_revision_instructions
+            revision = (
+                prompt_config.get("revision_instructions") or self.default_revision_instructions
+            )
             if feedback:
                 revision += f"\n\nAI Review Feedback: {json.dumps(feedback)}"
             if human_notes:

@@ -32,18 +32,17 @@ def extract_code_files(content: str) -> list[dict]:
 
         # Remove the filepath comment line from content
         lines = block.split("\n")
-        cleaned_lines = [
-            line for line in lines
-            if not _is_filepath_line(line)
-        ]
+        cleaned_lines = [line for line in lines if not _is_filepath_line(line)]
         file_content = "\n".join(cleaned_lines).strip()
 
         if file_content:
-            files.append({
-                "file_path": filepath,
-                "content": file_content,
-                "language": language,
-            })
+            files.append(
+                {
+                    "file_path": filepath,
+                    "content": file_content,
+                    "language": language,
+                }
+            )
 
     return files
 
@@ -54,7 +53,7 @@ def _extract_filepath(block: str) -> str | None:
     for line in lines:
         # Match various comment styles: #, //, --, <!--
         fp_match = re.match(
-            r'^\s*(?:#|//|--|<!--)\s*filepath:\s*(.+?)(?:\s*-->)?\s*$',
+            r"^\s*(?:#|//|--|<!--)\s*filepath:\s*(.+?)(?:\s*-->)?\s*$",
             line.strip(),
             re.IGNORECASE,
         )
@@ -65,8 +64,10 @@ def _extract_filepath(block: str) -> str | None:
 
 def _is_filepath_line(line: str) -> bool:
     """Check if a line is a filepath comment."""
-    return bool(re.match(
-        r'^\s*(?:#|//|--|<!--)\s*filepath:\s*.+',
-        line.strip(),
-        re.IGNORECASE,
-    ))
+    return bool(
+        re.match(
+            r"^\s*(?:#|//|--|<!--)\s*filepath:\s*.+",
+            line.strip(),
+            re.IGNORECASE,
+        )
+    )

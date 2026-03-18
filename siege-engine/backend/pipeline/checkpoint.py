@@ -1,6 +1,5 @@
 """Build a siege-state.json manifest at the end of a pipeline run."""
 
-import json
 import logging
 from datetime import datetime
 
@@ -24,10 +23,12 @@ def build_siege_state(db: Session, project_id: str, pipeline_run: PipelineRun) -
     artifact_list = [
         {
             "id": a.id,
-            "artifact_type": a.artifact_type.value if hasattr(a.artifact_type, 'value') else str(a.artifact_type),
+            "artifact_type": a.artifact_type.value
+            if hasattr(a.artifact_type, "value")
+            else str(a.artifact_type),
             "name": a.name,
             "component_key": a.component_key,
-            "status": a.status.value if hasattr(a.status, 'value') else str(a.status),
+            "status": a.status.value if hasattr(a.status, "value") else str(a.status),
             "version": a.version,
             "file_path": a.file_path,
             "git_commit_sha": a.git_commit_sha,
@@ -37,16 +38,14 @@ def build_siege_state(db: Session, project_id: str, pipeline_run: PipelineRun) -
 
     # Stage executions for this run
     executions = (
-        db.query(StageExecution)
-        .filter_by(project_id=project_id, run_id=pipeline_run.run_id)
-        .all()
+        db.query(StageExecution).filter_by(project_id=project_id, run_id=pipeline_run.run_id).all()
     )
     execution_list = [
         {
             "id": e.id,
             "stage_key": e.stage_key,
             "component_key": e.component_key,
-            "status": e.status.value if hasattr(e.status, 'value') else str(e.status),
+            "status": e.status.value if hasattr(e.status, "value") else str(e.status),
             "artifact_id": e.artifact_id,
             "started_at": e.started_at.isoformat() if e.started_at else None,
             "completed_at": e.completed_at.isoformat() if e.completed_at else None,
@@ -73,7 +72,9 @@ def build_siege_state(db: Session, project_id: str, pipeline_run: PipelineRun) -
         "config": {
             "human_review": pipeline_run.human_review,
             "ai_loops": pipeline_run.ai_loops,
-            "stop_point": pipeline_run.stop_point.value if hasattr(pipeline_run.stop_point, 'value') else str(pipeline_run.stop_point),
+            "stop_point": pipeline_run.stop_point.value
+            if hasattr(pipeline_run.stop_point, "value")
+            else str(pipeline_run.stop_point),
         },
         "artifacts": artifact_list,
         "stage_executions": execution_list,

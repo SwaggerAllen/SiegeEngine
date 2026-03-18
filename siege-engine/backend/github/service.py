@@ -1,7 +1,5 @@
 import httpx
 
-from backend.config import settings
-
 
 class GitHubService:
     """GitHub API client using stored OAuth tokens."""

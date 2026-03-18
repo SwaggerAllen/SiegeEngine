@@ -49,10 +49,11 @@ export function LoginPage() {
         await login(username, password);
       }
       navigate('/projects');
-    } catch (err: any) {
-      if (err.response?.data?.detail) {
-        setError(err.response.data.detail);
-      } else if (err.request && !err.response) {
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } }; request?: unknown };
+      if (axiosErr.response?.data?.detail) {
+        setError(axiosErr.response.data.detail);
+      } else if (axiosErr.request && !axiosErr.response) {
         setError('Unable to reach the server. Please check your connection.');
       } else {
         setError('Authentication failed. Please try again.');

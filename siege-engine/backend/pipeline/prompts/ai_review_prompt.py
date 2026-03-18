@@ -2,8 +2,14 @@ from backend.pipeline.prompts.base import PromptTemplate
 
 
 class AIReviewPrompt(PromptTemplate):
-
-    def build(self, input_artifacts, component_key=None, feedback=None, human_notes=None, prompt_config=None):
+    def build(
+        self,
+        input_artifacts,
+        component_key=None,
+        feedback=None,
+        human_notes=None,
+        prompt_config=None,
+    ):
         # Extract special keys from input_artifacts
         # Make a copy so we don't mutate the original
         artifacts = dict(input_artifacts)
@@ -13,12 +19,12 @@ class AIReviewPrompt(PromptTemplate):
         if prompt_config:
             # Re-inject the formatted content as input_artifacts for _build_from_config
             # The context template uses {artifact_content}, {stage_name}, and {input_context}
-            formatted_context = "\n\n".join(
-                f"### {k}\n{v}" for k, v in artifacts.items()
-            )
+            formatted_context = "\n\n".join(f"### {k}\n{v}" for k, v in artifacts.items())
             # Build from config with special placeholder handling
             system_msg = prompt_config.get("system_message") or self.default_system_message
-            output_fmt = prompt_config.get("output_format_instructions") or self.default_output_format
+            output_fmt = (
+                prompt_config.get("output_format_instructions") or self.default_output_format
+            )
             ctx_template = prompt_config.get("context_template") or self.default_context_template
 
             if output_fmt:
@@ -37,17 +43,17 @@ class AIReviewPrompt(PromptTemplate):
             return messages
 
         # Default build
-        input_context = "\n\n".join(
-            f"### {k}\n{v}" for k, v in artifacts.items()
-        )
+        input_context = "\n\n".join(f"### {k}\n{v}" for k, v in artifacts.items())
 
         messages = [
             {"role": "system", "content": self.full_system_message},
             {
                 "role": "user",
                 "content": (
-                    f"ARTIFACT UNDER REVIEW ({stage_name}):\n\n{artifact_content}\n\n"
-                    f"---\n\nINPUT CONTEXT USED TO GENERATE THIS ARTIFACT:\n\n{input_context[:4000]}"
+                    f"ARTIFACT UNDER REVIEW ({stage_name}):\n\n"
+                    f"{artifact_content}\n\n"
+                    f"---\n\nINPUT CONTEXT USED TO GENERATE "
+                    f"THIS ARTIFACT:\n\n{input_context[:4000]}"
                 ),
             },
         ]

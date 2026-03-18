@@ -13,8 +13,6 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-logger = logging.getLogger(__name__)
-
 from backend.models import (
     Artifact,
     ArtifactComment,
@@ -22,7 +20,6 @@ from backend.models import (
     ArtifactStatus,
     ArtifactType,
     ComponentDefinition,
-    ExecutionMode,
     FanOutStrategy,
     PipelineConfig,
     PipelineRun,
@@ -43,16 +40,21 @@ from backend.pipeline.nodes.extract_components import (
 from backend.pipeline.nodes.generate import generate
 from backend.websocket.manager import ws_manager
 
+logger = logging.getLogger(__name__)
 
 # Stage keys grouped by level for readiness checks.
 # component_plans comes after extract_sub_components because it only
 # runs for leaf components (those that produced no sub-components).
 COMPONENT_STAGE_ORDER = [
-    "component_requirements", "component_architectures",
-    "extract_sub_components", "component_plans",
+    "component_requirements",
+    "component_architectures",
+    "extract_sub_components",
+    "component_plans",
 ]
 SUB_COMPONENT_STAGE_ORDER = [
-    "sub_component_requirements", "sub_component_architectures", "sub_component_plans",
+    "sub_component_requirements",
+    "sub_component_architectures",
+    "sub_component_plans",
 ]
 
 # Extraction stages that define downstream branching structure —
@@ -71,14 +73,20 @@ class PipelineEngine:
         self.db = db
 
     async def start_pipeline(
-        self, project_id: str, pipeline_run_id: str | None = None,
+        self,
+        project_id: str,
+        pipeline_run_id: str | None = None,
     ) -> str:
         """Start a pipeline run. Returns run_id.
 
         Carries over APPROVED (non-stale) executions so that already-approved
         work is preserved.  Only non-approved stages are re-processed.
         """
-        logger.info("start_pipeline called for project_id=%s, pipeline_run_id=%s", project_id, pipeline_run_id)
+        logger.info(
+            "start_pipeline called for project_id=%s, pipeline_run_id=%s",
+            project_id,
+            pipeline_run_id,
+        )
 
         project = self.db.get(Project, project_id)
         if not project or not project.pipeline_config:
@@ -97,15 +105,20 @@ class PipelineEngine:
         stages = sorted(config.stages, key=lambda s: s.order_index)
         logger.info(
             "Pipeline run_id=%s (run #%s) starting with %d stages: %s",
-            run_id, pipeline_run.run_number if pipeline_run else "?",
-            len(stages), [s.stage_key for s in stages],
+            run_id,
+            pipeline_run.run_number if pipeline_run else "?",
+            len(stages),
+            [s.stage_key for s in stages],
         )
 
         await self._find_and_execute_next(project_id, run_id, config, pipeline_run)
         return run_id
 
     async def resume_run(
-        self, project_id: str, pipeline_run_id: str, prev_run_id: str,
+        self,
+        project_id: str,
+        pipeline_run_id: str,
+        prev_run_id: str,
     ) -> str:
         """Resume a pipeline by carrying over work from a previous run.
 
@@ -114,7 +127,9 @@ class PipelineEngine:
         """
         logger.info(
             "resume_run called: project_id=%s, pipeline_run_id=%s, prev_run_id=%s",
-            project_id, pipeline_run_id, prev_run_id,
+            project_id,
+            pipeline_run_id,
+            prev_run_id,
         )
 
         project = self.db.get(Project, project_id)
@@ -133,15 +148,16 @@ class PipelineEngine:
 
         # Additionally carry over AWAITING_REVIEW executions from the previous run
         stale_artifact_ids = {
-            a.id for a in
-            self.db.query(Artifact)
+            a.id
+            for a in self.db.query(Artifact)
             .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
             .all()
         }
         review_execs = (
             self.db.query(StageExecution)
-            .filter_by(project_id=project_id, run_id=prev_run_id,
-                       status=StageStatus.AWAITING_REVIEW)
+            .filter_by(
+                project_id=project_id, run_id=prev_run_id, status=StageStatus.AWAITING_REVIEW
+            )
             .all()
         )
         review_carried = 0
@@ -152,7 +168,8 @@ class PipelineEngine:
             already = (
                 self.db.query(StageExecution)
                 .filter_by(
-                    project_id=project_id, run_id=new_run_id,
+                    project_id=project_id,
+                    run_id=new_run_id,
                     stage_key=prev_exec.stage_key,
                     component_key=prev_exec.component_key,
                 )
@@ -177,14 +194,18 @@ class PipelineEngine:
         self.db.commit()
         logger.info(
             "Carried over %d approved + %d in-review executions into run %s",
-            carried, review_carried, new_run_id,
+            carried,
+            review_carried,
+            new_run_id,
         )
 
         stages = sorted(config.stages, key=lambda s: s.order_index)
         logger.info(
             "Resume run_id=%s (run #%s) with %d stages: %s",
-            new_run_id, pipeline_run.run_number,
-            len(stages), [s.stage_key for s in stages],
+            new_run_id,
+            pipeline_run.run_number,
+            len(stages),
+            [s.stage_key for s in stages],
         )
 
         await self._find_and_execute_next(project_id, new_run_id, config, pipeline_run)
@@ -199,8 +220,8 @@ class PipelineEngine:
         from sqlalchemy import func
 
         stale_artifact_ids = {
-            a.id for a in
-            self.db.query(Artifact)
+            a.id
+            for a in self.db.query(Artifact)
             .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
             .all()
         }
@@ -244,7 +265,9 @@ class PipelineEngine:
             if prev_exec.artifact_id and prev_exec.artifact_id in stale_artifact_ids:
                 logger.info(
                     "Skipping stale execution (stage=%s, component=%s, artifact=%s)",
-                    prev_exec.stage_key, prev_exec.component_key, prev_exec.artifact_id,
+                    prev_exec.stage_key,
+                    prev_exec.component_key,
+                    prev_exec.artifact_id,
                 )
                 continue
 
@@ -266,7 +289,9 @@ class PipelineEngine:
         return carried
 
     def _should_pause(
-        self, stage_def: StageDefinition, pipeline_run: PipelineRun | None,
+        self,
+        stage_def: StageDefinition,
+        pipeline_run: PipelineRun | None,
     ) -> bool:
         """Determine if the pipeline should pause after executing this stage."""
         if not pipeline_run:
@@ -303,7 +328,10 @@ class PipelineEngine:
         return False
 
     async def _find_and_execute_next(
-        self, project_id: str, run_id: str, config: PipelineConfig,
+        self,
+        project_id: str,
+        run_id: str,
+        config: PipelineConfig,
         pipeline_run: PipelineRun | None = None,
     ):
         """Find the next executable work item across all stages and execute it.
@@ -314,7 +342,6 @@ class PipelineEngine:
         """
         stages = sorted(config.stages, key=lambda s: s.order_index)
         has_pending_work = False
-        did_execute = False
 
         for stage_def in stages:
             # Check if stage is fully complete
@@ -329,11 +356,15 @@ class PipelineEngine:
                     stage_key=stage_def.stage_key,
                     run_id=run_id,
                 )
-                .filter(StageExecution.status.in_([
-                    StageStatus.AWAITING_REVIEW,
-                    StageStatus.RUNNING,
-                    StageStatus.AI_REVIEW,
-                ]))
+                .filter(
+                    StageExecution.status.in_(
+                        [
+                            StageStatus.AWAITING_REVIEW,
+                            StageStatus.RUNNING,
+                            StageStatus.AI_REVIEW,
+                        ]
+                    )
+                )
                 .count()
             )
             if pending_count > 0:
@@ -341,7 +372,11 @@ class PipelineEngine:
                 # Continue scanning downstream stages for entities whose
                 # dependencies are already met.
                 has_pending_work = True
-                logger.info("Stage %s has %d pending executions, scanning downstream", stage_def.stage_key, pending_count)
+                logger.info(
+                    "Stage %s has %d pending executions, scanning downstream",
+                    stage_def.stage_key,
+                    pending_count,
+                )
                 continue
 
             fan_out = stage_def.fan_out_strategy
@@ -376,18 +411,28 @@ class PipelineEngine:
                 )
                 self.db.add(execution)
                 self.db.flush()
-                did_execute = True
 
                 await self._run_stage(
-                    project_id, stage_def, input_artifacts, None, execution, run_id,
-                    human_notes=rejected_notes, config=config, pipeline_run=pipeline_run,
+                    project_id,
+                    stage_def,
+                    input_artifacts,
+                    None,
+                    execution,
+                    run_id,
+                    human_notes=rejected_notes,
+                    config=config,
+                    pipeline_run=pipeline_run,
                 )
 
                 if execution.status == StageStatus.FAILED:
                     logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
-                    await ws_manager.broadcast(project_id, {
-                        "type": "pipeline_completed", "run_id": run_id,
-                    })
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "pipeline_completed",
+                            "run_id": run_id,
+                        },
+                    )
                     return
 
                 # Post-generation hooks (deferred for branching stages until approval)
@@ -399,15 +444,22 @@ class PipelineEngine:
                 if execution.status == StageStatus.AWAITING_REVIEW:
                     has_pending_work = True
                     if self._should_pause(stage_def, pipeline_run):
-                        await ws_manager.broadcast(project_id, {
-                            "type": "pipeline_paused",
-                            "stage_key": stage_def.stage_key,
-                            "run_id": run_id,
-                            "message": f"Awaiting review for {stage_def.display_name}",
-                        })
+                        await ws_manager.broadcast(
+                            project_id,
+                            {
+                                "type": "pipeline_paused",
+                                "stage_key": stage_def.stage_key,
+                                "run_id": run_id,
+                                "message": f"Awaiting review for {stage_def.display_name}",
+                            },
+                        )
                         return
 
-            elif fan_out in (FanOutStrategy.COMPONENT, FanOutStrategy.SUB_COMPONENT, FanOutStrategy.LEAF):
+            elif fan_out in (
+                FanOutStrategy.COMPONENT,
+                FanOutStrategy.SUB_COMPONENT,
+                FanOutStrategy.LEAF,
+            ):
                 ready = self._get_ready_entities(project_id, stage_def, run_id)
                 if not ready:
                     # No entities ready — check if any entities exist at all
@@ -420,7 +472,10 @@ class PipelineEngine:
                     # Continue scanning instead of stopping — downstream stages
                     # for already-approved entities may still be runnable.
                     has_pending_work = True
-                    logger.info("Stage %s: entities exist but none ready, scanning downstream", stage_def.stage_key)
+                    logger.info(
+                        "Stage %s: entities exist but none ready, scanning downstream",
+                        stage_def.stage_key,
+                    )
                     continue
 
                 # Execute ready entities
@@ -438,11 +493,17 @@ class PipelineEngine:
                     )
                     self.db.add(execution)
                     self.db.flush()
-                    did_execute = True
 
                     await self._run_stage(
-                        project_id, stage_def, input_artifacts, entity_key, execution, run_id,
-                        human_notes=rejected_notes, config=config, pipeline_run=pipeline_run,
+                        project_id,
+                        stage_def,
+                        input_artifacts,
+                        entity_key,
+                        execution,
+                        run_id,
+                        human_notes=rejected_notes,
+                        config=config,
+                        pipeline_run=pipeline_run,
                     )
 
                     if execution.status == StageStatus.FAILED:
@@ -452,13 +513,19 @@ class PipelineEngine:
                     # Post-generation hooks (deferred for branching stages until approval)
                     if execution.status in (StageStatus.AWAITING_REVIEW, StageStatus.APPROVED):
                         if stage_def.stage_key not in BRANCHING_STAGES:
-                            await self._post_generation_hook(project_id, stage_def, entity_key, execution)
+                            await self._post_generation_hook(
+                                project_id, stage_def, entity_key, execution
+                            )
 
                 if stage_failed:
                     logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
-                    await ws_manager.broadcast(project_id, {
-                        "type": "pipeline_completed", "run_id": run_id,
-                    })
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "pipeline_completed",
+                            "run_id": run_id,
+                        },
+                    )
                     return
 
                 # Check if pipeline should pause at this stage
@@ -475,12 +542,15 @@ class PipelineEngine:
                     )
                     if awaiting_review > 0:
                         has_pending_work = True
-                        await ws_manager.broadcast(project_id, {
-                            "type": "pipeline_paused",
-                            "stage_key": stage_def.stage_key,
-                            "run_id": run_id,
-                            "message": f"Awaiting review for {stage_def.display_name}",
-                        })
+                        await ws_manager.broadcast(
+                            project_id,
+                            {
+                                "type": "pipeline_paused",
+                                "stage_key": stage_def.stage_key,
+                                "run_id": run_id,
+                                "message": f"Awaiting review for {stage_def.display_name}",
+                            },
+                        )
                         return
 
         # If pending work exists, the pipeline isn't finished — just no new work to do
@@ -498,12 +568,13 @@ class PipelineEngine:
 
             # Git checkpoint: commit siege-state.json + any remaining changes
             try:
-                from backend.pipeline.checkpoint import build_siege_state
                 from backend.git_manager.service import git_manager
+                from backend.pipeline.checkpoint import build_siege_state
 
                 siege_state = build_siege_state(self.db, project_id, pipeline_run)
                 git_commit_sha = git_manager.checkpoint_run(
-                    project_id, siege_state,
+                    project_id,
+                    siege_state,
                     f"Run #{pipeline_run.run_number} completed",
                 )
                 pipeline_run.git_commit_sha = git_commit_sha
@@ -514,18 +585,25 @@ class PipelineEngine:
                 if project and project.auto_push_enabled and project.remote_url:
                     try:
                         git_manager.push_current_branch(project_id)
-                        logger.info("Auto-pushed run #%d for project %s", pipeline_run.run_number, project_id)
+                        logger.info(
+                            "Auto-pushed run #%d for project %s",
+                            pipeline_run.run_number,
+                            project_id,
+                        )
                     except Exception as push_err:
                         logger.warning("Auto-push failed for project %s: %s", project_id, push_err)
             except Exception as ckpt_err:
                 logger.error("Checkpoint failed for run #%d: %s", pipeline_run.run_number, ckpt_err)
 
-        await ws_manager.broadcast(project_id, {
-            "type": "pipeline_completed",
-            "run_id": run_id,
-            "run_number": pipeline_run.run_number if pipeline_run else None,
-            "git_commit_sha": git_commit_sha,
-        })
+        await ws_manager.broadcast(
+            project_id,
+            {
+                "type": "pipeline_completed",
+                "run_id": run_id,
+                "run_number": pipeline_run.run_number if pipeline_run else None,
+                "git_commit_sha": git_commit_sha,
+            },
+        )
 
     def _stage_fully_complete(
         self, project_id: str, stage_def: StageDefinition, run_id: str
@@ -570,9 +648,7 @@ class PipelineEngine:
 
         return True
 
-    def _get_all_entities_for_stage(
-        self, project_id: str, stage_def: StageDefinition
-    ) -> list[str]:
+    def _get_all_entities_for_stage(self, project_id: str, stage_def: StageDefinition) -> list[str]:
         """Get all entity keys that should be processed for a fan-out stage."""
         fan_out = stage_def.fan_out_strategy
 
@@ -582,9 +658,7 @@ class PipelineEngine:
                 comps = inject_setup_component(comps)
             # component_plans only applies to leaf components (no sub-components)
             if stage_def.stage_key == "component_plans":
-                parent_keys = {
-                    d.parent_key for d in self._get_sub_component_defs(project_id)
-                }
+                parent_keys = {d.parent_key for d in self._get_sub_component_defs(project_id)}
                 comps = [c for c in comps if c["key"] not in parent_keys]
             return [c["key"] for c in comps]
 
@@ -612,14 +686,14 @@ class PipelineEngine:
             # Components that produced sub-components are planned at the
             # sub-component level instead.
             if stage_def.stage_key == "component_plans":
-                parent_keys = {
-                    d.parent_key for d in self._get_sub_component_defs(project_id)
-                }
+                parent_keys = {d.parent_key for d in self._get_sub_component_defs(project_id)}
                 comps = [c for c in comps if c["key"] not in parent_keys]
 
             for comp in comps:
                 key = comp["key"]
-                if self._is_component_ready(project_id, key, stage_def, run_id, comp.get("dependencies", [])):
+                if self._is_component_ready(
+                    project_id, key, stage_def, run_id, comp.get("dependencies", [])
+                ):
                     ready.append(key)
 
         elif fan_out == FanOutStrategy.SUB_COMPONENT:
@@ -630,7 +704,9 @@ class PipelineEngine:
                 deps = sc.dependencies or []
                 # Deps are sibling keys, need full paths
                 full_deps = [f"{sc.parent_key}.{d}" for d in deps]
-                if self._is_sub_component_ready(project_id, full_key, sc.parent_key, stage_def, run_id, full_deps):
+                if self._is_sub_component_ready(
+                    project_id, full_key, sc.parent_key, stage_def, run_id, full_deps
+                ):
                     ready.append(full_key)
 
         elif fan_out == FanOutStrategy.LEAF:
@@ -642,8 +718,12 @@ class PipelineEngine:
         return ready
 
     def _is_component_ready(
-        self, project_id: str, comp_key: str, stage_def: StageDefinition,
-        run_id: str, dependencies: list[str]
+        self,
+        project_id: str,
+        comp_key: str,
+        stage_def: StageDefinition,
+        run_id: str,
+        dependencies: list[str],
     ) -> bool:
         """Check if a component is ready for a given stage."""
         # 1. Not already processed (non-rejected execution exists)
@@ -665,7 +745,9 @@ class PipelineEngine:
         # (and plans, for stages after component_plans — but non-leaf
         #  components won't have plans so we only require architectures)
         for dep_key in dependencies:
-            if not self._has_approved_artifact(project_id, ArtifactType.COMPONENT_ARCHITECTURE, dep_key):
+            if not self._has_approved_artifact(
+                project_id, ArtifactType.COMPONENT_ARCHITECTURE, dep_key
+            ):
                 return False
 
         # 3. Own prior component stages are approved
@@ -678,8 +760,13 @@ class PipelineEngine:
         return True
 
     def _is_sub_component_ready(
-        self, project_id: str, full_key: str, parent_key: str,
-        stage_def: StageDefinition, run_id: str, full_deps: list[str]
+        self,
+        project_id: str,
+        full_key: str,
+        parent_key: str,
+        stage_def: StageDefinition,
+        run_id: str,
+        full_deps: list[str],
     ) -> bool:
         """Check if a sub-component is ready for a given stage."""
         # 1. Not already processed
@@ -699,7 +786,9 @@ class PipelineEngine:
 
         # 2. All dependency sub-components have approved plans
         for dep_key in full_deps:
-            if not self._has_approved_artifact(project_id, ArtifactType.SUB_COMPONENT_PLAN, dep_key):
+            if not self._has_approved_artifact(
+                project_id, ArtifactType.SUB_COMPONENT_PLAN, dep_key
+            ):
                 return False
 
         # 3. Own prior sub-component stages are approved
@@ -710,7 +799,9 @@ class PipelineEngine:
                     return False
 
         # 4. Parent extract_sub_components must be approved
-        if not self._has_approved_execution(project_id, "extract_sub_components", parent_key, run_id):
+        if not self._has_approved_execution(
+            project_id, "extract_sub_components", parent_key, run_id
+        ):
             return False
 
         return True
@@ -737,7 +828,9 @@ class PipelineEngine:
         # 2. Check if leaf's plan is approved
         if "." in leaf_key:
             # Sub-component leaf
-            if not self._has_approved_artifact(project_id, ArtifactType.SUB_COMPONENT_PLAN, leaf_key):
+            if not self._has_approved_artifact(
+                project_id, ArtifactType.SUB_COMPONENT_PLAN, leaf_key
+            ):
                 return False
         else:
             # Top-level component leaf
@@ -811,11 +904,7 @@ class PipelineEngine:
 
     def _get_leaf_keys(self, project_id: str) -> list[str]:
         """Get leaf entity keys (components without sub-components + all sub-components)."""
-        all_defs = (
-            self.db.query(ComponentDefinition)
-            .filter_by(project_id=project_id)
-            .all()
-        )
+        all_defs = self.db.query(ComponentDefinition).filter_by(project_id=project_id).all()
 
         top_level = [d for d in all_defs if d.parent_key is None]
         sub_comps = [d for d in all_defs if d.parent_key is not None]
@@ -861,7 +950,8 @@ class PipelineEngine:
         if removed_keys:
             logger.info(
                 "Components removed from project %s: %s",
-                project_id, removed_keys,
+                project_id,
+                removed_keys,
             )
             for key in removed_keys:
                 # Delete artifacts with this component_key
@@ -977,7 +1067,10 @@ class PipelineEngine:
         self.db.flush()
         logger.info(
             "Components for project %s: %d added, %d updated, %d removed",
-            project_id, added, updated, len(removed_keys),
+            project_id,
+            added,
+            updated,
+            len(removed_keys),
         )
 
     def _store_sub_components(self, project_id: str, parent_key: str, content: str):
@@ -994,7 +1087,9 @@ class PipelineEngine:
 
         errors = validate_dependency_dag(sub_components)
         if errors:
-            logger.warning("Sub-component dependency validation errors for %s: %s", parent_key, errors)
+            logger.warning(
+                "Sub-component dependency validation errors for %s: %s", parent_key, errors
+            )
 
         # Clear existing sub-components for this parent
         (
@@ -1015,11 +1110,19 @@ class PipelineEngine:
             self.db.add(cd)
 
         self.db.flush()
-        logger.info("Stored %d sub-components for %s in project %s", len(sub_components), parent_key, project_id)
+        logger.info(
+            "Stored %d sub-components for %s in project %s",
+            len(sub_components),
+            parent_key,
+            project_id,
+        )
 
     async def _post_generation_hook(
-        self, project_id: str, stage_def: StageDefinition,
-        component_key: str | None, execution: StageExecution
+        self,
+        project_id: str,
+        stage_def: StageDefinition,
+        component_key: str | None,
+        execution: StageExecution,
     ):
         """Run post-generation hooks for extraction stages."""
         if not execution.artifact_id:
@@ -1059,32 +1162,35 @@ class PipelineEngine:
 
                     # Store feedback as a comment record (not on artifact field)
                     if notes and notes.strip():
-                        self.db.add(ArtifactComment(
-                            artifact_id=execution.artifact_id,
-                            project_id=execution.project_id,
-                            author_id=user_id,
-                            content=notes.strip(),
-                            comment_type="feedback",
-                            artifact_version=artifact.version,
-                        ))
+                        self.db.add(
+                            ArtifactComment(
+                                artifact_id=execution.artifact_id,
+                                project_id=execution.project_id,
+                                author_id=user_id,
+                                content=notes.strip(),
+                                comment_type="feedback",
+                                artifact_version=artifact.version,
+                            )
+                        )
 
             execution.status = StageStatus.APPROVED
             execution.completed_at = datetime.utcnow()
             self.db.commit()
 
-            await ws_manager.broadcast(execution.project_id, {
-                "type": "stage_completed",
-                "stage_key": execution.stage_key,
-                "component_key": execution.component_key,
-                "status": action,
-                "execution_id": execution_id,
-            })
+            await ws_manager.broadcast(
+                execution.project_id,
+                {
+                    "type": "stage_completed",
+                    "stage_key": execution.stage_key,
+                    "component_key": execution.component_key,
+                    "status": action,
+                    "execution_id": execution_id,
+                },
+            )
 
             # Run post-generation hooks (e.g., store components after approval)
             config = (
-                self.db.query(PipelineConfig)
-                .filter_by(project_id=execution.project_id)
-                .first()
+                self.db.query(PipelineConfig).filter_by(project_id=execution.project_id).first()
             )
             if config:
                 stage_def = next(
@@ -1101,22 +1207,30 @@ class PipelineEngine:
                     # their executions so _find_and_execute_next picks them up.
                     if (execution.retry_count or 0) > 0:
                         stale_ids = self._invalidate_stale_downstream(
-                            execution.project_id, execution.run_id,
-                            stage_def.order_index, config,
+                            execution.project_id,
+                            execution.run_id,
+                            stage_def.order_index,
+                            config,
                         )
                         if stale_ids:
                             self.db.commit()
-                            await ws_manager.broadcast(execution.project_id, {
-                                "type": "staleness_propagated",
-                                "stale_artifact_ids": stale_ids,
-                            })
+                            await ws_manager.broadcast(
+                                execution.project_id,
+                                {
+                                    "type": "staleness_propagated",
+                                    "stale_artifact_ids": stale_ids,
+                                },
+                            )
 
             # Find and execute next available work
             await self._check_and_continue(execution)
 
         elif action == "rejected":
-            logger.info("Stage %s rejected (execution=%s), triggering regeneration",
-                        execution.stage_key, execution_id)
+            logger.info(
+                "Stage %s rejected (execution=%s), triggering regeneration",
+                execution.stage_key,
+                execution_id,
+            )
             execution.status = StageStatus.REJECTED
 
             if execution.artifact_id:
@@ -1127,20 +1241,20 @@ class PipelineEngine:
             # Store feedback as a comment record
             if notes and notes.strip() and execution.artifact_id:
                 art = self.db.get(Artifact, execution.artifact_id)
-                self.db.add(ArtifactComment(
-                    artifact_id=execution.artifact_id,
-                    project_id=execution.project_id,
-                    author_id=user_id,
-                    content=notes.strip(),
-                    comment_type="feedback",
-                    artifact_version=art.version if art else None,
-                ))
+                self.db.add(
+                    ArtifactComment(
+                        artifact_id=execution.artifact_id,
+                        project_id=execution.project_id,
+                        author_id=user_id,
+                        content=notes.strip(),
+                        comment_type="feedback",
+                        artifact_version=art.version if art else None,
+                    )
+                )
 
             # Cascade-reject downstream AWAITING_REVIEW nodes
             config = (
-                self.db.query(PipelineConfig)
-                .filter_by(project_id=execution.project_id)
-                .first()
+                self.db.query(PipelineConfig).filter_by(project_id=execution.project_id).first()
             )
             stale_artifact_ids = []
             if config:
@@ -1150,31 +1264,40 @@ class PipelineEngine:
                 )
                 if stage_def:
                     stale_artifact_ids = self._cascade_reject_downstream(
-                        execution.project_id, execution.run_id,
-                        stage_def.order_index, config,
+                        execution.project_id,
+                        execution.run_id,
+                        stage_def.order_index,
+                        config,
                     )
 
             self.db.commit()
 
-            await ws_manager.broadcast(execution.project_id, {
-                "type": "stage_completed",
-                "stage_key": execution.stage_key,
-                "component_key": execution.component_key,
-                "status": "rejected",
-                "execution_id": execution_id,
-            })
+            await ws_manager.broadcast(
+                execution.project_id,
+                {
+                    "type": "stage_completed",
+                    "stage_key": execution.stage_key,
+                    "component_key": execution.component_key,
+                    "status": "rejected",
+                    "execution_id": execution_id,
+                },
+            )
 
             if stale_artifact_ids:
-                await ws_manager.broadcast(execution.project_id, {
-                    "type": "staleness_propagated",
-                    "stale_artifact_ids": stale_artifact_ids,
-                })
+                await ws_manager.broadcast(
+                    execution.project_id,
+                    {
+                        "type": "staleness_propagated",
+                        "stale_artifact_ids": stale_artifact_ids,
+                    },
+                )
 
             await self._regenerate_stage(execution)
 
         elif action == "save_feedback":
-            logger.info("Saving feedback for stage %s (execution=%s)",
-                        execution.stage_key, execution_id)
+            logger.info(
+                "Saving feedback for stage %s (execution=%s)", execution.stage_key, execution_id
+            )
             if execution.artifact_id:
                 artifact = self.db.get(Artifact, execution.artifact_id)
                 if artifact:
@@ -1184,31 +1307,32 @@ class PipelineEngine:
 
                     # Store feedback as a comment record
                     if notes and notes.strip():
-                        self.db.add(ArtifactComment(
-                            artifact_id=execution.artifact_id,
-                            project_id=execution.project_id,
-                            author_id=user_id,
-                            content=notes.strip(),
-                            comment_type="feedback",
-                            artifact_version=artifact.version,
-                        ))
+                        self.db.add(
+                            ArtifactComment(
+                                artifact_id=execution.artifact_id,
+                                project_id=execution.project_id,
+                                author_id=user_id,
+                                content=notes.strip(),
+                                comment_type="feedback",
+                                artifact_version=artifact.version,
+                            )
+                        )
             self.db.commit()
 
-            await ws_manager.broadcast(execution.project_id, {
-                "type": "feedback_saved",
-                "stage_key": execution.stage_key,
-                "component_key": execution.component_key,
-                "execution_id": execution_id,
-                "artifact_id": execution.artifact_id,
-            })
+            await ws_manager.broadcast(
+                execution.project_id,
+                {
+                    "type": "feedback_saved",
+                    "stage_key": execution.stage_key,
+                    "component_key": execution.component_key,
+                    "execution_id": execution_id,
+                    "artifact_id": execution.artifact_id,
+                },
+            )
 
     async def _check_and_continue(self, execution: StageExecution):
         """After approval, find and execute the next available work."""
-        config = (
-            self.db.query(PipelineConfig)
-            .filter_by(project_id=execution.project_id)
-            .first()
-        )
+        config = self.db.query(PipelineConfig).filter_by(project_id=execution.project_id).first()
         if not config:
             return
 
@@ -1227,8 +1351,11 @@ class PipelineEngine:
         )
 
     def _cascade_reject_downstream(
-        self, project_id: str, run_id: str,
-        rejected_stage_order_index: int, config: PipelineConfig,
+        self,
+        project_id: str,
+        run_id: str,
+        rejected_stage_order_index: int,
+        config: PipelineConfig,
     ) -> list[str]:
         """Cascade-reject downstream AWAITING_REVIEW executions, mark their artifacts STALE.
 
@@ -1255,7 +1382,9 @@ class PipelineEngine:
             for exc in downstream_execs:
                 logger.info(
                     "Cascade-rejecting downstream execution %s (stage=%s, component=%s)",
-                    exc.id, exc.stage_key, exc.component_key,
+                    exc.id,
+                    exc.stage_key,
+                    exc.component_key,
                 )
                 exc.status = StageStatus.REJECTED
 
@@ -1269,8 +1398,11 @@ class PipelineEngine:
         return stale_artifact_ids
 
     def _invalidate_stale_downstream(
-        self, project_id: str, run_id: str,
-        approved_stage_order_index: int, config: PipelineConfig,
+        self,
+        project_id: str,
+        run_id: str,
+        approved_stage_order_index: int,
+        config: PipelineConfig,
     ) -> list[str]:
         """After approving a regenerated stage, mark downstream artifacts as
         STALE so the user knows they were built on old content.
@@ -1304,7 +1436,9 @@ class PipelineEngine:
                     if artifact:
                         logger.info(
                             "Marking downstream artifact %s as stale (stage=%s, component=%s)",
-                            artifact.id, exc.stage_key, exc.component_key,
+                            artifact.id,
+                            exc.stage_key,
+                            exc.component_key,
                         )
                         artifact.status = ArtifactStatus.STALE
                         stale_artifact_ids.append(artifact.id)
@@ -1315,11 +1449,7 @@ class PipelineEngine:
     async def _regenerate_stage(self, old_execution: StageExecution):
         """Re-run a rejected stage with human feedback from ArtifactComment records."""
         project_id = old_execution.project_id
-        config = (
-            self.db.query(PipelineConfig)
-            .filter_by(project_id=project_id)
-            .first()
-        )
+        config = self.db.query(PipelineConfig).filter_by(project_id=project_id).first()
         if not config:
             logger.error("Cannot regenerate: pipeline config not found for project %s", project_id)
             return
@@ -1356,19 +1486,29 @@ class PipelineEngine:
         # Commit so DAG endpoint sees GENERATING status
         self.db.commit()
 
-        logger.info("Regenerating stage %s (component=%s) with human feedback, new execution=%s",
-                     old_execution.stage_key, old_execution.component_key, new_execution.id)
+        logger.info(
+            "Regenerating stage %s (component=%s) with human feedback, new execution=%s",
+            old_execution.stage_key,
+            old_execution.component_key,
+            new_execution.id,
+        )
 
-        await ws_manager.broadcast(project_id, {
-            "type": "stage_started",
-            "stage_key": old_execution.stage_key,
-            "component_key": old_execution.component_key,
-        })
+        await ws_manager.broadcast(
+            project_id,
+            {
+                "type": "stage_started",
+                "stage_key": old_execution.stage_key,
+                "component_key": old_execution.component_key,
+            },
+        )
 
         try:
             feedback_notes = self._get_feedback_notes(old_execution.artifact_id)
             content, artifact_id = await generate(
-                stage_def, input_artifacts, old_execution.component_key, self.db,
+                stage_def,
+                input_artifacts,
+                old_execution.component_key,
+                self.db,
                 human_notes=feedback_notes,
             )
             new_execution.artifact_id = artifact_id
@@ -1388,18 +1528,23 @@ class PipelineEngine:
 
             # AI Review
             if stage_def.ai_review_enabled:
-                await ws_manager.broadcast(project_id, {
-                    "type": "stage_progress",
-                    "stage_key": stage_def.stage_key,
-                    "component_key": old_execution.component_key,
-                    "step": "ai_reviewing",
-                    "message": f"AI reviewing {stage_def.display_name}...",
-                })
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "stage_progress",
+                        "stage_key": stage_def.stage_key,
+                        "component_key": old_execution.component_key,
+                        "step": "ai_reviewing",
+                        "message": f"AI reviewing {stage_def.display_name}...",
+                    },
+                )
                 new_execution.status = StageStatus.AI_REVIEW
                 self.db.flush()
 
                 feedback = await ai_review(
-                    stage_def, content, input_artifacts,
+                    stage_def,
+                    content,
+                    input_artifacts,
                     review_prompt_overrides=config.review_prompt_overrides,
                 )
                 artifact = self.db.get(Artifact, artifact_id)
@@ -1421,14 +1566,17 @@ class PipelineEngine:
 
             self.db.commit()
 
-            await ws_manager.broadcast(project_id, {
-                "type": "stage_awaiting_review"
-                if stage_def.human_review_enabled
-                else "stage_completed",
-                "stage_key": stage_def.stage_key,
-                "component_key": old_execution.component_key,
-                "artifact_id": artifact_id,
-            })
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "stage_awaiting_review"
+                    if stage_def.human_review_enabled
+                    else "stage_completed",
+                    "stage_key": stage_def.stage_key,
+                    "component_key": old_execution.component_key,
+                    "artifact_id": artifact_id,
+                },
+            )
 
         except Exception as e:
             logger.exception("Regeneration failed for stage %s: %s", old_execution.stage_key, e)
@@ -1440,18 +1588,22 @@ class PipelineEngine:
             if old_execution.artifact_id:
                 stuck_artifact = self.db.get(Artifact, old_execution.artifact_id)
                 if stuck_artifact and stuck_artifact.status in (
-                    ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING
+                    ArtifactStatus.GENERATING,
+                    ArtifactStatus.AI_REVIEWING,
                 ):
                     stuck_artifact.status = original_artifact_status or ArtifactStatus.REJECTED
 
             self.db.commit()
 
-            await ws_manager.broadcast(project_id, {
-                "type": "stage_failed",
-                "stage_key": old_execution.stage_key,
-                "component_key": old_execution.component_key,
-                "error": str(e),
-            })
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "stage_failed",
+                    "stage_key": old_execution.stage_key,
+                    "component_key": old_execution.component_key,
+                    "error": str(e),
+                },
+            )
 
     async def resolve_stale(
         self,
@@ -1475,14 +1627,16 @@ class PipelineEngine:
                 artifact.content = edited_content
                 artifact.version += 1
             if notes and notes.strip():
-                self.db.add(ArtifactComment(
-                    artifact_id=artifact_id,
-                    project_id=project_id,
-                    author_id=user_id,
-                    content=notes.strip(),
-                    comment_type="feedback",
-                    artifact_version=artifact.version,
-                ))
+                self.db.add(
+                    ArtifactComment(
+                        artifact_id=artifact_id,
+                        project_id=project_id,
+                        author_id=user_id,
+                        content=notes.strip(),
+                        comment_type="feedback",
+                        artifact_version=artifact.version,
+                    )
+                )
             self.db.commit()
             return
 
@@ -1491,24 +1645,29 @@ class PipelineEngine:
                 artifact.content = edited_content
                 artifact.version += 1
             if notes and notes.strip():
-                self.db.add(ArtifactComment(
-                    artifact_id=artifact_id,
-                    project_id=project_id,
-                    author_id=user_id,
-                    content=notes.strip(),
-                    comment_type="feedback",
-                    artifact_version=artifact.version,
-                ))
+                self.db.add(
+                    ArtifactComment(
+                        artifact_id=artifact_id,
+                        project_id=project_id,
+                        author_id=user_id,
+                        content=notes.strip(),
+                        comment_type="feedback",
+                        artifact_version=artifact.version,
+                    )
+                )
             artifact.status = ArtifactStatus.APPROVED
             self.db.commit()
 
-            await ws_manager.broadcast(project_id, {
-                "type": "stage_completed",
-                "stage_key": artifact.artifact_type.value,
-                "component_key": artifact.component_key,
-                "artifact_id": artifact_id,
-                "status": "approved",
-            })
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "stage_completed",
+                    "stage_key": artifact.artifact_type.value,
+                    "component_key": artifact.component_key,
+                    "artifact_id": artifact_id,
+                    "status": "approved",
+                },
+            )
             return
 
         if action == "rejected":
@@ -1526,17 +1685,12 @@ class PipelineEngine:
             raise ValueError("Artifact not found")
 
         project_id = artifact.project_id
-        config = (
-            self.db.query(PipelineConfig)
-            .filter_by(project_id=project_id)
-            .first()
-        )
+        config = self.db.query(PipelineConfig).filter_by(project_id=project_id).first()
         if not config:
             raise ValueError("Pipeline config not found")
 
         stage_def = next(
-            (s for s in config.stages
-             if s.output_artifact_type == artifact.artifact_type.value),
+            (s for s in config.stages if s.output_artifact_type == artifact.artifact_type.value),
             None,
         )
         if not stage_def:
@@ -1546,14 +1700,16 @@ class PipelineEngine:
 
         # Store the new feedback as an ArtifactComment
         if feedback and feedback.strip():
-            self.db.add(ArtifactComment(
-                artifact_id=artifact_id,
-                project_id=project_id,
-                author_id=user_id,
-                content=feedback.strip(),
-                comment_type="feedback",
-                artifact_version=artifact.version,
-            ))
+            self.db.add(
+                ArtifactComment(
+                    artifact_id=artifact_id,
+                    project_id=project_id,
+                    author_id=user_id,
+                    content=feedback.strip(),
+                    comment_type="feedback",
+                    artifact_version=artifact.version,
+                )
+            )
             self.db.flush()
 
         # Build accumulated feedback from all feedback comments
@@ -1577,18 +1733,28 @@ class PipelineEngine:
         # Commit so other sessions (DAG endpoint) can see the GENERATING/RUNNING status
         self.db.commit()
 
-        logger.info("Revising artifact %s (stage=%s, component=%s) with feedback",
-                     artifact_id, stage_def.stage_key, artifact.component_key)
+        logger.info(
+            "Revising artifact %s (stage=%s, component=%s) with feedback",
+            artifact_id,
+            stage_def.stage_key,
+            artifact.component_key,
+        )
 
-        await ws_manager.broadcast(project_id, {
-            "type": "stage_started",
-            "stage_key": stage_def.stage_key,
-            "component_key": artifact.component_key,
-        })
+        await ws_manager.broadcast(
+            project_id,
+            {
+                "type": "stage_started",
+                "stage_key": stage_def.stage_key,
+                "component_key": artifact.component_key,
+            },
+        )
 
         try:
             content, new_artifact_id = await generate(
-                stage_def, input_artifacts, artifact.component_key, self.db,
+                stage_def,
+                input_artifacts,
+                artifact.component_key,
+                self.db,
                 human_notes=accumulated,
             )
             execution.artifact_id = new_artifact_id
@@ -1607,18 +1773,23 @@ class PipelineEngine:
                 self.db.add(divider)
 
             if stage_def.ai_review_enabled:
-                await ws_manager.broadcast(project_id, {
-                    "type": "stage_progress",
-                    "stage_key": stage_def.stage_key,
-                    "component_key": artifact.component_key,
-                    "step": "ai_reviewing",
-                    "message": f"AI reviewing {stage_def.display_name}...",
-                })
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "stage_progress",
+                        "stage_key": stage_def.stage_key,
+                        "component_key": artifact.component_key,
+                        "step": "ai_reviewing",
+                        "message": f"AI reviewing {stage_def.display_name}...",
+                    },
+                )
                 execution.status = StageStatus.AI_REVIEW
                 self.db.flush()
 
                 ai_feedback = await ai_review(
-                    stage_def, content, input_artifacts,
+                    stage_def,
+                    content,
+                    input_artifacts,
                     review_prompt_overrides=config.review_prompt_overrides,
                 )
                 updated_artifact = self.db.get(Artifact, new_artifact_id)
@@ -1633,12 +1804,15 @@ class PipelineEngine:
 
             self.db.commit()
 
-            await ws_manager.broadcast(project_id, {
-                "type": "stage_awaiting_review",
-                "stage_key": stage_def.stage_key,
-                "component_key": artifact.component_key,
-                "artifact_id": new_artifact_id,
-            })
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "stage_awaiting_review",
+                    "stage_key": stage_def.stage_key,
+                    "component_key": artifact.component_key,
+                    "artifact_id": new_artifact_id,
+                },
+            )
 
         except Exception as e:
             logger.exception("Revision failed for artifact %s: %s", artifact_id, e)
@@ -1648,29 +1822,24 @@ class PipelineEngine:
             artifact.status = ArtifactStatus.APPROVED
             self.db.commit()
 
-            await ws_manager.broadcast(project_id, {
-                "type": "stage_failed",
-                "stage_key": stage_def.stage_key,
-                "component_key": artifact.component_key,
-                "error": str(e),
-            })
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "stage_failed",
+                    "stage_key": stage_def.stage_key,
+                    "component_key": artifact.component_key,
+                    "error": str(e),
+                },
+            )
 
     def _lookup_pipeline_run(self, run_id: str) -> PipelineRun | None:
         """Look up a PipelineRun by its run_id."""
-        return (
-            self.db.query(PipelineRun)
-            .filter_by(run_id=run_id)
-            .first()
-        )
+        return self.db.query(PipelineRun).filter_by(run_id=run_id).first()
 
     async def retry_stage(self, execution: StageExecution):
         """Re-run a failed stage execution."""
         project_id = execution.project_id
-        config = (
-            self.db.query(PipelineConfig)
-            .filter_by(project_id=project_id)
-            .first()
-        )
+        config = self.db.query(PipelineConfig).filter_by(project_id=project_id).first()
         if not config:
             raise ValueError("Pipeline config not found")
 
@@ -1686,7 +1855,10 @@ class PipelineEngine:
         # Reset any artifact stuck in generating/ai_reviewing from a previous failed attempt
         if execution.artifact_id:
             artifact = self.db.get(Artifact, execution.artifact_id)
-            if artifact and artifact.status in (ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING):
+            if artifact and artifact.status in (
+                ArtifactStatus.GENERATING,
+                ArtifactStatus.AI_REVIEWING,
+            ):
                 artifact.status = ArtifactStatus.PENDING
 
         input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
@@ -1696,8 +1868,14 @@ class PipelineEngine:
         self.db.flush()
 
         await self._run_stage(
-            project_id, stage_def, input_artifacts, execution.component_key, execution,
-            execution.run_id or str(uuid.uuid4()), config=config, pipeline_run=pipeline_run,
+            project_id,
+            stage_def,
+            input_artifacts,
+            execution.component_key,
+            execution,
+            execution.run_id or str(uuid.uuid4()),
+            config=config,
+            pipeline_run=pipeline_run,
         )
 
     async def _run_stage(
@@ -1713,44 +1891,59 @@ class PipelineEngine:
         pipeline_run: PipelineRun | None = None,
     ):
         """Run a single stage (generate -> ai_review -> set status)."""
-        logger.info("_run_stage: stage=%s component=%s execution_id=%s human_notes=%s",
-                     stage_def.stage_key, component_key, execution.id,
-                     f"{len(human_notes)} chars" if human_notes else "None")
+        logger.info(
+            "_run_stage: stage=%s component=%s execution_id=%s human_notes=%s",
+            stage_def.stage_key,
+            component_key,
+            execution.id,
+            f"{len(human_notes)} chars" if human_notes else "None",
+        )
         logger.info("  input_artifacts keys: %s", list(input_artifacts.keys()))
 
         # Commit the RUNNING execution so other sessions (DAG endpoint) can see it
         self.db.commit()
 
         try:
-            await ws_manager.broadcast(project_id, {
-                "type": "stage_progress",
-                "stage_key": stage_def.stage_key,
-                "component_key": component_key,
-                "step": "generating",
-                "message": f"Generating {stage_def.display_name}...",
-            })
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "stage_progress",
+                    "stage_key": stage_def.stage_key,
+                    "component_key": component_key,
+                    "step": "generating",
+                    "message": f"Generating {stage_def.display_name}...",
+                },
+            )
 
             content, artifact_id = await generate(
-                stage_def, input_artifacts, component_key, self.db,
+                stage_def,
+                input_artifacts,
+                component_key,
+                self.db,
                 human_notes=human_notes,
             )
             execution.artifact_id = artifact_id
 
             # AI Review
             if stage_def.ai_review_enabled:
-                await ws_manager.broadcast(project_id, {
-                    "type": "stage_progress",
-                    "stage_key": stage_def.stage_key,
-                    "component_key": component_key,
-                    "step": "ai_reviewing",
-                    "message": f"AI reviewing {stage_def.display_name}...",
-                })
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "stage_progress",
+                        "stage_key": stage_def.stage_key,
+                        "component_key": component_key,
+                        "step": "ai_reviewing",
+                        "message": f"AI reviewing {stage_def.display_name}...",
+                    },
+                )
 
                 execution.status = StageStatus.AI_REVIEW
                 self.db.flush()
 
                 feedback = await ai_review(
-                    stage_def, content, input_artifacts,
+                    stage_def,
+                    content,
+                    input_artifacts,
                     review_prompt_overrides=stage_def.pipeline_config.review_prompt_overrides,
                 )
                 artifact = self.db.get(Artifact, artifact_id)
@@ -1762,16 +1955,25 @@ class PipelineEngine:
                 ai_loops = pipeline_run.ai_loops if pipeline_run else 1
                 if feedback and ai_loops > 1:
                     for loop_i in range(1, ai_loops):
-                        await ws_manager.broadcast(project_id, {
-                            "type": "stage_progress",
-                            "stage_key": stage_def.stage_key,
-                            "component_key": component_key,
-                            "step": "self_improvement",
-                            "message": f"Self-improvement loop {loop_i + 1}/{ai_loops} for {stage_def.display_name}...",
-                        })
+                        await ws_manager.broadcast(
+                            project_id,
+                            {
+                                "type": "stage_progress",
+                                "stage_key": stage_def.stage_key,
+                                "component_key": component_key,
+                                "step": "self_improvement",
+                                "message": (
+                                    f"Self-improvement loop {loop_i + 1}/{ai_loops}"
+                                    f" for {stage_def.display_name}..."
+                                ),
+                            },
+                        )
 
                         content, artifact_id = await generate(
-                            stage_def, input_artifacts, component_key, self.db,
+                            stage_def,
+                            input_artifacts,
+                            component_key,
+                            self.db,
                             feedback=feedback,
                             human_notes=human_notes,
                         )
@@ -1779,7 +1981,9 @@ class PipelineEngine:
 
                         # Re-review
                         feedback = await ai_review(
-                            stage_def, content, input_artifacts,
+                            stage_def,
+                            content,
+                            input_artifacts,
                             review_prompt_overrides=stage_def.pipeline_config.review_prompt_overrides,
                         )
                         artifact = self.db.get(Artifact, artifact_id)
@@ -1800,17 +2004,22 @@ class PipelineEngine:
 
             self.db.commit()
 
-            await ws_manager.broadcast(project_id, {
-                "type": "stage_awaiting_review"
-                if stage_def.human_review_enabled
-                else "stage_completed",
-                "stage_key": stage_def.stage_key,
-                "component_key": component_key,
-                "artifact_id": artifact_id,
-            })
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "stage_awaiting_review"
+                    if stage_def.human_review_enabled
+                    else "stage_completed",
+                    "stage_key": stage_def.stage_key,
+                    "component_key": component_key,
+                    "artifact_id": artifact_id,
+                },
+            )
 
         except Exception as e:
-            logger.exception("Stage %s failed for component=%s: %s", stage_def.stage_key, component_key, e)
+            logger.exception(
+                "Stage %s failed for component=%s: %s", stage_def.stage_key, component_key, e
+            )
             execution.status = StageStatus.FAILED
             execution.error_message = str(e)
             execution.completed_at = datetime.utcnow()
@@ -1819,18 +2028,22 @@ class PipelineEngine:
             if execution.artifact_id:
                 stuck_artifact = self.db.get(Artifact, execution.artifact_id)
                 if stuck_artifact and stuck_artifact.status in (
-                    ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING
+                    ArtifactStatus.GENERATING,
+                    ArtifactStatus.AI_REVIEWING,
                 ):
                     stuck_artifact.status = ArtifactStatus.PENDING
 
             self.db.commit()
 
-            await ws_manager.broadcast(project_id, {
-                "type": "stage_failed",
-                "stage_key": stage_def.stage_key,
-                "component_key": component_key,
-                "error": str(e),
-            })
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "stage_failed",
+                    "stage_key": stage_def.stage_key,
+                    "component_key": component_key,
+                    "error": str(e),
+                },
+            )
 
     def _get_feedback_notes(self, artifact_id: str) -> str | None:
         """Build accumulated feedback from ArtifactComment records (feedback only).
@@ -1848,7 +2061,10 @@ class PipelineEngine:
         return "\n\n---\n\n".join(f.content for f in feedbacks)
 
     def _get_rejected_notes(
-        self, project_id: str, stage_def: StageDefinition, component_key: str | None = None,
+        self,
+        project_id: str,
+        stage_def: StageDefinition,
+        component_key: str | None = None,
     ) -> str | None:
         """If this stage has a rejected/stale artifact with feedback comments, return them.
 
@@ -1923,10 +2139,14 @@ class PipelineEngine:
                         artifact_type=artifact_type,
                         component_key=filter_key,
                     )
-                    .filter(Artifact.status.in_([
-                        ArtifactStatus.APPROVED,
-                        ArtifactStatus.AWAITING_REVIEW,
-                    ]))
+                    .filter(
+                        Artifact.status.in_(
+                            [
+                                ArtifactStatus.APPROVED,
+                                ArtifactStatus.AWAITING_REVIEW,
+                            ]
+                        )
+                    )
                     .first()
                 )
                 if artifact and artifact.content:
@@ -1936,10 +2156,14 @@ class PipelineEngine:
                 artifacts = (
                     self.db.query(Artifact)
                     .filter_by(project_id=project_id, artifact_type=artifact_type)
-                    .filter(Artifact.status.in_([
-                        ArtifactStatus.APPROVED,
-                        ArtifactStatus.AWAITING_REVIEW,
-                    ]))
+                    .filter(
+                        Artifact.status.in_(
+                            [
+                                ArtifactStatus.APPROVED,
+                                ArtifactStatus.AWAITING_REVIEW,
+                            ]
+                        )
+                    )
                     .all()
                 )
                 if len(artifacts) == 1:
@@ -1970,10 +2194,14 @@ class PipelineEngine:
                             artifact_type=ArtifactType.COMPONENT_ARCHITECTURE,
                             component_key=dep_key,
                         )
-                        .filter(Artifact.status.in_([
-                            ArtifactStatus.APPROVED,
-                            ArtifactStatus.AWAITING_REVIEW,
-                        ]))
+                        .filter(
+                            Artifact.status.in_(
+                                [
+                                    ArtifactStatus.APPROVED,
+                                    ArtifactStatus.AWAITING_REVIEW,
+                                ]
+                            )
+                        )
                         .first()
                     )
                     if dep_art and dep_art.content:
@@ -2003,10 +2231,14 @@ class PipelineEngine:
                             artifact_type=ArtifactType.SUB_COMPONENT_ARCHITECTURE,
                             component_key=full_dep_key,
                         )
-                        .filter(Artifact.status.in_([
-                            ArtifactStatus.APPROVED,
-                            ArtifactStatus.AWAITING_REVIEW,
-                        ]))
+                        .filter(
+                            Artifact.status.in_(
+                                [
+                                    ArtifactStatus.APPROVED,
+                                    ArtifactStatus.AWAITING_REVIEW,
+                                ]
+                            )
+                        )
                         .first()
                     )
                     if dep_art and dep_art.content:
@@ -2016,9 +2248,7 @@ class PipelineEngine:
 
         return inputs
 
-    def _get_artifact_content(
-        self, project_id: str, artifact_type: ArtifactType
-    ) -> str | None:
+    def _get_artifact_content(self, project_id: str, artifact_type: ArtifactType) -> str | None:
         artifact = (
             self.db.query(Artifact)
             .filter_by(project_id=project_id, artifact_type=artifact_type)
@@ -2030,11 +2260,15 @@ class PipelineEngine:
 # Helper functions
 
 _COMPONENT_STAGES = {
-    "component_requirements", "component_architectures", "component_plans",
+    "component_requirements",
+    "component_architectures",
+    "component_plans",
     "extract_sub_components",
 }
 _SUB_COMPONENT_STAGES = {
-    "sub_component_requirements", "sub_component_architectures", "sub_component_plans",
+    "sub_component_requirements",
+    "sub_component_architectures",
+    "sub_component_plans",
 }
 
 

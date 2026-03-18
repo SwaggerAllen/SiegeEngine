@@ -2,10 +2,18 @@ from backend.pipeline.prompts.base import PromptTemplate
 
 
 class ExtractComponentsPrompt(PromptTemplate):
-
-    def build(self, input_artifacts, component_key=None, feedback=None, human_notes=None, prompt_config=None):
+    def build(
+        self,
+        input_artifacts,
+        component_key=None,
+        feedback=None,
+        human_notes=None,
+        prompt_config=None,
+    ):
         if prompt_config:
-            return self._build_from_config(input_artifacts, component_key, feedback, human_notes, prompt_config)
+            return self._build_from_config(
+                input_artifacts, component_key, feedback, human_notes, prompt_config
+            )
 
         system_reqs = input_artifacts.get("system_requirements", "")
         system_arch = input_artifacts.get("system_architecture", "")

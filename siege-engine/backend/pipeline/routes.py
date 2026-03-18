@@ -4,16 +4,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from jose import JWTError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-logger = logging.getLogger(__name__)
-
-from backend.auth.routes import get_current_user, _require_writer
+from backend.auth.routes import _require_writer, get_current_user
 from backend.auth.service import decode_token
-from backend.dag.service import get_regeneration_order, get_stale_artifacts
+from backend.dag.service import get_regeneration_order
 from backend.database import get_db
-from sqlalchemy import func
-
 from backend.models import (
     Artifact,
     ArtifactStatus,
@@ -29,16 +26,14 @@ from backend.models import (
     StopPoint,
     User,
 )
+from backend.pipeline.defaults import DEFAULT_STAGES
 from backend.pipeline.engine import PipelineEngine
 from backend.pipeline.prompts import PROMPT_REGISTRY
-from backend.pipeline.defaults import DEFAULT_STAGES
 from backend.pipeline.schemas import (
     CancelRequest,
     PipelineConfigResponse,
     PipelineConfigUpdate,
-    PipelineRunResponse,
     PipelineStartRequest,
-    PromptConfigResponse,
     PromptConfigUpdate,
     PromptPreviewRequest,
     RegenerateRequest,
@@ -48,9 +43,10 @@ from backend.pipeline.schemas import (
     ReviseRequest,
     StageDefinitionResponse,
     StageDefinitionUpdate,
-    StageExecutionResponse,
 )
 from backend.websocket.manager import ws_manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -139,9 +135,7 @@ async def start_pipeline(
 
     # Compute next sequential run number for this project
     max_num = (
-        db.query(func.max(PipelineRun.run_number))
-        .filter_by(project_id=project_id)
-        .scalar()
+        db.query(func.max(PipelineRun.run_number)).filter_by(project_id=project_id).scalar()
     ) or 0
     run_number = max_num + 1
 
@@ -158,7 +152,11 @@ async def start_pipeline(
 
     logger.info(
         "POST /start: project_id=%s, run_number=%d, human_review=%s, ai_loops=%d, stop_point=%s",
-        project_id, run_number, req.human_review, req.ai_loops, req.stop_point,
+        project_id,
+        run_number,
+        req.human_review,
+        req.ai_loops,
+        req.stop_point,
     )
 
     pipeline_run_id = pipeline_run.id
@@ -216,9 +214,7 @@ async def resume_run(
 
     # Compute next run number
     max_num = (
-        db.query(func.max(PipelineRun.run_number))
-        .filter_by(project_id=project_id)
-        .scalar()
+        db.query(func.max(PipelineRun.run_number)).filter_by(project_id=project_id).scalar()
     ) or 0
     run_number = max_num + 1
 
@@ -235,7 +231,10 @@ async def resume_run(
 
     logger.info(
         "POST /resume-run: project_id=%s, run_number=%d, resuming from run #%d (run_id=%s)",
-        project_id, run_number, prev_run.run_number, prev_run.run_id,
+        project_id,
+        run_number,
+        prev_run.run_number,
+        prev_run.run_id,
     )
 
     pipeline_run_id = pipeline_run.id
@@ -282,7 +281,10 @@ async def resume_stage(
         try:
             engine = PipelineEngine(bg_db)
             await engine.resume_stage(
-                req.execution_id, req.action, req.notes, req.edited_content,
+                req.execution_id,
+                req.action,
+                req.notes,
+                req.edited_content,
                 user_id=user_id,
             )
         except Exception:
@@ -337,7 +339,10 @@ async def resolve_stale(
         try:
             engine = PipelineEngine(bg_db)
             await engine.resolve_stale(
-                req.artifact_id, req.action, req.notes, req.edited_content,
+                req.artifact_id,
+                req.action,
+                req.notes,
+                req.edited_content,
                 user_id=user_id,
             )
         except Exception:
@@ -372,7 +377,7 @@ def prompt_preview(
     _user: User = Depends(get_current_user),
 ):
     """Return the full interpolated prompt that would be sent to the LLM."""
-    from backend.models import Artifact, ArtifactComment
+    from backend.models import Artifact
     from backend.pipeline.nodes.generate import build_prompt_messages
 
     artifact = db.get(Artifact, req.artifact_id)
@@ -408,8 +413,10 @@ def prompt_preview(
         effective_notes = feedback_notes
 
     result = build_prompt_messages(
-        stage_def, input_artifacts, artifact.component_key,
-        feedback=artifact.ai_review_feedback if hasattr(artifact, 'ai_review_feedback') else None,
+        stage_def,
+        input_artifacts,
+        artifact.component_key,
+        feedback=artifact.ai_review_feedback if hasattr(artifact, "ai_review_feedback") else None,
         human_notes=effective_notes,
     )
 
@@ -461,7 +468,11 @@ async def cancel_pipeline(
     running = (
         db.query(StageExecution)
         .filter_by(project_id=project_id)
-        .filter(StageExecution.status.in_([StageStatus.RUNNING, StageStatus.PENDING, StageStatus.AI_REVIEW]))
+        .filter(
+            StageExecution.status.in_(
+                [StageStatus.RUNNING, StageStatus.PENDING, StageStatus.AI_REVIEW]
+            )
+        )
         .all()
     )
     for e in running:
@@ -497,9 +508,9 @@ async def cancel_pipeline(
         if not project.github_repo_slug:
             raise HTTPException(400, "Project has no GitHub repo configured")
 
-        from backend.models import GitHubCredential
         from backend.git_manager.service import git_manager
         from backend.github.service import GitHubService
+        from backend.models import GitHubCredential
 
         cred = db.query(GitHubCredential).filter_by(user_id=user.id).first()
         if not cred:
@@ -508,7 +519,11 @@ async def cancel_pipeline(
         run_label = active_runs[0].run_number if active_runs else "cancelled"
         branch = f"siege-engine/{project.name.lower().replace(' ', '-')}"
         pr_title = req.pr_title or f"Cancelled run #{run_label} — review before continuing"
-        pr_body = req.pr_body or "This PR was created when a pipeline run was cancelled. Merge or close it to unblock new runs."
+        pr_body = (
+            req.pr_body
+            or "This PR was created when a pipeline run was cancelled."
+            " Merge or close it to unblock new runs."
+        )
 
         auth_url = None
         if project.remote_url and project.remote_url.startswith("https://"):
@@ -519,7 +534,11 @@ async def cancel_pipeline(
 
         gh = GitHubService(cred.access_token)
         pr = await gh.create_pr(
-            project.github_repo_slug, pr_title, pr_body, branch, req.base_branch,
+            project.github_repo_slug,
+            pr_title,
+            pr_body,
+            branch,
+            req.base_branch,
         )
 
         project.blocking_pr_url = pr.get("html_url")
@@ -567,8 +586,8 @@ async def check_blocking_pr(
         db.commit()
         return {"blocking": False}
 
-    from backend.models import GitHubCredential
     from backend.github.service import GitHubService
+    from backend.models import GitHubCredential
 
     cred = db.query(GitHubCredential).filter_by(user_id=user.id).first()
     if not cred:
@@ -649,9 +668,7 @@ def get_run_state(
 ):
     """Return the siege-state.json manifest for a specific completed run."""
     pipeline_run = (
-        db.query(PipelineRun)
-        .filter_by(project_id=project_id, run_number=run_number)
-        .first()
+        db.query(PipelineRun).filter_by(project_id=project_id, run_number=run_number).first()
     )
     if not pipeline_run:
         raise HTTPException(404, f"Run #{run_number} not found")
@@ -659,8 +676,9 @@ def get_run_state(
         raise HTTPException(404, f"Run #{run_number} has no checkpoint commit")
 
     try:
-        from backend.git_manager.service import git_manager
         import json
+
+        from backend.git_manager.service import git_manager
 
         content = git_manager.get_file_at_commit(
             project_id, "siege-state.json", pipeline_run.git_commit_sha
@@ -751,40 +769,44 @@ def list_prompt_configs(
         pc = stage_def.prompt_config
         prompt_class = PROMPT_REGISTRY.get(stage_def.prompt_template_key)
         if pc:
-            result.append({
-                "stage_key": stage_def.stage_key,
-                "display_name": stage_def.display_name,
-                "has_custom_config": True,
-                "config": {
-                    "id": pc.id,
-                    "stage_definition_id": pc.stage_definition_id,
-                    "system_message": pc.system_message,
-                    "output_format_instructions": pc.output_format_instructions,
-                    "context_template": pc.context_template,
-                    "revision_instructions": pc.revision_instructions,
-                    "model": pc.model,
-                    "temperature": pc.temperature,
-                    "max_tokens": pc.max_tokens,
-                },
-            })
+            result.append(
+                {
+                    "stage_key": stage_def.stage_key,
+                    "display_name": stage_def.display_name,
+                    "has_custom_config": True,
+                    "config": {
+                        "id": pc.id,
+                        "stage_definition_id": pc.stage_definition_id,
+                        "system_message": pc.system_message,
+                        "output_format_instructions": pc.output_format_instructions,
+                        "context_template": pc.context_template,
+                        "revision_instructions": pc.revision_instructions,
+                        "model": pc.model,
+                        "temperature": pc.temperature,
+                        "max_tokens": pc.max_tokens,
+                    },
+                }
+            )
         elif prompt_class:
             tmpl = prompt_class()
-            result.append({
-                "stage_key": stage_def.stage_key,
-                "display_name": stage_def.display_name,
-                "has_custom_config": False,
-                "config": {
-                    "id": None,
-                    "stage_definition_id": stage_def.id,
-                    "system_message": tmpl.default_system_message,
-                    "output_format_instructions": tmpl.default_output_format,
-                    "context_template": tmpl.default_context_template,
-                    "revision_instructions": tmpl.default_revision_instructions,
-                    "model": None,
-                    "temperature": None,
-                    "max_tokens": 8192,
-                },
-            })
+            result.append(
+                {
+                    "stage_key": stage_def.stage_key,
+                    "display_name": stage_def.display_name,
+                    "has_custom_config": False,
+                    "config": {
+                        "id": None,
+                        "stage_definition_id": stage_def.id,
+                        "system_message": tmpl.default_system_message,
+                        "output_format_instructions": tmpl.default_output_format,
+                        "context_template": tmpl.default_context_template,
+                        "revision_instructions": tmpl.default_revision_instructions,
+                        "model": None,
+                        "temperature": None,
+                        "max_tokens": 8192,
+                    },
+                }
+            )
 
     # Append the AI Review prompt entry
     ai_review_prompt_class = PROMPT_REGISTRY.get("ai_review")
@@ -792,39 +814,49 @@ def list_prompt_configs(
         tmpl = ai_review_prompt_class()
         overrides = config.review_prompt_overrides
         if overrides:
-            result.append({
-                "stage_key": "__ai_review__",
-                "display_name": "AI Review",
-                "has_custom_config": True,
-                "config": {
-                    "id": None,
-                    "stage_definition_id": None,
-                    "system_message": overrides.get("system_message", tmpl.default_system_message),
-                    "output_format_instructions": overrides.get("output_format_instructions", tmpl.default_output_format),
-                    "context_template": overrides.get("context_template", tmpl.default_context_template),
-                    "revision_instructions": "",
-                    "model": overrides.get("model"),
-                    "temperature": overrides.get("temperature"),
-                    "max_tokens": overrides.get("max_tokens", 8192),
-                },
-            })
+            result.append(
+                {
+                    "stage_key": "__ai_review__",
+                    "display_name": "AI Review",
+                    "has_custom_config": True,
+                    "config": {
+                        "id": None,
+                        "stage_definition_id": None,
+                        "system_message": overrides.get(
+                            "system_message", tmpl.default_system_message
+                        ),
+                        "output_format_instructions": overrides.get(
+                            "output_format_instructions", tmpl.default_output_format
+                        ),
+                        "context_template": overrides.get(
+                            "context_template", tmpl.default_context_template
+                        ),
+                        "revision_instructions": "",
+                        "model": overrides.get("model"),
+                        "temperature": overrides.get("temperature"),
+                        "max_tokens": overrides.get("max_tokens", 8192),
+                    },
+                }
+            )
         else:
-            result.append({
-                "stage_key": "__ai_review__",
-                "display_name": "AI Review",
-                "has_custom_config": False,
-                "config": {
-                    "id": None,
-                    "stage_definition_id": None,
-                    "system_message": tmpl.default_system_message,
-                    "output_format_instructions": tmpl.default_output_format,
-                    "context_template": tmpl.default_context_template,
-                    "revision_instructions": "",
-                    "model": None,
-                    "temperature": None,
-                    "max_tokens": 8192,
-                },
-            })
+            result.append(
+                {
+                    "stage_key": "__ai_review__",
+                    "display_name": "AI Review",
+                    "has_custom_config": False,
+                    "config": {
+                        "id": None,
+                        "stage_definition_id": None,
+                        "system_message": tmpl.default_system_message,
+                        "output_format_instructions": tmpl.default_output_format,
+                        "context_template": tmpl.default_context_template,
+                        "revision_instructions": "",
+                        "model": None,
+                        "temperature": None,
+                        "max_tokens": 8192,
+                    },
+                }
+            )
 
     return result
 
@@ -847,7 +879,9 @@ def get_prompt_config(
             "id": None,
             "stage_definition_id": None,
             "system_message": overrides.get("system_message", tmpl.default_system_message),
-            "output_format_instructions": overrides.get("output_format_instructions", tmpl.default_output_format),
+            "output_format_instructions": overrides.get(
+                "output_format_instructions", tmpl.default_output_format
+            ),
             "context_template": overrides.get("context_template", tmpl.default_context_template),
             "revision_instructions": "",
             "model": overrides.get("model"),
@@ -921,7 +955,9 @@ def update_prompt_config(
             "id": None,
             "stage_definition_id": None,
             "system_message": overrides.get("system_message", tmpl.default_system_message),
-            "output_format_instructions": overrides.get("output_format_instructions", tmpl.default_output_format),
+            "output_format_instructions": overrides.get(
+                "output_format_instructions", tmpl.default_output_format
+            ),
             "context_template": overrides.get("context_template", tmpl.default_context_template),
             "revision_instructions": "",
             "model": overrides.get("model"),
@@ -1050,12 +1086,15 @@ async def cancel_stage(
 
     db.commit()
 
-    await ws_manager.broadcast(project_id, {
-        "type": "stage_failed",
-        "stage_key": execution.stage_key,
-        "component_key": execution.component_key,
-        "error": "Cancelled by user",
-    })
+    await ws_manager.broadcast(
+        project_id,
+        {
+            "type": "stage_failed",
+            "stage_key": execution.stage_key,
+            "component_key": execution.component_key,
+            "error": "Cancelled by user",
+        },
+    )
 
     return {"status": "cancelled", "execution_id": execution_id}
 
@@ -1098,12 +1137,15 @@ async def force_restart_stage(
     db.flush()
 
     # Broadcast so the UI updates immediately
-    await ws_manager.broadcast(project_id, {
-        "type": "stage_failed",
-        "stage_key": execution.stage_key,
-        "component_key": execution.component_key,
-        "error": "Force-restarted by user",
-    })
+    await ws_manager.broadcast(
+        project_id,
+        {
+            "type": "stage_failed",
+            "stage_key": execution.stage_key,
+            "component_key": execution.component_key,
+            "error": "Force-restarted by user",
+        },
+    )
 
     # Now retry using the existing retry logic
     engine = PipelineEngine(db)

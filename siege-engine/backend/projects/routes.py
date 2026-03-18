@@ -1,8 +1,9 @@
-from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from backend.auth.routes import get_current_user, _require_writer
+from backend.auth.routes import _require_writer, get_current_user
+from backend.dag.service import propagate_staleness
 from backend.database import get_db
 from backend.git_manager.service import git_manager
 from backend.github.service import GitHubService
@@ -16,7 +17,6 @@ from backend.projects.schemas import (
     ProjectResponse,
     ProjectUpdate,
 )
-from backend.dag.service import propagate_staleness
 
 router = APIRouter()
 
@@ -164,7 +164,7 @@ def update_artifact(
         artifact.git_commit_sha = sha
 
     # Propagate staleness
-    stale_ids = propagate_staleness(db, artifact_id)
+    propagate_staleness(db, artifact_id)
 
     db.commit()
     db.refresh(artifact)
@@ -222,9 +222,7 @@ def get_artifact_version(
     if not artifact.file_path:
         raise HTTPException(400, "Artifact has no file path")
 
-    content = git_manager.get_file_at_version(
-        artifact.project_id, artifact.file_path, commit_sha
-    )
+    content = git_manager.get_file_at_version(artifact.project_id, artifact.file_path, commit_sha)
     if content is None:
         raise HTTPException(404, "Version not found")
     return {"content": content, "sha": commit_sha}

@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down — checkpointing SQLite WAL...")
     try:
         from sqlalchemy import text as _text
+
         with engine.begin() as conn:
             conn.execute(_text("PRAGMA wal_checkpoint(TRUNCATE)"))
         engine.dispose()
@@ -64,14 +65,17 @@ async def lifespan(app: FastAPI):
 
 def _log_db_diagnostics():
     """Log database file info at startup to help debug persistence issues."""
-    from sqlalchemy import text as _text
 
     db_url = settings.database_url
     logger.info("Database URL: %s", db_url)
 
     # Extract file path from sqlite URL
     if db_url.startswith("sqlite:///"):
-        db_path = db_url.replace("sqlite:///", "/", 1) if db_url.startswith("sqlite:////") else db_url.replace("sqlite:///", "", 1)
+        db_path = (
+            db_url.replace("sqlite:///", "/", 1)
+            if db_url.startswith("sqlite:////")
+            else db_url.replace("sqlite:///", "", 1)
+        )
         db_file = Path(db_path)
         if db_file.exists():
             size_kb = db_file.stat().st_size / 1024
@@ -83,6 +87,7 @@ def _log_db_diagnostics():
     db = SessionLocal()
     try:
         from backend.models import Project, User
+
         project_count = db.query(Project).count()
         user_count = db.query(User).count()
         logger.info("Database contains %d projects, %d users", project_count, user_count)
@@ -118,6 +123,7 @@ def _recover_crashed_executions():
 def _migrate_feedback_to_comments():
     """One-time migration: move human_review_notes into ArtifactComment records."""
     import re
+
     from backend.models import Artifact, ArtifactComment
 
     db = SessionLocal()
@@ -137,7 +143,9 @@ def _migrate_feedback_to_comments():
             raw = artifact.human_review_notes
             logger.info(
                 "  Artifact %s (v%d): human_review_notes is %d chars",
-                artifact.id, artifact.version, len(raw),
+                artifact.id,
+                artifact.version,
+                len(raw),
             )
 
             # Split accumulated notes by --- dividers.
@@ -149,7 +157,8 @@ def _migrate_feedback_to_comments():
             ]
             logger.info(
                 "  Split into %d entries for artifact %s",
-                len(entries), artifact.id,
+                len(entries),
+                artifact.id,
             )
 
             for entry in entries:
@@ -197,12 +206,12 @@ app.add_middleware(
 
 # API routes
 from backend.auth.routes import router as auth_router  # noqa: E402
-from backend.projects.routes import router as project_router  # noqa: E402
-from backend.pipeline.routes import router as pipeline_router  # noqa: E402
-from backend.dag.routes import router as dag_router  # noqa: E402
-from backend.github.oauth import router as github_router  # noqa: E402
 from backend.chat.routes import router as chat_router  # noqa: E402
 from backend.comments.routes import router as comments_router  # noqa: E402
+from backend.dag.routes import router as dag_router  # noqa: E402
+from backend.github.oauth import router as github_router  # noqa: E402
+from backend.pipeline.routes import router as pipeline_router  # noqa: E402
+from backend.projects.routes import router as project_router  # noqa: E402
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(project_router, prefix="/api/projects", tags=["projects"])

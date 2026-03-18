@@ -52,8 +52,13 @@ class CLIManager:
         sem = _get_semaphore()
         async with sem:
             return await self._invoke(
-                prompt, system_prompt, working_dir, model,
-                tools, timeout, max_budget_usd,
+                prompt,
+                system_prompt,
+                working_dir,
+                model,
+                tools,
+                timeout,
+                max_budget_usd,
             )
 
     async def _invoke(
@@ -91,8 +96,13 @@ class CLIManager:
 
         logger.info(
             "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds, api_key_len=%d, api_key=%s...%s",
-            model or "default", tools or "default", working_dir or ".", timeout,
-            len(api_key), api_key[:12] if api_key else "MISSING", api_key[-6:] if api_key else "",
+            model or "default",
+            tools or "default",
+            working_dir or ".",
+            timeout,
+            len(api_key),
+            api_key[:12] if api_key else "MISSING",
+            api_key[-6:] if api_key else "",
         )
 
         proc = await asyncio.create_subprocess_exec(
@@ -106,7 +116,8 @@ class CLIManager:
 
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=prompt.encode("utf-8")), timeout=timeout,
+                proc.communicate(input=prompt.encode("utf-8")),
+                timeout=timeout,
             )
         except asyncio.TimeoutError:
             proc.kill()

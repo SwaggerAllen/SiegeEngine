@@ -1,5 +1,5 @@
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from backend.config import settings
 
@@ -35,37 +35,33 @@ def _migrate_missing_columns():
         columns = [c["name"] for c in inspector.get_columns("pipeline_configs")]
         if "review_prompt_overrides" not in columns:
             with engine.begin() as conn:
-                conn.execute(text(
-                    "ALTER TABLE pipeline_configs ADD COLUMN review_prompt_overrides JSON"
-                ))
+                conn.execute(
+                    text("ALTER TABLE pipeline_configs ADD COLUMN review_prompt_overrides JSON")
+                )
 
     # InviteLink.role
     if inspector.has_table("invite_links"):
         columns = [c["name"] for c in inspector.get_columns("invite_links")]
         if "role" not in columns:
             with engine.begin() as conn:
-                conn.execute(text(
-                    "ALTER TABLE invite_links ADD COLUMN role VARCHAR(20) DEFAULT 'member'"
-                ))
+                conn.execute(
+                    text("ALTER TABLE invite_links ADD COLUMN role VARCHAR(20) DEFAULT 'member'")
+                )
 
     # Project.auto_push_enabled
     if inspector.has_table("projects"):
         columns = [c["name"] for c in inspector.get_columns("projects")]
         if "auto_push_enabled" not in columns:
             with engine.begin() as conn:
-                conn.execute(text(
-                    "ALTER TABLE projects ADD COLUMN auto_push_enabled BOOLEAN DEFAULT 0"
-                ))
+                conn.execute(
+                    text("ALTER TABLE projects ADD COLUMN auto_push_enabled BOOLEAN DEFAULT 0")
+                )
         if "blocking_pr_url" not in columns:
             with engine.begin() as conn:
-                conn.execute(text(
-                    "ALTER TABLE projects ADD COLUMN blocking_pr_url VARCHAR(500)"
-                ))
+                conn.execute(text("ALTER TABLE projects ADD COLUMN blocking_pr_url VARCHAR(500)"))
         if "blocking_pr_number" not in columns:
             with engine.begin() as conn:
-                conn.execute(text(
-                    "ALTER TABLE projects ADD COLUMN blocking_pr_number INTEGER"
-                ))
+                conn.execute(text("ALTER TABLE projects ADD COLUMN blocking_pr_number INTEGER"))
 
 
 def _migrate_stage_order():
@@ -90,41 +86,40 @@ def _migrate_stage_order():
             return
 
         # 1. Sync every stage definition: update order + inputs, delete removed
-        rows = conn.execute(text(
-            "SELECT id, stage_key, order_index, input_stage_keys "
-            "FROM stage_definitions"
-        )).fetchall()
+        rows = conn.execute(
+            text("SELECT id, stage_key, order_index, input_stage_keys FROM stage_definitions")
+        ).fetchall()
 
         for sid, skey, current_order, current_inputs in rows:
             if skey not in valid_keys:
                 # Stage was removed (e.g. high_level_plan) — delete it
-                conn.execute(text(
-                    "DELETE FROM stage_definitions WHERE id = :id"
-                ), {"id": sid})
+                conn.execute(text("DELETE FROM stage_definitions WHERE id = :id"), {"id": sid})
                 continue
 
             target_order = new_order[skey]
             target_inputs = new_inputs[skey]
             if current_order != target_order or current_inputs != target_inputs:
-                conn.execute(text(
-                    "UPDATE stage_definitions SET order_index = :order_index, "
-                    "input_stage_keys = :input_keys WHERE id = :id"
-                ), {"order_index": target_order, "input_keys": target_inputs, "id": sid})
+                conn.execute(
+                    text(
+                        "UPDATE stage_definitions SET order_index = :order_index, "
+                        "input_stage_keys = :input_keys WHERE id = :id"
+                    ),
+                    {"order_index": target_order, "input_keys": target_inputs, "id": sid},
+                )
 
         # 2. Clean up artifacts/executions for removed stages
         _cleanup_artifacts_for_type(conn, inspector, "high_level_plan")
-        conn.execute(text(
-            "DELETE FROM stage_executions WHERE stage_key = 'high_level_plan'"
-        ))
+        conn.execute(text("DELETE FROM stage_executions WHERE stage_key = 'high_level_plan'"))
 
         # 3. Clean up component_plan artifacts for non-leaf components
         if not inspector.has_table("component_definitions"):
             return
 
-        parent_keys = conn.execute(text(
-            "SELECT DISTINCT parent_key FROM component_definitions "
-            "WHERE parent_key IS NOT NULL"
-        )).fetchall()
+        parent_keys = conn.execute(
+            text(
+                "SELECT DISTINCT parent_key FROM component_definitions WHERE parent_key IS NOT NULL"
+            )
+        ).fetchall()
         non_leaf_keys = [r[0] for r in parent_keys]
         if not non_leaf_keys:
             return
@@ -132,25 +127,31 @@ def _migrate_stage_order():
         placeholders = ", ".join(f":k{i}" for i in range(len(non_leaf_keys)))
         params = {f"k{i}": k for i, k in enumerate(non_leaf_keys)}
 
-        orphan_ids = conn.execute(text(
-            f"SELECT id FROM artifacts "
-            f"WHERE artifact_type = 'component_plan' "
-            f"AND component_key IN ({placeholders})"
-        ), params).fetchall()
+        orphan_ids = conn.execute(
+            text(
+                f"SELECT id FROM artifacts "
+                f"WHERE artifact_type = 'component_plan' "
+                f"AND component_key IN ({placeholders})"
+            ),
+            params,
+        ).fetchall()
         _delete_artifact_ids(conn, inspector, [r[0] for r in orphan_ids])
 
-        conn.execute(text(
-            f"DELETE FROM stage_executions "
-            f"WHERE stage_key = 'component_plans' "
-            f"AND component_key IN ({placeholders})"
-        ), params)
+        conn.execute(
+            text(
+                f"DELETE FROM stage_executions "
+                f"WHERE stage_key = 'component_plans' "
+                f"AND component_key IN ({placeholders})"
+            ),
+            params,
+        )
 
 
 def _cleanup_artifacts_for_type(conn, inspector, artifact_type: str):
     """Delete all artifacts of a given type and their related records."""
-    art_ids = conn.execute(text(
-        "SELECT id FROM artifacts WHERE artifact_type = :atype"
-    ), {"atype": artifact_type}).fetchall()
+    art_ids = conn.execute(
+        text("SELECT id FROM artifacts WHERE artifact_type = :atype"), {"atype": artifact_type}
+    ).fetchall()
     _delete_artifact_ids(conn, inspector, [r[0] for r in art_ids])
 
 
@@ -161,20 +162,19 @@ def _delete_artifact_ids(conn, inspector, art_ids: list[str]):
     ph = ", ".join(f":a{i}" for i in range(len(art_ids)))
     params = {f"a{i}": aid for i, aid in enumerate(art_ids)}
 
-    conn.execute(text(
-        f"DELETE FROM artifact_dependencies "
-        f"WHERE upstream_artifact_id IN ({ph}) "
-        f"OR downstream_artifact_id IN ({ph})"
-    ), params)
+    conn.execute(
+        text(
+            f"DELETE FROM artifact_dependencies "
+            f"WHERE upstream_artifact_id IN ({ph}) "
+            f"OR downstream_artifact_id IN ({ph})"
+        ),
+        params,
+    )
 
     if inspector.has_table("artifact_comments"):
-        conn.execute(text(
-            f"DELETE FROM artifact_comments WHERE artifact_id IN ({ph})"
-        ), params)
+        conn.execute(text(f"DELETE FROM artifact_comments WHERE artifact_id IN ({ph})"), params)
 
-    conn.execute(text(
-        f"DELETE FROM artifacts WHERE id IN ({ph})"
-    ), params)
+    conn.execute(text(f"DELETE FROM artifacts WHERE id IN ({ph})"), params)
 
 
 def get_db():

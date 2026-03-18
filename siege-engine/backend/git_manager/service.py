@@ -62,9 +62,7 @@ class GitManager:
             for c in commits
         ]
 
-    def get_file_at_version(
-        self, project_id: str, file_path: str, commit_sha: str
-    ) -> str:
+    def get_file_at_version(self, project_id: str, file_path: str, commit_sha: str) -> str:
         repo = self._get_repo(project_id)
         commit = repo.commit(commit_sha)
         blob = commit.tree / file_path
@@ -96,9 +94,7 @@ class GitManager:
         result = repo.git.push(push_target, f"{branch_name}:{branch_name}")
         return str(result or "pushed")
 
-    def pull_remote(
-        self, project_id: str, branch: str = "main", remote: str = "origin"
-    ) -> bool:
+    def pull_remote(self, project_id: str, branch: str = "main", remote: str = "origin") -> bool:
         """Pull from remote. Returns True if successful, False if conflicts."""
         repo = self._get_repo(project_id)
         remote_obj = repo.remote(remote)
@@ -140,21 +136,19 @@ class GitManager:
         """
         repo = self._get_repo(project_id)
         manifest_path = Path(repo.working_dir) / "siege-state.json"
-        manifest_path.write_text(
-            json.dumps(siege_state, indent=2), encoding="utf-8"
-        )
+        manifest_path.write_text(json.dumps(siege_state, indent=2), encoding="utf-8")
         # Stage everything — manifest + any stragglers
         repo.git.add(A=True)
         commit = repo.index.commit(message)
         logger.info(
             "Checkpoint commit %s for project %s: %s",
-            commit.hexsha[:8], project_id, message,
+            commit.hexsha[:8],
+            project_id,
+            message,
         )
         return commit.hexsha
 
-    def get_file_at_commit(
-        self, project_id: str, file_path: str, commit_sha: str
-    ) -> str:
+    def get_file_at_commit(self, project_id: str, file_path: str, commit_sha: str) -> str:
         """Read a file from a specific commit (wrapper around get_file_at_version)."""
         return self.get_file_at_version(project_id, file_path, commit_sha)
 

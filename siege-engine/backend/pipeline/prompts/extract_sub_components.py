@@ -2,10 +2,18 @@ from backend.pipeline.prompts.base import PromptTemplate
 
 
 class ExtractSubComponentsPrompt(PromptTemplate):
-
-    def build(self, input_artifacts, component_key=None, feedback=None, human_notes=None, prompt_config=None):
+    def build(
+        self,
+        input_artifacts,
+        component_key=None,
+        feedback=None,
+        human_notes=None,
+        prompt_config=None,
+    ):
         if prompt_config:
-            return self._build_from_config(input_artifacts, component_key, feedback, human_notes, prompt_config)
+            return self._build_from_config(
+                input_artifacts, component_key, feedback, human_notes, prompt_config
+            )
 
         component_arch = input_artifacts.get("component_architectures", "")
         component_reqs = input_artifacts.get("component_requirements", "")
@@ -20,8 +28,7 @@ class ExtractSubComponentsPrompt(PromptTemplate):
             {"role": "system", "content": self.full_system_message},
             {
                 "role": "user",
-                "content": "\n\n---\n\n".join(context_parts)
-                + f"\n\nCOMPONENT: {component_key}\n\n"
+                "content": "\n\n---\n\n".join(context_parts) + f"\n\nCOMPONENT: {component_key}\n\n"
                 "Evaluate whether this component needs sub-component decomposition.",
             },
         ]

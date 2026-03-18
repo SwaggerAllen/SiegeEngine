@@ -123,9 +123,7 @@ def validate_dependency_dag(components: list[dict]) -> list[str]:
     for comp in components:
         for dep in comp.get("dependencies", []):
             if dep not in keys:
-                errors.append(
-                    f"Component '{comp.get('key')}' depends on unknown key '{dep}'"
-                )
+                errors.append(f"Component '{comp.get('key')}' depends on unknown key '{dep}'")
             if dep == comp.get("key"):
                 errors.append(f"Component '{comp.get('key')}' depends on itself")
 

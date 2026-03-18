@@ -11,20 +11,51 @@ logger = logging.getLogger(__name__)
 # Stage-specific review guidance injected into the system message.
 # Keyed by stage_key from the StageDefinition.
 STAGE_REVIEW_GUIDANCE: dict[str, str] = {
-    "system_architecture": """\
-## Architecture-Specific Review Focus
-
-Pay special attention to **component boundaries and decomposition**. This is one of the most consequential decisions in the architecture and should receive detailed scrutiny:
-
-- **Are there too many components?** Over-decomposed architectures create unnecessary inter-service communication, deployment complexity, and cognitive overhead. If two components always change together, are always deployed together, or share most of their data, they should probably be one component. Flag any components that seem to exist for organizational purity rather than genuine technical need.
-
-- **Are there too few components?** Under-decomposed architectures create monoliths that are hard to scale, test, and maintain independently. If a single component handles multiple unrelated domains, has mixed scaling requirements, or would benefit from independent deployment, it should probably be split. Flag any components that seem to be doing too much.
-
-- **Are the boundaries in the right places?** Good boundaries follow domain boundaries, minimize cross-component coupling, and maximize internal cohesion. Each component should have a clear, singular responsibility. Flag boundaries that cut across domains or create excessive cross-component dependencies.
-
-- **Is the component count justified?** For each component, ask: does this need to be separate? What is gained by the separation? What is the cost? The right number of components is the minimum needed to achieve genuine separation of concerns — no fewer, no more.
-
-When evaluating, consider the specific functional requirements and the realistic scale of the system. A small CRUD app with 15 microservices is over-decomposed; a complex platform with 3 monolithic services is under-decomposed. Ground your assessment in the actual requirements, not in abstract principles.""",
+    "system_architecture": (
+        "## Architecture-Specific Review Focus\n"
+        "\n"
+        "Pay special attention to **component boundaries and"
+        " decomposition**. This is one of the most consequential"
+        " decisions in the architecture and should receive"
+        " detailed scrutiny:\n"
+        "\n"
+        "- **Are there too many components?** Over-decomposed"
+        " architectures create unnecessary inter-service"
+        " communication, deployment complexity, and cognitive"
+        " overhead. If two components always change together,"
+        " are always deployed together, or share most of their"
+        " data, they should probably be one component. Flag any"
+        " components that seem to exist for organizational"
+        " purity rather than genuine technical need.\n"
+        "\n"
+        "- **Are there too few components?** Under-decomposed"
+        " architectures create monoliths that are hard to scale,"
+        " test, and maintain independently. If a single component"
+        " handles multiple unrelated domains, has mixed scaling"
+        " requirements, or would benefit from independent"
+        " deployment, it should probably be split. Flag any"
+        " components that seem to be doing too much.\n"
+        "\n"
+        "- **Are the boundaries in the right places?** Good"
+        " boundaries follow domain boundaries, minimize"
+        " cross-component coupling, and maximize internal"
+        " cohesion. Each component should have a clear, singular"
+        " responsibility. Flag boundaries that cut across domains"
+        " or create excessive cross-component dependencies.\n"
+        "\n"
+        "- **Is the component count justified?** For each"
+        " component, ask: does this need to be separate? What is"
+        " gained by the separation? What is the cost? The right"
+        " number of components is the minimum needed to achieve"
+        " genuine separation of concerns — no fewer, no more.\n"
+        "\n"
+        "When evaluating, consider the specific functional"
+        " requirements and the realistic scale of the system."
+        " A small CRUD app with 15 microservices is"
+        " over-decomposed; a complex platform with 3 monolithic"
+        " services is under-decomposed. Ground your assessment"
+        " in the actual requirements, not in abstract principles."
+    ),
 }
 
 

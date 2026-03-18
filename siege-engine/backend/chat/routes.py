@@ -8,7 +8,6 @@ from jose import JWTError
 
 from backend.auth.service import decode_token
 from backend.chat.service import chat_service
-from backend.config import settings
 from backend.database import SessionLocal
 from backend.git_manager.service import git_manager
 from backend.models import Project
@@ -73,37 +72,45 @@ async def chat_websocket(
                 # Parse stream-json format from CLI
                 try:
                     chunk = json.loads(line)
-                    # stream-json emits {"type":"assistant","content":[{"type":"text","text":"..."}]}
+                    # stream-json emits assistant/content/text blocks
                     if chunk.get("type") == "assistant":
                         for block in chunk.get("content", []):
                             if block.get("type") == "text":
                                 text = block.get("text", "")
                                 full_response += text
-                                await websocket.send_json({
-                                    "type": "response_chunk",
-                                    "text": text,
-                                })
+                                await websocket.send_json(
+                                    {
+                                        "type": "response_chunk",
+                                        "text": text,
+                                    }
+                                )
                     elif chunk.get("type") == "result":
                         # Final result message
                         result_text = chunk.get("result", "")
                         if result_text and not full_response:
                             full_response = result_text
-                            await websocket.send_json({
-                                "type": "response_chunk",
-                                "text": result_text,
-                            })
+                            await websocket.send_json(
+                                {
+                                    "type": "response_chunk",
+                                    "text": result_text,
+                                }
+                            )
                 except json.JSONDecodeError:
                     # Raw text fallback
                     full_response += line
-                    await websocket.send_json({
-                        "type": "response_chunk",
-                        "text": line,
-                    })
+                    await websocket.send_json(
+                        {
+                            "type": "response_chunk",
+                            "text": line,
+                        }
+                    )
 
-            await websocket.send_json({
-                "type": "response_end",
-                "full_text": full_response,
-            })
+            await websocket.send_json(
+                {
+                    "type": "response_end",
+                    "full_text": full_response,
+                }
+            )
 
     except WebSocketDisconnect:
         logger.info("Chat WebSocket disconnected for project %s", project_id)

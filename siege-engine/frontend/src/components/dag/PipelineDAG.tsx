@@ -74,7 +74,7 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
   }, [layoutedNodes, rawEdges]);
 
   const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: any) => {
+    (_: React.MouseEvent, node: { id: string; data?: { stage_key?: string; has_artifact?: boolean } }) => {
       if (variant === 'pipeline') {
         selectStage(node.data?.stage_key ?? null);
       } else {

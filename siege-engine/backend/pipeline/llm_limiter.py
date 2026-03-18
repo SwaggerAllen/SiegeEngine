@@ -33,9 +33,11 @@ async def rate_limited_invoke(model, messages):
             except RateLimitError:
                 if attempt == max_attempts - 1:
                     raise
-                delay = base_delay * (2 ** attempt)
+                delay = base_delay * (2**attempt)
                 logger.warning(
                     "Rate limited (attempt %d/%d), retrying in %.1fs",
-                    attempt + 1, max_attempts, delay,
+                    attempt + 1,
+                    max_attempts,
+                    delay,
                 )
                 await asyncio.sleep(delay)

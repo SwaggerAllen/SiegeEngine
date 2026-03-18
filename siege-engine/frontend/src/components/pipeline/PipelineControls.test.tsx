@@ -115,9 +115,12 @@ describe('PipelineControls', () => {
     mockStoreValues({ isRunning: true });
     render(<PipelineControls projectId="proj-1" />);
 
+    // Click Cancel to open dialog
     await user.click(screen.getByText('Cancel'));
+    // Click "Cancel Run" button in the dialog
+    await user.click(screen.getByRole('button', { name: 'Cancel Run' }));
 
-    expect(mockCancelPipeline).toHaveBeenCalledWith('proj-1');
+    expect(mockCancelPipeline).toHaveBeenCalledWith('proj-1', undefined);
   });
 
   it('shows Resume button when there is a completed run', () => {

@@ -64,7 +64,9 @@ def get_components(
     )
 
     is_reviewing = artifact and artifact.status.value in (
-        "awaiting_review", "generating", "ai_reviewing",
+        "awaiting_review",
+        "generating",
+        "ai_reviewing",
     )
 
     if artifact and artifact.content:
@@ -82,23 +84,27 @@ def get_components(
         components = []
         # Components in the new extraction
         for c in parsed:
-            components.append({
-                "key": c["key"],
-                "name": c.get("name", c["key"]),
-                "description": c.get("description"),
-                "dependencies": c.get("dependencies") or [],
-                "change": "existing" if c["key"] in existing_keys else "new",
-            })
+            components.append(
+                {
+                    "key": c["key"],
+                    "name": c.get("name", c["key"]),
+                    "description": c.get("description"),
+                    "dependencies": c.get("dependencies") or [],
+                    "change": "existing" if c["key"] in existing_keys else "new",
+                }
+            )
         # Components in the old set that are NOT in the new extraction
         for key, cd in existing_by_key.items():
             if key not in parsed_keys:
-                components.append({
-                    "key": cd.key,
-                    "name": cd.name,
-                    "description": cd.description,
-                    "dependencies": cd.dependencies or [],
-                    "change": "removed",
-                })
+                components.append(
+                    {
+                        "key": cd.key,
+                        "name": cd.name,
+                        "description": cd.description,
+                        "dependencies": cd.dependencies or [],
+                        "change": "removed",
+                    }
+                )
     elif existing_by_key:
         # Not reviewing — just show DB records
         components = [
@@ -134,7 +140,7 @@ def get_components(
     # Build dependents map (reverse of dependencies) across all components
     dependents: dict[str, list[str]] = {}
     for comp in components:
-        for dep_key in (comp.get("dependencies") or []):
+        for dep_key in comp.get("dependencies") or []:
             dependents.setdefault(dep_key, []).append(comp["key"])
 
     return [

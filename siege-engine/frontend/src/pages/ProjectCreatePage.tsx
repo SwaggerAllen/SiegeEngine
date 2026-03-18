@@ -22,8 +22,9 @@ export function ProjectCreatePage() {
     try {
       const id = await createProject(name, description || null, content);
       navigate(`/projects/${id}`);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to create project');
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(detail || 'Failed to create project');
     } finally {
       setLoading(false);
     }

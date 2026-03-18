@@ -271,8 +271,9 @@ function PRDialog({ projectId, onClose }: { projectId: string; onClose: () => vo
         base_branch: baseBranch,
       });
       setResult({ pr_url: data.pr_url });
-    } catch (err: any) {
-      setResult({ error: err.response?.data?.detail || 'Failed to create PR' });
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setResult({ error: detail || 'Failed to create PR' });
     } finally {
       setLoading(false);
     }
