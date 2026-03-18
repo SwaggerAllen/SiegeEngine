@@ -413,9 +413,9 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
                 </span>
               </div>
               {/* Backward compatibility: show old-format issues if present */}
-              {!reviewFeedback.document && reviewFeedback.issues?.length > 0 && (
+              {!reviewFeedback.document && (reviewFeedback.issues?.length ?? 0) > 0 && (
                 <ul className="mt-2 space-y-1">
-                  {reviewFeedback.issues.map((issue: ReviewIssue, i: number) => (
+                  {reviewFeedback.issues!.map((issue: ReviewIssue, i: number) => (
                     <li key={i} className="text-gray-300 text-xs">
                       <span
                         className={`font-medium ${
@@ -438,7 +438,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
           {/* Full review document */}
           <div className={proseClasses}>
             <Markdown>
-              {reviewFeedback?.document || 'No feedback available'}
+              {(reviewFeedback?.document as string) || 'No feedback available'}
             </Markdown>
           </div>
         </div>
