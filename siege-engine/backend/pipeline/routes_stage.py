@@ -156,20 +156,20 @@ async def force_restart_stage(
     db: Session = Depends(get_db),
     _user: User = Depends(_require_writer),
 ):
-    """Force-restart a stuck execution (running/ai_review/generating).
+    """Force-restart a stuck or rejected execution.
 
-    Resets the execution and its artifact to failed state, then immediately
-    retries via the job queue.
+    Resets the execution and its artifact to failed/pending state, then
+    immediately retries via the job queue.
     """
     execution = db.get(StageExecution, execution_id)
     if not execution or execution.project_id != project_id:
         raise HTTPException(404, "Execution not found")
 
-    restartable_statuses = {"running", "ai_review", "failed"}
+    restartable_statuses = {"running", "ai_review", "failed", "rejected"}
     if execution.status.value not in restartable_statuses:
         raise HTTPException(
             400,
-            f"Can only force-restart stuck or failed executions (running/ai_review/failed), "
+            f"Can only force-restart stuck, failed, or rejected executions, "
             f"current status: {execution.status.value}",
         )
 
@@ -178,10 +178,10 @@ async def force_restart_stage(
     execution.error_message = "Force-restarted by user"
     execution.completed_at = datetime.utcnow()
 
-    # Reset any associated artifact stuck in generating/ai_reviewing
+    # Reset any associated artifact stuck in generating/ai_reviewing/rejected
     if execution.artifact_id:
         artifact = db.get(Artifact, execution.artifact_id)
-        if artifact and artifact.status.value in ("generating", "ai_reviewing"):
+        if artifact and artifact.status.value in ("generating", "ai_reviewing", "rejected"):
             artifact.status = ArtifactStatus.PENDING
 
     db.commit()

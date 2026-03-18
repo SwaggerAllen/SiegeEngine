@@ -802,6 +802,7 @@ class ArtifactOpsMixin:
             if artifact and artifact.status in (
                 ArtifactStatus.GENERATING,
                 ArtifactStatus.AI_REVIEWING,
+                ArtifactStatus.REJECTED,
             ):
                 artifact.status = ArtifactStatus.PENDING
 
