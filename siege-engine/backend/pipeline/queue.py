@@ -83,7 +83,14 @@ def recover_stale_jobs(db: Session) -> int:
 
 def _claim_next(db: Session) -> Job | None:
     """Atomically claim the next queued job. Returns None if queue is empty."""
-    # Use raw SQL for atomic claim with SQLite
+    # Read-only check first to avoid unnecessary write locks
+    has_queued = db.execute(
+        text("SELECT 1 FROM jobs WHERE status = 'queued' LIMIT 1")
+    ).first()
+    if not has_queued:
+        return None
+
+    # Atomic claim with write lock
     now = datetime.utcnow()
     result = db.execute(
         text(
@@ -236,7 +243,7 @@ _JOB_HANDLERS = {
 
 # ── Worker Loop ───────────────────────────────────────────────────────────────
 
-async def worker_loop(poll_interval: float = 0.5) -> None:
+async def worker_loop(poll_interval: float = 2.0) -> None:
     """Main worker loop. Polls the job queue and executes jobs.
 
     Runs as an asyncio task within the server process.
