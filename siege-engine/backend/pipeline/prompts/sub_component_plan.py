@@ -16,13 +16,13 @@ class SubComponentPlanPrompt(PromptTemplate):
             )
 
         sub_comp_arch = input_artifacts.get("sub_component_architectures", "")
-        sub_comp_reqs = input_artifacts.get("sub_component_requirements", "")
+        component_arch = input_artifacts.get("component_architectures", "")
 
         context_parts = []
         if sub_comp_arch:
             context_parts.append(f"SUB-COMPONENT ARCHITECTURE:\n\n{sub_comp_arch}")
-        if sub_comp_reqs:
-            context_parts.append(f"SUB-COMPONENT REQUIREMENTS:\n\n{sub_comp_reqs}")
+        if component_arch:
+            context_parts.append(f"PARENT COMPONENT ARCHITECTURE:\n\n{component_arch}")
         dep_archs = input_artifacts.get("dependency_architectures", "")
         if dep_archs:
             context_parts.append(f"DEPENDENCY SUB-COMPONENT ARCHITECTURES:\n\n{dep_archs}")

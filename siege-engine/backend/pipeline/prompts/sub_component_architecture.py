@@ -15,14 +15,17 @@ class SubComponentArchPrompt(PromptTemplate):
                 input_artifacts, component_key, feedback, human_notes, prompt_config
             )
 
-        sub_comp_reqs = input_artifacts.get("sub_component_requirements", "")
         component_arch = input_artifacts.get("component_architectures", "")
+        sub_component_map = input_artifacts.get("extract_sub_components", "")
+        system_reqs = input_artifacts.get("system_requirements", "")
 
         context_parts = []
         if component_arch:
             context_parts.append(f"PARENT COMPONENT ARCHITECTURE:\n\n{component_arch}")
-        if sub_comp_reqs:
-            context_parts.append(f"SUB-COMPONENT REQUIREMENTS:\n\n{sub_comp_reqs}")
+        if sub_component_map:
+            context_parts.append(f"SUB-COMPONENT DECOMPOSITION:\n\n{sub_component_map}")
+        if system_reqs:
+            context_parts.append(f"SYSTEM REQUIREMENTS:\n\n{system_reqs}")
         dep_archs = input_artifacts.get("dependency_architectures", "")
         if dep_archs:
             context_parts.append(f"DEPENDENCY SUB-COMPONENT ARCHITECTURES:\n\n{dep_archs}")

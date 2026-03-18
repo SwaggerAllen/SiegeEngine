@@ -16,13 +16,13 @@ class ExtractSubComponentsPrompt(PromptTemplate):
             )
 
         component_arch = input_artifacts.get("component_architectures", "")
-        component_reqs = input_artifacts.get("component_requirements", "")
+        system_reqs = input_artifacts.get("system_requirements", "")
 
         context_parts = []
         if component_arch:
             context_parts.append(f"COMPONENT ARCHITECTURE:\n\n{component_arch}")
-        if component_reqs:
-            context_parts.append(f"COMPONENT REQUIREMENTS:\n\n{component_reqs}")
+        if system_reqs:
+            context_parts.append(f"SYSTEM REQUIREMENTS:\n\n{system_reqs}")
 
         messages = [
             {"role": "system", "content": self.full_system_message},

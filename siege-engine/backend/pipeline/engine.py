@@ -989,13 +989,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 # Helper functions
 
 _COMPONENT_STAGES = {
-    "component_requirements",
     "component_architectures",
     "component_plans",
     "extract_sub_components",
 }
 _SUB_COMPONENT_STAGES = {
-    "sub_component_requirements",
     "sub_component_architectures",
     "sub_component_plans",
 }

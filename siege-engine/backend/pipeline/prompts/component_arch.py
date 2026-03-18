@@ -15,12 +15,12 @@ class ComponentArchPrompt(PromptTemplate):
                 input_artifacts, component_key, feedback, human_notes, prompt_config
             )
 
-        comp_reqs = input_artifacts.get("component_requirements", "")
+        system_reqs = input_artifacts.get("system_requirements", "")
         system_arch = input_artifacts.get("system_architecture", "")
 
         context_parts = []
-        if comp_reqs:
-            context_parts.append(f"COMPONENT REQUIREMENTS:\n\n{comp_reqs}")
+        if system_reqs:
+            context_parts.append(f"SYSTEM REQUIREMENTS:\n\n{system_reqs}")
         if system_arch:
             context_parts.append(f"SYSTEM ARCHITECTURE:\n\n{system_arch}")
         dep_archs = input_artifacts.get("dependency_architectures", "")

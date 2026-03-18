@@ -110,8 +110,12 @@ def _migrate_stage_order():
                 )
 
         # 2. Clean up artifacts/executions for removed stages
-        _cleanup_artifacts_for_type(conn, inspector, "high_level_plan")
-        conn.execute(text("DELETE FROM stage_executions WHERE stage_key = 'high_level_plan'"))
+        for removed_type in ("high_level_plan", "component_requirements", "sub_component_requirements"):
+            _cleanup_artifacts_for_type(conn, inspector, removed_type)
+            conn.execute(
+                text("DELETE FROM stage_executions WHERE stage_key = :sk"),
+                {"sk": removed_type},
+            )
 
         # 3. Clean up component_plan artifacts for non-leaf components
         if not inspector.has_table("component_definitions"):
