@@ -9,6 +9,8 @@ class AIReviewPrompt(PromptTemplate):
         feedback=None,
         human_notes=None,
         prompt_config=None,
+        current_content=None,
+        upstream_changes=None,
     ):
         # Extract special keys from input_artifacts
         # Make a copy so we don't mutate the original

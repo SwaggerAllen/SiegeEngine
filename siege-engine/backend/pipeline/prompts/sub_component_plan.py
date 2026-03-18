@@ -9,10 +9,13 @@ class SubComponentPlanPrompt(PromptTemplate):
         feedback=None,
         human_notes=None,
         prompt_config=None,
+        current_content=None,
+        upstream_changes=None,
     ):
         if prompt_config:
             return self._build_from_config(
-                input_artifacts, component_key, feedback, human_notes, prompt_config
+                input_artifacts, component_key, feedback, human_notes, prompt_config,
+                current_content=current_content, upstream_changes=upstream_changes
             )
 
         sub_comp_arch = input_artifacts.get("sub_component_architectures", "")
@@ -36,4 +39,4 @@ class SubComponentPlanPrompt(PromptTemplate):
                 "Produce a detailed implementation plan for this sub-component.",
             },
         ]
-        return self._inject_feedback(messages, feedback, human_notes)
+        return self._inject_feedback(messages, feedback, human_notes, current_content, upstream_changes)

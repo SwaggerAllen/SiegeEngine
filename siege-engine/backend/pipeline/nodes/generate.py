@@ -58,6 +58,8 @@ def build_prompt_messages(
     component_key: str | None,
     feedback: dict | None = None,
     human_notes: str | None = None,
+    current_content: str | None = None,
+    upstream_changes: str | None = None,
 ) -> dict:
     """
     Dry-run prompt build. Returns {messages, model, temperature}.
@@ -87,6 +89,8 @@ def build_prompt_messages(
         feedback=feedback,
         human_notes=human_notes,
         prompt_config=prompt_config_dict,
+        current_content=current_content,
+        upstream_changes=upstream_changes,
     )
 
     # Model selection: prompt config > stage def > default
@@ -110,15 +114,18 @@ async def generate(
     db: Session,
     feedback: dict | None = None,
     human_notes: str | None = None,
+    current_content: str | None = None,
+    upstream_changes: str | None = None,
 ) -> tuple[str, str]:
     """
     Run AI generation for a stage. Returns (content, artifact_id).
     """
     logger.info(
-        "generate() called: template=%s, component=%s, input_keys=%s",
+        "generate() called: template=%s, component=%s, input_keys=%s, revision=%s",
         stage_def.prompt_template_key,
         component_key,
         list(input_artifacts.keys()),
+        bool(current_content or upstream_changes),
     )
 
     result = build_prompt_messages(
@@ -127,6 +134,8 @@ async def generate(
         component_key,
         feedback=feedback,
         human_notes=human_notes,
+        current_content=current_content,
+        upstream_changes=upstream_changes,
     )
     messages = result["messages"]
     model_name = result["model"]

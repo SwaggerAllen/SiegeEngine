@@ -554,6 +554,43 @@ async def prune_artifact(
     return {"status": "pruned", "artifact_id": artifact_id}
 
 
+@pipeline_router.get("/{project_id}/artifacts/{artifact_id}/diff")
+async def get_artifact_diff(
+    project_id: str,
+    artifact_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Get a unified diff between the current and previous version of an artifact."""
+    from backend.git_manager.service import git_manager
+
+    artifact = db.get(Artifact, artifact_id)
+    if not artifact or artifact.project_id != project_id:
+        raise HTTPException(404, "Artifact not found")
+
+    if not artifact.file_path or not artifact.git_commit_sha:
+        raise HTTPException(400, "Artifact has no version history")
+
+    # Get the file history to find the previous version
+    history = git_manager.get_file_history(project_id, artifact.file_path)
+    if len(history) < 2:
+        raise HTTPException(400, "No previous version to diff against")
+
+    # Current version is history[0], previous is history[1]
+    current_sha = history[0]["sha"]
+    previous_sha = history[1]["sha"]
+
+    diff_text = git_manager.get_diff(project_id, previous_sha, current_sha, artifact.file_path)
+
+    return {
+        "diff": diff_text,
+        "from_version": artifact.version - 1,
+        "to_version": artifact.version,
+        "from_sha": previous_sha,
+        "to_sha": current_sha,
+    }
+
+
 @pipeline_router.websocket("/{project_id}/ws")
 async def pipeline_websocket(
     websocket: WebSocket,

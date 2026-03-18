@@ -30,6 +30,8 @@ class PromptTemplate(ABC):
         feedback: dict | None = None,
         human_notes: str | None = None,
         prompt_config: dict | None = None,
+        current_content: str | None = None,
+        upstream_changes: str | None = None,
     ) -> list[dict]: ...
 
     def _build_from_config(
@@ -39,6 +41,8 @@ class PromptTemplate(ABC):
         feedback: dict | None,
         human_notes: str | None,
         prompt_config: dict,
+        current_content: str | None = None,
+        upstream_changes: str | None = None,
     ) -> list[dict]:
         """Build messages from a PromptConfig (DB-stored configuration)."""
         system_msg = prompt_config.get("system_message") or self.default_system_message
@@ -62,10 +66,21 @@ class PromptTemplate(ABC):
             {"role": "user", "content": user_content},
         ]
 
-        if feedback or human_notes:
+        if feedback or human_notes or current_content or upstream_changes:
             revision = (
                 prompt_config.get("revision_instructions") or self.default_revision_instructions
             )
+            if current_content:
+                revision += (
+                    "\n\nHere is your previous output. Revise it to address the issues below. "
+                    "Keep unchanged sections intact — only modify what needs to change.\n\n"
+                    f"CURRENT DOCUMENT:\n\n{current_content}"
+                )
+            if upstream_changes:
+                revision += (
+                    "\n\nThe following upstream documents have changed:\n\n"
+                    f"UPSTREAM CHANGES:\n\n{upstream_changes}"
+                )
             if feedback:
                 revision += f"\n\nAI Review Feedback: {json.dumps(feedback)}"
             if human_notes:
@@ -75,14 +90,39 @@ class PromptTemplate(ABC):
         return messages
 
     def _inject_feedback(
-        self, messages: list[dict], feedback: dict | None, human_notes: str | None
+        self,
+        messages: list[dict],
+        feedback: dict | None,
+        human_notes: str | None,
+        current_content: str | None = None,
+        upstream_changes: str | None = None,
     ) -> list[dict]:
-        if feedback or human_notes:
-            revision_msg = "REVISION REQUESTED.\n"
-            if feedback:
-                revision_msg += f"AI Review Feedback: {json.dumps(feedback)}\n"
-            if human_notes:
-                revision_msg += f"Human Reviewer Notes: {human_notes}\n"
-            revision_msg += "Address all issues and produce an improved version."
-            messages.append({"role": "user", "content": revision_msg})
+        if not (feedback or human_notes or current_content or upstream_changes):
+            return messages
+
+        revision_parts = ["REVISION REQUESTED."]
+
+        if current_content:
+            revision_parts.append(
+                "Here is your previous output. Revise it to address the issues below. "
+                "Keep unchanged sections intact — only modify what needs to change.\n\n"
+                f"CURRENT DOCUMENT:\n\n{current_content}"
+            )
+
+        if upstream_changes:
+            revision_parts.append(
+                "The following upstream documents have changed since your last output:\n\n"
+                f"UPSTREAM CHANGES:\n\n{upstream_changes}\n\n"
+                "Update your document to reflect these upstream changes."
+            )
+
+        if feedback:
+            revision_parts.append(f"AI Review Feedback: {json.dumps(feedback)}")
+        if human_notes:
+            revision_parts.append(f"Human Reviewer Notes: {human_notes}")
+
+        if not current_content and not upstream_changes:
+            revision_parts.append("Address all issues and produce an improved version.")
+
+        messages.append({"role": "user", "content": "\n\n".join(revision_parts)})
         return messages

@@ -378,12 +378,19 @@ class ArtifactOpsMixin:
 
         try:
             feedback_notes = self._get_feedback_notes(old_execution.artifact_id)
+            # Pass current content for incremental revision
+            existing_content = None
+            if old_execution.artifact_id:
+                existing_artifact = self.db.get(Artifact, old_execution.artifact_id)
+                if existing_artifact and existing_artifact.content:
+                    existing_content = existing_artifact.content
             content, artifact_id = await generate(
                 stage_def,
                 input_artifacts,
                 old_execution.component_key,
                 self.db,
                 human_notes=feedback_notes,
+                current_content=existing_content,
             )
             new_execution.artifact_id = artifact_id
 
@@ -673,12 +680,15 @@ class ArtifactOpsMixin:
         )
 
         try:
+            # Pass current content for incremental revision
+            existing_content = artifact.content if artifact.content else None
             content, new_artifact_id = await generate(
                 stage_def,
                 input_artifacts,
                 artifact.component_key,
                 self.db,
                 human_notes=accumulated,
+                current_content=existing_content,
             )
             execution.artifact_id = new_artifact_id
 
