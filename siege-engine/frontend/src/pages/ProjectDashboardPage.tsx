@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useProjectStore } from '../store/projectStore';
 import { usePipelineStore } from '../store/pipelineStore';
@@ -36,6 +36,8 @@ export function ProjectDashboardPage() {
   const [activeTab, setActiveTab] = useState<Tab>('documents');
   const [paneExpanded, setPaneExpanded] = useState(false);
   const [initialStageKey, setInitialStageKey] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     resetPipeline();
@@ -48,6 +50,18 @@ export function ProjectDashboardPage() {
     }
     return () => clearSelection();
   }, [projectId, resetPipeline, fetchProject, fetchConfig, fetchStatus, fetchRuns, fetchBlockingPR, clearSelection]);
+
+  // Close hamburger menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [menuOpen]);
 
   // When a DAG node's "Edit" prompt button is clicked, switch to prompts tab
   useEffect(() => {
@@ -81,6 +95,14 @@ export function ProjectDashboardPage() {
   const isAdmin = user?.role === 'admin';
   const isViewer = user?.role === 'viewer';
   const hasRemote = !!currentProject?.remote_url;
+  const tabLabels: Record<Tab, string> = {
+    documents: 'Documents',
+    pipeline: 'Pipeline',
+    prompts: 'Prompts',
+    'input-docs': 'Input Docs',
+    chat: 'Chat',
+    settings: 'Settings',
+  };
   const visibleTabs: Tab[] = isViewer
     ? ['documents', 'pipeline', 'chat']
     : ['documents', 'pipeline', 'prompts', 'input-docs', 'chat', 'settings'];
@@ -140,21 +162,34 @@ export function ProjectDashboardPage() {
         </div>
       </header>
 
-      {/* Tab bar — hidden on mobile when artifact pane is expanded */}
-      <div className={`border-b border-gray-700 px-4 flex gap-4 shrink-0 ${paneExpanded ? 'hidden md:flex' : ''}`}>
-        {visibleTabs.map((tab) => (
-          <button
-            key={tab}
-            onClick={() => { setActiveTab(tab); clearSelection(); }}
-            className={`py-2 text-sm border-b-2 capitalize min-h-[44px] md:min-h-0 ${
-              activeTab === tab
-                ? 'border-blue-500 text-white'
-                : 'border-transparent text-gray-400 hover:text-white'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
+      {/* Navigation menu — hamburger with vertical dropdown */}
+      <div className={`border-b border-gray-700 px-4 shrink-0 relative ${paneExpanded ? 'hidden md:block' : ''}`} ref={menuRef}>
+        <button
+          onClick={() => setMenuOpen(!menuOpen)}
+          className="flex items-center gap-2 py-2 text-sm text-gray-300 hover:text-white min-h-[44px]"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          <span>{tabLabels[activeTab]}</span>
+        </button>
+        {menuOpen && (
+          <div className="absolute left-0 top-full z-50 w-48 bg-gray-800 border border-gray-700 rounded-b-lg shadow-xl">
+            {visibleTabs.map((tab) => (
+              <button
+                key={tab}
+                onClick={() => { setActiveTab(tab); clearSelection(); setMenuOpen(false); }}
+                className={`w-full text-left px-4 py-3 text-sm ${
+                  activeTab === tab
+                    ? 'bg-gray-700 text-white'
+                    : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                }`}
+              >
+                {tabLabels[tab]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Main content */}

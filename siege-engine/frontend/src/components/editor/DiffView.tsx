@@ -58,7 +58,7 @@ export default function DiffView({ projectId, artifactId, artifactVersion }: Dif
         v{diff.from_version} → v{diff.to_version}
       </div>
       <div className="flex-1 overflow-auto">
-        <pre className="text-sm font-mono p-4 leading-relaxed">
+        <div className="text-sm font-mono p-4 leading-relaxed whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
           {parsed.map(({ line, type, key }) => (
             <div
               key={key}
@@ -75,7 +75,7 @@ export default function DiffView({ projectId, artifactId, artifactVersion }: Dif
               {line}
             </div>
           ))}
-        </pre>
+        </div>
       </div>
     </div>
   );
