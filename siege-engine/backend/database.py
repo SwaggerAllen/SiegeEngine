@@ -1,7 +1,13 @@
+from pathlib import Path
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from backend.config import settings
+
+# Resolve alembic.ini relative to the project root (one level above backend/)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_ALEMBIC_INI = str(_PROJECT_ROOT / "alembic.ini")
 
 
 class Base(DeclarativeBase):
@@ -34,7 +40,7 @@ def init_db():
         conn.execute(text("PRAGMA busy_timeout=30000"))
 
     # Run Alembic migrations
-    alembic_cfg = Config("alembic.ini")
+    alembic_cfg = Config(_ALEMBIC_INI)
     alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
 
     script = ScriptDirectory.from_config(alembic_cfg)

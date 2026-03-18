@@ -9,4 +9,5 @@ __pycache__
 .gitignore
 *.pyc
 tests
-alembic
+alembic/__pycache__
+alembic/versions/__pycache__
