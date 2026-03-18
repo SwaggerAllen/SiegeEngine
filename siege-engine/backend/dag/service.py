@@ -313,10 +313,13 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
         stage_execs = key_to_execs.get(stage_def.stage_key, [])
         node_ids = []
 
+        # Keep only the latest execution per component_key for accurate status
+        latest_stage_execs = _latest_executions(stage_execs)
+
         # Nodes for existing artifacts
         for art in stage_arts:
             matching_exec = next(
-                (e for e in stage_execs if e.component_key == art.component_key or e.artifact_id == art.id),
+                (e for e in latest_stage_execs if e.component_key == art.component_key or e.artifact_id == art.id),
                 None,
             )
             is_active = bool(
@@ -343,10 +346,10 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
             })
             node_ids.append(art.id)
 
-        # Placeholder nodes for running/reviewing executions with no artifact yet
+        # Placeholder nodes for running/reviewing/failed executions with no artifact yet
         art_comp_keys = {art.component_key for art in stage_arts}
-        for exc in stage_execs:
-            if exc.status not in (StageStatus.RUNNING, StageStatus.AI_REVIEW):
+        for exc in latest_stage_execs:
+            if exc.status not in (StageStatus.RUNNING, StageStatus.AI_REVIEW, StageStatus.FAILED):
                 continue
             if exc.component_key in art_comp_keys:
                 continue  # Already has an artifact node
@@ -358,7 +361,12 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
             label = stage_def.display_name
             if exc.component_key:
                 label = f"{label} - {exc.component_key}"
-            status = "generating" if exc.status == StageStatus.RUNNING else "ai_reviewing"
+            if exc.status == StageStatus.FAILED:
+                status = "failed"
+                is_placeholder_active = False
+            else:
+                status = "generating" if exc.status == StageStatus.RUNNING else "ai_reviewing"
+                is_placeholder_active = True
             nodes.append({
                 "id": placeholder_id,
                 "type": "stageNode",
@@ -369,7 +377,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                     "component_key": exc.component_key,
                     "version": 0,
                     "stage_key": stage_def.stage_key,
-                    "is_active": True,
+                    "is_active": is_placeholder_active,
                     "has_artifact": False,
                     "prompt_info": _build_prompt_info(stage_def),
                     "execution_id": exc.id,
