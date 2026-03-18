@@ -25,6 +25,7 @@ from backend.models.pipeline import (
     StageDefinition,
     StageExecution,
 )
+from backend.models.job import Job
 
 __all__ = [
     "Base",
@@ -47,6 +48,8 @@ __all__ = [
     "ArtifactComment",
     "ArtifactDependency",
     "ComponentDefinition",
+    # Job
+    "Job",
     # Pipeline
     "PipelineConfig",
     "PipelineRun",

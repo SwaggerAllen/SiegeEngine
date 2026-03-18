@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import datetime
 
@@ -6,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from backend.auth.routes import _require_writer
-from backend.database import SessionLocal, get_db
+from backend.database import get_db
 from backend.models import (
     Artifact,
     ArtifactStatus,
@@ -18,6 +17,7 @@ from backend.models import (
 )
 from backend.pipeline.defaults import DEFAULT_STAGES
 from backend.pipeline.engine import PipelineEngine
+from backend.pipeline.queue import enqueue
 from backend.pipeline.schemas import (
     ResolveStaleRequest,
     ResumeRequest,
@@ -39,26 +39,6 @@ def _get_config_or_404(db: Session, project_id: str) -> PipelineConfig:
     return config
 
 
-def _run_in_background(coro_factory, log_msg: str = "Background task failed") -> None:
-    """Schedule a coroutine factory to run in a background asyncio task.
-
-    The factory receives a PipelineEngine and should return a coroutine.
-    Each invocation gets its own DB session.
-    """
-
-    async def _run():
-        bg_db = SessionLocal()
-        try:
-            engine = PipelineEngine(bg_db)
-            await coro_factory(engine)
-        except Exception:
-            logger.exception(log_msg)
-        finally:
-            bg_db.close()
-
-    asyncio.ensure_future(_run())
-
-
 def _get_stage_def(db: Session, project_id: str, stage_key: str) -> StageDefinition:
     config = _get_config_or_404(db, project_id)
     stage_def = next((s for s in config.stages if s.stage_key == stage_key), None)
@@ -74,17 +54,15 @@ async def resume_stage(
     db: Session = Depends(get_db),
     _user: User = Depends(_require_writer),
 ):
-    # Run in a background task with its own DB session so that
-    # rejection → regeneration (LLM call) doesn't block the request
-    # and the session isn't closed mid-generation.
     user_id = _user.id
 
-    _run_in_background(
-        lambda eng: eng.resume_stage(
-            req.execution_id, req.action, req.notes, req.edited_content, user_id=user_id
-        ),
-        f"resume_stage failed for execution_id={req.execution_id}",
-    )
+    enqueue(db, "resume_stage", {
+        "execution_id": req.execution_id,
+        "action": req.action,
+        "notes": req.notes,
+        "edited_content": req.edited_content,
+        "user_id": user_id,
+    })
     return {"status": "resumed"}
 
 
@@ -98,10 +76,11 @@ async def revise_artifact(
     """Revise an approved artifact with AI using human feedback."""
     user_id = _user.id
 
-    _run_in_background(
-        lambda eng: eng.revise_artifact(req.artifact_id, req.feedback, user_id=user_id),
-        f"revise_artifact failed for artifact_id={req.artifact_id}",
-    )
+    enqueue(db, "revise_artifact", {
+        "artifact_id": req.artifact_id,
+        "feedback": req.feedback,
+        "user_id": user_id,
+    })
     return {"status": "revision_started"}
 
 
@@ -115,12 +94,13 @@ async def resolve_stale(
     """Approve, reject, or save feedback on a stale artifact."""
     user_id = _user.id
 
-    _run_in_background(
-        lambda eng: eng.resolve_stale(
-            req.artifact_id, req.action, req.notes, req.edited_content, user_id=user_id
-        ),
-        f"resolve_stale failed for artifact_id={req.artifact_id}",
-    )
+    enqueue(db, "resolve_stale", {
+        "artifact_id": req.artifact_id,
+        "action": req.action,
+        "notes": req.notes,
+        "edited_content": req.edited_content,
+        "user_id": user_id,
+    })
     return {"status": "resolving"}
 
 
@@ -179,7 +159,7 @@ async def force_restart_stage(
     """Force-restart a stuck execution (running/ai_review/generating).
 
     Resets the execution and its artifact to failed state, then immediately
-    retries. Use this when a CLI process died without triggering error handling.
+    retries via the job queue.
     """
     execution = db.get(StageExecution, execution_id)
     if not execution or execution.project_id != project_id:
@@ -204,7 +184,7 @@ async def force_restart_stage(
         if artifact and artifact.status.value in ("generating", "ai_reviewing"):
             artifact.status = ArtifactStatus.PENDING
 
-    db.flush()
+    db.commit()
 
     # Broadcast so the UI updates immediately
     await ws_manager.broadcast(
@@ -217,9 +197,8 @@ async def force_restart_stage(
         },
     )
 
-    # Now retry using the existing retry logic
-    engine = PipelineEngine(db)
-    await engine.retry_stage(execution)
+    # Retry via job queue
+    enqueue(db, "retry_stage", {"execution_id": execution_id})
     return {"status": "force_restarted", "execution_id": execution_id}
 
 

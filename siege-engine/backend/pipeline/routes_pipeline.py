@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import datetime
 
@@ -10,7 +9,7 @@ from sqlalchemy.orm import Session
 from backend.auth.routes import _require_writer, get_current_user
 from backend.auth.service import decode_token
 from backend.dag.service import get_regeneration_order
-from backend.database import SessionLocal, get_db
+from backend.database import get_db
 from backend.models import (
     Artifact,
     ArtifactStatus,
@@ -24,6 +23,7 @@ from backend.models import (
     User,
 )
 from backend.pipeline.engine import PipelineEngine
+from backend.pipeline.queue import enqueue
 from backend.pipeline.schemas import (
     CancelRequest,
     PipelineStartRequest,
@@ -43,26 +43,6 @@ def _get_project_or_404(db: Session, project_id: str) -> Project:
     if not project:
         raise HTTPException(404, "Project not found")
     return project
-
-
-def _run_in_background(coro_factory, log_msg: str = "Background task failed") -> None:
-    """Schedule a coroutine factory to run in a background asyncio task.
-
-    The factory receives a PipelineEngine and should return a coroutine.
-    Each invocation gets its own DB session.
-    """
-
-    async def _run():
-        bg_db = SessionLocal()
-        try:
-            engine = PipelineEngine(bg_db)
-            await coro_factory(engine)
-        except Exception:
-            logger.exception(log_msg)
-        finally:
-            bg_db.close()
-
-    asyncio.ensure_future(_run())
 
 
 def _check_blocking_pr(project: Project):
@@ -116,11 +96,10 @@ async def start_pipeline(
 
     pipeline_run_id = pipeline_run.id
 
-    # Run pipeline in a background task with its own DB session.
-    _run_in_background(
-        lambda eng: eng.start_pipeline(project_id, pipeline_run_id=pipeline_run_id),
-        f"Pipeline execution failed for project_id={project_id}",
-    )
+    enqueue(db, "start_pipeline", {
+        "project_id": project_id,
+        "pipeline_run_id": pipeline_run_id,
+    })
 
     return {
         "status": "started",
@@ -184,10 +163,11 @@ async def resume_run(
     pipeline_run_id = pipeline_run.id
     prev_run_id = prev_run.run_id
 
-    _run_in_background(
-        lambda eng: eng.resume_run(project_id, pipeline_run_id, prev_run_id),
-        f"Resume run failed for project_id={project_id}",
-    )
+    enqueue(db, "resume_run", {
+        "project_id": project_id,
+        "pipeline_run_id": pipeline_run_id,
+        "prev_run_id": prev_run_id,
+    })
 
     return {
         "status": "resumed",
@@ -538,8 +518,7 @@ async def retry_stage(
     if execution.status.value != "failed":
         raise HTTPException(400, "Can only retry failed executions")
 
-    engine = PipelineEngine(db)
-    await engine.retry_stage(execution)
+    enqueue(db, "retry_stage", {"execution_id": execution_id})
     return {"status": "retrying", "execution_id": execution_id}
 
 
