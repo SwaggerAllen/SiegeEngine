@@ -1473,6 +1473,7 @@ class PipelineEngine:
                 artifact.status = ArtifactStatus.GENERATING
 
         run_id = old_execution.run_id or str(uuid.uuid4())
+        pipeline_run = self._lookup_pipeline_run(run_id) if run_id else None
         new_execution = StageExecution(
             project_id=project_id,
             stage_key=old_execution.stage_key,
@@ -1552,7 +1553,10 @@ class PipelineEngine:
                     artifact.ai_review_feedback = feedback
                     artifact.status = ArtifactStatus.AI_REVIEWING
 
-            if stage_def.human_review_enabled:
+            should_await_review = stage_def.human_review_enabled and (
+                not pipeline_run or pipeline_run.human_review
+            )
+            if should_await_review:
                 new_execution.status = StageStatus.AWAITING_REVIEW
                 artifact = self.db.get(Artifact, artifact_id)
                 if artifact:
@@ -1570,7 +1574,7 @@ class PipelineEngine:
                 project_id,
                 {
                     "type": "stage_awaiting_review"
-                    if stage_def.human_review_enabled
+                    if should_await_review
                     else "stage_completed",
                     "stage_key": stage_def.stage_key,
                     "component_key": old_execution.component_key,
@@ -1806,6 +1810,8 @@ class PipelineEngine:
                     updated_artifact.ai_review_feedback = ai_feedback
                     updated_artifact.status = ArtifactStatus.AI_REVIEWING
 
+            # User-initiated revisions always go to AWAITING_REVIEW so the
+            # user can inspect the regenerated content they requested.
             execution.status = StageStatus.AWAITING_REVIEW
             updated_artifact = self.db.get(Artifact, new_artifact_id)
             if updated_artifact:
@@ -1999,7 +2005,10 @@ class PipelineEngine:
                         if artifact:
                             artifact.ai_review_feedback = feedback
 
-            if stage_def.human_review_enabled:
+            should_await_review = stage_def.human_review_enabled and (
+                not pipeline_run or pipeline_run.human_review
+            )
+            if should_await_review:
                 execution.status = StageStatus.AWAITING_REVIEW
                 artifact = self.db.get(Artifact, artifact_id)
                 if artifact:
@@ -2017,7 +2026,7 @@ class PipelineEngine:
                 project_id,
                 {
                     "type": "stage_awaiting_review"
-                    if stage_def.human_review_enabled
+                    if should_await_review
                     else "stage_completed",
                     "stage_key": stage_def.stage_key,
                     "component_key": component_key,
