@@ -14,6 +14,23 @@ const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
   failed: { bg: 'bg-red-700', text: 'Failed' },
 };
 
+function formatTimestamp(ts: string): string {
+  const d = new Date(ts);
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+}
+
+function formatDuration(startedAt: string, completedAt: string): string {
+  const ms = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+  if (ms < 0) return '';
+  const totalSecs = Math.floor(ms / 1000);
+  if (totalSecs < 60) return `${totalSecs}s`;
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  if (mins < 60) return `${mins}m ${secs}s`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m`;
+}
+
 function ExecutionRow({ exec, projectId }: { exec: StageExecution; projectId?: string }) {
   const [expanded, setExpanded] = useState(false);
   const [actionInProgress, setActionInProgress] = useState(false);
@@ -69,6 +86,14 @@ function ExecutionRow({ exec, projectId }: { exec: StageExecution; projectId?: s
           </button>
         )}
       </div>
+      {exec.started_at && (
+        <div className="text-gray-500 mt-0.5 pl-0.5">
+          {formatTimestamp(exec.started_at)}
+          {exec.completed_at
+            ? ` · ${formatDuration(exec.started_at, exec.completed_at)}`
+            : ' · in progress'}
+        </div>
+      )}
       {exec.error_message && expanded && (
         <pre className="mt-1 p-2 bg-gray-900 rounded text-red-400 whitespace-pre-wrap break-words text-xs max-h-60 overflow-auto">
           {exec.error_message}
