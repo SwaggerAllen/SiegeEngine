@@ -137,6 +137,18 @@ export async function forceRestartStage(projectId: string, executionId: string) 
   return data;
 }
 
+export async function triggerStage(
+  projectId: string,
+  stageKey: string,
+  componentKey?: string | null
+) {
+  const { data } = await api.post(`/pipeline/${projectId}/trigger-stage`, {
+    stage_key: stageKey,
+    component_key: componentKey ?? null,
+  });
+  return data;
+}
+
 export async function pruneArtifact(projectId: string, artifactId: string) {
   const { data } = await api.delete(`/pipeline/${projectId}/prune/${artifactId}`);
   return data;

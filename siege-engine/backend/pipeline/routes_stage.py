@@ -24,6 +24,7 @@ from backend.pipeline.schemas import (
     ReviseRequest,
     StageDefinitionResponse,
     StageDefinitionUpdate,
+    TriggerStageRequest,
 )
 from backend.websocket.manager import ws_manager
 
@@ -205,6 +206,34 @@ async def force_restart_stage(
     # Retry via job queue
     enqueue(db, "retry_stage", {"execution_id": execution_id})
     return {"status": "force_restarted", "execution_id": execution_id}
+
+
+@stage_router.post("/{project_id}/trigger-stage")
+async def trigger_stage(
+    project_id: str,
+    req: TriggerStageRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Manually trigger a single stage.  Useful for recovering from stuck
+    pipeline states where no execution exists to force-restart."""
+    config = _get_config_or_404(db, project_id)
+    stage_def = next(
+        (s for s in config.stages if s.stage_key == req.stage_key), None
+    )
+    if not stage_def:
+        raise HTTPException(404, f"Stage '{req.stage_key}' not found")
+
+    enqueue(
+        db,
+        "trigger_stage",
+        {
+            "project_id": project_id,
+            "stage_key": req.stage_key,
+            "component_key": req.component_key,
+        },
+    )
+    return {"status": "triggered", "stage_key": req.stage_key}
 
 
 # ──── Stage Definition Config ────
