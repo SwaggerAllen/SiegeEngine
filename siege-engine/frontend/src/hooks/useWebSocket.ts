@@ -99,6 +99,11 @@ export function useWebSocket(projectId: string | undefined) {
         fetchArtifact(data.artifact_id);
       }
 
+      // Refresh artifact after force restart so ReviewPanel clears the approved badge
+      if (data.type === 'stage_failed' && data.artifact_id) {
+        fetchArtifact(data.artifact_id);
+      }
+
       // Refresh artifact content after feedback is saved
       if (data.type === 'feedback_saved' && data.artifact_id) {
         fetchArtifact(data.artifact_id);
