@@ -548,6 +548,20 @@ class ArtifactOpsMixin:
                     )
                 )
             artifact.status = ArtifactStatus.APPROVED
+
+            # Sync the owning execution to APPROVED so the DAG node status
+            # matches the artifact badge (fixes rejected-execution / approved-
+            # artifact mismatch).
+            execution = (
+                self.db.query(StageExecution)
+                .filter_by(artifact_id=artifact_id)
+                .order_by(StageExecution.started_at.desc())
+                .first()
+            )
+            if execution and execution.status != StageStatus.APPROVED:
+                execution.status = StageStatus.APPROVED
+                execution.completed_at = datetime.utcnow()
+
             self.db.commit()
 
             if artifact.artifact_type.value == "component_map":
@@ -567,6 +581,13 @@ class ArtifactOpsMixin:
                     "status": "approved",
                 },
             )
+
+            # Trigger downstream stages (e.g. component nodes after fan-out
+            # approval).  Without this the pipeline stalls after approving a
+            # stale artifact.
+            if execution:
+                await self._check_and_continue(execution)
+
             return
 
         if action == "rejected":
