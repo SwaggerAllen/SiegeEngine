@@ -106,6 +106,13 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         carried = self._carry_over_approved(project_id, run_id)
         logger.info("Carried over %d approved executions into run %s", carried, run_id)
 
+        # Re-populate component/sub-component definitions from carried-over
+        # branching stages.  _store_components only runs via _post_generation_hook
+        # during the original execution — carry-over doesn't re-run it, so the
+        # ComponentDefinition rows may be missing (e.g. after DB issues or the
+        # first run being in a bad state).
+        await self._ensure_branching_definitions(project_id, config, run_id)
+
         stages = sorted(config.stages, key=lambda s: s.order_index)
         logger.info(
             "Pipeline run_id=%s (run #%s) starting with %d stages: %s",
@@ -202,6 +209,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             review_carried,
             new_run_id,
         )
+
+        await self._ensure_branching_definitions(project_id, config, new_run_id)
 
         stages = sorted(config.stages, key=lambda s: s.order_index)
         logger.info(
@@ -573,6 +582,54 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         self.db.commit()
         return carried
+
+    async def _ensure_branching_definitions(
+        self, project_id: str, config: PipelineConfig, run_id: str
+    ):
+        """Re-populate component/sub-component definitions if missing.
+
+        When a branching stage (extract_components, extract_sub_components) is
+        carried over from a previous run, the ComponentDefinition rows may not
+        exist — _store_components only runs during the original
+        _post_generation_hook.  This method detects that gap and re-runs the
+        hook so fan-out stages can find their entities.
+        """
+        for stage_def in config.stages:
+            if stage_def.stage_key not in BRANCHING_STAGES:
+                continue
+
+            exec_ = (
+                self.db.query(StageExecution)
+                .filter_by(
+                    project_id=project_id,
+                    stage_key=stage_def.stage_key,
+                    run_id=run_id,
+                    status=StageStatus.APPROVED,
+                )
+                .first()
+            )
+            if not exec_ or not exec_.artifact_id:
+                continue
+
+            # Check if definitions already exist
+            if stage_def.stage_key == "extract_components":
+                existing = self._get_components(project_id)
+                if existing:
+                    continue
+            elif stage_def.stage_key == "extract_sub_components":
+                existing = self._get_sub_component_defs(project_id)
+                if existing:
+                    continue
+
+            logger.info(
+                "Re-populating definitions for carried-over %s (artifact=%s)",
+                stage_def.stage_key,
+                exec_.artifact_id,
+            )
+            await self._post_generation_hook(
+                project_id, stage_def, exec_.component_key, exec_
+            )
+            self.db.commit()
 
     def _should_pause(
         self,
