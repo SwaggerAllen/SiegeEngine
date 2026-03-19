@@ -218,7 +218,7 @@ export function ProjectDashboardPage() {
                 ) ? (
                   <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                     <div className="flex-1 md:w-2/3 overflow-auto border-b md:border-b-0 md:border-r border-gray-700">
-                      <ArtifactEditor artifact={selectedArtifact} projectId={projectId} />
+                      <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
                     </div>
                     <div className="md:w-1/3 overflow-auto p-3">
                       <ReviewPanel
@@ -231,7 +231,7 @@ export function ProjectDashboardPage() {
                 ) : (
                   <>
                     <div className="flex-1 overflow-auto">
-                      <ArtifactEditor artifact={selectedArtifact} projectId={projectId} />
+                      <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
                     </div>
                     <div className="shrink-0 p-3 border-t border-gray-700 overflow-auto max-h-64">
                       <ReviewPanel

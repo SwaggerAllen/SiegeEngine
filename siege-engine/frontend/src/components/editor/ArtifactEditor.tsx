@@ -60,6 +60,14 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
     setPromptPreview(null);
   }, [artifact.id, reviewFeedback, activeTab]);
 
+  // Sync local edit buffer when artifact content changes (e.g. after restore or AI revision)
+  useEffect(() => {
+    setContent(artifact.content || '');
+    setEditing(false);
+    setShowRevise(false);
+    setFeedback('');
+  }, [artifact.id, artifact.version]);
+
   // Fetch prompt preview when tab is selected
   useEffect(() => {
     if (activeTab !== 'prompt') return;
