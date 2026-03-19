@@ -4,7 +4,7 @@
 #
 
 app = 'siege-engine'
-primary_region = 'dfw'
+primary_region = 'iad'
 
 [build]
 
