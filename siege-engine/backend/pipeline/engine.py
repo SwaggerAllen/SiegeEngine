@@ -220,12 +220,14 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         project_id: str,
         stage_key: str,
         component_key: str | None = None,
-    ) -> str:
-        """Manually trigger a single stage, creating an execution if needed.
+    ) -> str | list[str]:
+        """Manually trigger a stage, creating executions as needed.
 
-        Finds the most recent active run, gathers inputs, and kicks off the
-        stage.  Useful as a recovery mechanism when the pipeline gets stuck.
-        Returns the execution_id.
+        For fan-out stages (COMPONENT, SUB_COMPONENT, LEAF), this finds all
+        ready entities and triggers them — or a single entity if component_key
+        is provided.  For non-fan-out stages it triggers the single execution.
+
+        Returns the execution_id (or list of ids for fan-out).
         """
         config = self._get_config(project_id)
         if not config:
@@ -245,6 +247,32 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             .first()
         )
         run_id = pipeline_run.run_id if pipeline_run else str(uuid.uuid4())
+
+        fan_out = stage_def.fan_out_strategy
+        if fan_out in (
+            FanOutStrategy.COMPONENT,
+            FanOutStrategy.SUB_COMPONENT,
+            FanOutStrategy.LEAF,
+        ):
+            return await self._trigger_fan_out_stage(
+                project_id, stage_def, run_id, config, pipeline_run, component_key
+            )
+
+        return await self._trigger_single_stage(
+            project_id, stage_def, run_id, config, pipeline_run, component_key
+        )
+
+    async def _trigger_single_stage(
+        self,
+        project_id: str,
+        stage_def: StageDefinition,
+        run_id: str,
+        config: PipelineConfig,
+        pipeline_run: PipelineRun | None,
+        component_key: str | None,
+    ) -> str:
+        """Trigger a single (non-fan-out) stage."""
+        stage_key = stage_def.stage_key
 
         # Check for an already-running execution
         existing = (
@@ -318,6 +346,125 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             pipeline_run=pipeline_run,
         )
         return execution.id
+
+    async def _trigger_fan_out_stage(
+        self,
+        project_id: str,
+        stage_def: StageDefinition,
+        run_id: str,
+        config: PipelineConfig,
+        pipeline_run: PipelineRun | None,
+        component_key: str | None,
+    ) -> list[str]:
+        """Trigger a fan-out stage for ready entities (or a specific one)."""
+        stage_key = stage_def.stage_key
+
+        if component_key:
+            # Trigger a specific entity
+            entity_keys = [component_key]
+        else:
+            # Find all ready entities
+            entity_keys = self._get_ready_entities(project_id, stage_def, run_id)
+            if not entity_keys:
+                all_entities = self._get_all_entities_for_stage(project_id, stage_def)
+                if not all_entities:
+                    raise ValueError(
+                        f"No entities found for fan-out stage {stage_key}"
+                    )
+                raise ValueError(
+                    f"No entities are ready for stage {stage_key}. "
+                    f"{len(all_entities)} entities exist but are blocked on "
+                    f"upstream dependencies or already have non-rejected executions."
+                )
+
+        execution_ids = []
+        for entity_key in entity_keys:
+            # Check for an already-running execution
+            existing = (
+                self.db.query(StageExecution)
+                .filter_by(
+                    project_id=project_id,
+                    stage_key=stage_key,
+                    component_key=entity_key,
+                    run_id=run_id,
+                )
+                .filter(
+                    StageExecution.status.in_(
+                        [StageStatus.RUNNING, StageStatus.AI_REVIEW]
+                    )
+                )
+                .first()
+            )
+            if existing:
+                logger.info(
+                    "Skipping %s/%s — already running (execution %s)",
+                    stage_key, entity_key, existing.id,
+                )
+                continue
+
+            input_artifacts = self._gather_inputs(project_id, stage_def, entity_key)
+
+            # Gather any prior feedback
+            feedback_notes = None
+            current_content = None
+            prev_exec = (
+                self.db.query(StageExecution)
+                .filter_by(
+                    project_id=project_id,
+                    stage_key=stage_key,
+                    component_key=entity_key,
+                )
+                .order_by(StageExecution.started_at.desc())
+                .first()
+            )
+            if prev_exec and prev_exec.artifact_id:
+                feedback_notes = self._get_feedback_notes(prev_exec.artifact_id)
+                prev_artifact = self.db.get(Artifact, prev_exec.artifact_id)
+                if prev_artifact and prev_artifact.content:
+                    current_content = prev_artifact.content
+
+            execution = StageExecution(
+                project_id=project_id,
+                stage_key=stage_key,
+                component_key=entity_key,
+                status=StageStatus.RUNNING,
+                started_at=datetime.utcnow(),
+                run_id=run_id,
+            )
+            self.db.add(execution)
+            self.db.flush()
+
+            logger.info(
+                "Manually triggered fan-out stage %s entity=%s execution=%s",
+                stage_key, entity_key, execution.id,
+            )
+
+            await self._run_stage(
+                project_id,
+                stage_def,
+                input_artifacts,
+                entity_key,
+                execution,
+                run_id,
+                human_notes=feedback_notes,
+                current_content=current_content,
+                config=config,
+                pipeline_run=pipeline_run,
+            )
+            execution_ids.append(execution.id)
+
+            if execution.status == StageStatus.FAILED:
+                logger.error(
+                    "Stopping trigger: entity %s failed", entity_key
+                )
+                break
+
+        if not execution_ids:
+            raise ValueError(
+                f"All entities for stage {stage_key} are already running"
+            )
+
+        return execution_ids
 
     def _carry_over_approved(self, project_id: str, new_run_id: str) -> int:
         """Carry over the most recent APPROVED execution for each (stage, component)
@@ -404,6 +551,12 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 )
                 continue
 
+            logger.info(
+                "Carrying over execution: stage=%s component=%s artifact=%s",
+                prev_exec.stage_key,
+                prev_exec.component_key,
+                prev_exec.artifact_id,
+            )
             new_exec = StageExecution(
                 project_id=project_id,
                 stage_key=prev_exec.stage_key,
@@ -479,7 +632,13 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         for stage_def in stages:
             # Check if stage is fully complete
             if self._stage_fully_complete(project_id, stage_def, run_id):
+                logger.info("Stage %s: fully complete, skipping", stage_def.stage_key)
                 continue
+            logger.info(
+                "Stage %s: not complete (fan_out=%s), checking readiness",
+                stage_def.stage_key,
+                stage_def.fan_out_strategy.value if stage_def.fan_out_strategy else "none",
+            )
 
             # Check if any executions are still in-flight or awaiting review
             pending_count = (
@@ -605,9 +764,29 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     # Continue scanning instead of stopping — downstream stages
                     # for already-approved entities may still be runnable.
                     has_pending_work = True
+                    # Log why each entity isn't ready for debugging
+                    for ek in all_entities[:5]:
+                        ex = (
+                            self.db.query(StageExecution)
+                            .filter_by(
+                                project_id=project_id,
+                                stage_key=stage_def.stage_key,
+                                run_id=run_id,
+                                component_key=ek,
+                            )
+                            .filter(StageExecution.status.notin_([StageStatus.REJECTED]))
+                            .first()
+                        )
+                        logger.info(
+                            "  entity %s not ready: existing_exec=%s (status=%s)",
+                            ek,
+                            ex.id if ex else None,
+                            ex.status.value if ex else "n/a",
+                        )
                     logger.info(
-                        "Stage %s: entities exist but none ready, scanning downstream",
+                        "Stage %s: %d entities exist but none ready, scanning downstream",
                         stage_def.stage_key,
+                        len(all_entities),
                     )
                     continue
 
