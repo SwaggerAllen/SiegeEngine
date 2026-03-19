@@ -59,22 +59,43 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         """Return the PipelineConfig for a project, or None if missing."""
         return self.db.query(PipelineConfig).filter_by(project_id=project_id).first()
 
-    def _mark_awaiting_review(self, execution: StageExecution, artifact_id: str | None) -> None:
-        """Set execution and artifact status to AWAITING_REVIEW."""
-        execution.status = StageStatus.AWAITING_REVIEW
-        if artifact_id:
-            artifact = self.db.get(Artifact, artifact_id)
-            if artifact:
-                artifact.status = ArtifactStatus.AWAITING_REVIEW
+    def _transition_execution(
+        self,
+        execution: StageExecution,
+        new_status: StageStatus,
+        *,
+        artifact_status: ArtifactStatus | None = None,
+        error_message: str | None = None,
+        set_completed: bool = False,
+    ) -> None:
+        """Atomically transition execution status and optionally its artifact.
 
-    def _mark_approved(self, execution: StageExecution, artifact_id: str | None) -> None:
-        """Set execution and artifact status to APPROVED, record completion time."""
-        execution.status = StageStatus.APPROVED
-        execution.completed_at = datetime.utcnow()
-        if artifact_id:
-            artifact = self.db.get(Artifact, artifact_id)
+        Centralises all status mutations so execution and artifact stay in sync.
+        Does NOT broadcast websocket events — callers handle that themselves.
+        """
+        old_status = execution.status
+        execution.status = new_status
+        if set_completed:
+            execution.completed_at = datetime.utcnow()
+        if error_message is not None:
+            execution.error_message = error_message
+
+        if artifact_status is not None and execution.artifact_id:
+            artifact = self.db.get(Artifact, execution.artifact_id)
             if artifact:
-                artifact.status = ArtifactStatus.APPROVED
+                artifact.status = artifact_status
+
+        logger.debug(
+            "Transition exec %s: %s -> %s (artifact: %s)",
+            execution.id, old_status.value, new_status.value,
+            artifact_status.value if artifact_status else "unchanged",
+        )
+
+    def _mark_artifact_status(self, artifact_id: str, new_status: ArtifactStatus) -> None:
+        """Update an artifact's status without touching any execution."""
+        artifact = self.db.get(Artifact, artifact_id)
+        if artifact:
+            artifact.status = new_status
 
     async def start_pipeline(
         self,
@@ -105,6 +126,12 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         carried = self._carry_over_approved(project_id, run_id)
         logger.info("Carried over %d approved executions into run %s", carried, run_id)
+
+        # Reconcile any execution/artifact status mismatches from prior runs
+        corrections = self._reconcile_statuses(project_id, run_id)
+        if corrections:
+            logger.info("Reconciled %d status mismatches in run %s", len(corrections), run_id)
+            self.db.commit()
 
         # Re-populate component/sub-component definitions from carried-over
         # branching stages.  _store_components only runs via _post_generation_hook
@@ -209,6 +236,12 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             review_carried,
             new_run_id,
         )
+
+        # Reconcile any execution/artifact status mismatches
+        corrections = self._reconcile_statuses(project_id, new_run_id)
+        if corrections:
+            logger.info("Reconciled %d status mismatches in run %s", len(corrections), new_run_id)
+            self.db.commit()
 
         await self._ensure_branching_definitions(project_id, config, new_run_id)
 
@@ -502,9 +535,10 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 "has approved artifact %s — setting execution to APPROVED",
                 ex.id, ex.stage_key, ex.status.value, ex.artifact_id,
             )
-            ex.status = StageStatus.APPROVED
-            if not ex.completed_at:
-                ex.completed_at = datetime.utcnow()
+            self._transition_execution(
+                ex, StageStatus.APPROVED,
+                set_completed=not ex.completed_at,
+            )
         if mismatched:
             self.db.flush()
 
@@ -582,6 +616,72 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         self.db.commit()
         return carried
+
+    def _reconcile_statuses(self, project_id: str, run_id: str) -> list[dict]:
+        """Find and fix execution/artifact status mismatches for a run.
+
+        Returns list of corrections made (for logging/API response).
+        """
+        corrections: list[dict] = []
+
+        executions = (
+            self.db.query(StageExecution)
+            .filter_by(project_id=project_id, run_id=run_id)
+            .filter(StageExecution.artifact_id.isnot(None))
+            .all()
+        )
+
+        for exc in executions:
+            artifact = self.db.get(Artifact, exc.artifact_id)
+            if not artifact:
+                continue
+
+            correction = None
+
+            if exc.status == StageStatus.APPROVED and artifact.status not in (
+                ArtifactStatus.APPROVED, ArtifactStatus.STALE,
+            ):
+                correction = {"expected": "APPROVED", "actual": artifact.status.value}
+                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.APPROVED)
+
+            elif exc.status == StageStatus.AWAITING_REVIEW and artifact.status != ArtifactStatus.AWAITING_REVIEW:
+                correction = {"expected": "AWAITING_REVIEW", "actual": artifact.status.value}
+                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.AWAITING_REVIEW)
+
+            elif exc.status == StageStatus.FAILED and artifact.status in (
+                ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING,
+            ):
+                correction = {"expected": "PENDING (unstick)", "actual": artifact.status.value}
+                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.PENDING)
+
+            elif exc.status == StageStatus.REJECTED and artifact.status not in (
+                ArtifactStatus.REJECTED, ArtifactStatus.STALE,
+            ):
+                correction = {"expected": "REJECTED", "actual": artifact.status.value}
+                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.REJECTED)
+
+            elif exc.status in (
+                StageStatus.APPROVED, StageStatus.FAILED, StageStatus.REJECTED,
+            ) and artifact.status == ArtifactStatus.GENERATING:
+                correction = {"expected": "PENDING (unstick)", "actual": "GENERATING"}
+                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.PENDING)
+
+            if correction:
+                entry = {
+                    "execution_id": exc.id,
+                    "stage_key": exc.stage_key,
+                    "component_key": exc.component_key,
+                    "execution_status": exc.status.value,
+                    "artifact_id": exc.artifact_id,
+                    **correction,
+                }
+                corrections.append(entry)
+                logger.warning("Reconciled status mismatch: %s", entry)
+
+        if corrections:
+            self.db.flush()
+
+        return corrections
 
     async def _ensure_branching_definitions(
         self, project_id: str, config: PipelineConfig, run_id: str
@@ -1035,7 +1135,10 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     },
                 )
 
-                execution.status = StageStatus.AI_REVIEW
+                self._transition_execution(
+                    execution, StageStatus.AI_REVIEW,
+                    artifact_status=None,
+                )
                 self.db.flush()
 
                 feedback = await ai_review(
@@ -1097,9 +1200,16 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 or is_propagation
             )
             if should_await_review:
-                self._mark_awaiting_review(execution, artifact_id)
+                self._transition_execution(
+                    execution, StageStatus.AWAITING_REVIEW,
+                    artifact_status=ArtifactStatus.AWAITING_REVIEW,
+                )
             else:
-                self._mark_approved(execution, artifact_id)
+                self._transition_execution(
+                    execution, StageStatus.APPROVED,
+                    artifact_status=ArtifactStatus.APPROVED,
+                    set_completed=True,
+                )
 
             self.db.commit()
 
@@ -1117,18 +1227,22 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             logger.exception(
                 "Stage %s failed for component=%s: %s", stage_def.stage_key, component_key, e
             )
-            execution.status = StageStatus.FAILED
-            execution.error_message = str(e)
-            execution.completed_at = datetime.utcnow()
-
-            # Reset any artifact stuck in generating/ai_reviewing
+            # Determine safe artifact status: unstick GENERATING/AI_REVIEWING → PENDING
+            art_status = None
             if execution.artifact_id:
                 stuck_artifact = self.db.get(Artifact, execution.artifact_id)
                 if stuck_artifact and stuck_artifact.status in (
                     ArtifactStatus.GENERATING,
                     ArtifactStatus.AI_REVIEWING,
                 ):
-                    stuck_artifact.status = ArtifactStatus.PENDING
+                    art_status = ArtifactStatus.PENDING
+
+            self._transition_execution(
+                execution, StageStatus.FAILED,
+                artifact_status=art_status,
+                error_message=str(e),
+                set_completed=True,
+            )
 
             self.db.commit()
 

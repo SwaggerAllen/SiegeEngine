@@ -125,15 +125,20 @@ async def cancel_stage(
             f"current status: {execution.status.value}",
         )
 
-    execution.status = StageStatus.FAILED
-    execution.error_message = "Cancelled by user"
-    execution.completed_at = datetime.utcnow()
-
-    # Reset any associated artifact stuck in generating/ai_reviewing
+    # Determine safe artifact status: unstick GENERATING/AI_REVIEWING → PENDING
+    art_status = None
     if execution.artifact_id:
         artifact = db.get(Artifact, execution.artifact_id)
         if artifact and artifact.status.value in ("generating", "ai_reviewing"):
-            artifact.status = ArtifactStatus.PENDING
+            art_status = ArtifactStatus.PENDING
+
+    engine = PipelineEngine(db)
+    engine._transition_execution(
+        execution, StageStatus.FAILED,
+        artifact_status=art_status,
+        error_message="Cancelled by user",
+        set_completed=True,
+    )
 
     db.commit()
 
@@ -174,18 +179,22 @@ async def force_restart_stage(
             f"current status: {execution.status.value}",
         )
 
-    # Reset the execution to failed state
-    execution.status = StageStatus.FAILED
-    execution.error_message = "Force-restarted by user"
-    execution.completed_at = datetime.utcnow()
-
-    # Reset any associated artifact so regeneration starts fresh.
+    # Reset execution to failed and artifact to pending so regeneration starts fresh.
     # This includes "approved" because a failed revision restores the artifact
     # to approved — the user explicitly wants to retry in that case too.
+    art_status = None
     if execution.artifact_id:
         artifact = db.get(Artifact, execution.artifact_id)
         if artifact and artifact.status.value not in ("pending",):
-            artifact.status = ArtifactStatus.PENDING
+            art_status = ArtifactStatus.PENDING
+
+    engine = PipelineEngine(db)
+    engine._transition_execution(
+        execution, StageStatus.FAILED,
+        artifact_status=art_status,
+        error_message="Force-restarted by user",
+        set_completed=True,
+    )
 
     db.commit()
 

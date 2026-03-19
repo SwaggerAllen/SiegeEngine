@@ -488,6 +488,37 @@ def get_run_state(
         raise HTTPException(500, f"Failed to load run state: {e}")
 
 
+@pipeline_router.post("/{project_id}/reconcile")
+def reconcile_statuses(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Manually trigger status reconciliation for the latest run."""
+    _get_project_or_404(db, project_id)
+
+    # Find the most recent run
+    latest_run = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id)
+        .order_by(PipelineRun.run_number.desc())
+        .first()
+    )
+    if not latest_run:
+        return {"corrections": [], "message": "No runs found"}
+
+    engine = PipelineEngine(db)
+    corrections = engine._reconcile_statuses(project_id, latest_run.run_id)
+    if corrections:
+        db.commit()
+
+    return {
+        "corrections": corrections,
+        "run_id": latest_run.run_id,
+        "run_number": latest_run.run_number,
+    }
+
+
 @pipeline_router.post("/{project_id}/regenerate")
 async def regenerate(
     project_id: str,
