@@ -30,6 +30,6 @@ primary_region = 'iad'
 
 [[vm]]
   memory = '2gb'
-  cpu_kind = 'shared'
-  cpus = 2
+  cpu_kind = 'performance'
+  cpus = 1
   count = 1
