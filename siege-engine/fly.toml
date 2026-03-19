@@ -4,7 +4,7 @@
 #
 
 app = 'siege-engine'
-primary_region = 'ewr'
+primary_region = 'lax'
 
 [build]
 
