@@ -806,6 +806,15 @@ class ArtifactOpsMixin:
             ):
                 artifact.status = ArtifactStatus.PENDING
 
+        # Gather feedback notes and current content so the retry builds on
+        # the previous version rather than generating from scratch.
+        feedback_notes = self._get_feedback_notes(execution.artifact_id) if execution.artifact_id else None
+        current_content = None
+        if execution.artifact_id:
+            existing_artifact = self.db.get(Artifact, execution.artifact_id)
+            if existing_artifact and existing_artifact.content:
+                current_content = existing_artifact.content
+
         input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
         execution.status = StageStatus.RUNNING
         execution.error_message = None
@@ -819,6 +828,8 @@ class ArtifactOpsMixin:
             execution.component_key,
             execution,
             execution.run_id or str(uuid.uuid4()),
+            human_notes=feedback_notes,
+            current_content=current_content,
             config=config,
             pipeline_run=pipeline_run,
         )
