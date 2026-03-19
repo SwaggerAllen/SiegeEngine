@@ -66,7 +66,7 @@ export type WSEvent =
   | { type: 'stage_progress'; stage_key: string; step: string; component_key?: string; message: string }
   | { type: 'stage_awaiting_review'; stage_key: string; component_key?: string; artifact_id: string }
   | { type: 'stage_completed'; stage_key: string; component_key?: string; artifact_id?: string; status?: string }
-  | { type: 'stage_failed'; stage_key: string; component_key?: string; error: string }
+  | { type: 'stage_failed'; stage_key: string; component_key?: string; error: string; artifact_id?: string; artifact_status?: string }
   | { type: 'pipeline_completed'; run_id: string; run_number?: number; git_commit_sha?: string }
   | { type: 'pipeline_paused'; stage_key: string; run_id: string; message?: string }
   | { type: 'staleness_propagated'; stale_artifact_ids: string[] }

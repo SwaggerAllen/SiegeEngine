@@ -178,15 +178,18 @@ async def force_restart_stage(
     execution.error_message = "Force-restarted by user"
     execution.completed_at = datetime.utcnow()
 
-    # Reset any associated artifact stuck in generating/ai_reviewing/rejected
+    # Reset any associated artifact so regeneration starts fresh.
+    # This includes "approved" because a failed revision restores the artifact
+    # to approved — the user explicitly wants to retry in that case too.
     if execution.artifact_id:
         artifact = db.get(Artifact, execution.artifact_id)
-        if artifact and artifact.status.value in ("generating", "ai_reviewing", "rejected"):
+        if artifact and artifact.status.value not in ("pending",):
             artifact.status = ArtifactStatus.PENDING
 
     db.commit()
 
-    # Broadcast so the UI updates immediately
+    # Broadcast so the UI updates immediately (include artifact_status so
+    # components showing the approved/rejected badge can clear it).
     await ws_manager.broadcast(
         project_id,
         {
@@ -194,6 +197,8 @@ async def force_restart_stage(
             "stage_key": execution.stage_key,
             "component_key": execution.component_key,
             "error": "Force-restarted by user",
+            "artifact_id": execution.artifact_id,
+            "artifact_status": "pending",
         },
     )
 

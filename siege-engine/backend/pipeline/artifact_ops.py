@@ -799,11 +799,7 @@ class ArtifactOpsMixin:
 
         if execution.artifact_id:
             artifact = self.db.get(Artifact, execution.artifact_id)
-            if artifact and artifact.status in (
-                ArtifactStatus.GENERATING,
-                ArtifactStatus.AI_REVIEWING,
-                ArtifactStatus.REJECTED,
-            ):
+            if artifact and artifact.status != ArtifactStatus.PENDING:
                 artifact.status = ArtifactStatus.PENDING
 
         # Gather feedback notes and current content so the retry builds on
