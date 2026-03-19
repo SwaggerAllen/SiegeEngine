@@ -618,6 +618,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         execution: StageExecution,
         run_id: str,
         human_notes: str | None = None,
+        current_content: str | None = None,
         config: PipelineConfig | None = None,
         pipeline_run: PipelineRun | None = None,
     ):
@@ -652,6 +653,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 component_key,
                 self.db,
                 human_notes=human_notes,
+                current_content=current_content,
             )
             execution.artifact_id = artifact_id
 
