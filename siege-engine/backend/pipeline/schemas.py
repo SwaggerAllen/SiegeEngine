@@ -48,6 +48,11 @@ class PromptPreviewRequest(BaseModel):
     human_notes: str | None = None  # Optional draft feedback for "what-if" preview
 
 
+class TriggerStageRequest(BaseModel):
+    stage_key: str
+    component_key: str | None = None
+
+
 class StageDefinitionResponse(BaseModel):
     id: str
     stage_key: str

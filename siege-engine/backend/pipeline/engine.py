@@ -215,6 +215,110 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         await self._find_and_execute_next(project_id, new_run_id, config, pipeline_run)
         return new_run_id
 
+    async def trigger_stage(
+        self,
+        project_id: str,
+        stage_key: str,
+        component_key: str | None = None,
+    ) -> str:
+        """Manually trigger a single stage, creating an execution if needed.
+
+        Finds the most recent active run, gathers inputs, and kicks off the
+        stage.  Useful as a recovery mechanism when the pipeline gets stuck.
+        Returns the execution_id.
+        """
+        config = self._get_config(project_id)
+        if not config:
+            raise ValueError("Pipeline config not found")
+
+        stage_def = next(
+            (s for s in config.stages if s.stage_key == stage_key), None
+        )
+        if not stage_def:
+            raise ValueError(f"Stage definition not found: {stage_key}")
+
+        # Find the latest run for this project
+        pipeline_run = (
+            self.db.query(PipelineRun)
+            .filter_by(project_id=project_id)
+            .order_by(PipelineRun.run_number.desc())
+            .first()
+        )
+        run_id = pipeline_run.run_id if pipeline_run else str(uuid.uuid4())
+
+        # Check for an already-running execution
+        existing = (
+            self.db.query(StageExecution)
+            .filter_by(
+                project_id=project_id,
+                stage_key=stage_key,
+                component_key=component_key,
+                run_id=run_id,
+            )
+            .filter(
+                StageExecution.status.in_(
+                    [StageStatus.RUNNING, StageStatus.AI_REVIEW]
+                )
+            )
+            .first()
+        )
+        if existing:
+            raise ValueError(
+                f"Stage {stage_key} (component={component_key}) is already "
+                f"running (execution {existing.id})"
+            )
+
+        input_artifacts = self._gather_inputs(project_id, stage_def, component_key)
+
+        # Gather any prior feedback
+        feedback_notes = None
+        prev_exec = (
+            self.db.query(StageExecution)
+            .filter_by(
+                project_id=project_id,
+                stage_key=stage_key,
+                component_key=component_key,
+            )
+            .order_by(StageExecution.started_at.desc())
+            .first()
+        )
+        current_content = None
+        if prev_exec and prev_exec.artifact_id:
+            feedback_notes = self._get_feedback_notes(prev_exec.artifact_id)
+            prev_artifact = self.db.get(Artifact, prev_exec.artifact_id)
+            if prev_artifact and prev_artifact.content:
+                current_content = prev_artifact.content
+
+        execution = StageExecution(
+            project_id=project_id,
+            stage_key=stage_key,
+            component_key=component_key,
+            status=StageStatus.RUNNING,
+            started_at=datetime.utcnow(),
+            run_id=run_id,
+        )
+        self.db.add(execution)
+        self.db.flush()
+
+        logger.info(
+            "Manually triggered stage %s (component=%s) execution=%s",
+            stage_key, component_key, execution.id,
+        )
+
+        await self._run_stage(
+            project_id,
+            stage_def,
+            input_artifacts,
+            component_key,
+            execution,
+            run_id,
+            human_notes=feedback_notes,
+            current_content=current_content,
+            config=config,
+            pipeline_run=pipeline_run,
+        )
+        return execution.id
+
     def _carry_over_approved(self, project_id: str, new_run_id: str) -> int:
         """Carry over the most recent APPROVED execution for each (stage, component)
         across ALL previous runs.  Skips executions whose artifact is currently STALE.
@@ -222,6 +326,31 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         Returns the number of executions carried over.
         """
         from sqlalchemy import func
+
+        # Reconcile mismatches: if an artifact is APPROVED but its latest
+        # execution is not, sync the execution so it gets carried over
+        # instead of silently dropping it.
+        mismatched = (
+            self.db.query(StageExecution)
+            .filter_by(project_id=project_id)
+            .filter(StageExecution.run_id != new_run_id)
+            .filter(StageExecution.artifact_id.isnot(None))
+            .filter(StageExecution.status != StageStatus.APPROVED)
+            .join(Artifact, StageExecution.artifact_id == Artifact.id)
+            .filter(Artifact.status == ArtifactStatus.APPROVED)
+            .all()
+        )
+        for ex in mismatched:
+            logger.warning(
+                "Reconciling status mismatch: execution %s (stage=%s, status=%s) "
+                "has approved artifact %s — setting execution to APPROVED",
+                ex.id, ex.stage_key, ex.status.value, ex.artifact_id,
+            )
+            ex.status = StageStatus.APPROVED
+            if not ex.completed_at:
+                ex.completed_at = datetime.utcnow()
+        if mismatched:
+            self.db.flush()
 
         stale_artifact_ids = {
             a.id

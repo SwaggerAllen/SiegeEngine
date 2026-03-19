@@ -251,6 +251,22 @@ async def _handle_retry_stage(payload: dict) -> None:
         db.close()
 
 
+async def _handle_trigger_stage(payload: dict) -> None:
+    """Handle a trigger_stage job (manual kickoff)."""
+    from backend.pipeline.engine import PipelineEngine
+
+    db = SessionLocal()
+    try:
+        engine = PipelineEngine(db)
+        await engine.trigger_stage(
+            payload["project_id"],
+            payload["stage_key"],
+            component_key=payload.get("component_key"),
+        )
+    finally:
+        db.close()
+
+
 _JOB_HANDLERS = {
     "start_pipeline": _handle_start_pipeline,
     "resume_run": _handle_resume_run,
@@ -258,6 +274,7 @@ _JOB_HANDLERS = {
     "revise_artifact": _handle_revise_artifact,
     "resolve_stale": _handle_resolve_stale,
     "retry_stage": _handle_retry_stage,
+    "trigger_stage": _handle_trigger_stage,
 }
 
 

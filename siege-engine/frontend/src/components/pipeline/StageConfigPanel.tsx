@@ -31,9 +31,12 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
     human_review_enabled: boolean;
   } | null>(null);
 
+  const triggerStage = usePipelineStore((s) => s.triggerStage);
+
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [triggering, setTriggering] = useState(false);
 
   useEffect(() => {
     if (stageDef) {
@@ -86,6 +89,17 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
 
   const handleEditPrompt = () => {
     setEditPromptStageKey(stageKey);
+  };
+
+  const handleTrigger = async () => {
+    setTriggering(true);
+    try {
+      await triggerStage(projectId, stageKey);
+    } catch (err) {
+      console.error('[StageConfig] Trigger failed:', err);
+    } finally {
+      setTriggering(false);
+    }
   };
 
   if (!stageDef || !form) {
@@ -206,6 +220,14 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
             className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded"
           >
             Edit Prompt
+          </button>
+          <button
+            onClick={handleTrigger}
+            disabled={triggering}
+            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded disabled:opacity-50"
+            title="Manually kick off this stage (useful for recovering from stuck states)"
+          >
+            {triggering ? 'Running...' : 'Run Stage'}
           </button>
           {saved && <span className="text-green-400 text-sm">Saved!</span>}
         </div>
