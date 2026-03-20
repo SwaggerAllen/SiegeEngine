@@ -569,6 +569,15 @@ class ArtifactOpsMixin:
                     )
                 )
             self.db.commit()
+
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "feedback_saved",
+                    "stage_key": "",
+                    "artifact_id": artifact_id,
+                },
+            )
             if notes and notes.strip():
                 await ws_manager.broadcast(
                     project_id,

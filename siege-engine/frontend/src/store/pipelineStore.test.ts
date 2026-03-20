@@ -148,6 +148,17 @@ describe('pipelineStore', () => {
       expect(state.pausedStage).toBeNull();
       expect(pipelineApi.resumeStage).toHaveBeenCalledWith('proj-1', 'exec-1', 'approved', 'looks good', undefined);
     });
+
+    it('does not clear paused state for save_feedback action', async () => {
+      usePipelineStore.setState({ isPaused: true, pausedStage: 'design' });
+      vi.mocked(pipelineApi.resumeStage).mockResolvedValue(undefined);
+
+      await usePipelineStore.getState().resumeStage('proj-1', 'exec-1', 'save_feedback', 'some notes');
+
+      const state = usePipelineStore.getState();
+      expect(state.isPaused).toBe(true);
+      expect(state.pausedStage).toBe('design');
+    });
   });
 
   describe('fetchRuns', () => {

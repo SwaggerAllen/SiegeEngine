@@ -68,6 +68,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
       if (action === 'save_feedback') {
         setFeedbackSaved(true);
         setFeedbackCount((c) => c + 1);
+        setNotes('');
       } else {
         setNotes('');
         setEditedContent('');
@@ -92,6 +93,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
       if (action === 'save_feedback') {
         setFeedbackSaved(true);
         setFeedbackCount((c) => c + 1);
+        setNotes('');
       } else {
         setNotes('');
         setEditedContent('');
