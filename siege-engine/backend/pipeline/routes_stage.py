@@ -19,6 +19,7 @@ from backend.pipeline.defaults import DEFAULT_STAGES
 from backend.pipeline.engine import PipelineEngine
 from backend.pipeline.queue import enqueue
 from backend.pipeline.schemas import (
+    AcceptAndCascadeRequest,
     ResolveStaleRequest,
     ResumeRequest,
     ReviseRequest,
@@ -103,6 +104,25 @@ async def resolve_stale(
         "user_id": user_id,
     })
     return {"status": "resolving"}
+
+
+@stage_router.post("/{project_id}/accept-and-cascade")
+async def accept_and_cascade(
+    project_id: str,
+    req: AcceptAndCascadeRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Approve an artifact and regenerate all downstream dependents."""
+    user_id = _user.id
+
+    enqueue(db, "accept_and_cascade", {
+        "artifact_id": req.artifact_id,
+        "notes": req.notes,
+        "edited_content": req.edited_content,
+        "user_id": user_id,
+    })
+    return {"status": "cascading"}
 
 
 @stage_router.post("/{project_id}/cancel-stage/{execution_id}")

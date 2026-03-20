@@ -30,6 +30,7 @@ interface PipelineState {
   resumeStage: (projectId: string, executionId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
   reviseArtifact: (projectId: string, artifactId: string, feedback: string) => Promise<void>;
   resolveStale: (projectId: string, artifactId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
+  acceptAndCascade: (projectId: string, artifactId: string, notes?: string, editedContent?: string) => Promise<void>;
   cancelPipeline: (projectId: string, options?: { open_pr?: boolean; pr_title?: string; pr_body?: string; base_branch?: string }) => Promise<void>;
   checkBlockingPR: (projectId: string) => Promise<boolean>;
   dismissBlockingPR: (projectId: string) => Promise<void>;
@@ -147,6 +148,11 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     }
   },
 
+  acceptAndCascade: async (projectId, artifactId, notes, editedContent) => {
+    set({ isRunning: true });
+    await pipelineApi.acceptAndCascade(projectId, artifactId, notes, editedContent);
+  },
+
   cancelPipeline: async (projectId, options) => {
     const result = await pipelineApi.cancelPipeline(projectId, options);
     set({ isRunning: false, isPaused: false, pausedStage: null });
@@ -237,6 +243,9 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
         break;
       case 'stage_failed':
         // Refresh executions on next render
+        break;
+      case 'cascade_completed':
+        set({ isRunning: false });
         break;
     }
   },

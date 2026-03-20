@@ -16,8 +16,11 @@ from backend.models import (
     ArtifactStatus,
     ComponentDefinition,
     PipelineConfig,
+    PipelineRun,
+    PipelineRunStatus,
     StageExecution,
     StageStatus,
+    StopPoint,
 )
 from backend.pipeline.nodes.ai_review import ai_review
 from backend.pipeline.nodes.generate import generate
@@ -79,6 +82,14 @@ class ArtifactOpsMixin:
                     "execution_id": execution_id,
                 },
             )
+            if notes and notes.strip() and execution.artifact_id:
+                await ws_manager.broadcast(
+                    execution.project_id,
+                    {
+                        "type": "comment_added",
+                        "artifact_id": execution.artifact_id,
+                    },
+                )
 
             config = self._get_config(execution.project_id)
             if config:
@@ -181,6 +192,14 @@ class ArtifactOpsMixin:
                     "execution_id": execution_id,
                 },
             )
+            if notes and notes.strip() and execution.artifact_id:
+                await ws_manager.broadcast(
+                    execution.project_id,
+                    {
+                        "type": "comment_added",
+                        "artifact_id": execution.artifact_id,
+                    },
+                )
 
             if stale_artifact_ids:
                 await ws_manager.broadcast(
@@ -227,6 +246,15 @@ class ArtifactOpsMixin:
                     "artifact_id": execution.artifact_id,
                 },
             )
+            # Also broadcast comment_added so CommentsPanel refreshes
+            if notes and notes.strip() and execution.artifact_id:
+                await ws_manager.broadcast(
+                    execution.project_id,
+                    {
+                        "type": "comment_added",
+                        "artifact_id": execution.artifact_id,
+                    },
+                )
 
     async def _check_and_continue(self, execution: StageExecution):
         """After approval, find and execute the next available work."""
@@ -541,6 +569,14 @@ class ArtifactOpsMixin:
                     )
                 )
             self.db.commit()
+            if notes and notes.strip():
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "comment_added",
+                        "artifact_id": artifact_id,
+                    },
+                )
             return
 
         if action == "approved":
@@ -594,6 +630,14 @@ class ArtifactOpsMixin:
                     "status": "approved",
                 },
             )
+            if notes and notes.strip():
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "comment_added",
+                        "artifact_id": artifact_id,
+                    },
+                )
 
             # Trigger downstream stages (e.g. component nodes after fan-out
             # approval).  Without this the pipeline stalls after approving a
@@ -609,6 +653,243 @@ class ArtifactOpsMixin:
             return
 
         raise ValueError(f"Unknown action: {action}")
+
+    async def accept_and_cascade(
+        self,
+        artifact_id: str,
+        notes: str | None = None,
+        edited_content: str | None = None,
+        user_id: str | None = None,
+    ):
+        """Approve an artifact and regenerate all downstream dependents.
+
+        Phase 1: Creates a cascade PipelineRun with human_review=False so
+        _find_and_execute_next() auto-approves each stage in dependency order.
+        Phase 2: Flips all newly-generated artifacts to AWAITING_REVIEW so
+        the user can inspect each one.
+        """
+        from sqlalchemy import func
+        from backend.pipeline.engine import BRANCHING_STAGES
+
+        artifact = self.db.get(Artifact, artifact_id)
+        if not artifact:
+            raise ValueError("Artifact not found")
+        if artifact.status not in (
+            ArtifactStatus.STALE,
+            ArtifactStatus.AWAITING_REVIEW,
+            ArtifactStatus.APPROVED,
+        ):
+            raise ValueError(
+                f"Cannot cascade from artifact in status {artifact.status.value}; "
+                "expected stale, awaiting_review, or approved"
+            )
+
+        project_id = artifact.project_id
+
+        # ── Step A: Approve the source artifact ─────────────────────────
+        if edited_content:
+            artifact.content = edited_content
+            artifact.version += 1
+
+        if notes and notes.strip():
+            self.db.add(
+                ArtifactComment(
+                    artifact_id=artifact_id,
+                    project_id=project_id,
+                    author_id=user_id,
+                    content=notes.strip(),
+                    comment_type="feedback",
+                    artifact_version=artifact.version,
+                )
+            )
+
+        self._mark_artifact_status(artifact_id, ArtifactStatus.APPROVED)
+
+        # Sync owning execution to APPROVED
+        execution = (
+            self.db.query(StageExecution)
+            .filter_by(artifact_id=artifact_id)
+            .order_by(StageExecution.started_at.desc())
+            .first()
+        )
+        if execution and execution.status != StageStatus.APPROVED:
+            self._transition_execution(
+                execution, StageStatus.APPROVED,
+                set_completed=True,
+            )
+
+        # Handle component_map / sub_component_map storage
+        if artifact.artifact_type.value == "component_map":
+            self._store_components(project_id, artifact.content)
+        elif artifact.artifact_type.value == "sub_component_map" and artifact.component_key:
+            self._store_sub_components(project_id, artifact.component_key, artifact.content)
+
+        # Post-generation hook for branching stages
+        config = self._get_config(project_id)
+        if not config:
+            raise ValueError("Pipeline config not found")
+        source_stage = next(
+            (s for s in config.stages if s.output_artifact_type == artifact.artifact_type.value),
+            None,
+        )
+        if not source_stage:
+            raise ValueError(
+                f"No stage definition for artifact type: {artifact.artifact_type.value}"
+            )
+
+        if execution and source_stage.stage_key in BRANCHING_STAGES:
+            await self._post_generation_hook(
+                project_id, source_stage, artifact.component_key, execution
+            )
+
+        self.db.commit()
+
+        await ws_manager.broadcast(
+            project_id,
+            {
+                "type": "stage_completed",
+                "stage_key": source_stage.stage_key,
+                "component_key": artifact.component_key,
+                "artifact_id": artifact_id,
+                "status": "approved",
+            },
+        )
+
+        # ── Step B: Create cascade run & reset downstream ───────────────
+        source_order = source_stage.order_index
+        downstream_stage_keys = {
+            s.stage_key for s in config.stages if s.order_index > source_order
+        }
+
+        if not downstream_stage_keys:
+            logger.info("No downstream stages to cascade for artifact %s", artifact_id)
+            return
+
+        max_num = (
+            self.db.query(func.max(PipelineRun.run_number))
+            .filter_by(project_id=project_id)
+            .scalar()
+        ) or 0
+        cascade_run = PipelineRun(
+            project_id=project_id,
+            run_number=max_num + 1,
+            human_review=False,
+            ai_loops=1,
+            stop_point=StopPoint.AFTER_ALL,
+            propagation_run=False,
+        )
+        self.db.add(cascade_run)
+        self.db.commit()
+
+        # Carry over all approved executions from previous runs
+        self._carry_over_approved(project_id, cascade_run.run_id)
+
+        # Delete carried-over executions for downstream stages (they need regen)
+        (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.run_id == cascade_run.run_id,
+                StageExecution.stage_key.in_(downstream_stage_keys),
+            )
+            .delete(synchronize_session="fetch")
+        )
+        self.db.commit()
+
+        # Snapshot carried-over exec IDs (upstream only) before generation
+        carried_exec_ids = {
+            e.id
+            for e in self.db.query(StageExecution)
+            .filter_by(run_id=cascade_run.run_id)
+            .all()
+        }
+
+        await ws_manager.broadcast(
+            project_id,
+            {
+                "type": "cascade_started",
+                "source_artifact_id": artifact_id,
+                "run_id": cascade_run.run_id,
+            },
+        )
+
+        # ── Step C: Generation loop ─────────────────────────────────────
+        for _ in range(20):  # safety limit
+            await self._find_and_execute_next(
+                project_id, cascade_run.run_id, config, cascade_run
+            )
+
+            # Run deferred post-generation hooks for branching stages
+            new_branching = (
+                self.db.query(StageExecution)
+                .filter(
+                    StageExecution.run_id == cascade_run.run_id,
+                    StageExecution.status == StageStatus.APPROVED,
+                    StageExecution.stage_key.in_(BRANCHING_STAGES),
+                    StageExecution.id.notin_(carried_exec_ids),
+                )
+                .all()
+            )
+            if not new_branching:
+                break
+            for ex in new_branching:
+                stage_def = next(
+                    (s for s in config.stages if s.stage_key == ex.stage_key), None
+                )
+                if stage_def:
+                    await self._post_generation_hook(
+                        project_id, stage_def, ex.component_key, ex
+                    )
+                carried_exec_ids.add(ex.id)
+            self.db.commit()
+
+        # ── Step D: Flip regenerated artifacts to AWAITING_REVIEW ───────
+        regenerated_execs = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.run_id == cascade_run.run_id,
+                StageExecution.status == StageStatus.APPROVED,
+                StageExecution.id.notin_(carried_exec_ids),
+            )
+            .all()
+        )
+        for ex in regenerated_execs:
+            ex.status = StageStatus.AWAITING_REVIEW
+            ex.completed_at = None
+            if ex.artifact_id:
+                art = self.db.get(Artifact, ex.artifact_id)
+                if art:
+                    art.status = ArtifactStatus.AWAITING_REVIEW
+
+        self.db.commit()
+
+        # Broadcast review status for each regenerated artifact
+        for ex in regenerated_execs:
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "stage_awaiting_review",
+                    "stage_key": ex.stage_key,
+                    "component_key": ex.component_key,
+                    "artifact_id": ex.artifact_id,
+                },
+            )
+
+        regenerated_count = len(regenerated_execs)
+        logger.info(
+            "Accept & cascade completed for artifact %s: %d downstream artifacts regenerated",
+            artifact_id,
+            regenerated_count,
+        )
+
+        await ws_manager.broadcast(
+            project_id,
+            {
+                "type": "cascade_completed",
+                "source_artifact_id": artifact_id,
+                "regenerated_count": regenerated_count,
+                "run_id": cascade_run.run_id,
+            },
+        )
 
     def prune_artifact(self, project_id: str, artifact_id: str):
         """Remove an artifact and its associated records from the project.

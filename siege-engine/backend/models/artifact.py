@@ -81,6 +81,7 @@ class ArtifactComment(Base):
     parent_id: Mapped[str | None] = mapped_column(ForeignKey("artifact_comments.id"), nullable=True)
     artifact_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ComponentDefinition(Base):

@@ -20,6 +20,10 @@ class CreateCommentRequest(BaseModel):
     parent_id: str | None = None
 
 
+class UpdateCommentRequest(BaseModel):
+    content: str
+
+
 def _comment_to_dict(comment: ArtifactComment, db: Session) -> dict:
     author = db.get(User, comment.author_id) if comment.author_id else None
     return {
@@ -37,6 +41,7 @@ def _comment_to_dict(comment: ArtifactComment, db: Session) -> dict:
         "parent_id": comment.parent_id,
         "artifact_version": comment.artifact_version,
         "created_at": comment.created_at.isoformat(),
+        "updated_at": comment.updated_at.isoformat() if comment.updated_at else None,
     }
 
 
@@ -109,3 +114,91 @@ def create_comment(
         pass  # No event loop running (e.g. in tests)
 
     return _comment_to_dict(comment, db)
+
+
+@router.put("/{project_id}/artifacts/{artifact_id}/comments/{comment_id}")
+def update_comment(
+    project_id: str,
+    artifact_id: str,
+    comment_id: str,
+    req: UpdateCommentRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not req.content.strip():
+        raise HTTPException(400, "Comment content cannot be empty")
+
+    comment = db.get(ArtifactComment, comment_id)
+    if not comment:
+        raise HTTPException(404, "Comment not found")
+    if comment.artifact_id != artifact_id or comment.project_id != project_id:
+        raise HTTPException(404, "Comment not found")
+    if comment.author_id != user.id:
+        raise HTTPException(403, "Can only edit your own comments")
+    if comment.comment_type == "system_event":
+        raise HTTPException(400, "Cannot edit system events")
+
+    from datetime import datetime
+
+    comment.content = req.content.strip()
+    comment.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(comment)
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(
+            ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "comment_updated",
+                    "artifact_id": artifact_id,
+                    "comment_id": comment_id,
+                },
+            )
+        )
+    except RuntimeError:
+        pass
+
+    return _comment_to_dict(comment, db)
+
+
+@router.delete("/{project_id}/artifacts/{artifact_id}/comments/{comment_id}")
+def delete_comment(
+    project_id: str,
+    artifact_id: str,
+    comment_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    comment = db.get(ArtifactComment, comment_id)
+    if not comment:
+        raise HTTPException(404, "Comment not found")
+    if comment.artifact_id != artifact_id or comment.project_id != project_id:
+        raise HTTPException(404, "Comment not found")
+    if comment.author_id != user.id:
+        raise HTTPException(403, "Can only delete your own comments")
+    if comment.comment_type == "system_event":
+        raise HTTPException(400, "Cannot delete system events")
+
+    # Delete child replies first
+    db.query(ArtifactComment).filter_by(parent_id=comment_id).delete()
+    db.delete(comment)
+    db.commit()
+
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(
+            ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "comment_deleted",
+                    "artifact_id": artifact_id,
+                    "comment_id": comment_id,
+                },
+            )
+        )
+    except RuntimeError:
+        pass
+
+    return {"status": "deleted"}

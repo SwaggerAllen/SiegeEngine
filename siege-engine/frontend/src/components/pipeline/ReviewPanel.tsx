@@ -17,7 +17,7 @@ interface ReviewPanelProps {
 const REGENERATING_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
-  const { resumeStage, resolveStale, forceRestartStage, pruneArtifact } = usePipelineStore();
+  const { resumeStage, resolveStale, acceptAndCascade, forceRestartStage, pruneArtifact, cancelStage } = usePipelineStore();
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
   const [notes, setNotes] = useState('');
@@ -30,6 +30,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const [pruning, setPruning] = useState(false);
   const [reparsing, setReparsing] = useState(false);
   const [reparseResult, setReparseResult] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const fetchDAG = useDAGStore((s) => s.fetchDAG);
   const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
 
@@ -145,6 +146,37 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
       setReparseResult('Reparse failed');
     } finally {
       setReparsing(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!execution) return;
+    setCancelling(true);
+    try {
+      await cancelStage(projectId, execution.id);
+    } catch (err) {
+      console.error('Cancel failed:', err);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const handleAcceptAndCascade = async () => {
+    if (!window.confirm('Approve this artifact and regenerate all downstream dependents?')) return;
+    setSubmitting(true);
+    try {
+      await acceptAndCascade(
+        projectId,
+        artifact.id,
+        notes || undefined,
+        showEditor && editedContent ? editedContent : undefined
+      );
+      setNotes('');
+      setEditedContent('');
+      setShowEditor(false);
+      setFeedbackSaved(false);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -265,6 +297,13 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
             Approve
           </button>
           <button
+            onClick={handleAcceptAndCascade}
+            disabled={submitting}
+            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {submitting ? 'Cascading...' : 'Accept & Cascade'}
+          </button>
+          <button
             onClick={() => handleStaleAction('save_feedback')}
             disabled={submitting || !notes.trim()}
             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
@@ -283,6 +322,96 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
             className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
           >
             {showEditor ? 'Hide Editor' : 'Edit & Approve'}
+          </button>
+          {canPrune && (
+            <button
+              onClick={handlePrune}
+              disabled={pruning}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
+            >
+              {pruning ? 'Pruning...' : '🗑 Prune'}
+            </button>
+          )}
+          {canReparse && (
+            <button
+              onClick={handleReparse}
+              disabled={reparsing}
+              className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              {reparsing ? 'Reparsing...' : 'Reparse Children'}
+            </button>
+          )}
+          {reparseResult && (
+            <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
+              {reparseResult}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Actively generating: show status and cancel button
+  if (!isViewer && isGenerating && execution && (execution.status === 'running' || execution.status === 'ai_review' || execution.status === 'pending')) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="px-2 py-1 rounded bg-blue-600 text-white animate-pulse">
+            {execution.status === 'ai_review' ? 'AI Reviewing' : 'Generating'}
+          </span>
+          <span className="text-xs text-gray-400">
+            This artifact is being generated...
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleCancel}
+            disabled={cancelling}
+            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {cancelling ? 'Cancelling...' : 'Cancel Generation'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Approved artifacts (non-viewer, non-input): show request changes / feedback UI
+  const isApproved = artifact.status === 'approved' && execution?.status === 'approved';
+  if (!isViewer && !isAwaitingReview && isApproved && !isInputDoc) {
+    return (
+      <div className="space-y-3">
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs text-gray-400">Request Changes (optional)</label>
+            {feedbackCount > 0 && (
+              <span className="text-xs text-orange-400">
+                {feedbackCount} previous feedback{feedbackCount !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+          <textarea
+            value={notes}
+            onChange={(e) => { setNotes(e.target.value); setFeedbackSaved(false); }}
+            className="w-full h-14 md:h-28 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+            placeholder="Add feedback to request changes..."
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
+          <button
+            onClick={() => handleAction('save_feedback')}
+            disabled={submitting || !notes.trim()}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+          </button>
+          <button
+            onClick={() => handleAction('rejected')}
+            disabled={submitting || !notes.trim()}
+            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {submitting ? 'Requesting...' : 'Request Changes & Re-generate'}
           </button>
           {canPrune && (
             <button
@@ -383,6 +512,13 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
         >
           Approve
+        </button>
+        <button
+          onClick={handleAcceptAndCascade}
+          disabled={submitting}
+          className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+        >
+          {submitting ? 'Cascading...' : 'Accept & Cascade'}
         </button>
         <button
           onClick={() => handleAction('save_feedback')}

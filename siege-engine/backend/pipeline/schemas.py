@@ -26,6 +26,12 @@ class ResolveStaleRequest(BaseModel):
     edited_content: str | None = None
 
 
+class AcceptAndCascadeRequest(BaseModel):
+    artifact_id: str
+    notes: str | None = None
+    edited_content: str | None = None
+
+
 class ResumeRunRequest(BaseModel):
     human_review: bool = True
     ai_loops: int = 1
