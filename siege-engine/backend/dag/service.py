@@ -122,16 +122,14 @@ def get_regeneration_order(db: Session, artifact_ids: list[str]) -> list[list[st
 
 
 def get_stale_artifacts(db: Session, project_id: str) -> list[str]:
-    artifacts = (
-        db.execute(
-            select(Artifact)
-            .where(Artifact.project_id == project_id)
-            .where(Artifact.status == ArtifactStatus.STALE)
-        )
-        .scalars()
-        .all()
-    )
-    return [a.id for a in artifacts]
+    """Return IDs of stale artifacts using the snapshot as source of truth."""
+    from backend.pipeline.event_store import EventStore
+    es = EventStore(db)
+    snapshot = es.get_snapshot(project_id)
+    return [
+        aid for aid, status in (snapshot.artifact_statuses or {}).items()
+        if status == "stale"
+    ]
 
 
 def _build_prompt_info(stage_def: StageDefinition) -> dict:

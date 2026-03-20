@@ -2,13 +2,15 @@
 
 Determines which stages/entities are ready to execute based on what has
 already been approved in the current run.
+
+Status reads for approval checks use the PipelineSnapshot (event-sourced
+source of truth).  Execution-existence checks still use the StageExecution
+table since the snapshot is project-level and doesn't distinguish by run_id.
 """
 
 import logging
 
 from backend.models import (
-    Artifact,
-    ArtifactStatus,
     ArtifactType,
     FanOutStrategy,
     StageDefinition,
@@ -18,6 +20,22 @@ from backend.models import (
 from backend.pipeline.nodes.extract_components import inject_setup_component
 
 logger = logging.getLogger(__name__)
+
+# Reverse mapping: artifact type → stage key that produces it.
+_ARTIFACT_TYPE_TO_STAGE_KEY: dict[ArtifactType, str] = {
+    ArtifactType.SYSTEM_REQUIREMENTS: "system_requirements",
+    ArtifactType.COMPONENT_REQUIREMENTS: "component_requirements",
+    ArtifactType.SYSTEM_ARCHITECTURE: "system_architecture",
+    ArtifactType.COMPONENT_ARCHITECTURE: "component_architectures",
+    ArtifactType.COMPONENT_PLAN: "component_plans",
+    ArtifactType.COMPONENT_MAP: "extract_components",
+    ArtifactType.SUB_COMPONENT_MAP: "extract_sub_components",
+    ArtifactType.SUB_COMPONENT_REQUIREMENTS: "sub_component_requirements",
+    ArtifactType.SUB_COMPONENT_ARCHITECTURE: "sub_component_architectures",
+    ArtifactType.SUB_COMPONENT_PLAN: "sub_component_plans",
+    ArtifactType.CODE: "code_generation",
+    ArtifactType.CODE_REVIEW: "code_review",
+}
 
 # Stage keys grouped by level for readiness checks.
 COMPONENT_STAGE_ORDER = [
@@ -37,40 +55,25 @@ class ReadinessMixin:
     def _stage_fully_complete(
         self, project_id: str, stage_def: StageDefinition, run_id: str
     ) -> bool:
-        """Check if a stage is fully complete (all expected entities approved)."""
+        """Check if a stage is fully complete (all expected entities approved).
+
+        Uses the PipelineSnapshot as the source of truth for stage statuses.
+        """
+        snapshot = self.events.get_snapshot(project_id)
+        statuses = snapshot.stage_statuses or {}
         fan_out = stage_def.fan_out_strategy
 
         if fan_out == FanOutStrategy.NONE:
-            approved = (
-                self.db.query(StageExecution)
-                .filter_by(
-                    project_id=project_id,
-                    stage_key=stage_def.stage_key,
-                    run_id=run_id,
-                    status=StageStatus.APPROVED,
-                )
-                .count()
-            )
-            return approved > 0
+            return statuses.get(stage_def.stage_key) == "approved"
 
-        # Fan-out stages: check if ALL entities have approved executions
+        # Fan-out stages: check if ALL entities have approved status
         all_entities = self._get_all_entities_for_stage(project_id, stage_def)
         if not all_entities:
             return False
 
         for entity_key in all_entities:
-            approved = (
-                self.db.query(StageExecution)
-                .filter_by(
-                    project_id=project_id,
-                    stage_key=stage_def.stage_key,
-                    run_id=run_id,
-                    component_key=entity_key,
-                    status=StageStatus.APPROVED,
-                )
-                .count()
-            )
-            if approved == 0:
+            key = f"{stage_def.stage_key}/{entity_key}"
+            if statuses.get(key) != "approved":
                 return False
 
         return True
@@ -268,30 +271,27 @@ class ReadinessMixin:
     def _has_approved_artifact(
         self, project_id: str, artifact_type: ArtifactType, component_key: str
     ) -> bool:
-        """Check if an approved artifact exists."""
-        return (
-            self.db.query(Artifact)
-            .filter_by(
-                project_id=project_id,
-                artifact_type=artifact_type,
-                component_key=component_key,
-                status=ArtifactStatus.APPROVED,
-            )
-            .count()
-        ) > 0
+        """Check if an approved artifact exists using the snapshot.
+
+        Maps artifact_type → stage_key, then checks the snapshot's
+        stage_statuses for approval.
+        """
+        stage_key = _ARTIFACT_TYPE_TO_STAGE_KEY.get(artifact_type)
+        if not stage_key:
+            return False
+        snapshot = self.events.get_snapshot(project_id)
+        key = f"{stage_key}/{component_key}" if component_key else stage_key
+        return (snapshot.stage_statuses or {}).get(key) == "approved"
 
     def _has_approved_execution(
         self, project_id: str, stage_key: str, component_key: str, run_id: str
     ) -> bool:
-        """Check if an approved execution exists for a stage+component."""
-        return (
-            self.db.query(StageExecution)
-            .filter_by(
-                project_id=project_id,
-                stage_key=stage_key,
-                run_id=run_id,
-                component_key=component_key,
-                status=StageStatus.APPROVED,
-            )
-            .count()
-        ) > 0
+        """Check if an approved execution exists using the snapshot.
+
+        The snapshot's stage_statuses track the current status for each
+        stage+component.  Carried-over executions set their status to
+        'approved' in the snapshot.
+        """
+        snapshot = self.events.get_snapshot(project_id)
+        key = f"{stage_key}/{component_key}" if component_key else stage_key
+        return (snapshot.stage_statuses or {}).get(key) == "approved"

@@ -695,6 +695,25 @@ def reconcile_statuses(
     }
 
 
+@pipeline_router.post("/{project_id}/reconstruct")
+def reconstruct_from_git(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Reconstruct pipeline state from the git repository.
+
+    Disaster recovery: rebuilds all artifacts and component definitions
+    from siege-state.json + git file content. All artifacts are set to
+    AWAITING_REVIEW so the user can inspect them.
+    """
+    _get_project_or_404(db, project_id)
+
+    from backend.cli.reconstruct import reconstruct_from_git as _reconstruct
+    result = _reconstruct(db, project_id)
+    return result
+
+
 @pipeline_router.post("/{project_id}/regenerate")
 async def regenerate(
     project_id: str,
