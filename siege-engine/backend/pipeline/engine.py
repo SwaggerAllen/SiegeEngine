@@ -94,24 +94,21 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             artifact_status.value if artifact_status else "unchanged",
         )
 
-        # Dual-write: emit corresponding event
+        # Emit corresponding event
         event_type = _status_to_event_type(new_status)
         if event_type:
-            try:
-                self.events.emit(
-                    execution.project_id,
-                    event_type,
-                    {
-                        "execution_id": execution.id,
-                        "stage_key": execution.stage_key,
-                        "component_key": execution.component_key,
-                        "artifact_id": execution.artifact_id,
-                        "error": error_message,
-                    },
-                    run_id=execution.run_id,
-                )
-            except Exception as e:
-                logger.warning("Event emit failed (dual-write): %s", e)
+            self.events.emit(
+                execution.project_id,
+                event_type,
+                {
+                    "execution_id": execution.id,
+                    "stage_key": execution.stage_key,
+                    "component_key": execution.component_key,
+                    "artifact_id": execution.artifact_id,
+                    "error": error_message,
+                },
+                run_id=execution.run_id,
+            )
 
     def _mark_artifact_status(self, artifact_id: str, new_status: ArtifactStatus) -> None:
         """Update an artifact's status without touching any execution."""
@@ -146,36 +143,22 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         pipeline_run = self.db.get(PipelineRun, pipeline_run_id) if pipeline_run_id else None
         run_id = pipeline_run.run_id if pipeline_run else str(uuid.uuid4())
 
-        # Dual-write: emit run_created event
+        # Emit run_created event
         if pipeline_run:
-            try:
-                self.events.emit(
-                    project_id, evt.RUN_CREATED,
-                    {
-                        "run_id": run_id,
-                        "run_number": pipeline_run.run_number,
-                        "human_review": pipeline_run.human_review,
-                        "ai_loops": pipeline_run.ai_loops,
-                        "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "after_all",
-                    },
-                    run_id=run_id,
-                )
-            except Exception as e:
-                logger.warning("Event emit failed (run_created): %s", e)
+            self.events.emit(
+                project_id, evt.RUN_CREATED,
+                {
+                    "run_id": run_id,
+                    "run_number": pipeline_run.run_number,
+                    "human_review": pipeline_run.human_review,
+                    "ai_loops": pipeline_run.ai_loops,
+                    "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "after_all",
+                },
+                run_id=run_id,
+            )
 
         carried = self._carry_over_approved(project_id, run_id)
         logger.info("Carried over %d approved executions into run %s", carried, run_id)
-
-        # Reconcile any execution/artifact status mismatches from prior runs
-        corrections = self._reconcile_statuses(project_id, run_id)
-        if corrections:
-            logger.info("Reconciled %d status mismatches in run %s", len(corrections), run_id)
-        # Clean up orphaned executions left behind by prior prune operations
-        orphans = self._cleanup_orphaned_executions(project_id)
-        if orphans:
-            logger.info("Cleaned up %d orphaned executions at pipeline start", len(orphans))
-        if corrections or orphans:
-            self.db.commit()
 
         # Re-populate component/sub-component definitions from carried-over
         # branching stages.  _store_components only runs via _post_generation_hook
@@ -225,21 +208,18 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         new_run_id = pipeline_run.run_id
 
-        # Dual-write: emit run_created event for resumed run
-        try:
-            self.events.emit(
-                project_id, evt.RUN_CREATED,
-                {
-                    "run_id": new_run_id,
-                    "run_number": pipeline_run.run_number,
-                    "human_review": pipeline_run.human_review,
-                    "ai_loops": pipeline_run.ai_loops,
-                    "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "after_all",
-                },
-                run_id=new_run_id,
-            )
-        except Exception as e:
-            logger.warning("Event emit failed (run_created on resume): %s", e)
+        # Emit run_created event for resumed run
+        self.events.emit(
+            project_id, evt.RUN_CREATED,
+            {
+                "run_id": new_run_id,
+                "run_number": pipeline_run.run_number,
+                "human_review": pipeline_run.human_review,
+                "ai_loops": pipeline_run.ai_loops,
+                "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "after_all",
+            },
+            run_id=new_run_id,
+        )
 
         # Carry over all approved work (searches across all runs)
         carried = self._carry_over_approved(project_id, new_run_id)
@@ -296,16 +276,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             review_carried,
             new_run_id,
         )
-
-        # Reconcile any execution/artifact status mismatches
-        corrections = self._reconcile_statuses(project_id, new_run_id)
-        if corrections:
-            logger.info("Reconciled %d status mismatches in run %s", len(corrections), new_run_id)
-        orphans = self._cleanup_orphaned_executions(project_id)
-        if orphans:
-            logger.info("Cleaned up %d orphaned executions at resume", len(orphans))
-        if corrections or orphans:
-            self.db.commit()
 
         await self._ensure_branching_definitions(project_id, config, new_run_id)
 
@@ -678,175 +648,22 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             self.db.add(new_exec)
             carried += 1
 
-            # Dual-write: emit carried_over event
-            try:
-                self.events.emit(
-                    project_id, evt.CARRIED_OVER,
-                    {
-                        "execution_id": new_exec.id,
-                        "stage_key": new_exec.stage_key,
-                        "component_key": new_exec.component_key,
-                        "artifact_id": new_exec.artifact_id,
-                        "from_run_id": prev_exec.run_id,
-                        "to_run_id": new_run_id,
-                    },
-                    run_id=new_run_id,
-                )
-            except Exception as e:
-                logger.warning("Event emit failed (carried_over): %s", e)
+            # Emit carried_over event
+            self.events.emit(
+                project_id, evt.CARRIED_OVER,
+                {
+                    "execution_id": new_exec.id,
+                    "stage_key": new_exec.stage_key,
+                    "component_key": new_exec.component_key,
+                    "artifact_id": new_exec.artifact_id,
+                    "from_run_id": prev_exec.run_id,
+                    "to_run_id": new_run_id,
+                },
+                run_id=new_run_id,
+            )
 
         self.db.commit()
         return carried
-
-    def _reconcile_statuses(self, project_id: str, run_id: str) -> list[dict]:
-        """Find and fix execution/artifact status mismatches for a run.
-
-        Returns list of corrections made (for logging/API response).
-        """
-        corrections: list[dict] = []
-
-        executions = (
-            self.db.query(StageExecution)
-            .filter_by(project_id=project_id, run_id=run_id)
-            .filter(StageExecution.artifact_id.isnot(None))
-            .all()
-        )
-
-        for exc in executions:
-            artifact = self.db.get(Artifact, exc.artifact_id)
-            if not artifact:
-                continue
-
-            correction = None
-
-            if exc.status == StageStatus.APPROVED and artifact.status not in (
-                ArtifactStatus.APPROVED, ArtifactStatus.STALE,
-            ):
-                correction = {"expected": "APPROVED", "actual": artifact.status.value}
-                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.APPROVED)
-
-            elif exc.status == StageStatus.AWAITING_REVIEW and artifact.status != ArtifactStatus.AWAITING_REVIEW:
-                correction = {"expected": "AWAITING_REVIEW", "actual": artifact.status.value}
-                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.AWAITING_REVIEW)
-
-            elif exc.status == StageStatus.FAILED and artifact.status in (
-                ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING,
-            ):
-                correction = {"expected": "PENDING (unstick)", "actual": artifact.status.value}
-                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.PENDING)
-
-            elif exc.status == StageStatus.REJECTED and artifact.status not in (
-                ArtifactStatus.REJECTED, ArtifactStatus.STALE,
-            ):
-                correction = {"expected": "REJECTED", "actual": artifact.status.value}
-                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.REJECTED)
-
-            elif exc.status in (
-                StageStatus.APPROVED, StageStatus.FAILED, StageStatus.REJECTED,
-            ) and artifact.status == ArtifactStatus.GENERATING:
-                correction = {"expected": "PENDING (unstick)", "actual": "GENERATING"}
-                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.PENDING)
-
-            if correction:
-                entry = {
-                    "execution_id": exc.id,
-                    "stage_key": exc.stage_key,
-                    "component_key": exc.component_key,
-                    "execution_status": exc.status.value,
-                    "artifact_id": exc.artifact_id,
-                    **correction,
-                }
-                corrections.append(entry)
-                logger.warning("Reconciled status mismatch: %s", entry)
-
-        if corrections:
-            self.db.flush()
-
-        return corrections
-
-    def _cleanup_orphaned_executions(self, project_id: str) -> list[dict]:
-        """Find and delete StageExecution records whose artifact no longer exists.
-
-        These orphans typically result from prior prune operations that only
-        deleted executions by artifact_id, missing retries with artifact_id=NULL
-        for the same stage+component.
-
-        Returns list of removed records (for logging/API response).
-        """
-        removed: list[dict] = []
-
-        # 1. Executions referencing a deleted artifact (FK dangling or NULL after delete)
-        execs_with_artifact = (
-            self.db.query(StageExecution)
-            .filter(
-                StageExecution.project_id == project_id,
-                StageExecution.artifact_id.isnot(None),
-            )
-            .all()
-        )
-        artifact_ids_in_db = {
-            a.id
-            for a in self.db.query(Artifact.id).filter_by(project_id=project_id).all()
-        }
-        for exc in execs_with_artifact:
-            if exc.artifact_id not in artifact_ids_in_db:
-                removed.append({
-                    "execution_id": exc.id,
-                    "stage_key": exc.stage_key,
-                    "component_key": exc.component_key,
-                    "reason": "artifact_deleted",
-                    "artifact_id": exc.artifact_id,
-                })
-                self.db.delete(exc)
-
-        # 2. Executions with artifact_id=NULL for a stage+component where no
-        #    artifact of the expected type exists (orphaned from pruned artifacts).
-        config = self.db.query(PipelineConfig).filter_by(project_id=project_id).first()
-        if config:
-            stage_type_map = {s.stage_key: s.output_artifact_type for s in config.stages}
-            null_artifact_execs = (
-                self.db.query(StageExecution)
-                .filter(
-                    StageExecution.project_id == project_id,
-                    StageExecution.artifact_id.is_(None),
-                    StageExecution.status.in_([
-                        StageStatus.FAILED,
-                        StageStatus.APPROVED,
-                        StageStatus.AWAITING_REVIEW,
-                        StageStatus.REJECTED,
-                    ]),
-                )
-                .all()
-            )
-            for exc in null_artifact_execs:
-                expected_type = stage_type_map.get(exc.stage_key)
-                if not expected_type:
-                    continue
-                # Check if any artifact exists for this stage output + component
-                q = self.db.query(Artifact.id).filter_by(
-                    project_id=project_id,
-                    artifact_type=expected_type,
-                )
-                if exc.component_key is not None:
-                    q = q.filter(Artifact.component_key == exc.component_key)
-                else:
-                    q = q.filter(Artifact.component_key.is_(None))
-                if not q.first():
-                    removed.append({
-                        "execution_id": exc.id,
-                        "stage_key": exc.stage_key,
-                        "component_key": exc.component_key,
-                        "reason": "no_matching_artifact",
-                    })
-                    self.db.delete(exc)
-
-        if removed:
-            self.db.flush()
-            logger.info(
-                "Cleaned up %d orphaned executions in project %s", len(removed), project_id
-            )
-
-        return removed
 
     async def _ensure_branching_definitions(
         self, project_id: str, config: PipelineConfig, run_id: str
@@ -1200,15 +1017,12 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             pipeline_run.completed_at = datetime.utcnow()
             self.db.commit()
 
-            # Dual-write: emit run_completed event
-            try:
-                self.events.emit(
-                    project_id, evt.RUN_COMPLETED,
-                    {"run_id": run_id, "status": "completed"},
-                    run_id=run_id,
-                )
-            except Exception as e:
-                logger.warning("Event emit failed (run_completed): %s", e)
+            # Emit run_completed event
+            self.events.emit(
+                project_id, evt.RUN_COMPLETED,
+                {"run_id": run_id, "status": "completed"},
+                run_id=run_id,
+            )
 
             # Git checkpoint: commit siege-state.json + any remaining changes
             try:
@@ -1696,7 +1510,7 @@ def _is_sub_component_stage(stage_key: str) -> bool:
 
 
 def _status_to_event_type(status: StageStatus) -> str | None:
-    """Map a StageStatus to its corresponding event type for dual-write."""
+    """Map a StageStatus to its corresponding event type."""
     return {
         StageStatus.RUNNING: evt.STAGE_STARTED,
         StageStatus.AI_REVIEW: evt.AI_REVIEW_STARTED,

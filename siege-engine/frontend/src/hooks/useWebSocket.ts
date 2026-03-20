@@ -73,23 +73,30 @@ export function useWebSocket(projectId: string | undefined) {
       console.log('[WS] Received:', data.type, data);
       updateFromWS(data);
 
-      // Refresh DAG and status on state-changing events
+      // Refresh DAG on state-changing events
       if (
         data.type === 'stage_started' ||
         data.type === 'stage_completed' ||
         data.type === 'stage_awaiting_review' ||
-        data.type === 'stage_progress' ||
         data.type === 'stage_failed' ||
         data.type === 'pipeline_completed' ||
         data.type === 'pipeline_paused' ||
         data.type === 'staleness_propagated' ||
-        data.type === 'feedback_saved' ||
-        data.type === 'comment_added' ||
         data.type === 'artifact_pruned'
       ) {
         fetchDAG(projectId);
         fetchDocumentsDAG(projectId);
+        // fetchStatus for execution list refresh (isRunning/isPaused handled by local reducer)
         fetchStatus(projectId);
+      }
+
+      // DAG refresh for feedback/comment events (no fetchStatus needed — no execution state change)
+      if (
+        data.type === 'feedback_saved' ||
+        data.type === 'comment_added'
+      ) {
+        fetchDAG(projectId);
+        fetchDocumentsDAG(projectId);
       }
 
       // Auto-select artifact when review is needed

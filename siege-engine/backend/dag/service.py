@@ -74,16 +74,13 @@ def propagate_staleness(db: Session, artifact_id: str, event_store=None) -> list
         for downstream_id in graph.get(current_id, []):
             queue.append(downstream_id)
 
-    # Dual-write: emit staleness_propagated event
+    # Emit staleness_propagated event
     if stale_ids and event_store:
-        try:
-            from backend.pipeline import events as evt
-            event_store.emit(
-                artifact.project_id, evt.STALENESS_PROPAGATED,
-                {"source_artifact_id": artifact_id, "stale_ids": stale_ids},
-            )
-        except Exception:
-            pass  # Dual-write: don't fail if event emission fails
+        from backend.pipeline import events as evt
+        event_store.emit(
+            artifact.project_id, evt.STALENESS_PROPAGATED,
+            {"source_artifact_id": artifact_id, "stale_ids": stale_ids},
+        )
 
     return stale_ids
 

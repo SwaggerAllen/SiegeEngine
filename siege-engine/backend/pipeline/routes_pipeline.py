@@ -439,14 +439,11 @@ async def reset_all(
 
     db.commit()
 
-    # Dual-write: emit pipeline_reset event
-    try:
-        from backend.pipeline.event_store import EventStore
-        from backend.pipeline import events as _evt
-        EventStore(db).emit(project_id, _evt.PIPELINE_RESET, {}, run_id=run_id)
-        db.commit()
-    except Exception:
-        pass
+    # Emit pipeline_reset event
+    from backend.pipeline.event_store import EventStore
+    from backend.pipeline import events as _evt
+    EventStore(db).emit(project_id, _evt.PIPELINE_RESET, {}, run_id=run_id)
+    db.commit()
 
     await ws_manager.broadcast(
         project_id,
@@ -670,30 +667,31 @@ def reconcile_statuses(
     db: Session = Depends(get_db),
     _user: User = Depends(_require_writer),
 ):
-    """Manually trigger status reconciliation for the latest run."""
+    """Rebuild the pipeline snapshot from the event log.
+
+    Reconciliation is no longer needed since the event-sourced snapshot
+    is the single source of truth. This endpoint now rebuilds the
+    materialized snapshot in case it drifts.
+    """
     _get_project_or_404(db, project_id)
 
-    # Find the most recent run
+    from backend.pipeline.event_store import EventStore
+    es = EventStore(db)
+    es.rebuild_snapshot(project_id)
+    db.commit()
+
     latest_run = (
         db.query(PipelineRun)
         .filter_by(project_id=project_id)
         .order_by(PipelineRun.run_number.desc())
         .first()
     )
-    if not latest_run:
-        return {"corrections": [], "message": "No runs found"}
-
-    engine = PipelineEngine(db)
-    corrections = engine._reconcile_statuses(project_id, latest_run.run_id)
-    orphans_removed = engine._cleanup_orphaned_executions(project_id)
-    if corrections or orphans_removed:
-        db.commit()
 
     return {
-        "corrections": corrections,
-        "orphans_removed": orphans_removed,
-        "run_id": latest_run.run_id,
-        "run_number": latest_run.run_number,
+        "corrections": [],
+        "orphans_removed": [],
+        "run_id": latest_run.run_id if latest_run else None,
+        "run_number": latest_run.run_number if latest_run else None,
     }
 
 
