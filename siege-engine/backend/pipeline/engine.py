@@ -1374,16 +1374,18 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         stage_def: StageDefinition,
         component_key: str | None = None,
     ) -> str | None:
-        """If this stage has a rejected/stale artifact with feedback comments, return them.
+        """If this stage has a rejected artifact with feedback comments, return them.
 
-        Checks both REJECTED (direct rejection) and STALE (cascade-rejected with
-        saved feedback) artifacts so that saved feedback survives upstream rejections.
+        Only checks REJECTED artifacts (explicit user rejection).  STALE artifacts
+        are excluded because their feedback was written about content generated from
+        a different upstream context and may conflict with the current inputs
+        (e.g. after an upstream revert).
         """
         artifact_type_val = stage_def.output_artifact_type
         query = (
             self.db.query(Artifact)
             .filter_by(project_id=project_id)
-            .filter(Artifact.status.in_([ArtifactStatus.REJECTED, ArtifactStatus.STALE]))
+            .filter(Artifact.status == ArtifactStatus.REJECTED)
             .filter(Artifact.artifact_type == artifact_type_val)
         )
         if component_key:
