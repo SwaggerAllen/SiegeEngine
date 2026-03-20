@@ -642,6 +642,25 @@ class ArtifactOpsMixin:
             .delete(synchronize_session="fetch")
         )
 
+        # Delete stage executions — both those referencing this artifact directly
+        # and orphaned retries for the same stage+component (artifact_id=NULL).
+        stage_keys_for_artifact = {
+            e.stage_key
+            for e in self.db.query(StageExecution)
+            .filter_by(project_id=project_id, artifact_id=artifact_id)
+            .all()
+        }
+        if stage_keys_for_artifact:
+            q = self.db.query(StageExecution).filter(
+                StageExecution.project_id == project_id,
+                StageExecution.stage_key.in_(stage_keys_for_artifact),
+            )
+            if component_key is not None:
+                q = q.filter(StageExecution.component_key == component_key)
+            else:
+                q = q.filter(StageExecution.component_key.is_(None))
+            q.delete(synchronize_session="fetch")
+        # Safety net: also delete any remaining executions with matching artifact_id
         (
             self.db.query(StageExecution)
             .filter_by(project_id=project_id, artifact_id=artifact_id)
