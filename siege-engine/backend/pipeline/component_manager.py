@@ -10,7 +10,10 @@ from backend.models import (
     Artifact,
     ArtifactComment,
     ArtifactDependency,
+    ArtifactStatus,
+    ArtifactType,
     ComponentDefinition,
+    FanOutStrategy,
     StageDefinition,
     StageExecution,
 )
@@ -252,6 +255,67 @@ class ComponentManagerMixin:
             parent_key,
             project_id,
         )
+
+    def _heal_missing_entities(self, project_id: str, stage_def: StageDefinition) -> bool:
+        """Attempt to re-populate missing ComponentDefinitions from approved artifacts.
+
+        Called when a fan-out stage finds zero entities but an approved branching
+        artifact exists.  Returns True if entities were healed.
+        """
+        fan_out = stage_def.fan_out_strategy
+        healed = False
+
+        if fan_out in (FanOutStrategy.COMPONENT, FanOutStrategy.LEAF):
+            # Check for approved extract_components artifact
+            artifact = (
+                self.db.query(Artifact)
+                .filter_by(
+                    project_id=project_id,
+                    artifact_type=ArtifactType.COMPONENT_MAP,
+                    status=ArtifactStatus.APPROVED,
+                )
+                .first()
+            )
+            if artifact and artifact.content:
+                logger.warning(
+                    "Healing missing components for project %s from artifact %s",
+                    project_id, artifact.id,
+                )
+                self._store_components(project_id, artifact.content)
+                self.db.flush()
+                healed = True
+
+        if fan_out in (FanOutStrategy.SUB_COMPONENT, FanOutStrategy.LEAF):
+            # Check for approved extract_sub_components artifacts per parent
+            sub_artifacts = (
+                self.db.query(Artifact)
+                .filter_by(
+                    project_id=project_id,
+                    artifact_type=ArtifactType.SUB_COMPONENT_MAP,
+                    status=ArtifactStatus.APPROVED,
+                )
+                .filter(Artifact.component_key.isnot(None))
+                .all()
+            )
+            for sub_art in sub_artifacts:
+                if sub_art.content and sub_art.component_key:
+                    existing = (
+                        self.db.query(ComponentDefinition)
+                        .filter_by(project_id=project_id, parent_key=sub_art.component_key)
+                        .count()
+                    )
+                    if existing == 0:
+                        logger.warning(
+                            "Healing missing sub-components for parent=%s from artifact %s",
+                            sub_art.component_key, sub_art.id,
+                        )
+                        self._store_sub_components(
+                            project_id, sub_art.component_key, sub_art.content
+                        )
+                        self.db.flush()
+                        healed = True
+
+        return healed
 
     async def _post_generation_hook(
         self,

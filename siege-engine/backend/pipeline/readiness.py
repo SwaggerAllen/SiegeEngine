@@ -76,7 +76,21 @@ class ReadinessMixin:
         return True
 
     def _get_all_entities_for_stage(self, project_id: str, stage_def: StageDefinition) -> list[str]:
-        """Get all entity keys that should be processed for a fan-out stage."""
+        """Get all entity keys that should be processed for a fan-out stage.
+
+        Self-healing: if no entities are found but an approved branching artifact
+        exists, attempt to re-populate ComponentDefinitions before returning.
+        """
+        entities = self._collect_entities(project_id, stage_def)
+
+        if not entities and stage_def.fan_out_strategy != FanOutStrategy.NONE:
+            if self._heal_missing_entities(project_id, stage_def):
+                entities = self._collect_entities(project_id, stage_def)
+
+        return entities
+
+    def _collect_entities(self, project_id: str, stage_def: StageDefinition) -> list[str]:
+        """Raw entity collection without self-healing."""
         fan_out = stage_def.fan_out_strategy
 
         if fan_out == FanOutStrategy.COMPONENT:

@@ -49,7 +49,6 @@ class ArtifactOpsMixin:
                     if edited_content:
                         artifact.content = edited_content
                         artifact.version += 1
-                    artifact.status = ArtifactStatus.APPROVED
 
                     if notes and notes.strip():
                         self.db.add(
@@ -63,8 +62,11 @@ class ArtifactOpsMixin:
                             )
                         )
 
-            execution.status = StageStatus.APPROVED
-            execution.completed_at = datetime.utcnow()
+            self._transition_execution(
+                execution, StageStatus.APPROVED,
+                artifact_status=ArtifactStatus.APPROVED,
+                set_completed=True,
+            )
             self.db.commit()
 
             await ws_manager.broadcast(
@@ -114,12 +116,10 @@ class ArtifactOpsMixin:
                 execution.stage_key,
                 execution_id,
             )
-            execution.status = StageStatus.REJECTED
-
-            if execution.artifact_id:
-                artifact = self.db.get(Artifact, execution.artifact_id)
-                if artifact:
-                    artifact.status = ArtifactStatus.REJECTED
+            self._transition_execution(
+                execution, StageStatus.REJECTED,
+                artifact_status=ArtifactStatus.REJECTED,
+            )
 
             # Also reject carried-over copies of this execution in other runs.
             # When a new pipeline run starts, _carry_over_approved duplicates
@@ -139,7 +139,7 @@ class ArtifactOpsMixin:
                 .all()
             )
             for copy in carried_copies:
-                copy.status = StageStatus.REJECTED
+                self._transition_execution(copy, StageStatus.REJECTED)
 
             if notes and notes.strip() and execution.artifact_id:
                 art = self.db.get(Artifact, execution.artifact_id)
@@ -282,13 +282,12 @@ class ArtifactOpsMixin:
                     exc.stage_key,
                     exc.component_key,
                 )
-                exc.status = StageStatus.REJECTED
-
+                self._transition_execution(
+                    exc, StageStatus.REJECTED,
+                    artifact_status=ArtifactStatus.STALE,
+                )
                 if exc.artifact_id:
-                    artifact = self.db.get(Artifact, exc.artifact_id)
-                    if artifact:
-                        artifact.status = ArtifactStatus.STALE
-                        stale_artifact_ids.append(artifact.id)
+                    stale_artifact_ids.append(exc.artifact_id)
 
         self.db.flush()
         return stale_artifact_ids
@@ -327,16 +326,14 @@ class ArtifactOpsMixin:
 
             for exc in downstream_execs:
                 if exc.artifact_id:
-                    artifact = self.db.get(Artifact, exc.artifact_id)
-                    if artifact:
-                        logger.info(
-                            "Marking downstream artifact %s as stale (stage=%s, component=%s)",
-                            artifact.id,
-                            exc.stage_key,
-                            exc.component_key,
-                        )
-                        artifact.status = ArtifactStatus.STALE
-                        stale_artifact_ids.append(artifact.id)
+                    logger.info(
+                        "Marking downstream artifact %s as stale (stage=%s, component=%s)",
+                        exc.artifact_id,
+                        exc.stage_key,
+                        exc.component_key,
+                    )
+                    self._mark_artifact_status(exc.artifact_id, ArtifactStatus.STALE)
+                    stale_artifact_ids.append(exc.artifact_id)
 
         self.db.flush()
         return stale_artifact_ids
@@ -364,7 +361,7 @@ class ArtifactOpsMixin:
             artifact = self.db.get(Artifact, old_execution.artifact_id)
             if artifact:
                 original_artifact_status = artifact.status
-                artifact.status = ArtifactStatus.GENERATING
+                self._mark_artifact_status(old_execution.artifact_id, ArtifactStatus.GENERATING)
 
         run_id = old_execution.run_id or str(uuid.uuid4())
         pipeline_run = self._lookup_pipeline_run(run_id) if run_id else None
@@ -437,7 +434,7 @@ class ArtifactOpsMixin:
                         "message": f"AI reviewing {stage_def.display_name}...",
                     },
                 )
-                new_execution.status = StageStatus.AI_REVIEW
+                self._transition_execution(new_execution, StageStatus.AI_REVIEW)
                 self.db.flush()
 
                 feedback = await ai_review(
@@ -455,9 +452,16 @@ class ArtifactOpsMixin:
                 not pipeline_run or pipeline_run.human_review
             )
             if should_await_review:
-                self._mark_awaiting_review(new_execution, artifact_id)
+                self._transition_execution(
+                    new_execution, StageStatus.AWAITING_REVIEW,
+                    artifact_status=ArtifactStatus.AWAITING_REVIEW,
+                )
             else:
-                self._mark_approved(new_execution, artifact_id)
+                self._transition_execution(
+                    new_execution, StageStatus.APPROVED,
+                    artifact_status=ArtifactStatus.APPROVED,
+                    set_completed=True,
+                )
 
             self.db.commit()
 
@@ -473,17 +477,24 @@ class ArtifactOpsMixin:
 
         except Exception as e:
             logger.exception("Regeneration failed for stage %s: %s", old_execution.stage_key, e)
-            new_execution.status = StageStatus.FAILED
-            new_execution.error_message = str(e)
-            new_execution.completed_at = datetime.utcnow()
-
+            # Restore old artifact from stuck generating/reviewing state
+            revert_status = None
             if old_execution.artifact_id:
                 stuck_artifact = self.db.get(Artifact, old_execution.artifact_id)
                 if stuck_artifact and stuck_artifact.status in (
                     ArtifactStatus.GENERATING,
                     ArtifactStatus.AI_REVIEWING,
                 ):
-                    stuck_artifact.status = original_artifact_status or ArtifactStatus.REJECTED
+                    self._mark_artifact_status(
+                        old_execution.artifact_id,
+                        original_artifact_status or ArtifactStatus.REJECTED,
+                    )
+
+            self._transition_execution(
+                new_execution, StageStatus.FAILED,
+                error_message=str(e),
+                set_completed=True,
+            )
 
             self.db.commit()
 
@@ -547,7 +558,7 @@ class ArtifactOpsMixin:
                         artifact_version=artifact.version,
                     )
                 )
-            artifact.status = ArtifactStatus.APPROVED
+            self._mark_artifact_status(artifact_id, ArtifactStatus.APPROVED)
 
             # Sync the owning execution to APPROVED so the DAG node status
             # matches the artifact badge (fixes rejected-execution / approved-
@@ -559,8 +570,10 @@ class ArtifactOpsMixin:
                 .first()
             )
             if execution and execution.status != StageStatus.APPROVED:
-                execution.status = StageStatus.APPROVED
-                execution.completed_at = datetime.utcnow()
+                self._transition_execution(
+                    execution, StageStatus.APPROVED,
+                    set_completed=True,
+                )
 
             self.db.commit()
 
@@ -687,7 +700,7 @@ class ArtifactOpsMixin:
 
         accumulated = self._get_feedback_notes(artifact_id)
 
-        artifact.status = ArtifactStatus.GENERATING
+        self._mark_artifact_status(artifact_id, ArtifactStatus.GENERATING)
         self.db.flush()
 
         input_artifacts = self._gather_inputs(project_id, stage_def, artifact.component_key)
@@ -756,7 +769,7 @@ class ArtifactOpsMixin:
                         "message": f"AI reviewing {stage_def.display_name}...",
                     },
                 )
-                execution.status = StageStatus.AI_REVIEW
+                self._transition_execution(execution, StageStatus.AI_REVIEW)
                 self.db.flush()
 
                 ai_feedback = await ai_review(
@@ -770,7 +783,10 @@ class ArtifactOpsMixin:
                     updated_artifact.ai_review_feedback = ai_feedback
                     updated_artifact.status = ArtifactStatus.AI_REVIEWING
 
-            self._mark_awaiting_review(execution, new_artifact_id)
+            self._transition_execution(
+                execution, StageStatus.AWAITING_REVIEW,
+                artifact_status=ArtifactStatus.AWAITING_REVIEW,
+            )
 
             self.db.commit()
 
@@ -786,10 +802,12 @@ class ArtifactOpsMixin:
 
         except Exception as e:
             logger.exception("Revision failed for artifact %s: %s", artifact_id, e)
-            execution.status = StageStatus.FAILED
-            execution.error_message = str(e)
-            execution.completed_at = datetime.utcnow()
-            artifact.status = ArtifactStatus.APPROVED
+            self._transition_execution(
+                execution, StageStatus.FAILED,
+                error_message=str(e),
+                set_completed=True,
+            )
+            self._mark_artifact_status(artifact_id, ArtifactStatus.APPROVED)
             self.db.commit()
 
             await ws_manager.broadcast(
@@ -821,7 +839,7 @@ class ArtifactOpsMixin:
         if execution.artifact_id:
             artifact = self.db.get(Artifact, execution.artifact_id)
             if artifact and artifact.status != ArtifactStatus.PENDING:
-                artifact.status = ArtifactStatus.PENDING
+                self._mark_artifact_status(execution.artifact_id, ArtifactStatus.PENDING)
 
         # Gather feedback notes and current content so the retry builds on
         # the previous version rather than generating from scratch.
@@ -833,8 +851,7 @@ class ArtifactOpsMixin:
                 current_content = existing_artifact.content
 
         input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
-        execution.status = StageStatus.RUNNING
-        execution.error_message = None
+        self._transition_execution(execution, StageStatus.RUNNING, error_message="")
         execution.retry_count = (execution.retry_count or 0) + 1
         self.db.flush()
 

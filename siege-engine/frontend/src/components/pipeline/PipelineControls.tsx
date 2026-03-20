@@ -64,9 +64,17 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
     }
   };
 
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
   const handleCancel = async (openPR: boolean) => {
     setShowCancelDialog(false);
-    await cancelPipeline(projectId, openPR ? { open_pr: true } : undefined);
+    setCancelError(null);
+    try {
+      await cancelPipeline(projectId, openPR ? { open_pr: true } : undefined);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to create PR';
+      setCancelError(message);
+    }
   };
 
   const handleCheckPR = async () => {
@@ -255,6 +263,9 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
       )}
       {prCleared && (
         <span className="text-green-400 text-xs">PR resolved — runs unblocked</span>
+      )}
+      {cancelError && (
+        <span className="text-red-400 text-xs max-w-xs truncate" title={cancelError}>{cancelError}</span>
       )}
       {isPaused && (
         <span className="text-yellow-400 text-sm">Paused for review</span>

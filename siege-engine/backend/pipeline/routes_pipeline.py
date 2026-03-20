@@ -292,6 +292,9 @@ async def cancel_pipeline(
         if not cred:
             raise HTTPException(400, "GitHub not connected. Connect via Settings.")
 
+        if not project.remote_url or not project.remote_url.startswith("https://"):
+            raise HTTPException(400, "Project needs an HTTPS remote URL for PR creation")
+
         run_label = active_runs[0].run_number if active_runs else "cancelled"
         branch = f"siege-engine/{project.name.lower().replace(' ', '-')}"
         pr_title = req.pr_title or f"Cancelled run #{run_label} — review before continuing"
@@ -301,21 +304,36 @@ async def cancel_pipeline(
             " Merge or close it to unblock new runs."
         )
 
-        auth_url = None
-        if project.remote_url and project.remote_url.startswith("https://"):
-            auth_url = project.remote_url.replace(
-                "https://", f"https://x-access-token:{cred.access_token}@"
-            )
-        git_manager.push_branch(project_id, branch, auth_url=auth_url)
+        auth_url = project.remote_url.replace(
+            "https://", f"https://x-access-token:{cred.access_token}@"
+        )
+
+        try:
+            git_manager.push_branch(project_id, branch, auth_url=auth_url)
+        except Exception as e:
+            logger.error("Failed to push branch for PR: %s", e)
+            result["pr_error"] = f"Failed to push branch: {e}"
+            return result
 
         gh = GitHubService(cred.access_token)
-        pr = await gh.create_pr(
-            project.github_repo_slug,
-            pr_title,
-            pr_body,
-            branch,
-            req.base_branch,
-        )
+        try:
+            pr = await gh.create_pr(
+                project.github_repo_slug,
+                pr_title,
+                pr_body,
+                branch,
+                req.base_branch,
+            )
+        except Exception as e:
+            error_detail = str(e)
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_detail = e.response.json().get("message", error_detail)
+                except Exception:
+                    pass
+            logger.error("Failed to create PR: %s", error_detail)
+            result["pr_error"] = f"GitHub API error: {error_detail}"
+            return result
 
         project.blocking_pr_url = pr.get("html_url")
         project.blocking_pr_number = pr.get("number")
@@ -486,6 +504,37 @@ def get_run_state(
         return json.loads(content)
     except Exception as e:
         raise HTTPException(500, f"Failed to load run state: {e}")
+
+
+@pipeline_router.post("/{project_id}/reconcile")
+def reconcile_statuses(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Manually trigger status reconciliation for the latest run."""
+    _get_project_or_404(db, project_id)
+
+    # Find the most recent run
+    latest_run = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id)
+        .order_by(PipelineRun.run_number.desc())
+        .first()
+    )
+    if not latest_run:
+        return {"corrections": [], "message": "No runs found"}
+
+    engine = PipelineEngine(db)
+    corrections = engine._reconcile_statuses(project_id, latest_run.run_id)
+    if corrections:
+        db.commit()
+
+    return {
+        "corrections": corrections,
+        "run_id": latest_run.run_id,
+        "run_number": latest_run.run_number,
+    }
 
 
 @pipeline_router.post("/{project_id}/regenerate")
