@@ -451,36 +451,53 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                     )
                     edge_idx += 1
 
-    # Add cross-component dependency edges from ComponentDefinition
+    # Add cross-component dependency edges from ComponentDefinition.
+    # Draw edges at every artifact tier so the dependency relationship is
+    # visible as soon as both components have at least one artifact.
+    _COMPONENT_DEP_PAIRS = [
+        (ArtifactType.COMPONENT_REQUIREMENTS.value, ArtifactType.COMPONENT_REQUIREMENTS.value),
+        (ArtifactType.COMPONENT_ARCHITECTURE.value, ArtifactType.COMPONENT_REQUIREMENTS.value),
+        (ArtifactType.COMPONENT_ARCHITECTURE.value, ArtifactType.COMPONENT_ARCHITECTURE.value),
+        (ArtifactType.COMPONENT_ARCHITECTURE.value, ArtifactType.COMPONENT_PLAN.value),
+        (ArtifactType.COMPONENT_PLAN.value, ArtifactType.COMPONENT_PLAN.value),
+    ]
+    _SUB_COMPONENT_DEP_PAIRS = [
+        (ArtifactType.SUB_COMPONENT_REQUIREMENTS.value, ArtifactType.SUB_COMPONENT_REQUIREMENTS.value),
+        (ArtifactType.SUB_COMPONENT_ARCHITECTURE.value, ArtifactType.SUB_COMPONENT_REQUIREMENTS.value),
+        (ArtifactType.SUB_COMPONENT_ARCHITECTURE.value, ArtifactType.SUB_COMPONENT_ARCHITECTURE.value),
+        (ArtifactType.SUB_COMPONENT_ARCHITECTURE.value, ArtifactType.SUB_COMPONENT_PLAN.value),
+        (ArtifactType.SUB_COMPONENT_PLAN.value, ArtifactType.SUB_COMPONENT_PLAN.value),
+    ]
+    existing_edge_keys = {(e["source"], e["target"]) for e in edges}
     comp_defs = db.query(ComponentDefinition).filter_by(project_id=project_id).all()
     for comp_def in comp_defs:
         for dep_key in comp_def.dependencies or []:
             if comp_def.parent_key:
-                # Sub-component dependency
-                src_type = ArtifactType.SUB_COMPONENT_ARCHITECTURE.value
-                tgt_type = ArtifactType.SUB_COMPONENT_REQUIREMENTS.value
                 dep_full_key = f"{comp_def.parent_key}.{dep_key}"
                 comp_full_key = f"{comp_def.parent_key}.{comp_def.key}"
+                pairs = _SUB_COMPONENT_DEP_PAIRS
             else:
-                # Top-level component dependency
-                src_type = ArtifactType.COMPONENT_ARCHITECTURE.value
-                tgt_type = ArtifactType.COMPONENT_REQUIREMENTS.value
                 dep_full_key = dep_key
                 comp_full_key = comp_def.key
+                pairs = _COMPONENT_DEP_PAIRS
 
-            src_node = _find_artifact_node(nodes, src_type, dep_full_key)
-            tgt_node = _find_artifact_node(nodes, tgt_type, comp_full_key)
-            if src_node and tgt_node:
-                edges.append(
-                    {
-                        "id": f"dep_edge_{edge_idx}",
-                        "source": src_node["id"],
-                        "target": tgt_node["id"],
-                        "type": "default",
-                        "animated": False,
-                        "style": {"strokeDasharray": "5 5", "stroke": "#818cf8"},
-                    }
-                )
-                edge_idx += 1
+            for src_type, tgt_type in pairs:
+                src_node = _find_artifact_node(nodes, src_type, dep_full_key)
+                tgt_node = _find_artifact_node(nodes, tgt_type, comp_full_key)
+                if src_node and tgt_node:
+                    edge_key = (src_node["id"], tgt_node["id"])
+                    if edge_key not in existing_edge_keys:
+                        existing_edge_keys.add(edge_key)
+                        edges.append(
+                            {
+                                "id": f"dep_edge_{edge_idx}",
+                                "source": src_node["id"],
+                                "target": tgt_node["id"],
+                                "type": "default",
+                                "animated": False,
+                                "style": {"strokeDasharray": "5 5", "stroke": "#818cf8"},
+                            }
+                        )
+                        edge_idx += 1
 
     return {"nodes": nodes, "edges": edges}

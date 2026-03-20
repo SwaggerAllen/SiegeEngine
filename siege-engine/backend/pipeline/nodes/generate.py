@@ -12,6 +12,7 @@ from backend.models import (
     ArtifactDependency,
     ArtifactStatus,
     ArtifactType,
+    ComponentDefinition,
     StageDefinition,
 )
 from backend.pipeline.nodes.code_extractor import extract_code_files
@@ -281,6 +282,61 @@ async def generate(
                         stage_key=stage_def.stage_key,
                     )
                     db.add(dep)
+
+    # Create dependency edges for cross-component dependency architectures
+    # (injected by _gather_inputs but not covered by input_stage_keys)
+    if component_key:
+        parent_key = component_key.split(".")[0] if "." in component_key else None
+        if parent_key:
+            # Sub-component: look up sibling dependencies
+            sc_key = component_key.split(".")[-1]
+            comp_def = (
+                db.query(ComponentDefinition)
+                .filter_by(project_id=project_id, key=sc_key, parent_key=parent_key)
+                .first()
+            )
+            dep_art_type = ArtifactType.SUB_COMPONENT_ARCHITECTURE
+            dep_key_fn = lambda dk: f"{parent_key}.{dk}"  # noqa: E731
+        else:
+            comp_def = (
+                db.query(ComponentDefinition)
+                .filter_by(project_id=project_id, key=component_key, parent_key=None)
+                .first()
+            )
+            dep_art_type = ArtifactType.COMPONENT_ARCHITECTURE
+            dep_key_fn = lambda dk: dk  # noqa: E731
+
+        if comp_def and comp_def.dependencies:
+            for dep_key in comp_def.dependencies:
+                dep_art = (
+                    db.query(Artifact)
+                    .filter_by(
+                        project_id=project_id,
+                        artifact_type=dep_art_type,
+                        component_key=dep_key_fn(dep_key),
+                    )
+                    .filter(
+                        Artifact.status.in_([ArtifactStatus.APPROVED, ArtifactStatus.AWAITING_REVIEW])
+                    )
+                    .first()
+                )
+                if dep_art:
+                    existing_dep = (
+                        db.query(ArtifactDependency)
+                        .filter_by(
+                            upstream_artifact_id=dep_art.id,
+                            downstream_artifact_id=artifact.id,
+                        )
+                        .first()
+                    )
+                    if not existing_dep:
+                        db.add(
+                            ArtifactDependency(
+                                upstream_artifact_id=dep_art.id,
+                                downstream_artifact_id=artifact.id,
+                                stage_key=stage_def.stage_key,
+                            )
+                        )
 
     db.flush()
     return content, artifact.id
