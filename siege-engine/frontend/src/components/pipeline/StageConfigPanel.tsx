@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { updateStageConfig, resetStageConfig } from '../../api/pipeline';
+import { updateStageConfig, resetStageConfig, reconcilePipeline } from '../../api/pipeline';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { useDAGStore } from '../../store/dagStore';
 
@@ -37,6 +37,11 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
   const [resetting, setResetting] = useState(false);
   const [saved, setSaved] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+  const [repairResult, setRepairResult] = useState<string | null>(null);
+  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
+  const fetchStatus = usePipelineStore((s) => s.fetchStatus);
+  const fetchRuns = usePipelineStore((s) => s.fetchRuns);
 
   useEffect(() => {
     if (stageDef) {
@@ -101,6 +106,35 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
       setTriggering(false);
     }
   };
+
+  const handleRepair = async () => {
+    setRepairing(true);
+    setRepairResult(null);
+    try {
+      const result = await reconcilePipeline(projectId);
+      const fixes = result.corrections.length + result.orphans_removed.length;
+      setRepairResult(fixes > 0 ? `Fixed ${fixes} issue${fixes > 1 ? 's' : ''}` : 'No issues found');
+      if (fixes > 0) {
+        await Promise.all([
+          fetchDAG(projectId),
+          fetchDocumentsDAG(projectId),
+          fetchStatus(projectId),
+          fetchRuns(projectId),
+        ]);
+      }
+    } catch {
+      setRepairResult('Repair failed');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  // Auto-dismiss repair result
+  useEffect(() => {
+    if (!repairResult) return;
+    const timer = setTimeout(() => setRepairResult(null), 4000);
+    return () => clearTimeout(timer);
+  }, [repairResult]);
 
   if (!stageDef || !form) {
     return (
@@ -229,7 +263,33 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
           >
             {triggering ? 'Running...' : 'Run Stage'}
           </button>
+          <button
+            onClick={handleRepair}
+            disabled={repairing}
+            className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded disabled:opacity-50 flex items-center gap-1.5"
+            title="Repair: fix orphaned nodes and status mismatches"
+          >
+            <svg className={`w-4 h-4 ${repairing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {repairing ? (
+                <>
+                  <circle className="opacity-25" cx="12" cy="12" r="10" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" stroke="none" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </>
+              ) : (
+                <>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </>
+              )}
+            </svg>
+            <span>Repair</span>
+          </button>
           {saved && <span className="text-green-400 text-sm">Saved!</span>}
+          {repairResult && (
+            <span className={`text-sm ${repairResult.startsWith('Fixed') ? 'text-green-400' : repairResult === 'No issues found' ? 'text-gray-400' : 'text-red-400'}`}>
+              {repairResult}
+            </span>
+          )}
         </div>
       </div>
     </div>
