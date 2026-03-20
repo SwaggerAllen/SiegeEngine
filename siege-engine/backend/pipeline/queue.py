@@ -251,6 +251,23 @@ async def _handle_retry_stage(payload: dict) -> None:
         db.close()
 
 
+async def _handle_accept_and_cascade(payload: dict) -> None:
+    """Handle an accept_and_cascade job."""
+    from backend.pipeline.engine import PipelineEngine
+
+    db = SessionLocal()
+    try:
+        engine = PipelineEngine(db)
+        await engine.accept_and_cascade(
+            payload["artifact_id"],
+            notes=payload.get("notes"),
+            edited_content=payload.get("edited_content"),
+            user_id=payload.get("user_id"),
+        )
+    finally:
+        db.close()
+
+
 async def _handle_trigger_stage(payload: dict) -> None:
     """Handle a trigger_stage job (manual kickoff)."""
     from backend.pipeline.engine import PipelineEngine
@@ -273,6 +290,7 @@ _JOB_HANDLERS = {
     "resume_stage": _handle_resume_stage,
     "revise_artifact": _handle_revise_artifact,
     "resolve_stale": _handle_resolve_stale,
+    "accept_and_cascade": _handle_accept_and_cascade,
     "retry_stage": _handle_retry_stage,
     "trigger_stage": _handle_trigger_stage,
 }

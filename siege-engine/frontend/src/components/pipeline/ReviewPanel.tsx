@@ -17,7 +17,7 @@ interface ReviewPanelProps {
 const REGENERATING_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
-  const { resumeStage, resolveStale, forceRestartStage, pruneArtifact } = usePipelineStore();
+  const { resumeStage, resolveStale, acceptAndCascade, forceRestartStage, pruneArtifact } = usePipelineStore();
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
   const [notes, setNotes] = useState('');
@@ -148,6 +148,25 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     }
   };
 
+  const handleAcceptAndCascade = async () => {
+    if (!window.confirm('Approve this artifact and regenerate all downstream dependents?')) return;
+    setSubmitting(true);
+    try {
+      await acceptAndCascade(
+        projectId,
+        artifact.id,
+        notes || undefined,
+        showEditor && editedContent ? editedContent : undefined
+      );
+      setNotes('');
+      setEditedContent('');
+      setShowEditor(false);
+      setFeedbackSaved(false);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // Auto-dismiss reparse result
   useEffect(() => {
     if (!reparseResult) return;
@@ -263,6 +282,13 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
             className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
           >
             Approve
+          </button>
+          <button
+            onClick={handleAcceptAndCascade}
+            disabled={submitting}
+            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {submitting ? 'Cascading...' : 'Accept & Cascade'}
           </button>
           <button
             onClick={() => handleStaleAction('save_feedback')}
@@ -383,6 +409,13 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
         >
           Approve
+        </button>
+        <button
+          onClick={handleAcceptAndCascade}
+          disabled={submitting}
+          className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+        >
+          {submitting ? 'Cascading...' : 'Accept & Cascade'}
         </button>
         <button
           onClick={() => handleAction('save_feedback')}
