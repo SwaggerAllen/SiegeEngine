@@ -81,37 +81,6 @@ def parse_sub_components_from_content(content: str) -> dict:
     return {"needs_decomposition": False, "components": []}
 
 
-SETUP_COMPONENT = {
-    "key": "project_setup",
-    "name": "Project Setup & Scaffolding",
-    "description": (
-        "Initial project scaffolding: directory structure, configuration files, "
-        "dependency management, shared utilities, base classes, and any other "
-        "foundational setup that other components depend on."
-    ),
-    "dependencies": [],
-}
-
-
-def inject_setup_component(components: list[dict]) -> list[dict]:
-    """Ensure a project_setup component is at the front and all others depend on it."""
-    existing_keys = {c.get("key", "") for c in components}
-    if "project_setup" not in existing_keys:
-        setup = SETUP_COMPONENT.copy()
-        others = list(components)
-    else:
-        setup = next(c for c in components if c.get("key") == "project_setup")
-        others = [c for c in components if c.get("key") != "project_setup"]
-
-    # Ensure every non-setup component lists project_setup as a dependency
-    for comp in others:
-        deps = comp.get("dependencies") or []
-        if "project_setup" not in deps:
-            comp["dependencies"] = ["project_setup"] + list(deps)
-
-    return [setup] + others
-
-
 def validate_dependency_dag(components: list[dict]) -> list[str]:
     """Validate that component dependencies form a DAG (no cycles).
 

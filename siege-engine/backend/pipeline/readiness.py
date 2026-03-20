@@ -17,20 +17,16 @@ from backend.models import (
     StageExecution,
     StageStatus,
 )
-from backend.pipeline.nodes.extract_components import inject_setup_component
-
 logger = logging.getLogger(__name__)
 
 # Reverse mapping: artifact type → stage key that produces it.
 _ARTIFACT_TYPE_TO_STAGE_KEY: dict[ArtifactType, str] = {
     ArtifactType.SYSTEM_REQUIREMENTS: "system_requirements",
-    ArtifactType.COMPONENT_REQUIREMENTS: "component_requirements",
     ArtifactType.SYSTEM_ARCHITECTURE: "system_architecture",
     ArtifactType.COMPONENT_ARCHITECTURE: "component_architectures",
     ArtifactType.COMPONENT_PLAN: "component_plans",
     ArtifactType.COMPONENT_MAP: "extract_components",
     ArtifactType.SUB_COMPONENT_MAP: "extract_sub_components",
-    ArtifactType.SUB_COMPONENT_REQUIREMENTS: "sub_component_requirements",
     ArtifactType.SUB_COMPONENT_ARCHITECTURE: "sub_component_architectures",
     ArtifactType.SUB_COMPONENT_PLAN: "sub_component_plans",
     ArtifactType.CODE: "code_generation",
@@ -98,8 +94,6 @@ class ReadinessMixin:
 
         if fan_out == FanOutStrategy.COMPONENT:
             comps = self._get_components(project_id)
-            if stage_def.stage_key in ("component_plans", "code_generation", "code_review"):
-                comps = inject_setup_component(comps)
             if stage_def.stage_key == "component_plans":
                 parent_keys = {d.parent_key for d in self._get_sub_component_defs(project_id)}
                 comps = [c for c in comps if c["key"] not in parent_keys]
@@ -122,8 +116,6 @@ class ReadinessMixin:
 
         if fan_out == FanOutStrategy.COMPONENT:
             comps = self._get_components(project_id)
-            if stage_def.stage_key in ("component_plans", "code_generation", "code_review"):
-                comps = inject_setup_component(comps)
 
             if stage_def.stage_key == "component_plans":
                 parent_keys = {d.parent_key for d in self._get_sub_component_defs(project_id)}

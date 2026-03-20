@@ -5,10 +5,7 @@ from backend.auth.routes import get_current_user
 from backend.dag import service as dag_service
 from backend.database import get_db
 from backend.models import Artifact, ArtifactType, ComponentDefinition, Project, User
-from backend.pipeline.nodes.extract_components import (
-    inject_setup_component,
-    parse_components_from_content,
-)
+from backend.pipeline.nodes.extract_components import parse_components_from_content
 
 router = APIRouter()
 
@@ -71,7 +68,6 @@ def get_components(
 
     if artifact and artifact.content:
         parsed = parse_components_from_content(artifact.content)
-        parsed = inject_setup_component(parsed)
     else:
         parsed = []
 
@@ -117,11 +113,6 @@ def get_components(
             }
             for c in comp_defs
         ]
-        components = inject_setup_component(components)
-        # Re-tag after inject (inject returns dicts, not models)
-        for c in components:
-            if "change" not in c:
-                c["change"] = None
     elif parsed:
         # First extraction, no existing DB records
         components = [
