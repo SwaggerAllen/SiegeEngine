@@ -77,21 +77,23 @@ async def start_pipeline(
     pipeline_run = PipelineRun(
         project_id=project_id,
         run_number=run_number,
-        human_review=req.human_review,
         ai_loops=req.ai_loops,
         stop_point=StopPoint(req.stop_point),
+        start_stage_key=req.start_stage_key,
+        start_component_key=req.start_component_key,
     )
     db.add(pipeline_run)
     db.commit()
     db.refresh(pipeline_run)
 
     logger.info(
-        "POST /start: project_id=%s, run_number=%d, human_review=%s, ai_loops=%d, stop_point=%s",
+        "POST /start: project_id=%s, run_number=%d, ai_loops=%d, stop_point=%s, start=%s/%s",
         project_id,
         run_number,
-        req.human_review,
         req.ai_loops,
         req.stop_point,
+        req.start_stage_key,
+        req.start_component_key,
     )
 
     pipeline_run_id = pipeline_run.id
@@ -144,9 +146,10 @@ async def resume_run(
     pipeline_run = PipelineRun(
         project_id=project_id,
         run_number=run_number,
-        human_review=req.human_review,
         ai_loops=req.ai_loops,
         stop_point=StopPoint(req.stop_point),
+        start_stage_key=req.start_stage_key,
+        start_component_key=req.start_component_key,
     )
     db.add(pipeline_run)
     db.commit()
@@ -209,9 +212,8 @@ async def propagate_changes(
     pipeline_run = PipelineRun(
         project_id=project_id,
         run_number=run_number,
-        human_review=False,
         propagation_run=True,
-        stop_point=StopPoint.AFTER_ALL,
+        stop_point=StopPoint.BEFORE_CODE,
     )
     db.add(pipeline_run)
     db.commit()
@@ -400,8 +402,7 @@ async def reset_all(
         latest_run = PipelineRun(
             project_id=project_id,
             run_number=1,
-            human_review=True,
-            stop_point=StopPoint.AFTER_ALL,
+            stop_point=StopPoint.END_OF_PHASE,
             status=PipelineRunStatus.CANCELLED,
             completed_at=datetime.utcnow(),
         )
@@ -621,9 +622,10 @@ def list_runs(
             "run_number": r.run_number,
             "run_id": r.run_id,
             "status": r.status.value,
-            "human_review": r.human_review,
             "ai_loops": r.ai_loops,
             "stop_point": r.stop_point.value,
+            "start_stage_key": r.start_stage_key,
+            "start_component_key": r.start_component_key,
             "git_commit_sha": r.git_commit_sha,
             "started_at": r.started_at.isoformat() if r.started_at else None,
             "completed_at": r.completed_at.isoformat() if r.completed_at else None,

@@ -303,7 +303,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
             disabled={submitting}
             className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
           >
-            {submitting ? 'Cascading...' : 'Accept & Cascade'}
+            {submitting ? 'Regenerating...' : 'Approve & Regen Downstream'}
           </button>
           <button
             onClick={() => handleStaleAction('save_feedback')}
@@ -520,7 +520,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           disabled={submitting}
           className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
         >
-          {submitting ? 'Cascading...' : 'Accept & Cascade'}
+          {submitting ? 'Regenerating...' : 'Approve & Regen Downstream'}
         </button>
         <button
           onClick={() => handleAction('save_feedback')}

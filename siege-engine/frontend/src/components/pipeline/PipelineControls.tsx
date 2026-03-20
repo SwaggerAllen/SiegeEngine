@@ -3,10 +3,9 @@ import { usePipelineStore } from '../../store/pipelineStore';
 import type { PipelineStartOptions } from '../../types/pipeline';
 
 const STOP_POINT_OPTIONS = [
-  { value: 'after_all', label: 'Only when needed' },
-  { value: 'before_code', label: 'Before code generation' },
-  { value: 'at_fan_out', label: 'At fan-out points' },
-  { value: 'after_triplets', label: 'After each req\u2192arch\u2192plan group' },
+  { value: 'end_of_phase', label: 'Stop at end of current phase' },
+  { value: 'before_code', label: 'Stop before code generation' },
+  { value: 'every_artifact', label: 'Stop after every artifact' },
 ];
 
 export function PipelineControls({ projectId, hasGitHub }: { projectId: string; hasGitHub?: boolean }) {
@@ -16,9 +15,8 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
   } = usePipelineStore();
   const [showConfig, setShowConfig] = useState(false);
   const [configMode, setConfigMode] = useState<'start' | 'resume'>('start');
-  const [humanReview, setHumanReview] = useState(true);
   const [aiLoops, setAiLoops] = useState(1);
-  const [stopPoint, setStopPoint] = useState('after_all');
+  const [stopPoint, setStopPoint] = useState('end_of_phase');
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [checkingPR, setCheckingPR] = useState(false);
@@ -57,7 +55,6 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
 
   const handleConfirm = async () => {
     const options: PipelineStartOptions = {
-      human_review: humanReview,
       ai_loops: aiLoops,
       stop_point: stopPoint,
     };
@@ -210,17 +207,6 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
                 </p>
               )}
 
-              {/* Human Review Toggle */}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={humanReview}
-                  onChange={(e) => setHumanReview(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-500 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
-                />
-                <span className="text-sm text-gray-300">Include human review</span>
-              </label>
-
               {/* AI Loops */}
               <div>
                 <label className="block text-sm text-gray-300 mb-1">
@@ -238,7 +224,7 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
 
               {/* Stop Point */}
               <div>
-                <label className="block text-sm text-gray-300 mb-1">Pause at</label>
+                <label className="block text-sm text-gray-300 mb-1">Stop at</label>
                 <select
                   value={stopPoint}
                   onChange={(e) => setStopPoint(e.target.value)}

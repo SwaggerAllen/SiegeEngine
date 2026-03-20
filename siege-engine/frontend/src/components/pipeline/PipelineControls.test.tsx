@@ -89,9 +89,8 @@ describe('PipelineControls', () => {
     await user.click(screen.getByText('Start Run'));
 
     expect(screen.getByText('Run Configuration')).toBeInTheDocument();
-    expect(screen.getByText('Include human review')).toBeInTheDocument();
     expect(screen.getByText('AI self-improvement loops')).toBeInTheDocument();
-    expect(screen.getByText('Pause at')).toBeInTheDocument();
+    expect(screen.getByText('Stop at')).toBeInTheDocument();
   });
 
   it('calls startPipeline with default options when Start is clicked', async () => {
@@ -104,9 +103,8 @@ describe('PipelineControls', () => {
     await user.click(screen.getByRole('button', { name: 'Start' }));
 
     expect(mockStartPipeline).toHaveBeenCalledWith('proj-1', {
-      human_review: true,
       ai_loops: 1,
-      stop_point: 'after_all',
+      stop_point: 'end_of_phase',
     });
   });
 
@@ -157,9 +155,8 @@ describe('PipelineControls', () => {
     await user.click(resumeBtns[resumeBtns.length - 1]);
 
     expect(mockResumePipeline).toHaveBeenCalledWith('proj-1', {
-      human_review: true,
       ai_loops: 1,
-      stop_point: 'after_all',
+      stop_point: 'end_of_phase',
     });
   });
 });

@@ -1,11 +1,15 @@
 """Readiness-check mixin for PipelineEngine.
 
 Determines which stages/entities are ready to execute based on what has
-already been approved in the current run.
+already been generated in the current run.
 
-Status reads for approval checks use the PipelineSnapshot (event-sourced
-source of truth).  Execution-existence checks still use the StageExecution
-table since the snapshot is project-level and doesn't distinguish by run_id.
+Dependencies are satisfied when parent artifacts have been *generated*
+(status in: approved, awaiting_review, stale) — approval is not required
+for downstream generation to proceed.
+
+Status reads use the PipelineSnapshot (event-sourced source of truth).
+Execution-existence checks still use the StageExecution table since
+the snapshot is project-level and doesn't distinguish by run_id.
 """
 
 import logging
@@ -13,6 +17,7 @@ import logging
 from backend.models import (
     ArtifactType,
     FanOutStrategy,
+    PipelineRun,
     StageDefinition,
     StageExecution,
     StageStatus,
@@ -33,6 +38,9 @@ _ARTIFACT_TYPE_TO_STAGE_KEY: dict[ArtifactType, str] = {
     ArtifactType.CODE_REVIEW: "code_review",
 }
 
+# Statuses that indicate an artifact has been generated (has content).
+_GENERATED_STATUSES = {"approved", "awaiting_review", "stale"}
+
 # Stage keys grouped by level for readiness checks.
 COMPONENT_STAGE_ORDER = [
     "component_architectures",
@@ -44,9 +52,51 @@ SUB_COMPONENT_STAGE_ORDER = [
     "sub_component_plans",
 ]
 
+# Stage order mapping for scope filtering.
+_STAGE_KEY_TO_ORDER: dict[str, int] = {
+    "system_requirements": 0,
+    "system_architecture": 1,
+    "extract_components": 2,
+    "component_architectures": 3,
+    "extract_sub_components": 4,
+    "component_plans": 5,
+    "sub_component_architectures": 6,
+    "sub_component_plans": 7,
+    "code_generation": 8,
+    "code_review": 9,
+}
+
 
 class ReadinessMixin:
     """Mixin that provides stage/entity readiness checks."""
+
+    def _stage_fully_generated(
+        self, project_id: str, stage_def: StageDefinition, run_id: str
+    ) -> bool:
+        """Check if a stage is fully generated (all expected entities have content).
+
+        Uses the PipelineSnapshot as the source of truth for stage statuses.
+        A stage is "fully generated" when all entities are in a generated state
+        (approved, awaiting_review, or stale).
+        """
+        snapshot = self.events.get_snapshot(project_id)
+        statuses = snapshot.stage_statuses or {}
+        fan_out = stage_def.fan_out_strategy
+
+        if fan_out == FanOutStrategy.NONE:
+            return statuses.get(stage_def.stage_key) in _GENERATED_STATUSES
+
+        # Fan-out stages: check if ALL entities have been generated
+        all_entities = self._get_all_entities_for_stage(project_id, stage_def)
+        if not all_entities:
+            return False
+
+        for entity_key in all_entities:
+            key = f"{stage_def.stage_key}/{entity_key}"
+            if statuses.get(key) not in _GENERATED_STATUSES:
+                return False
+
+        return True
 
     def _stage_fully_complete(
         self, project_id: str, stage_def: StageDefinition, run_id: str
@@ -71,6 +121,44 @@ class ReadinessMixin:
             key = f"{stage_def.stage_key}/{entity_key}"
             if statuses.get(key) != "approved":
                 return False
+
+        return True
+
+    def _is_in_run_scope(
+        self,
+        stage_def: StageDefinition,
+        component_key: str | None,
+        pipeline_run: PipelineRun | None,
+    ) -> bool:
+        """Check if a stage/entity is within the scope of the current run.
+
+        A run scoped to a starting node only generates descendants of that node.
+        If no start node is set, everything is in scope.
+        """
+        if not pipeline_run:
+            return True
+        if not pipeline_run.start_stage_key:
+            return True
+
+        start_order = _STAGE_KEY_TO_ORDER.get(pipeline_run.start_stage_key, 0)
+        stage_order = stage_def.order_index
+
+        # Stages before the start are out of scope
+        if stage_order < start_order:
+            return False
+
+        # If run is scoped to a specific component, filter by that component
+        if pipeline_run.start_component_key:
+            start_comp = pipeline_run.start_component_key
+            if component_key:
+                # component_key matches or is a sub-component of start_comp
+                if not (component_key == start_comp
+                        or component_key.startswith(f"{start_comp}.")):
+                    return False
+            elif stage_def.fan_out_strategy != FanOutStrategy.NONE:
+                # Fan-out stage but no component_key yet — will be filtered
+                # at entity level by _get_scoped_ready_entities
+                pass
 
         return True
 
@@ -108,7 +196,8 @@ class ReadinessMixin:
         return []
 
     def _get_ready_entities(
-        self, project_id: str, stage_def: StageDefinition, run_id: str
+        self, project_id: str, stage_def: StageDefinition, run_id: str,
+        pipeline_run: PipelineRun | None = None,
     ) -> list[str]:
         """Get entity keys that are ready to be processed for a fan-out stage."""
         fan_out = stage_def.fan_out_strategy
@@ -123,6 +212,8 @@ class ReadinessMixin:
 
             for comp in comps:
                 key = comp["key"]
+                if not self._is_in_run_scope(stage_def, key, pipeline_run):
+                    continue
                 if self._is_component_ready(
                     project_id, key, stage_def, run_id, comp.get("dependencies", [])
                 ):
@@ -132,6 +223,8 @@ class ReadinessMixin:
             sub_comps = self._get_sub_component_defs(project_id)
             for sc in sub_comps:
                 full_key = f"{sc.parent_key}.{sc.key}"
+                if not self._is_in_run_scope(stage_def, full_key, pipeline_run):
+                    continue
                 deps = sc.dependencies or []
                 full_deps = [f"{sc.parent_key}.{d}" for d in deps]
                 if self._is_sub_component_ready(
@@ -142,6 +235,8 @@ class ReadinessMixin:
         elif fan_out == FanOutStrategy.LEAF:
             leaves = self._get_leaf_keys(project_id)
             for leaf_key in leaves:
+                if not self._is_in_run_scope(stage_def, leaf_key, pipeline_run):
+                    continue
                 if self._is_leaf_ready(project_id, leaf_key, stage_def, run_id):
                     ready.append(leaf_key)
 
@@ -170,8 +265,9 @@ class ReadinessMixin:
         if existing:
             return False
 
+        # Dependencies satisfied when parent has been *generated* (not just approved)
         for dep_key in dependencies:
-            if not self._has_approved_artifact(
+            if not self._has_generated_artifact(
                 project_id, ArtifactType.COMPONENT_ARCHITECTURE, dep_key
             ):
                 return False
@@ -179,7 +275,7 @@ class ReadinessMixin:
         if stage_def.stage_key in COMPONENT_STAGE_ORDER:
             current_idx = COMPONENT_STAGE_ORDER.index(stage_def.stage_key)
             for prior_key in COMPONENT_STAGE_ORDER[:current_idx]:
-                if not self._has_approved_execution(project_id, prior_key, comp_key, run_id):
+                if not self._has_generated_execution(project_id, prior_key, comp_key, run_id):
                     return False
 
         return True
@@ -208,19 +304,20 @@ class ReadinessMixin:
         if existing:
             return False
 
+        # Dependencies satisfied when parent has been *generated*
         for dep_key in full_deps:
-            if not self._has_approved_artifact(
-                project_id, ArtifactType.SUB_COMPONENT_PLAN, dep_key
+            if not self._has_generated_artifact(
+                project_id, ArtifactType.SUB_COMPONENT_ARCHITECTURE, dep_key
             ):
                 return False
 
         if stage_def.stage_key in SUB_COMPONENT_STAGE_ORDER:
             current_idx = SUB_COMPONENT_STAGE_ORDER.index(stage_def.stage_key)
             for prior_key in SUB_COMPONENT_STAGE_ORDER[:current_idx]:
-                if not self._has_approved_execution(project_id, prior_key, full_key, run_id):
+                if not self._has_generated_execution(project_id, prior_key, full_key, run_id):
                     return False
 
-        if not self._has_approved_execution(
+        if not self._has_generated_execution(
             project_id, "extract_sub_components", parent_key, run_id
         ):
             return False
@@ -246,44 +343,47 @@ class ReadinessMixin:
             return False
 
         if "." in leaf_key:
-            if not self._has_approved_artifact(
+            if not self._has_generated_artifact(
                 project_id, ArtifactType.SUB_COMPONENT_PLAN, leaf_key
             ):
                 return False
         else:
-            if not self._has_approved_artifact(project_id, ArtifactType.COMPONENT_PLAN, leaf_key):
+            if not self._has_generated_artifact(project_id, ArtifactType.COMPONENT_PLAN, leaf_key):
                 return False
 
         if stage_def.stage_key == "code_review":
-            if not self._has_approved_execution(project_id, "code_generation", leaf_key, run_id):
+            if not self._has_generated_execution(project_id, "code_generation", leaf_key, run_id):
                 return False
 
         return True
 
-    def _has_approved_artifact(
+    def _has_generated_artifact(
         self, project_id: str, artifact_type: ArtifactType, component_key: str
     ) -> bool:
-        """Check if an approved artifact exists using the snapshot.
+        """Check if a generated artifact exists using the snapshot.
 
-        Maps artifact_type → stage_key, then checks the snapshot's
-        stage_statuses for approval.
+        An artifact is considered "generated" if its status indicates it has
+        content: approved, awaiting_review, or stale.
         """
         stage_key = _ARTIFACT_TYPE_TO_STAGE_KEY.get(artifact_type)
         if not stage_key:
             return False
         snapshot = self.events.get_snapshot(project_id)
         key = f"{stage_key}/{component_key}" if component_key else stage_key
-        return (snapshot.stage_statuses or {}).get(key) == "approved"
+        return (snapshot.stage_statuses or {}).get(key) in _GENERATED_STATUSES
 
-    def _has_approved_execution(
+    def _has_generated_execution(
         self, project_id: str, stage_key: str, component_key: str, run_id: str
     ) -> bool:
-        """Check if an approved execution exists using the snapshot.
+        """Check if a generated execution exists using the snapshot.
 
-        The snapshot's stage_statuses track the current status for each
-        stage+component.  Carried-over executions set their status to
-        'approved' in the snapshot.
+        An execution is considered "generated" if its status indicates the
+        artifact has content: approved, awaiting_review, or stale.
         """
         snapshot = self.events.get_snapshot(project_id)
         key = f"{stage_key}/{component_key}" if component_key else stage_key
-        return (snapshot.stage_statuses or {}).get(key) == "approved"
+        return (snapshot.stage_statuses or {}).get(key) in _GENERATED_STATUSES
+
+    # Keep legacy names as aliases for any external callers
+    _has_approved_artifact = _has_generated_artifact
+    _has_approved_execution = _has_generated_execution

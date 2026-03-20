@@ -41,9 +41,10 @@ export interface StageExecution {
 }
 
 export interface PipelineStartOptions {
-  human_review?: boolean;
   ai_loops?: number;
   stop_point?: string;
+  start_stage_key?: string | null;
+  start_component_key?: string | null;
 }
 
 export type PipelineRunStatus = 'running' | 'completed' | 'cancelled' | 'failed' | 'paused';
@@ -53,9 +54,10 @@ export interface PipelineRun {
   run_number: number;
   run_id: string;
   status: PipelineRunStatus;
-  human_review: boolean;
   ai_loops: number;
   stop_point: string;
+  start_stage_key: string | null;
+  start_component_key: string | null;
   git_commit_sha: string | null;
   started_at: string | null;
   completed_at: string | null;

@@ -48,10 +48,11 @@ class PipelineRun(Base):
     status: Mapped[PipelineRunStatus] = mapped_column(
         Enum(PipelineRunStatus), default=PipelineRunStatus.RUNNING
     )
-    human_review: Mapped[bool] = mapped_column(Boolean, default=True)
     ai_loops: Mapped[int] = mapped_column(Integer, default=1)
-    stop_point: Mapped[StopPoint] = mapped_column(Enum(StopPoint), default=StopPoint.AFTER_ALL)
+    stop_point: Mapped[StopPoint] = mapped_column(Enum(StopPoint), default=StopPoint.END_OF_PHASE)
     propagation_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    start_stage_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    start_component_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     git_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -220,18 +220,15 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
             />
             <span className="text-sm text-gray-300">AI Review Enabled</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer">
+          <div className="flex items-center gap-2 opacity-50">
             <input
               type="checkbox"
-              checked={form.human_review_enabled}
-              onChange={(e) => {
-                setForm({ ...form, human_review_enabled: e.target.checked });
-                setSaved(false);
-              }}
-              className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-900"
+              checked={true}
+              disabled
+              className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-500"
             />
-            <span className="text-sm text-gray-300">Human Review Enabled</span>
-          </label>
+            <span className="text-sm text-gray-400">Human Review (always on)</span>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-gray-700">

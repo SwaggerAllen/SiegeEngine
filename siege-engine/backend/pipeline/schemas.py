@@ -2,9 +2,10 @@ from pydantic import BaseModel
 
 
 class PipelineStartRequest(BaseModel):
-    human_review: bool = True
     ai_loops: int = 1  # Number of AI self-improvement loops (generate→review cycles)
-    stop_point: str = "after_all"  # "after_all", "before_code", "at_fan_out", "after_triplets"
+    stop_point: str = "end_of_phase"  # "end_of_phase", "before_code", "every_artifact"
+    start_stage_key: str | None = None  # Stage to start from (None = first incomplete)
+    start_component_key: str | None = None  # Component to scope the run to
 
 
 class ResumeRequest(BaseModel):
@@ -33,9 +34,10 @@ class AcceptAndCascadeRequest(BaseModel):
 
 
 class ResumeRunRequest(BaseModel):
-    human_review: bool = True
     ai_loops: int = 1
-    stop_point: str = "after_all"
+    stop_point: str = "end_of_phase"
+    start_stage_key: str | None = None
+    start_component_key: str | None = None
 
 
 class CancelRequest(BaseModel):
@@ -143,9 +145,10 @@ class PipelineRunResponse(BaseModel):
     run_number: int
     run_id: str
     status: str
-    human_review: bool
     ai_loops: int
     stop_point: str
+    start_stage_key: str | None
+    start_component_key: str | None
     git_commit_sha: str | None
     started_at: str | None
     completed_at: str | None
