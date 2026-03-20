@@ -18,9 +18,10 @@ import { ProjectSettingsPanel } from '../components/project/ProjectSettingsPanel
 import { ChatPanel } from '../components/chat/ChatPanel';
 import InputDocsPanel from '../components/input-docs/InputDocsPanel';
 import { RunSelector } from '../components/pipeline/RunSelector';
+import { EventHistoryPanel } from '../components/pipeline/EventHistoryPanel';
 import api from '../api/client';
 
-type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings';
+type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history';
 
 export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -102,10 +103,11 @@ export function ProjectDashboardPage() {
     'input-docs': 'Input Docs',
     chat: 'Chat',
     settings: 'Settings',
+    history: 'Event History',
   };
   const visibleTabs: Tab[] = isViewer
     ? ['documents', 'pipeline', 'chat']
-    : ['documents', 'pipeline', 'prompts', 'input-docs', 'chat', 'settings'];
+    : ['documents', 'pipeline', 'prompts', 'input-docs', 'chat', 'settings', 'history'];
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white">
@@ -276,6 +278,10 @@ export function ProjectDashboardPage() {
       ) : activeTab === 'chat' ? (
         <div className="flex-1 overflow-hidden">
           <ChatPanel projectId={projectId} />
+        </div>
+      ) : activeTab === 'history' ? (
+        <div className="flex-1 overflow-hidden">
+          <EventHistoryPanel projectId={projectId} />
         </div>
       ) : (
         <div className="flex-1 overflow-auto">

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { usePipelineStore } from '../../store/pipelineStore';
+import { useProjectStore } from '../../store/projectStore';
 import type { PipelineStartOptions } from '../../types/pipeline';
 
 const STOP_POINT_OPTIONS = [
@@ -11,10 +12,11 @@ const STOP_POINT_OPTIONS = [
 export function PipelineControls({ projectId, hasGitHub }: { projectId: string; hasGitHub?: boolean }) {
   const {
     isRunning, isPaused, currentRunNumber, runs, blockingPR,
-    startPipeline, resumeRun, cancelPipeline, resetAll, checkBlockingPR, dismissBlockingPR,
+    startPipeline, resumeRun, regenDownstream, cancelPipeline, resetAll, checkBlockingPR, dismissBlockingPR,
   } = usePipelineStore();
+  const { selectedArtifact } = useProjectStore();
   const [showConfig, setShowConfig] = useState(false);
-  const [configMode, setConfigMode] = useState<'start' | 'resume'>('start');
+  const [configMode, setConfigMode] = useState<'start' | 'resume' | 'regen'>('start');
   const [aiLoops, setAiLoops] = useState(1);
   const [stopPoint, setStopPoint] = useState('end_of_phase');
   const [showCancelDialog, setShowCancelDialog] = useState(false);
@@ -48,17 +50,22 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showConfig, showCancelDialog, showResetConfirm]);
 
-  const openConfig = (mode: 'start' | 'resume') => {
+  const openConfig = (mode: 'start' | 'resume' | 'regen') => {
     setConfigMode(mode);
     setShowConfig(true);
   };
 
   const handleConfirm = async () => {
+    setShowConfig(false);
+    if (configMode === 'regen') {
+      if (!selectedArtifact) return;
+      await regenDownstream(projectId, selectedArtifact.id);
+      return;
+    }
     const options: PipelineStartOptions = {
       ai_loops: aiLoops,
       stop_point: stopPoint,
     };
-    setShowConfig(false);
     if (configMode === 'resume') {
       await resumeRun(projectId, options);
     } else {
@@ -168,6 +175,19 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
                 <span>Resume</span>
               </button>
 
+              {selectedArtifact && (
+                <button
+                  onClick={() => openConfig('regen')}
+                  className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
+                  title={`Regen downstream from "${selectedArtifact.name || selectedArtifact.artifact_type}"`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                  </svg>
+                  <span>Regen Downstream</span>
+                </button>
+              )}
+
               <div ref={resetConfirmRef} className="relative">
                 <button
                   onClick={() => setShowResetConfirm(true)}
@@ -199,55 +219,67 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
           {showConfig && (
             <div className="absolute top-full mt-1 right-0 z-50 w-72 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 space-y-3">
               <h3 className="text-sm font-semibold text-white">
-                {configMode === 'resume' ? 'Resume Run' : 'Run Configuration'}
+                {configMode === 'regen' ? 'Regen Downstream' : configMode === 'resume' ? 'Resume Run' : 'Run Configuration'}
               </h3>
               {configMode === 'resume' && (
                 <p className="text-xs text-gray-400">
                   Continues from the last run, re-processing stale and in-review nodes.
                 </p>
               )}
+              {configMode === 'regen' && selectedArtifact && (
+                <p className="text-xs text-gray-400">
+                  Regenerate all already-generated nodes downstream of{' '}
+                  <span className="text-teal-300 font-medium">{selectedArtifact.name || selectedArtifact.artifact_type}</span>.
+                </p>
+              )}
 
-              {/* AI Loops */}
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">
-                  AI self-improvement loops
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  max={10}
-                  value={aiLoops}
-                  onChange={(e) => setAiLoops(Math.max(0, Math.min(10, parseInt(e.target.value) || 0)))}
-                  className="w-20 px-2 py-1 bg-gray-700 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
+              {configMode !== 'regen' && (
+                <>
+                  {/* AI Loops */}
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-1">
+                      AI self-improvement loops
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10}
+                      value={aiLoops}
+                      onChange={(e) => setAiLoops(Math.max(0, Math.min(10, parseInt(e.target.value) || 0)))}
+                      className="w-20 px-2 py-1 bg-gray-700 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
 
-              {/* Stop Point */}
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">Stop at</label>
-                <select
-                  value={stopPoint}
-                  onChange={(e) => setStopPoint(e.target.value)}
-                  className="w-full px-2 py-1.5 bg-gray-700 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
-                >
-                  {STOP_POINT_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                  {/* Stop Point */}
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-1">Stop at</label>
+                    <select
+                      value={stopPoint}
+                      onChange={(e) => setStopPoint(e.target.value)}
+                      className="w-full px-2 py-1.5 bg-gray-700 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                    >
+                      {STOP_POINT_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
 
               {/* Confirm Button */}
               <button
                 onClick={handleConfirm}
                 className={`w-full py-1.5 text-white text-sm rounded font-medium ${
-                  configMode === 'resume'
-                    ? 'bg-blue-600 hover:bg-blue-700'
-                    : 'bg-green-600 hover:bg-green-700'
+                  configMode === 'regen'
+                    ? 'bg-teal-600 hover:bg-teal-700'
+                    : configMode === 'resume'
+                      ? 'bg-blue-600 hover:bg-blue-700'
+                      : 'bg-green-600 hover:bg-green-700'
                 }`}
               >
-                {configMode === 'resume' ? 'Resume' : 'Start'}
+                {configMode === 'regen' ? 'Confirm Regen' : configMode === 'resume' ? 'Resume' : 'Start'}
               </button>
             </div>
           )}

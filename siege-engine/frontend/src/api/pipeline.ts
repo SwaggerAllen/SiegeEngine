@@ -1,5 +1,5 @@
 import api from './client';
-import type { PipelineConfig, PipelineRun, PipelineSnapshot, PipelineStartOptions, StageDefinition } from '../types/pipeline';
+import type { PipelineConfig, PipelineEventPage, PipelineRun, PipelineSnapshot, PipelineStartOptions, StageDefinition } from '../types/pipeline';
 
 export async function getPipelineConfig(projectId: string): Promise<PipelineConfig> {
   const { data } = await api.get(`/pipeline/${projectId}/config`);
@@ -193,6 +193,30 @@ export interface ArtifactDiff {
 
 export async function getArtifactDiff(projectId: string, artifactId: string): Promise<ArtifactDiff> {
   const { data } = await api.get(`/pipeline/${projectId}/artifacts/${artifactId}/diff`);
+  return data;
+}
+
+export async function listEvents(
+  projectId: string,
+  params?: { run_id?: string; event_type?: string; limit?: number; offset?: number }
+): Promise<PipelineEventPage> {
+  const { data } = await api.get(`/pipeline/${projectId}/events`, { params });
+  return data;
+}
+
+export async function getSnapshotAtSequence(
+  projectId: string,
+  sequence: number
+): Promise<PipelineSnapshot> {
+  const { data } = await api.get(`/pipeline/${projectId}/events/snapshot-at/${sequence}`);
+  return data;
+}
+
+export async function revertToSequence(
+  projectId: string,
+  sequence: number
+): Promise<{ status: string; reverted_to_sequence: number; events_deleted: number }> {
+  const { data } = await api.post(`/pipeline/${projectId}/events/revert-to/${sequence}`);
   return data;
 }
 

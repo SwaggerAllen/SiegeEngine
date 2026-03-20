@@ -74,6 +74,22 @@ export interface PipelineSnapshot {
   last_sequence: number;
 }
 
+export interface PipelineEvent {
+  id: string;
+  sequence: number;
+  event_type: string;
+  payload: Record<string, unknown>;
+  run_id: string | null;
+  created_at: string | null;
+}
+
+export interface PipelineEventPage {
+  events: PipelineEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export type WSEvent =
   | { type: 'stage_started'; stage_key: string; component_key?: string }
   | { type: 'stage_progress'; stage_key: string; step: string; component_key?: string; message: string }

@@ -531,6 +531,134 @@ def get_snapshot(
     }
 
 
+@pipeline_router.get("/{project_id}/events")
+def list_events(
+    project_id: str,
+    run_id: str | None = Query(None),
+    event_type: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return paginated event history for a project."""
+    from backend.models.pipeline_events import PipelineEvent
+
+    _get_project_or_404(db, project_id)
+
+    query = (
+        db.query(PipelineEvent)
+        .filter_by(project_id=project_id)
+    )
+    if run_id:
+        query = query.filter(PipelineEvent.run_id == run_id)
+    if event_type:
+        query = query.filter(PipelineEvent.event_type == event_type)
+
+    total = query.count()
+    events = (
+        query
+        .order_by(PipelineEvent.sequence.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return {
+        "events": [
+            {
+                "id": e.id,
+                "sequence": e.sequence,
+                "event_type": e.event_type,
+                "payload": e.payload,
+                "run_id": e.run_id,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in events
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@pipeline_router.get("/{project_id}/events/snapshot-at/{sequence}")
+def snapshot_at_sequence(
+    project_id: str,
+    sequence: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Replay events up to a given sequence number and return the snapshot state at that point."""
+    from backend.models.pipeline_events import PipelineEvent
+    from backend.pipeline.reducer import apply_event, empty_snapshot
+
+    _get_project_or_404(db, project_id)
+
+    events = (
+        db.query(PipelineEvent)
+        .filter_by(project_id=project_id)
+        .filter(PipelineEvent.sequence <= sequence)
+        .order_by(PipelineEvent.sequence)
+        .all()
+    )
+
+    if not events:
+        raise HTTPException(404, f"No events found up to sequence {sequence}")
+
+    state = empty_snapshot()
+    for event in events:
+        state = apply_event(state, event.event_type, event.payload, event.sequence)
+
+    return state
+
+
+@pipeline_router.post("/{project_id}/events/revert-to/{sequence}")
+def revert_to_sequence(
+    project_id: str,
+    sequence: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Revert pipeline state to a historical point by deleting events after the given sequence.
+
+    This is destructive: all events with sequence > the target are permanently deleted,
+    and the snapshot is rebuilt from scratch.
+    """
+    from backend.models.pipeline_events import PipelineEvent
+    from backend.pipeline.event_store import EventStore
+
+    _get_project_or_404(db, project_id)
+
+    # Validate that the target sequence exists
+    target_event = (
+        db.query(PipelineEvent)
+        .filter_by(project_id=project_id, sequence=sequence)
+        .first()
+    )
+    if not target_event:
+        raise HTTPException(404, f"No event found at sequence {sequence}")
+
+    # Delete all events after the target sequence
+    deleted_count = (
+        db.query(PipelineEvent)
+        .filter_by(project_id=project_id)
+        .filter(PipelineEvent.sequence > sequence)
+        .delete(synchronize_session="fetch")
+    )
+
+    # Rebuild snapshot from remaining events
+    es = EventStore(db)
+    es.rebuild_snapshot(project_id)
+    db.commit()
+
+    return {
+        "status": "reverted",
+        "reverted_to_sequence": sequence,
+        "events_deleted": deleted_count,
+    }
+
+
 @pipeline_router.get("/{project_id}/blocking-pr")
 def get_blocking_pr(
     project_id: str,
