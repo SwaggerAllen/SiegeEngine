@@ -71,5 +71,8 @@ export type WSEvent =
   | { type: 'pipeline_paused'; stage_key: string; run_id: string; message?: string }
   | { type: 'staleness_propagated'; stale_artifact_ids: string[] }
   | { type: 'feedback_saved'; stage_key: string; component_key?: string; execution_id: string; artifact_id?: string }
-  | { type: 'comment_added'; artifact_id: string; comment_id: string }
-  | { type: 'artifact_pruned'; artifact_id: string };
+  | { type: 'comment_added'; artifact_id: string; comment_id?: string }
+  | { type: 'comment_updated'; artifact_id: string; comment_id: string }
+  | { type: 'comment_deleted'; artifact_id: string; comment_id: string }
+  | { type: 'artifact_pruned'; artifact_id: string }
+  | { type: 'cascade_completed'; run_id?: string };
