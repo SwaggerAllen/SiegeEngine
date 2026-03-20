@@ -32,6 +32,7 @@ interface PipelineState {
   resolveStale: (projectId: string, artifactId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
   acceptAndCascade: (projectId: string, artifactId: string, notes?: string, editedContent?: string) => Promise<void>;
   cancelPipeline: (projectId: string, options?: { open_pr?: boolean; pr_title?: string; pr_body?: string; base_branch?: string }) => Promise<void>;
+  resetAll: (projectId: string) => Promise<void>;
   checkBlockingPR: (projectId: string) => Promise<boolean>;
   dismissBlockingPR: (projectId: string) => Promise<void>;
   cancelStage: (projectId: string, executionId: string) => Promise<void>;
@@ -165,6 +166,13 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       throw new Error(result.pr_error);
     }
     get().fetchRuns(projectId);
+  },
+
+  resetAll: async (projectId) => {
+    await pipelineApi.resetAll(projectId);
+    set({ isRunning: false, isPaused: false, pausedStage: null });
+    get().fetchRuns(projectId);
+    get().fetchStatus(projectId);
   },
 
   checkBlockingPR: async (projectId) => {

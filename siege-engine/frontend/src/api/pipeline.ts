@@ -121,6 +121,11 @@ export async function cancelPipeline(
   return data;
 }
 
+export async function resetAll(projectId: string) {
+  const { data } = await api.post(`/pipeline/${projectId}/reset-all`);
+  return data;
+}
+
 export async function getBlockingPR(projectId: string) {
   const { data } = await api.get(`/pipeline/${projectId}/blocking-pr`);
   return data as { blocking_pr_url: string | null; blocking_pr_number: number | null };

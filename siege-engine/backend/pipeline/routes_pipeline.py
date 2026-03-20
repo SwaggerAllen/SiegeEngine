@@ -345,6 +345,117 @@ async def cancel_pipeline(
     return result
 
 
+@pipeline_router.post("/{project_id}/reset-all")
+async def reset_all(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Reset pipeline to a clean slate.
+
+    Cancels all active runs, puts every artifact with content into
+    AWAITING_REVIEW, and ensures each has an execution the next Resume
+    can carry over.  Artifacts without content become PENDING.
+    """
+    project = _get_project_or_404(db, project_id)
+
+    # 1. Cancel all active pipeline runs
+    active_runs = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id, status=PipelineRunStatus.RUNNING)
+        .all()
+    )
+    for r in active_runs:
+        r.status = PipelineRunStatus.CANCELLED
+        r.completed_at = datetime.utcnow()
+
+    # 2. Fail all in-flight executions
+    in_flight = (
+        db.query(StageExecution)
+        .filter_by(project_id=project_id)
+        .filter(
+            StageExecution.status.in_(
+                [StageStatus.RUNNING, StageStatus.PENDING, StageStatus.AI_REVIEW]
+            )
+        )
+        .all()
+    )
+    for e in in_flight:
+        e.status = StageStatus.FAILED
+        e.error_message = "Reset by user"
+        e.completed_at = e.completed_at or datetime.utcnow()
+
+    db.flush()
+
+    # 3. Determine which run to attach reset executions to.
+    #    Use the most recent cancelled/completed run so Resume can find them.
+    latest_run = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id)
+        .order_by(PipelineRun.run_number.desc())
+        .first()
+    )
+    if not latest_run:
+        # No runs at all — create a synthetic one
+        latest_run = PipelineRun(
+            project_id=project_id,
+            run_number=1,
+            human_review=True,
+            stop_point=StopPoint.AFTER_ALL,
+            status=PipelineRunStatus.CANCELLED,
+            completed_at=datetime.utcnow(),
+        )
+        db.add(latest_run)
+        db.flush()
+
+    run_id = latest_run.run_id
+
+    # 4. Reset artifacts and their executions
+    all_artifacts = (
+        db.query(Artifact)
+        .filter_by(project_id=project_id)
+        .all()
+    )
+
+    reset_count = 0
+    for artifact in all_artifacts:
+        if artifact.content and artifact.content.strip():
+            artifact.status = ArtifactStatus.AWAITING_REVIEW
+
+            # Find or create an AWAITING_REVIEW execution in the target run
+            existing_exec = (
+                db.query(StageExecution)
+                .filter_by(project_id=project_id, artifact_id=artifact.id)
+                .order_by(StageExecution.started_at.desc())
+                .first()
+            )
+            if existing_exec:
+                existing_exec.status = StageStatus.AWAITING_REVIEW
+                existing_exec.run_id = run_id
+                existing_exec.error_message = None
+            reset_count += 1
+        else:
+            artifact.status = ArtifactStatus.PENDING
+
+    db.commit()
+
+    await ws_manager.broadcast(
+        project_id,
+        {
+            "type": "pipeline_completed",
+            "run_id": run_id,
+            "message": "Pipeline reset to clean slate",
+        },
+    )
+
+    return {
+        "status": "reset",
+        "artifacts_reset": reset_count,
+        "executions_cancelled": len(in_flight),
+        "runs_cancelled": len(active_runs),
+    }
+
+
 @pipeline_router.get("/{project_id}/status")
 def get_status(
     project_id: str,

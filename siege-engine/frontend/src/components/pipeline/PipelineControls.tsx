@@ -12,7 +12,7 @@ const STOP_POINT_OPTIONS = [
 export function PipelineControls({ projectId, hasGitHub }: { projectId: string; hasGitHub?: boolean }) {
   const {
     isRunning, isPaused, currentRunNumber, runs, blockingPR,
-    startPipeline, resumeRun, cancelPipeline, checkBlockingPR, dismissBlockingPR,
+    startPipeline, resumeRun, cancelPipeline, resetAll, checkBlockingPR, dismissBlockingPR,
   } = usePipelineStore();
   const [showConfig, setShowConfig] = useState(false);
   const [configMode, setConfigMode] = useState<'start' | 'resume'>('start');
@@ -20,10 +20,12 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
   const [aiLoops, setAiLoops] = useState(1);
   const [stopPoint, setStopPoint] = useState('after_all');
   const [showCancelDialog, setShowCancelDialog] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [checkingPR, setCheckingPR] = useState(false);
   const [prCleared, setPrCleared] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLDivElement>(null);
+  const resetConfirmRef = useRef<HTMLDivElement>(null);
 
   // Check if there's a previous run to resume from
   const hasCompletedRun = runs.some(
@@ -32,7 +34,7 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
 
   // Close popover on outside click
   useEffect(() => {
-    if (!showConfig && !showCancelDialog) return;
+    if (!showConfig && !showCancelDialog && !showResetConfirm) return;
     const handleClick = (e: MouseEvent) => {
       if (showConfig && panelRef.current && !panelRef.current.contains(e.target as Node)) {
         setShowConfig(false);
@@ -40,10 +42,13 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
       if (showCancelDialog && cancelRef.current && !cancelRef.current.contains(e.target as Node)) {
         setShowCancelDialog(false);
       }
+      if (showResetConfirm && resetConfirmRef.current && !resetConfirmRef.current.contains(e.target as Node)) {
+        setShowResetConfirm(false);
+      }
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [showConfig, showCancelDialog]);
+  }, [showConfig, showCancelDialog, showResetConfirm]);
 
   const openConfig = (mode: 'start' | 'resume') => {
     setConfigMode(mode);
@@ -73,6 +78,18 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
       await cancelPipeline(projectId, openPR ? { open_pr: true } : undefined);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to create PR';
+      setCancelError(message);
+    }
+  };
+
+  const handleResetAll = async () => {
+    setShowResetConfirm(false);
+    setShowCancelDialog(false);
+    setCancelError(null);
+    try {
+      await resetAll(projectId);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Reset failed';
       setCancelError(message);
     }
   };
@@ -143,15 +160,43 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
           </button>
 
           {hasCompletedRun && (
-            <button
-              onClick={() => openConfig('resume')}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <span>Resume</span>
-            </button>
+            <>
+              <button
+                onClick={() => openConfig('resume')}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>Resume</span>
+              </button>
+
+              <div ref={resetConfirmRef} className="relative">
+                <button
+                  onClick={() => setShowResetConfirm(true)}
+                  className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0"
+                  title="Reset all pipeline state to a clean slate"
+                >
+                  Reset All
+                </button>
+                {showResetConfirm && (
+                  <div className="absolute top-full mt-1 right-0 z-50 w-64 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 space-y-3">
+                    <h3 className="text-sm font-semibold text-white">Reset Pipeline</h3>
+                    <p className="text-xs text-gray-400">
+                      Stops all activity and puts every document with content into
+                      &ldquo;Awaiting Review&rdquo;. You can then review each one and start a
+                      fresh run.
+                    </p>
+                    <button
+                      onClick={handleResetAll}
+                      className="w-full py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded"
+                    >
+                      Confirm Reset
+                    </button>
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
           {showConfig && (
@@ -256,6 +301,17 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
                     Cancel &amp; Open PR
                   </button>
                 )}
+                <div className="border-t border-gray-600 pt-2 mt-1">
+                  <button
+                    onClick={handleResetAll}
+                    className="w-full py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded"
+                  >
+                    Reset All (Clean Slate)
+                  </button>
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    Stops everything and puts all documents into review.
+                  </p>
+                </div>
               </div>
             </div>
           )}
