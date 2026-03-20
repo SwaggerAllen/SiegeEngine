@@ -82,6 +82,14 @@ class ArtifactOpsMixin:
                     "execution_id": execution_id,
                 },
             )
+            if notes and notes.strip() and execution.artifact_id:
+                await ws_manager.broadcast(
+                    execution.project_id,
+                    {
+                        "type": "comment_added",
+                        "artifact_id": execution.artifact_id,
+                    },
+                )
 
             config = self._get_config(execution.project_id)
             if config:
@@ -184,6 +192,14 @@ class ArtifactOpsMixin:
                     "execution_id": execution_id,
                 },
             )
+            if notes and notes.strip() and execution.artifact_id:
+                await ws_manager.broadcast(
+                    execution.project_id,
+                    {
+                        "type": "comment_added",
+                        "artifact_id": execution.artifact_id,
+                    },
+                )
 
             if stale_artifact_ids:
                 await ws_manager.broadcast(
@@ -230,6 +246,15 @@ class ArtifactOpsMixin:
                     "artifact_id": execution.artifact_id,
                 },
             )
+            # Also broadcast comment_added so CommentsPanel refreshes
+            if notes and notes.strip() and execution.artifact_id:
+                await ws_manager.broadcast(
+                    execution.project_id,
+                    {
+                        "type": "comment_added",
+                        "artifact_id": execution.artifact_id,
+                    },
+                )
 
     async def _check_and_continue(self, execution: StageExecution):
         """After approval, find and execute the next available work."""
@@ -544,6 +569,14 @@ class ArtifactOpsMixin:
                     )
                 )
             self.db.commit()
+            if notes and notes.strip():
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "comment_added",
+                        "artifact_id": artifact_id,
+                    },
+                )
             return
 
         if action == "approved":
@@ -597,6 +630,14 @@ class ArtifactOpsMixin:
                     "status": "approved",
                 },
             )
+            if notes and notes.strip():
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "comment_added",
+                        "artifact_id": artifact_id,
+                    },
+                )
 
             # Trigger downstream stages (e.g. component nodes after fan-out
             # approval).  Without this the pipeline stalls after approving a

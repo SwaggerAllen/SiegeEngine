@@ -15,6 +15,7 @@ export interface Comment {
   parent_id: string | null;
   artifact_version: number | null;
   created_at: string;
+  updated_at: string | null;
 }
 
 export async function listComments(
@@ -38,4 +39,27 @@ export async function createComment(
     { content, parent_id: parentId ?? null },
   );
   return data;
+}
+
+export async function updateComment(
+  projectId: string,
+  artifactId: string,
+  commentId: string,
+  content: string,
+): Promise<Comment> {
+  const { data } = await api.put(
+    `/comments/${projectId}/artifacts/${artifactId}/comments/${commentId}`,
+    { content },
+  );
+  return data;
+}
+
+export async function deleteComment(
+  projectId: string,
+  artifactId: string,
+  commentId: string,
+): Promise<void> {
+  await api.delete(
+    `/comments/${projectId}/artifacts/${artifactId}/comments/${commentId}`,
+  );
 }
