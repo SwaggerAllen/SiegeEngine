@@ -139,7 +139,6 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   },
 
   reviseArtifact: async (projectId, artifactId, feedback) => {
-    set({ isRunning: true });
     await pipelineApi.reviseArtifact(projectId, artifactId, feedback);
   },
 
