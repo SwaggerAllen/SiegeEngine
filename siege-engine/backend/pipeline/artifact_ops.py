@@ -614,7 +614,8 @@ class ArtifactOpsMixin:
         """Remove an artifact and its associated records from the project.
 
         Deletes the artifact, its dependency edges, comments, and stage executions.
-        If the artifact has a component_key, also removes the ComponentDefinition.
+        Preserves the ComponentDefinition so the fanout parent still knows the
+        entity exists and will regenerate it on the next pipeline run.
         Does NOT cascade to downstream artifacts (component plans, code, etc.).
         """
         artifact = self.db.get(Artifact, artifact_id)
@@ -667,12 +668,10 @@ class ArtifactOpsMixin:
             .delete()
         )
 
-        if component_key:
-            (
-                self.db.query(ComponentDefinition)
-                .filter_by(project_id=project_id, key=component_key, parent_key=None)
-                .delete()
-            )
+        # NOTE: We intentionally do NOT delete the ComponentDefinition here.
+        # Prune resets a node to "not yet generated" so the pipeline will
+        # regenerate it on the next run.  To truly remove a component, edit
+        # the parent fanout document instead.
 
         self.db.delete(artifact)
         self.db.commit()

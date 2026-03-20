@@ -154,6 +154,15 @@ export async function pruneArtifact(projectId: string, artifactId: string) {
   return data;
 }
 
+export async function reparseFanout(projectId: string, artifactId: string): Promise<{
+  added: string[];
+  removed: string[];
+  total: number;
+}> {
+  const { data } = await api.post(`/pipeline/${projectId}/artifacts/${artifactId}/reparse`);
+  return data;
+}
+
 export interface ArtifactDiff {
   diff: string;
   from_version: number;

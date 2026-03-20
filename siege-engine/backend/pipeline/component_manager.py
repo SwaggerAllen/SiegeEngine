@@ -317,6 +317,79 @@ class ComponentManagerMixin:
 
         return healed
 
+    def reparse_fanout(self, project_id: str, artifact_id: str) -> dict:
+        """Re-parse a fanout artifact to restore missing ComponentDefinitions.
+
+        Works on approved extract_components or extract_sub_components artifacts.
+        Re-runs the same parsing logic used during post-generation to reconcile
+        ComponentDefinition rows with the artifact's current text content.
+        Returns a summary of what changed.
+        """
+        artifact = self.db.get(Artifact, artifact_id)
+        if not artifact:
+            raise ValueError("Artifact not found")
+        if artifact.project_id != project_id:
+            raise ValueError("Artifact does not belong to this project")
+        if not artifact.content:
+            raise ValueError("Artifact has no content to parse")
+
+        before_keys: set[str] = set()
+        after_keys: set[str] = set()
+
+        if artifact.artifact_type == ArtifactType.COMPONENT_MAP:
+            before_keys = {
+                d.key
+                for d in self.db.query(ComponentDefinition)
+                .filter_by(project_id=project_id)
+                .filter(ComponentDefinition.parent_key.is_(None))
+                .all()
+            }
+            self._store_components(project_id, artifact.content)
+            self.db.commit()
+            after_keys = {
+                d.key
+                for d in self.db.query(ComponentDefinition)
+                .filter_by(project_id=project_id)
+                .filter(ComponentDefinition.parent_key.is_(None))
+                .all()
+            }
+        elif artifact.artifact_type == ArtifactType.SUB_COMPONENT_MAP:
+            parent_key = artifact.component_key
+            if not parent_key:
+                raise ValueError("Sub-component map artifact has no component_key")
+            before_keys = {
+                d.key
+                for d in self.db.query(ComponentDefinition)
+                .filter_by(project_id=project_id, parent_key=parent_key)
+                .all()
+            }
+            self._store_sub_components(project_id, parent_key, artifact.content)
+            self.db.commit()
+            after_keys = {
+                d.key
+                for d in self.db.query(ComponentDefinition)
+                .filter_by(project_id=project_id, parent_key=parent_key)
+                .all()
+            }
+        else:
+            raise ValueError(
+                f"Artifact type {artifact.artifact_type.value} is not a fanout artifact"
+            )
+
+        added = after_keys - before_keys
+        removed = before_keys - after_keys
+        logger.info(
+            "Reparsed fanout artifact %s: added=%s removed=%s",
+            artifact_id,
+            added,
+            removed,
+        )
+        return {
+            "added": sorted(added),
+            "removed": sorted(removed),
+            "total": len(after_keys),
+        }
+
     async def _post_generation_hook(
         self,
         project_id: str,
