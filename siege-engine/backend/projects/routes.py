@@ -306,24 +306,44 @@ async def open_pr(
     if not cred:
         raise HTTPException(400, "GitHub not connected. Connect via Settings.")
 
+    if not project.remote_url:
+        raise HTTPException(400, "Project has no remote URL configured")
+
     # Push first (token passed as one-time auth URL, never persisted)
     branch = req.branch_name or f"siege-engine/{project.name.lower().replace(' ', '-')}"
     auth_url = None
-    if project.remote_url and project.remote_url.startswith("https://"):
+    if project.remote_url.startswith("https://"):
         auth_url = project.remote_url.replace(
             "https://", f"https://x-access-token:{cred.access_token}@"
         )
-    git_manager.push_branch(project_id, branch, auth_url=auth_url)
+    else:
+        raise HTTPException(400, "Only HTTPS remote URLs are supported for PR creation")
+
+    try:
+        git_manager.push_branch(project_id, branch, auth_url=auth_url)
+    except Exception as e:
+        raise HTTPException(502, f"Failed to push branch '{branch}': {e}")
 
     # Create PR
     gh = GitHubService(cred.access_token)
-    pr = await gh.create_pr(
-        project.github_repo_slug,
-        req.title,
-        req.body,
-        branch,
-        req.base_branch,
-    )
+    try:
+        pr = await gh.create_pr(
+            project.github_repo_slug,
+            req.title,
+            req.body,
+            branch,
+            req.base_branch,
+        )
+    except Exception as e:
+        error_detail = str(e)
+        # httpx errors include the response body
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_detail = e.response.json().get("message", error_detail)
+            except Exception:
+                pass
+        raise HTTPException(502, f"GitHub API error: {error_detail}")
+
     return {
         "status": "pr_created",
         "pr_number": pr.get("number"),

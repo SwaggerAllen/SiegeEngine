@@ -153,6 +153,10 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     if (result.pr_url) {
       set({ blockingPR: { url: result.pr_url, number: result.pr_number } });
     }
+    if (result.pr_error) {
+      console.error('[Pipeline] PR creation failed:', result.pr_error);
+      throw new Error(result.pr_error);
+    }
     get().fetchRuns(projectId);
   },
 
