@@ -17,7 +17,7 @@ interface ReviewPanelProps {
 const REGENERATING_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
-  const { resumeStage, resolveStale, acceptAndCascade, forceRestartStage, pruneArtifact, cancelStage } = usePipelineStore();
+  const { resumeStage, resolveStale, regenDownstream, forceRestartStage, pruneArtifact, cancelStage } = usePipelineStore();
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
   const [notes, setNotes] = useState('');
@@ -163,20 +163,11 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     }
   };
 
-  const handleAcceptAndCascade = async () => {
-    if (!window.confirm('Approve this artifact and regenerate all downstream dependents?')) return;
+  const handleRegenDownstream = async () => {
+    if (!window.confirm('Start a run to regenerate all already-generated downstream nodes?')) return;
     setSubmitting(true);
     try {
-      await acceptAndCascade(
-        projectId,
-        artifact.id,
-        notes || undefined,
-        showEditor && editedContent ? editedContent : undefined
-      );
-      setNotes('');
-      setEditedContent('');
-      setShowEditor(false);
-      setFeedbackSaved(false);
+      await regenDownstream(projectId, artifact.id);
     } finally {
       setSubmitting(false);
     }
@@ -299,11 +290,11 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
             Approve
           </button>
           <button
-            onClick={handleAcceptAndCascade}
+            onClick={handleRegenDownstream}
             disabled={submitting}
             className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
           >
-            {submitting ? 'Regenerating...' : 'Approve & Regen Downstream'}
+            {submitting ? 'Starting...' : 'Regen Downstream'}
           </button>
           <button
             onClick={() => handleStaleAction('save_feedback')}
@@ -516,11 +507,11 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           Approve
         </button>
         <button
-          onClick={handleAcceptAndCascade}
+          onClick={handleRegenDownstream}
           disabled={submitting}
           className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
         >
-          {submitting ? 'Regenerating...' : 'Approve & Regen Downstream'}
+          {submitting ? 'Starting...' : 'Regen Downstream'}
         </button>
         <button
           onClick={() => handleAction('save_feedback')}

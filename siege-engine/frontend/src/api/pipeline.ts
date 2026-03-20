@@ -84,16 +84,12 @@ export async function resolveStale(
   return data;
 }
 
-export async function acceptAndCascade(
+export async function regenDownstream(
   projectId: string,
   artifactId: string,
-  notes?: string,
-  editedContent?: string
 ) {
-  const { data } = await api.post(`/pipeline/${projectId}/accept-and-cascade`, {
+  const { data } = await api.post(`/pipeline/${projectId}/regen-downstream`, {
     artifact_id: artifactId,
-    notes,
-    edited_content: editedContent,
   });
   return data;
 }

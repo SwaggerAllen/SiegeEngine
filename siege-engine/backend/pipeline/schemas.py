@@ -27,10 +27,8 @@ class ResolveStaleRequest(BaseModel):
     edited_content: str | None = None
 
 
-class AcceptAndCascadeRequest(BaseModel):
+class RegenDownstreamRequest(BaseModel):
     artifact_id: str
-    notes: str | None = None
-    edited_content: str | None = None
 
 
 class ResumeRunRequest(BaseModel):

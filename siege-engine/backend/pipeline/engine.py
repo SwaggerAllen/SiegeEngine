@@ -858,6 +858,13 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 if not self._is_in_run_scope(stage_def, None, pipeline_run):
                     continue
 
+                # regen_generated_only: skip if entity doesn't already have content
+                if pipeline_run and pipeline_run.regen_generated_only:
+                    if not self._entity_already_generated(
+                        project_id, stage_def.stage_key, None
+                    ):
+                        continue
+
                 # Execute single stage
                 input_artifacts = self._gather_inputs(project_id, stage_def)
                 rejected_notes = self._get_rejected_notes(project_id, stage_def)

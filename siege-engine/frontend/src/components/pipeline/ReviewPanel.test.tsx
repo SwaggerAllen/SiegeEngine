@@ -11,8 +11,10 @@ vi.mock('../../store/pipelineStore', () => ({
   usePipelineStore: vi.fn(() => ({
     resumeStage: mockResumeStage,
     resolveStale: vi.fn(),
+    regenDownstream: vi.fn(),
     forceRestartStage: vi.fn(),
     pruneArtifact: mockPruneArtifact,
+    cancelStage: vi.fn(),
   })),
 }));
 

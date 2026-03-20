@@ -32,7 +32,7 @@ interface PipelineState {
   resumeStage: (projectId: string, executionId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
   reviseArtifact: (projectId: string, artifactId: string, feedback: string) => Promise<void>;
   resolveStale: (projectId: string, artifactId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
-  acceptAndCascade: (projectId: string, artifactId: string, notes?: string, editedContent?: string) => Promise<void>;
+  regenDownstream: (projectId: string, artifactId: string) => Promise<void>;
   cancelPipeline: (projectId: string, options?: { open_pr?: boolean; pr_title?: string; pr_body?: string; base_branch?: string }) => Promise<void>;
   resetAll: (projectId: string) => Promise<void>;
   checkBlockingPR: (projectId: string) => Promise<boolean>;
@@ -158,8 +158,8 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     // isRunning will be updated by WS events via the reducer
   },
 
-  acceptAndCascade: async (projectId, artifactId, notes, editedContent) => {
-    await pipelineApi.acceptAndCascade(projectId, artifactId, notes, editedContent);
+  regenDownstream: async (projectId, artifactId) => {
+    await pipelineApi.regenDownstream(projectId, artifactId);
     // isRunning will be updated by WS events via the reducer
   },
 

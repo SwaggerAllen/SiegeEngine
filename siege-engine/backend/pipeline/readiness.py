@@ -195,12 +195,25 @@ class ReadinessMixin:
 
         return []
 
+    def _entity_already_generated(
+        self, project_id: str, stage_key: str, component_key: str | None,
+    ) -> bool:
+        """Check if an entity already has generated content in the snapshot.
+
+        Used by regen_generated_only runs to skip entities that haven't been
+        generated yet (only regenerate what already exists).
+        """
+        snapshot = self.events.get_snapshot(project_id)
+        key = f"{stage_key}/{component_key}" if component_key else stage_key
+        return (snapshot.stage_statuses or {}).get(key) in _GENERATED_STATUSES
+
     def _get_ready_entities(
         self, project_id: str, stage_def: StageDefinition, run_id: str,
         pipeline_run: PipelineRun | None = None,
     ) -> list[str]:
         """Get entity keys that are ready to be processed for a fan-out stage."""
         fan_out = stage_def.fan_out_strategy
+        regen_only = pipeline_run.regen_generated_only if pipeline_run else False
         ready = []
 
         if fan_out == FanOutStrategy.COMPONENT:
@@ -214,6 +227,10 @@ class ReadinessMixin:
                 key = comp["key"]
                 if not self._is_in_run_scope(stage_def, key, pipeline_run):
                     continue
+                if regen_only and not self._entity_already_generated(
+                    project_id, stage_def.stage_key, key
+                ):
+                    continue
                 if self._is_component_ready(
                     project_id, key, stage_def, run_id, comp.get("dependencies", [])
                 ):
@@ -224,6 +241,10 @@ class ReadinessMixin:
             for sc in sub_comps:
                 full_key = f"{sc.parent_key}.{sc.key}"
                 if not self._is_in_run_scope(stage_def, full_key, pipeline_run):
+                    continue
+                if regen_only and not self._entity_already_generated(
+                    project_id, stage_def.stage_key, full_key
+                ):
                     continue
                 deps = sc.dependencies or []
                 full_deps = [f"{sc.parent_key}.{d}" for d in deps]
@@ -236,6 +257,10 @@ class ReadinessMixin:
             leaves = self._get_leaf_keys(project_id)
             for leaf_key in leaves:
                 if not self._is_in_run_scope(stage_def, leaf_key, pipeline_run):
+                    continue
+                if regen_only and not self._entity_already_generated(
+                    project_id, stage_def.stage_key, leaf_key
+                ):
                     continue
                 if self._is_leaf_ready(project_id, leaf_key, stage_def, run_id):
                     ready.append(leaf_key)

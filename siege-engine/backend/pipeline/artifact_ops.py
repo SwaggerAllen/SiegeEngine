@@ -705,77 +705,25 @@ class ArtifactOpsMixin:
 
         raise ValueError(f"Unknown action: {action}")
 
-    async def accept_and_cascade(
+    async def regen_downstream(
         self,
         artifact_id: str,
-        notes: str | None = None,
-        edited_content: str | None = None,
-        user_id: str | None = None,
     ):
-        """Approve an artifact and start a scoped run to regenerate downstream.
+        """Start a scoped run to regenerate already-generated downstream nodes.
 
-        Step 1: Approve the source artifact.
-        Step 2: Create a new run scoped from this artifact's stage, which will
-        generate all downstream descendants with their deps met. All generated
-        artifacts land in AWAITING_REVIEW for human inspection.
+        Creates a new PipelineRun scoped from the given artifact's stage,
+        with regen_generated_only=True so only nodes that already have content
+        are regenerated. The source artifact is NOT approved — use the separate
+        approve action for that.
         """
         from sqlalchemy import func
-        from backend.pipeline.engine import BRANCHING_STAGES
 
         artifact = self.db.get(Artifact, artifact_id)
         if not artifact:
             raise ValueError("Artifact not found")
-        if artifact.status not in (
-            ArtifactStatus.STALE,
-            ArtifactStatus.AWAITING_REVIEW,
-            ArtifactStatus.APPROVED,
-        ):
-            raise ValueError(
-                f"Cannot cascade from artifact in status {artifact.status.value}; "
-                "expected stale, awaiting_review, or approved"
-            )
 
         project_id = artifact.project_id
 
-        # ── Step 1: Approve the source artifact ─────────────────────────
-        if edited_content:
-            artifact.content = edited_content
-            artifact.version += 1
-
-        if notes and notes.strip():
-            self.db.add(
-                ArtifactComment(
-                    artifact_id=artifact_id,
-                    project_id=project_id,
-                    author_id=user_id,
-                    content=notes.strip(),
-                    comment_type="feedback",
-                    artifact_version=artifact.version,
-                )
-            )
-
-        self._mark_artifact_status(artifact_id, ArtifactStatus.APPROVED)
-
-        # Sync owning execution to APPROVED
-        execution = (
-            self.db.query(StageExecution)
-            .filter_by(artifact_id=artifact_id)
-            .order_by(StageExecution.started_at.desc())
-            .first()
-        )
-        if execution and execution.status != StageStatus.APPROVED:
-            self._transition_execution(
-                execution, StageStatus.APPROVED,
-                set_completed=True,
-            )
-
-        # Handle component_map / sub_component_map storage
-        if artifact.artifact_type.value == "component_map":
-            self._store_components(project_id, artifact.content)
-        elif artifact.artifact_type.value == "sub_component_map" and artifact.component_key:
-            self._store_sub_components(project_id, artifact.component_key, artifact.content)
-
-        # Post-generation hook for branching stages
         config = self._get_config(project_id)
         if not config:
             raise ValueError("Pipeline config not found")
@@ -788,32 +736,13 @@ class ArtifactOpsMixin:
                 f"No stage definition for artifact type: {artifact.artifact_type.value}"
             )
 
-        if execution and source_stage.stage_key in BRANCHING_STAGES:
-            await self._post_generation_hook(
-                project_id, source_stage, artifact.component_key, execution
-            )
-
-        self.db.commit()
-
-        await ws_manager.broadcast(
-            project_id,
-            {
-                "type": "stage_completed",
-                "stage_key": source_stage.stage_key,
-                "component_key": artifact.component_key,
-                "artifact_id": artifact_id,
-                "status": "approved",
-            },
-        )
-
-        # ── Step 2: Create a scoped cascade run ────────────────────────
         source_order = source_stage.order_index
         downstream_stage_keys = {
             s.stage_key for s in config.stages if s.order_index > source_order
         }
 
         if not downstream_stage_keys:
-            logger.info("No downstream stages to cascade for artifact %s", artifact_id)
+            logger.info("No downstream stages to regen for artifact %s", artifact_id)
             return
 
         max_num = (
@@ -821,52 +750,52 @@ class ArtifactOpsMixin:
             .filter_by(project_id=project_id)
             .scalar()
         ) or 0
-        cascade_run = PipelineRun(
+        regen_run = PipelineRun(
             project_id=project_id,
             run_number=max_num + 1,
             ai_loops=1,
             stop_point=StopPoint.BEFORE_CODE,
             start_stage_key=source_stage.stage_key,
             start_component_key=artifact.component_key,
+            regen_generated_only=True,
         )
-        self.db.add(cascade_run)
+        self.db.add(regen_run)
         self.db.commit()
 
         # Carry over all approved executions from previous runs
-        self._carry_over_approved(project_id, cascade_run.run_id)
+        self._carry_over_approved(project_id, regen_run.run_id)
 
         # Delete carried-over executions for downstream stages (they need regen)
         (
             self.db.query(StageExecution)
             .filter(
-                StageExecution.run_id == cascade_run.run_id,
+                StageExecution.run_id == regen_run.run_id,
                 StageExecution.stage_key.in_(downstream_stage_keys),
             )
             .delete(synchronize_session="fetch")
         )
         self.db.commit()
 
-        # Emit cascade_started event
+        # Emit event
         self.events.emit(
             project_id, evt.CASCADE_STARTED,
-            {"run_id": cascade_run.run_id, "source_artifact_id": artifact_id},
-            run_id=cascade_run.run_id,
+            {"run_id": regen_run.run_id, "source_artifact_id": artifact_id},
+            run_id=regen_run.run_id,
         )
 
         await ws_manager.broadcast(
             project_id,
             {
-                "type": "cascade_started",
+                "type": "regen_downstream_started",
                 "source_artifact_id": artifact_id,
-                "run_id": cascade_run.run_id,
+                "run_id": regen_run.run_id,
             },
         )
 
-        # Run the scoped generation — all artifacts go to AWAITING_REVIEW
         from backend.pipeline.queue import enqueue
         enqueue(self.db, "start_pipeline", {
             "project_id": project_id,
-            "pipeline_run_id": cascade_run.id,
+            "pipeline_run_id": regen_run.id,
         })
 
     def prune_artifact(self, project_id: str, artifact_id: str):
