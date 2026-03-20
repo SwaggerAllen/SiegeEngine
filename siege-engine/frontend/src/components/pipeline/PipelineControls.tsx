@@ -50,8 +50,7 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showConfig, showCancelDialog, showResetConfirm]);
 
-  const openConfig = (mode: 'start' | 'resume' | 'regen') => {
-    setConfigMode(mode);
+  const openConfig = () => {
     setShowConfig(true);
   };
 
@@ -154,7 +153,7 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
       {!isRunning ? (
         <div ref={panelRef} className="flex items-center gap-1.5">
           <button
-            onClick={() => openConfig('start')}
+            onClick={openConfig}
             className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
           >
             <span>Start Run</span>
@@ -164,63 +163,52 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
           </button>
 
           {hasCompletedRun && (
-            <>
+            <div ref={resetConfirmRef} className="relative">
               <button
-                onClick={() => openConfig('resume')}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
+                onClick={() => setShowResetConfirm(true)}
+                className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0"
+                title="Reset all pipeline state to a clean slate"
               >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span>Resume</span>
+                Reset All
               </button>
-
-              {selectedArtifact && (
-                <button
-                  onClick={() => openConfig('regen')}
-                  className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
-                  title={`Regen downstream from "${selectedArtifact.name || selectedArtifact.artifact_type}"`}
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-                  </svg>
-                  <span>Regen Downstream</span>
-                </button>
+              {showResetConfirm && (
+                <div className="absolute top-full mt-1 right-0 z-50 w-64 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 space-y-3">
+                  <h3 className="text-sm font-semibold text-white">Reset Pipeline</h3>
+                  <p className="text-xs text-gray-400">
+                    Stops all activity and puts every document with content into
+                    &ldquo;Awaiting Review&rdquo;. You can then review each one and start a
+                    fresh run.
+                  </p>
+                  <button
+                    onClick={handleResetAll}
+                    className="w-full py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded"
+                  >
+                    Confirm Reset
+                  </button>
+                </div>
               )}
-
-              <div ref={resetConfirmRef} className="relative">
-                <button
-                  onClick={() => setShowResetConfirm(true)}
-                  className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs md:text-sm rounded min-h-[44px] md:min-h-0"
-                  title="Reset all pipeline state to a clean slate"
-                >
-                  Reset All
-                </button>
-                {showResetConfirm && (
-                  <div className="absolute top-full mt-1 right-0 z-50 w-64 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 space-y-3">
-                    <h3 className="text-sm font-semibold text-white">Reset Pipeline</h3>
-                    <p className="text-xs text-gray-400">
-                      Stops all activity and puts every document with content into
-                      &ldquo;Awaiting Review&rdquo;. You can then review each one and start a
-                      fresh run.
-                    </p>
-                    <button
-                      onClick={handleResetAll}
-                      className="w-full py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded"
-                    >
-                      Confirm Reset
-                    </button>
-                  </div>
-                )}
-              </div>
-            </>
+            </div>
           )}
 
           {showConfig && (
             <div className="absolute top-full mt-1 right-0 z-50 w-72 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-white">
-                {configMode === 'regen' ? 'Regen Downstream' : configMode === 'resume' ? 'Resume Run' : 'Run Configuration'}
-              </h3>
+              <h3 className="text-sm font-semibold text-white">Run Configuration</h3>
+
+              {/* Run Type */}
+              <div>
+                <label className="block text-sm text-gray-300 mb-1">Run type</label>
+                <select
+                  value={configMode}
+                  onChange={(e) => setConfigMode(e.target.value as 'start' | 'resume' | 'regen')}
+                  className="w-full px-2 py-1.5 bg-gray-700 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="start">Fresh Start</option>
+                  {hasCompletedRun && <option value="resume">Resume Previous</option>}
+                  {selectedArtifact && <option value="regen">Regen Downstream</option>}
+                </select>
+              </div>
+
+              {/* Mode descriptions */}
               {configMode === 'resume' && (
                 <p className="text-xs text-gray-400">
                   Continues from the last run, re-processing stale and in-review nodes.
@@ -279,7 +267,7 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
                       : 'bg-green-600 hover:bg-green-700'
                 }`}
               >
-                {configMode === 'regen' ? 'Confirm Regen' : configMode === 'resume' ? 'Resume' : 'Start'}
+                {configMode === 'regen' ? 'Regen Downstream' : configMode === 'resume' ? 'Resume' : 'Start'}
               </button>
             </div>
           )}
