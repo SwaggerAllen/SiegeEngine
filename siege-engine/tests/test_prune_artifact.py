@@ -118,7 +118,9 @@ class TestPruneArtifact:
 
         assert db.query(StageExecution).filter_by(artifact_id=art.id).count() == 0
 
-    def test_deletes_component_definition(self, db):
+    def test_preserves_component_definition(self, db):
+        """Prune should NOT delete the ComponentDefinition so the fanout
+        parent still knows the entity exists and regenerates it."""
         art = _make_artifact(db, component_key="auth")
         comp_def = ComponentDefinition(
             id=_id(),
@@ -133,10 +135,12 @@ class TestPruneArtifact:
         engine = PipelineEngine(db)
         engine.prune_artifact(PROJECT_ID, art.id)
 
+        # Artifact is gone but ComponentDefinition survives
+        assert db.get(Artifact, art.id) is None
         remaining = (
             db.query(ComponentDefinition).filter_by(project_id=PROJECT_ID, key="auth").count()
         )
-        assert remaining == 0
+        assert remaining == 1
 
     def test_raises_for_wrong_project(self, db):
         art = _make_artifact(db)

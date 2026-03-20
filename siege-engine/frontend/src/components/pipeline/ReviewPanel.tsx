@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { useAuthStore } from '../../store/authStore';
+import { useDAGStore } from '../../store/dagStore';
 import { listComments } from '../../api/comments';
+import { reparseFanout } from '../../api/pipeline';
 import type { Artifact } from '../../types/project';
 import type { StageExecution } from '../../types/pipeline';
 import { RESTARTABLE_STATUSES } from '../../types/pipeline';
@@ -26,6 +28,10 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const [feedbackCount, setFeedbackCount] = useState(0);
   const [restarting, setRestarting] = useState(false);
   const [pruning, setPruning] = useState(false);
+  const [reparsing, setReparsing] = useState(false);
+  const [reparseResult, setReparseResult] = useState<string | null>(null);
+  const fetchDAG = useDAGStore((s) => s.fetchDAG);
+  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
 
   const isAwaitingReview = execution?.status === 'awaiting_review';
   const isRestartable = execution && RESTARTABLE_STATUSES.has(execution.status);
@@ -34,6 +40,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const isInputDoc = artifact.artifact_type === 'project_doc';
   const isGenerating = artifact.status === 'generating' || artifact.status === 'ai_reviewing';
   const canPrune = !isViewer && !isInputDoc && !isGenerating;
+  const isFanout = artifact.artifact_type === 'component_map' || artifact.artifact_type === 'sub_component_map';
+  const canReparse = !isViewer && isFanout && !isGenerating;
 
   // Reset to blank when switching artifacts; fetch feedback count
   useEffect(() => {
@@ -119,6 +127,33 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
       setPruning(false);
     }
   };
+
+  const handleReparse = async () => {
+    setReparsing(true);
+    setReparseResult(null);
+    try {
+      const result = await reparseFanout(projectId, artifact.id);
+      const msg = result.added.length > 0
+        ? `Restored ${result.added.length}: ${result.added.join(', ')}`
+        : 'No missing entities found';
+      setReparseResult(msg);
+      if (result.added.length > 0 || result.removed.length > 0) {
+        await Promise.all([fetchDAG(projectId), fetchDocumentsDAG(projectId)]);
+      }
+    } catch (err) {
+      console.error('Reparse failed:', err);
+      setReparseResult('Reparse failed');
+    } finally {
+      setReparsing(false);
+    }
+  };
+
+  // Auto-dismiss reparse result
+  useEffect(() => {
+    if (!reparseResult) return;
+    const timer = setTimeout(() => setReparseResult(null), 5000);
+    return () => clearTimeout(timer);
+  }, [reparseResult]);
 
   // Show restart button for stuck/failed/rejected stages
   if (!isViewer && isRestartable && !isAwaitingReview) {
@@ -258,23 +293,53 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
               {pruning ? 'Pruning...' : '🗑 Prune'}
             </button>
           )}
+          {canReparse && (
+            <button
+              onClick={handleReparse}
+              disabled={reparsing}
+              className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              {reparsing ? 'Reparsing...' : 'Reparse Children'}
+            </button>
+          )}
+          {reparseResult && (
+            <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
+              {reparseResult}
+            </span>
+          )}
         </div>
       </div>
     );
   }
 
-  // Viewers or non-actionable: show prune button only
+  // Viewers or non-actionable: show prune/reparse buttons
   if (isViewer || !isAwaitingReview) {
-    if (!canPrune) return null;
+    if (!canPrune && !canReparse) return null;
     return (
-      <div className="pt-2 border-t border-gray-700">
-        <button
-          onClick={handlePrune}
-          disabled={pruning}
-          className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
-        >
-          {pruning ? 'Pruning...' : '🗑 Prune Node'}
-        </button>
+      <div className="pt-2 border-t border-gray-700 flex flex-wrap items-center gap-2">
+        {canPrune && (
+          <button
+            onClick={handlePrune}
+            disabled={pruning}
+            className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
+          >
+            {pruning ? 'Pruning...' : '🗑 Prune Node'}
+          </button>
+        )}
+        {canReparse && (
+          <button
+            onClick={handleReparse}
+            disabled={reparsing}
+            className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {reparsing ? 'Reparsing...' : 'Reparse Children'}
+          </button>
+        )}
+        {reparseResult && (
+          <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
+            {reparseResult}
+          </span>
+        )}
       </div>
     );
   }
@@ -347,6 +412,20 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           >
             {pruning ? 'Pruning...' : '🗑 Prune'}
           </button>
+        )}
+        {canReparse && (
+          <button
+            onClick={handleReparse}
+            disabled={reparsing}
+            className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {reparsing ? 'Reparsing...' : 'Reparse Children'}
+          </button>
+        )}
+        {reparseResult && (
+          <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
+            {reparseResult}
+          </span>
         )}
       </div>
     </div>

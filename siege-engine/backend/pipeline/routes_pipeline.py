@@ -659,6 +659,32 @@ async def prune_artifact(
     return {"status": "pruned", "artifact_id": artifact_id}
 
 
+@pipeline_router.post("/{project_id}/artifacts/{artifact_id}/reparse")
+async def reparse_fanout(
+    project_id: str,
+    artifact_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Re-parse a fanout artifact to restore missing ComponentDefinitions."""
+    engine = PipelineEngine(db)
+    try:
+        result = engine.reparse_fanout(project_id, artifact_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    await ws_manager.broadcast(
+        project_id,
+        {
+            "type": "fanout_reparsed",
+            "artifact_id": artifact_id,
+            "added": result["added"],
+            "removed": result["removed"],
+        },
+    )
+    return result
+
+
 @pipeline_router.get("/{project_id}/artifacts/{artifact_id}/diff")
 async def get_artifact_diff(
     project_id: str,
