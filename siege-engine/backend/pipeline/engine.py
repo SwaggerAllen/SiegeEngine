@@ -131,6 +131,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         corrections = self._reconcile_statuses(project_id, run_id)
         if corrections:
             logger.info("Reconciled %d status mismatches in run %s", len(corrections), run_id)
+        # Clean up orphaned executions left behind by prior prune operations
+        orphans = self._cleanup_orphaned_executions(project_id)
+        if orphans:
+            logger.info("Cleaned up %d orphaned executions at pipeline start", len(orphans))
+        if corrections or orphans:
             self.db.commit()
 
         # Re-populate component/sub-component definitions from carried-over
@@ -241,6 +246,10 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         corrections = self._reconcile_statuses(project_id, new_run_id)
         if corrections:
             logger.info("Reconciled %d status mismatches in run %s", len(corrections), new_run_id)
+        orphans = self._cleanup_orphaned_executions(project_id)
+        if orphans:
+            logger.info("Cleaned up %d orphaned executions at resume", len(orphans))
+        if corrections or orphans:
             self.db.commit()
 
         await self._ensure_branching_definitions(project_id, config, new_run_id)
@@ -682,6 +691,90 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             self.db.flush()
 
         return corrections
+
+    def _cleanup_orphaned_executions(self, project_id: str) -> list[dict]:
+        """Find and delete StageExecution records whose artifact no longer exists.
+
+        These orphans typically result from prior prune operations that only
+        deleted executions by artifact_id, missing retries with artifact_id=NULL
+        for the same stage+component.
+
+        Returns list of removed records (for logging/API response).
+        """
+        removed: list[dict] = []
+
+        # 1. Executions referencing a deleted artifact (FK dangling or NULL after delete)
+        execs_with_artifact = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.project_id == project_id,
+                StageExecution.artifact_id.isnot(None),
+            )
+            .all()
+        )
+        artifact_ids_in_db = {
+            a.id
+            for a in self.db.query(Artifact.id).filter_by(project_id=project_id).all()
+        }
+        for exc in execs_with_artifact:
+            if exc.artifact_id not in artifact_ids_in_db:
+                removed.append({
+                    "execution_id": exc.id,
+                    "stage_key": exc.stage_key,
+                    "component_key": exc.component_key,
+                    "reason": "artifact_deleted",
+                    "artifact_id": exc.artifact_id,
+                })
+                self.db.delete(exc)
+
+        # 2. Executions with artifact_id=NULL for a stage+component where no
+        #    artifact of the expected type exists (orphaned from pruned artifacts).
+        config = self.db.query(PipelineConfig).filter_by(project_id=project_id).first()
+        if config:
+            stage_type_map = {s.stage_key: s.output_artifact_type for s in config.stages}
+            null_artifact_execs = (
+                self.db.query(StageExecution)
+                .filter(
+                    StageExecution.project_id == project_id,
+                    StageExecution.artifact_id.is_(None),
+                    StageExecution.status.in_([
+                        StageStatus.FAILED,
+                        StageStatus.APPROVED,
+                        StageStatus.AWAITING_REVIEW,
+                        StageStatus.REJECTED,
+                    ]),
+                )
+                .all()
+            )
+            for exc in null_artifact_execs:
+                expected_type = stage_type_map.get(exc.stage_key)
+                if not expected_type:
+                    continue
+                # Check if any artifact exists for this stage output + component
+                q = self.db.query(Artifact.id).filter_by(
+                    project_id=project_id,
+                    artifact_type=expected_type,
+                )
+                if exc.component_key is not None:
+                    q = q.filter(Artifact.component_key == exc.component_key)
+                else:
+                    q = q.filter(Artifact.component_key.is_(None))
+                if not q.first():
+                    removed.append({
+                        "execution_id": exc.id,
+                        "stage_key": exc.stage_key,
+                        "component_key": exc.component_key,
+                        "reason": "no_matching_artifact",
+                    })
+                    self.db.delete(exc)
+
+        if removed:
+            self.db.flush()
+            logger.info(
+                "Cleaned up %d orphaned executions in project %s", len(removed), project_id
+            )
+
+        return removed
 
     async def _ensure_branching_definitions(
         self, project_id: str, config: PipelineConfig, run_id: str

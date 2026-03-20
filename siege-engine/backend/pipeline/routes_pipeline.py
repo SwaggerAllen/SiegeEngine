@@ -527,11 +527,13 @@ def reconcile_statuses(
 
     engine = PipelineEngine(db)
     corrections = engine._reconcile_statuses(project_id, latest_run.run_id)
-    if corrections:
+    orphans_removed = engine._cleanup_orphaned_executions(project_id)
+    if corrections or orphans_removed:
         db.commit()
 
     return {
         "corrections": corrections,
+        "orphans_removed": orphans_removed,
         "run_id": latest_run.run_id,
         "run_number": latest_run.run_number,
     }

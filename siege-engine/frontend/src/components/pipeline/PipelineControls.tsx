@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { usePipelineStore } from '../../store/pipelineStore';
+import { reconcilePipeline } from '../../api/pipeline';
 import type { PipelineStartOptions } from '../../types/pipeline';
 
 const STOP_POINT_OPTIONS = [
@@ -13,6 +14,7 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
   const {
     isRunning, isPaused, currentRunNumber, runs, blockingPR,
     startPipeline, resumeRun, cancelPipeline, checkBlockingPR, dismissBlockingPR,
+    fetchRuns, fetchStatus,
   } = usePipelineStore();
   const [showConfig, setShowConfig] = useState(false);
   const [configMode, setConfigMode] = useState<'start' | 'resume'>('start');
@@ -22,6 +24,8 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [checkingPR, setCheckingPR] = useState(false);
   const [prCleared, setPrCleared] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+  const [repairResult, setRepairResult] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLDivElement>(null);
 
@@ -89,12 +93,38 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
     }
   };
 
+  const handleRepair = async () => {
+    setRepairing(true);
+    setRepairResult(null);
+    try {
+      const result = await reconcilePipeline(projectId);
+      const fixes = result.corrections.length + result.orphans_removed.length;
+      setRepairResult(fixes > 0 ? `Fixed ${fixes} issue${fixes > 1 ? 's' : ''}` : 'No issues found');
+      if (fixes > 0) {
+        // Refresh pipeline data so DAG updates
+        fetchRuns(projectId);
+        fetchStatus(projectId);
+      }
+    } catch {
+      setRepairResult('Repair failed');
+    } finally {
+      setRepairing(false);
+    }
+  };
+
   // Auto-dismiss the "PR resolved" message
   useEffect(() => {
     if (!prCleared) return;
     const timer = setTimeout(() => setPrCleared(false), 4000);
     return () => clearTimeout(timer);
   }, [prCleared]);
+
+  // Auto-dismiss the repair result message
+  useEffect(() => {
+    if (!repairResult) return;
+    const timer = setTimeout(() => setRepairResult(null), 4000);
+    return () => clearTimeout(timer);
+  }, [repairResult]);
 
   // Blocking PR banner
   if (blockingPR && !isRunning) {
@@ -153,6 +183,25 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
               <span>Resume</span>
             </button>
           )}
+
+          <button
+            onClick={handleRepair}
+            disabled={repairing}
+            title="Repair: fix orphaned nodes and status mismatches"
+            className="px-2 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-gray-200 text-xs rounded min-h-[44px] md:min-h-0 disabled:opacity-50"
+          >
+            {repairing ? (
+              <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            )}
+          </button>
 
           {showConfig && (
             <div className="absolute top-full mt-1 right-0 z-50 w-72 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 space-y-3">
@@ -263,6 +312,11 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
       )}
       {prCleared && (
         <span className="text-green-400 text-xs">PR resolved — runs unblocked</span>
+      )}
+      {repairResult && (
+        <span className={`text-xs ${repairResult.startsWith('Fixed') ? 'text-green-400' : repairResult === 'No issues found' ? 'text-gray-400' : 'text-red-400'}`}>
+          {repairResult}
+        </span>
       )}
       {cancelError && (
         <span className="text-red-400 text-xs max-w-xs truncate" title={cancelError}>{cancelError}</span>

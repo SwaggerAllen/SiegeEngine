@@ -213,6 +213,18 @@ export async function resetStageConfig(
   return data;
 }
 
+export interface ReconcileResult {
+  corrections: Array<Record<string, unknown>>;
+  orphans_removed: Array<Record<string, unknown>>;
+  run_id: string;
+  run_number: number;
+}
+
+export async function reconcilePipeline(projectId: string): Promise<ReconcileResult> {
+  const { data } = await api.post(`/pipeline/${projectId}/reconcile`);
+  return data;
+}
+
 export interface PromptPreviewMessage {
   role: string;
   content: string;
