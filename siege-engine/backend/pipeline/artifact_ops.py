@@ -890,6 +890,11 @@ class ArtifactOpsMixin:
             regenerated_count,
         )
 
+        # Mark the cascade run as completed so it doesn't block new runs
+        cascade_run.status = PipelineRunStatus.COMPLETED
+        cascade_run.completed_at = datetime.utcnow()
+        self.db.commit()
+
         await ws_manager.broadcast(
             project_id,
             {
