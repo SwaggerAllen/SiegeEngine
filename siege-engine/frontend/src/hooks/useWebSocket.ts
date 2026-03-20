@@ -14,7 +14,7 @@ export function useWebSocket(projectId: string | undefined) {
   const retryDelay = useRef(INITIAL_RETRY_MS);
   const mountedRef = useRef(true);
 
-  const { updateFromWS, fetchStatus, fetchRuns } = usePipelineStore();
+  const { updateFromWS, fetchStatus } = usePipelineStore();
   const { fetchDAG, fetchDocumentsDAG, selectArtifact } = useDAGStore();
   const { fetchArtifact } = useProjectStore();
   const [connected, setConnected] = useState(false);
@@ -114,18 +114,11 @@ export function useWebSocket(projectId: string | undefined) {
         fetchArtifact(data.artifact_id);
       }
 
-      // Reconcile isRunning after events that may end a run or revision
-      if (
-        data.type === 'stage_awaiting_review' ||
-        data.type === 'pipeline_completed' ||
-        data.type === 'cascade_completed'
-      ) {
-        fetchRuns(projectId);
-      }
+      // isRunning/isPaused are now updated by the local snapshot reducer in updateFromWS
     };
 
     wsRef.current = ws;
-  }, [projectId, updateFromWS, fetchStatus, fetchRuns, fetchDAG, fetchDocumentsDAG, selectArtifact, fetchArtifact]);
+  }, [projectId, updateFromWS, fetchStatus, fetchDAG, fetchDocumentsDAG, selectArtifact, fetchArtifact]);
 
   useEffect(() => {
     mountedRef.current = true;

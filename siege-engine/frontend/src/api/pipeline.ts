@@ -1,5 +1,5 @@
 import api from './client';
-import type { PipelineConfig, PipelineRun, PipelineStartOptions, StageDefinition } from '../types/pipeline';
+import type { PipelineConfig, PipelineRun, PipelineSnapshot, PipelineStartOptions, StageDefinition } from '../types/pipeline';
 
 export async function getPipelineConfig(projectId: string): Promise<PipelineConfig> {
   const { data } = await api.get(`/pipeline/${projectId}/config`);
@@ -110,6 +110,11 @@ export async function regenerateArtifacts(
 
 export async function getPipelineStatus(projectId: string) {
   const { data } = await api.get(`/pipeline/${projectId}/status`);
+  return data;
+}
+
+export async function getSnapshot(projectId: string): Promise<PipelineSnapshot> {
+  const { data } = await api.get(`/pipeline/${projectId}/snapshot`);
   return data;
 }
 

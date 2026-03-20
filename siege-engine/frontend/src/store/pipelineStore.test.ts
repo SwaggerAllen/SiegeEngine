@@ -10,13 +10,17 @@ vi.mock('../api/pipeline', () => ({
   cancelPipeline: vi.fn(),
   listRuns: vi.fn(),
   getRunState: vi.fn(),
+  getSnapshot: vi.fn(),
 }));
 
 import * as pipelineApi from '../api/pipeline';
 
+import { emptySnapshot } from './pipelineReducer';
+
 const initialState = {
   config: null,
   executions: [],
+  snapshot: emptySnapshot(),
   isRunning: false,
   isPaused: false,
   pausedStage: null,
@@ -77,8 +81,13 @@ describe('pipelineStore', () => {
       expect(state.pausedStage).toBe('extract_components');
     });
 
-    it('does not change state on stage_failed event', () => {
-      usePipelineStore.setState({ isRunning: true, isPaused: false });
+    it('does not change isRunning on stage_failed event', () => {
+      // Set snapshot as running so the reducer preserves it
+      usePipelineStore.setState({
+        isRunning: true,
+        isPaused: false,
+        snapshot: { ...emptySnapshot(), is_running: true },
+      });
       const event: WSEvent = { type: 'stage_failed', stage_key: 'design', error: 'timeout' };
 
       usePipelineStore.getState().updateFromWS(event);
@@ -121,18 +130,22 @@ describe('pipelineStore', () => {
   });
 
   describe('cancelPipeline', () => {
-    it('resets all running state', async () => {
+    it('calls API and fetches updated state', async () => {
       usePipelineStore.setState({ isRunning: true, isPaused: true, pausedStage: 'design' });
       vi.mocked(pipelineApi.cancelPipeline).mockResolvedValue({ status: 'cancelled' });
       vi.mocked(pipelineApi.listRuns).mockResolvedValue([]);
+      vi.mocked(pipelineApi.getPipelineStatus).mockResolvedValue({
+        stages: [],
+        snapshot: { ...emptySnapshot(), is_running: false, is_paused: false, paused_stage: null },
+      });
 
       await usePipelineStore.getState().cancelPipeline('proj-1');
 
-      const state = usePipelineStore.getState();
-      expect(state.isRunning).toBe(false);
-      expect(state.isPaused).toBe(false);
-      expect(state.pausedStage).toBeNull();
       expect(pipelineApi.cancelPipeline).toHaveBeenCalledWith('proj-1', undefined);
+      // isRunning/isPaused now updated via fetchStatus which reads snapshot
+      await vi.waitFor(() => {
+        expect(pipelineApi.getPipelineStatus).toHaveBeenCalled();
+      });
     });
   });
 
@@ -162,7 +175,7 @@ describe('pipelineStore', () => {
   });
 
   describe('fetchRuns', () => {
-    it('populates runs and detects active run', async () => {
+    it('populates runs and detects active run number', async () => {
       const runs = [
         { id: 'r2', run_number: 2, run_id: 'rid-2', status: 'running' as const, human_review: true, ai_loops: 1, stop_point: 'after_all', git_commit_sha: null, started_at: '2024-01-02', completed_at: null },
         { id: 'r1', run_number: 1, run_id: 'rid-1', status: 'completed' as const, human_review: true, ai_loops: 1, stop_point: 'after_all', git_commit_sha: 'abc123', started_at: '2024-01-01', completed_at: '2024-01-01' },
@@ -174,6 +187,7 @@ describe('pipelineStore', () => {
       const state = usePipelineStore.getState();
       expect(state.runs).toEqual(runs);
       expect(state.currentRunNumber).toBe(2);
+      // isRunning/isPaused now derived from snapshot, not from fetchRuns
     });
   });
 

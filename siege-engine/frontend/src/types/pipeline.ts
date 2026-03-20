@@ -61,6 +61,17 @@ export interface PipelineRun {
   completed_at: string | null;
 }
 
+export interface PipelineSnapshot {
+  is_running: boolean;
+  is_paused: boolean;
+  paused_stage: string | null;
+  current_run_id: string | null;
+  stage_statuses: Record<string, string>;
+  artifact_statuses: Record<string, string>;
+  run_status: Record<string, string>;
+  last_sequence: number;
+}
+
 export type WSEvent =
   | { type: 'stage_started'; stage_key: string; component_key?: string }
   | { type: 'stage_progress'; stage_key: string; step: string; component_key?: string; message: string }
