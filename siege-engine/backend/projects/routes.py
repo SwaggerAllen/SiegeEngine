@@ -164,7 +164,8 @@ def update_artifact(
         artifact.git_commit_sha = sha
 
     # Propagate staleness
-    propagate_staleness(db, artifact_id)
+    from backend.pipeline.event_store import EventStore
+    propagate_staleness(db, artifact_id, event_store=EventStore(db))
 
     db.commit()
     db.refresh(artifact)

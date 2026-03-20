@@ -439,6 +439,15 @@ async def reset_all(
 
     db.commit()
 
+    # Dual-write: emit pipeline_reset event
+    try:
+        from backend.pipeline.event_store import EventStore
+        from backend.pipeline import events as _evt
+        EventStore(db).emit(project_id, _evt.PIPELINE_RESET, {}, run_id=run_id)
+        db.commit()
+    except Exception:
+        pass
+
     await ws_manager.broadcast(
         project_id,
         {

@@ -22,6 +22,7 @@ from backend.models import (
     StageStatus,
     StopPoint,
 )
+from backend.pipeline import events as evt
 from backend.pipeline.nodes.ai_review import ai_review
 from backend.pipeline.nodes.generate import generate
 from backend.websocket.manager import ws_manager
@@ -364,6 +365,17 @@ class ArtifactOpsMixin:
                     stale_artifact_ids.append(exc.artifact_id)
 
         self.db.flush()
+
+        # Dual-write: emit staleness_propagated event
+        if stale_artifact_ids:
+            try:
+                self.events.emit(
+                    project_id, evt.STALENESS_PROPAGATED,
+                    {"source_stage_order": approved_stage_order_index, "stale_ids": stale_artifact_ids},
+                )
+            except Exception as e:
+                logger.warning("Event emit failed (staleness_propagated): %s", e)
+
         return stale_artifact_ids
 
     async def _regenerate_stage(self, old_execution: StageExecution):
@@ -605,6 +617,20 @@ class ArtifactOpsMixin:
                 )
             self._mark_artifact_status(artifact_id, ArtifactStatus.APPROVED)
 
+            # Dual-write: emit stale_resolved event
+            try:
+                self.events.emit(
+                    project_id, evt.STALE_RESOLVED,
+                    {
+                        "artifact_id": artifact_id,
+                        "action": "approved",
+                        "stage_key": artifact.artifact_type.value,
+                        "component_key": artifact.component_key,
+                    },
+                )
+            except Exception as e:
+                logger.warning("Event emit failed (stale_resolved): %s", e)
+
             # Sync the owning execution to APPROVED so the DAG node status
             # matches the artifact badge (fixes rejected-execution / approved-
             # artifact mismatch).
@@ -812,6 +838,16 @@ class ArtifactOpsMixin:
             .all()
         }
 
+        # Dual-write: emit cascade_started event
+        try:
+            self.events.emit(
+                project_id, evt.CASCADE_STARTED,
+                {"run_id": cascade_run.run_id, "source_artifact_id": artifact_id},
+                run_id=cascade_run.run_id,
+            )
+        except Exception as e:
+            logger.warning("Event emit failed (cascade_started): %s", e)
+
         await ws_manager.broadcast(
             project_id,
             {
@@ -895,6 +931,16 @@ class ArtifactOpsMixin:
         cascade_run.completed_at = datetime.utcnow()
         self.db.commit()
 
+        # Dual-write: emit cascade_completed event
+        try:
+            self.events.emit(
+                project_id, evt.CASCADE_COMPLETED,
+                {"run_id": cascade_run.run_id},
+                run_id=cascade_run.run_id,
+            )
+        except Exception as e:
+            logger.warning("Event emit failed (cascade_completed): %s", e)
+
         await ws_manager.broadcast(
             project_id,
             {
@@ -971,6 +1017,19 @@ class ArtifactOpsMixin:
         self.db.delete(artifact)
         self.db.commit()
 
+        # Dual-write: emit artifact_pruned event
+        try:
+            self.events.emit(
+                project_id, evt.ARTIFACT_PRUNED,
+                {
+                    "artifact_id": artifact_id,
+                    "stage_key": artifact.artifact_type.value,
+                    "component_key": component_key,
+                },
+            )
+        except Exception as e:
+            logger.warning("Event emit failed (artifact_pruned): %s", e)
+
         logger.info(
             "Pruned artifact %s (component_key=%s) from project %s",
             artifact_id,
@@ -1015,6 +1074,20 @@ class ArtifactOpsMixin:
 
         self._mark_artifact_status(artifact_id, ArtifactStatus.GENERATING)
         self.db.flush()
+
+        # Dual-write: emit artifact_revised event
+        try:
+            self.events.emit(
+                project_id, evt.ARTIFACT_REVISED,
+                {
+                    "artifact_id": artifact_id,
+                    "stage_key": stage_def.stage_key,
+                    "component_key": artifact.component_key,
+                    "feedback": feedback,
+                },
+            )
+        except Exception as e:
+            logger.warning("Event emit failed (artifact_revised): %s", e)
 
         input_artifacts = self._gather_inputs(project_id, stage_def, artifact.component_key)
 

@@ -31,6 +31,8 @@ from backend.models import (
 )
 from backend.pipeline.artifact_ops import ArtifactOpsMixin
 from backend.pipeline.component_manager import ComponentManagerMixin
+from backend.pipeline.event_store import EventStore
+from backend.pipeline import events as evt
 from backend.pipeline.nodes.ai_review import ai_review
 from backend.pipeline.nodes.generate import generate
 from backend.pipeline.readiness import (
@@ -54,6 +56,7 @@ _STAGE_TO_PLAN_TYPE = {
 class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
     def __init__(self, db: Session):
         self.db = db
+        self.events = EventStore(db)
 
     def _get_config(self, project_id: str) -> PipelineConfig | None:
         """Return the PipelineConfig for a project, or None if missing."""
@@ -91,6 +94,25 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             artifact_status.value if artifact_status else "unchanged",
         )
 
+        # Dual-write: emit corresponding event
+        event_type = _status_to_event_type(new_status)
+        if event_type:
+            try:
+                self.events.emit(
+                    execution.project_id,
+                    event_type,
+                    {
+                        "execution_id": execution.id,
+                        "stage_key": execution.stage_key,
+                        "component_key": execution.component_key,
+                        "artifact_id": execution.artifact_id,
+                        "error": error_message,
+                    },
+                    run_id=execution.run_id,
+                )
+            except Exception as e:
+                logger.warning("Event emit failed (dual-write): %s", e)
+
     def _mark_artifact_status(self, artifact_id: str, new_status: ArtifactStatus) -> None:
         """Update an artifact's status without touching any execution."""
         artifact = self.db.get(Artifact, artifact_id)
@@ -123,6 +145,23 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         # Load PipelineRun if provided (new flow), otherwise legacy fallback
         pipeline_run = self.db.get(PipelineRun, pipeline_run_id) if pipeline_run_id else None
         run_id = pipeline_run.run_id if pipeline_run else str(uuid.uuid4())
+
+        # Dual-write: emit run_created event
+        if pipeline_run:
+            try:
+                self.events.emit(
+                    project_id, evt.RUN_CREATED,
+                    {
+                        "run_id": run_id,
+                        "run_number": pipeline_run.run_number,
+                        "human_review": pipeline_run.human_review,
+                        "ai_loops": pipeline_run.ai_loops,
+                        "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "after_all",
+                    },
+                    run_id=run_id,
+                )
+            except Exception as e:
+                logger.warning("Event emit failed (run_created): %s", e)
 
         carried = self._carry_over_approved(project_id, run_id)
         logger.info("Carried over %d approved executions into run %s", carried, run_id)
@@ -185,6 +224,22 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             raise ValueError("PipelineRun not found")
 
         new_run_id = pipeline_run.run_id
+
+        # Dual-write: emit run_created event for resumed run
+        try:
+            self.events.emit(
+                project_id, evt.RUN_CREATED,
+                {
+                    "run_id": new_run_id,
+                    "run_number": pipeline_run.run_number,
+                    "human_review": pipeline_run.human_review,
+                    "ai_loops": pipeline_run.ai_loops,
+                    "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "after_all",
+                },
+                run_id=new_run_id,
+            )
+        except Exception as e:
+            logger.warning("Event emit failed (run_created on resume): %s", e)
 
         # Carry over all approved work (searches across all runs)
         carried = self._carry_over_approved(project_id, new_run_id)
@@ -622,6 +677,23 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             )
             self.db.add(new_exec)
             carried += 1
+
+            # Dual-write: emit carried_over event
+            try:
+                self.events.emit(
+                    project_id, evt.CARRIED_OVER,
+                    {
+                        "execution_id": new_exec.id,
+                        "stage_key": new_exec.stage_key,
+                        "component_key": new_exec.component_key,
+                        "artifact_id": new_exec.artifact_id,
+                        "from_run_id": prev_exec.run_id,
+                        "to_run_id": new_run_id,
+                    },
+                    run_id=new_run_id,
+                )
+            except Exception as e:
+                logger.warning("Event emit failed (carried_over): %s", e)
 
         self.db.commit()
         return carried
@@ -1128,6 +1200,16 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             pipeline_run.completed_at = datetime.utcnow()
             self.db.commit()
 
+            # Dual-write: emit run_completed event
+            try:
+                self.events.emit(
+                    project_id, evt.RUN_COMPLETED,
+                    {"run_id": run_id, "status": "completed"},
+                    run_id=run_id,
+                )
+            except Exception as e:
+                logger.warning("Event emit failed (run_completed): %s", e)
+
             # Git checkpoint: commit siege-state.json + any remaining changes
             try:
                 from backend.git_manager.service import git_manager
@@ -1611,6 +1693,19 @@ def _is_component_stage(stage_key: str) -> bool:
 
 def _is_sub_component_stage(stage_key: str) -> bool:
     return stage_key in _SUB_COMPONENT_STAGES
+
+
+def _status_to_event_type(status: StageStatus) -> str | None:
+    """Map a StageStatus to its corresponding event type for dual-write."""
+    return {
+        StageStatus.RUNNING: evt.STAGE_STARTED,
+        StageStatus.AI_REVIEW: evt.AI_REVIEW_STARTED,
+        StageStatus.AWAITING_REVIEW: evt.AWAITING_HUMAN_REVIEW,
+        StageStatus.APPROVED: evt.HUMAN_APPROVED,
+        StageStatus.REJECTED: evt.HUMAN_REJECTED,
+        StageStatus.FAILED: evt.STAGE_FAILED,
+        StageStatus.SKIPPED: evt.STAGE_SKIPPED,
+    }.get(status)
 
 
 def _stage_key_to_artifact_type(stage_key: str) -> ArtifactType:

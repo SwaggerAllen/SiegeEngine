@@ -175,6 +175,7 @@ def propagate(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    stale_ids = dag_service.propagate_staleness(db, artifact_id)
+    from backend.pipeline.event_store import EventStore
+    stale_ids = dag_service.propagate_staleness(db, artifact_id, event_store=EventStore(db))
     db.commit()
     return {"stale_ids": stale_ids}
