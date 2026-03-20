@@ -569,6 +569,15 @@ class ArtifactOpsMixin:
                     )
                 )
             self.db.commit()
+
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "feedback_saved",
+                    "stage_key": "",
+                    "artifact_id": artifact_id,
+                },
+            )
             if notes and notes.strip():
                 await ws_manager.broadcast(
                     project_id,
@@ -880,6 +889,11 @@ class ArtifactOpsMixin:
             artifact_id,
             regenerated_count,
         )
+
+        # Mark the cascade run as completed so it doesn't block new runs
+        cascade_run.status = PipelineRunStatus.COMPLETED
+        cascade_run.completed_at = datetime.utcnow()
+        self.db.commit()
 
         await ws_manager.broadcast(
             project_id,

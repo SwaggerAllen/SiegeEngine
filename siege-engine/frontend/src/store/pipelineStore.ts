@@ -133,11 +133,12 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
 
   resumeStage: async (projectId, executionId, action, notes, editedContent) => {
     await pipelineApi.resumeStage(projectId, executionId, action, notes, editedContent);
-    set({ isPaused: false, pausedStage: null });
+    if (action !== 'save_feedback') {
+      set({ isPaused: false, pausedStage: null });
+    }
   },
 
   reviseArtifact: async (projectId, artifactId, feedback) => {
-    set({ isRunning: true });
     await pipelineApi.reviseArtifact(projectId, artifactId, feedback);
   },
 
