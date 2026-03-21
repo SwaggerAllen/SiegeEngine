@@ -192,6 +192,7 @@ class ArtifactOpsMixin:
                     "component_key": execution.component_key,
                     "status": "rejected",
                     "execution_id": execution_id,
+                    "artifact_id": execution.artifact_id,
                 },
             )
             if notes and notes.strip() and execution.artifact_id:
@@ -424,48 +425,58 @@ class ArtifactOpsMixin:
             logger.error("Cannot regenerate: stage def not found for %s", old_execution.stage_key)
             return
 
-        input_artifacts = self._gather_inputs(project_id, stage_def, old_execution.component_key)
-
+        # Capture original artifact status BEFORE any mutations so we can
+        # restore it on failure.
         original_artifact_status = None
         if old_execution.artifact_id:
             artifact = self.db.get(Artifact, old_execution.artifact_id)
             if artifact:
                 original_artifact_status = artifact.status
-                self._mark_artifact_status(old_execution.artifact_id, ArtifactStatus.GENERATING)
 
-        # Ensure regeneration belongs to a run
-        run_id, pipeline_run = self._ensure_run_for_regeneration(
-            project_id, old_execution.run_id
-        )
-        new_execution = StageExecution(
-            project_id=project_id,
-            stage_key=old_execution.stage_key,
-            component_key=old_execution.component_key,
-            status=StageStatus.RUNNING,
-            started_at=datetime.utcnow(),
-            run_id=run_id,
-            retry_count=(old_execution.retry_count or 0) + 1,
-        )
-        self.db.add(new_execution)
-        self.db.commit()
-
-        logger.info(
-            "Regenerating stage %s (component=%s) with human feedback, new execution=%s",
-            old_execution.stage_key,
-            old_execution.component_key,
-            new_execution.id,
-        )
-
-        await ws_manager.broadcast(
-            project_id,
-            {
-                "type": "stage_started",
-                "stage_key": old_execution.stage_key,
-                "component_key": old_execution.component_key,
-            },
-        )
+        new_execution = None
+        run_id = None
 
         try:
+            input_artifacts = self._gather_inputs(
+                project_id, stage_def, old_execution.component_key,
+                include_stale=True,
+            )
+
+            if old_execution.artifact_id:
+                self._mark_artifact_status(old_execution.artifact_id, ArtifactStatus.GENERATING)
+
+            # Ensure regeneration belongs to a run
+            run_id, pipeline_run = self._ensure_run_for_regeneration(
+                project_id, old_execution.run_id
+            )
+            new_execution = StageExecution(
+                project_id=project_id,
+                stage_key=old_execution.stage_key,
+                component_key=old_execution.component_key,
+                status=StageStatus.RUNNING,
+                started_at=datetime.utcnow(),
+                run_id=run_id,
+                retry_count=(old_execution.retry_count or 0) + 1,
+            )
+            self.db.add(new_execution)
+            self.db.commit()
+
+            logger.info(
+                "Regenerating stage %s (component=%s) with human feedback, new execution=%s",
+                old_execution.stage_key,
+                old_execution.component_key,
+                new_execution.id,
+            )
+
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "stage_started",
+                    "stage_key": old_execution.stage_key,
+                    "component_key": old_execution.component_key,
+                },
+            )
+
             feedback_notes = self._get_feedback_notes(old_execution.artifact_id)
             # Pass current content for incremental revision
             existing_content = None
@@ -541,7 +552,6 @@ class ArtifactOpsMixin:
         except Exception as e:
             logger.exception("Regeneration failed for stage %s: %s", old_execution.stage_key, e)
             # Restore old artifact from stuck generating/reviewing state
-            revert_status = None
             if old_execution.artifact_id:
                 stuck_artifact = self.db.get(Artifact, old_execution.artifact_id)
                 if stuck_artifact and stuck_artifact.status in (
@@ -553,11 +563,12 @@ class ArtifactOpsMixin:
                         original_artifact_status or ArtifactStatus.REJECTED,
                     )
 
-            self._transition_execution(
-                new_execution, StageStatus.FAILED,
-                error_message=str(e),
-                set_completed=True,
-            )
+            if new_execution is not None:
+                self._transition_execution(
+                    new_execution, StageStatus.FAILED,
+                    error_message=str(e),
+                    set_completed=True,
+                )
 
             self.db.commit()
 
@@ -567,6 +578,8 @@ class ArtifactOpsMixin:
                     "type": "stage_failed",
                     "stage_key": old_execution.stage_key,
                     "component_key": old_execution.component_key,
+                    "artifact_id": old_execution.artifact_id,
+                    "artifact_status": "rejected",
                     "error": str(e),
                 },
             )
@@ -887,6 +900,9 @@ class ArtifactOpsMixin:
         if not artifact:
             raise ValueError("Artifact not found")
 
+        # Capture original status for error recovery
+        original_artifact_status = artifact.status
+
         project_id = artifact.project_id
         config = self._get_config(project_id)
         if not config:
@@ -930,7 +946,9 @@ class ArtifactOpsMixin:
             },
         )
 
-        input_artifacts = self._gather_inputs(project_id, stage_def, artifact.component_key)
+        input_artifacts = self._gather_inputs(
+            project_id, stage_def, artifact.component_key, include_stale=True,
+        )
 
         run_id = str(uuid.uuid4())
         execution = StageExecution(
@@ -1034,7 +1052,9 @@ class ArtifactOpsMixin:
                 error_message=str(e),
                 set_completed=True,
             )
-            self._mark_artifact_status(artifact_id, ArtifactStatus.APPROVED)
+            self._mark_artifact_status(
+                artifact_id, original_artifact_status or ArtifactStatus.APPROVED,
+            )
             self.db.commit()
 
             await ws_manager.broadcast(
@@ -1043,6 +1063,8 @@ class ArtifactOpsMixin:
                     "type": "stage_failed",
                     "stage_key": stage_def.stage_key,
                     "component_key": artifact.component_key,
+                    "artifact_id": artifact_id,
+                    "artifact_status": original_artifact_status.value if original_artifact_status else "approved",
                     "error": str(e),
                 },
             )

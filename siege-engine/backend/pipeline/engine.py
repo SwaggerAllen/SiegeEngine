@@ -1301,14 +1301,24 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         return None
 
     def _gather_inputs(
-        self, project_id: str, stage_def: StageDefinition, component_key: str | None = None
+        self, project_id: str, stage_def: StageDefinition, component_key: str | None = None,
+        *, include_stale: bool = False,
     ) -> dict[str, str]:
         """Gather input artifact contents for a stage.
 
         For sub-component stages (component_key contains '.'), automatically
         resolves parent-level inputs by the parent key and sub-component-level
         inputs by the full key.
+
+        When *include_stale* is True, STALE artifacts are also accepted as
+        inputs.  This is used during regeneration/revision flows where the
+        caller explicitly wants to use whatever content is available rather
+        than failing due to missing context.
         """
+        _accepted_statuses = [ArtifactStatus.APPROVED, ArtifactStatus.AWAITING_REVIEW]
+        if include_stale:
+            _accepted_statuses.append(ArtifactStatus.STALE)
+
         inputs: dict[str, str] = {}
 
         if not stage_def.input_stage_keys:
@@ -1356,14 +1366,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         artifact_type=artifact_type,
                         component_key=filter_key,
                     )
-                    .filter(
-                        Artifact.status.in_(
-                            [
-                                ArtifactStatus.APPROVED,
-                                ArtifactStatus.AWAITING_REVIEW,
-                            ]
-                        )
-                    )
+                    .filter(Artifact.status.in_(_accepted_statuses))
                     .first()
                 )
                 if artifact and artifact.content:
@@ -1373,14 +1376,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 artifacts = (
                     self.db.query(Artifact)
                     .filter_by(project_id=project_id, artifact_type=artifact_type)
-                    .filter(
-                        Artifact.status.in_(
-                            [
-                                ArtifactStatus.APPROVED,
-                                ArtifactStatus.AWAITING_REVIEW,
-                            ]
-                        )
-                    )
+                    .filter(Artifact.status.in_(_accepted_statuses))
                     .all()
                 )
                 if len(artifacts) == 1:
@@ -1411,14 +1407,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                             artifact_type=ArtifactType.COMPONENT_ARCHITECTURE,
                             component_key=dep_key,
                         )
-                        .filter(
-                            Artifact.status.in_(
-                                [
-                                    ArtifactStatus.APPROVED,
-                                    ArtifactStatus.AWAITING_REVIEW,
-                                ]
-                            )
-                        )
+                        .filter(Artifact.status.in_(_accepted_statuses))
                         .first()
                     )
                     if dep_art and dep_art.content:
@@ -1448,14 +1437,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                             artifact_type=ArtifactType.SUB_COMPONENT_ARCHITECTURE,
                             component_key=full_dep_key,
                         )
-                        .filter(
-                            Artifact.status.in_(
-                                [
-                                    ArtifactStatus.APPROVED,
-                                    ArtifactStatus.AWAITING_REVIEW,
-                                ]
-                            )
-                        )
+                        .filter(Artifact.status.in_(_accepted_statuses))
                         .first()
                     )
                     if dep_art and dep_art.content:
