@@ -564,6 +564,39 @@ def list_events(
         .all()
     )
 
+    # Collect artifact IDs and run IDs from event payloads for name resolution
+    artifact_ids: set[str] = set()
+    run_ids: set[str] = set()
+    for e in events:
+        if e.payload:
+            aid = e.payload.get("artifact_id")
+            if aid:
+                artifact_ids.add(str(aid))
+        if e.run_id:
+            run_ids.add(e.run_id)
+
+    # Resolve artifact names
+    artifact_names: dict[str, str] = {}
+    if artifact_ids:
+        from backend.models.artifact import Artifact
+        arts = (
+            db.query(Artifact.id, Artifact.name)
+            .filter(Artifact.id.in_(artifact_ids))
+            .all()
+        )
+        artifact_names = {a.id: a.name for a in arts}
+
+    # Resolve run numbers
+    run_numbers: dict[str, int] = {}
+    if run_ids:
+        from backend.models.pipeline import PipelineRun
+        runs_q = (
+            db.query(PipelineRun.run_id, PipelineRun.run_number)
+            .filter(PipelineRun.run_id.in_(run_ids))
+            .all()
+        )
+        run_numbers = {r.run_id: r.run_number for r in runs_q}
+
     return {
         "events": [
             {
@@ -579,6 +612,8 @@ def list_events(
         "total": total,
         "limit": limit,
         "offset": offset,
+        "artifact_names": artifact_names,
+        "run_numbers": run_numbers,
     }
 
 
@@ -620,11 +655,18 @@ def revert_to_sequence(
     db: Session = Depends(get_db),
     _user: User = Depends(_require_writer),
 ):
-    """Revert pipeline state to a historical point by deleting events after the given sequence.
+    """Revert pipeline state to a historical point.
 
-    This is destructive: all events with sequence > the target are permanently deleted,
-    and the snapshot is rebuilt from scratch.
+    This is destructive: all events after the target sequence are deleted, the
+    snapshot is rebuilt, artifact content is restored from git history, and any
+    artifacts/executions/runs created after the target point are removed.
     """
+    from datetime import datetime as dt
+
+    from backend.git_manager.service import git_manager
+    from backend.models.artifact import Artifact, ArtifactDependency
+    from backend.models.enums import ArtifactStatus
+    from backend.models.pipeline import PipelineRun, StageExecution
     from backend.models.pipeline_events import PipelineEvent
     from backend.pipeline.event_store import EventStore
 
@@ -639,6 +681,8 @@ def revert_to_sequence(
     if not target_event:
         raise HTTPException(404, f"No event found at sequence {sequence}")
 
+    target_time = target_event.created_at
+
     # Delete all events after the target sequence
     deleted_count = (
         db.query(PipelineEvent)
@@ -649,13 +693,86 @@ def revert_to_sequence(
 
     # Rebuild snapshot from remaining events
     es = EventStore(db)
-    es.rebuild_snapshot(project_id)
+    rebuilt = es.rebuild_snapshot(project_id)
+
+    # --- Restore artifact state ---
+    valid_artifact_ids = set((rebuilt.artifact_statuses or {}).keys())
+    all_artifacts = db.query(Artifact).filter_by(project_id=project_id).all()
+    artifacts_restored = 0
+    artifacts_deleted = 0
+
+    for art in all_artifacts:
+        if art.id not in valid_artifact_ids:
+            # Artifact was created after the revert point — clean up references first
+            db.query(StageExecution).filter(
+                StageExecution.artifact_id == art.id
+            ).update({"artifact_id": None}, synchronize_session="fetch")
+            db.query(ArtifactDependency).filter(
+                (ArtifactDependency.upstream_artifact_id == art.id)
+                | (ArtifactDependency.downstream_artifact_id == art.id)
+            ).delete(synchronize_session="fetch")
+            db.delete(art)
+            artifacts_deleted += 1
+        else:
+            # Restore status from snapshot
+            target_status_str = rebuilt.artifact_statuses[art.id]
+            try:
+                art.status = ArtifactStatus(target_status_str)
+            except ValueError:
+                art.status = ArtifactStatus.PENDING
+
+            # Restore content from git history
+            if art.file_path:
+                try:
+                    history = git_manager.get_file_history(project_id, art.file_path)
+                    restore_sha = None
+                    for commit in history:
+                        commit_time = dt.fromisoformat(commit["timestamp"].replace("Z", "+00:00"))
+                        # Compare naive — strip tzinfo if needed
+                        if commit_time.replace(tzinfo=None) <= target_time.replace(tzinfo=None):
+                            restore_sha = commit["sha"]
+                            break
+                    if restore_sha and restore_sha != art.git_commit_sha:
+                        content = git_manager.get_file_at_version(
+                            project_id, art.file_path, restore_sha
+                        )
+                        art.content = content
+                        art.git_commit_sha = restore_sha
+                        artifacts_restored += 1
+                except Exception:
+                    logger.warning(
+                        "Could not restore git content for artifact %s (%s)",
+                        art.id, art.file_path, exc_info=True,
+                    )
+
+    # --- Clean up executions and runs created after the revert point ---
+    # Delete executions whose run was created after target time
+    runs_after = (
+        db.query(PipelineRun.run_id)
+        .filter_by(project_id=project_id)
+        .filter(PipelineRun.started_at > target_time)
+        .all()
+    )
+    run_ids_after = {r[0] for r in runs_after}
+    if run_ids_after:
+        db.query(StageExecution).filter(
+            StageExecution.project_id == project_id,
+            StageExecution.run_id.in_(run_ids_after),
+        ).delete(synchronize_session="fetch")
+
+    db.query(PipelineRun).filter(
+        PipelineRun.project_id == project_id,
+        PipelineRun.started_at > target_time,
+    ).delete(synchronize_session="fetch")
+
     db.commit()
 
     return {
         "status": "reverted",
         "reverted_to_sequence": sequence,
         "events_deleted": deleted_count,
+        "artifacts_restored": artifacts_restored,
+        "artifacts_deleted": artifacts_deleted,
     }
 
 

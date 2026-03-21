@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import * as pipelineApi from '../../api/pipeline';
 import { usePipelineStore } from '../../store/pipelineStore';
 import type { PipelineEvent, PipelineSnapshot } from '../../types/pipeline';
@@ -28,16 +28,32 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   pipeline_reset: 'bg-red-900',
 };
 
+const ROUTINE_EVENTS = new Set([
+  'stage_queued', 'stage_started', 'carried_over',
+  'cascade_started', 'cascade_completed',
+]);
+
+const HIGHLIGHT_EVENTS = new Set([
+  'human_approved', 'human_rejected', 'stage_failed',
+  'staleness_propagated', 'pipeline_reset',
+]);
+
 function formatEventType(type: string): string {
   return type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function formatPayload(payload: Record<string, unknown>): string {
+function formatPayload(
+  payload: Record<string, unknown>,
+  artifactNames: Record<string, string>,
+): string {
   const parts: string[] = [];
   if (payload.stage_key) parts.push(`stage: ${payload.stage_key}`);
   if (payload.component_key) parts.push(`component: ${payload.component_key}`);
-  if (payload.artifact_id) parts.push(`artifact: ${String(payload.artifact_id).slice(0, 8)}`);
-  if (payload.run_id) parts.push(`run: ${String(payload.run_id).slice(0, 8)}`);
+  if (payload.artifact_id) {
+    const aid = String(payload.artifact_id);
+    const name = artifactNames[aid];
+    parts.push(`artifact: ${name || aid.slice(0, 8)}`);
+  }
   if (payload.action) parts.push(`action: ${payload.action}`);
   if (payload.status) parts.push(`status: ${payload.status}`);
   if (payload.stale_ids) parts.push(`stale: ${(payload.stale_ids as string[]).length} artifacts`);
@@ -61,6 +77,12 @@ interface Props {
   projectId: string;
 }
 
+interface RunGroup {
+  runId: string | null;
+  runNumber: number | null;
+  events: PipelineEvent[];
+}
+
 export function EventHistoryPanel({ projectId }: Props) {
   const [events, setEvents] = useState<PipelineEvent[]>([]);
   const [total, setTotal] = useState(0);
@@ -73,6 +95,10 @@ export function EventHistoryPanel({ projectId }: Props) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [reverting, setReverting] = useState(false);
   const [revertResult, setRevertResult] = useState<string | null>(null);
+  const [compactMode, setCompactMode] = useState(true);
+  const [collapsedRuns, setCollapsedRuns] = useState<Set<string>>(new Set());
+  const [artifactNames, setArtifactNames] = useState<Record<string, string>>({});
+  const [runNumbers, setRunNumbers] = useState<Record<string, number>>({});
   const { fetchStatus, fetchRuns } = usePipelineStore();
 
   const PAGE_SIZE = 50;
@@ -88,6 +114,8 @@ export function EventHistoryPanel({ projectId }: Props) {
       });
       setEvents(result.events);
       setTotal(result.total);
+      setArtifactNames((prev) => ({ ...prev, ...result.artifact_names }));
+      setRunNumbers((prev) => ({ ...prev, ...result.run_numbers }));
     } catch (err) {
       console.error('Failed to load events:', err);
     } finally {
@@ -103,6 +131,45 @@ export function EventHistoryPanel({ projectId }: Props) {
   useEffect(() => {
     setOffset(0);
   }, [filterRunId, filterEventType]);
+
+  // Group events by run
+  const runGroups = useMemo<RunGroup[]>(() => {
+    const groupMap = new Map<string, PipelineEvent[]>();
+    const order: string[] = [];
+
+    for (const event of events) {
+      const key = event.run_id || '__ungrouped__';
+      if (!groupMap.has(key)) {
+        groupMap.set(key, []);
+        order.push(key);
+      }
+      groupMap.get(key)!.push(event);
+    }
+
+    return order.map((key) => ({
+      runId: key === '__ungrouped__' ? null : key,
+      runNumber: key === '__ungrouped__' ? null : (runNumbers[key] ?? null),
+      events: groupMap.get(key)!,
+    }));
+  }, [events, runNumbers]);
+
+  // Filter events in compact mode
+  const filterEvents = useCallback((evts: PipelineEvent[]) => {
+    if (!compactMode) return evts;
+    return evts.filter((e) => !ROUTINE_EVENTS.has(e.event_type));
+  }, [compactMode]);
+
+  const toggleRunCollapsed = (runId: string) => {
+    setCollapsedRuns((prev) => {
+      const next = new Set(prev);
+      if (next.has(runId)) {
+        next.delete(runId);
+      } else {
+        next.add(runId);
+      }
+      return next;
+    });
+  };
 
   const handlePreview = async (seq: number) => {
     if (selectedSeq === seq) {
@@ -125,14 +192,18 @@ export function EventHistoryPanel({ projectId }: Props) {
 
   const handleRevert = async (seq: number) => {
     if (!window.confirm(
-      `Revert pipeline to sequence #${seq}? This will permanently delete all events after this point.`
+      `Revert pipeline to sequence #${seq}?\n\nThis will restore all documents to their state at this point. Events, artifacts, and runs created after this point will be permanently deleted.`
     )) return;
 
     setReverting(true);
     setRevertResult(null);
     try {
       const result = await pipelineApi.revertToSequence(projectId, seq);
-      setRevertResult(`Reverted to #${seq} — ${result.events_deleted} events deleted`);
+      const parts = [`Reverted to #${seq}`];
+      parts.push(`${result.events_deleted} events deleted`);
+      if (result.artifacts_restored > 0) parts.push(`${result.artifacts_restored} artifacts restored`);
+      if (result.artifacts_deleted > 0) parts.push(`${result.artifacts_deleted} artifacts removed`);
+      setRevertResult(parts.join(' — '));
       // Refresh everything
       loadEvents();
       fetchStatus(projectId);
@@ -159,13 +230,24 @@ export function EventHistoryPanel({ projectId }: Props) {
       <div className="shrink-0 p-4 border-b border-gray-700 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-white">Event History</h2>
-          <button
-            onClick={loadEvents}
-            disabled={loading}
-            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded disabled:opacity-50"
-          >
-            {loading ? 'Loading...' : 'Refresh'}
-          </button>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={compactMode}
+                onChange={(e) => setCompactMode(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-900"
+              />
+              Compact
+            </label>
+            <button
+              onClick={loadEvents}
+              disabled={loading}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded disabled:opacity-50"
+            >
+              {loading ? 'Loading...' : 'Refresh'}
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -177,7 +259,7 @@ export function EventHistoryPanel({ projectId }: Props) {
             <option value="">All runs</option>
             {uniqueRunIds.map((rid) => (
               <option key={rid} value={rid}>
-                Run {rid.slice(0, 8)}...
+                Run #{runNumbers[rid] ?? rid.slice(0, 8)}
               </option>
             ))}
           </select>
@@ -216,30 +298,65 @@ export function EventHistoryPanel({ projectId }: Props) {
           )}
 
           <div className="divide-y divide-gray-800">
-            {events.map((event) => (
-              <div
-                key={event.id}
-                className={`px-4 py-2 hover:bg-gray-800/50 cursor-pointer transition-colors ${
-                  selectedSeq === event.sequence ? 'bg-gray-800 ring-1 ring-blue-500' : ''
-                }`}
-                onClick={() => handlePreview(event.sequence)}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs text-gray-500 font-mono w-8 shrink-0 text-right">
-                    #{event.sequence}
-                  </span>
-                  <span className={`text-xs text-white px-1.5 py-0.5 rounded ${EVENT_TYPE_COLORS[event.event_type] || 'bg-gray-600'}`}>
-                    {formatEventType(event.event_type)}
-                  </span>
-                  <span className="text-xs text-gray-500 ml-auto">
-                    {formatTime(event.created_at)}
-                  </span>
+            {runGroups.map((group) => {
+              const groupKey = group.runId || '__ungrouped__';
+              const isCollapsed = collapsedRuns.has(groupKey);
+              const filteredEvents = filterEvents(group.events);
+              const hiddenCount = group.events.length - filteredEvents.length;
+
+              return (
+                <div key={groupKey}>
+                  {/* Run group header */}
+                  <div
+                    className="px-4 py-2 bg-gray-800/80 border-b border-gray-700 cursor-pointer hover:bg-gray-800 flex items-center gap-2"
+                    onClick={() => toggleRunCollapsed(groupKey)}
+                  >
+                    <svg
+                      className={`w-3 h-3 text-gray-400 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                    <span className="text-xs font-semibold text-gray-300">
+                      {group.runNumber != null ? `Run #${group.runNumber}` : group.runId ? `Run ${group.runId.slice(0, 8)}` : 'System Events'}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {filteredEvents.length} event{filteredEvents.length !== 1 ? 's' : ''}
+                      {hiddenCount > 0 && ` (+${hiddenCount} routine)`}
+                    </span>
+                  </div>
+
+                  {/* Events within group */}
+                  {!isCollapsed && filteredEvents.map((event) => {
+                    const isHighlight = HIGHLIGHT_EVENTS.has(event.event_type);
+                    return (
+                      <div
+                        key={event.id}
+                        className={`px-4 py-2 hover:bg-gray-800/50 cursor-pointer transition-colors ${
+                          selectedSeq === event.sequence ? 'bg-gray-800 ring-1 ring-blue-500' : ''
+                        } ${isHighlight ? 'border-l-2 border-l-yellow-500' : ''}`}
+                        onClick={() => handlePreview(event.sequence)}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs text-gray-500 font-mono w-8 shrink-0 text-right">
+                            #{event.sequence}
+                          </span>
+                          <span className={`text-xs text-white px-1.5 py-0.5 rounded ${EVENT_TYPE_COLORS[event.event_type] || 'bg-gray-600'}`}>
+                            {formatEventType(event.event_type)}
+                          </span>
+                          <span className="text-xs text-gray-500 ml-auto">
+                            {formatTime(event.created_at)}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-400 ml-10 truncate">
+                          {formatPayload(event.payload, artifactNames)}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                <div className="text-xs text-gray-400 ml-10 truncate">
-                  {formatPayload(event.payload)}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Pagination */}
@@ -305,7 +422,9 @@ export function EventHistoryPanel({ projectId }: Props) {
                     <div className="space-y-1">
                       {Object.entries(previewSnapshot.run_status).map(([runId, status]) => (
                         <div key={runId} className="flex items-center gap-2 text-xs">
-                          <span className="text-gray-500 font-mono">{runId.slice(0, 8)}</span>
+                          <span className="text-gray-500 font-mono">
+                            {runNumbers[runId] != null ? `#${runNumbers[runId]}` : runId.slice(0, 8)}
+                          </span>
                           <span className={`px-1.5 py-0.5 rounded ${
                             status === 'running' ? 'bg-blue-600 text-white' :
                             status === 'completed' ? 'bg-green-700 text-white' :
@@ -350,8 +469,10 @@ export function EventHistoryPanel({ projectId }: Props) {
                     <div className="space-y-1 max-h-40 overflow-auto">
                       {Object.entries(previewSnapshot.artifact_statuses).map(([aid, status]) => (
                         <div key={aid} className="flex items-center gap-2 text-xs">
-                          <span className="text-gray-500 font-mono">{aid.slice(0, 8)}</span>
-                          <span className={`px-1.5 py-0.5 rounded ${
+                          <span className="text-gray-300 truncate flex-1">
+                            {artifactNames[aid] || aid.slice(0, 8)}
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded shrink-0 ${
                             status === 'approved' ? 'bg-green-700 text-white' :
                             status === 'generating' ? 'bg-blue-600 text-white' :
                             status === 'awaiting_review' ? 'bg-yellow-600 text-white' :

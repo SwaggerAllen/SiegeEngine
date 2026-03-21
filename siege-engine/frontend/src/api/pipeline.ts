@@ -215,7 +215,7 @@ export async function getSnapshotAtSequence(
 export async function revertToSequence(
   projectId: string,
   sequence: number
-): Promise<{ status: string; reverted_to_sequence: number; events_deleted: number }> {
+): Promise<{ status: string; reverted_to_sequence: number; events_deleted: number; artifacts_restored: number; artifacts_deleted: number }> {
   const { data } = await api.post(`/pipeline/${projectId}/events/revert-to/${sequence}`);
   return data;
 }

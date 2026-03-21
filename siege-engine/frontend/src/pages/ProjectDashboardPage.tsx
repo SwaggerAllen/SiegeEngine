@@ -251,8 +251,8 @@ export function ProjectDashboardPage() {
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="p-4 text-gray-500 text-sm shrink-0">
                   {activeTab === 'documents'
-                    ? 'Select a document node to view or edit'
-                    : 'Select a stage node to configure it'}
+                    ? 'Select a document node to view, edit, or start a run'
+                    : 'Select a stage node to configure it or start a run'}
                 </div>
                 {activeTab === 'pipeline' && (
                   <div className="flex-1 p-4 border-t border-gray-700 overflow-auto min-h-0">

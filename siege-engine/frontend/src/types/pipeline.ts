@@ -88,6 +88,8 @@ export interface PipelineEventPage {
   total: number;
   limit: number;
   offset: number;
+  artifact_names: Record<string, string>;
+  run_numbers: Record<string, number>;
 }
 
 export type WSEvent =

@@ -15,6 +15,11 @@ vi.mock('../../store/pipelineStore', () => ({
     forceRestartStage: vi.fn(),
     pruneArtifact: mockPruneArtifact,
     cancelStage: vi.fn(),
+    config: { stages: [{ stage_key: 'system_requirements', output_artifact_type: 'system_requirements' }] },
+    isRunning: false,
+    runs: [],
+    startPipeline: vi.fn(),
+    resumeRun: vi.fn(),
   })),
 }));
 
@@ -79,12 +84,14 @@ describe('ReviewPanel', () => {
     expect(screen.getByText('🗑 Prune Node')).toBeInTheDocument();
   });
 
-  it('renders nothing for input doc artifacts', () => {
+  it('renders no action buttons for input doc artifacts', () => {
     const inputArtifact = { ...baseArtifact, artifact_type: 'project_doc' };
-    const { container } = render(
+    render(
       <ReviewPanel projectId="proj-1" artifact={inputArtifact} execution={undefined} />
     );
-    expect(container.innerHTML).toBe('');
+    expect(screen.queryByText('🗑 Prune Node')).not.toBeInTheDocument();
+    expect(screen.queryByText('Start Run')).not.toBeInTheDocument();
+    expect(screen.queryByText('Regen Downstream')).not.toBeInTheDocument();
   });
 
   it('renders Approve, Save Feedback, and Reject buttons when awaiting_review', () => {
