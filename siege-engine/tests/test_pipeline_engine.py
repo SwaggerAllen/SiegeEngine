@@ -6,16 +6,15 @@ from backend.models import StopPoint
 from backend.pipeline.engine import BRANCHING_STAGES, PipelineEngine
 
 
-def _make_stage_def(stage_key, human_review_enabled=True):
+def _make_stage_def(stage_key, order_index=0):
     sd = MagicMock()
     sd.stage_key = stage_key
-    sd.human_review_enabled = human_review_enabled
+    sd.order_index = order_index
     return sd
 
 
-def _make_run(human_review=True, stop_point=StopPoint.AFTER_ALL):
+def _make_run(stop_point=StopPoint.EVERY_ARTIFACT):
     run = MagicMock()
-    run.human_review = human_review
     run.stop_point = stop_point
     return run
 
@@ -26,44 +25,40 @@ class TestShouldPause:
     def setup_method(self):
         self.engine = PipelineEngine.__new__(PipelineEngine)
 
-    def test_no_run_uses_stage_human_review(self):
-        sd = _make_stage_def("system_requirements", human_review_enabled=True)
+    def test_no_run_always_pauses(self):
+        sd = _make_stage_def("system_requirements")
         assert self.engine._should_pause(sd, None) is True
 
-        sd2 = _make_stage_def("system_requirements", human_review_enabled=False)
-        assert self.engine._should_pause(sd2, None) is False
-
-    def test_human_review_off_never_pauses(self):
-        sd = _make_stage_def("system_requirements", human_review_enabled=True)
-        run = _make_run(human_review=False)
-        assert self.engine._should_pause(sd, run) is False
-
-    def test_after_all_with_human_review_on(self):
-        sd = _make_stage_def("system_requirements", human_review_enabled=True)
-        run = _make_run(human_review=True, stop_point=StopPoint.AFTER_ALL)
+    def test_every_artifact_always_pauses(self):
+        sd = _make_stage_def("system_requirements")
+        run = _make_run(stop_point=StopPoint.EVERY_ARTIFACT)
         assert self.engine._should_pause(sd, run) is True
 
-    def test_after_all_stage_review_disabled(self):
-        sd = _make_stage_def("code_generation", human_review_enabled=False)
-        run = _make_run(human_review=True, stop_point=StopPoint.AFTER_ALL)
-        assert self.engine._should_pause(sd, run) is False
-
     def test_before_code_pauses_code_stages(self):
-        run = _make_run(human_review=True, stop_point=StopPoint.BEFORE_CODE)
+        run = _make_run(stop_point=StopPoint.BEFORE_CODE)
         for key in ("code_generation", "code_review"):
-            sd = _make_stage_def(key, human_review_enabled=False)
+            sd = _make_stage_def(key)
             assert self.engine._should_pause(sd, run) is True
 
-    def test_before_code_non_code_stage_uses_human_review(self):
-        sd = _make_stage_def("system_requirements", human_review_enabled=False)
-        run = _make_run(human_review=True, stop_point=StopPoint.BEFORE_CODE)
+    def test_before_code_does_not_pause_non_code_stages(self):
+        sd = _make_stage_def("system_requirements")
+        run = _make_run(stop_point=StopPoint.BEFORE_CODE)
         assert self.engine._should_pause(sd, run) is False
 
-    def test_branching_stage_always_pauses_with_human_review(self):
-        for stage_key in BRANCHING_STAGES:
-            sd = _make_stage_def(stage_key, human_review_enabled=False)
-            run = _make_run(human_review=True, stop_point=StopPoint.AFTER_ALL)
-            assert self.engine._should_pause(sd, run) is True
+    def test_end_of_phase_pauses_later_stages(self):
+        sd = _make_stage_def("code_generation", order_index=5)
+        run = _make_run(stop_point=StopPoint.END_OF_PHASE)
+        # Mock the helper methods used by END_OF_PHASE
+        self.engine._get_start_order = MagicMock(return_value=2)
+        self.engine._starting_phase_complete = MagicMock(return_value=False)
+        assert self.engine._should_pause(sd, run, project_id="proj-1") is True
+
+    def test_end_of_phase_does_not_pause_same_phase(self):
+        sd = _make_stage_def("system_requirements", order_index=1)
+        run = _make_run(stop_point=StopPoint.END_OF_PHASE)
+        self.engine._get_start_order = MagicMock(return_value=2)
+        self.engine._starting_phase_complete = MagicMock(return_value=False)
+        assert self.engine._should_pause(sd, run, project_id="proj-1") is False
 
 
 class TestBranchingStages:
