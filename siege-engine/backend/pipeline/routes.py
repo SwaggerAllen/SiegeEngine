@@ -106,7 +106,7 @@ def get_config(
                 "model_override": s.model_override,
                 "temperature_override": s.temperature_override,
             }
-            for s in config.stages
+            for s in sorted(config.stages, key=lambda s: s.order_index)
         ],
     }
 

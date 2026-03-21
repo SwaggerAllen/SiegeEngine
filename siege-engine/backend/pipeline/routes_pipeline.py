@@ -1129,16 +1129,36 @@ async def get_artifact_diff(
     if len(history) < 2:
         raise HTTPException(400, "No previous version to diff against")
 
-    # Current version is history[0], previous is history[1]
-    current_sha = history[0]["sha"]
-    previous_sha = history[1]["sha"]
+    # Use the artifact's known commit SHA as current, find its predecessor
+    current_sha = artifact.git_commit_sha
+    previous_sha = None
+    for i, entry in enumerate(history):
+        if entry["sha"] == current_sha and i + 1 < len(history):
+            previous_sha = history[i + 1]["sha"]
+            break
+
+    # Fallback: if artifact SHA not found in history, use latest two
+    if not previous_sha:
+        current_sha = history[0]["sha"]
+        previous_sha = history[1]["sha"]
 
     diff_text = git_manager.get_diff(project_id, previous_sha, current_sha, artifact.file_path)
 
+    # Parse version numbers from commit messages for accurate labels
+    import re
+    to_version = artifact.version
+    from_version = artifact.version - 1
+    for entry in history:
+        if entry["sha"] == previous_sha:
+            m = re.search(r"v(\d+)", entry["message"])
+            if m:
+                from_version = int(m.group(1))
+            break
+
     return {
         "diff": diff_text,
-        "from_version": artifact.version - 1,
-        "to_version": artifact.version,
+        "from_version": from_version,
+        "to_version": to_version,
         "from_sha": previous_sha,
         "to_sha": current_sha,
     }

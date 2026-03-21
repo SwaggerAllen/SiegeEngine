@@ -323,7 +323,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   }, [reparseResult]);
 
   // Show restart button for stuck/failed/rejected stages
-  if (!isViewer && isRestartable && !isAwaitingReview) {
+  // Skip if the artifact is actively generating — that has its own UI below
+  if (!isViewer && isRestartable && !isAwaitingReview && !isGenerating) {
     const statusLabel = execution!.status === 'failed' ? 'Failed' :
                         execution!.status === 'rejected' ? 'Rejected' :
                         execution!.status === 'ai_review' ? 'Stuck in AI Review' : 'Stuck (Running)';
@@ -411,7 +412,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
             <textarea
               value={notes}
               onChange={(e) => { setNotes(e.target.value); setFeedbackSaved(false); }}
-              className="w-full h-14 md:h-28 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+              className="w-full h-24 md:h-32 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none resize-y"
               placeholder="Add feedback for re-generation..."
             />
           </div>
@@ -544,7 +545,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           <textarea
             value={notes}
             onChange={(e) => { setNotes(e.target.value); setFeedbackSaved(false); }}
-            className="w-full h-14 md:h-28 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+            className="w-full h-24 md:h-32 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none resize-y"
             placeholder="Add feedback to request changes..."
           />
         </div>
@@ -665,7 +666,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           <textarea
             value={notes}
             onChange={(e) => { setNotes(e.target.value); setFeedbackSaved(false); }}
-            className="w-full h-14 md:h-28 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+            className="w-full h-24 md:h-32 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none resize-y"
             placeholder="Add feedback for re-generation..."
           />
         </div>

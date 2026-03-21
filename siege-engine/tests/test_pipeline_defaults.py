@@ -1,6 +1,11 @@
 """Tests for backend.pipeline.defaults – pipeline stage configuration."""
 
 from backend.pipeline.defaults import DEFAULT_STAGES
+from backend.pipeline.readiness import (
+    COMPONENT_STAGE_ORDER,
+    SUB_COMPONENT_STAGE_ORDER,
+    _STAGE_KEY_TO_ORDER,
+)
 
 
 class TestDefaultStages:
@@ -67,3 +72,32 @@ class TestDefaultStages:
         for stage in DEFAULT_STAGES:
             if stage["stage_key"].startswith("system_"):
                 assert stage["fan_out_strategy"] == "none"
+
+
+class TestStageOrderConsistency:
+    """Ensure readiness ordering constants stay in sync with DEFAULT_STAGES."""
+
+    def test_stage_key_to_order_matches_defaults(self):
+        """_STAGE_KEY_TO_ORDER must match the order_index in DEFAULT_STAGES."""
+        for stage in DEFAULT_STAGES:
+            key = stage["stage_key"]
+            assert key in _STAGE_KEY_TO_ORDER, f"Missing key in _STAGE_KEY_TO_ORDER: {key}"
+            assert _STAGE_KEY_TO_ORDER[key] == stage["order_index"], (
+                f"Order mismatch for '{key}': "
+                f"_STAGE_KEY_TO_ORDER={_STAGE_KEY_TO_ORDER[key]}, "
+                f"DEFAULT_STAGES={stage['order_index']}"
+            )
+
+    def test_component_stage_order_is_ascending(self):
+        """COMPONENT_STAGE_ORDER must list stages in ascending order_index."""
+        indices = [_STAGE_KEY_TO_ORDER[k] for k in COMPONENT_STAGE_ORDER]
+        assert indices == sorted(indices), (
+            f"COMPONENT_STAGE_ORDER is not in ascending order: {list(zip(COMPONENT_STAGE_ORDER, indices))}"
+        )
+
+    def test_sub_component_stage_order_is_ascending(self):
+        """SUB_COMPONENT_STAGE_ORDER must list stages in ascending order_index."""
+        indices = [_STAGE_KEY_TO_ORDER[k] for k in SUB_COMPONENT_STAGE_ORDER]
+        assert indices == sorted(indices), (
+            f"SUB_COMPONENT_STAGE_ORDER is not in ascending order: {list(zip(SUB_COMPONENT_STAGE_ORDER, indices))}"
+        )

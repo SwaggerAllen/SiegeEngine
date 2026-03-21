@@ -54,6 +54,16 @@ class ArtifactOpsMixin:
                         artifact.content = edited_content
                         artifact.version += 1
 
+                        if artifact.file_path:
+                            from backend.git_manager.service import git_manager
+                            sha = git_manager.commit_artifact(
+                                execution.project_id,
+                                edited_content,
+                                artifact.file_path,
+                                f"Edit {artifact.name or artifact.file_path} v{artifact.version}",
+                            )
+                            artifact.git_commit_sha = sha
+
                     if notes and notes.strip():
                         self.db.add(
                             ArtifactComment(
@@ -225,6 +235,16 @@ class ArtifactOpsMixin:
                     if edited_content:
                         artifact.content = edited_content
                         artifact.version += 1
+
+                        if artifact.file_path:
+                            from backend.git_manager.service import git_manager
+                            sha = git_manager.commit_artifact(
+                                execution.project_id,
+                                edited_content,
+                                artifact.file_path,
+                                f"Edit {artifact.name or artifact.file_path} v{artifact.version}",
+                            )
+                            artifact.git_commit_sha = sha
 
                     if notes and notes.strip():
                         self.db.add(
@@ -457,6 +477,7 @@ class ArtifactOpsMixin:
                 started_at=datetime.utcnow(),
                 run_id=run_id,
                 retry_count=(old_execution.retry_count or 0) + 1,
+                artifact_id=old_execution.artifact_id,
             )
             self.db.add(new_execution)
             self.db.commit()
@@ -622,6 +643,17 @@ class ArtifactOpsMixin:
             if edited_content:
                 artifact.content = edited_content
                 artifact.version += 1
+
+                if artifact.file_path:
+                    from backend.git_manager.service import git_manager
+                    sha = git_manager.commit_artifact(
+                        project_id,
+                        edited_content,
+                        artifact.file_path,
+                        f"Edit {artifact.name or artifact.file_path} v{artifact.version}",
+                    )
+                    artifact.git_commit_sha = sha
+
             if notes and notes.strip():
                 self.db.add(
                     ArtifactComment(
@@ -657,6 +689,17 @@ class ArtifactOpsMixin:
             if edited_content:
                 artifact.content = edited_content
                 artifact.version += 1
+
+                if artifact.file_path:
+                    from backend.git_manager.service import git_manager
+                    sha = git_manager.commit_artifact(
+                        project_id,
+                        edited_content,
+                        artifact.file_path,
+                        f"Edit {artifact.name or artifact.file_path} v{artifact.version}",
+                    )
+                    artifact.git_commit_sha = sha
+
             if notes and notes.strip():
                 self.db.add(
                     ArtifactComment(
@@ -975,6 +1018,7 @@ class ArtifactOpsMixin:
             status=StageStatus.RUNNING,
             started_at=datetime.utcnow(),
             run_id=run_id,
+            artifact_id=artifact_id,
         )
         self.db.add(execution)
         self.db.commit()
