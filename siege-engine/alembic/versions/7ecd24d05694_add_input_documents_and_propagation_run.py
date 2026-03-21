@@ -35,7 +35,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     with op.batch_alter_table('pipeline_runs', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('propagation_run', sa.Boolean(), nullable=False))
+        batch_op.add_column(sa.Column('propagation_run', sa.Boolean(), nullable=False, server_default=sa.text('0')))
 
     # ### end Alembic commands ###
 
