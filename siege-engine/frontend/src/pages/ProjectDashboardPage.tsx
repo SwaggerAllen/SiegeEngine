@@ -81,15 +81,23 @@ export function ProjectDashboardPage() {
   // approved/rejected one, hiding the review panel.
   //
   // Also match by component_key for stuck/failed executions whose artifact_id
-  // is null (e.g., generation died before creating the artifact record).
+  // is null (e.g., generation died before creating the artifact record), or
+  // when the artifact_id doesn't match due to regeneration edge cases.
   const selectedExecution = selectedArtifact
     ? executions.find((e) => e.artifact_id === selectedArtifact.id && e.status === 'awaiting_review')
       || executions.find((e) => e.artifact_id === selectedArtifact.id)
       || executions.find((e) =>
           !e.artifact_id
           && e.component_key === (selectedArtifact.component_key ?? null)
-          && ['running', 'ai_review', 'failed'].includes(e.status)
-          && ['generating', 'ai_reviewing', 'pending'].includes(selectedArtifact.status)
+          && ['running', 'ai_review', 'failed', 'awaiting_review'].includes(e.status)
+          && ['generating', 'ai_reviewing', 'pending', 'awaiting_review'].includes(selectedArtifact.status)
+        )
+      // Fallback: match by component_key when artifact_id is set but doesn't match
+      // (can happen after regeneration creates a new execution with a stale artifact_id reference)
+      || executions.find((e) =>
+          e.component_key === (selectedArtifact.component_key ?? null)
+          && e.status === 'awaiting_review'
+          && selectedArtifact.status === 'awaiting_review'
         )
     : undefined;
 

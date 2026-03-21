@@ -185,7 +185,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const fetchDAG = useDAGStore((s) => s.fetchDAG);
   const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
 
-  const isAwaitingReview = execution?.status === 'awaiting_review';
+  const isAwaitingReview = execution?.status === 'awaiting_review'
+    || (!execution && artifact.status === 'awaiting_review');
   const isRestartable = execution && RESTARTABLE_STATUSES.has(execution.status);
   const isStale = artifact.status === 'stale';
   const isBeingRegenerated = isStale && execution && REGENERATING_STATUSES.has(execution.status);
@@ -203,7 +204,12 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     listComments(projectId, artifact.id).then((comments) => {
       setFeedbackCount(comments.filter((c) => c.comment_type === 'feedback').length);
     }).catch(() => {});
-  }, [projectId, artifact.id]);
+    // If the artifact is awaiting_review but we have no matching execution,
+    // refresh executions so the feedback UI can work properly.
+    if (artifact.status === 'awaiting_review' && !execution) {
+      fetchStatus(projectId);
+    }
+  }, [projectId, artifact.id, artifact.status, execution, fetchStatus]);
 
   const handleAction = async (action: string) => {
     if (!execution) return;
