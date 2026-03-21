@@ -1,5 +1,5 @@
 import api from './client';
-import type { PipelineConfig, PipelineRun, PipelineStartOptions, StageDefinition } from '../types/pipeline';
+import type { PipelineConfig, PipelineEventPage, PipelineRun, PipelineSnapshot, PipelineStartOptions, StageDefinition } from '../types/pipeline';
 
 export async function getPipelineConfig(projectId: string): Promise<PipelineConfig> {
   const { data } = await api.get(`/pipeline/${projectId}/config`);
@@ -84,16 +84,12 @@ export async function resolveStale(
   return data;
 }
 
-export async function acceptAndCascade(
+export async function regenDownstream(
   projectId: string,
   artifactId: string,
-  notes?: string,
-  editedContent?: string
 ) {
-  const { data } = await api.post(`/pipeline/${projectId}/accept-and-cascade`, {
+  const { data } = await api.post(`/pipeline/${projectId}/regen-downstream`, {
     artifact_id: artifactId,
-    notes,
-    edited_content: editedContent,
   });
   return data;
 }
@@ -110,6 +106,11 @@ export async function regenerateArtifacts(
 
 export async function getPipelineStatus(projectId: string) {
   const { data } = await api.get(`/pipeline/${projectId}/status`);
+  return data;
+}
+
+export async function getSnapshot(projectId: string): Promise<PipelineSnapshot> {
+  const { data } = await api.get(`/pipeline/${projectId}/snapshot`);
   return data;
 }
 
@@ -192,6 +193,30 @@ export interface ArtifactDiff {
 
 export async function getArtifactDiff(projectId: string, artifactId: string): Promise<ArtifactDiff> {
   const { data } = await api.get(`/pipeline/${projectId}/artifacts/${artifactId}/diff`);
+  return data;
+}
+
+export async function listEvents(
+  projectId: string,
+  params?: { run_id?: string; event_type?: string; limit?: number; offset?: number }
+): Promise<PipelineEventPage> {
+  const { data } = await api.get(`/pipeline/${projectId}/events`, { params });
+  return data;
+}
+
+export async function getSnapshotAtSequence(
+  projectId: string,
+  sequence: number
+): Promise<PipelineSnapshot> {
+  const { data } = await api.get(`/pipeline/${projectId}/events/snapshot-at/${sequence}`);
+  return data;
+}
+
+export async function revertToSequence(
+  projectId: string,
+  sequence: number
+): Promise<{ status: string; reverted_to_sequence: number; events_deleted: number; artifacts_restored: number; artifacts_deleted: number }> {
+  const { data } = await api.post(`/pipeline/${projectId}/events/revert-to/${sequence}`);
   return data;
 }
 

@@ -14,7 +14,7 @@ export function useWebSocket(projectId: string | undefined) {
   const retryDelay = useRef(INITIAL_RETRY_MS);
   const mountedRef = useRef(true);
 
-  const { updateFromWS, fetchStatus, fetchRuns } = usePipelineStore();
+  const { updateFromWS, fetchStatus } = usePipelineStore();
   const { fetchDAG, fetchDocumentsDAG, selectArtifact } = useDAGStore();
   const { fetchArtifact } = useProjectStore();
   const [connected, setConnected] = useState(false);
@@ -73,23 +73,30 @@ export function useWebSocket(projectId: string | undefined) {
       console.log('[WS] Received:', data.type, data);
       updateFromWS(data);
 
-      // Refresh DAG and status on state-changing events
+      // Refresh DAG on state-changing events
       if (
         data.type === 'stage_started' ||
         data.type === 'stage_completed' ||
         data.type === 'stage_awaiting_review' ||
-        data.type === 'stage_progress' ||
         data.type === 'stage_failed' ||
         data.type === 'pipeline_completed' ||
         data.type === 'pipeline_paused' ||
         data.type === 'staleness_propagated' ||
-        data.type === 'feedback_saved' ||
-        data.type === 'comment_added' ||
         data.type === 'artifact_pruned'
       ) {
         fetchDAG(projectId);
         fetchDocumentsDAG(projectId);
+        // fetchStatus for execution list refresh (isRunning/isPaused handled by local reducer)
         fetchStatus(projectId);
+      }
+
+      // DAG refresh for feedback/comment events (no fetchStatus needed — no execution state change)
+      if (
+        data.type === 'feedback_saved' ||
+        data.type === 'comment_added'
+      ) {
+        fetchDAG(projectId);
+        fetchDocumentsDAG(projectId);
       }
 
       // Auto-select artifact when review is needed
@@ -114,18 +121,11 @@ export function useWebSocket(projectId: string | undefined) {
         fetchArtifact(data.artifact_id);
       }
 
-      // Reconcile isRunning after events that may end a run or revision
-      if (
-        data.type === 'stage_awaiting_review' ||
-        data.type === 'pipeline_completed' ||
-        data.type === 'cascade_completed'
-      ) {
-        fetchRuns(projectId);
-      }
+      // isRunning/isPaused are now updated by the local snapshot reducer in updateFromWS
     };
 
     wsRef.current = ws;
-  }, [projectId, updateFromWS, fetchStatus, fetchRuns, fetchDAG, fetchDocumentsDAG, selectArtifact, fetchArtifact]);
+  }, [projectId, updateFromWS, fetchStatus, fetchDAG, fetchDocumentsDAG, selectArtifact, fetchArtifact]);
 
   useEffect(() => {
     mountedRef.current = true;

@@ -5,8 +5,154 @@ import { useDAGStore } from '../../store/dagStore';
 import { listComments } from '../../api/comments';
 import { reparseFanout } from '../../api/pipeline';
 import type { Artifact } from '../../types/project';
-import type { StageExecution } from '../../types/pipeline';
+import type { StageExecution, PipelineStartOptions } from '../../types/pipeline';
 import { RESTARTABLE_STATUSES } from '../../types/pipeline';
+
+const STOP_POINT_OPTIONS = [
+  { value: 'end_of_phase', label: 'End of phase' },
+  { value: 'before_code', label: 'Before code generation' },
+  { value: 'every_artifact', label: 'After every artifact' },
+];
+
+const STOP_POINT_REGEN = { value: 'regen_downstream', label: 'Regen downstream only' };
+
+/** Inline run controls shown inside the node panel. */
+function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: {
+  projectId: string;
+  stageKey: string | null;
+  componentKey: string | null;
+  artifactId?: string;
+}) {
+  const { startPipeline, resumeRun, regenDownstream, isRunning, runs } = usePipelineStore();
+  const [expanded, setExpanded] = useState(false);
+  const [mode, setMode] = useState<'start' | 'resume'>('start');
+  const [aiLoops, setAiLoops] = useState(1);
+  const [stopPoint, setStopPoint] = useState('end_of_phase');
+  const [starting, setStarting] = useState(false);
+
+  const hasCompletedRun = runs.some(
+    (r) => r.status === 'completed' || r.status === 'paused' || r.status === 'cancelled' || r.status === 'failed'
+  );
+
+  const isRegen = stopPoint === 'regen_downstream';
+
+  if (isRunning) return null;
+
+  const handleStart = async () => {
+    setStarting(true);
+    try {
+      if (isRegen && artifactId) {
+        await regenDownstream(projectId, artifactId);
+      } else {
+        const options: PipelineStartOptions = {
+          ai_loops: aiLoops,
+          stop_point: stopPoint,
+          start_stage_key: stageKey,
+          start_component_key: componentKey,
+        };
+        if (mode === 'resume') {
+          await resumeRun(projectId, options);
+        } else {
+          await startPipeline(projectId, options);
+        }
+      }
+    } catch (err) {
+      console.error('Run start failed:', err);
+    } finally {
+      setStarting(false);
+      setExpanded(false);
+    }
+  };
+
+  return (
+    <div className="border-t border-gray-700 pt-2 mt-2">
+      {!expanded ? (
+        <button
+          onClick={() => setExpanded(true)}
+          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
+        >
+          <span>Start Run</span>
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      ) : (
+        <div className="space-y-3 bg-gray-800/50 rounded-lg p-3">
+          <h4 className="text-xs font-semibold text-gray-300">Run Configuration</h4>
+
+          {/* Run Type */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Run type</label>
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value as 'start' | 'resume')}
+              className="w-full px-2 py-1.5 bg-gray-700 text-white text-xs rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+            >
+              <option value="start">Fresh Start from here</option>
+              {hasCompletedRun && <option value="resume">Resume from here</option>}
+            </select>
+          </div>
+
+          {!isRegen && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">AI self-improvement loops</label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={aiLoops}
+                onChange={(e) => setAiLoops(Math.max(0, Math.min(10, parseInt(e.target.value) || 0)))}
+                className="w-16 px-2 py-1 bg-gray-700 text-white text-xs rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          )}
+
+          {/* Stop point — includes regen downstream when artifact is available */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Stop at</label>
+            <select
+              value={stopPoint}
+              onChange={(e) => setStopPoint(e.target.value)}
+              className="w-full px-2 py-1.5 bg-gray-700 text-white text-xs rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+            >
+              {STOP_POINT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+              {artifactId && (
+                <option value={STOP_POINT_REGEN.value}>{STOP_POINT_REGEN.label}</option>
+              )}
+            </select>
+            {isRegen && (
+              <p className="text-xs text-gray-500 mt-1">
+                Only regenerates already-generated nodes downstream of this artifact.
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleStart}
+              disabled={starting}
+              className={`px-3 py-1.5 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0 ${
+                isRegen ? 'bg-teal-600 hover:bg-teal-700' :
+                mode === 'resume' ? 'bg-blue-600 hover:bg-blue-700' :
+                'bg-green-600 hover:bg-green-700'
+              }`}
+            >
+              {starting ? 'Starting...' : isRegen ? 'Regen Downstream' : mode === 'resume' ? 'Resume' : 'Start'}
+            </button>
+            <button
+              onClick={() => setExpanded(false)}
+              className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ReviewPanelProps {
   projectId: string;
@@ -17,9 +163,14 @@ interface ReviewPanelProps {
 const REGENERATING_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
-  const { resumeStage, resolveStale, acceptAndCascade, forceRestartStage, pruneArtifact, cancelStage } = usePipelineStore();
+  const { resumeStage, resolveStale, forceRestartStage, pruneArtifact, cancelStage, config } = usePipelineStore();
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
+
+  // Derive stage_key from artifact type for run controls
+  const artifactStageKey = config?.stages.find(
+    (s) => s.output_artifact_type === artifact.artifact_type
+  )?.stage_key ?? null;
   const [notes, setNotes] = useState('');
   const [editedContent, setEditedContent] = useState('');
   const [showEditor, setShowEditor] = useState(false);
@@ -163,25 +314,6 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     }
   };
 
-  const handleAcceptAndCascade = async () => {
-    if (!window.confirm('Approve this artifact and regenerate all downstream dependents?')) return;
-    setSubmitting(true);
-    try {
-      await acceptAndCascade(
-        projectId,
-        artifact.id,
-        notes || undefined,
-        showEditor && editedContent ? editedContent : undefined
-      );
-      setNotes('');
-      setEditedContent('');
-      setShowEditor(false);
-      setFeedbackSaved(false);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   // Auto-dismiss reparse result
   useEffect(() => {
     if (!reparseResult) return;
@@ -244,6 +376,9 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
             </>
           )}
         </div>
+        {!isInputDoc && (
+          <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
+        )}
       </div>
     );
   }
@@ -299,13 +434,6 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
             Approve
           </button>
           <button
-            onClick={handleAcceptAndCascade}
-            disabled={submitting}
-            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-          >
-            {submitting ? 'Cascading...' : 'Accept & Cascade'}
-          </button>
-          <button
             onClick={() => handleStaleAction('save_feedback')}
             disabled={submitting || !notes.trim()}
             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
@@ -349,6 +477,9 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
             </span>
           )}
         </div>
+        {!isInputDoc && (
+          <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
+        )}
       </div>
     );
   }
@@ -439,37 +570,44 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
             </span>
           )}
         </div>
+        <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
       </div>
     );
   }
 
   // Viewers or non-actionable: show prune/reparse buttons
   if (isViewer || !isAwaitingReview) {
-    if (!canPrune && !canReparse) return null;
     return (
-      <div className="pt-2 border-t border-gray-700 flex flex-wrap items-center gap-2">
-        {canPrune && (
-          <button
-            onClick={handlePrune}
-            disabled={pruning}
-            className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
-          >
-            {pruning ? 'Pruning...' : '🗑 Prune Node'}
-          </button>
+      <div className="space-y-2">
+        {(canPrune || canReparse) && (
+          <div className="pt-2 border-t border-gray-700 flex flex-wrap items-center gap-2">
+            {canPrune && (
+              <button
+                onClick={handlePrune}
+                disabled={pruning}
+                className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
+              >
+                {pruning ? 'Pruning...' : '🗑 Prune Node'}
+              </button>
+            )}
+            {canReparse && (
+              <button
+                onClick={handleReparse}
+                disabled={reparsing}
+                className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+              >
+                {reparsing ? 'Reparsing...' : 'Reparse Children'}
+              </button>
+            )}
+            {reparseResult && (
+              <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
+                {reparseResult}
+              </span>
+            )}
+          </div>
         )}
-        {canReparse && (
-          <button
-            onClick={handleReparse}
-            disabled={reparsing}
-            className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-          >
-            {reparsing ? 'Reparsing...' : 'Reparse Children'}
-          </button>
-        )}
-        {reparseResult && (
-          <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
-            {reparseResult}
-          </span>
+        {!isViewer && !isInputDoc && (
+          <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
         )}
       </div>
     );
@@ -516,13 +654,6 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           Approve
         </button>
         <button
-          onClick={handleAcceptAndCascade}
-          disabled={submitting}
-          className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-        >
-          {submitting ? 'Cascading...' : 'Accept & Cascade'}
-        </button>
-        <button
           onClick={() => handleAction('save_feedback')}
           disabled={submitting || !notes.trim()}
           className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
@@ -566,6 +697,9 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           </span>
         )}
       </div>
+      {!isInputDoc && (
+        <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
+      )}
     </div>
   );
 }

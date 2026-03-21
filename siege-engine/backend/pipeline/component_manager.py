@@ -18,7 +18,6 @@ from backend.models import (
     StageExecution,
 )
 from backend.pipeline.nodes.extract_components import (
-    inject_setup_component,
     parse_components_from_content,
     parse_sub_components_from_content,
     validate_dependency_dag,
@@ -84,8 +83,6 @@ class ComponentManagerMixin:
         errors = validate_dependency_dag(components)
         if errors:
             logger.warning("Component dependency validation errors: %s", errors)
-
-        components = inject_setup_component(components)
 
         old_defs = (
             self.db.query(ComponentDefinition)

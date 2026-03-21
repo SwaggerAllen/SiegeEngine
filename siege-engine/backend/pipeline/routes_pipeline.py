@@ -77,21 +77,23 @@ async def start_pipeline(
     pipeline_run = PipelineRun(
         project_id=project_id,
         run_number=run_number,
-        human_review=req.human_review,
         ai_loops=req.ai_loops,
         stop_point=StopPoint(req.stop_point),
+        start_stage_key=req.start_stage_key,
+        start_component_key=req.start_component_key,
     )
     db.add(pipeline_run)
     db.commit()
     db.refresh(pipeline_run)
 
     logger.info(
-        "POST /start: project_id=%s, run_number=%d, human_review=%s, ai_loops=%d, stop_point=%s",
+        "POST /start: project_id=%s, run_number=%d, ai_loops=%d, stop_point=%s, start=%s/%s",
         project_id,
         run_number,
-        req.human_review,
         req.ai_loops,
         req.stop_point,
+        req.start_stage_key,
+        req.start_component_key,
     )
 
     pipeline_run_id = pipeline_run.id
@@ -144,9 +146,10 @@ async def resume_run(
     pipeline_run = PipelineRun(
         project_id=project_id,
         run_number=run_number,
-        human_review=req.human_review,
         ai_loops=req.ai_loops,
         stop_point=StopPoint(req.stop_point),
+        start_stage_key=req.start_stage_key,
+        start_component_key=req.start_component_key,
     )
     db.add(pipeline_run)
     db.commit()
@@ -209,9 +212,8 @@ async def propagate_changes(
     pipeline_run = PipelineRun(
         project_id=project_id,
         run_number=run_number,
-        human_review=False,
         propagation_run=True,
-        stop_point=StopPoint.AFTER_ALL,
+        stop_point=StopPoint.BEFORE_CODE,
     )
     db.add(pipeline_run)
     db.commit()
@@ -400,8 +402,7 @@ async def reset_all(
         latest_run = PipelineRun(
             project_id=project_id,
             run_number=1,
-            human_review=True,
-            stop_point=StopPoint.AFTER_ALL,
+            stop_point=StopPoint.END_OF_PHASE,
             status=PipelineRunStatus.CANCELLED,
             completed_at=datetime.utcnow(),
         )
@@ -439,6 +440,12 @@ async def reset_all(
 
     db.commit()
 
+    # Emit pipeline_reset event
+    from backend.pipeline.event_store import EventStore
+    from backend.pipeline import events as _evt
+    EventStore(db).emit(project_id, _evt.PIPELINE_RESET, {}, run_id=run_id)
+    db.commit()
+
     await ws_manager.broadcast(
         project_id,
         {
@@ -468,6 +475,12 @@ def get_status(
         .order_by(StageExecution.started_at.desc())
         .all()
     )
+
+    # Include snapshot data for Phase 2 reads
+    from backend.pipeline.event_store import EventStore
+    es = EventStore(db)
+    snapshot = es.get_snapshot(project_id)
+
     return {
         "stages": [
             {
@@ -482,7 +495,284 @@ def get_status(
                 "run_id": e.run_id,
             }
             for e in executions
-        ]
+        ],
+        "snapshot": {
+            "is_running": snapshot.is_running,
+            "is_paused": snapshot.is_paused,
+            "paused_stage": snapshot.paused_stage,
+            "current_run_id": snapshot.current_run_id,
+            "stage_statuses": snapshot.stage_statuses or {},
+            "artifact_statuses": snapshot.artifact_statuses or {},
+            "run_status": snapshot.run_status or {},
+            "last_sequence": snapshot.last_sequence,
+        },
+    }
+
+
+@pipeline_router.get("/{project_id}/snapshot")
+def get_snapshot(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return the materialized pipeline snapshot."""
+    from backend.pipeline.event_store import EventStore
+    es = EventStore(db)
+    snapshot = es.get_snapshot(project_id)
+    return {
+        "is_running": snapshot.is_running,
+        "is_paused": snapshot.is_paused,
+        "paused_stage": snapshot.paused_stage,
+        "current_run_id": snapshot.current_run_id,
+        "stage_statuses": snapshot.stage_statuses or {},
+        "artifact_statuses": snapshot.artifact_statuses or {},
+        "run_status": snapshot.run_status or {},
+        "last_sequence": snapshot.last_sequence,
+    }
+
+
+@pipeline_router.get("/{project_id}/events")
+def list_events(
+    project_id: str,
+    run_id: str | None = Query(None),
+    event_type: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return paginated event history for a project."""
+    from backend.models.pipeline_events import PipelineEvent
+
+    _get_project_or_404(db, project_id)
+
+    query = (
+        db.query(PipelineEvent)
+        .filter_by(project_id=project_id)
+    )
+    if run_id:
+        query = query.filter(PipelineEvent.run_id == run_id)
+    if event_type:
+        query = query.filter(PipelineEvent.event_type == event_type)
+
+    total = query.count()
+    events = (
+        query
+        .order_by(PipelineEvent.sequence.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    # Collect artifact IDs and run IDs from event payloads for name resolution
+    artifact_ids: set[str] = set()
+    run_ids: set[str] = set()
+    for e in events:
+        if e.payload:
+            aid = e.payload.get("artifact_id")
+            if aid:
+                artifact_ids.add(str(aid))
+        if e.run_id:
+            run_ids.add(e.run_id)
+
+    # Resolve artifact names
+    artifact_names: dict[str, str] = {}
+    if artifact_ids:
+        from backend.models.artifact import Artifact
+        arts = (
+            db.query(Artifact.id, Artifact.name)
+            .filter(Artifact.id.in_(artifact_ids))
+            .all()
+        )
+        artifact_names = {a.id: a.name for a in arts}
+
+    # Resolve run numbers
+    run_numbers: dict[str, int] = {}
+    if run_ids:
+        from backend.models.pipeline import PipelineRun
+        runs_q = (
+            db.query(PipelineRun.run_id, PipelineRun.run_number)
+            .filter(PipelineRun.run_id.in_(run_ids))
+            .all()
+        )
+        run_numbers = {r.run_id: r.run_number for r in runs_q}
+
+    return {
+        "events": [
+            {
+                "id": e.id,
+                "sequence": e.sequence,
+                "event_type": e.event_type,
+                "payload": e.payload,
+                "run_id": e.run_id,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in events
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "artifact_names": artifact_names,
+        "run_numbers": run_numbers,
+    }
+
+
+@pipeline_router.get("/{project_id}/events/snapshot-at/{sequence}")
+def snapshot_at_sequence(
+    project_id: str,
+    sequence: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Replay events up to a given sequence number and return the snapshot state at that point."""
+    from backend.models.pipeline_events import PipelineEvent
+    from backend.pipeline.reducer import apply_event, empty_snapshot
+
+    _get_project_or_404(db, project_id)
+
+    events = (
+        db.query(PipelineEvent)
+        .filter_by(project_id=project_id)
+        .filter(PipelineEvent.sequence <= sequence)
+        .order_by(PipelineEvent.sequence)
+        .all()
+    )
+
+    if not events:
+        raise HTTPException(404, f"No events found up to sequence {sequence}")
+
+    state = empty_snapshot()
+    for event in events:
+        state = apply_event(state, event.event_type, event.payload, event.sequence)
+
+    return state
+
+
+@pipeline_router.post("/{project_id}/events/revert-to/{sequence}")
+def revert_to_sequence(
+    project_id: str,
+    sequence: int,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Revert pipeline state to a historical point.
+
+    This is destructive: all events after the target sequence are deleted, the
+    snapshot is rebuilt, artifact content is restored from git history, and any
+    artifacts/executions/runs created after the target point are removed.
+    """
+    from datetime import datetime as dt
+
+    from backend.git_manager.service import git_manager
+    from backend.models.artifact import Artifact, ArtifactDependency
+    from backend.models.enums import ArtifactStatus
+    from backend.models.pipeline import PipelineRun, StageExecution
+    from backend.models.pipeline_events import PipelineEvent
+    from backend.pipeline.event_store import EventStore
+
+    _get_project_or_404(db, project_id)
+
+    # Validate that the target sequence exists
+    target_event = (
+        db.query(PipelineEvent)
+        .filter_by(project_id=project_id, sequence=sequence)
+        .first()
+    )
+    if not target_event:
+        raise HTTPException(404, f"No event found at sequence {sequence}")
+
+    target_time = target_event.created_at
+
+    # Delete all events after the target sequence
+    deleted_count = (
+        db.query(PipelineEvent)
+        .filter_by(project_id=project_id)
+        .filter(PipelineEvent.sequence > sequence)
+        .delete(synchronize_session="fetch")
+    )
+
+    # Rebuild snapshot from remaining events
+    es = EventStore(db)
+    rebuilt = es.rebuild_snapshot(project_id)
+
+    # --- Restore artifact state ---
+    valid_artifact_ids = set((rebuilt.artifact_statuses or {}).keys())
+    all_artifacts = db.query(Artifact).filter_by(project_id=project_id).all()
+    artifacts_restored = 0
+    artifacts_deleted = 0
+
+    for art in all_artifacts:
+        if art.id not in valid_artifact_ids:
+            # Artifact was created after the revert point — clean up references first
+            db.query(StageExecution).filter(
+                StageExecution.artifact_id == art.id
+            ).update({"artifact_id": None}, synchronize_session="fetch")
+            db.query(ArtifactDependency).filter(
+                (ArtifactDependency.upstream_artifact_id == art.id)
+                | (ArtifactDependency.downstream_artifact_id == art.id)
+            ).delete(synchronize_session="fetch")
+            db.delete(art)
+            artifacts_deleted += 1
+        else:
+            # Restore status from snapshot
+            target_status_str = rebuilt.artifact_statuses[art.id]
+            try:
+                art.status = ArtifactStatus(target_status_str)
+            except ValueError:
+                art.status = ArtifactStatus.PENDING
+
+            # Restore content from git history
+            if art.file_path:
+                try:
+                    history = git_manager.get_file_history(project_id, art.file_path)
+                    restore_sha = None
+                    for commit in history:
+                        commit_time = dt.fromisoformat(commit["timestamp"].replace("Z", "+00:00"))
+                        # Compare naive — strip tzinfo if needed
+                        if commit_time.replace(tzinfo=None) <= target_time.replace(tzinfo=None):
+                            restore_sha = commit["sha"]
+                            break
+                    if restore_sha and restore_sha != art.git_commit_sha:
+                        content = git_manager.get_file_at_version(
+                            project_id, art.file_path, restore_sha
+                        )
+                        art.content = content
+                        art.git_commit_sha = restore_sha
+                        artifacts_restored += 1
+                except Exception:
+                    logger.warning(
+                        "Could not restore git content for artifact %s (%s)",
+                        art.id, art.file_path, exc_info=True,
+                    )
+
+    # --- Clean up executions and runs created after the revert point ---
+    # Delete executions whose run was created after target time
+    runs_after = (
+        db.query(PipelineRun.run_id)
+        .filter_by(project_id=project_id)
+        .filter(PipelineRun.started_at > target_time)
+        .all()
+    )
+    run_ids_after = {r[0] for r in runs_after}
+    if run_ids_after:
+        db.query(StageExecution).filter(
+            StageExecution.project_id == project_id,
+            StageExecution.run_id.in_(run_ids_after),
+        ).delete(synchronize_session="fetch")
+
+    db.query(PipelineRun).filter(
+        PipelineRun.project_id == project_id,
+        PipelineRun.started_at > target_time,
+    ).delete(synchronize_session="fetch")
+
+    db.commit()
+
+    return {
+        "status": "reverted",
+        "reverted_to_sequence": sequence,
+        "events_deleted": deleted_count,
+        "artifacts_restored": artifacts_restored,
+        "artifacts_deleted": artifacts_deleted,
     }
 
 
@@ -577,9 +867,10 @@ def list_runs(
             "run_number": r.run_number,
             "run_id": r.run_id,
             "status": r.status.value,
-            "human_review": r.human_review,
             "ai_loops": r.ai_loops,
             "stop_point": r.stop_point.value,
+            "start_stage_key": r.start_stage_key,
+            "start_component_key": r.start_component_key,
             "git_commit_sha": r.git_commit_sha,
             "started_at": r.started_at.isoformat() if r.started_at else None,
             "completed_at": r.completed_at.isoformat() if r.completed_at else None,
@@ -623,31 +914,51 @@ def reconcile_statuses(
     db: Session = Depends(get_db),
     _user: User = Depends(_require_writer),
 ):
-    """Manually trigger status reconciliation for the latest run."""
+    """Rebuild the pipeline snapshot from the event log.
+
+    Reconciliation is no longer needed since the event-sourced snapshot
+    is the single source of truth. This endpoint now rebuilds the
+    materialized snapshot in case it drifts.
+    """
     _get_project_or_404(db, project_id)
 
-    # Find the most recent run
+    from backend.pipeline.event_store import EventStore
+    es = EventStore(db)
+    es.rebuild_snapshot(project_id)
+    db.commit()
+
     latest_run = (
         db.query(PipelineRun)
         .filter_by(project_id=project_id)
         .order_by(PipelineRun.run_number.desc())
         .first()
     )
-    if not latest_run:
-        return {"corrections": [], "message": "No runs found"}
-
-    engine = PipelineEngine(db)
-    corrections = engine._reconcile_statuses(project_id, latest_run.run_id)
-    orphans_removed = engine._cleanup_orphaned_executions(project_id)
-    if corrections or orphans_removed:
-        db.commit()
 
     return {
-        "corrections": corrections,
-        "orphans_removed": orphans_removed,
-        "run_id": latest_run.run_id,
-        "run_number": latest_run.run_number,
+        "corrections": [],
+        "orphans_removed": [],
+        "run_id": latest_run.run_id if latest_run else None,
+        "run_number": latest_run.run_number if latest_run else None,
     }
+
+
+@pipeline_router.post("/{project_id}/reconstruct")
+def reconstruct_from_git(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Reconstruct pipeline state from the git repository.
+
+    Disaster recovery: rebuilds all artifacts and component definitions
+    from siege-state.json + git file content. All artifacts are set to
+    AWAITING_REVIEW so the user can inspect them.
+    """
+    _get_project_or_404(db, project_id)
+
+    from backend.cli.reconstruct import reconstruct_from_git as _reconstruct
+    result = _reconstruct(db, project_id)
+    return result
 
 
 @pipeline_router.post("/{project_id}/regenerate")

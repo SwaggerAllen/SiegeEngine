@@ -50,7 +50,7 @@ def build_dependency_graph(db: Session, project_id: str) -> dict[str, list[str]]
     return graph
 
 
-def propagate_staleness(db: Session, artifact_id: str) -> list[str]:
+def propagate_staleness(db: Session, artifact_id: str, event_store=None) -> list[str]:
     artifact = db.get(Artifact, artifact_id)
     if not artifact:
         return []
@@ -73,6 +73,14 @@ def propagate_staleness(db: Session, artifact_id: str) -> list[str]:
 
         for downstream_id in graph.get(current_id, []):
             queue.append(downstream_id)
+
+    # Emit staleness_propagated event
+    if stale_ids and event_store:
+        from backend.pipeline import events as evt
+        event_store.emit(
+            artifact.project_id, evt.STALENESS_PROPAGATED,
+            {"source_artifact_id": artifact_id, "stale_ids": stale_ids},
+        )
 
     return stale_ids
 
@@ -114,16 +122,14 @@ def get_regeneration_order(db: Session, artifact_ids: list[str]) -> list[list[st
 
 
 def get_stale_artifacts(db: Session, project_id: str) -> list[str]:
-    artifacts = (
-        db.execute(
-            select(Artifact)
-            .where(Artifact.project_id == project_id)
-            .where(Artifact.status == ArtifactStatus.STALE)
-        )
-        .scalars()
-        .all()
-    )
-    return [a.id for a in artifacts]
+    """Return IDs of stale artifacts using the snapshot as source of truth."""
+    from backend.pipeline.event_store import EventStore
+    es = EventStore(db)
+    snapshot = es.get_snapshot(project_id)
+    return [
+        aid for aid, status in (snapshot.artifact_statuses or {}).items()
+        if status == "stale"
+    ]
 
 
 def _build_prompt_info(stage_def: StageDefinition) -> dict:

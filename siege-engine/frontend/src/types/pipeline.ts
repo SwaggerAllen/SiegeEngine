@@ -41,9 +41,10 @@ export interface StageExecution {
 }
 
 export interface PipelineStartOptions {
-  human_review?: boolean;
   ai_loops?: number;
   stop_point?: string;
+  start_stage_key?: string | null;
+  start_component_key?: string | null;
 }
 
 export type PipelineRunStatus = 'running' | 'completed' | 'cancelled' | 'failed' | 'paused';
@@ -53,12 +54,42 @@ export interface PipelineRun {
   run_number: number;
   run_id: string;
   status: PipelineRunStatus;
-  human_review: boolean;
   ai_loops: number;
   stop_point: string;
+  start_stage_key: string | null;
+  start_component_key: string | null;
   git_commit_sha: string | null;
   started_at: string | null;
   completed_at: string | null;
+}
+
+export interface PipelineSnapshot {
+  is_running: boolean;
+  is_paused: boolean;
+  paused_stage: string | null;
+  current_run_id: string | null;
+  stage_statuses: Record<string, string>;
+  artifact_statuses: Record<string, string>;
+  run_status: Record<string, string>;
+  last_sequence: number;
+}
+
+export interface PipelineEvent {
+  id: string;
+  sequence: number;
+  event_type: string;
+  payload: Record<string, unknown>;
+  run_id: string | null;
+  created_at: string | null;
+}
+
+export interface PipelineEventPage {
+  events: PipelineEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+  artifact_names: Record<string, string>;
+  run_numbers: Record<string, number>;
 }
 
 export type WSEvent =

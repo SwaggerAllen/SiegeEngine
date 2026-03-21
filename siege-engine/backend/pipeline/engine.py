@@ -31,6 +31,8 @@ from backend.models import (
 )
 from backend.pipeline.artifact_ops import ArtifactOpsMixin
 from backend.pipeline.component_manager import ComponentManagerMixin
+from backend.pipeline.event_store import EventStore
+from backend.pipeline import events as evt
 from backend.pipeline.nodes.ai_review import ai_review
 from backend.pipeline.nodes.generate import generate
 from backend.pipeline.readiness import (
@@ -54,6 +56,7 @@ _STAGE_TO_PLAN_TYPE = {
 class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
     def __init__(self, db: Session):
         self.db = db
+        self.events = EventStore(db)
 
     def _get_config(self, project_id: str) -> PipelineConfig | None:
         """Return the PipelineConfig for a project, or None if missing."""
@@ -91,6 +94,22 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             artifact_status.value if artifact_status else "unchanged",
         )
 
+        # Emit corresponding event
+        event_type = _status_to_event_type(new_status)
+        if event_type:
+            self.events.emit(
+                execution.project_id,
+                event_type,
+                {
+                    "execution_id": execution.id,
+                    "stage_key": execution.stage_key,
+                    "component_key": execution.component_key,
+                    "artifact_id": execution.artifact_id,
+                    "error": error_message,
+                },
+                run_id=execution.run_id,
+            )
+
     def _mark_artifact_status(self, artifact_id: str, new_status: ArtifactStatus) -> None:
         """Update an artifact's status without touching any execution."""
         artifact = self.db.get(Artifact, artifact_id)
@@ -124,19 +143,23 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         pipeline_run = self.db.get(PipelineRun, pipeline_run_id) if pipeline_run_id else None
         run_id = pipeline_run.run_id if pipeline_run else str(uuid.uuid4())
 
+        # Emit run_created event
+        if pipeline_run:
+            self.events.emit(
+                project_id, evt.RUN_CREATED,
+                {
+                    "run_id": run_id,
+                    "run_number": pipeline_run.run_number,
+                    "ai_loops": pipeline_run.ai_loops,
+                    "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "end_of_phase",
+                    "start_stage_key": pipeline_run.start_stage_key,
+                    "start_component_key": pipeline_run.start_component_key,
+                },
+                run_id=run_id,
+            )
+
         carried = self._carry_over_approved(project_id, run_id)
         logger.info("Carried over %d approved executions into run %s", carried, run_id)
-
-        # Reconcile any execution/artifact status mismatches from prior runs
-        corrections = self._reconcile_statuses(project_id, run_id)
-        if corrections:
-            logger.info("Reconciled %d status mismatches in run %s", len(corrections), run_id)
-        # Clean up orphaned executions left behind by prior prune operations
-        orphans = self._cleanup_orphaned_executions(project_id)
-        if orphans:
-            logger.info("Cleaned up %d orphaned executions at pipeline start", len(orphans))
-        if corrections or orphans:
-            self.db.commit()
 
         # Re-populate component/sub-component definitions from carried-over
         # branching stages.  _store_components only runs via _post_generation_hook
@@ -185,6 +208,20 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             raise ValueError("PipelineRun not found")
 
         new_run_id = pipeline_run.run_id
+
+        # Emit run_created event for resumed run
+        self.events.emit(
+            project_id, evt.RUN_CREATED,
+            {
+                "run_id": new_run_id,
+                "run_number": pipeline_run.run_number,
+                "ai_loops": pipeline_run.ai_loops,
+                "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "end_of_phase",
+                "start_stage_key": pipeline_run.start_stage_key,
+                "start_component_key": pipeline_run.start_component_key,
+            },
+            run_id=new_run_id,
+        )
 
         # Carry over all approved work (searches across all runs)
         carried = self._carry_over_approved(project_id, new_run_id)
@@ -241,16 +278,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             review_carried,
             new_run_id,
         )
-
-        # Reconcile any execution/artifact status mismatches
-        corrections = self._reconcile_statuses(project_id, new_run_id)
-        if corrections:
-            logger.info("Reconciled %d status mismatches in run %s", len(corrections), new_run_id)
-        orphans = self._cleanup_orphaned_executions(project_id)
-        if orphans:
-            logger.info("Cleaned up %d orphaned executions at resume", len(orphans))
-        if corrections or orphans:
-            self.db.commit()
 
         await self._ensure_branching_definitions(project_id, config, new_run_id)
 
@@ -623,158 +650,22 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             self.db.add(new_exec)
             carried += 1
 
+            # Emit carried_over event
+            self.events.emit(
+                project_id, evt.CARRIED_OVER,
+                {
+                    "execution_id": new_exec.id,
+                    "stage_key": new_exec.stage_key,
+                    "component_key": new_exec.component_key,
+                    "artifact_id": new_exec.artifact_id,
+                    "from_run_id": prev_exec.run_id,
+                    "to_run_id": new_run_id,
+                },
+                run_id=new_run_id,
+            )
+
         self.db.commit()
         return carried
-
-    def _reconcile_statuses(self, project_id: str, run_id: str) -> list[dict]:
-        """Find and fix execution/artifact status mismatches for a run.
-
-        Returns list of corrections made (for logging/API response).
-        """
-        corrections: list[dict] = []
-
-        executions = (
-            self.db.query(StageExecution)
-            .filter_by(project_id=project_id, run_id=run_id)
-            .filter(StageExecution.artifact_id.isnot(None))
-            .all()
-        )
-
-        for exc in executions:
-            artifact = self.db.get(Artifact, exc.artifact_id)
-            if not artifact:
-                continue
-
-            correction = None
-
-            if exc.status == StageStatus.APPROVED and artifact.status not in (
-                ArtifactStatus.APPROVED, ArtifactStatus.STALE,
-            ):
-                correction = {"expected": "APPROVED", "actual": artifact.status.value}
-                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.APPROVED)
-
-            elif exc.status == StageStatus.AWAITING_REVIEW and artifact.status != ArtifactStatus.AWAITING_REVIEW:
-                correction = {"expected": "AWAITING_REVIEW", "actual": artifact.status.value}
-                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.AWAITING_REVIEW)
-
-            elif exc.status == StageStatus.FAILED and artifact.status in (
-                ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING,
-            ):
-                correction = {"expected": "PENDING (unstick)", "actual": artifact.status.value}
-                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.PENDING)
-
-            elif exc.status == StageStatus.REJECTED and artifact.status not in (
-                ArtifactStatus.REJECTED, ArtifactStatus.STALE,
-            ):
-                correction = {"expected": "REJECTED", "actual": artifact.status.value}
-                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.REJECTED)
-
-            elif exc.status in (
-                StageStatus.APPROVED, StageStatus.FAILED, StageStatus.REJECTED,
-            ) and artifact.status == ArtifactStatus.GENERATING:
-                correction = {"expected": "PENDING (unstick)", "actual": "GENERATING"}
-                self._mark_artifact_status(exc.artifact_id, ArtifactStatus.PENDING)
-
-            if correction:
-                entry = {
-                    "execution_id": exc.id,
-                    "stage_key": exc.stage_key,
-                    "component_key": exc.component_key,
-                    "execution_status": exc.status.value,
-                    "artifact_id": exc.artifact_id,
-                    **correction,
-                }
-                corrections.append(entry)
-                logger.warning("Reconciled status mismatch: %s", entry)
-
-        if corrections:
-            self.db.flush()
-
-        return corrections
-
-    def _cleanup_orphaned_executions(self, project_id: str) -> list[dict]:
-        """Find and delete StageExecution records whose artifact no longer exists.
-
-        These orphans typically result from prior prune operations that only
-        deleted executions by artifact_id, missing retries with artifact_id=NULL
-        for the same stage+component.
-
-        Returns list of removed records (for logging/API response).
-        """
-        removed: list[dict] = []
-
-        # 1. Executions referencing a deleted artifact (FK dangling or NULL after delete)
-        execs_with_artifact = (
-            self.db.query(StageExecution)
-            .filter(
-                StageExecution.project_id == project_id,
-                StageExecution.artifact_id.isnot(None),
-            )
-            .all()
-        )
-        artifact_ids_in_db = {
-            a.id
-            for a in self.db.query(Artifact.id).filter_by(project_id=project_id).all()
-        }
-        for exc in execs_with_artifact:
-            if exc.artifact_id not in artifact_ids_in_db:
-                removed.append({
-                    "execution_id": exc.id,
-                    "stage_key": exc.stage_key,
-                    "component_key": exc.component_key,
-                    "reason": "artifact_deleted",
-                    "artifact_id": exc.artifact_id,
-                })
-                self.db.delete(exc)
-
-        # 2. Executions with artifact_id=NULL for a stage+component where no
-        #    artifact of the expected type exists (orphaned from pruned artifacts).
-        config = self.db.query(PipelineConfig).filter_by(project_id=project_id).first()
-        if config:
-            stage_type_map = {s.stage_key: s.output_artifact_type for s in config.stages}
-            null_artifact_execs = (
-                self.db.query(StageExecution)
-                .filter(
-                    StageExecution.project_id == project_id,
-                    StageExecution.artifact_id.is_(None),
-                    StageExecution.status.in_([
-                        StageStatus.FAILED,
-                        StageStatus.APPROVED,
-                        StageStatus.AWAITING_REVIEW,
-                        StageStatus.REJECTED,
-                    ]),
-                )
-                .all()
-            )
-            for exc in null_artifact_execs:
-                expected_type = stage_type_map.get(exc.stage_key)
-                if not expected_type:
-                    continue
-                # Check if any artifact exists for this stage output + component
-                q = self.db.query(Artifact.id).filter_by(
-                    project_id=project_id,
-                    artifact_type=expected_type,
-                )
-                if exc.component_key is not None:
-                    q = q.filter(Artifact.component_key == exc.component_key)
-                else:
-                    q = q.filter(Artifact.component_key.is_(None))
-                if not q.first():
-                    removed.append({
-                        "execution_id": exc.id,
-                        "stage_key": exc.stage_key,
-                        "component_key": exc.component_key,
-                        "reason": "no_matching_artifact",
-                    })
-                    self.db.delete(exc)
-
-        if removed:
-            self.db.flush()
-            logger.info(
-                "Cleaned up %d orphaned executions in project %s", len(removed), project_id
-            )
-
-        return removed
 
     async def _ensure_branching_definitions(
         self, project_id: str, config: PipelineConfig, run_id: str
@@ -828,40 +719,57 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         self,
         stage_def: StageDefinition,
         pipeline_run: PipelineRun | None,
+        project_id: str | None = None,
     ) -> bool:
-        """Determine if the pipeline should pause after executing this stage."""
+        """Determine if the pipeline should pause after executing this stage.
+
+        Stop points control when the run halts generation:
+        - EVERY_ARTIFACT: stop after every wave of generation
+        - BEFORE_CODE: stop before code_generation/code_review stages
+        - END_OF_PHASE: stop when work moves past the starting phase
+        """
         if not pipeline_run:
-            # Legacy fallback — pause at every human-review stage
-            return stage_def.human_review_enabled
+            return True  # No run context — always pause
 
         stop = pipeline_run.stop_point
 
-        # Branching stages always pause if human review is on
-        if stage_def.stage_key in BRANCHING_STAGES and pipeline_run.human_review:
+        if stop == StopPoint.EVERY_ARTIFACT:
             return True
 
-        if stop == StopPoint.AFTER_ALL:
-            return pipeline_run.human_review and stage_def.human_review_enabled
+        if stop == StopPoint.BEFORE_CODE:
+            return stage_def.stage_key in ("code_generation", "code_review")
 
-        elif stop == StopPoint.BEFORE_CODE:
-            if stage_def.stage_key in ("code_generation", "code_review"):
-                return True
-            return pipeline_run.human_review and stage_def.human_review_enabled
+        if stop == StopPoint.END_OF_PHASE:
+            start_order = self._get_start_order(pipeline_run, project_id)
+            # If starting phase is already fully generated, target the next phase
+            if project_id and self._starting_phase_complete(pipeline_run, project_id):
+                start_order += 1
+            return stage_def.order_index > start_order
 
-        elif stop == StopPoint.AT_FAN_OUT:
-            if stage_def.stage_key in BRANCHING_STAGES:
-                return True
-            return pipeline_run.human_review and stage_def.human_review_enabled
+        # Legacy stop points — treat as end_of_phase
+        return True
 
-        elif stop == StopPoint.AFTER_TRIPLETS:
-            triplet_ends = {"component_plans", "sub_component_plans"}
-            if stage_def.stage_key in triplet_ends:
-                return True
-            if stage_def.stage_key in BRANCHING_STAGES:
-                return True
-            return pipeline_run.human_review and stage_def.human_review_enabled
+    def _get_start_order(self, pipeline_run: PipelineRun, project_id: str | None = None) -> int:
+        """Get the order_index of the run's starting stage."""
+        from backend.pipeline.readiness import _STAGE_KEY_TO_ORDER
+        if pipeline_run.start_stage_key:
+            return _STAGE_KEY_TO_ORDER.get(pipeline_run.start_stage_key, 0)
+        # No explicit start — start from beginning
+        return 0
 
-        return False
+    def _starting_phase_complete(self, pipeline_run: PipelineRun, project_id: str) -> bool:
+        """Check if the starting phase of a run is already fully generated."""
+        if not pipeline_run.start_stage_key:
+            return False
+        config = self._get_config(project_id)
+        if not config:
+            return False
+        stage_def = next(
+            (s for s in config.stages if s.stage_key == pipeline_run.start_stage_key), None
+        )
+        if not stage_def:
+            return False
+        return self._stage_fully_generated(project_id, stage_def, pipeline_run.run_id)
 
     async def _find_and_execute_next(
         self,
@@ -875,23 +783,35 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         Scans the full DAG rather than stopping at the first incomplete stage,
         so downstream entities whose dependencies are met can progress even while
         sibling entities in earlier stages are still awaiting review.
+
+        Key behaviors:
+        - Dependencies are satisfied by "generated" status (not just approved)
+        - AWAITING_REVIEW nodes do NOT block downstream generation
+        - Only RUNNING/AI_REVIEW states represent truly in-flight work
+        - Run scope is filtered by start_stage_key/start_component_key
+        - Stop point controls when the run halts
         """
         stages = sorted(config.stages, key=lambda s: s.order_index)
-        has_pending_work = False
+        has_inflight_work = False
+        generated_work_this_pass = False
 
         for stage_def in stages:
-            # Check if stage is fully complete
-            if self._stage_fully_complete(project_id, stage_def, run_id):
-                logger.info("Stage %s: fully complete, skipping", stage_def.stage_key)
+            # Skip stages outside run scope
+            if not self._is_in_run_scope(stage_def, None, pipeline_run):
+                continue
+
+            # Check if stage is fully generated (has content for all entities)
+            if self._stage_fully_generated(project_id, stage_def, run_id):
+                logger.info("Stage %s: fully generated, skipping", stage_def.stage_key)
                 continue
             logger.info(
-                "Stage %s: not complete (fan_out=%s), checking readiness",
+                "Stage %s: not fully generated (fan_out=%s), checking readiness",
                 stage_def.stage_key,
                 stage_def.fan_out_strategy.value if stage_def.fan_out_strategy else "none",
             )
 
-            # Check if any executions are still in-flight or awaiting review
-            pending_count = (
+            # Check if any executions are still truly in-flight (RUNNING/AI_REVIEW)
+            inflight_count = (
                 self.db.query(StageExecution)
                 .filter_by(
                     project_id=project_id,
@@ -900,24 +820,17 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 )
                 .filter(
                     StageExecution.status.in_(
-                        [
-                            StageStatus.AWAITING_REVIEW,
-                            StageStatus.RUNNING,
-                            StageStatus.AI_REVIEW,
-                        ]
+                        [StageStatus.RUNNING, StageStatus.AI_REVIEW]
                     )
                 )
                 .count()
             )
-            if pending_count > 0:
-                # Stage has pending work — note it but DON'T stop.
-                # Continue scanning downstream stages for entities whose
-                # dependencies are already met.
-                has_pending_work = True
+            if inflight_count > 0:
+                has_inflight_work = True
                 logger.info(
-                    "Stage %s has %d pending executions, scanning downstream",
+                    "Stage %s has %d in-flight executions, scanning downstream",
                     stage_def.stage_key,
-                    pending_count,
+                    inflight_count,
                 )
                 continue
 
@@ -936,10 +849,21 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     .first()
                 )
                 if existing:
-                    # Already has a non-rejected execution but stage not complete
-                    # (could be failed) — skip to avoid re-running
-                    has_pending_work = True
+                    # Already has a non-rejected execution (awaiting_review, approved, failed)
+                    if existing.status == StageStatus.FAILED:
+                        has_inflight_work = True
                     continue
+
+                # Check scope for non-fan-out
+                if not self._is_in_run_scope(stage_def, None, pipeline_run):
+                    continue
+
+                # regen_generated_only: skip if entity doesn't already have content
+                if pipeline_run and pipeline_run.regen_generated_only:
+                    if not self._entity_already_generated(
+                        project_id, stage_def.stage_key, None
+                    ):
+                        continue
 
                 # Execute single stage
                 input_artifacts = self._gather_inputs(project_id, stage_def)
@@ -978,43 +902,40 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     return
 
                 # Post-generation hooks (deferred for branching stages until approval)
-                if execution.status in (StageStatus.AWAITING_REVIEW, StageStatus.APPROVED):
+                if execution.status == StageStatus.AWAITING_REVIEW:
                     if stage_def.stage_key not in BRANCHING_STAGES:
                         await self._post_generation_hook(project_id, stage_def, None, execution)
 
+                generated_work_this_pass = True
+
                 # Check if pipeline should pause at this stage
-                if execution.status == StageStatus.AWAITING_REVIEW:
-                    has_pending_work = True
-                    if self._should_pause(stage_def, pipeline_run):
-                        await ws_manager.broadcast(
-                            project_id,
-                            {
-                                "type": "pipeline_paused",
-                                "stage_key": stage_def.stage_key,
-                                "run_id": run_id,
-                                "message": f"Awaiting review for {stage_def.display_name}",
-                            },
-                        )
-                        return
+                if self._should_pause(stage_def, pipeline_run, project_id):
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "pipeline_paused",
+                            "stage_key": stage_def.stage_key,
+                            "run_id": run_id,
+                            "message": f"Awaiting review for {stage_def.display_name}",
+                        },
+                    )
+                    return
 
             elif fan_out in (
                 FanOutStrategy.COMPONENT,
                 FanOutStrategy.SUB_COMPONENT,
                 FanOutStrategy.LEAF,
             ):
-                ready = self._get_ready_entities(project_id, stage_def, run_id)
+                ready = self._get_ready_entities(
+                    project_id, stage_def, run_id, pipeline_run=pipeline_run
+                )
                 if not ready:
                     # No entities ready — check if any entities exist at all
                     all_entities = self._get_all_entities_for_stage(project_id, stage_def)
                     if not all_entities:
-                        # No entities at all — skip this stage (e.g., no sub-components)
                         logger.info("No entities for stage %s, skipping", stage_def.stage_key)
                         continue
-                    # Entities exist but none are ready — blocked on upstream deps.
-                    # Continue scanning instead of stopping — downstream stages
-                    # for already-approved entities may still be runnable.
-                    has_pending_work = True
-                    # Log why each entity isn't ready for debugging
+                    # Log why entities aren't ready
                     for ek in all_entities[:5]:
                         ex = (
                             self.db.query(StageExecution)
@@ -1073,7 +994,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         break
 
                     # Post-generation hooks (deferred for branching stages until approval)
-                    if execution.status in (StageStatus.AWAITING_REVIEW, StageStatus.APPROVED):
+                    if execution.status == StageStatus.AWAITING_REVIEW:
                         if stage_def.stage_key not in BRANCHING_STAGES:
                             await self._post_generation_hook(
                                 project_id, stage_def, entity_key, execution
@@ -1090,33 +1011,23 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     )
                     return
 
-                # Check if pipeline should pause at this stage
-                if self._should_pause(stage_def, pipeline_run):
-                    awaiting_review = (
-                        self.db.query(StageExecution)
-                        .filter_by(
-                            project_id=project_id,
-                            stage_key=stage_def.stage_key,
-                            run_id=run_id,
-                            status=StageStatus.AWAITING_REVIEW,
-                        )
-                        .count()
-                    )
-                    if awaiting_review > 0:
-                        has_pending_work = True
-                        await ws_manager.broadcast(
-                            project_id,
-                            {
-                                "type": "pipeline_paused",
-                                "stage_key": stage_def.stage_key,
-                                "run_id": run_id,
-                                "message": f"Awaiting review for {stage_def.display_name}",
-                            },
-                        )
-                        return
+                generated_work_this_pass = True
 
-        # If pending work exists, the pipeline isn't finished — just no new work to do
-        if has_pending_work:
+                # Check if pipeline should pause at this stage
+                if self._should_pause(stage_def, pipeline_run, project_id):
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "pipeline_paused",
+                            "stage_key": stage_def.stage_key,
+                            "run_id": run_id,
+                            "message": f"Awaiting review for {stage_def.display_name}",
+                        },
+                    )
+                    return
+
+        # If in-flight work exists, the pipeline isn't finished — just no new work to do
+        if has_inflight_work:
             return
 
         # If we get here, all stages are complete
@@ -1127,6 +1038,13 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             pipeline_run.status = PipelineRunStatus.COMPLETED
             pipeline_run.completed_at = datetime.utcnow()
             self.db.commit()
+
+            # Emit run_completed event
+            self.events.emit(
+                project_id, evt.RUN_COMPLETED,
+                {"run_id": run_id, "status": "completed"},
+                run_id=run_id,
+            )
 
             # Git checkpoint: commit siege-state.json + any remaining changes
             try:
@@ -1284,32 +1202,19 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         if artifact:
                             artifact.ai_review_feedback = feedback
 
-            # Determine if this stage should pause for review
-            is_propagation = pipeline_run and pipeline_run.propagation_run
-            should_await_review = (
-                # Normal behavior: pause if human review enabled for this run
-                (stage_def.human_review_enabled and (not pipeline_run or pipeline_run.human_review))
-                # Propagation runs: always pause for review so user can inspect changes
-                or is_propagation
+            # All generated artifacts go to AWAITING_REVIEW — only human
+            # approval can move them to APPROVED.
+            self._transition_execution(
+                execution, StageStatus.AWAITING_REVIEW,
+                artifact_status=ArtifactStatus.AWAITING_REVIEW,
             )
-            if should_await_review:
-                self._transition_execution(
-                    execution, StageStatus.AWAITING_REVIEW,
-                    artifact_status=ArtifactStatus.AWAITING_REVIEW,
-                )
-            else:
-                self._transition_execution(
-                    execution, StageStatus.APPROVED,
-                    artifact_status=ArtifactStatus.APPROVED,
-                    set_completed=True,
-                )
 
             self.db.commit()
 
             await ws_manager.broadcast(
                 project_id,
                 {
-                    "type": "stage_awaiting_review" if should_await_review else "stage_completed",
+                    "type": "stage_awaiting_review",
                     "stage_key": stage_def.stage_key,
                     "component_key": component_key,
                     "artifact_id": artifact_id,
@@ -1611,6 +1516,19 @@ def _is_component_stage(stage_key: str) -> bool:
 
 def _is_sub_component_stage(stage_key: str) -> bool:
     return stage_key in _SUB_COMPONENT_STAGES
+
+
+def _status_to_event_type(status: StageStatus) -> str | None:
+    """Map a StageStatus to its corresponding event type."""
+    return {
+        StageStatus.RUNNING: evt.STAGE_STARTED,
+        StageStatus.AI_REVIEW: evt.AI_REVIEW_STARTED,
+        StageStatus.AWAITING_REVIEW: evt.AWAITING_HUMAN_REVIEW,
+        StageStatus.APPROVED: evt.HUMAN_APPROVED,
+        StageStatus.REJECTED: evt.HUMAN_REJECTED,
+        StageStatus.FAILED: evt.STAGE_FAILED,
+        StageStatus.SKIPPED: evt.STAGE_SKIPPED,
+    }.get(status)
 
 
 def _stage_key_to_artifact_type(stage_key: str) -> ArtifactType:

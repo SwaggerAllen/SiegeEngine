@@ -23,13 +23,11 @@ logger = logging.getLogger(__name__)
 # Map stage output types to artifact types
 ARTIFACT_TYPE_MAP = {
     "system_requirements": ArtifactType.SYSTEM_REQUIREMENTS,
-    "component_requirements": ArtifactType.COMPONENT_REQUIREMENTS,
     "system_architecture": ArtifactType.SYSTEM_ARCHITECTURE,
     "component_architecture": ArtifactType.COMPONENT_ARCHITECTURE,
     "component_plan": ArtifactType.COMPONENT_PLAN,
     "component_map": ArtifactType.COMPONENT_MAP,
     "sub_component_map": ArtifactType.SUB_COMPONENT_MAP,
-    "sub_component_requirements": ArtifactType.SUB_COMPONENT_REQUIREMENTS,
     "sub_component_architecture": ArtifactType.SUB_COMPONENT_ARCHITECTURE,
     "sub_component_plan": ArtifactType.SUB_COMPONENT_PLAN,
     "code": ArtifactType.CODE,
@@ -39,13 +37,11 @@ ARTIFACT_TYPE_MAP = {
 # Map artifact types to git file paths
 FILE_PATH_MAP = {
     "system_requirements": "requirements/system_requirements.md",
-    "component_requirements": "requirements/components/{component_key}.md",
     "system_architecture": "architecture/system_architecture.md",
     "component_architecture": "architecture/components/{component_key}.md",
     "component_plan": "plans/components/{component_key}.md",
     "component_map": "components/component_map.md",
     "sub_component_map": "components/{component_key}/sub_component_map.md",
-    "sub_component_requirements": "requirements/sub_components/{component_key}.md",
     "sub_component_architecture": "architecture/sub_components/{component_key}.md",
     "sub_component_plan": "plans/sub_components/{component_key}.md",
     "code": "code/{component_key}/generated_code.md",
@@ -367,13 +363,11 @@ def extract_components(content: str) -> list[dict]:
 def _stage_key_to_type(stage_key: str) -> str:
     mapping = {
         "system_requirements": "system_requirements",
-        "component_requirements": "component_requirements",
         "system_architecture": "system_architecture",
         "component_architectures": "component_architecture",
         "component_plans": "component_plan",
         "extract_components": "component_map",
         "extract_sub_components": "sub_component_map",
-        "sub_component_requirements": "sub_component_requirements",
         "sub_component_architectures": "sub_component_architecture",
         "sub_component_plans": "sub_component_plan",
         "code_generation": "code",

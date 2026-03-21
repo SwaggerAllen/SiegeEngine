@@ -26,6 +26,7 @@ from backend.models.pipeline import (
     StageExecution,
 )
 from backend.models.input_document import InputDocument
+from backend.models.pipeline_events import PipelineEvent, PipelineSnapshot
 from backend.models.job import Job
 
 __all__ = [
@@ -59,4 +60,7 @@ __all__ = [
     "PromptConfig",
     "StageDefinition",
     "StageExecution",
+    # Event sourcing
+    "PipelineEvent",
+    "PipelineSnapshot",
 ]

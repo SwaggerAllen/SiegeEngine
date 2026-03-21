@@ -54,8 +54,11 @@ class FanOutStrategy(str, enum.Enum):
 
 
 class StopPoint(str, enum.Enum):
-    AFTER_ALL = "after_all"
+    END_OF_PHASE = "end_of_phase"
     BEFORE_CODE = "before_code"
+    EVERY_ARTIFACT = "every_artifact"
+    # Legacy values kept for migration compatibility
+    AFTER_ALL = "after_all"
     AT_FAN_OUT = "at_fan_out"
     AFTER_TRIPLETS = "after_triplets"
 

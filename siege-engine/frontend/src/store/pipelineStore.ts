@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import * as pipelineApi from '../api/pipeline';
-import type { PipelineConfig, PipelineRun, PipelineStartOptions, StageExecution, WSEvent } from '../types/pipeline';
+import type { PipelineConfig, PipelineRun, PipelineSnapshot, PipelineStartOptions, StageExecution, WSEvent } from '../types/pipeline';
+import { applyWSEvent, emptySnapshot } from './pipelineReducer';
 
 export interface BlockingPR {
   url: string;
@@ -10,6 +11,7 @@ export interface BlockingPR {
 interface PipelineState {
   config: PipelineConfig | null;
   executions: StageExecution[];
+  snapshot: PipelineSnapshot;
   isRunning: boolean;
   isPaused: boolean;
   pausedStage: string | null;
@@ -30,7 +32,7 @@ interface PipelineState {
   resumeStage: (projectId: string, executionId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
   reviseArtifact: (projectId: string, artifactId: string, feedback: string) => Promise<void>;
   resolveStale: (projectId: string, artifactId: string, action: string, notes?: string, editedContent?: string) => Promise<void>;
-  acceptAndCascade: (projectId: string, artifactId: string, notes?: string, editedContent?: string) => Promise<void>;
+  regenDownstream: (projectId: string, artifactId: string) => Promise<void>;
   cancelPipeline: (projectId: string, options?: { open_pr?: boolean; pr_title?: string; pr_body?: string; base_branch?: string }) => Promise<void>;
   resetAll: (projectId: string) => Promise<void>;
   checkBlockingPR: (projectId: string) => Promise<boolean>;
@@ -47,6 +49,7 @@ interface PipelineState {
 export const usePipelineStore = create<PipelineState>((set, get) => ({
   config: null,
   executions: [],
+  snapshot: emptySnapshot(),
   isRunning: false,
   isPaused: false,
   pausedStage: null,
@@ -59,7 +62,7 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   blockingPR: null,
 
   reset: () => set({
-    config: null, executions: [], isRunning: false, isPaused: false, pausedStage: null,
+    config: null, executions: [], snapshot: emptySnapshot(), isRunning: false, isPaused: false, pausedStage: null,
     currentRunNumber: null, runs: [], selectedRunNumber: null, historicalState: null, isViewingHistory: false, lastWSEvent: null, blockingPR: null,
   }),
 
@@ -69,8 +72,16 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   },
 
   fetchStatus: async (projectId) => {
-    const { stages } = await pipelineApi.getPipelineStatus(projectId);
-    set({ executions: stages });
+    const data = await pipelineApi.getPipelineStatus(projectId);
+    const updates: Partial<PipelineState> = { executions: data.stages };
+    // Use snapshot as source of truth for running/paused state
+    if (data.snapshot) {
+      updates.snapshot = data.snapshot;
+      updates.isRunning = data.snapshot.is_running;
+      updates.isPaused = data.snapshot.is_paused;
+      updates.pausedStage = data.snapshot.paused_stage;
+    }
+    set(updates);
   },
 
   fetchRuns: async (projectId) => {
@@ -80,8 +91,7 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       set({
         runs,
         currentRunNumber: activeRun?.run_number ?? (runs.length > 0 ? runs[0].run_number : null),
-        isRunning: activeRun?.status === 'running' || activeRun?.status === 'paused',
-        isPaused: activeRun?.status === 'paused',
+        // isRunning/isPaused now derived from snapshot via fetchStatus and WS events
       });
     } catch (err) {
       console.error('[Pipeline] Failed to fetch runs:', err);
@@ -145,19 +155,16 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
 
   resolveStale: async (projectId, artifactId, action, notes, editedContent) => {
     await pipelineApi.resolveStale(projectId, artifactId, action, notes, editedContent);
-    if (action === 'rejected') {
-      set({ isRunning: true });
-    }
+    // isRunning will be updated by WS events via the reducer
   },
 
-  acceptAndCascade: async (projectId, artifactId, notes, editedContent) => {
-    set({ isRunning: true });
-    await pipelineApi.acceptAndCascade(projectId, artifactId, notes, editedContent);
+  regenDownstream: async (projectId, artifactId) => {
+    await pipelineApi.regenDownstream(projectId, artifactId);
+    // isRunning will be updated by WS events via the reducer
   },
 
   cancelPipeline: async (projectId, options) => {
     const result = await pipelineApi.cancelPipeline(projectId, options);
-    set({ isRunning: false, isPaused: false, pausedStage: null });
     if (result.pr_url) {
       set({ blockingPR: { url: result.pr_url, number: result.pr_number } });
     }
@@ -165,12 +172,14 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       console.error('[Pipeline] PR creation failed:', result.pr_error);
       throw new Error(result.pr_error);
     }
+    // Snapshot reconciles via fetchStatus
     get().fetchRuns(projectId);
+    get().fetchStatus(projectId);
   },
 
   resetAll: async (projectId) => {
     await pipelineApi.resetAll(projectId);
-    set({ isRunning: false, isPaused: false, pausedStage: null });
+    // Snapshot reconciles via fetchStatus
     get().fetchRuns(projectId);
     get().fetchStatus(projectId);
   },
@@ -196,19 +205,16 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
 
   retryStage: async (projectId, executionId) => {
     await pipelineApi.retryStage(projectId, executionId);
-    set({ isRunning: true });
     get().fetchStatus(projectId);
   },
 
   forceRestartStage: async (projectId, executionId) => {
     await pipelineApi.forceRestartStage(projectId, executionId);
-    set({ isRunning: true });
     get().fetchStatus(projectId);
   },
 
   triggerStage: async (projectId, stageKey, componentKey) => {
     await pipelineApi.triggerStage(projectId, stageKey, componentKey);
-    set({ isRunning: true });
     get().fetchStatus(projectId);
   },
 
@@ -235,27 +241,22 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     // Always store the latest event so subscribers (e.g. CommentsPanel) can react
     set({ lastWSEvent: event });
 
-    switch (event.type) {
-      case 'stage_started':
-        set({ isRunning: true, isPaused: false, pausedStage: null });
-        break;
-      case 'pipeline_completed':
-        set((state) => ({
-          isRunning: false,
-          isPaused: false,
-          pausedStage: null,
-          currentRunNumber: event.run_number ?? state.currentRunNumber,
-        }));
-        break;
-      case 'pipeline_paused':
-        set({ isPaused: true, pausedStage: event.stage_key });
-        break;
-      case 'stage_failed':
-        // Refresh executions on next render
-        break;
-      case 'cascade_completed':
-        set({ isRunning: false });
-        break;
+    // Apply event through the reducer to update snapshot + derived state
+    const prevSnapshot = get().snapshot;
+    const newSnapshot = applyWSEvent(prevSnapshot, event);
+
+    const updates: Partial<PipelineState> = {
+      snapshot: newSnapshot,
+      isRunning: newSnapshot.is_running,
+      isPaused: newSnapshot.is_paused,
+      pausedStage: newSnapshot.paused_stage,
+    };
+
+    // Update currentRunNumber on pipeline_completed
+    if (event.type === 'pipeline_completed' && event.run_number) {
+      updates.currentRunNumber = event.run_number;
     }
+
+    set(updates);
   },
 }));

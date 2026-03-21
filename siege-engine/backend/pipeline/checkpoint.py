@@ -70,11 +70,12 @@ def build_siege_state(db: Session, project_id: str, pipeline_run: PipelineRun) -
         "run_id": pipeline_run.run_id,
         "timestamp": datetime.utcnow().isoformat(),
         "config": {
-            "human_review": pipeline_run.human_review,
             "ai_loops": pipeline_run.ai_loops,
             "stop_point": pipeline_run.stop_point.value
             if hasattr(pipeline_run.stop_point, "value")
             else str(pipeline_run.stop_point),
+            "start_stage_key": pipeline_run.start_stage_key,
+            "start_component_key": pipeline_run.start_component_key,
         },
         "artifacts": artifact_list,
         "stage_executions": execution_list,

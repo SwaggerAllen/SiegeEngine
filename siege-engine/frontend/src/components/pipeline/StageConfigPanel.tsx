@@ -2,6 +2,13 @@ import { useEffect, useState } from 'react';
 import { updateStageConfig, resetStageConfig, reconcilePipeline } from '../../api/pipeline';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { useDAGStore } from '../../store/dagStore';
+import type { PipelineStartOptions } from '../../types/pipeline';
+
+const STOP_POINT_OPTIONS = [
+  { value: 'end_of_phase', label: 'End of phase' },
+  { value: 'before_code', label: 'Before code generation' },
+  { value: 'every_artifact', label: 'After every artifact' },
+];
 
 const MODEL_OPTIONS = [
   { value: '', label: 'Pipeline Default' },
@@ -32,6 +39,10 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
   } | null>(null);
 
   const triggerStage = usePipelineStore((s) => s.triggerStage);
+  const startPipeline = usePipelineStore((s) => s.startPipeline);
+  const resumeRun = usePipelineStore((s) => s.resumeRun);
+  const isRunning = usePipelineStore((s) => s.isRunning);
+  const runs = usePipelineStore((s) => s.runs);
 
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -39,9 +50,18 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
   const [triggering, setTriggering] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [repairResult, setRepairResult] = useState<string | null>(null);
+  const [showRunConfig, setShowRunConfig] = useState(false);
+  const [runMode, setRunMode] = useState<'start' | 'resume'>('start');
+  const [aiLoops, setAiLoops] = useState(1);
+  const [stopPoint, setStopPoint] = useState('end_of_phase');
+  const [startingRun, setStartingRun] = useState(false);
   const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
   const fetchStatus = usePipelineStore((s) => s.fetchStatus);
   const fetchRuns = usePipelineStore((s) => s.fetchRuns);
+
+  const hasCompletedRun = runs.some(
+    (r) => r.status === 'completed' || r.status === 'paused' || r.status === 'cancelled' || r.status === 'failed'
+  );
 
   useEffect(() => {
     if (stageDef) {
@@ -220,18 +240,15 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
             />
             <span className="text-sm text-gray-300">AI Review Enabled</span>
           </label>
-          <label className="flex items-center gap-2 cursor-pointer">
+          <div className="flex items-center gap-2 opacity-50">
             <input
               type="checkbox"
-              checked={form.human_review_enabled}
-              onChange={(e) => {
-                setForm({ ...form, human_review_enabled: e.target.checked });
-                setSaved(false);
-              }}
-              className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-900"
+              checked={true}
+              disabled
+              className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-500"
             />
-            <span className="text-sm text-gray-300">Human Review Enabled</span>
-          </label>
+            <span className="text-sm text-gray-400">Human Review (always on)</span>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-gray-700">
@@ -291,6 +308,104 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
             </span>
           )}
         </div>
+
+        {/* Start Run from this stage */}
+        {!isRunning && (
+          <div className="pt-4 border-t border-gray-700">
+            {!showRunConfig ? (
+              <button
+                onClick={() => setShowRunConfig(true)}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded flex items-center gap-1.5"
+              >
+                <span>Start Run from Here</span>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            ) : (
+              <div className="space-y-3 bg-gray-800/50 rounded-lg p-3">
+                <h4 className="text-sm font-semibold text-gray-300">Run Configuration</h4>
+                <p className="text-xs text-gray-400">
+                  Starting from <span className="text-white font-medium">{stageDef.display_name}</span>
+                </p>
+
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Run type</label>
+                  <select
+                    value={runMode}
+                    onChange={(e) => setRunMode(e.target.value as 'start' | 'resume')}
+                    className="w-full px-2 py-1.5 bg-gray-700 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="start">Fresh Start</option>
+                    {hasCompletedRun && <option value="resume">Resume</option>}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">AI self-improvement loops</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={aiLoops}
+                    onChange={(e) => setAiLoops(Math.max(0, Math.min(10, parseInt(e.target.value) || 0)))}
+                    className="w-20 px-2 py-1 bg-gray-700 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Stop at</label>
+                  <select
+                    value={stopPoint}
+                    onChange={(e) => setStopPoint(e.target.value)}
+                    className="w-full px-2 py-1.5 bg-gray-700 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                  >
+                    {STOP_POINT_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      setStartingRun(true);
+                      try {
+                        const options: PipelineStartOptions = {
+                          ai_loops: aiLoops,
+                          stop_point: stopPoint,
+                          start_stage_key: stageKey,
+                        };
+                        if (runMode === 'resume') {
+                          await resumeRun(projectId, options);
+                        } else {
+                          await startPipeline(projectId, options);
+                        }
+                        setShowRunConfig(false);
+                      } catch (err) {
+                        console.error('Run start failed:', err);
+                      } finally {
+                        setStartingRun(false);
+                      }
+                    }}
+                    disabled={startingRun}
+                    className={`px-4 py-2 text-white text-sm rounded disabled:opacity-50 ${
+                      runMode === 'resume' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'
+                    }`}
+                  >
+                    {startingRun ? 'Starting...' : runMode === 'resume' ? 'Resume' : 'Start'}
+                  </button>
+                  <button
+                    onClick={() => setShowRunConfig(false)}
+                    className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
