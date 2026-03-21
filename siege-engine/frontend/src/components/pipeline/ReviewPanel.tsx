@@ -14,6 +14,8 @@ const STOP_POINT_OPTIONS = [
   { value: 'every_artifact', label: 'After every artifact' },
 ];
 
+const STOP_POINT_REGEN = { value: 'regen_downstream', label: 'Regen downstream only' };
+
 /** Inline run controls shown inside the node panel. */
 function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: {
   projectId: string;
@@ -23,7 +25,7 @@ function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: 
 }) {
   const { startPipeline, resumeRun, regenDownstream, isRunning, runs } = usePipelineStore();
   const [expanded, setExpanded] = useState(false);
-  const [mode, setMode] = useState<'start' | 'resume' | 'regen'>('start');
+  const [mode, setMode] = useState<'start' | 'resume'>('start');
   const [aiLoops, setAiLoops] = useState(1);
   const [stopPoint, setStopPoint] = useState('end_of_phase');
   const [starting, setStarting] = useState(false);
@@ -32,12 +34,14 @@ function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: 
     (r) => r.status === 'completed' || r.status === 'paused' || r.status === 'cancelled' || r.status === 'failed'
   );
 
+  const isRegen = stopPoint === 'regen_downstream';
+
   if (isRunning) return null;
 
   const handleStart = async () => {
     setStarting(true);
     try {
-      if (mode === 'regen' && artifactId) {
+      if (isRegen && artifactId) {
         await regenDownstream(projectId, artifactId);
       } else {
         const options: PipelineStartOptions = {
@@ -63,30 +67,15 @@ function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: 
   return (
     <div className="border-t border-gray-700 pt-2 mt-2">
       {!expanded ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setExpanded(true)}
-            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
-          >
-            <span>Start Run</span>
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-          {artifactId && (
-            <button
-              onClick={async () => {
-                setStarting(true);
-                try { await regenDownstream(projectId, artifactId); } catch (err) { console.error(err); }
-                finally { setStarting(false); }
-              }}
-              disabled={starting}
-              className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-            >
-              {starting ? 'Starting...' : 'Regen Downstream'}
-            </button>
-          )}
-        </div>
+        <button
+          onClick={() => setExpanded(true)}
+          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
+        >
+          <span>Start Run</span>
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
       ) : (
         <div className="space-y-3 bg-gray-800/50 rounded-lg p-3">
           <h4 className="text-xs font-semibold text-gray-300">Run Configuration</h4>
@@ -96,60 +85,61 @@ function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: 
             <label className="block text-xs text-gray-400 mb-1">Run type</label>
             <select
               value={mode}
-              onChange={(e) => setMode(e.target.value as 'start' | 'resume' | 'regen')}
+              onChange={(e) => setMode(e.target.value as 'start' | 'resume')}
               className="w-full px-2 py-1.5 bg-gray-700 text-white text-xs rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
             >
               <option value="start">Fresh Start from here</option>
               {hasCompletedRun && <option value="resume">Resume from here</option>}
-              {artifactId && <option value="regen">Regen Downstream</option>}
             </select>
           </div>
 
-          {mode === 'regen' && (
-            <p className="text-xs text-gray-400">
-              Regenerate all already-generated nodes downstream of this artifact.
-            </p>
+          {!isRegen && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">AI self-improvement loops</label>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={aiLoops}
+                onChange={(e) => setAiLoops(Math.max(0, Math.min(10, parseInt(e.target.value) || 0)))}
+                className="w-16 px-2 py-1 bg-gray-700 text-white text-xs rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
           )}
 
-          {mode !== 'regen' && (
-            <>
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">AI self-improvement loops</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={10}
-                  value={aiLoops}
-                  onChange={(e) => setAiLoops(Math.max(0, Math.min(10, parseInt(e.target.value) || 0)))}
-                  className="w-16 px-2 py-1 bg-gray-700 text-white text-xs rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Stop at</label>
-                <select
-                  value={stopPoint}
-                  onChange={(e) => setStopPoint(e.target.value)}
-                  className="w-full px-2 py-1.5 bg-gray-700 text-white text-xs rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
-                >
-                  {STOP_POINT_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-            </>
-          )}
+          {/* Stop point — includes regen downstream when artifact is available */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Stop at</label>
+            <select
+              value={stopPoint}
+              onChange={(e) => setStopPoint(e.target.value)}
+              className="w-full px-2 py-1.5 bg-gray-700 text-white text-xs rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+            >
+              {STOP_POINT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+              {artifactId && (
+                <option value={STOP_POINT_REGEN.value}>{STOP_POINT_REGEN.label}</option>
+              )}
+            </select>
+            {isRegen && (
+              <p className="text-xs text-gray-500 mt-1">
+                Only regenerates already-generated nodes downstream of this artifact.
+              </p>
+            )}
+          </div>
 
           <div className="flex items-center gap-2">
             <button
               onClick={handleStart}
               disabled={starting}
               className={`px-3 py-1.5 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0 ${
-                mode === 'regen' ? 'bg-teal-600 hover:bg-teal-700' :
+                isRegen ? 'bg-teal-600 hover:bg-teal-700' :
                 mode === 'resume' ? 'bg-blue-600 hover:bg-blue-700' :
                 'bg-green-600 hover:bg-green-700'
               }`}
             >
-              {starting ? 'Starting...' : mode === 'regen' ? 'Regen Downstream' : mode === 'resume' ? 'Resume' : 'Start'}
+              {starting ? 'Starting...' : isRegen ? 'Regen Downstream' : mode === 'resume' ? 'Resume' : 'Start'}
             </button>
             <button
               onClick={() => setExpanded(false)}
