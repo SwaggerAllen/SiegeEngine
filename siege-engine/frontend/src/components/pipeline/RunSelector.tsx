@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePipelineStore } from '../../store/pipelineStore';
 import type { PipelineRun } from '../../types/pipeline';
+import { formatDateShort } from '../../utils/dateFormat';
 
 export function RunSelector({ projectId }: { projectId: string }) {
   const { runs, fetchRuns, selectedRunNumber, isViewingHistory, selectRun } =
@@ -87,7 +88,7 @@ export function RunSelector({ projectId }: { projectId: string }) {
                   <span>Run #{run.run_number}</span>
                   {run.completed_at && (
                     <span className="text-xs text-gray-500">
-                      {new Date(run.completed_at).toLocaleDateString()}
+                      {formatDateShort(run.completed_at)}
                     </span>
                   )}
                 </div>

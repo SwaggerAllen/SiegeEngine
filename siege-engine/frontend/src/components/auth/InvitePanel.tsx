@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import { formatFullDateTime } from '../../utils/dateFormat';
 
 interface Invite {
   id: string;
@@ -102,7 +103,7 @@ export function InvitePanel({ onClose }: { onClose: () => void }) {
                     </span>
                   </div>
                   <p className="text-xs text-gray-400">
-                    Expires: {new Date(inv.expires_at).toLocaleString()}
+                    Expires: {formatFullDateTime(inv.expires_at)}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 ml-2 shrink-0">

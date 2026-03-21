@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import * as pipelineApi from '../../api/pipeline';
 import { usePipelineStore } from '../../store/pipelineStore';
 import type { PipelineEvent, PipelineSnapshot } from '../../types/pipeline';
+import { formatDateTimeSec } from '../../utils/dateFormat';
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
   run_created: 'bg-green-700',
@@ -63,14 +64,7 @@ function formatPayload(
 
 function formatTime(isoStr: string | null): string {
   if (!isoStr) return '';
-  const d = new Date(isoStr);
-  return d.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  return formatDateTimeSec(isoStr);
 }
 
 interface Props {
