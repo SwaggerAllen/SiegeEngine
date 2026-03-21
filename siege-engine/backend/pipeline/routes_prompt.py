@@ -46,7 +46,7 @@ def list_prompt_configs(
     config = _get_config_or_404(db, project_id)
 
     result = []
-    for stage_def in config.stages:
+    for stage_def in sorted(config.stages, key=lambda s: s.order_index):
         pc = stage_def.prompt_config
         prompt_class = PROMPT_REGISTRY.get(stage_def.prompt_template_key)
         if pc:
