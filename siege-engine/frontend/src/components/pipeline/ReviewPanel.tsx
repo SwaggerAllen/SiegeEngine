@@ -186,7 +186,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
 
   const isAwaitingReview = execution?.status === 'awaiting_review'
-    || (!execution && artifact.status === 'awaiting_review');
+    || artifact.status === 'awaiting_review';
   const isRestartable = execution && RESTARTABLE_STATUSES.has(execution.status);
   const isStale = artifact.status === 'stale';
   const isBeingRegenerated = isStale && execution && REGENERATING_STATUSES.has(execution.status);
