@@ -90,6 +90,9 @@ def _add_missing_columns():
     inspector = inspect(engine)
 
     _ensure_column(inspector, "pipeline_runs", "propagation_run", "BOOLEAN DEFAULT 0")
+    _ensure_column(inspector, "pipeline_runs", "start_stage_key", "VARCHAR(100)")
+    _ensure_column(inspector, "pipeline_runs", "start_component_key", "VARCHAR(255)")
+    _ensure_column(inspector, "pipeline_runs", "regen_generated_only", "BOOLEAN DEFAULT 0")
     _ensure_column(inspector, "artifact_comments", "updated_at", "DATETIME")
 
 
