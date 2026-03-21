@@ -3,6 +3,7 @@ import Markdown from 'react-markdown';
 import { useProjectStore } from '../../store/projectStore';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { useAuthStore } from '../../store/authStore';
+import { formatDateTime } from '../../utils/dateFormat';
 import { getArtifactHistory, getArtifactVersion } from '../../api/projects';
 import { getPromptPreview } from '../../api/pipeline';
 import type { ArtifactVersion } from '../../api/projects';
@@ -99,11 +100,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   };
 
   // Format timestamp for display
-  const formatDate = (ts: string): string => {
-    const d = new Date(ts);
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
-      ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  };
+  const formatDate = (ts: string): string => formatDateTime(ts);
 
   const handleVersionChange = async (sha: string) => {
     if (!sha) {

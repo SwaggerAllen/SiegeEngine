@@ -132,6 +132,9 @@ class ArtifactOpsMixin:
 
             # Approval is passive — it does NOT trigger run continuation.
             # Users must start a new run to generate downstream work.
+            # But we DO need to complete the run if all stages are done
+            # (e.g. a single-artifact regeneration run).
+            await self._try_complete_run(execution)
 
         elif action == "rejected":
             logger.info(
@@ -396,6 +399,49 @@ class ArtifactOpsMixin:
             )
 
         return stale_artifact_ids
+
+    async def _try_complete_run(self, execution: StageExecution):
+        """Complete the pipeline run if all its executions are finished."""
+        if not execution.run_id:
+            return
+        pipeline_run = self._lookup_pipeline_run(execution.run_id)
+        if not pipeline_run or pipeline_run.status != PipelineRunStatus.RUNNING:
+            return
+
+        # Check if any executions in this run are still in-flight
+        in_flight = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.run_id == execution.run_id,
+                StageExecution.status.in_([
+                    StageStatus.RUNNING,
+                    StageStatus.AI_REVIEW,
+                    StageStatus.AWAITING_REVIEW,
+                    StageStatus.PENDING,
+                ]),
+            )
+            .count()
+        )
+        if in_flight > 0:
+            return
+
+        pipeline_run.status = PipelineRunStatus.COMPLETED
+        pipeline_run.completed_at = datetime.utcnow()
+        self.db.commit()
+
+        self.events.emit(
+            execution.project_id, evt.RUN_COMPLETED,
+            {"run_id": execution.run_id, "status": "completed"},
+            run_id=execution.run_id,
+        )
+
+        await ws_manager.broadcast(
+            execution.project_id,
+            {
+                "type": "pipeline_completed",
+                "run_id": execution.run_id,
+            },
+        )
 
     def _ensure_run_for_regeneration(self, project_id: str, old_run_id: str | None) -> tuple[str, PipelineRun | None]:
         """Ensure a regeneration belongs to a run. Returns (run_id, pipeline_run)."""
@@ -768,6 +814,9 @@ class ArtifactOpsMixin:
                 )
 
             # Approval is passive — does not trigger run continuation.
+            # But complete the run if all stages are done.
+            if execution:
+                await self._try_complete_run(execution)
 
             return
 

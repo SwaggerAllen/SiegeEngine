@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { StageExecution } from '../../types/pipeline';
 import { RESTARTABLE_STATUSES } from '../../types/pipeline';
 import { usePipelineStore } from '../../store/pipelineStore';
+import { formatTime } from '../../utils/dateFormat';
 
 const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
   pending: { bg: 'bg-gray-600', text: 'Pending' },
@@ -15,8 +16,7 @@ const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
 };
 
 function formatTimestamp(ts: string): string {
-  const d = new Date(ts);
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  return formatTime(ts);
 }
 
 function formatDuration(startedAt: string, completedAt: string): string {

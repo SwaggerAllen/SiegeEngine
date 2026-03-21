@@ -3,6 +3,7 @@ import { listComments, createComment, updateComment, deleteComment } from '../..
 import type { Comment } from '../../api/comments';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { useAuthStore } from '../../store/authStore';
+import { formatDateTime } from '../../utils/dateFormat';
 
 interface CommentsPanelProps {
   projectId: string;
@@ -128,15 +129,7 @@ export function CommentsPanel({ projectId, artifactId, compact }: CommentsPanelP
     }
   }
 
-  const formatTime = (iso: string) => {
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
+  const formatTime = (iso: string) => formatDateTime(iso);
 
   if (loading) {
     return (
