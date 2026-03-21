@@ -3,7 +3,6 @@
 import json
 
 from backend.pipeline.nodes.extract_components import (
-    inject_setup_component,
     parse_components_from_content,
     parse_sub_components_from_content,
     validate_dependency_dag,
@@ -95,45 +94,6 @@ class TestParseSubComponentsFromContent:
         result = parse_sub_components_from_content(content)
         assert result["needs_decomposition"] is False
         assert result["components"] == []
-
-
-# ── inject_setup_component ─────────────────────────────────────────
-
-
-class TestInjectSetupComponent:
-    def test_adds_setup_when_missing(self):
-        components = [
-            {"key": "auth", "name": "Auth", "dependencies": []},
-            {"key": "api", "name": "API", "dependencies": ["auth"]},
-        ]
-        result = inject_setup_component(components)
-        assert result[0]["key"] == "project_setup"
-        assert len(result) == 3
-
-    def test_all_components_depend_on_setup(self):
-        components = [
-            {"key": "auth", "name": "Auth", "dependencies": []},
-        ]
-        result = inject_setup_component(components)
-        auth = next(c for c in result if c["key"] == "auth")
-        assert "project_setup" in auth["dependencies"]
-
-    def test_existing_setup_preserved(self):
-        components = [
-            {"key": "project_setup", "name": "Setup", "dependencies": []},
-            {"key": "web", "name": "Web", "dependencies": ["project_setup"]},
-        ]
-        result = inject_setup_component(components)
-        assert result[0]["key"] == "project_setup"
-        assert len(result) == 2
-
-    def test_does_not_duplicate_setup_dependency(self):
-        components = [
-            {"key": "auth", "name": "Auth", "dependencies": ["project_setup"]},
-        ]
-        result = inject_setup_component(components)
-        auth = next(c for c in result if c["key"] == "auth")
-        assert auth["dependencies"].count("project_setup") == 1
 
 
 # ── validate_dependency_dag ────────────────────────────────────────

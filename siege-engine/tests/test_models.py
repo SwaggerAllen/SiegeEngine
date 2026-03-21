@@ -68,7 +68,7 @@ class TestPipelineRunStatus:
 
 class TestStopPoint:
     def test_all_stop_points(self):
-        expected = {"after_all", "before_code", "at_fan_out", "after_triplets"}
+        expected = {"end_of_phase", "before_code", "every_artifact", "after_all", "at_fan_out", "after_triplets"}
         actual = {s.value for s in StopPoint}
         assert actual == expected
 

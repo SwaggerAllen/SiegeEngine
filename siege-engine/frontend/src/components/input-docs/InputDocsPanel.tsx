@@ -45,7 +45,7 @@ export default function InputDocsPanel({ projectId }: InputDocsPanelProps) {
   const [saving, setSaving] = useState(false);
   const [propagating, setPropagating] = useState(false);
   const [isNew, setIsNew] = useState(false);
-  const [_dirty, setDirty] = useState(false);
+  const [, setDirty] = useState(false);
 
   const fetchAll = async () => {
     setLoading(true);
