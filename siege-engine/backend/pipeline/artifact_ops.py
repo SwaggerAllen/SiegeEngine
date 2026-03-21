@@ -535,6 +535,18 @@ class ArtifactOpsMixin:
                 new_execution.id,
             )
 
+            self.events.emit(
+                project_id, evt.STAGE_STARTED,
+                {
+                    "execution_id": new_execution.id,
+                    "stage_key": old_execution.stage_key,
+                    "component_key": old_execution.component_key,
+                    "artifact_id": new_execution.artifact_id,
+                    "trigger": "rejection_regenerate",
+                },
+                run_id=new_execution.run_id,
+            )
+
             await ws_manager.broadcast(
                 project_id,
                 {
@@ -1062,6 +1074,18 @@ class ArtifactOpsMixin:
             artifact.component_key,
         )
 
+        self.events.emit(
+            project_id, evt.STAGE_STARTED,
+            {
+                "execution_id": execution.id,
+                "stage_key": stage_def.stage_key,
+                "component_key": artifact.component_key,
+                "artifact_id": artifact_id,
+                "trigger": "revision",
+            },
+            run_id=run_id,
+        )
+
         await ws_manager.broadcast(
             project_id,
             {
@@ -1193,7 +1217,7 @@ class ArtifactOpsMixin:
                 current_content = existing_artifact.content
 
         input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
-        self._transition_execution(execution, StageStatus.RUNNING, error_message="")
+        self._transition_execution(execution, StageStatus.RUNNING, error_message="", trigger="force_restart")
         execution.retry_count = (execution.retry_count or 0) + 1
         self.db.flush()
 

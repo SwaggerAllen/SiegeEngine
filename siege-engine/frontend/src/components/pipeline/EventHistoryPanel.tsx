@@ -43,11 +43,19 @@ function formatEventType(type: string): string {
   return type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+const TRIGGER_LABELS: Record<string, string> = {
+  pipeline_run: 'Pipeline Run',
+  force_restart: 'Force Restart',
+  rejection_regenerate: 'Rejection Regenerate',
+  revision: 'Revision',
+};
+
 function formatPayload(
   payload: Record<string, unknown>,
   artifactNames: Record<string, string>,
 ): string {
   const parts: string[] = [];
+  if (payload.trigger) parts.push(`via ${TRIGGER_LABELS[String(payload.trigger)] || payload.trigger}`);
   if (payload.stage_key) parts.push(`stage: ${payload.stage_key}`);
   if (payload.component_key) parts.push(`component: ${payload.component_key}`);
   if (payload.artifact_id) {
@@ -60,6 +68,12 @@ function formatPayload(
   if (payload.stale_ids) parts.push(`stale: ${(payload.stale_ids as string[]).length} artifacts`);
   if (parts.length === 0) return JSON.stringify(payload);
   return parts.join(' | ');
+}
+
+function formatError(payload: Record<string, unknown>): string | null {
+  const err = payload.error;
+  if (!err || (typeof err === 'string' && !err.trim())) return null;
+  return String(err);
 }
 
 function formatTime(isoStr: string | null): string {
@@ -345,6 +359,11 @@ export function EventHistoryPanel({ projectId }: Props) {
                         <div className="text-xs text-gray-400 ml-10 truncate">
                           {formatPayload(event.payload, artifactNames)}
                         </div>
+                        {formatError(event.payload) && (
+                          <div className="text-xs text-red-400 ml-10 mt-0.5 truncate" title={formatError(event.payload)!}>
+                            {formatError(event.payload)}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

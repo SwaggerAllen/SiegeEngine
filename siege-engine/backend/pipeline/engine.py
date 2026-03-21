@@ -70,6 +70,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         artifact_status: ArtifactStatus | None = None,
         error_message: str | None = None,
         set_completed: bool = False,
+        trigger: str | None = None,
     ) -> None:
         """Atomically transition execution status and optionally its artifact.
 
@@ -106,6 +107,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     "component_key": execution.component_key,
                     "artifact_id": execution.artifact_id,
                     "error": error_message,
+                    **({"trigger": trigger} if trigger else {}),
                 },
                 run_id=execution.run_id,
             )
@@ -1110,6 +1112,19 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         # Commit the RUNNING execution so other sessions (DAG endpoint) can see it
         self.db.commit()
+
+        # Emit stage_started event for event history
+        self.events.emit(
+            project_id, evt.STAGE_STARTED,
+            {
+                "execution_id": execution.id,
+                "stage_key": stage_def.stage_key,
+                "component_key": component_key,
+                "artifact_id": execution.artifact_id,
+                "trigger": "pipeline_run",
+            },
+            run_id=execution.run_id,
+        )
 
         try:
             await ws_manager.broadcast(
