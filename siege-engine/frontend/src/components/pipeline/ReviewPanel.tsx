@@ -163,7 +163,7 @@ interface ReviewPanelProps {
 const REGENERATING_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
-  const { resumeStage, resolveStale, forceRestartStage, pruneArtifact, cancelStage, config } = usePipelineStore();
+  const { resumeStage, resolveStale, forceRestartStage, pruneArtifact, cancelStage, fetchStatus, config } = usePipelineStore();
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
 
@@ -225,6 +225,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         setEditedContent('');
         setShowEditor(false);
         setFeedbackSaved(false);
+        fetchStatus(projectId);
       }
     } finally {
       setSubmitting(false);
@@ -250,6 +251,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         setEditedContent('');
         setShowEditor(false);
         setFeedbackSaved(false);
+        fetchStatus(projectId);
       }
     } finally {
       setSubmitting(false);
