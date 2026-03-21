@@ -322,7 +322,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   }, [reparseResult]);
 
   // Show restart button for stuck/failed/rejected stages
-  if (!isViewer && isRestartable && !isAwaitingReview) {
+  // Skip if the artifact is actively generating — that has its own UI below
+  if (!isViewer && isRestartable && !isAwaitingReview && !isGenerating) {
     const statusLabel = execution!.status === 'failed' ? 'Failed' :
                         execution!.status === 'rejected' ? 'Rejected' :
                         execution!.status === 'ai_review' ? 'Stuck in AI Review' : 'Stuck (Running)';

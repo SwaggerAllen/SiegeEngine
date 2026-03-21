@@ -477,6 +477,7 @@ class ArtifactOpsMixin:
                 started_at=datetime.utcnow(),
                 run_id=run_id,
                 retry_count=(old_execution.retry_count or 0) + 1,
+                artifact_id=old_execution.artifact_id,
             )
             self.db.add(new_execution)
             self.db.commit()
@@ -1000,6 +1001,7 @@ class ArtifactOpsMixin:
             status=StageStatus.RUNNING,
             started_at=datetime.utcnow(),
             run_id=run_id,
+            artifact_id=artifact_id,
         )
         self.db.add(execution)
         self.db.commit()
