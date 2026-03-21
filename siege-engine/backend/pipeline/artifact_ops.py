@@ -584,6 +584,23 @@ class ArtifactOpsMixin:
                 },
             )
 
+        finally:
+            # Complete the regeneration run so the frontend clears is_running.
+            if run_id:
+                regen_run = self._lookup_pipeline_run(run_id)
+                if regen_run and regen_run.status == PipelineRunStatus.RUNNING:
+                    regen_run.status = PipelineRunStatus.COMPLETED
+                    regen_run.completed_at = datetime.utcnow()
+                    self.db.commit()
+
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "pipeline_completed",
+                        "run_id": run_id,
+                    },
+                )
+
     async def resolve_stale(
         self,
         artifact_id: str,
@@ -1066,6 +1083,17 @@ class ArtifactOpsMixin:
                     "artifact_id": artifact_id,
                     "artifact_status": original_artifact_status.value if original_artifact_status else "approved",
                     "error": str(e),
+                },
+            )
+
+        finally:
+            # Signal the frontend that this single-artifact revision is done
+            # so it clears is_running.
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "pipeline_completed",
+                    "run_id": run_id,
                 },
             )
 
