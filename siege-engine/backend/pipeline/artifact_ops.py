@@ -1208,6 +1208,23 @@ class ArtifactOpsMixin:
         if not artifact:
             raise ValueError("Artifact not found")
 
+        # Guard: skip if there's already a RUNNING execution for this artifact.
+        # Prevents duplicate revisions from rapid UI clicks.
+        already_running = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.artifact_id == artifact_id,
+                StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]),
+            )
+            .first()
+        )
+        if already_running:
+            logger.warning(
+                "Skipping revision for artifact %s: execution %s is already running",
+                artifact_id, already_running.id,
+            )
+            return
+
         # Capture original status for error recovery
         original_artifact_status = artifact.status
 
