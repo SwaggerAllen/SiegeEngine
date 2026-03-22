@@ -567,11 +567,20 @@ def get_status(
     snapshot = es.get_snapshot(project_id)
 
     stage_statuses = snapshot.stage_statuses or {}
+    exec_map = snapshot.execution_map or {}
 
     def _snap_status(e):
-        """Get status from snapshot (source of truth), fall back to DB."""
+        """Get status from snapshot for the CURRENT execution only.
+
+        Only the execution tracked in execution_map gets the live snapshot
+        status.  Historical executions use their own DB status — otherwise
+        every execution for a stage shows the same blinking "running" badge.
+        """
         key = f"{e.stage_key}/{e.component_key}" if e.component_key else e.stage_key
-        return stage_statuses.get(key, e.status.value)
+        tracked = exec_map.get(key, {})
+        if tracked.get("execution_id") == e.id:
+            return stage_statuses.get(key, e.status.value)
+        return e.status.value
 
     return {
         "stages": [
