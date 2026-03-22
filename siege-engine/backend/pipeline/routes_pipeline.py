@@ -304,6 +304,14 @@ async def cancel_pipeline(
             "status": "cancelled",
         }, run_id=r.run_id)
 
+    # Unconditionally clear running state in the snapshot.
+    # RUN_COMPLETED only clears is_running when current_run_id matches,
+    # which can be stale. Force it here since we cancelled everything.
+    snapshot = es.get_snapshot(project_id)
+    snapshot.is_running = False
+    snapshot.is_paused = False
+    snapshot.paused_stage = None
+
     db.commit()
 
     # Broadcast cancellation so the UI updates immediately

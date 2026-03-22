@@ -743,12 +743,16 @@ class ArtifactOpsMixin:
         edited_content: str | None = None,
         user_id: str | None = None,
     ):
-        """Handle approve/reject/save_feedback for a stale artifact."""
+        """Handle approve/reject/save_feedback for a stale or awaiting_review artifact.
+
+        Input documents (project_doc) have no StageExecution and use this
+        endpoint for direct artifact-based approval.
+        """
         artifact = self.db.get(Artifact, artifact_id)
         if not artifact:
             raise ValueError("Artifact not found")
-        if artifact.status != ArtifactStatus.STALE:
-            raise ValueError(f"Artifact is not stale (status={artifact.status.value})")
+        if artifact.status not in (ArtifactStatus.STALE, ArtifactStatus.AWAITING_REVIEW):
+            raise ValueError(f"Artifact is not stale or awaiting_review (status={artifact.status.value})")
 
         project_id = artifact.project_id
 
