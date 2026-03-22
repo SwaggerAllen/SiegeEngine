@@ -40,6 +40,10 @@ from backend.pipeline.nodes.generate import generate
 from backend.pipeline.readiness import (
     ReadinessMixin,
 )
+from backend.pipeline.stage_execution import (
+    StageExecutionContext,
+    StageExecutionStrategy,
+)
 from backend.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -381,81 +385,18 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         pipeline_run: PipelineRun | None,
         component_key: str | None,
     ) -> str:
-        """Trigger a single (non-fan-out) stage."""
-        stage_key = stage_def.stage_key
+        """Trigger a single (non-fan-out) stage via ManualTriggerStrategy."""
+        from backend.pipeline.stage_execution import ManualTriggerStrategy
 
-        # Check for an already-running execution
-        existing = (
-            self.db.query(StageExecution)
-            .filter_by(
-                project_id=project_id,
-                stage_key=stage_key,
-                component_key=component_key,
-                run_id=run_id,
-            )
-            .filter(
-                StageExecution.status.in_(
-                    [StageStatus.RUNNING, StageStatus.AI_REVIEW]
-                )
-            )
-            .first()
-        )
-        if existing:
-            raise ValueError(
-                f"Stage {stage_key} (component={component_key}) is already "
-                f"running (execution {existing.id})"
-            )
-
-        input_artifacts = self._gather_inputs(project_id, stage_def, component_key)
-
-        # Gather any prior feedback
-        feedback_notes = None
-        prev_exec = (
-            self.db.query(StageExecution)
-            .filter_by(
-                project_id=project_id,
-                stage_key=stage_key,
-                component_key=component_key,
-            )
-            .order_by(StageExecution.started_at.desc())
-            .first()
-        )
-        current_content = None
-        if prev_exec and prev_exec.artifact_id:
-            feedback_notes = self._get_feedback_notes(prev_exec.artifact_id)
-            prev_artifact = self.db.get(Artifact, prev_exec.artifact_id)
-            if prev_artifact and prev_artifact.content:
-                current_content = prev_artifact.content
-
-        execution = StageExecution(
+        strategy = ManualTriggerStrategy(
             project_id=project_id,
-            stage_key=stage_key,
-            component_key=component_key,
-            status=StageStatus.RUNNING,
-            started_at=datetime.utcnow(),
+            stage_def=stage_def,
             run_id=run_id,
-        )
-        self.db.add(execution)
-        self.db.flush()
-
-        logger.info(
-            "Manually triggered stage %s (component=%s) execution=%s",
-            stage_key, component_key, execution.id,
-        )
-
-        await self._run_stage(
-            project_id,
-            stage_def,
-            input_artifacts,
-            component_key,
-            execution,
-            run_id,
-            human_notes=feedback_notes,
-            current_content=current_content,
             config=config,
             pipeline_run=pipeline_run,
+            component_key=component_key,
         )
-        # Run completion is handled by _run_stage's finally block.
+        execution = await self.execute_strategy(strategy)
         return execution.id
 
     async def _trigger_fan_out_stage(
@@ -467,14 +408,18 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         pipeline_run: PipelineRun | None,
         component_key: str | None,
     ) -> list[str]:
-        """Trigger a fan-out stage for ready entities (or a specific one)."""
+        """Trigger a fan-out stage for ready entities (or a specific one).
+
+        Creates a ManualTriggerStrategy per entity and calls
+        execute_strategy for each.
+        """
+        from backend.pipeline.stage_execution import ManualTriggerStrategy, SkipExecution
+
         stage_key = stage_def.stage_key
 
         if component_key:
-            # Trigger a specific entity
             entity_keys = [component_key]
         else:
-            # Find all ready entities
             entity_keys = self._get_ready_entities(project_id, stage_def, run_id)
             if not entity_keys:
                 all_entities = self._get_all_entities_for_stage(project_id, stage_def)
@@ -490,83 +435,23 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         execution_ids = []
         for entity_key in entity_keys:
-            # Check for an already-running execution
-            existing = (
-                self.db.query(StageExecution)
-                .filter_by(
-                    project_id=project_id,
-                    stage_key=stage_key,
-                    component_key=entity_key,
-                    run_id=run_id,
-                )
-                .filter(
-                    StageExecution.status.in_(
-                        [StageStatus.RUNNING, StageStatus.AI_REVIEW]
-                    )
-                )
-                .first()
-            )
-            if existing:
-                logger.info(
-                    "Skipping %s/%s — already running (execution %s)",
-                    stage_key, entity_key, existing.id,
-                )
-                continue
-
-            input_artifacts = self._gather_inputs(project_id, stage_def, entity_key)
-
-            # Gather any prior feedback
-            feedback_notes = None
-            current_content = None
-            prev_exec = (
-                self.db.query(StageExecution)
-                .filter_by(
-                    project_id=project_id,
-                    stage_key=stage_key,
-                    component_key=entity_key,
-                )
-                .order_by(StageExecution.started_at.desc())
-                .first()
-            )
-            if prev_exec and prev_exec.artifact_id:
-                feedback_notes = self._get_feedback_notes(prev_exec.artifact_id)
-                prev_artifact = self.db.get(Artifact, prev_exec.artifact_id)
-                if prev_artifact and prev_artifact.content:
-                    current_content = prev_artifact.content
-
-            execution = StageExecution(
+            strategy = ManualTriggerStrategy(
                 project_id=project_id,
-                stage_key=stage_key,
-                component_key=entity_key,
-                status=StageStatus.RUNNING,
-                started_at=datetime.utcnow(),
+                stage_def=stage_def,
                 run_id=run_id,
-            )
-            self.db.add(execution)
-            self.db.flush()
-
-            logger.info(
-                "Manually triggered fan-out stage %s entity=%s execution=%s",
-                stage_key, entity_key, execution.id,
-            )
-
-            await self._run_stage(
-                project_id,
-                stage_def,
-                input_artifacts,
-                entity_key,
-                execution,
-                run_id,
-                human_notes=feedback_notes,
-                current_content=current_content,
                 config=config,
                 pipeline_run=pipeline_run,
+                component_key=entity_key,
             )
+            execution = await self.execute_strategy(strategy)
+            if execution is None:
+                # SkipExecution — already running, continue to next entity
+                continue
             execution_ids.append(execution.id)
 
             if execution.status == StageStatus.FAILED:
                 logger.error(
-                    "Stopping trigger: entity %s failed", entity_key
+                    "Stopping trigger: entity %s failed", entity_key,
                 )
                 break
 
@@ -575,7 +460,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 f"All entities for stage {stage_key} are already running"
             )
 
-        # Run completion is handled by _run_stage's finally block.
         return execution_ids
 
     def _carry_over_approved(self, project_id: str, new_run_id: str) -> int:
@@ -911,17 +795,17 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 self.db.add(execution)
                 self.db.flush()
 
-                await self._run_stage(
-                    project_id,
-                    stage_def,
-                    input_artifacts,
-                    None,
-                    execution,
-                    run_id,
-                    human_notes=rejected_notes,
+                ctx = StageExecutionContext(
+                    project_id=project_id,
+                    stage_def=stage_def,
                     config=config,
+                    execution=execution,
+                    run_id=run_id,
                     pipeline_run=pipeline_run,
+                    input_artifacts=input_artifacts,
+                    human_notes=rejected_notes,
                 )
+                await self._run_stage(ctx)
 
                 if execution.status == StageStatus.FAILED:
                     # Run completion is handled by _run_stage's finally block.
@@ -1015,17 +899,17 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     self.db.add(execution)
                     self.db.flush()
 
-                    await self._run_stage(
-                        project_id,
-                        stage_def,
-                        input_artifacts,
-                        entity_key,
-                        execution,
-                        run_id,
-                        human_notes=rejected_notes,
+                    ctx = StageExecutionContext(
+                        project_id=project_id,
+                        stage_def=stage_def,
                         config=config,
+                        execution=execution,
+                        run_id=run_id,
                         pipeline_run=pipeline_run,
+                        input_artifacts=input_artifacts,
+                        human_notes=rejected_notes,
                     )
+                    await self._run_stage(ctx)
 
                     if execution.status == StageStatus.FAILED:
                         stage_failed = True
@@ -1140,21 +1024,64 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             },
         )
 
+    async def execute_strategy(
+        self,
+        strategy: "StageExecutionStrategy",
+    ) -> StageExecution:
+        """Execute a stage using the given strategy.
+
+        The strategy handles preparation (creating execution, gathering
+        inputs, etc.).  This method calls _run_stage which handles the
+        shared lifecycle (event emission, generation, error handling,
+        run completion).
+        """
+        from backend.pipeline.stage_execution import SkipExecution
+
+        try:
+            ctx = await strategy.prepare(self)
+        except SkipExecution as e:
+            logger.warning("Skipping execution: %s", e)
+            return None
+
+        await ws_manager.broadcast(
+            ctx.project_id,
+            {
+                "type": "stage_started",
+                "stage_key": ctx.stage_def.stage_key,
+                "component_key": ctx.execution.component_key,
+            },
+        )
+
+        await self._run_stage(ctx)
+        return ctx.execution
+
     async def _run_stage(
         self,
-        project_id: str,
-        stage_def: StageDefinition,
-        input_artifacts: dict[str, str],
-        component_key: str | None,
-        execution: StageExecution,
-        run_id: str,
-        human_notes: str | None = None,
-        current_content: str | None = None,
-        config: PipelineConfig | None = None,
-        pipeline_run: PipelineRun | None = None,
-        trigger: str = "pipeline_run",
+        ctx: "StageExecutionContext",
     ):
-        """Run a single stage (generate -> ai_review -> set status)."""
+        """Run a single stage (generate -> ai_review -> set status).
+
+        This is THE single path for all stage execution.  It handles:
+        - STAGE_STARTED event emission
+        - Generation + AI review
+        - Error handling (STAGE_FAILED)
+        - Run completion (_try_complete_run) in the finally block
+
+        Callers provide a StageExecutionContext (built by a strategy or
+        directly by the orchestrator).  Never call this without a context.
+        """
+        # Unpack context for readability within the method body.
+        project_id = ctx.project_id
+        stage_def = ctx.stage_def
+        input_artifacts = ctx.input_artifacts
+        component_key = ctx.execution.component_key
+        execution = ctx.execution
+        run_id = ctx.run_id
+        human_notes = ctx.human_notes
+        current_content = ctx.current_content
+        pipeline_run = ctx.pipeline_run
+        trigger = ctx.trigger
+
         logger.info(
             "_run_stage: stage=%s component=%s execution_id=%s human_notes=%s",
             stage_def.stage_key,

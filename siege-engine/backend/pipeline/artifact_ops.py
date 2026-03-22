@@ -1452,106 +1452,17 @@ class ArtifactOpsMixin:
             )
 
     async def retry_stage(self, execution: StageExecution):
-        """Re-run a failed stage execution.
+        """Re-run a failed stage execution via ForceRestartStrategy.
 
         Creates a NEW execution record (rather than reusing the old one) so
         that each run gets its own execution and retry counts don't accumulate
         across runs.  The old execution stays in its terminal state.
+
+        All setup logic (guard, run creation, input gathering) is in
+        ForceRestartStrategy.prepare().  Lifecycle (event emission, error
+        handling, run completion) is in _run_stage.
         """
-        project_id = execution.project_id
+        from backend.pipeline.stage_execution import ForceRestartStrategy
 
-        # Guard: skip if there's already a RUNNING execution for this stage.
-        already_running = (
-            self.db.query(StageExecution)
-            .filter(
-                StageExecution.project_id == project_id,
-                StageExecution.stage_key == execution.stage_key,
-                StageExecution.component_key == execution.component_key,
-                StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]),
-                StageExecution.id != execution.id,
-            )
-            .first()
-        )
-        if already_running:
-            logger.warning(
-                "Skipping retry for stage %s: execution %s is already running",
-                execution.stage_key, already_running.id,
-            )
-            return
-
-        config = self._get_config(project_id)
-        if not config:
-            raise ValueError("Pipeline config not found")
-
-        stage_def = next(
-            (s for s in config.stages if s.stage_key == execution.stage_key),
-            None,
-        )
-        if not stage_def:
-            raise ValueError(f"Stage definition not found: {execution.stage_key}")
-
-        # Ensure we have an active run — reuse an existing RUNNING run or
-        # create a new single-artifact run so the execution is always tracked.
-        run_id, pipeline_run = self._ensure_active_run(project_id, execution.run_id)
-
-        if execution.artifact_id:
-            artifact = self.db.get(Artifact, execution.artifact_id)
-            if artifact and artifact.status != ArtifactStatus.PENDING:
-                self._mark_artifact_status(execution.artifact_id, ArtifactStatus.PENDING)
-
-        # Gather feedback notes and current content so the retry builds on
-        # the previous version rather than generating from scratch.
-        feedback_notes = (
-            self._get_feedback_notes(execution.artifact_id)
-            if execution.artifact_id
-            else None
-        )
-        current_content = None
-        if execution.artifact_id:
-            existing_artifact = self.db.get(Artifact, execution.artifact_id)
-            if existing_artifact and existing_artifact.content:
-                current_content = existing_artifact.content
-
-        # Create a NEW execution instead of reusing the old one.  This avoids
-        # reusing the same execution across multiple runs (which caused
-        # duplicate stage_started events and unbounded retry_count growth).
-        new_execution = StageExecution(
-            project_id=project_id,
-            stage_key=execution.stage_key,
-            component_key=execution.component_key,
-            status=StageStatus.RUNNING,
-            started_at=datetime.utcnow(),
-            run_id=run_id,
-            retry_count=(execution.retry_count or 0) + 1,
-            artifact_id=execution.artifact_id,
-        )
-        self.db.add(new_execution)
-        self.db.flush()
-
-        input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
-
-        await ws_manager.broadcast(
-            project_id,
-            {
-                "type": "stage_started",
-                "stage_key": execution.stage_key,
-                "component_key": execution.component_key,
-            },
-        )
-
-        # _run_stage emits the STAGE_STARTED event itself, so we don't call
-        # _transition_execution here (which would emit a duplicate event).
-        await self._run_stage(
-            project_id,
-            stage_def,
-            input_artifacts,
-            new_execution.component_key,
-            new_execution,
-            run_id,
-            human_notes=feedback_notes,
-            current_content=current_content,
-            config=config,
-            pipeline_run=pipeline_run,
-            trigger="force_restart",
-        )
-        # Run completion is handled by _run_stage's finally block.
+        strategy = ForceRestartStrategy(execution)
+        await self.execute_strategy(strategy)
