@@ -1266,6 +1266,36 @@ def reconcile_statuses(
             ) and not execution.completed_at:
                 execution.completed_at = datetime.utcnow()
 
+    # Fix orphaned RUNNING executions not tracked by the snapshot.
+    # These are executions that exist in DB as RUNNING but the snapshot's
+    # execution_map doesn't reference them (e.g., created before a crash).
+    tracked_exec_ids = {
+        entry.get("execution_id")
+        for entry in snap_exec_map.values()
+        if entry.get("execution_id")
+    }
+    orphan_executions = (
+        db.query(StageExecution)
+        .filter(
+            StageExecution.project_id == project_id,
+            StageExecution.status.in_([
+                StageStatus.RUNNING, StageStatus.AI_REVIEW,
+            ]),
+            StageExecution.id.notin_(tracked_exec_ids) if tracked_exec_ids else True,
+        )
+        .all()
+    )
+    for orphan in orphan_executions:
+        corrections.append({
+            "type": "orphan_execution",
+            "id": orphan.id,
+            "stage_key": orphan.stage_key,
+            "from": orphan.status.value,
+            "to": "failed",
+        })
+        orphan.status = StageStatus.FAILED
+        orphan.completed_at = orphan.completed_at or datetime.utcnow()
+
     # Fix stuck runs: if snapshot says not running, complete any RUNNING runs.
     snap_is_running = snapshot.is_running
     snap_run_statuses = snapshot.run_status or {}
