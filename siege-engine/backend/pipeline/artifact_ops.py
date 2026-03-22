@@ -482,13 +482,25 @@ class ArtifactOpsMixin:
         if in_flight > 0:
             return
 
-        pipeline_run.status = PipelineRunStatus.COMPLETED
+        # Determine final status: FAILED if any execution failed, else COMPLETED
+        has_failure = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.run_id == execution.run_id,
+                StageExecution.status == StageStatus.FAILED,
+            )
+            .count()
+        ) > 0
+        final_status = PipelineRunStatus.FAILED if has_failure else PipelineRunStatus.COMPLETED
+        status_str = "failed" if has_failure else "completed"
+
+        pipeline_run.status = final_status
         pipeline_run.completed_at = datetime.utcnow()
         self.db.commit()
 
         self.events.emit(
             execution.project_id, evt.RUN_COMPLETED,
-            {"run_id": execution.run_id, "status": "completed"},
+            {"run_id": execution.run_id, "status": status_str},
             run_id=execution.run_id,
         )
 
@@ -1539,3 +1551,8 @@ class ArtifactOpsMixin:
             pipeline_run=pipeline_run,
             trigger="force_restart",
         )
+
+        # Complete the run if the execution finished (success or failure).
+        # Without this, the run stays stuck as RUNNING forever when the
+        # stage fails — nobody else is watching for this run to finish.
+        await self._try_complete_run(new_execution)
