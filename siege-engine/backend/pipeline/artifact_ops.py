@@ -628,6 +628,7 @@ class ArtifactOpsMixin:
                 self.db,
                 human_notes=feedback_notes,
                 current_content=existing_content,
+                execution_id=new_execution.id,
             )
             new_execution.artifact_id = artifact_id
 
@@ -1227,6 +1228,7 @@ class ArtifactOpsMixin:
                 self.db,
                 human_notes=accumulated,
                 current_content=existing_content,
+                execution_id=execution.id,
             )
             execution.artifact_id = new_artifact_id
 
