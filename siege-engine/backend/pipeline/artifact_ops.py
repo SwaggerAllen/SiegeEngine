@@ -1554,8 +1554,4 @@ class ArtifactOpsMixin:
             pipeline_run=pipeline_run,
             trigger="force_restart",
         )
-
-        # Complete the run if the execution finished (success or failure).
-        # Without this, the run stays stuck as RUNNING forever when the
-        # stage fails — nobody else is watching for this run to finish.
-        await self._try_complete_run(new_execution)
+        # Run completion is handled by _run_stage's finally block.
