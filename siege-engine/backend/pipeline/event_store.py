@@ -41,6 +41,11 @@ class EventStore:
             payload=payload,
         )
         self.db.add(event)
+        # Flush so the next _next_sequence() call sees this event's sequence.
+        # Without this, multiple emit() calls in the same transaction get
+        # duplicate sequence numbers (autoflush is off), violating
+        # uq_event_project_sequence and causing a 500.
+        self.db.flush()
 
         # Update materialized snapshot
         snapshot = self._get_or_create_snapshot(project_id)
