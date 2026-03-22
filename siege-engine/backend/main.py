@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -120,11 +121,17 @@ def _log_db_diagnostics():
 
 
 def _recover_crashed_executions():
-    """Mark RUNNING/AI_REVIEW executions as FAILED after a server restart."""
-    from backend.models import StageExecution, StageStatus
+    """Mark RUNNING/AI_REVIEW executions as FAILED after a server restart.
+
+    Also marks any RUNNING pipeline runs as FAILED so the DAG and run
+    history accurately reflect the crash.
+    """
+    from backend.models import PipelineRun, PipelineRunStatus, StageExecution, StageStatus
 
     db = SessionLocal()
     try:
+        now = datetime.utcnow()
+
         stuck = (
             db.query(StageExecution)
             .filter(StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]))
@@ -135,6 +142,20 @@ def _recover_crashed_executions():
             for execution in stuck:
                 execution.status = StageStatus.FAILED
                 execution.error_message = "Server restarted during execution"
+                execution.completed_at = now
+
+        stuck_runs = (
+            db.query(PipelineRun)
+            .filter(PipelineRun.status == PipelineRunStatus.RUNNING)
+            .all()
+        )
+        if stuck_runs:
+            logger.warning("Recovering %d stuck pipeline runs from previous run", len(stuck_runs))
+            for run in stuck_runs:
+                run.status = PipelineRunStatus.FAILED
+                run.completed_at = now
+
+        if stuck or stuck_runs:
             db.commit()
     finally:
         db.close()
