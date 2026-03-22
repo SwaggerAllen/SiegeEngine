@@ -1354,6 +1354,15 @@ class ArtifactOpsMixin:
         execution.retry_count = (execution.retry_count or 0) + 1
         self.db.flush()
 
+        await ws_manager.broadcast(
+            project_id,
+            {
+                "type": "stage_started",
+                "stage_key": execution.stage_key,
+                "component_key": execution.component_key,
+            },
+        )
+
         await self._run_stage(
             project_id,
             stage_def,
