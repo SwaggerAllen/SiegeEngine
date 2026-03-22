@@ -23,7 +23,7 @@ from backend.models import (
     User,
 )
 from backend.pipeline.engine import PipelineEngine
-from backend.pipeline.queue import cancel_jobs_by_type, enqueue
+from backend.pipeline.queue import cancel_jobs_by_type, cancel_running_execution, enqueue
 from backend.pipeline.schemas import (
     CancelRequest,
     PipelineStartRequest,
@@ -253,9 +253,21 @@ async def cancel_pipeline(
         )
         .all()
     )
+    # Kill CLI processes and cancel worker tasks for each running execution
     for e in running:
+        cancel_running_execution(e.id)
         e.status = StageStatus.FAILED
         e.error_message = "Cancelled by user"
+
+    # Cancel all queued jobs for this project's executions
+    all_exec_ids = {e.id for e in running}
+    from backend.models.job import Job
+    queued_jobs = db.query(Job).filter_by(status="queued").all()
+    for job in queued_jobs:
+        payload = job.payload or {}
+        # Cancel jobs that reference this project or any of its executions
+        if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
+            job.status = "cancelled"
 
     # Reset in-progress artifacts back to pending so they don't stay stuck
     in_progress_artifacts = (
@@ -278,6 +290,15 @@ async def cancel_pipeline(
         r.completed_at = datetime.utcnow()
 
     db.commit()
+
+    # Broadcast cancellation so the UI updates immediately
+    await ws_manager.broadcast(
+        project_id,
+        {
+            "type": "pipeline_cancelled",
+            "cancelled_count": len(running),
+        },
+    )
 
     result = {"status": "cancelled", "cancelled_count": len(running)}
 
