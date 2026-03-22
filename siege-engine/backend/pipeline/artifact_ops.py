@@ -531,6 +531,17 @@ class ArtifactOpsMixin:
         self.db.add(new_run)
         self.db.flush()
 
+        self.events.emit(
+            project_id, evt.RUN_CREATED,
+            {
+                "run_id": new_run.run_id,
+                "run_number": new_run.run_number,
+                "ai_loops": new_run.ai_loops,
+                "stop_point": new_run.stop_point.value,
+            },
+            run_id=new_run.run_id,
+        )
+
         logger.info(
             "Created regeneration run #%d (run_id=%s) for project %s",
             new_run.run_number, new_run.run_id, project_id,
@@ -736,22 +747,9 @@ class ArtifactOpsMixin:
                 },
             )
 
-        finally:
-            # Complete the regeneration run so the frontend clears is_running.
-            if run_id:
-                regen_run = self._lookup_pipeline_run(run_id)
-                if regen_run and regen_run.status == PipelineRunStatus.RUNNING:
-                    regen_run.status = PipelineRunStatus.COMPLETED
-                    regen_run.completed_at = datetime.utcnow()
-                    self.db.commit()
-
-                await ws_manager.broadcast(
-                    project_id,
-                    {
-                        "type": "pipeline_completed",
-                        "run_id": run_id,
-                    },
-                )
+            # Complete the run if all executions are now terminal
+            if new_execution is not None:
+                await self._try_complete_run(new_execution)
 
     async def resolve_stale(
         self,
