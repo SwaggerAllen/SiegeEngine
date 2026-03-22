@@ -592,6 +592,192 @@ def get_snapshot(
     }
 
 
+@pipeline_router.get("/{project_id}/debug-state")
+def get_debug_state(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return complete pipeline state for debugging."""
+    from backend.models.job import Job
+    from backend.models.pipeline_events import PipelineEvent
+    from backend.pipeline.event_store import EventStore
+
+    _get_project_or_404(db, project_id)
+
+    # Snapshot (full)
+    es = EventStore(db)
+    snapshot = es.get_snapshot(project_id)
+    snapshot_data = {
+        "is_running": snapshot.is_running,
+        "is_paused": snapshot.is_paused,
+        "paused_stage": snapshot.paused_stage,
+        "current_run_id": snapshot.current_run_id,
+        "last_sequence": snapshot.last_sequence,
+        "run_status": snapshot.run_status or {},
+        "stage_statuses": snapshot.stage_statuses or {},
+        "artifact_statuses": snapshot.artifact_statuses or {},
+        "artifact_versions": snapshot.artifact_versions or {},
+        "stage_errors": snapshot.stage_errors or {},
+        "stage_triggers": snapshot.stage_triggers or {},
+        "artifact_meta": snapshot.artifact_meta or {},
+        "artifact_git_shas": snapshot.artifact_git_shas or {},
+        "comment_counts": snapshot.comment_counts or {},
+        "cascade_parents": snapshot.cascade_parents or {},
+    }
+
+    # Runs
+    runs = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id)
+        .order_by(PipelineRun.run_number.desc())
+        .all()
+    )
+    runs_data = [
+        {
+            "run_number": r.run_number,
+            "run_id": r.run_id,
+            "status": r.status.value,
+            "ai_loops": r.ai_loops,
+            "human_review": r.human_review,
+            "stop_point": r.stop_point.value,
+            "propagation_run": r.propagation_run,
+            "start_stage_key": r.start_stage_key,
+            "start_component_key": r.start_component_key,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+        }
+        for r in runs
+    ]
+
+    # Executions
+    executions = (
+        db.query(StageExecution)
+        .filter_by(project_id=project_id)
+        .order_by(StageExecution.started_at.desc().nullslast())
+        .all()
+    )
+    exec_data = [
+        {
+            "id": e.id,
+            "stage_key": e.stage_key,
+            "component_key": e.component_key,
+            "status": e.status.value,
+            "artifact_id": e.artifact_id,
+            "run_id": e.run_id,
+            "error_message": e.error_message,
+            "retry_count": e.retry_count,
+            "started_at": e.started_at.isoformat() if e.started_at else None,
+            "completed_at": e.completed_at.isoformat() if e.completed_at else None,
+        }
+        for e in executions
+    ]
+
+    # Artifacts
+    artifacts = (
+        db.query(Artifact)
+        .filter_by(project_id=project_id)
+        .all()
+    )
+    artifact_data = [
+        {
+            "id": a.id,
+            "name": a.name,
+            "artifact_type": a.artifact_type.value,
+            "component_key": a.component_key,
+            "status": a.status.value,
+            "version": a.version,
+            "content_length": len(a.content) if a.content else 0,
+            "file_path": a.file_path,
+            "git_commit_sha": a.git_commit_sha,
+        }
+        for a in artifacts
+    ]
+
+    # Recent events (last 50)
+    events = (
+        db.query(PipelineEvent)
+        .filter_by(project_id=project_id)
+        .order_by(PipelineEvent.sequence.desc())
+        .limit(50)
+        .all()
+    )
+    event_data = [
+        {
+            "sequence": ev.sequence,
+            "event_type": ev.event_type,
+            "run_id": ev.run_id,
+            "payload": ev.payload,
+            "created_at": ev.created_at.isoformat() if ev.created_at else None,
+        }
+        for ev in reversed(events)  # chronological order
+    ]
+
+    # Active jobs
+    jobs = (
+        db.query(Job)
+        .filter(Job.status.in_(["queued", "running"]))
+        .all()
+    )
+    # Filter to this project's jobs
+    job_data = []
+    for j in jobs:
+        payload = j.payload or {}
+        if payload.get("project_id") == project_id:
+            job_data.append({
+                "id": j.id,
+                "job_type": j.job_type,
+                "status": j.status,
+                "payload": payload,
+                "created_at": j.created_at.isoformat() if j.created_at else None,
+            })
+
+    # Snapshot vs DB mismatches
+    mismatches = []
+    snap_artifact_statuses = snapshot_data["artifact_statuses"]
+    for a in artifact_data:
+        snap_status = snap_artifact_statuses.get(a["id"])
+        db_status = a["status"]
+        if snap_status and snap_status != db_status:
+            mismatches.append({
+                "type": "artifact_status",
+                "id": a["id"],
+                "name": a["name"],
+                "snapshot": snap_status,
+                "db": db_status,
+            })
+
+    snap_stage_statuses = snapshot_data["stage_statuses"]
+    # Build a map of current execution status per stage key
+    exec_by_stage: dict[str, str] = {}
+    for e in exec_data:
+        key = e["stage_key"]
+        if e["component_key"]:
+            key += f":{e['component_key']}"
+        # Keep the most recent (first in list since sorted desc)
+        if key not in exec_by_stage:
+            exec_by_stage[key] = e["status"]
+    for key, snap_status in snap_stage_statuses.items():
+        db_status = exec_by_stage.get(key)
+        if db_status and snap_status != db_status:
+            mismatches.append({
+                "type": "stage_status",
+                "key": key,
+                "snapshot": snap_status,
+                "db": db_status,
+            })
+
+    return {
+        "snapshot": snapshot_data,
+        "runs": runs_data,
+        "executions": exec_data,
+        "artifacts": artifact_data,
+        "events": event_data,
+        "jobs": job_data,
+        "mismatches": mismatches,
+    }
+
+
 @pipeline_router.get("/{project_id}/events")
 def list_events(
     project_id: str,
