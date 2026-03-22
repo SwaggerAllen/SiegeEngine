@@ -455,6 +455,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             config=config,
             pipeline_run=pipeline_run,
         )
+
+        # Complete the run if the execution finished (success or failure).
+        await self._try_complete_run(execution)
         return execution.id
 
     async def _trigger_fan_out_stage(
@@ -573,6 +576,12 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             raise ValueError(
                 f"All entities for stage {stage_key} are already running"
             )
+
+        # Complete the run if all triggered executions finished.
+        if execution_ids:
+            last_exec = self.db.get(StageExecution, execution_ids[-1])
+            if last_exec:
+                await self._try_complete_run(last_exec)
 
         return execution_ids
 
