@@ -80,6 +80,7 @@ export function useWebSocket(projectId: string | undefined) {
         data.type === 'stage_awaiting_review' ||
         data.type === 'stage_failed' ||
         data.type === 'pipeline_completed' ||
+        data.type === 'pipeline_cancelled' ||
         data.type === 'pipeline_paused' ||
         data.type === 'staleness_propagated' ||
         data.type === 'artifact_pruned'

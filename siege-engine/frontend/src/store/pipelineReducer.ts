@@ -82,6 +82,12 @@ export function applyWSEvent(snapshot: PipelineSnapshot, event: WSEvent): Pipeli
       }
       break;
 
+    case 'pipeline_cancelled':
+      snap.is_running = false;
+      snap.is_paused = false;
+      snap.paused_stage = null;
+      break;
+
     case 'pipeline_paused':
       snap.is_paused = true;
       snap.paused_stage = event.stage_key;

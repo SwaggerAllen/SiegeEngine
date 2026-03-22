@@ -337,15 +337,24 @@ async def worker_loop(poll_interval: float = 5.0) -> None:
     logger.info(f"Job queue worker started (id={_WORKER_ID})")
 
     while not _shutdown_event.is_set():
-        # Wait for either a job notification or the poll timeout
+        # Wait for either a job notification, shutdown, or the poll timeout
         _job_notify.clear()
+        shutdown_task = asyncio.create_task(_shutdown_event.wait())
+        notify_task = asyncio.create_task(_job_notify.wait())
         try:
-            await asyncio.wait_for(_shutdown_event.wait(), timeout=poll_interval)
-            break  # Shutdown signaled
-        except asyncio.TimeoutError:
-            pass
-
-        # Also check if we were notified
+            done, pending = await asyncio.wait(
+                [shutdown_task, notify_task],
+                timeout=poll_interval,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for t in (shutdown_task, notify_task):
+                if not t.done():
+                    t.cancel()
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
         if _shutdown_event.is_set():
             break
 
