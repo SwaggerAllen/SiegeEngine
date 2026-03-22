@@ -626,6 +626,7 @@ def get_snapshot(
 @pipeline_router.get("/{project_id}/debug-state")
 def get_debug_state(
     project_id: str,
+    max_events: int = 30,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
@@ -726,12 +727,13 @@ def get_debug_state(
         for a in artifacts
     ]
 
-    # Recent events (last 50)
+    # Recent events (capped)
+    event_limit = min(max(max_events, 10), 200)
     events = (
         db.query(PipelineEvent)
         .filter_by(project_id=project_id)
         .order_by(PipelineEvent.sequence.desc())
-        .limit(50)
+        .limit(event_limit)
         .all()
     )
     event_data = [
