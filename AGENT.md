@@ -142,7 +142,7 @@ The debug dump has these sections, in order:
 | `backend/pipeline/engine.py` | `_run_stage` (takes `StageExecutionContext`), `execute_strategy`, `_find_and_execute_next` — the stage execution lifecycle |
 | `backend/pipeline/reducer.py` | Pure event reducer — maps event types to snapshot mutations. No DB access. |
 | `backend/pipeline/event_store.py` | `emit()` — appends event, flushes, updates materialized snapshot. `rebuild_snapshot()` — replays all events from scratch. |
-| `backend/pipeline/queue.py` | Job queue worker. `recover_stale_jobs()` re-queues running jobs on restart. `_handle_resume_stage` / `_handle_retry_stage` — job handlers. |
+| `backend/pipeline/queue.py` | Job queue worker. `_handle_resume_stage` / `_handle_retry_stage` — job handlers. `cancel_all_stale_jobs()` cleans up on startup. |
 | `backend/pipeline/routes_pipeline.py` | `reconcile_statuses` — the repair endpoint. `debug_state` — generates the debug dump. |
 | `frontend/src/pages/ProjectDashboardPage.tsx` | Debug button, repair button, repair handler |
 | `frontend/src/components/pipeline/DebugStatePanel.tsx` | Formats the debug dump text |
@@ -164,7 +164,7 @@ The debug dump has these sections, in order:
 
 4. **Job dedup**: `enqueue()` has no built-in deduplication. Call `cancel_jobs_by_type()` before `enqueue()` to prevent duplicate jobs (see `routes_stage.py` `force_restart_stage` and `trigger_stage` for examples).
 
-5. **recover_stale_jobs on restart**: When the server restarts, `recover_stale_jobs()` re-queues any jobs that were running. If the previous handler already created an execution before the crash, the re-queued handler will try to create another one — the concurrency guard (pitfall #3) prevents this from causing duplicates.
+5. **No stale job recovery**: `recover_stale_jobs()` was removed. On server restart, the startup reconciliation marks orphaned RUNNING executions as FAILED and completes stuck runs. Users restart work manually via the UI, which creates fresh runs and executions rather than resuming stale state.
 
 6. **Stage execution strategy pattern**: All stage execution goes through `_run_stage(ctx: StageExecutionContext)`, which handles the shared lifecycle (STAGE_STARTED event, generation, AI review, error handling, artifact recovery, run completion via `_try_complete_run` in its `finally` block). Trigger-specific setup lives in strategy classes in `stage_execution.py`:
    - `ForceRestartStrategy` — force-restart a failed/stuck execution
@@ -173,6 +173,18 @@ The debug dump has these sections, in order:
    - `ArtifactRevisionStrategy` — revise an approved artifact with feedback
 
    To add a new trigger: subclass `StageExecutionStrategy`, implement `prepare()`, call `engine.execute_strategy(strategy)`. The orchestrator (`_find_and_execute_next`) builds `StageExecutionContext` directly since it has complex multi-stage logic. Context fields `error_artifact_status` and `original_artifact_id` control error recovery per trigger type.
+
+7. **Run completion must be centralized**: `_try_complete_run()` is called in `_run_stage`'s `finally` block — this is the ONE place where runs are completed. Earlier bugs had run completion scattered across callers (`retry_stage`, `trigger_stage`, etc.) or missing entirely, causing zombie runs that stayed RUNNING forever. Never add run completion logic outside of `_run_stage`'s finally.
+
+8. **Snapshot status vs DB status in API responses**: The `/status` endpoint uses snapshot `stage_statuses` as the source of truth for execution badges. But it must only apply the snapshot status to the **current** execution (the one in `execution_map`). Historical executions must use their own DB status. Otherwise every execution for a stage shows the same badge (e.g., all 21 executions for `system_architecture` blinking "Running").
+
+9. **Startup reconciliation**: On server startup, `auto_reconcile_all_projects()` runs for every project. It rebuilds snapshots from events, syncs DB projections, marks orphaned RUNNING executions as FAILED, completes stuck runs, and cancels stale queued jobs. This replaces the old `recover_stale_jobs()` approach which tried to resume work and caused duplicate executions.
+
+10. **Pipeline reset must clear everything**: `reset_all` must clear: all executions, all artifacts, all events, all pipeline snapshots, all component definitions, all prompt configs, AND all queued jobs. Missing any of these causes ghost state (e.g., zombie `run_status` entries from the snapshot surviving a reset, or stale jobs re-triggering after reset).
+
+11. **DB projections are write-only for pipeline state**: `Artifact.status`, `StageExecution.status`, and similar DB fields are updated for query convenience and UI display, but pipeline state decisions must ALWAYS read from the `PipelineSnapshot`. When drift is detected between snapshot and DB, the snapshot wins. The reconcile endpoint fixes drift by syncing DB → snapshot.
+
+12. **CLI concurrency**: `MAX_CONCURRENT_LLM_CALLS` is set to 1. Higher values caused resource issues. The semaphore in `cli/manager.py` enforces this. Don't increase without load testing.
 
 ## Development Principles
 
