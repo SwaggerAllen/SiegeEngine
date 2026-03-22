@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     default_temperature: float = 0.3
 
     # Rate Limiting
-    max_concurrent_llm_calls: int = 5
+    max_concurrent_llm_calls: int = 1
     llm_retry_max_attempts: int = 3
     llm_retry_base_delay: float = 1.0
 
