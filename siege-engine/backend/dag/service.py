@@ -20,17 +20,42 @@ from backend.models import (
 def _get_latest_run_executions(
     db: Session, project_id: str
 ) -> tuple[PipelineRun | None, list[StageExecution]]:
-    """Return (latest_run, executions) for a project, scoped to the latest run."""
+    """Return (latest_run, executions) for a project.
+
+    Includes executions from the latest pipeline run **plus** any executions
+    that started after it (out-of-run activity such as stale approvals,
+    revisions, or post-run reviews).  This ensures the DAG reflects the
+    current state even when actions happen outside a formal run.
+    """
     latest_run = (
         db.query(PipelineRun)
         .filter_by(project_id=project_id)
         .order_by(PipelineRun.run_number.desc())
         .first()
     )
-    exec_query = db.query(StageExecution).filter_by(project_id=project_id)
-    if latest_run:
-        exec_query = exec_query.filter_by(run_id=latest_run.run_id)
-    return latest_run, exec_query.all()
+    if not latest_run:
+        return None, db.query(StageExecution).filter_by(project_id=project_id).all()
+
+    # Executions belonging to the latest run
+    run_execs = (
+        db.query(StageExecution)
+        .filter_by(project_id=project_id, run_id=latest_run.run_id)
+        .all()
+    )
+
+    # Also include executions that don't belong to this run but started
+    # after the run was created (out-of-run approvals, revisions, etc.)
+    out_of_run_execs = (
+        db.query(StageExecution)
+        .filter(
+            StageExecution.project_id == project_id,
+            StageExecution.run_id != latest_run.run_id,
+            StageExecution.started_at > latest_run.started_at,
+        )
+        .all()
+    )
+
+    return latest_run, run_execs + out_of_run_execs
 
 
 def build_dependency_graph(db: Session, project_id: str) -> dict[str, list[str]]:
