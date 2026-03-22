@@ -46,16 +46,22 @@ async def lifespan(app: FastAPI):
     # One-time clean slate migration: reset pipeline state, preserve documents
     _clean_slate_migration()
 
+    # Cancel stale jobs BEFORE reconciling so the zombie execution check
+    # sees an empty job table and correctly marks everything as dead.
+    from backend.pipeline.queue import recover_stale_jobs, shutdown_worker, worker_loop
+
+    _cancel_all_jobs_on_startup()
+
     # Startup recovery: reconcile all projects (rebuild snapshots, fix
     # projection drift, kill orphaned executions, complete zombie runs).
+    # At boot time no processes are alive, so every RUNNING execution is
+    # a zombie — the reconciler detects this via the empty job table.
     _reconcile_all_projects()
 
     # One-time migration: move human_review_notes → ArtifactComment records
     _migrate_feedback_to_comments()
 
-    # Recover stale jobs and start the job queue worker
-    from backend.pipeline.queue import recover_stale_jobs, shutdown_worker, worker_loop
-
+    # Re-queue any jobs that should be retried, then start the worker
     db = SessionLocal()
     try:
         recover_stale_jobs(db)
@@ -313,6 +319,36 @@ def _clean_slate_migration():
 
     except Exception:
         logger.exception("Clean slate migration failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _cancel_all_jobs_on_startup():
+    """Cancel all queued/running jobs on startup.
+
+    At boot time no worker is alive, so any leftover jobs from the
+    previous process are stale.  Cancelling them first ensures the
+    reconciler's zombie-execution check sees an empty job table and
+    correctly marks every RUNNING execution as dead.
+    """
+    from backend.models.job import Job
+
+    db = SessionLocal()
+    try:
+        count = (
+            db.query(Job)
+            .filter(Job.status.in_(["queued", "running"]))
+            .update(
+                {"status": "cancelled"},
+                synchronize_session="fetch",
+            )
+        )
+        db.commit()
+        if count:
+            logger.info("Startup: cancelled %d stale jobs", count)
+    except Exception:
+        logger.exception("Failed to cancel stale jobs (non-fatal)")
         db.rollback()
     finally:
         db.close()
