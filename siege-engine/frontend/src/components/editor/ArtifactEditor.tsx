@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { useProjectStore } from '../../store/projectStore';
 import { usePipelineStore } from '../../store/pipelineStore';
@@ -6,6 +6,7 @@ import { useAuthStore } from '../../store/authStore';
 import { formatDateTime } from '../../utils/dateFormat';
 import { getArtifactHistory, getArtifactVersion } from '../../api/projects';
 import { getPromptPreview } from '../../api/pipeline';
+import { useLocalDraft } from '../../hooks/useLocalDraft';
 import type { ArtifactVersion } from '../../api/projects';
 import type { PromptPreview } from '../../api/pipeline';
 import type { Artifact } from '../../types/project';
@@ -23,10 +24,10 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
   const [editing, setEditing] = useState(false);
-  const [content, setContent] = useState(artifact.content || '');
+  const [content, setContent, clearContent] = useLocalDraft(`editor-content:${artifact.id}`, artifact.content || '');
   const [saving, setSaving] = useState(false);
   const [showRevise, setShowRevise] = useState(false);
-  const [feedback, setFeedback] = useState('');
+  const [feedback, setFeedback, clearFeedback] = useLocalDraft(`revision-request:${artifact.id}`);
   const [submittingRevision, setSubmittingRevision] = useState(false);
   const [activeTab, setActiveTab] = useState<EditorTab>('document');
   const [history, setHistory] = useState<ArtifactVersion[]>([]);
@@ -61,12 +62,28 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
     setPromptPreview(null);
   }, [artifact.id, reviewFeedback, activeTab]);
 
-  // Sync local edit buffer when artifact content changes (e.g. after restore or AI revision)
+  // Track previous artifact to distinguish "switched artifact" from "version bumped"
+  const prevArtifactRef = useRef({ id: artifact.id, version: artifact.version });
   useEffect(() => {
-    setContent(artifact.content || '');
-    setEditing(false);
-    setShowRevise(false);
-    setFeedback('');
+    const prev = prevArtifactRef.current;
+    prevArtifactRef.current = { id: artifact.id, version: artifact.version };
+
+    if (prev.id !== artifact.id) {
+      // Switched to a different artifact — just reset UI state, keep drafts
+      setEditing(false);
+      setShowRevise(false);
+      return;
+    }
+
+    if (prev.version !== artifact.version) {
+      // Same artifact, version bumped (AI revision / restore) — clear drafts
+      clearContent();
+      setContent(artifact.content || '');
+      setEditing(false);
+      setShowRevise(false);
+      clearFeedback();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artifact.id, artifact.version]);
 
   // Fetch prompt preview when tab is selected
@@ -125,6 +142,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
     setSaving(true);
     try {
       await updateArtifact(artifact.id, content);
+      clearContent();
       setEditing(false);
     } finally {
       setSaving(false);
@@ -136,7 +154,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
     setSubmittingRevision(true);
     try {
       await reviseArtifact(projectId, artifact.id, feedback);
-      setFeedback('');
+      clearFeedback();
       setShowRevise(false);
     } finally {
       setSubmittingRevision(false);
@@ -225,6 +243,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
                 </button>
                 <button
                   onClick={() => {
+                    clearContent();
                     setContent(artifact.content || '');
                     setEditing(false);
                   }}

@@ -23,15 +23,21 @@ const EVENT_TYPE_COLORS: Record<string, string> = {
   stale_resolved: 'bg-teal-600',
   staleness_propagated: 'bg-orange-700',
   artifact_pruned: 'bg-red-800',
+  artifact_committed: 'bg-emerald-700',
   cascade_started: 'bg-cyan-700',
   cascade_completed: 'bg-cyan-600',
   carried_over: 'bg-gray-500',
+  comment_added: 'bg-sky-600',
+  generation_progress: 'bg-blue-400',
+  pipeline_paused: 'bg-yellow-700',
+  pipeline_resumed: 'bg-green-500',
   pipeline_reset: 'bg-red-900',
 };
 
 const ROUTINE_EVENTS = new Set([
   'stage_queued', 'stage_started', 'carried_over',
   'cascade_started', 'cascade_completed',
+  'generation_progress', 'artifact_committed',
 ]);
 
 const HIGHLIGHT_EVENTS = new Set([
@@ -43,23 +49,43 @@ function formatEventType(type: string): string {
   return type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+const TRIGGER_LABELS: Record<string, string> = {
+  pipeline_run: 'Pipeline Run',
+  force_restart: 'Force Restart',
+  rejection_regenerate: 'Rejection Regenerate',
+  revision: 'Revision',
+};
+
 function formatPayload(
   payload: Record<string, unknown>,
   artifactNames: Record<string, string>,
 ): string {
   const parts: string[] = [];
+  if (payload.trigger) parts.push(`via ${TRIGGER_LABELS[String(payload.trigger)] || payload.trigger}`);
   if (payload.stage_key) parts.push(`stage: ${payload.stage_key}`);
   if (payload.component_key) parts.push(`component: ${payload.component_key}`);
   if (payload.artifact_id) {
     const aid = String(payload.artifact_id);
-    const name = artifactNames[aid];
+    const name = payload.artifact_name as string || artifactNames[aid];
     parts.push(`artifact: ${name || aid.slice(0, 8)}`);
   }
   if (payload.action) parts.push(`action: ${payload.action}`);
   if (payload.status) parts.push(`status: ${payload.status}`);
+  if (payload.version != null) parts.push(`v${payload.version}`);
+  if (payload.retry_count != null && Number(payload.retry_count) > 0) parts.push(`retry #${payload.retry_count}`);
   if (payload.stale_ids) parts.push(`stale: ${(payload.stale_ids as string[]).length} artifacts`);
+  if (payload.git_commit_sha) parts.push(`sha: ${String(payload.git_commit_sha).slice(0, 7)}`);
+  if (payload.parent_run_id) parts.push(`parent: ${String(payload.parent_run_id).slice(0, 8)}`);
+  if (payload.step) parts.push(`step: ${payload.step}`);
+  if (payload.comment_type) parts.push(`type: ${payload.comment_type}`);
   if (parts.length === 0) return JSON.stringify(payload);
   return parts.join(' | ');
+}
+
+function formatError(payload: Record<string, unknown>): string | null {
+  const err = payload.error;
+  if (!err || (typeof err === 'string' && !err.trim())) return null;
+  return String(err);
 }
 
 function formatTime(isoStr: string | null): string {
@@ -345,6 +371,11 @@ export function EventHistoryPanel({ projectId }: Props) {
                         <div className="text-xs text-gray-400 ml-10 truncate">
                           {formatPayload(event.payload, artifactNames)}
                         </div>
+                        {formatError(event.payload) && (
+                          <div className="text-xs text-red-400 ml-10 mt-0.5 truncate" title={formatError(event.payload)!}>
+                            {formatError(event.payload)}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -437,21 +468,38 @@ export function EventHistoryPanel({ projectId }: Props) {
                   <div>
                     <h4 className="text-xs text-gray-400 mb-1 font-semibold">Stages</h4>
                     <div className="space-y-1 max-h-40 overflow-auto">
-                      {Object.entries(previewSnapshot.stage_statuses).map(([key, status]) => (
-                        <div key={key} className="flex items-center gap-2 text-xs">
-                          <span className="text-gray-300 font-mono truncate flex-1">{key}</span>
-                          <span className={`px-1.5 py-0.5 rounded shrink-0 ${
-                            status === 'approved' ? 'bg-green-700 text-white' :
-                            status === 'running' ? 'bg-blue-600 text-white' :
-                            status === 'awaiting_review' ? 'bg-yellow-600 text-white' :
-                            status === 'failed' ? 'bg-red-700 text-white' :
-                            status === 'stale' ? 'bg-orange-700 text-white' :
-                            'bg-gray-600 text-gray-300'
-                          }`}>
-                            {status}
-                          </span>
-                        </div>
-                      ))}
+                      {Object.entries(previewSnapshot.stage_statuses).map(([key, status]) => {
+                        const stageError = previewSnapshot.stage_errors?.[key];
+                        const trigger = previewSnapshot.stage_triggers?.[key];
+                        return (
+                          <div key={key}>
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="text-gray-300 font-mono truncate flex-1">{key}</span>
+                              {trigger && (
+                                <span className="text-gray-500 text-[10px]">
+                                  {TRIGGER_LABELS[trigger] || trigger}
+                                </span>
+                              )}
+                              <span className={`px-1.5 py-0.5 rounded shrink-0 ${
+                                status === 'approved' ? 'bg-green-700 text-white' :
+                                status === 'running' ? 'bg-blue-600 text-white' :
+                                status === 'awaiting_review' ? 'bg-yellow-600 text-white' :
+                                status === 'failed' ? 'bg-red-700 text-white' :
+                                status === 'stale' ? 'bg-orange-700 text-white' :
+                                'bg-gray-600 text-gray-300'
+                              }`}>
+                                {status}
+                              </span>
+                            </div>
+                            {stageError?.error && (
+                              <div className="text-[10px] text-red-400 ml-2 truncate" title={stageError.error}>
+                                {stageError.error}
+                                {stageError.retry_count != null && stageError.retry_count > 0 && ` (retry #${stageError.retry_count})`}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -461,23 +509,38 @@ export function EventHistoryPanel({ projectId }: Props) {
                   <div>
                     <h4 className="text-xs text-gray-400 mb-1 font-semibold">Artifacts</h4>
                     <div className="space-y-1 max-h-40 overflow-auto">
-                      {Object.entries(previewSnapshot.artifact_statuses).map(([aid, status]) => (
-                        <div key={aid} className="flex items-center gap-2 text-xs">
-                          <span className="text-gray-300 truncate flex-1">
-                            {artifactNames[aid] || aid.slice(0, 8)}
-                          </span>
-                          <span className={`px-1.5 py-0.5 rounded shrink-0 ${
-                            status === 'approved' ? 'bg-green-700 text-white' :
-                            status === 'generating' ? 'bg-blue-600 text-white' :
-                            status === 'awaiting_review' ? 'bg-yellow-600 text-white' :
-                            status === 'stale' ? 'bg-orange-700 text-white' :
-                            status === 'pending' ? 'bg-gray-600 text-gray-300' :
-                            'bg-gray-600 text-gray-300'
-                          }`}>
-                            {status}
-                          </span>
-                        </div>
-                      ))}
+                      {Object.entries(previewSnapshot.artifact_statuses).map(([aid, status]) => {
+                        const version = previewSnapshot.artifact_versions?.[aid];
+                        const comments = previewSnapshot.comment_counts?.[aid];
+                        const meta = previewSnapshot.artifact_meta?.[aid];
+                        const sha = previewSnapshot.artifact_git_shas?.[aid];
+                        return (
+                          <div key={aid} className="flex items-center gap-2 text-xs">
+                            <span className="text-gray-300 truncate flex-1">
+                              {meta?.name || artifactNames[aid] || aid.slice(0, 8)}
+                            </span>
+                            {version != null && (
+                              <span className="text-gray-500 text-[10px]">v{version}</span>
+                            )}
+                            {comments != null && comments > 0 && (
+                              <span className="text-sky-400 text-[10px]">{comments} comment{comments !== 1 ? 's' : ''}</span>
+                            )}
+                            {sha && (
+                              <span className="text-gray-500 font-mono text-[10px]">{sha.slice(0, 7)}</span>
+                            )}
+                            <span className={`px-1.5 py-0.5 rounded shrink-0 ${
+                              status === 'approved' ? 'bg-green-700 text-white' :
+                              status === 'generating' ? 'bg-blue-600 text-white' :
+                              status === 'awaiting_review' ? 'bg-yellow-600 text-white' :
+                              status === 'stale' ? 'bg-orange-700 text-white' :
+                              status === 'pending' ? 'bg-gray-600 text-gray-300' :
+                              'bg-gray-600 text-gray-300'
+                            }`}>
+                              {status}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

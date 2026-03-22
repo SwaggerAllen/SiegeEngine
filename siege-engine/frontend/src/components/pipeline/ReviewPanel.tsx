@@ -4,6 +4,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useDAGStore } from '../../store/dagStore';
 import { listComments } from '../../api/comments';
 import { reparseFanout } from '../../api/pipeline';
+import { useLocalDraft } from '../../hooks/useLocalDraft';
 import type { Artifact } from '../../types/project';
 import type { StageExecution, PipelineStartOptions } from '../../types/pipeline';
 import { RESTARTABLE_STATUSES } from '../../types/pipeline';
@@ -171,8 +172,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const artifactStageKey = config?.stages.find(
     (s) => s.output_artifact_type === artifact.artifact_type
   )?.stage_key ?? null;
-  const [notes, setNotes] = useState('');
-  const [editedContent, setEditedContent] = useState('');
+  const [notes, setNotes, clearNotes] = useLocalDraft(`review-notes:${artifact.id}`);
+  const [editedContent, setEditedContent, clearEditedContent] = useLocalDraft(`review-edit:${artifact.id}`);
   const [showEditor, setShowEditor] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [feedbackSaved, setFeedbackSaved] = useState(false);
@@ -197,9 +198,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const isFanout = artifact.artifact_type === 'component_map' || artifact.artifact_type === 'sub_component_map';
   const canReparse = !isViewer && isFanout && !isGenerating;
 
-  // Reset to blank when switching artifacts; fetch feedback count
+  // Fetch feedback count when switching artifacts
   useEffect(() => {
-    setNotes('');
     setFeedbackSaved(false);
     // Count existing feedback entries for this artifact
     listComments(projectId, artifact.id).then((comments) => {
@@ -226,10 +226,10 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
       if (action === 'save_feedback') {
         setFeedbackSaved(true);
         setFeedbackCount((c) => c + 1);
-        setNotes('');
+        clearNotes();
       } else {
-        setNotes('');
-        setEditedContent('');
+        clearNotes();
+        clearEditedContent();
         setShowEditor(false);
         setFeedbackSaved(false);
         fetchStatus(projectId);
@@ -252,10 +252,10 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
       if (action === 'save_feedback') {
         setFeedbackSaved(true);
         setFeedbackCount((c) => c + 1);
-        setNotes('');
+        clearNotes();
       } else {
-        setNotes('');
-        setEditedContent('');
+        clearNotes();
+        clearEditedContent();
         setShowEditor(false);
         setFeedbackSaved(false);
         fetchStatus(projectId);

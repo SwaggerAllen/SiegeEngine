@@ -10,6 +10,7 @@ completed their full document cycle and received human approval.
 import logging
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -70,6 +71,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         artifact_status: ArtifactStatus | None = None,
         error_message: str | None = None,
         set_completed: bool = False,
+        trigger: str | None = None,
     ) -> None:
         """Atomically transition execution status and optionally its artifact.
 
@@ -97,16 +99,27 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         # Emit corresponding event
         event_type = _status_to_event_type(new_status)
         if event_type:
+            payload: dict[str, Any] = {
+                "execution_id": execution.id,
+                "stage_key": execution.stage_key,
+                "component_key": execution.component_key,
+                "artifact_id": execution.artifact_id,
+                "error": error_message,
+                "retry_count": execution.retry_count,
+            }
+            if trigger:
+                payload["trigger"] = trigger
+            # Include artifact metadata when available
+            if execution.artifact_id:
+                artifact = self.db.get(Artifact, execution.artifact_id)
+                if artifact:
+                    payload["artifact_type"] = artifact.artifact_type.value
+                    payload["artifact_name"] = artifact.name
+                    payload["version"] = artifact.version
             self.events.emit(
                 execution.project_id,
                 event_type,
-                {
-                    "execution_id": execution.id,
-                    "stage_key": execution.stage_key,
-                    "component_key": execution.component_key,
-                    "artifact_id": execution.artifact_id,
-                    "error": error_message,
-                },
+                payload,
                 run_id=execution.run_id,
             )
 
@@ -910,6 +923,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
                 # Check if pipeline should pause at this stage
                 if self._should_pause(stage_def, pipeline_run, project_id):
+                    self.events.emit(
+                        project_id, evt.PIPELINE_PAUSED,
+                        {"stage_key": stage_def.stage_key, "run_id": run_id},
+                        run_id=run_id,
+                    )
                     await ws_manager.broadcast(
                         project_id,
                         {
@@ -1015,6 +1033,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
                 # Check if pipeline should pause at this stage
                 if self._should_pause(stage_def, pipeline_run, project_id):
+                    self.events.emit(
+                        project_id, evt.PIPELINE_PAUSED,
+                        {"stage_key": stage_def.stage_key, "run_id": run_id},
+                        run_id=run_id,
+                    )
                     await ws_manager.broadcast(
                         project_id,
                         {
@@ -1059,6 +1082,18 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 )
                 pipeline_run.git_commit_sha = git_commit_sha
                 self.db.commit()
+
+                # Record git checkpoint in event trail
+                self.events.emit(
+                    project_id, evt.ARTIFACT_COMMITTED,
+                    {
+                        "git_commit_sha": git_commit_sha,
+                        "run_id": run_id,
+                        "run_number": pipeline_run.run_number,
+                        "scope": "run_checkpoint",
+                    },
+                    run_id=run_id,
+                )
 
                 # Auto-push if configured
                 project = self.db.get(Project, project_id)
@@ -1111,7 +1146,30 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         # Commit the RUNNING execution so other sessions (DAG endpoint) can see it
         self.db.commit()
 
+        # Emit stage_started event for event history
+        self.events.emit(
+            project_id, evt.STAGE_STARTED,
+            {
+                "execution_id": execution.id,
+                "stage_key": stage_def.stage_key,
+                "component_key": component_key,
+                "artifact_id": execution.artifact_id,
+                "trigger": "pipeline_run",
+                "retry_count": execution.retry_count,
+            },
+            run_id=execution.run_id,
+        )
+
         try:
+            self.events.emit(
+                project_id, evt.GENERATION_PROGRESS,
+                {
+                    "stage_key": stage_def.stage_key,
+                    "component_key": component_key,
+                    "step": "generating",
+                },
+                run_id=execution.run_id,
+            )
             await ws_manager.broadcast(
                 project_id,
                 {
@@ -1133,8 +1191,33 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             )
             execution.artifact_id = artifact_id
 
+            # Record artifact git commit in event trail
+            gen_artifact = self.db.get(Artifact, artifact_id)
+            if gen_artifact and gen_artifact.git_commit_sha:
+                self.events.emit(
+                    project_id, evt.ARTIFACT_COMMITTED,
+                    {
+                        "artifact_id": artifact_id,
+                        "git_commit_sha": gen_artifact.git_commit_sha,
+                        "version": gen_artifact.version,
+                        "artifact_type": gen_artifact.artifact_type.value,
+                        "artifact_name": gen_artifact.name,
+                        "scope": "generation",
+                    },
+                    run_id=execution.run_id,
+                )
+
             # AI Review
             if stage_def.ai_review_enabled:
+                self.events.emit(
+                    project_id, evt.GENERATION_PROGRESS,
+                    {
+                        "stage_key": stage_def.stage_key,
+                        "component_key": component_key,
+                        "step": "ai_reviewing",
+                    },
+                    run_id=execution.run_id,
+                )
                 await ws_manager.broadcast(
                     project_id,
                     {
@@ -1167,6 +1250,17 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 ai_loops = pipeline_run.ai_loops if pipeline_run else 1
                 if feedback and ai_loops > 1:
                     for loop_i in range(1, ai_loops):
+                        self.events.emit(
+                            project_id, evt.GENERATION_PROGRESS,
+                            {
+                                "stage_key": stage_def.stage_key,
+                                "component_key": component_key,
+                                "step": "self_improvement",
+                                "loop": loop_i + 1,
+                                "total_loops": ai_loops,
+                            },
+                            run_id=execution.run_id,
+                        )
                         await ws_manager.broadcast(
                             project_id,
                             {

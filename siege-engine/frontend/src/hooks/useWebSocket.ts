@@ -121,6 +121,15 @@ export function useWebSocket(projectId: string | undefined) {
         fetchArtifact(data.artifact_id);
       }
 
+      // Refresh selected artifact when a stage starts (e.g. after rejection triggers
+      // regeneration — artifact transitions to 'generating' but selectedArtifact is stale)
+      if (data.type === 'stage_started') {
+        const selectedId = useDAGStore.getState().selectedArtifactId;
+        if (selectedId) {
+          fetchArtifact(selectedId);
+        }
+      }
+
       // isRunning/isPaused are now updated by the local snapshot reducer in updateFromWS
     };
 

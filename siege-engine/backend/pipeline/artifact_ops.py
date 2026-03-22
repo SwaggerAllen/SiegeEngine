@@ -63,6 +63,18 @@ class ArtifactOpsMixin:
                                 f"Edit {artifact.name or artifact.file_path} v{artifact.version}",
                             )
                             artifact.git_commit_sha = sha
+                            self.events.emit(
+                                execution.project_id, evt.ARTIFACT_COMMITTED,
+                                {
+                                    "artifact_id": execution.artifact_id,
+                                    "git_commit_sha": sha,
+                                    "version": artifact.version,
+                                    "artifact_type": artifact.artifact_type.value,
+                                    "artifact_name": artifact.name,
+                                    "scope": "content_edit",
+                                },
+                                run_id=execution.run_id,
+                            )
 
                     if notes and notes.strip():
                         self.db.add(
@@ -74,6 +86,17 @@ class ArtifactOpsMixin:
                                 comment_type="feedback",
                                 artifact_version=artifact.version,
                             )
+                        )
+                        self.events.emit(
+                            execution.project_id, evt.COMMENT_ADDED,
+                            {
+                                "artifact_id": execution.artifact_id,
+                                "comment_type": "feedback",
+                                "artifact_version": artifact.version,
+                                "stage_key": execution.stage_key,
+                                "component_key": execution.component_key,
+                            },
+                            run_id=execution.run_id,
                         )
 
             self._transition_execution(
@@ -179,6 +202,17 @@ class ArtifactOpsMixin:
                         artifact_version=art.version if art else None,
                     )
                 )
+                self.events.emit(
+                    execution.project_id, evt.COMMENT_ADDED,
+                    {
+                        "artifact_id": execution.artifact_id,
+                        "comment_type": "feedback",
+                        "artifact_version": art.version if art else None,
+                        "stage_key": execution.stage_key,
+                        "component_key": execution.component_key,
+                    },
+                    run_id=execution.run_id,
+                )
 
             config = self._get_config(execution.project_id)
             stale_artifact_ids = []
@@ -248,6 +282,18 @@ class ArtifactOpsMixin:
                                 f"Edit {artifact.name or artifact.file_path} v{artifact.version}",
                             )
                             artifact.git_commit_sha = sha
+                            self.events.emit(
+                                execution.project_id, evt.ARTIFACT_COMMITTED,
+                                {
+                                    "artifact_id": execution.artifact_id,
+                                    "git_commit_sha": sha,
+                                    "version": artifact.version,
+                                    "artifact_type": artifact.artifact_type.value,
+                                    "artifact_name": artifact.name,
+                                    "scope": "content_edit",
+                                },
+                                run_id=execution.run_id,
+                            )
 
                     if notes and notes.strip():
                         self.db.add(
@@ -259,6 +305,17 @@ class ArtifactOpsMixin:
                                 comment_type="feedback",
                                 artifact_version=artifact.version,
                             )
+                        )
+                        self.events.emit(
+                            execution.project_id, evt.COMMENT_ADDED,
+                            {
+                                "artifact_id": execution.artifact_id,
+                                "comment_type": "feedback",
+                                "artifact_version": artifact.version,
+                                "stage_key": execution.stage_key,
+                                "component_key": execution.component_key,
+                            },
+                            run_id=execution.run_id,
                         )
             self.db.commit()
 
@@ -535,6 +592,19 @@ class ArtifactOpsMixin:
                 new_execution.id,
             )
 
+            self.events.emit(
+                project_id, evt.STAGE_STARTED,
+                {
+                    "execution_id": new_execution.id,
+                    "stage_key": old_execution.stage_key,
+                    "component_key": old_execution.component_key,
+                    "artifact_id": new_execution.artifact_id,
+                    "trigger": "rejection_regenerate",
+                    "retry_count": new_execution.retry_count,
+                },
+                run_id=new_execution.run_id,
+            )
+
             await ws_manager.broadcast(
                 project_id,
                 {
@@ -574,6 +644,15 @@ class ArtifactOpsMixin:
                 self.db.add(divider)
 
             if stage_def.ai_review_enabled:
+                self.events.emit(
+                    project_id, evt.GENERATION_PROGRESS,
+                    {
+                        "stage_key": stage_def.stage_key,
+                        "component_key": old_execution.component_key,
+                        "step": "ai_reviewing",
+                    },
+                    run_id=new_execution.run_id,
+                )
                 await ws_manager.broadcast(
                     project_id,
                     {
@@ -699,6 +778,17 @@ class ArtifactOpsMixin:
                         f"Edit {artifact.name or artifact.file_path} v{artifact.version}",
                     )
                     artifact.git_commit_sha = sha
+                    self.events.emit(
+                        project_id, evt.ARTIFACT_COMMITTED,
+                        {
+                            "artifact_id": artifact_id,
+                            "git_commit_sha": sha,
+                            "version": artifact.version,
+                            "artifact_type": artifact.artifact_type.value,
+                            "artifact_name": artifact.name,
+                            "scope": "content_edit",
+                        },
+                    )
 
             if notes and notes.strip():
                 self.db.add(
@@ -710,6 +800,14 @@ class ArtifactOpsMixin:
                         comment_type="feedback",
                         artifact_version=artifact.version,
                     )
+                )
+                self.events.emit(
+                    project_id, evt.COMMENT_ADDED,
+                    {
+                        "artifact_id": artifact_id,
+                        "comment_type": "feedback",
+                        "artifact_version": artifact.version,
+                    },
                 )
             self.db.commit()
 
@@ -745,6 +843,17 @@ class ArtifactOpsMixin:
                         f"Edit {artifact.name or artifact.file_path} v{artifact.version}",
                     )
                     artifact.git_commit_sha = sha
+                    self.events.emit(
+                        project_id, evt.ARTIFACT_COMMITTED,
+                        {
+                            "artifact_id": artifact_id,
+                            "git_commit_sha": sha,
+                            "version": artifact.version,
+                            "artifact_type": artifact.artifact_type.value,
+                            "artifact_name": artifact.name,
+                            "scope": "content_edit",
+                        },
+                    )
 
             if notes and notes.strip():
                 self.db.add(
@@ -756,6 +865,14 @@ class ArtifactOpsMixin:
                         comment_type="feedback",
                         artifact_version=artifact.version,
                     )
+                )
+                self.events.emit(
+                    project_id, evt.COMMENT_ADDED,
+                    {
+                        "artifact_id": artifact_id,
+                        "comment_type": "feedback",
+                        "artifact_version": artifact.version,
+                    },
                 )
             self._mark_artifact_status(artifact_id, ArtifactStatus.APPROVED)
 
@@ -898,10 +1015,23 @@ class ArtifactOpsMixin:
         )
         self.db.commit()
 
+        # Find parent run for cascade relationship
+        parent_execution = (
+            self.db.query(StageExecution)
+            .filter_by(artifact_id=artifact_id)
+            .order_by(StageExecution.started_at.desc())
+            .first()
+        )
+        parent_run_id = parent_execution.run_id if parent_execution else None
+
         # Emit event
         self.events.emit(
             project_id, evt.CASCADE_STARTED,
-            {"run_id": regen_run.run_id, "source_artifact_id": artifact_id},
+            {
+                "run_id": regen_run.run_id,
+                "source_artifact_id": artifact_id,
+                "parent_run_id": parent_run_id,
+            },
             run_id=regen_run.run_id,
         )
 
@@ -1079,6 +1209,22 @@ class ArtifactOpsMixin:
             artifact.component_key,
         )
 
+        self.events.emit(
+            project_id, evt.STAGE_STARTED,
+            {
+                "execution_id": execution.id,
+                "stage_key": stage_def.stage_key,
+                "component_key": artifact.component_key,
+                "artifact_id": artifact_id,
+                "trigger": "revision",
+                "retry_count": execution.retry_count,
+                "artifact_type": artifact.artifact_type.value,
+                "artifact_name": artifact.name,
+                "version": artifact.version,
+            },
+            run_id=run_id,
+        )
+
         await ws_manager.broadcast(
             project_id,
             {
@@ -1114,6 +1260,15 @@ class ArtifactOpsMixin:
                 self.db.add(divider)
 
             if stage_def.ai_review_enabled:
+                self.events.emit(
+                    project_id, evt.GENERATION_PROGRESS,
+                    {
+                        "stage_key": stage_def.stage_key,
+                        "component_key": artifact.component_key,
+                        "step": "ai_reviewing",
+                    },
+                    run_id=run_id,
+                )
                 await ws_manager.broadcast(
                     project_id,
                     {
@@ -1221,7 +1376,7 @@ class ArtifactOpsMixin:
                 current_content = existing_artifact.content
 
         input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
-        self._transition_execution(execution, StageStatus.RUNNING, error_message="")
+        self._transition_execution(execution, StageStatus.RUNNING, error_message="", trigger="force_restart")
         execution.retry_count = (execution.retry_count or 0) + 1
         self.db.flush()
 

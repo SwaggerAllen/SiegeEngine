@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -94,6 +94,8 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
     clearSelection();
   }, [selectStage, selectArtifact, clearSelection]);
 
+  const [showMinimap, setShowMinimap] = useState(true);
+
   if (rawNodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500">
@@ -116,29 +118,37 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
     >
       <Background color="#374151" gap={20} />
       <Controls className="!bg-gray-800 !border-gray-600 [&>button]:!bg-gray-700 [&>button]:!text-white [&>button]:!border-gray-600" />
-      <MiniMap
-        className="!bg-gray-800"
-        nodeColor={(n) => {
-          const artifactType = n.data?.artifact_type as string;
-          // Branching/extraction nodes get indigo color
-          if (artifactType === 'component_map' || artifactType === 'sub_component_map') {
-            return '#818cf8';
-          }
-          const status = n.data?.status as string;
-          const colors: Record<string, string> = {
-            approved: '#22c55e',
-            awaiting_review: '#eab308',
-            generating: '#3b82f6',
-            running: '#3b82f6',
-            ai_reviewing: '#a855f7',
-            stale: '#f97316',
-            rejected: '#ef4444',
-            failed: '#ef4444',
-            pending: '#6b7280',
-          };
-          return colors[status] || '#6b7280';
-        }}
-      />
+      <button
+        onClick={() => setShowMinimap((v) => !v)}
+        className="absolute top-2 right-2 z-10 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"
+        title={showMinimap ? 'Hide minimap' : 'Show minimap'}
+      >
+        {showMinimap ? 'Hide Map' : 'Show Map'}
+      </button>
+      {showMinimap && (
+        <MiniMap
+          className="!bg-gray-800"
+          nodeColor={(n) => {
+            const artifactType = n.data?.artifact_type as string;
+            if (artifactType === 'component_map' || artifactType === 'sub_component_map') {
+              return '#818cf8';
+            }
+            const status = n.data?.status as string;
+            const colors: Record<string, string> = {
+              approved: '#22c55e',
+              awaiting_review: '#eab308',
+              generating: '#3b82f6',
+              running: '#3b82f6',
+              ai_reviewing: '#a855f7',
+              stale: '#f97316',
+              rejected: '#ef4444',
+              failed: '#ef4444',
+              pending: '#6b7280',
+            };
+            return colors[status] || '#6b7280';
+          }}
+        />
+      )}
     </ReactFlow>
   );
 }
