@@ -9,13 +9,11 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
-from alembic import context
-
-from backend.config import settings
-from backend.database import Base
-
 # Import all models so Base.metadata is fully populated
 import backend.models  # noqa: F401
+from alembic import context
+from backend.config import settings
+from backend.database import Base
 
 config = context.config
 

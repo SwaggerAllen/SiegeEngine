@@ -96,6 +96,16 @@ def _add_missing_columns():
     _ensure_column(inspector, "pipeline_runs", "regen_generated_only", "BOOLEAN DEFAULT 0")
     _ensure_column(inspector, "artifact_comments", "updated_at", "DATETIME")
 
+    # Extended snapshot columns (added in d4e5f6a7b8c9 migration)
+    for col in (
+        "artifact_versions", "stage_errors", "comment_counts",
+        "stage_triggers", "artifact_meta", "artifact_git_shas",
+        "cascade_parents", "execution_map",
+    ):
+        _ensure_column(
+            inspector, "pipeline_snapshots", col, "JSON NOT NULL DEFAULT '{}'"
+        )
+
 
 def _ensure_column(inspector, table: str, column: str, col_def: str):
     """Add a column to a table if it doesn't exist."""

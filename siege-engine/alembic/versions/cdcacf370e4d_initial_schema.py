@@ -1,15 +1,15 @@
 """initial schema
 
 Revision ID: cdcacf370e4d
-Revises: 
+Revises:
 Create Date: 2026-03-18 15:22:58.309600
 
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'cdcacf370e4d'
@@ -64,11 +64,22 @@ def upgrade() -> None:
     op.create_table('artifacts',
     sa.Column('id', sa.String(), nullable=False),
     sa.Column('project_id', sa.String(), nullable=False),
-    sa.Column('artifact_type', sa.Enum('PROJECT_DOC', 'SYSTEM_REQUIREMENTS', 'SYSTEM_ARCHITECTURE', 'HIGH_LEVEL_PLAN', 'COMPONENT_MAP', 'COMPONENT_REQUIREMENTS', 'COMPONENT_ARCHITECTURE', 'COMPONENT_PLAN', 'SUB_COMPONENT_MAP', 'SUB_COMPONENT_REQUIREMENTS', 'SUB_COMPONENT_ARCHITECTURE', 'SUB_COMPONENT_PLAN', 'CODE', 'CODE_REVIEW', name='artifacttype'), nullable=False),
+    sa.Column('artifact_type', sa.Enum(
+        'PROJECT_DOC', 'SYSTEM_REQUIREMENTS',
+        'SYSTEM_ARCHITECTURE', 'HIGH_LEVEL_PLAN',
+        'COMPONENT_MAP', 'COMPONENT_REQUIREMENTS',
+        'COMPONENT_ARCHITECTURE', 'COMPONENT_PLAN',
+        'SUB_COMPONENT_MAP', 'SUB_COMPONENT_REQUIREMENTS',
+        'SUB_COMPONENT_ARCHITECTURE', 'SUB_COMPONENT_PLAN',
+        'CODE', 'CODE_REVIEW',
+        name='artifacttype'), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('component_key', sa.String(length=255), nullable=True),
     sa.Column('content', sa.Text(), nullable=True),
-    sa.Column('status', sa.Enum('PENDING', 'GENERATING', 'AI_REVIEWING', 'AWAITING_REVIEW', 'APPROVED', 'REJECTED', 'STALE', name='artifactstatus'), nullable=False),
+    sa.Column('status', sa.Enum(
+        'PENDING', 'GENERATING', 'AI_REVIEWING',
+        'AWAITING_REVIEW', 'APPROVED', 'REJECTED', 'STALE',
+        name='artifactstatus'), nullable=False),
     sa.Column('git_commit_sha', sa.String(length=40), nullable=True),
     sa.Column('version', sa.Integer(), nullable=False),
     sa.Column('ai_review_feedback', sa.JSON(), nullable=True),
@@ -132,10 +143,16 @@ def upgrade() -> None:
     sa.Column('project_id', sa.String(), nullable=False),
     sa.Column('run_number', sa.Integer(), nullable=False),
     sa.Column('run_id', sa.String(), nullable=False),
-    sa.Column('status', sa.Enum('RUNNING', 'PAUSED', 'COMPLETED', 'FAILED', 'CANCELLED', name='pipelinerunstatus'), nullable=False),
+    sa.Column('status', sa.Enum(
+        'RUNNING', 'PAUSED', 'COMPLETED', 'FAILED',
+        'CANCELLED', name='pipelinerunstatus'),
+        nullable=False),
     sa.Column('human_review', sa.Boolean(), nullable=False),
     sa.Column('ai_loops', sa.Integer(), nullable=False),
-    sa.Column('stop_point', sa.Enum('AFTER_ALL', 'BEFORE_CODE', 'AT_FAN_OUT', 'AFTER_TRIPLETS', name='stoppoint'), nullable=False),
+    sa.Column('stop_point', sa.Enum(
+        'AFTER_ALL', 'BEFORE_CODE', 'AT_FAN_OUT',
+        'AFTER_TRIPLETS', name='stoppoint'),
+        nullable=False),
     sa.Column('git_commit_sha', sa.String(length=40), nullable=True),
     sa.Column('started_at', sa.DateTime(), nullable=False),
     sa.Column('completed_at', sa.DateTime(), nullable=True),
@@ -160,7 +177,9 @@ def upgrade() -> None:
     sa.Column('order_index', sa.Integer(), nullable=False),
     sa.Column('output_artifact_type', sa.String(length=100), nullable=False),
     sa.Column('input_stage_keys', sa.JSON(), nullable=False),
-    sa.Column('fan_out_strategy', sa.Enum('NONE', 'COMPONENT', 'SUB_COMPONENT', 'LEAF', name='fanoutstrategy'), nullable=False),
+    sa.Column('fan_out_strategy', sa.Enum(
+        'NONE', 'COMPONENT', 'SUB_COMPONENT', 'LEAF',
+        name='fanoutstrategy'), nullable=False),
     sa.Column('fan_out_source_field', sa.String(length=100), nullable=True),
     sa.Column('ai_review_enabled', sa.Boolean(), nullable=False),
     sa.Column('human_review_enabled', sa.Boolean(), nullable=False),
@@ -175,7 +194,11 @@ def upgrade() -> None:
     sa.Column('project_id', sa.String(), nullable=False),
     sa.Column('stage_key', sa.String(length=100), nullable=False),
     sa.Column('component_key', sa.String(length=255), nullable=True),
-    sa.Column('status', sa.Enum('PENDING', 'RUNNING', 'AI_REVIEW', 'AWAITING_REVIEW', 'APPROVED', 'REJECTED', 'SKIPPED', 'FAILED', name='stagestatus'), nullable=False),
+    sa.Column('status', sa.Enum(
+        'PENDING', 'RUNNING', 'AI_REVIEW',
+        'AWAITING_REVIEW', 'APPROVED', 'REJECTED',
+        'SKIPPED', 'FAILED', name='stagestatus'),
+        nullable=False),
     sa.Column('artifact_id', sa.String(), nullable=True),
     sa.Column('langgraph_thread_id', sa.String(length=100), nullable=True),
     sa.Column('started_at', sa.DateTime(), nullable=True),
