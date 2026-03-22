@@ -597,6 +597,8 @@ class ArtifactOpsMixin:
                 artifact_id=old_execution.artifact_id,
             )
             self.db.add(new_execution)
+            # Flush to generate the execution ID before emitting the event.
+            self.db.flush()
 
             if old_execution.artifact_id:
                 self._mark_artifact_status(old_execution.artifact_id, ArtifactStatus.GENERATING)
