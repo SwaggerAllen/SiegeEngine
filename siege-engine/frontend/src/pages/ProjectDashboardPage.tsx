@@ -20,9 +20,10 @@ import InputDocsPanel from '../components/input-docs/InputDocsPanel';
 import { RunSelector } from '../components/pipeline/RunSelector';
 import { EventHistoryPanel } from '../components/pipeline/EventHistoryPanel';
 import { LogPanel } from '../components/pipeline/LogPanel';
+import { DebugStatePanel } from '../components/pipeline/DebugStatePanel';
 import api from '../api/client';
 
-type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs';
+type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug';
 
 export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -118,6 +119,7 @@ export function ProjectDashboardPage() {
     settings: 'Settings',
     history: 'Event History',
     logs: 'Logs',
+    debug: 'Debug',
   };
   const visibleTabs: Tab[] = isViewer
     ? ['documents', 'pipeline', 'chat']
@@ -164,6 +166,19 @@ export function ProjectDashboardPage() {
               Invites
             </button>
           )}
+          <button
+            onClick={() => { setActiveTab('debug'); clearSelection(); setMenuOpen(false); }}
+            className={`px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 ${
+              activeTab === 'debug'
+                ? 'bg-yellow-600 text-white'
+                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+            }`}
+            title="Debug State"
+          >
+            <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </button>
           {connected ? (
             <span className="text-xs text-green-400">WS Connected</span>
           ) : (
@@ -300,6 +315,10 @@ export function ProjectDashboardPage() {
       ) : activeTab === 'logs' ? (
         <div className="flex-1 overflow-hidden">
           <LogPanel />
+        </div>
+      ) : activeTab === 'debug' ? (
+        <div className="flex-1 overflow-hidden">
+          <DebugStatePanel projectId={projectId} />
         </div>
       ) : (
         <div className="flex-1 overflow-auto">

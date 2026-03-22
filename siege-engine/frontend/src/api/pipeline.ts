@@ -127,6 +127,11 @@ export async function resetAll(projectId: string) {
   return data;
 }
 
+export async function getDebugState(projectId: string) {
+  const { data } = await api.get(`/pipeline/${projectId}/debug-state`);
+  return data;
+}
+
 export async function getBlockingPR(projectId: string) {
   const { data } = await api.get(`/pipeline/${projectId}/blocking-pr`);
   return data as { blocking_pr_url: string | null; blocking_pr_number: number | null };
