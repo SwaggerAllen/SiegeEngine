@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
 
     # Cancel stale jobs BEFORE reconciling so the zombie execution check
     # sees an empty job table and correctly marks everything as dead.
-    from backend.pipeline.queue import recover_stale_jobs, shutdown_worker, worker_loop
+    from backend.pipeline.queue import shutdown_worker, worker_loop
 
     _cancel_all_jobs_on_startup()
 
@@ -60,13 +60,6 @@ async def lifespan(app: FastAPI):
 
     # One-time migration: move human_review_notes → ArtifactComment records
     _migrate_feedback_to_comments()
-
-    # Re-queue any jobs that should be retried, then start the worker
-    db = SessionLocal()
-    try:
-        recover_stale_jobs(db)
-    finally:
-        db.close()
 
     worker_task = asyncio.create_task(worker_loop())
 

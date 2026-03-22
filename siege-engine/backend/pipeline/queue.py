@@ -133,18 +133,6 @@ def cancel_running_execution(execution_id: str) -> bool:
     return False
 
 
-def recover_stale_jobs(db: Session) -> int:
-    """Mark any 'running' jobs as 'queued' on startup (crash recovery)."""
-    count = (
-        db.query(Job)
-        .filter_by(status="running")
-        .update({"status": "queued", "locked_by": None, "locked_at": None})
-    )
-    db.commit()
-    if count:
-        logger.info(f"Recovered {count} stale running jobs")
-    return count
-
 
 def _claim_next_sync() -> tuple[str, str, dict] | None:
     """Synchronous: claim the next queued job. Returns (job_id, job_type, payload) or None.
