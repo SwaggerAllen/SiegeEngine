@@ -5,6 +5,7 @@ retry_stage, and the cascade/invalidate helpers triggered by approvals
 and rejections.
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime
@@ -581,9 +582,6 @@ class ArtifactOpsMixin:
                 include_stale=True,
             )
 
-            if old_execution.artifact_id:
-                self._mark_artifact_status(old_execution.artifact_id, ArtifactStatus.GENERATING)
-
             # Ensure regeneration belongs to a run
             run_id, pipeline_run = self._ensure_active_run(
                 project_id, old_execution.run_id
@@ -599,14 +597,9 @@ class ArtifactOpsMixin:
                 artifact_id=old_execution.artifact_id,
             )
             self.db.add(new_execution)
-            self.db.commit()
 
-            logger.info(
-                "Regenerating stage %s (component=%s) with human feedback, new execution=%s",
-                old_execution.stage_key,
-                old_execution.component_key,
-                new_execution.id,
-            )
+            if old_execution.artifact_id:
+                self._mark_artifact_status(old_execution.artifact_id, ArtifactStatus.GENERATING)
 
             self.events.emit(
                 project_id, evt.STAGE_STARTED,
@@ -619,6 +612,17 @@ class ArtifactOpsMixin:
                     "retry_count": new_execution.retry_count,
                 },
                 run_id=new_execution.run_id,
+            )
+
+            # Commit execution, artifact status, and STAGE_STARTED event
+            # together so the snapshot and DB are always in sync.
+            self.db.commit()
+
+            logger.info(
+                "Regenerating stage %s (component=%s) with human feedback, new execution=%s",
+                old_execution.stage_key,
+                old_execution.component_key,
+                new_execution.id,
             )
 
             await ws_manager.broadcast(
@@ -711,6 +715,37 @@ class ArtifactOpsMixin:
                     "artifact_id": artifact_id,
                 },
             )
+
+        except asyncio.CancelledError:
+            logger.info(
+                "Regeneration cancelled for stage %s (force-restart)",
+                old_execution.stage_key,
+            )
+            if old_execution.artifact_id:
+                stuck_artifact = self.db.get(Artifact, old_execution.artifact_id)
+                if stuck_artifact and stuck_artifact.status in (
+                    ArtifactStatus.GENERATING,
+                    ArtifactStatus.AI_REVIEWING,
+                ):
+                    self._mark_artifact_status(
+                        old_execution.artifact_id,
+                        original_artifact_status or ArtifactStatus.REJECTED,
+                    )
+
+            if new_execution is not None:
+                self._transition_execution(
+                    new_execution, StageStatus.FAILED,
+                    error_message="Cancelled by force-restart",
+                    set_completed=True,
+                )
+
+            self.db.commit()
+
+            # Complete the run if all executions are now terminal
+            if new_execution is not None:
+                await self._try_complete_run(new_execution)
+
+            raise  # Let the worker loop see the CancelledError
 
         except Exception as e:
             logger.exception("Regeneration failed for stage %s: %s", old_execution.stage_key, e)
