@@ -178,7 +178,7 @@ def _clean_slate_migration():
         for project in projects:
             pid = project.id
 
-            # 1-5. Delete old pipeline state (preserve artifacts, comments, components, deps, input docs)
+            # 1-5. Delete old pipeline state (preserve artifacts, comments, deps)
             db.query(PipelineEvent).filter_by(project_id=pid).delete(synchronize_session="fetch")
             db.query(PipelineSnapshot).filter_by(project_id=pid).delete(synchronize_session="fetch")
             db.query(StageExecution).filter_by(project_id=pid).delete(synchronize_session="fetch")
@@ -203,12 +203,16 @@ def _clean_slate_migration():
             db.flush()
 
             if not artifacts_with_content:
-                logger.info("  Project %s (%s): no artifacts with content, skipping", project.name, pid)
+                logger.info(
+                    "  Project %s (%s): no artifacts with content, skipping",
+                    project.name, pid,
+                )
                 continue
 
             # 9. Build artifact_type → stage_key mapping from PipelineConfig
             config = db.query(PipelineConfig).filter_by(project_id=pid).first()
-            type_to_stage: dict[str, tuple[str, int]] = {}  # artifact_type -> (stage_key, order_index)
+            # artifact_type -> (stage_key, order_index)
+            type_to_stage: dict[str, tuple[str, int]] = {}
             if config:
                 for stage_def in config.stages:
                     type_to_stage[stage_def.output_artifact_type] = (

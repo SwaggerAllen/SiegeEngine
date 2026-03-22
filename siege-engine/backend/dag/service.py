@@ -410,7 +410,10 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
         for art in stage_arts:
             art_status = artifact_statuses.get(art.id, art.status.value)
             # Derive composite key for stage status / execution lookup
-            comp_key = f"{stage_def.stage_key}/{art.component_key}" if art.component_key else stage_def.stage_key
+            comp_key = (
+                f"{stage_def.stage_key}/{art.component_key}"
+                if art.component_key else stage_def.stage_key
+            )
             stage_status = stage_statuses.get(comp_key)
             is_active = stage_status in ("running", "ai_review")
             exec_entry = execution_map.get(comp_key, {})

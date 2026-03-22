@@ -242,8 +242,8 @@ async def cancel_pipeline(
 ):
     project = _get_project_or_404(db, project_id)
 
-    from backend.pipeline.event_store import EventStore
     from backend.pipeline import events as _evt
+    from backend.pipeline.event_store import EventStore
     es = EventStore(db)
 
     # Find all active executions
@@ -406,10 +406,10 @@ async def reset_all(
     and PIPELINE_RESET to put all artifacts into awaiting_review. The snapshot
     (source of truth) is updated by the reducer; DB models are updated as projections.
     """
-    project = _get_project_or_404(db, project_id)
+    _get_project_or_404(db, project_id)
 
-    from backend.pipeline.event_store import EventStore
     from backend.pipeline import events as _evt
+    from backend.pipeline.event_store import EventStore
     es = EventStore(db)
 
     # 1. Find and cancel in-flight executions (operational: kill processes)
