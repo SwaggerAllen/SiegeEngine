@@ -49,6 +49,7 @@ class PipelineRun(Base):
         Enum(PipelineRunStatus), default=PipelineRunStatus.RUNNING
     )
     ai_loops: Mapped[int] = mapped_column(Integer, default=1)
+    human_review: Mapped[bool] = mapped_column(Boolean, default=True)
     stop_point: Mapped[StopPoint] = mapped_column(Enum(StopPoint), default=StopPoint.END_OF_PHASE)
     propagation_run: Mapped[bool] = mapped_column(Boolean, default=False)
     start_stage_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
