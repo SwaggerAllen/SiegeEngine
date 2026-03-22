@@ -404,9 +404,19 @@ async def reset_all(
         .all()
     )
     for e in in_flight:
+        cancel_running_execution(e.id)
         e.status = StageStatus.FAILED
         e.error_message = "Reset by user"
         e.completed_at = e.completed_at or datetime.utcnow()
+
+    # Cancel all queued jobs for this project's executions
+    all_exec_ids = {e.id for e in in_flight}
+    from backend.models.job import Job
+    queued_jobs = db.query(Job).filter_by(status="queued").all()
+    for job in queued_jobs:
+        payload = job.payload or {}
+        if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
+            job.status = "cancelled"
 
     db.flush()
 
