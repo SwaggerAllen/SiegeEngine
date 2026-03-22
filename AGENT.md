@@ -25,6 +25,9 @@ siege-engine/
     github/              # OAuth + PR creation
     pipeline/
       engine.py          # Orchestrator: sequential stages, fan-out, review gates
+      events.py          # Event type constants (RUN_CREATED, STAGE_STARTED, etc.)
+      reducer.py         # Pure reducer: apply_event(snapshot, event) → new snapshot
+      event_store.py     # Append events, update materialized PipelineSnapshot
       routes.py          # Pipeline API endpoints
       nodes/
         generate.py      # CLI-based artifact generation
@@ -58,29 +61,30 @@ siege-engine/
 
 ## Pipeline Stages
 
-1. **System Requirements** — document generation with web research
-2. **System Architecture** — document + component list extraction
-3. **Component Requirements** — fan-out per component
+1. **System Requirements** — project-level document generation
+2. **System Architecture** — project-level document
+3. **Component Extraction** — extracts components via 3-way consensus voting
 4. **Component Architectures** — fan-out per component
-5. **High-Level Plan** — single document
-6. **Component Plans** — fan-out per component (+ setup component)
-7. **Code Generation** — fan-out, full tool access, git repo, $5 budget
-8. **Code Review & Fix** — fan-out, full tool access
+5. **Sub-Component Extraction** — fan-out per component, extracts sub-components
+6. **Component Plans** — fan-out, leaf components only (no sub-components)
+7. **Sub-Component Architectures** — fan-out per sub-component
+8. **Sub-Component Plans** — fan-out per sub-component
+9. **Code Generation** — fan-out per leaf entity, full tool access, git repo, $5 budget
+10. **Code Review & Fix** — fan-out per leaf entity, full tool access
 
-Stages 1-6 produce markdown documents via Claude CLI with web research tools.
-Stages 7-8 run in the project's git repo with full tool access (bash, file editing).
-
-Fan-out stages extract components from the system architecture (stage 2) using 3-way consensus voting, then run once per component in parallel.
+Stages 1-8 produce markdown documents via Claude CLI with web research tools.
+Stages 9-10 run in the project's git repo with full tool access (bash, file editing).
 
 ## Key Patterns
 
+- **Event sourcing**: All pipeline state changes go through events (`pipeline/events.py` → `reducer.py` → `event_store.py`). The `PipelineSnapshot` is the **single source of truth** for pipeline state. DB model status fields (`Artifact.status`, `StageExecution.status`) are projections — written for query convenience but never read for state decisions. The snapshot carries artifact metadata (name, type, component_key via `artifact_meta`), execution mapping (`execution_map`), and all statuses.
 - **CLI-based generation**: All LLM calls go through Claude CLI subprocess (`cli/manager.py`), not direct API. Enables tool access, budget control, and reproducibility.
 - **Semaphore concurrency**: `MAX_CONCURRENT_LLM_CALLS` (default 5) limits parallel CLI invocations.
-- **Review gates**: Pipeline pauses at `awaiting_review` status. Frontend shows ReviewPanel for approve/reject/edit. Resume via `POST /api/pipeline/{project_id}/resume`.
-- **Staleness propagation**: Rejecting an artifact marks all downstream artifacts as stale via BFS traversal.
+- **Review gates**: Pipeline pauses at `awaiting_review` status (read from snapshot). Frontend shows ReviewPanel for approve/reject/edit. Resume via `POST /api/pipeline/{project_id}/resume`.
+- **Staleness propagation**: Editing/rejecting an artifact emits `STALENESS_PROPAGATED` events marking downstream artifacts as stale via BFS traversal.
 - **Prompt customization**: Each stage's system message, output format, and context template are editable via the PromptEditorPanel and stored in DB (PromptConfig).
 - **WebSocket broadcasting**: Pipeline progress events stream to frontend in real-time.
-- **Setup component**: `project_setup` is injected for stages 6-8 to ensure scaffolding runs before component code.
+- **Setup component**: `project_setup` is injected for code stages to ensure scaffolding runs before component code.
 
 ## Development
 

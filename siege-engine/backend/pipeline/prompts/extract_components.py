@@ -35,4 +35,6 @@ class ExtractComponentsPrompt(PromptTemplate):
                 + "\n\nIdentify the components and their inter-dependencies.",
             },
         ]
-        return self._inject_feedback(messages, feedback, human_notes, current_content, upstream_changes)
+        return self._inject_feedback(
+            messages, feedback, human_notes, current_content, upstream_changes,
+        )

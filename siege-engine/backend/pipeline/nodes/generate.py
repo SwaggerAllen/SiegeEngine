@@ -314,7 +314,9 @@ async def generate(
                         component_key=dep_key_fn(dep_key),
                     )
                     .filter(
-                        Artifact.status.in_([ArtifactStatus.APPROVED, ArtifactStatus.AWAITING_REVIEW])
+                        Artifact.status.in_(
+                            [ArtifactStatus.APPROVED, ArtifactStatus.AWAITING_REVIEW]
+                        )
                     )
                     .first()
                 )

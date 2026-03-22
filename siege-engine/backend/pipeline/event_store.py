@@ -118,6 +118,7 @@ class EventStore:
                 artifact_meta={},
                 artifact_git_shas={},
                 cascade_parents={},
+                execution_map={},
             )
             self.db.add(snapshot)
             self.db.flush()
@@ -142,6 +143,7 @@ def _snapshot_to_dict(snapshot: PipelineSnapshot) -> dict[str, Any]:
         "artifact_meta": dict(snapshot.artifact_meta or {}),
         "artifact_git_shas": dict(snapshot.artifact_git_shas or {}),
         "cascade_parents": dict(snapshot.cascade_parents or {}),
+        "execution_map": dict(snapshot.execution_map or {}),
     }
 
 
@@ -162,3 +164,4 @@ def _update_snapshot_from_dict(snapshot: PipelineSnapshot, state: dict[str, Any]
     snapshot.artifact_meta = state.get("artifact_meta", {})
     snapshot.artifact_git_shas = state.get("artifact_git_shas", {})
     snapshot.cascade_parents = state.get("cascade_parents", {})
+    snapshot.execution_map = state.get("execution_map", {})

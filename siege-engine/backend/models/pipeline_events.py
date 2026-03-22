@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -49,6 +49,7 @@ class PipelineSnapshot(Base):
     artifact_meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     artifact_git_shas: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     cascade_parents: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    execution_map: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )

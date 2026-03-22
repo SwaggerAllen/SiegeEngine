@@ -43,6 +43,9 @@ async def lifespan(app: FastAPI):
     # Log database diagnostics so we can tell if the volume mounted correctly
     _log_db_diagnostics()
 
+    # One-time clean slate migration: reset pipeline state, preserve documents
+    _clean_slate_migration()
+
     # Startup recovery: mark any in-flight executions as failed
     _recover_crashed_executions()
 
@@ -120,17 +123,214 @@ def _log_db_diagnostics():
         db.close()
 
 
+def _clean_slate_migration():
+    """One-time migration: reset pipeline state while preserving document content.
+
+    Deletes all events, snapshots, executions, runs, and jobs for every project.
+    Then creates a synthetic completed run with events so the snapshot shows all
+    documents as awaiting_review — as if a real run had produced them.
+
+    Preserves: Artifact content, ArtifactComment, ComponentDefinition,
+    ArtifactDependency, InputDocument records.
+    """
+    # Derive data directory from database_url
+    db_url = settings.database_url
+    if db_url.startswith("sqlite:///"):
+        db_dir = Path(
+            db_url.replace("sqlite:////", "/", 1)
+            if db_url.startswith("sqlite:////")
+            else db_url.replace("sqlite:///", "", 1)
+        ).parent
+    else:
+        db_dir = Path("data")
+
+    marker = db_dir / ".clean_slate_v1"
+    if marker.exists():
+        return
+
+    from backend.models import (
+        Artifact,
+        ArtifactStatus,
+        PipelineConfig,
+        PipelineRun,
+        PipelineRunStatus,
+        Project,
+        StageExecution,
+        StageStatus,
+        StopPoint,
+    )
+    from backend.models.job import Job
+    from backend.models.pipeline_events import PipelineEvent, PipelineSnapshot
+    from backend.pipeline import events as evt
+    from backend.pipeline.event_store import EventStore
+
+    db = SessionLocal()
+    try:
+        projects = db.query(Project).all()
+        if not projects:
+            logger.info("Clean slate migration: no projects, writing marker and skipping")
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("applied")
+            return
+
+        logger.info("Clean slate migration: processing %d projects", len(projects))
+
+        for project in projects:
+            pid = project.id
+
+            # 1-5. Delete old pipeline state (preserve artifacts, comments, deps)
+            db.query(PipelineEvent).filter_by(project_id=pid).delete(synchronize_session="fetch")
+            db.query(PipelineSnapshot).filter_by(project_id=pid).delete(synchronize_session="fetch")
+            db.query(StageExecution).filter_by(project_id=pid).delete(synchronize_session="fetch")
+            db.query(PipelineRun).filter_by(project_id=pid).delete(synchronize_session="fetch")
+            # Delete jobs related to this project
+            all_jobs = db.query(Job).filter(Job.status.in_(["queued", "running"])).all()
+            for job in all_jobs:
+                payload = job.payload or {}
+                if payload.get("project_id") == pid:
+                    db.delete(job)
+            db.flush()
+
+            # 6-8. Categorize artifacts
+            all_artifacts = db.query(Artifact).filter_by(project_id=pid).all()
+            artifacts_with_content = []
+            for art in all_artifacts:
+                if art.content and art.content.strip():
+                    art.status = ArtifactStatus.AWAITING_REVIEW
+                    artifacts_with_content.append(art)
+                else:
+                    art.status = ArtifactStatus.PENDING
+            db.flush()
+
+            if not artifacts_with_content:
+                logger.info(
+                    "  Project %s (%s): no artifacts with content, skipping",
+                    project.name, pid,
+                )
+                continue
+
+            # 9. Build artifact_type → stage_key mapping from PipelineConfig
+            config = db.query(PipelineConfig).filter_by(project_id=pid).first()
+            # artifact_type -> (stage_key, order_index)
+            type_to_stage: dict[str, tuple[str, int]] = {}
+            if config:
+                for stage_def in config.stages:
+                    type_to_stage[stage_def.output_artifact_type] = (
+                        stage_def.stage_key,
+                        stage_def.order_index,
+                    )
+
+            # Fallback mapping from defaults for project_doc type (not in pipeline config)
+            if "project_doc" not in type_to_stage:
+                type_to_stage["project_doc"] = ("project_doc", -1)
+
+            # 10. Create synthetic completed run
+            now = datetime.utcnow()
+            synthetic_run = PipelineRun(
+                project_id=pid,
+                run_number=1,
+                status=PipelineRunStatus.COMPLETED,
+                stop_point=StopPoint.END_OF_PHASE,
+                started_at=now,
+                completed_at=now,
+            )
+            db.add(synthetic_run)
+            db.flush()
+            run_id = synthetic_run.run_id
+
+            # Sort artifacts by stage order so events are in pipeline order
+            def _sort_key(art):
+                type_val = art.artifact_type.value
+                _, order = type_to_stage.get(type_val, (type_val, 999))
+                return order
+
+            sorted_artifacts = sorted(artifacts_with_content, key=_sort_key)
+
+            # 11. Create executions and emit events
+            es = EventStore(db)
+
+            es.emit(pid, evt.RUN_CREATED, {
+                "run_id": run_id,
+                "run_number": 1,
+                "ai_loops": 1,
+                "stop_point": "end_of_phase",
+            }, run_id=run_id)
+
+            for art in sorted_artifacts:
+                type_val = art.artifact_type.value
+                stage_key, _ = type_to_stage.get(type_val, (type_val, 999))
+
+                # Create execution
+                execution = StageExecution(
+                    project_id=pid,
+                    stage_key=stage_key,
+                    component_key=art.component_key,
+                    status=StageStatus.AWAITING_REVIEW,
+                    artifact_id=art.id,
+                    run_id=run_id,
+                    started_at=art.created_at or now,
+                    completed_at=now,
+                )
+                db.add(execution)
+                db.flush()
+
+                # Common payload fields
+                base_payload = {
+                    "stage_key": stage_key,
+                    "component_key": art.component_key,
+                    "artifact_id": art.id,
+                    "execution_id": execution.id,
+                    "artifact_type": type_val,
+                    "artifact_name": art.name,
+                }
+
+                es.emit(pid, evt.STAGE_STARTED, {
+                    **base_payload,
+                    "trigger": "clean_slate_migration",
+                }, run_id=run_id)
+
+                es.emit(pid, evt.GENERATION_COMPLETED, base_payload, run_id=run_id)
+
+                es.emit(pid, evt.AWAITING_HUMAN_REVIEW, base_payload, run_id=run_id)
+
+            es.emit(pid, evt.RUN_COMPLETED, {
+                "run_id": run_id,
+                "status": "completed",
+            }, run_id=run_id)
+
+            logger.info(
+                "  Project %s (%s): migrated %d artifacts, run_id=%s",
+                project.name, pid, len(sorted_artifacts), run_id,
+            )
+
+        db.commit()
+        logger.info("Clean slate migration complete")
+
+        # Write marker file
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("applied")
+
+    except Exception:
+        logger.exception("Clean slate migration failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _recover_crashed_executions():
     """Mark RUNNING/AI_REVIEW executions as FAILED after a server restart.
 
-    Also marks any RUNNING pipeline runs as FAILED so the DAG and run
-    history accurately reflect the crash.
+    Emits STAGE_FAILED and RUN_COMPLETED events so the snapshot stays in sync.
+    Also updates DB models as projections.
     """
     from backend.models import PipelineRun, PipelineRunStatus, StageExecution, StageStatus
+    from backend.pipeline import events as evt
+    from backend.pipeline.event_store import EventStore
 
     db = SessionLocal()
     try:
         now = datetime.utcnow()
+        es = EventStore(db)
 
         stuck = (
             db.query(StageExecution)
@@ -140,6 +340,15 @@ def _recover_crashed_executions():
         if stuck:
             logger.warning("Recovering %d stuck executions from previous run", len(stuck))
             for execution in stuck:
+                # Emit event (updates snapshot via reducer)
+                es.emit(execution.project_id, evt.STAGE_FAILED, {
+                    "execution_id": execution.id,
+                    "stage_key": execution.stage_key,
+                    "component_key": execution.component_key,
+                    "artifact_id": execution.artifact_id,
+                    "error": "Server restarted during execution",
+                }, run_id=execution.run_id)
+                # DB projection
                 execution.status = StageStatus.FAILED
                 execution.error_message = "Server restarted during execution"
                 execution.completed_at = now
@@ -152,6 +361,12 @@ def _recover_crashed_executions():
         if stuck_runs:
             logger.warning("Recovering %d stuck pipeline runs from previous run", len(stuck_runs))
             for run in stuck_runs:
+                # Emit event (updates snapshot via reducer)
+                es.emit(run.project_id, evt.RUN_COMPLETED, {
+                    "run_id": run.run_id,
+                    "status": "failed",
+                }, run_id=run.run_id)
+                # DB projection
                 run.status = PipelineRunStatus.FAILED
                 run.completed_at = now
 

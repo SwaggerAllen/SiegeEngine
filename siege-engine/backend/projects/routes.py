@@ -68,6 +68,12 @@ def get_project(
     project = service.get_project(db, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
+    # Read artifact statuses from snapshot (source of truth)
+    from backend.pipeline.event_store import EventStore
+    snapshot = EventStore(db).get_snapshot(project_id)
+    artifact_statuses = snapshot.artifact_statuses or {}
+    artifact_versions = snapshot.artifact_versions or {}
+
     return {
         "id": project.id,
         "name": project.name,
@@ -84,9 +90,9 @@ def get_project(
                 "id": a.id,
                 "name": a.name,
                 "artifact_type": a.artifact_type.value,
-                "status": a.status.value,
+                "status": artifact_statuses.get(a.id, a.status.value),
                 "component_key": a.component_key,
-                "version": a.version,
+                "version": artifact_versions.get(a.id, a.version),
             }
             for a in project.artifacts
         ],
@@ -136,7 +142,7 @@ def get_artifact(
     artifact = db.get(Artifact, artifact_id)
     if not artifact:
         raise HTTPException(404, "Artifact not found")
-    return _artifact_to_dict(artifact)
+    return _artifact_to_dict(artifact, db)
 
 
 @router.put("/artifacts/{artifact_id}", response_model=ArtifactResponse)
@@ -169,7 +175,7 @@ def update_artifact(
 
     db.commit()
     db.refresh(artifact)
-    return _artifact_to_dict(artifact)
+    return _artifact_to_dict(artifact, db)
 
 
 @router.get("/artifacts/{artifact_id}/diff")
@@ -381,7 +387,18 @@ async def get_pr_status(
     }
 
 
-def _artifact_to_dict(artifact: Artifact) -> dict:
+def _artifact_to_dict(artifact: Artifact, db: Session | None = None) -> dict:
+    # Read status/version/git_sha from snapshot (source of truth) when db is available
+    status = artifact.status.value
+    version = artifact.version
+    git_sha = artifact.git_commit_sha
+    if db:
+        from backend.pipeline.event_store import EventStore
+        snapshot = EventStore(db).get_snapshot(artifact.project_id)
+        status = (snapshot.artifact_statuses or {}).get(artifact.id, status)
+        version = (snapshot.artifact_versions or {}).get(artifact.id, version)
+        git_sha = (snapshot.artifact_git_shas or {}).get(artifact.id, git_sha)
+
     return {
         "id": artifact.id,
         "project_id": artifact.project_id,
@@ -389,12 +406,12 @@ def _artifact_to_dict(artifact: Artifact) -> dict:
         "name": artifact.name,
         "component_key": artifact.component_key,
         "content": artifact.content,
-        "status": artifact.status.value,
-        "version": artifact.version,
+        "status": status,
+        "version": version,
         "ai_review_feedback": artifact.ai_review_feedback,
         "human_review_notes": artifact.human_review_notes,
         "file_path": artifact.file_path,
-        "git_commit_sha": artifact.git_commit_sha,
+        "git_commit_sha": git_sha,
         "language": artifact.language,
         "created_at": artifact.created_at.isoformat(),
         "updated_at": artifact.updated_at.isoformat(),

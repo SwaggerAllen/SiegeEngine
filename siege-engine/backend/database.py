@@ -27,10 +27,11 @@ def init_db():
     """Initialize database: run Alembic migrations, enable WAL, sync stages."""
     import logging
 
-    from alembic import command
     from alembic.config import Config
     from alembic.migration import MigrationContext
     from alembic.script import ScriptDirectory
+
+    from alembic import command
 
     logger = logging.getLogger(__name__)
 
@@ -152,7 +153,11 @@ def _migrate_stage_order():
                 )
 
         # 2. Clean up artifacts/executions for removed stages
-        for removed_type in ("high_level_plan", "component_requirements", "sub_component_requirements"):
+        for removed_type in (
+            "high_level_plan",
+            "component_requirements",
+            "sub_component_requirements",
+        ):
             _cleanup_artifacts_for_type(conn, inspector, removed_type)
             conn.execute(
                 text("DELETE FROM stage_executions WHERE stage_key = :sk"),

@@ -11,12 +11,12 @@ import copy
 from typing import Any
 
 from backend.pipeline.events import (
+    AI_REVIEW_COMPLETED,
+    AI_REVIEW_STARTED,
     ARTIFACT_COMMITTED,
     ARTIFACT_PRUNED,
     ARTIFACT_REVISED,
     AWAITING_HUMAN_REVIEW,
-    AI_REVIEW_COMPLETED,
-    AI_REVIEW_STARTED,
     CARRIED_OVER,
     CASCADE_COMPLETED,
     CASCADE_STARTED,
@@ -66,10 +66,17 @@ def empty_snapshot() -> dict[str, Any]:
         "artifact_git_shas": {},
         # New: cascade parent run relationships
         "cascade_parents": {},
+        # New: execution ID + artifact ID per stage/component
+        "execution_map": {},
     }
 
 
-def apply_event(snapshot: dict[str, Any], event_type: str, payload: dict, sequence: int) -> dict[str, Any]:
+def apply_event(
+    snapshot: dict[str, Any],
+    event_type: str,
+    payload: dict,
+    sequence: int,
+) -> dict[str, Any]:
     """Apply a single event to a snapshot dict. Returns new snapshot (does NOT mutate input)."""
     snap = copy.deepcopy(snapshot)
     # Ensure new fields exist for snapshots created before they were added
@@ -86,7 +93,7 @@ def _ensure_new_fields(snap: dict) -> None:
     for field in (
         "artifact_versions", "stage_errors", "comment_counts",
         "stage_triggers", "artifact_meta", "artifact_git_shas",
-        "cascade_parents",
+        "cascade_parents", "execution_map",
     ):
         if field not in snap:
             snap[field] = {}
@@ -118,6 +125,12 @@ def _handle_run_completed(snap: dict, p: dict) -> None:
 def _handle_stage_queued(snap: dict, p: dict) -> None:
     key = _stage_key(p)
     snap["stage_statuses"][key] = "pending"
+    # Track execution in execution_map
+    if p.get("execution_id"):
+        entry: dict = {"execution_id": p["execution_id"]}
+        if p.get("artifact_id"):
+            entry["artifact_id"] = p["artifact_id"]
+        snap["execution_map"][key] = entry
 
 
 def _handle_stage_started(snap: dict, p: dict) -> None:
@@ -136,6 +149,12 @@ def _handle_stage_started(snap: dict, p: dict) -> None:
     if p.get("retry_count") is not None:
         snap["stage_errors"].setdefault(key, {})
         snap["stage_errors"][key]["retry_count"] = p["retry_count"]
+    # Track execution in execution_map
+    if p.get("execution_id"):
+        entry: dict = {"execution_id": p["execution_id"]}
+        if p.get("artifact_id"):
+            entry["artifact_id"] = p["artifact_id"]
+        snap["execution_map"][key] = entry
     # Track artifact metadata
     _update_artifact_meta(snap, p)
 
@@ -265,10 +284,11 @@ def _handle_artifact_pruned(snap: dict, p: dict) -> None:
     snap["artifact_meta"].pop(artifact_id, None)
     snap["artifact_git_shas"].pop(artifact_id, None)
     snap["comment_counts"].pop(artifact_id, None)
-    # Remove stage status if provided
+    # Remove stage status and execution_map entry if provided
     if p.get("stage_key"):
         key = _stage_key(p)
         snap["stage_statuses"].pop(key, None)
+        snap["execution_map"].pop(key, None)
 
 
 def _handle_pipeline_reset(snap: dict, p: dict) -> None:
@@ -282,6 +302,7 @@ def _handle_pipeline_reset(snap: dict, p: dict) -> None:
     snap["paused_stage"] = None
     snap["stage_errors"].clear()
     snap["stage_triggers"].clear()
+    snap["execution_map"].clear()
 
 
 def _handle_stage_retried(snap: dict, p: dict) -> None:
@@ -343,7 +364,7 @@ def _exec_to_stage_key(snap: dict, p: dict) -> str:
 
 
 def _update_artifact_meta(snap: dict, p: dict) -> None:
-    """Track artifact type and name in snapshot if provided."""
+    """Track artifact type, name, and component_key in snapshot if provided."""
     artifact_id = p.get("artifact_id")
     if artifact_id:
         meta = snap["artifact_meta"].get(artifact_id, {})
@@ -351,6 +372,8 @@ def _update_artifact_meta(snap: dict, p: dict) -> None:
             meta["type"] = p["artifact_type"]
         if p.get("artifact_name"):
             meta["name"] = p["artifact_name"]
+        if "component_key" in p:
+            meta["component_key"] = p["component_key"]
         if meta:
             snap["artifact_meta"][artifact_id] = meta
 

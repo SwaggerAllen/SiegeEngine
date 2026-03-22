@@ -242,7 +242,11 @@ async def cancel_pipeline(
 ):
     project = _get_project_or_404(db, project_id)
 
-    # Mark all active executions as failed (includes AWAITING_REVIEW for paused pipelines)
+    from backend.pipeline import events as _evt
+    from backend.pipeline.event_store import EventStore
+    es = EventStore(db)
+
+    # Find all active executions
     active_executions = (
         db.query(StageExecution)
         .filter_by(project_id=project_id)
@@ -254,26 +258,38 @@ async def cancel_pipeline(
         )
         .all()
     )
-    # Kill CLI processes and cancel worker tasks for each running execution
+
+    # Kill CLI processes and cancel worker tasks (operational)
     for e in active_executions:
         cancel_running_execution(e.id)
-        e.status = StageStatus.FAILED
-        e.error_message = "Cancelled by user"
 
-    # Cancel all queued jobs for this project
+    # Cancel all queued jobs for this project (operational)
     from backend.models.job import Job
+    all_exec_ids = {e.id for e in active_executions}
     queued_jobs = (
         db.query(Job)
         .filter(Job.status.in_(["queued", "running"]))
         .all()
     )
-    all_exec_ids = {e.id for e in active_executions}
     for job in queued_jobs:
         payload = job.payload or {}
         if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
             job.status = "cancelled"
 
-    # Reset in-progress artifacts back to pending so they don't stay stuck
+    # Emit STAGE_FAILED events for each active execution (snapshot updates via reducer)
+    for e in active_executions:
+        es.emit(project_id, _evt.STAGE_FAILED, {
+            "execution_id": e.id,
+            "stage_key": e.stage_key,
+            "component_key": e.component_key,
+            "artifact_id": e.artifact_id,
+            "error": "Cancelled by user",
+        }, run_id=e.run_id)
+        # DB projections
+        e.status = StageStatus.FAILED
+        e.error_message = "Cancelled by user"
+
+    # Reset in-progress artifacts as DB projections
     in_progress_artifacts = (
         db.query(Artifact)
         .filter_by(project_id=project_id)
@@ -283,7 +299,7 @@ async def cancel_pipeline(
     for a in in_progress_artifacts:
         a.status = ArtifactStatus.PENDING
 
-    # Mark any active (running OR paused) PipelineRun as cancelled
+    # Emit RUN_COMPLETED events for active runs (snapshot updates via reducer)
     active_runs = (
         db.query(PipelineRun)
         .filter_by(project_id=project_id)
@@ -291,26 +307,13 @@ async def cancel_pipeline(
         .all()
     )
     for r in active_runs:
-        r.status = PipelineRunStatus.CANCELLED
-        r.completed_at = r.completed_at or datetime.utcnow()
-
-    # Emit RUN_COMPLETED events so the snapshot's is_running updates
-    from backend.pipeline.event_store import EventStore
-    from backend.pipeline import events as _evt
-    es = EventStore(db)
-    for r in active_runs:
         es.emit(project_id, _evt.RUN_COMPLETED, {
             "run_id": r.run_id,
             "status": "cancelled",
         }, run_id=r.run_id)
-
-    # Unconditionally clear running state in the snapshot.
-    # RUN_COMPLETED only clears is_running when current_run_id matches,
-    # which can be stale. Force it here since we cancelled everything.
-    snapshot = es.get_snapshot(project_id)
-    snapshot.is_running = False
-    snapshot.is_paused = False
-    snapshot.paused_stage = None
+        # DB projections
+        r.status = PipelineRunStatus.CANCELLED
+        r.completed_at = r.completed_at or datetime.utcnow()
 
     db.commit()
 
@@ -397,26 +400,19 @@ async def reset_all(
     db: Session = Depends(get_db),
     _user: User = Depends(_require_writer),
 ):
-    """Reset pipeline to a clean slate.
+    """Reset pipeline to a clean slate via events.
 
-    Cancels all active runs, puts every artifact with content into
-    AWAITING_REVIEW, and ensures each has an execution the next Resume
-    can carry over.  Artifacts without content become PENDING.
+    Emits STAGE_FAILED for in-flight executions, RUN_COMPLETED for active runs,
+    and PIPELINE_RESET to put all artifacts into awaiting_review. The snapshot
+    (source of truth) is updated by the reducer; DB models are updated as projections.
     """
-    project = _get_project_or_404(db, project_id)
+    _get_project_or_404(db, project_id)
 
-    # 1. Cancel all active pipeline runs (running OR paused)
-    active_runs = (
-        db.query(PipelineRun)
-        .filter_by(project_id=project_id)
-        .filter(PipelineRun.status.in_([PipelineRunStatus.RUNNING, PipelineRunStatus.PAUSED]))
-        .all()
-    )
-    for r in active_runs:
-        r.status = PipelineRunStatus.CANCELLED
-        r.completed_at = r.completed_at or datetime.utcnow()
+    from backend.pipeline import events as _evt
+    from backend.pipeline.event_store import EventStore
+    es = EventStore(db)
 
-    # 2. Fail all in-flight executions (including AWAITING_REVIEW for paused pipelines)
+    # 1. Find and cancel in-flight executions (operational: kill processes)
     in_flight = (
         db.query(StageExecution)
         .filter_by(project_id=project_id)
@@ -430,11 +426,8 @@ async def reset_all(
     )
     for e in in_flight:
         cancel_running_execution(e.id)
-        e.status = StageStatus.FAILED
-        e.error_message = "Reset by user"
-        e.completed_at = e.completed_at or datetime.utcnow()
 
-    # Cancel all queued jobs for this project
+    # Cancel all queued jobs for this project (operational)
     from backend.models.job import Job
     all_exec_ids = {e.id for e in in_flight}
     queued_jobs = db.query(Job).filter(Job.status.in_(["queued", "running"])).all()
@@ -443,10 +436,39 @@ async def reset_all(
         if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
             job.status = "cancelled"
 
+    # 2. Emit STAGE_FAILED for each in-flight execution
+    for e in in_flight:
+        es.emit(project_id, _evt.STAGE_FAILED, {
+            "execution_id": e.id,
+            "stage_key": e.stage_key,
+            "component_key": e.component_key,
+            "artifact_id": e.artifact_id,
+            "error": "Reset by user",
+        }, run_id=e.run_id)
+        # DB projection
+        e.status = StageStatus.FAILED
+        e.error_message = "Reset by user"
+        e.completed_at = e.completed_at or datetime.utcnow()
+
+    # 3. Emit RUN_COMPLETED for active runs
+    active_runs = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id)
+        .filter(PipelineRun.status.in_([PipelineRunStatus.RUNNING, PipelineRunStatus.PAUSED]))
+        .all()
+    )
+    for r in active_runs:
+        es.emit(project_id, _evt.RUN_COMPLETED, {
+            "run_id": r.run_id,
+            "status": "cancelled",
+        }, run_id=r.run_id)
+        # DB projection
+        r.status = PipelineRunStatus.CANCELLED
+        r.completed_at = r.completed_at or datetime.utcnow()
+
     db.flush()
 
-    # 3. Determine which run to attach reset executions to.
-    #    Use the most recent cancelled/completed run so Resume can find them.
+    # 4. Determine run_id for the reset event
     latest_run = (
         db.query(PipelineRun)
         .filter_by(project_id=project_id)
@@ -454,7 +476,6 @@ async def reset_all(
         .first()
     )
     if not latest_run:
-        # No runs at all — create a synthetic one
         latest_run = PipelineRun(
             project_id=project_id,
             run_number=1,
@@ -464,22 +485,29 @@ async def reset_all(
         )
         db.add(latest_run)
         db.flush()
-
     run_id = latest_run.run_id
 
-    # 4. Reset artifacts and their executions
-    all_artifacts = (
-        db.query(Artifact)
-        .filter_by(project_id=project_id)
-        .all()
-    )
+    # 5. Emit PIPELINE_RESET (reducer puts all snapshot artifacts into awaiting_review)
+    es.emit(project_id, _evt.PIPELINE_RESET, {}, run_id=run_id)
 
+    # 6. Sync DB artifact statuses as projections to match snapshot
+    all_artifacts = db.query(Artifact).filter_by(project_id=project_id).all()
+    snapshot = es.get_snapshot(project_id)
     reset_count = 0
     for artifact in all_artifacts:
-        if artifact.content and artifact.content.strip():
-            artifact.status = ArtifactStatus.AWAITING_REVIEW
+        snap_status = (snapshot.artifact_statuses or {}).get(artifact.id)
+        if snap_status:
+            try:
+                artifact.status = ArtifactStatus(snap_status)
+            except ValueError:
+                pass
+            reset_count += 1
+        elif not artifact.content or not artifact.content.strip():
+            artifact.status = ArtifactStatus.PENDING
 
-            # Find or create an AWAITING_REVIEW execution in the target run
+    # Ensure awaiting_review executions exist for resume
+    for artifact in all_artifacts:
+        if artifact.status == ArtifactStatus.AWAITING_REVIEW:
             existing_exec = (
                 db.query(StageExecution)
                 .filter_by(project_id=project_id, artifact_id=artifact.id)
@@ -490,20 +518,6 @@ async def reset_all(
                 existing_exec.status = StageStatus.AWAITING_REVIEW
                 existing_exec.run_id = run_id
                 existing_exec.error_message = None
-            reset_count += 1
-        else:
-            artifact.status = ArtifactStatus.PENDING
-
-    # Emit events so the snapshot updates before commit
-    from backend.pipeline.event_store import EventStore
-    from backend.pipeline import events as _evt
-    es = EventStore(db)
-    for r in active_runs:
-        es.emit(project_id, _evt.RUN_COMPLETED, {
-            "run_id": r.run_id,
-            "status": "cancelled",
-        }, run_id=r.run_id)
-    es.emit(project_id, _evt.PIPELINE_RESET, {}, run_id=run_id)
 
     db.commit()
 
@@ -542,13 +556,20 @@ def get_status(
     es = EventStore(db)
     snapshot = es.get_snapshot(project_id)
 
+    stage_statuses = snapshot.stage_statuses or {}
+
+    def _snap_status(e):
+        """Get status from snapshot (source of truth), fall back to DB."""
+        key = f"{e.stage_key}/{e.component_key}" if e.component_key else e.stage_key
+        return stage_statuses.get(key, e.status.value)
+
     return {
         "stages": [
             {
                 "id": e.id,
                 "stage_key": e.stage_key,
                 "component_key": e.component_key,
-                "status": e.status.value,
+                "status": _snap_status(e),
                 "artifact_id": e.artifact_id,
                 "started_at": e.started_at.isoformat() if e.started_at else None,
                 "completed_at": e.completed_at.isoformat() if e.completed_at else None,
@@ -624,6 +645,7 @@ def get_debug_state(
         "artifact_git_shas": snapshot.artifact_git_shas or {},
         "comment_counts": snapshot.comment_counts or {},
         "cascade_parents": snapshot.cascade_parents or {},
+        "execution_map": snapshot.execution_map or {},
     }
 
     # Runs
@@ -982,7 +1004,9 @@ def revert_to_sequence(
                         # Fall back to timestamp-based lookup
                         history = git_manager.get_file_history(project_id, art.file_path)
                         for commit in history:
-                            commit_time = dt.fromisoformat(commit["timestamp"].replace("Z", "+00:00"))
+                            commit_time = dt.fromisoformat(
+                                commit["timestamp"].replace("Z", "+00:00")
+                            )
                             if commit_time.replace(tzinfo=None) <= target_time.replace(tzinfo=None):
                                 restore_sha = commit["sha"]
                                 break
@@ -1168,17 +1192,30 @@ def reconcile_statuses(
     db: Session = Depends(get_db),
     _user: User = Depends(_require_writer),
 ):
-    """Rebuild the pipeline snapshot from the event log.
+    """Rebuild the pipeline snapshot from the event log and sync DB projections.
 
-    Reconciliation is no longer needed since the event-sourced snapshot
-    is the single source of truth. This endpoint now rebuilds the
-    materialized snapshot in case it drifts.
+    The snapshot is the single source of truth. This endpoint rebuilds it
+    from events, then syncs DB model status fields to match (repair projections).
     """
     _get_project_or_404(db, project_id)
 
     from backend.pipeline.event_store import EventStore
     es = EventStore(db)
-    es.rebuild_snapshot(project_id)
+    snapshot = es.rebuild_snapshot(project_id)
+
+    # Sync DB artifact statuses as projections
+    artifacts = db.query(Artifact).filter_by(project_id=project_id).all()
+    for art in artifacts:
+        snap_status = (snapshot.artifact_statuses or {}).get(art.id)
+        if snap_status:
+            try:
+                art.status = ArtifactStatus(snap_status)
+            except ValueError:
+                pass
+        snap_version = (snapshot.artifact_versions or {}).get(art.id)
+        if snap_version is not None:
+            art.version = snap_version
+
     db.commit()
 
     latest_run = (

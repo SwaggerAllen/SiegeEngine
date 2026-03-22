@@ -53,18 +53,28 @@ Open `http://localhost:5173` and register. The first user is automatically an ad
 
 ## Pipeline Stages
 
-The pipeline runs 8 stages, each with optional AI review and human review gates:
+The pipeline runs 10 stages, each with optional AI review and human review gates:
 
 1. **System Requirements** — gather and document project requirements
 2. **System Architecture** — design the overall system architecture
-3. **Component Requirements** — per-component requirements (fan-out)
+3. **Component Extraction** — extract components via 3-way consensus voting
 4. **Component Architectures** — per-component architecture (fan-out)
-5. **High Level Plan** — overall implementation plan
-6. **Component Plans** — per-component implementation plans (fan-out)
-7. **Code Generation** — generate code with full tool access (fan-out)
-8. **Code Review & Fix** — automated code review and fixes (fan-out)
+5. **Sub-Component Extraction** — extract sub-components per component (fan-out)
+6. **Component Plans** — per leaf component implementation plans (fan-out)
+7. **Sub-Component Architectures** — per sub-component architecture (fan-out)
+8. **Sub-Component Plans** — per sub-component implementation plans (fan-out)
+9. **Code Generation** — generate code with full tool access (fan-out per leaf)
+10. **Code Review & Fix** — automated code review and fixes (fan-out per leaf)
 
-Document stages (1-6) use the Claude CLI with web research tools (`WebFetch`, `WebSearch`). Code stages (7-8) run in the project's git repo with full tool access (bash, file editing, etc.).
+Document stages (1-8) use the Claude CLI with web research tools. Code stages (9-10) run in the project's git repo with full tool access (bash, file editing, etc.).
+
+## Architecture: Event Sourcing
+
+All pipeline state changes flow through an event-sourced system:
+- **Events** (`pipeline/events.py`) — immutable records of state changes (e.g., `STAGE_STARTED`, `HUMAN_APPROVED`)
+- **Reducer** (`pipeline/reducer.py`) — pure function that applies events to produce a snapshot
+- **Snapshot** (`PipelineSnapshot`) — materialized view that is the **single source of truth** for pipeline state
+- DB model status fields (`Artifact.status`, `StageExecution.status`) are projections — written for query convenience but never read for state decisions
 
 ## Features
 
@@ -107,6 +117,9 @@ backend/
   models.py      # SQLAlchemy ORM models
   pipeline/      # Pipeline engine, stage execution
     engine.py    # Orchestrator (fan-out, review gates)
+    events.py    # Event type constants
+    reducer.py   # Pure reducer: events → snapshot state
+    event_store.py # Append events, update materialized snapshot
     nodes/       # Generate, AI review, component extraction
     prompts/     # Prompt templates (editable via UI)
     routes.py    # Pipeline API endpoints

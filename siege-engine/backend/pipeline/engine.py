@@ -31,10 +31,10 @@ from backend.models import (
     StageStatus,
     StopPoint,
 )
+from backend.pipeline import events as evt
 from backend.pipeline.artifact_ops import ArtifactOpsMixin
 from backend.pipeline.component_manager import ComponentManagerMixin
 from backend.pipeline.event_store import EventStore
-from backend.pipeline import events as evt
 from backend.pipeline.nodes.ai_review import ai_review
 from backend.pipeline.nodes.generate import generate
 from backend.pipeline.readiness import (
@@ -74,22 +74,13 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         set_completed: bool = False,
         trigger: str | None = None,
     ) -> None:
-        """Atomically transition execution status and optionally its artifact.
+        """Transition execution status, emit event, then update DB as projection.
 
-        Centralises all status mutations so execution and artifact stay in sync.
+        Events are emitted FIRST so the snapshot (single source of truth) updates
+        before DB models. DB writes are projections for query convenience.
         Does NOT broadcast websocket events — callers handle that themselves.
         """
         old_status = execution.status
-        execution.status = new_status
-        if set_completed:
-            execution.completed_at = datetime.utcnow()
-        if error_message is not None:
-            execution.error_message = error_message
-
-        if artifact_status is not None and execution.artifact_id:
-            artifact = self.db.get(Artifact, execution.artifact_id)
-            if artifact:
-                artifact.status = artifact_status
 
         logger.debug(
             "Transition exec %s: %s -> %s (artifact: %s)",
@@ -97,7 +88,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             artifact_status.value if artifact_status else "unchanged",
         )
 
-        # Emit corresponding event
+        # 1. Emit event FIRST (updates snapshot via reducer)
         event_type = _status_to_event_type(new_status)
         if event_type:
             payload: dict[str, Any] = {
@@ -124,8 +115,24 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 run_id=execution.run_id,
             )
 
+        # 2. DB projections (not authoritative — snapshot is source of truth)
+        execution.status = new_status
+        if set_completed:
+            execution.completed_at = datetime.utcnow()
+        if error_message is not None:
+            execution.error_message = error_message
+
+        if artifact_status is not None and execution.artifact_id:
+            artifact = self.db.get(Artifact, execution.artifact_id)
+            if artifact:
+                artifact.status = artifact_status
+
     def _mark_artifact_status(self, artifact_id: str, new_status: ArtifactStatus) -> None:
-        """Update an artifact's status without touching any execution."""
+        """DB projection: update artifact status for query convenience.
+
+        NOT authoritative — the snapshot (via events) is the source of truth.
+        Callers must also emit the corresponding event that updates the snapshot.
+        """
         artifact = self.db.get(Artifact, artifact_id)
         if artifact:
             artifact.status = new_status
@@ -165,7 +172,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     "run_id": run_id,
                     "run_number": pipeline_run.run_number,
                     "ai_loops": pipeline_run.ai_loops,
-                    "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "end_of_phase",
+                    "stop_point": (
+                        pipeline_run.stop_point.value
+                        if pipeline_run.stop_point
+                        else "end_of_phase"
+                    ),
                     "start_stage_key": pipeline_run.start_stage_key,
                     "start_component_key": pipeline_run.start_component_key,
                 },
@@ -230,7 +241,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 "run_id": new_run_id,
                 "run_number": pipeline_run.run_number,
                 "ai_loops": pipeline_run.ai_loops,
-                "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "end_of_phase",
+                "stop_point": (
+                    pipeline_run.stop_point.value
+                    if pipeline_run.stop_point
+                    else "end_of_phase"
+                ),
                 "start_stage_key": pipeline_run.start_stage_key,
                 "start_component_key": pipeline_run.start_component_key,
             },
@@ -241,11 +256,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         carried = self._carry_over_approved(project_id, new_run_id)
 
         # Additionally carry over AWAITING_REVIEW executions from the previous run
+        # Read stale artifact IDs from snapshot (source of truth)
+        _snap = self.events.get_snapshot(project_id)
         stale_artifact_ids = {
-            a.id
-            for a in self.db.query(Artifact)
-            .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
-            .all()
+            aid for aid, status in (_snap.artifact_statuses or {}).items()
+            if status == "stale"
         }
         review_execs = (
             self.db.query(StageExecution)
@@ -595,11 +610,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         if mismatched:
             self.db.flush()
 
+        # Read stale artifact IDs from snapshot (source of truth)
+        _snap = self.events.get_snapshot(project_id)
         stale_artifact_ids = {
-            a.id
-            for a in self.db.query(Artifact)
-            .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
-            .all()
+            aid for aid, status in (_snap.artifact_statuses or {}).items()
+            if status == "stale"
         }
 
         # For each (stage_key, component_key), find the most recent APPROVED
@@ -810,7 +825,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         """
         stages = sorted(config.stages, key=lambda s: s.order_index)
         has_inflight_work = False
-        generated_work_this_pass = False
 
         for stage_def in stages:
             # Skip stages outside run scope
@@ -923,7 +937,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     if stage_def.stage_key not in BRANCHING_STAGES:
                         await self._post_generation_hook(project_id, stage_def, None, execution)
 
-                generated_work_this_pass = True
 
                 # Check if pipeline should pause at this stage
                 if self._should_pause(stage_def, pipeline_run, project_id):
@@ -1033,7 +1046,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     )
                     return
 
-                generated_work_this_pass = True
 
                 # Check if pipeline should pause at this stage
                 if self._should_pause(stage_def, pipeline_run, project_id):
@@ -1169,7 +1181,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             run_id=execution.run_id,
         )
 
-        try:  # noqa: the finally below uninstalls log_streamer
+        try:  # the finally below uninstalls log_streamer
             self.events.emit(
                 project_id, evt.GENERATION_PROGRESS,
                 {
@@ -1328,7 +1340,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         except asyncio.CancelledError:
             logger.info(
-                "Stage %s cancelled for component=%s (force-restart)", stage_def.stage_key, component_key
+                "Stage %s cancelled for component=%s (force-restart)",
+                stage_def.stage_key,
+                component_key,
             )
             # Unstick artifact status so the retry can start clean
             art_status = None

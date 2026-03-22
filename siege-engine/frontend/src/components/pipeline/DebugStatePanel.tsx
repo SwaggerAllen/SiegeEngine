@@ -34,7 +34,7 @@ function formatDebugText(state: DebugState): string {
 
   // Mismatches (top if any)
   if (state.mismatches.length > 0) {
-    lines.push('!!! SNAPSHOT vs DB MISMATCHES !!!');
+    lines.push('!!! PROJECTION DRIFT DETECTED (snapshot is source of truth) !!!');
     for (const m of state.mismatches) {
       if (m.type === 'artifact_status') {
         lines.push(`  ARTIFACT ${m.name} (${shortId(m.id as string)}): snapshot=${m.snapshot}  db=${m.db}`);
@@ -94,6 +94,27 @@ function formatDebugText(state: DebugState): string {
     lines.push(`stage_triggers:`);
     for (const [key, trigger] of Object.entries(stageTriggers)) {
       lines.push(`  ${key}: ${trigger}`);
+    }
+  }
+
+  const executionMap = snap.execution_map as Record<string, Record<string, string>>;
+  if (executionMap && Object.keys(executionMap).length > 0) {
+    lines.push(`execution_map:`);
+    for (const [key, entry] of Object.entries(executionMap)) {
+      const execId = shortId(entry?.execution_id);
+      const artId = entry?.artifact_id ? shortId(entry.artifact_id) : '(none)';
+      lines.push(`  ${pad(key, 40)} -> exec=${execId}  art=${artId}`);
+    }
+  }
+
+  const artifactMeta = snap.artifact_meta as Record<string, Record<string, string>>;
+  if (artifactMeta && Object.keys(artifactMeta).length > 0) {
+    lines.push(`artifact_meta:`);
+    for (const [aid, meta] of Object.entries(artifactMeta)) {
+      const name = meta?.name || '?';
+      const type = meta?.type || '?';
+      const ck = meta?.component_key || '';
+      lines.push(`  ${pad(name, 25)} type=${pad(type, 22)} comp=${ck || '(none)'}  (${shortId(aid)})`);
     }
   }
 
@@ -252,7 +273,7 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
 
       {state && state.mismatches.length > 0 && (
         <div className="text-yellow-300 text-xs bg-yellow-900/30 border border-yellow-700 rounded px-3 py-2 shrink-0">
-          {state.mismatches.length} snapshot vs DB mismatch{state.mismatches.length > 1 ? 'es' : ''} detected
+          {state.mismatches.length} projection drift{state.mismatches.length > 1 ? 's' : ''} detected (snapshot is source of truth)
         </div>
       )}
 

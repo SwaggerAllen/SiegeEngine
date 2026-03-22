@@ -22,6 +22,7 @@ from backend.models import (
     StageExecution,
     StageStatus,
 )
+
 logger = logging.getLogger(__name__)
 
 # Reverse mapping: artifact type → stage key that produces it.
