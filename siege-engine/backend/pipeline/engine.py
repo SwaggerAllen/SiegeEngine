@@ -1148,6 +1148,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         current_content: str | None = None,
         config: PipelineConfig | None = None,
         pipeline_run: PipelineRun | None = None,
+        trigger: str = "pipeline_run",
     ):
         """Run a single stage (generate -> ai_review -> set status)."""
         logger.info(
@@ -1175,7 +1176,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 "stage_key": stage_def.stage_key,
                 "component_key": component_key,
                 "artifact_id": execution.artifact_id,
-                "trigger": "pipeline_run",
+                "trigger": trigger,
                 "retry_count": execution.retry_count,
             },
             run_id=execution.run_id,
