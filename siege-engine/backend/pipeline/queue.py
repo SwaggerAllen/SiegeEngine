@@ -39,7 +39,32 @@ def enqueue(
     priority: int = 10,
     max_retries: int = 0,
 ) -> str:
-    """Enqueue a job for background processing. Returns job ID."""
+    """Enqueue a job for background processing. Returns job ID.
+
+    Duplicate-safe: if a queued job with the same type and payload already
+    exists, the existing job ID is returned instead of creating a new one.
+    """
+    import json
+
+    # Check for an existing queued job with the same type + payload to
+    # avoid duplicate work (e.g. rapid UI clicks on force-restart).
+    payload_json = json.dumps(payload, sort_keys=True)
+    existing = (
+        db.query(Job)
+        .filter(
+            Job.job_type == job_type,
+            Job.status == "queued",
+        )
+        .all()
+    )
+    for candidate in existing:
+        if json.dumps(candidate.payload, sort_keys=True) == payload_json:
+            logger.info(
+                "Dedup: reusing existing queued job %s type=%s",
+                candidate.id, job_type,
+            )
+            return candidate.id
+
     job = Job(
         job_type=job_type,
         payload=payload,

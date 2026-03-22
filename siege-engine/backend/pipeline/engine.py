@@ -1165,10 +1165,10 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         log_streamer = WebSocketLogHandler(project_id)
         log_streamer.install()
 
-        # Commit the RUNNING execution so other sessions (DAG endpoint) can see it
-        self.db.commit()
-
-        # Emit stage_started event for event history
+        # Emit stage_started event BEFORE committing so the event and the
+        # RUNNING execution are persisted in the same transaction.  Previously
+        # the commit came first, creating a window where the DB had a RUNNING
+        # execution with no corresponding event (projection drift).
         self.events.emit(
             project_id, evt.STAGE_STARTED,
             {
@@ -1181,6 +1181,10 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             },
             run_id=execution.run_id,
         )
+
+        # Commit the RUNNING execution + STAGE_STARTED event together so
+        # other sessions (DAG endpoint) can see them atomically.
+        self.db.commit()
 
         try:  # the finally below uninstalls log_streamer
             self.events.emit(

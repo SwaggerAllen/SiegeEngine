@@ -1316,6 +1316,44 @@ def reconcile_statuses(
             run.status = PipelineRunStatus.COMPLETED
             run.completed_at = run.completed_at or datetime.utcnow()
 
+    # Fix zombie runs: runs the snapshot considers RUNNING but that have no
+    # active executions left (e.g. the only execution was an orphan we just
+    # killed above).  Without this, the run stays stuck as RUNNING forever.
+    still_running = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id, status=PipelineRunStatus.RUNNING)
+        .all()
+    )
+    for run in still_running:
+        active_count = (
+            db.query(StageExecution)
+            .filter(
+                StageExecution.run_id == run.run_id,
+                StageExecution.status.in_([
+                    StageStatus.RUNNING, StageStatus.AI_REVIEW,
+                    StageStatus.AWAITING_REVIEW,
+                ]),
+            )
+            .count()
+        )
+        if active_count == 0:
+            corrections.append({
+                "type": "zombie_run",
+                "id": run.run_id,
+                "from": "running",
+                "to": "failed",
+            })
+            run.status = PipelineRunStatus.FAILED
+            run.completed_at = run.completed_at or datetime.utcnow()
+            # Emit RUN_COMPLETED so the snapshot reflects the fix
+            from backend.pipeline import events as _evt
+            from backend.pipeline.event_store import EventStore as _ES
+            _ES(db).emit(
+                project_id, _evt.RUN_COMPLETED,
+                {"run_id": run.run_id, "status": "failed"},
+                run_id=run.run_id,
+            )
+
     db.commit()
 
     latest_run = (
