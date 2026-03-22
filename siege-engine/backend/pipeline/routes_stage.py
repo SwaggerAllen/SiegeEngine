@@ -253,6 +253,11 @@ async def trigger_stage(
     if not stage_def:
         raise HTTPException(404, f"Stage '{req.stage_key}' not found")
 
+    # Cancel any existing queued trigger/retry jobs for this stage to prevent
+    # duplicate executions from concurrent requests.
+    cancel_jobs_by_type(db, "trigger_stage", project_id=project_id, stage_key=req.stage_key)
+    cancel_jobs_by_type(db, "retry_stage", stage_key=req.stage_key)
+
     enqueue(
         db,
         "trigger_stage",
