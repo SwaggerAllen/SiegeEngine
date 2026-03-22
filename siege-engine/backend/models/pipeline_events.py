@@ -49,6 +49,7 @@ class PipelineSnapshot(Base):
     artifact_meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     artifact_git_shas: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     cascade_parents: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    execution_map: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )

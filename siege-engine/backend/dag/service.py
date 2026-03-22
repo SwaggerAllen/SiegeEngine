@@ -76,6 +76,13 @@ def build_dependency_graph(db: Session, project_id: str) -> dict[str, list[str]]
 
 
 def propagate_staleness(db: Session, artifact_id: str, event_store=None) -> list[str]:
+    """Propagate staleness to downstream artifacts via dependency graph.
+
+    Emits STALENESS_PROPAGATED event (updates snapshot via reducer),
+    then sets artifact.status = STALE as DB projection.
+    event_store should always be provided; the parameter is optional only
+    for backward compatibility during migration.
+    """
     artifact = db.get(Artifact, artifact_id)
     if not artifact:
         return []
@@ -93,19 +100,24 @@ def propagate_staleness(db: Session, artifact_id: str, event_store=None) -> list
 
         current = db.get(Artifact, current_id)
         if current and current.status != ArtifactStatus.STALE:
-            current.status = ArtifactStatus.STALE
             stale_ids.append(current_id)
 
         for downstream_id in graph.get(current_id, []):
             queue.append(downstream_id)
 
-    # Emit staleness_propagated event
+    # Emit staleness_propagated event FIRST (snapshot source of truth)
     if stale_ids and event_store:
         from backend.pipeline import events as evt
         event_store.emit(
             artifact.project_id, evt.STALENESS_PROPAGATED,
             {"source_artifact_id": artifact_id, "stale_ids": stale_ids},
         )
+
+    # DB projection: set artifact.status = STALE
+    for sid in stale_ids:
+        art = db.get(Artifact, sid)
+        if art:
+            art.status = ArtifactStatus.STALE
 
     return stale_ids
 
@@ -211,29 +223,28 @@ def _derive_stage_status(stage_execs: list) -> tuple[str, bool]:
 
 
 def get_dag_visualization_data(db: Session, project_id: str) -> dict:
-    """Build workflow DAG from stage definitions.
+    """Build workflow DAG from stage definitions + snapshot.
 
     Shows one node per stage definition (workflow steps).
-    Never expands to per-artifact or per-component nodes.
+    Reads stage statuses from the snapshot (source of truth).
     """
+    from backend.pipeline.event_store import EventStore
+
     config = db.query(PipelineConfig).filter_by(project_id=project_id).first()
     if not config:
         return {"nodes": [], "edges": []}
 
     stages = sorted(config.stages, key=lambda s: s.order_index)
-
-    # Only consider executions from the latest pipeline run so that old
-    # FAILED / AWAITING_REVIEW records don't mask the current state.
-    _, executions = _get_latest_run_executions(db, project_id)
-
-    key_to_execs: dict[str, list] = defaultdict(list)
-    for exc in executions:
-        key_to_execs[exc.stage_key].append(exc)
+    snapshot = EventStore(db).get_snapshot(project_id)
+    stage_statuses = snapshot.stage_statuses or {}
 
     nodes: list[dict] = []
     for stage_def in stages:
-        stage_execs = key_to_execs.get(stage_def.stage_key, [])
-        status, is_active = _derive_stage_status(stage_execs)
+        # For workflow DAG, use the aggregate status for the stage key.
+        # Fan-out stages may have multiple entries (stage_key/component_key),
+        # so we aggregate: if any component is running, the stage is running, etc.
+        status = _derive_stage_status_from_snapshot(stage_def.stage_key, stage_statuses)
+        is_active = status in ("running", "ai_review", "ai_reviewing")
 
         node_id = f"stage_{stage_def.stage_key}"
         nodes.append(
@@ -283,6 +294,44 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
+def _derive_stage_status_from_snapshot(
+    stage_key: str, stage_statuses: dict[str, str]
+) -> str:
+    """Derive aggregate status for a stage from snapshot stage_statuses.
+
+    Handles both non-fan-out (exact match) and fan-out (prefix match) stages.
+    """
+    # Exact match for non-fan-out stages
+    if stage_key in stage_statuses:
+        return stage_statuses[stage_key]
+
+    # Fan-out: collect all entries that start with this stage_key
+    prefix = f"{stage_key}/"
+    component_statuses = [
+        status for key, status in stage_statuses.items()
+        if key.startswith(prefix)
+    ]
+    if not component_statuses:
+        return "pending"
+
+    # Priority-based aggregation (same logic as old _derive_stage_status)
+    if any(s == "running" for s in component_statuses):
+        return "running"
+    if any(s == "ai_review" for s in component_statuses):
+        return "ai_review"
+    if any(s == "failed" for s in component_statuses):
+        return "failed"
+    if any(s == "rejected" for s in component_statuses):
+        return "rejected"
+    if any(s == "awaiting_review" for s in component_statuses):
+        return "awaiting_review"
+    if all(s == "approved" for s in component_statuses):
+        return "approved"
+    if any(s == "approved" for s in component_statuses):
+        return "awaiting_review"
+    return "pending"
+
+
 def _find_artifact_node(nodes: list[dict], artifact_type: str, component_key: str) -> dict | None:
     """Find a node by artifact type and component key."""
     for node in nodes:
@@ -297,30 +346,32 @@ def _find_artifact_node(nodes: list[dict], artifact_type: str, component_key: st
 def get_documents_dag(db: Session, project_id: str) -> dict:
     """Build documents DAG showing artifact lineage.
 
+    Reads status from snapshot (source of truth). Structural data (artifact names,
+    types, component_keys) comes from DB or snapshot.artifact_meta.
     Only shows documents that actually exist — the project document as root,
     then generated artifacts. Stages with no artifacts yet are omitted entirely.
     """
+    from backend.pipeline.event_store import EventStore
+
     config = db.query(PipelineConfig).filter_by(project_id=project_id).first()
     if not config:
         return {"nodes": [], "edges": []}
 
     stages = sorted(config.stages, key=lambda s: s.order_index)
+    snapshot = EventStore(db).get_snapshot(project_id)
+    artifact_statuses = snapshot.artifact_statuses or {}
+    artifact_versions = snapshot.artifact_versions or {}
+    stage_statuses = snapshot.stage_statuses or {}
+    execution_map = snapshot.execution_map or {}
 
     artifacts = (
         db.execute(select(Artifact).where(Artifact.project_id == project_id)).scalars().all()
     )
 
-    # Only consider executions from the latest pipeline run.
-    _, executions = _get_latest_run_executions(db, project_id)
-
     # Build lookups
     type_to_artifacts: dict[str, list] = defaultdict(list)
     for art in artifacts:
         type_to_artifacts[art.artifact_type.value].append(art)
-
-    key_to_execs: dict[str, list] = defaultdict(list)
-    for exc in executions:
-        key_to_execs[exc.stage_key].append(exc)
 
     nodes: list[dict] = []
     stage_to_node_ids: dict[str, list[str]] = {}
@@ -329,6 +380,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
     project_docs = type_to_artifacts.get(ArtifactType.PROJECT_DOC.value, [])
     if project_docs:
         doc = project_docs[0]
+        doc_status = artifact_statuses.get(doc.id, doc.status.value)
         nodes.append(
             {
                 "id": doc.id,
@@ -336,9 +388,9 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                 "data": {
                     "label": doc.name,
                     "artifact_type": doc.artifact_type.value,
-                    "status": doc.status.value,
+                    "status": doc_status,
                     "component_key": None,
-                    "version": doc.version,
+                    "version": artifact_versions.get(doc.id, doc.version),
                     "stage_key": "project_doc",
                     "is_active": False,
                     "has_artifact": True,
@@ -349,29 +401,21 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
         )
         stage_to_node_ids["project_doc"] = [doc.id]
 
-    # Build nodes for stages with artifacts, plus placeholders for running executions
+    # Build nodes for stages with artifacts, plus placeholders from snapshot
     for stage_def in stages:
         stage_arts = type_to_artifacts.get(stage_def.output_artifact_type, [])
-        stage_execs = key_to_execs.get(stage_def.stage_key, [])
         node_ids = []
 
-        # Keep only the latest execution per component_key for accurate status
-        latest_stage_execs = _latest_executions(stage_execs)
-
-        # Nodes for existing artifacts
+        # Nodes for existing artifacts — status from snapshot
         for art in stage_arts:
-            matching_exec = next(
-                (
-                    e
-                    for e in latest_stage_execs
-                    if e.component_key == art.component_key or e.artifact_id == art.id
-                ),
-                None,
-            )
-            is_active = bool(
-                matching_exec
-                and matching_exec.status in (StageStatus.RUNNING, StageStatus.AI_REVIEW)
-            )
+            art_status = artifact_statuses.get(art.id, art.status.value)
+            # Derive composite key for stage status / execution lookup
+            comp_key = f"{stage_def.stage_key}/{art.component_key}" if art.component_key else stage_def.stage_key
+            stage_status = stage_statuses.get(comp_key)
+            is_active = stage_status in ("running", "ai_review")
+            exec_entry = execution_map.get(comp_key, {})
+            execution_id = exec_entry.get("execution_id")
+
             nodes.append(
                 {
                     "id": art.id,
@@ -379,41 +423,54 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                     "data": {
                         "label": art.name,
                         "artifact_type": art.artifact_type.value,
-                        "status": art.status.value,
+                        "status": art_status,
                         "component_key": art.component_key,
-                        "version": art.version,
+                        "version": artifact_versions.get(art.id, art.version),
                         "stage_key": stage_def.stage_key,
                         "is_active": is_active,
                         "has_artifact": True,
                         "prompt_info": _build_prompt_info(stage_def),
-                        "execution_id": matching_exec.id if matching_exec else None,
-                        "execution_status": matching_exec.status.value if matching_exec else None,
+                        "execution_id": execution_id,
+                        "execution_status": stage_status,
                     },
                     "position": {"x": 0, "y": 0},
                 }
             )
             node_ids.append(art.id)
 
-        # Placeholder nodes for running/reviewing/failed executions with no artifact yet
+        # Placeholder nodes for running/reviewing/failed stages with no artifact yet
+        # Use snapshot execution_map to find stages that have executions but no artifacts
         art_comp_keys = {art.component_key for art in stage_arts}
-        for exc in latest_stage_execs:
-            if exc.status not in (StageStatus.RUNNING, StageStatus.AI_REVIEW, StageStatus.FAILED):
-                continue
-            if exc.component_key in art_comp_keys:
-                continue  # Already has an artifact node
-            # Also skip if a None-keyed artifact already exists for non-fan-out stages
-            if exc.component_key is None and None in art_comp_keys:
+        for snap_key, snap_status in stage_statuses.items():
+            # Match stage keys that belong to this stage_def
+            if snap_key == stage_def.stage_key:
+                comp_key_val = None
+            elif snap_key.startswith(f"{stage_def.stage_key}/"):
+                comp_key_val = snap_key[len(stage_def.stage_key) + 1:]
+            else:
                 continue
 
-            placeholder_id = f"placeholder_{exc.id}"
+            if snap_status not in ("running", "ai_review", "failed"):
+                continue
+            if comp_key_val in art_comp_keys:
+                continue
+            if comp_key_val is None and None in art_comp_keys:
+                continue
+
+            exec_entry = execution_map.get(snap_key, {})
+            exec_id = exec_entry.get("execution_id", snap_key)
+            placeholder_id = f"placeholder_{exec_id}"
             label = stage_def.display_name
-            if exc.component_key:
-                label = f"{label} - {exc.component_key}"
-            if exc.status == StageStatus.FAILED:
-                status = "failed"
+            if comp_key_val:
+                label = f"{label} - {comp_key_val}"
+            if snap_status == "failed":
+                display_status = "failed"
                 is_placeholder_active = False
+            elif snap_status == "ai_review":
+                display_status = "ai_reviewing"
+                is_placeholder_active = True
             else:
-                status = "generating" if exc.status == StageStatus.RUNNING else "ai_reviewing"
+                display_status = "generating"
                 is_placeholder_active = True
             nodes.append(
                 {
@@ -422,15 +479,15 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                     "data": {
                         "label": label,
                         "artifact_type": stage_def.output_artifact_type,
-                        "status": status,
-                        "component_key": exc.component_key,
+                        "status": display_status,
+                        "component_key": comp_key_val,
                         "version": 0,
                         "stage_key": stage_def.stage_key,
                         "is_active": is_placeholder_active,
                         "has_artifact": False,
                         "prompt_info": _build_prompt_info(stage_def),
-                        "execution_id": exc.id,
-                        "execution_status": exc.status.value,
+                        "execution_id": exec_entry.get("execution_id"),
+                        "execution_status": snap_status,
                     },
                     "position": {"x": 0, "y": 0},
                 }

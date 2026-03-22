@@ -74,22 +74,13 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         set_completed: bool = False,
         trigger: str | None = None,
     ) -> None:
-        """Atomically transition execution status and optionally its artifact.
+        """Transition execution status, emit event, then update DB as projection.
 
-        Centralises all status mutations so execution and artifact stay in sync.
+        Events are emitted FIRST so the snapshot (single source of truth) updates
+        before DB models. DB writes are projections for query convenience.
         Does NOT broadcast websocket events — callers handle that themselves.
         """
         old_status = execution.status
-        execution.status = new_status
-        if set_completed:
-            execution.completed_at = datetime.utcnow()
-        if error_message is not None:
-            execution.error_message = error_message
-
-        if artifact_status is not None and execution.artifact_id:
-            artifact = self.db.get(Artifact, execution.artifact_id)
-            if artifact:
-                artifact.status = artifact_status
 
         logger.debug(
             "Transition exec %s: %s -> %s (artifact: %s)",
@@ -97,7 +88,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             artifact_status.value if artifact_status else "unchanged",
         )
 
-        # Emit corresponding event
+        # 1. Emit event FIRST (updates snapshot via reducer)
         event_type = _status_to_event_type(new_status)
         if event_type:
             payload: dict[str, Any] = {
@@ -124,8 +115,24 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 run_id=execution.run_id,
             )
 
+        # 2. DB projections (not authoritative — snapshot is source of truth)
+        execution.status = new_status
+        if set_completed:
+            execution.completed_at = datetime.utcnow()
+        if error_message is not None:
+            execution.error_message = error_message
+
+        if artifact_status is not None and execution.artifact_id:
+            artifact = self.db.get(Artifact, execution.artifact_id)
+            if artifact:
+                artifact.status = artifact_status
+
     def _mark_artifact_status(self, artifact_id: str, new_status: ArtifactStatus) -> None:
-        """Update an artifact's status without touching any execution."""
+        """DB projection: update artifact status for query convenience.
+
+        NOT authoritative — the snapshot (via events) is the source of truth.
+        Callers must also emit the corresponding event that updates the snapshot.
+        """
         artifact = self.db.get(Artifact, artifact_id)
         if artifact:
             artifact.status = new_status
@@ -241,11 +248,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         carried = self._carry_over_approved(project_id, new_run_id)
 
         # Additionally carry over AWAITING_REVIEW executions from the previous run
+        # Read stale artifact IDs from snapshot (source of truth)
+        _snap = self.events.get_snapshot(project_id)
         stale_artifact_ids = {
-            a.id
-            for a in self.db.query(Artifact)
-            .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
-            .all()
+            aid for aid, status in (_snap.artifact_statuses or {}).items()
+            if status == "stale"
         }
         review_execs = (
             self.db.query(StageExecution)
@@ -595,11 +602,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         if mismatched:
             self.db.flush()
 
+        # Read stale artifact IDs from snapshot (source of truth)
+        _snap = self.events.get_snapshot(project_id)
         stale_artifact_ids = {
-            a.id
-            for a in self.db.query(Artifact)
-            .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
-            .all()
+            aid for aid, status in (_snap.artifact_statuses or {}).items()
+            if status == "stale"
         }
 
         # For each (stage_key, component_key), find the most recent APPROVED

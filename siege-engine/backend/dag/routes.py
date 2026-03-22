@@ -60,7 +60,11 @@ def get_components(
         .first()
     )
 
-    is_reviewing = artifact and artifact.status.value in (
+    # Read status from snapshot (source of truth)
+    from backend.pipeline.event_store import EventStore
+    snapshot = EventStore(db).get_snapshot(project_id)
+    artifact_status = (snapshot.artifact_statuses or {}).get(artifact.id) if artifact else None
+    is_reviewing = artifact_status in (
         "awaiting_review",
         "generating",
         "ai_reviewing",
