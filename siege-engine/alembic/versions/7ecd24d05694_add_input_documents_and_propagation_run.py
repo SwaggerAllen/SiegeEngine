@@ -7,9 +7,9 @@ Create Date: 2026-03-18 15:35:58.575640
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '7ecd24d05694'
@@ -35,7 +35,10 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     with op.batch_alter_table('pipeline_runs', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('propagation_run', sa.Boolean(), nullable=False, server_default=sa.text('0')))
+        batch_op.add_column(sa.Column(
+            'propagation_run', sa.Boolean(),
+            nullable=False, server_default=sa.text('0')
+        ))
 
     # ### end Alembic commands ###
 

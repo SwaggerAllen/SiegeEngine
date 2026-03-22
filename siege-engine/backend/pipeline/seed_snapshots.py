@@ -71,6 +71,15 @@ def seed_snapshot_for_project(db: Session, project_id: str) -> PipelineSnapshot:
         is_paused=active_run is not None and active_run.status == PipelineRunStatus.PAUSED,
         paused_stage=None,
         current_run_id=active_run.run_id if active_run else None,
+        # Extended snapshot fields — must be initialized to empty dicts
+        artifact_versions={},
+        stage_errors={},
+        comment_counts={},
+        stage_triggers={},
+        artifact_meta={},
+        artifact_git_shas={},
+        cascade_parents={},
+        execution_map={},
     )
     db.add(snapshot)
     db.flush()
