@@ -455,6 +455,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             config=config,
             pipeline_run=pipeline_run,
         )
+        # Run completion is handled by _run_stage's finally block.
         return execution.id
 
     async def _trigger_fan_out_stage(
@@ -574,6 +575,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 f"All entities for stage {stage_key} are already running"
             )
 
+        # Run completion is handled by _run_stage's finally block.
         return execution_ids
 
     def _carry_over_approved(self, project_id: str, new_run_id: str) -> int:
@@ -922,6 +924,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 )
 
                 if execution.status == StageStatus.FAILED:
+                    # Run completion is handled by _run_stage's finally block.
                     logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
                     await ws_manager.broadcast(
                         project_id,
@@ -1036,6 +1039,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                             )
 
                 if stage_failed:
+                    # Run completion is handled by _run_stage's finally block.
                     logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
                     await ws_manager.broadcast(
                         project_id,
@@ -1076,14 +1080,14 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         if pipeline_run:
             pipeline_run.status = PipelineRunStatus.COMPLETED
             pipeline_run.completed_at = datetime.utcnow()
-            self.db.commit()
 
-            # Emit run_completed event
+            # Emit event BEFORE commit so both are persisted atomically.
             self.events.emit(
                 project_id, evt.RUN_COMPLETED,
                 {"run_id": run_id, "status": "completed"},
                 run_id=run_id,
             )
+            self.db.commit()
 
             # Git checkpoint: commit siege-state.json + any remaining changes
             try:
@@ -1403,6 +1407,19 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         finally:
             log_streamer.uninstall()
+
+            # Always attempt to complete the run after stage execution.
+            # This is the single place that guarantees run completion
+            # regardless of which code path called _run_stage (pipeline
+            # start, force-restart, manual trigger, etc.).
+            # _try_complete_run is a no-op if the run still has in-flight
+            # work, so it's safe to call unconditionally.
+            try:
+                await self._try_complete_run(execution)
+            except Exception:
+                logger.exception(
+                    "Failed to complete run after stage %s", execution.stage_key,
+                )
 
     def _lookup_pipeline_run(self, run_id: str) -> PipelineRun | None:
         """Look up a PipelineRun by its run_id."""
