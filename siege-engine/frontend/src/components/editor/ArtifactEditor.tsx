@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { useProjectStore } from '../../store/projectStore';
 import { usePipelineStore } from '../../store/pipelineStore';
@@ -62,13 +62,27 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
     setPromptPreview(null);
   }, [artifact.id, reviewFeedback, activeTab]);
 
-  // Sync local edit buffer when artifact version changes (e.g. after restore or AI revision)
+  // Track previous artifact to distinguish "switched artifact" from "version bumped"
+  const prevArtifactRef = useRef({ id: artifact.id, version: artifact.version });
   useEffect(() => {
-    clearContent();
-    setContent(artifact.content || '');
-    setEditing(false);
-    setShowRevise(false);
-    clearFeedback();
+    const prev = prevArtifactRef.current;
+    prevArtifactRef.current = { id: artifact.id, version: artifact.version };
+
+    if (prev.id !== artifact.id) {
+      // Switched to a different artifact — just reset UI state, keep drafts
+      setEditing(false);
+      setShowRevise(false);
+      return;
+    }
+
+    if (prev.version !== artifact.version) {
+      // Same artifact, version bumped (AI revision / restore) — clear drafts
+      clearContent();
+      setContent(artifact.content || '');
+      setEditing(false);
+      setShowRevise(false);
+      clearFeedback();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artifact.id, artifact.version]);
 
