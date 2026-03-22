@@ -552,6 +552,27 @@ class ArtifactOpsMixin:
     async def _regenerate_stage(self, old_execution: StageExecution):
         """Re-run a rejected stage with human feedback from ArtifactComment records."""
         project_id = old_execution.project_id
+
+        # Guard: skip if there's already a RUNNING execution for this stage.
+        # This prevents duplicate regenerations from concurrent jobs (e.g.,
+        # recover_stale_jobs re-queuing + user trigger, or rapid UI clicks).
+        already_running = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.project_id == project_id,
+                StageExecution.stage_key == old_execution.stage_key,
+                StageExecution.component_key == old_execution.component_key,
+                StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]),
+            )
+            .first()
+        )
+        if already_running:
+            logger.warning(
+                "Skipping regeneration for stage %s: execution %s is already running",
+                old_execution.stage_key, already_running.id,
+            )
+            return
+
         config = self._get_config(project_id)
         if not config:
             logger.error("Cannot regenerate: pipeline config not found for project %s", project_id)
@@ -1401,6 +1422,26 @@ class ArtifactOpsMixin:
     async def retry_stage(self, execution: StageExecution):
         """Re-run a failed stage execution."""
         project_id = execution.project_id
+
+        # Guard: skip if there's already a RUNNING execution for this stage.
+        already_running = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.project_id == project_id,
+                StageExecution.stage_key == execution.stage_key,
+                StageExecution.component_key == execution.component_key,
+                StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]),
+                StageExecution.id != execution.id,
+            )
+            .first()
+        )
+        if already_running:
+            logger.warning(
+                "Skipping retry for stage %s: execution %s is already running",
+                execution.stage_key, already_running.id,
+            )
+            return
+
         config = self._get_config(project_id)
         if not config:
             raise ValueError("Pipeline config not found")
