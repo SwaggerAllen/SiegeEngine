@@ -289,6 +289,16 @@ async def cancel_pipeline(
         r.status = PipelineRunStatus.CANCELLED
         r.completed_at = datetime.utcnow()
 
+    # Emit RUN_COMPLETED events so the snapshot's is_running updates
+    from backend.pipeline.event_store import EventStore
+    from backend.pipeline import events as _evt
+    es = EventStore(db)
+    for r in active_runs:
+        es.emit(project_id, _evt.RUN_COMPLETED, {
+            "run_id": r.run_id,
+            "status": "cancelled",
+        }, run_id=r.run_id)
+
     db.commit()
 
     # Broadcast cancellation so the UI updates immediately
@@ -469,18 +479,23 @@ async def reset_all(
         else:
             artifact.status = ArtifactStatus.PENDING
 
-    db.commit()
-
-    # Emit pipeline_reset event
+    # Emit events so the snapshot updates before commit
     from backend.pipeline.event_store import EventStore
     from backend.pipeline import events as _evt
-    EventStore(db).emit(project_id, _evt.PIPELINE_RESET, {}, run_id=run_id)
+    es = EventStore(db)
+    for r in active_runs:
+        es.emit(project_id, _evt.RUN_COMPLETED, {
+            "run_id": r.run_id,
+            "status": "cancelled",
+        }, run_id=r.run_id)
+    es.emit(project_id, _evt.PIPELINE_RESET, {}, run_id=run_id)
+
     db.commit()
 
     await ws_manager.broadcast(
         project_id,
         {
-            "type": "pipeline_completed",
+            "type": "pipeline_cancelled",
             "run_id": run_id,
             "message": "Pipeline reset to clean slate",
         },
