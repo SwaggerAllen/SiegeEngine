@@ -11,6 +11,7 @@ import copy
 from typing import Any
 
 from backend.pipeline.events import (
+    ARTIFACT_COMMITTED,
     ARTIFACT_PRUNED,
     ARTIFACT_REVISED,
     AWAITING_HUMAN_REVIEW,
@@ -19,11 +20,15 @@ from backend.pipeline.events import (
     CARRIED_OVER,
     CASCADE_COMPLETED,
     CASCADE_STARTED,
+    COMMENT_ADDED,
     FEEDBACK_SAVED,
     GENERATION_COMPLETED,
+    GENERATION_PROGRESS,
     HUMAN_APPROVED,
     HUMAN_REJECTED,
+    PIPELINE_PAUSED,
     PIPELINE_RESET,
+    PIPELINE_RESUMED,
     RUN_COMPLETED,
     RUN_CREATED,
     STAGE_FAILED,
@@ -47,17 +52,44 @@ def empty_snapshot() -> dict[str, Any]:
         "is_paused": False,
         "paused_stage": None,
         "current_run_id": None,
+        # New: artifact versions at each point in time
+        "artifact_versions": {},
+        # New: error messages per stage
+        "stage_errors": {},
+        # New: active comment counts per artifact
+        "comment_counts": {},
+        # New: last trigger per stage
+        "stage_triggers": {},
+        # New: artifact metadata (type + name)
+        "artifact_meta": {},
+        # New: git commit SHAs per artifact
+        "artifact_git_shas": {},
+        # New: cascade parent run relationships
+        "cascade_parents": {},
     }
 
 
 def apply_event(snapshot: dict[str, Any], event_type: str, payload: dict, sequence: int) -> dict[str, Any]:
     """Apply a single event to a snapshot dict. Returns new snapshot (does NOT mutate input)."""
     snap = copy.deepcopy(snapshot)
+    # Ensure new fields exist for snapshots created before they were added
+    _ensure_new_fields(snap)
     handler = _HANDLERS.get(event_type)
     if handler:
         handler(snap, payload)
     snap["last_sequence"] = sequence
     return snap
+
+
+def _ensure_new_fields(snap: dict) -> None:
+    """Backfill new snapshot fields for older snapshots."""
+    for field in (
+        "artifact_versions", "stage_errors", "comment_counts",
+        "stage_triggers", "artifact_meta", "artifact_git_shas",
+        "cascade_parents",
+    ):
+        if field not in snap:
+            snap[field] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -97,11 +129,21 @@ def _handle_stage_started(snap: dict, p: dict) -> None:
     # Update artifact status if present
     if p.get("artifact_id"):
         snap["artifact_statuses"][p["artifact_id"]] = "generating"
+    # Track trigger
+    if p.get("trigger"):
+        snap["stage_triggers"][key] = p["trigger"]
+    # Track retry count
+    if p.get("retry_count") is not None:
+        snap["stage_errors"].setdefault(key, {})
+        snap["stage_errors"][key]["retry_count"] = p["retry_count"]
+    # Track artifact metadata
+    _update_artifact_meta(snap, p)
 
 
 def _handle_generation_completed(snap: dict, p: dict) -> None:
     if p.get("artifact_id"):
         snap["artifact_statuses"][p["artifact_id"]] = "ai_reviewing"
+    _update_artifact_meta(snap, p)
 
 
 def _handle_ai_review_started(snap: dict, p: dict) -> None:
@@ -128,6 +170,8 @@ def _handle_human_approved(snap: dict, p: dict) -> None:
     snap["stage_statuses"][key] = "approved"
     if p.get("artifact_id"):
         snap["artifact_statuses"][p["artifact_id"]] = "approved"
+    # Clear error on approval
+    snap["stage_errors"].pop(key, None)
 
 
 def _handle_human_rejected(snap: dict, p: dict) -> None:
@@ -147,6 +191,12 @@ def _handle_stage_failed(snap: dict, p: dict) -> None:
     snap["stage_statuses"][key] = "failed"
     if p.get("artifact_id"):
         snap["artifact_statuses"][p["artifact_id"]] = "pending"
+    # Track error message
+    if p.get("error"):
+        snap["stage_errors"][key] = {
+            "error": p["error"],
+            "retry_count": p.get("retry_count"),
+        }
 
 
 def _handle_stage_skipped(snap: dict, p: dict) -> None:
@@ -161,6 +211,9 @@ def _handle_artifact_revised(snap: dict, p: dict) -> None:
     if p.get("stage_key"):
         key = _stage_key(p)
         snap["stage_statuses"][key] = "running"
+    # Track version bump
+    if p.get("version") is not None:
+        snap["artifact_versions"][artifact_id] = p["version"]
 
 
 def _handle_stale_resolved(snap: dict, p: dict) -> None:
@@ -183,9 +236,13 @@ def _handle_staleness_propagated(snap: dict, p: dict) -> None:
 
 def _handle_cascade_started(snap: dict, p: dict) -> None:
     snap["is_running"] = True
-    if p.get("run_id"):
-        snap["run_status"][p["run_id"]] = "running"
-        snap["current_run_id"] = p["run_id"]
+    run_id = p.get("run_id")
+    if run_id:
+        snap["run_status"][run_id] = "running"
+        snap["current_run_id"] = run_id
+    # Track parent relationship
+    if run_id and p.get("parent_run_id"):
+        snap["cascade_parents"][run_id] = p["parent_run_id"]
 
 
 def _handle_cascade_completed(snap: dict, p: dict) -> None:
@@ -204,6 +261,10 @@ def _handle_carried_over(snap: dict, p: dict) -> None:
 def _handle_artifact_pruned(snap: dict, p: dict) -> None:
     artifact_id = p["artifact_id"]
     snap["artifact_statuses"].pop(artifact_id, None)
+    snap["artifact_versions"].pop(artifact_id, None)
+    snap["artifact_meta"].pop(artifact_id, None)
+    snap["artifact_git_shas"].pop(artifact_id, None)
+    snap["comment_counts"].pop(artifact_id, None)
     # Remove stage status if provided
     if p.get("stage_key"):
         key = _stage_key(p)
@@ -219,6 +280,8 @@ def _handle_pipeline_reset(snap: dict, p: dict) -> None:
     snap["is_running"] = False
     snap["is_paused"] = False
     snap["paused_stage"] = None
+    snap["stage_errors"].clear()
+    snap["stage_triggers"].clear()
 
 
 def _handle_stage_retried(snap: dict, p: dict) -> None:
@@ -226,6 +289,36 @@ def _handle_stage_retried(snap: dict, p: dict) -> None:
     snap["stage_statuses"][key] = "pending"
     if p.get("artifact_id"):
         snap["artifact_statuses"][p["artifact_id"]] = "pending"
+
+
+def _handle_comment_added(snap: dict, p: dict) -> None:
+    artifact_id = p.get("artifact_id")
+    if artifact_id:
+        snap["comment_counts"][artifact_id] = snap["comment_counts"].get(artifact_id, 0) + 1
+
+
+def _handle_generation_progress(snap: dict, p: dict) -> None:
+    # Progress events are informational — no state change needed
+    pass
+
+
+def _handle_pipeline_paused(snap: dict, p: dict) -> None:
+    snap["is_paused"] = True
+    snap["paused_stage"] = p.get("stage_key")
+
+
+def _handle_pipeline_resumed(snap: dict, p: dict) -> None:
+    snap["is_paused"] = False
+    snap["paused_stage"] = None
+
+
+def _handle_artifact_committed(snap: dict, p: dict) -> None:
+    artifact_id = p.get("artifact_id")
+    if artifact_id:
+        if p.get("git_commit_sha"):
+            snap["artifact_git_shas"][artifact_id] = p["git_commit_sha"]
+        if p.get("version") is not None:
+            snap["artifact_versions"][artifact_id] = p["version"]
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +340,19 @@ def _exec_to_stage_key(snap: dict, p: dict) -> str:
     execution_id → stage_key mapping to the snapshot.
     """
     return _stage_key(p)
+
+
+def _update_artifact_meta(snap: dict, p: dict) -> None:
+    """Track artifact type and name in snapshot if provided."""
+    artifact_id = p.get("artifact_id")
+    if artifact_id:
+        meta = snap["artifact_meta"].get(artifact_id, {})
+        if p.get("artifact_type"):
+            meta["type"] = p["artifact_type"]
+        if p.get("artifact_name"):
+            meta["name"] = p["artifact_name"]
+        if meta:
+            snap["artifact_meta"][artifact_id] = meta
 
 
 _HANDLERS: dict[str, Any] = {
@@ -272,4 +378,9 @@ _HANDLERS: dict[str, Any] = {
     ARTIFACT_PRUNED: _handle_artifact_pruned,
     PIPELINE_RESET: _handle_pipeline_reset,
     STAGE_RETRIED: _handle_stage_retried,
+    COMMENT_ADDED: _handle_comment_added,
+    GENERATION_PROGRESS: _handle_generation_progress,
+    PIPELINE_PAUSED: _handle_pipeline_paused,
+    PIPELINE_RESUMED: _handle_pipeline_resumed,
+    ARTIFACT_COMMITTED: _handle_artifact_committed,
 }

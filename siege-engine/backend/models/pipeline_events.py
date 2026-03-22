@@ -41,6 +41,14 @@ class PipelineSnapshot(Base):
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False)
     paused_stage: Mapped[str | None] = mapped_column(String, nullable=True)
     current_run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Extended snapshot fields
+    artifact_versions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    stage_errors: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    comment_counts: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    stage_triggers: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    artifact_meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    artifact_git_shas: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    cascade_parents: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )

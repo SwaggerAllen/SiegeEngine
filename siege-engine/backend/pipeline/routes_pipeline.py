@@ -697,6 +697,8 @@ def revert_to_sequence(
 
     # --- Restore artifact state ---
     valid_artifact_ids = set((rebuilt.artifact_statuses or {}).keys())
+    snapshot_git_shas = dict(rebuilt.artifact_git_shas or {})
+    snapshot_versions = dict(rebuilt.artifact_versions or {})
     all_artifacts = db.query(Artifact).filter_by(project_id=project_id).all()
     artifacts_restored = 0
     artifacts_deleted = 0
@@ -721,17 +723,22 @@ def revert_to_sequence(
             except ValueError:
                 art.status = ArtifactStatus.PENDING
 
-            # Restore content from git history
+            # Restore version from snapshot if tracked
+            if art.id in snapshot_versions:
+                art.version = snapshot_versions[art.id]
+
+            # Restore content from git history — prefer exact SHA from snapshot
             if art.file_path:
                 try:
-                    history = git_manager.get_file_history(project_id, art.file_path)
-                    restore_sha = None
-                    for commit in history:
-                        commit_time = dt.fromisoformat(commit["timestamp"].replace("Z", "+00:00"))
-                        # Compare naive — strip tzinfo if needed
-                        if commit_time.replace(tzinfo=None) <= target_time.replace(tzinfo=None):
-                            restore_sha = commit["sha"]
-                            break
+                    restore_sha = snapshot_git_shas.get(art.id)
+                    if not restore_sha:
+                        # Fall back to timestamp-based lookup
+                        history = git_manager.get_file_history(project_id, art.file_path)
+                        for commit in history:
+                            commit_time = dt.fromisoformat(commit["timestamp"].replace("Z", "+00:00"))
+                            if commit_time.replace(tzinfo=None) <= target_time.replace(tzinfo=None):
+                                restore_sha = commit["sha"]
+                                break
                     if restore_sha and restore_sha != art.git_commit_sha:
                         content = git_manager.get_file_at_version(
                             project_id, art.file_path, restore_sha

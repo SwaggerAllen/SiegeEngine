@@ -72,6 +72,14 @@ export interface PipelineSnapshot {
   artifact_statuses: Record<string, string>;
   run_status: Record<string, string>;
   last_sequence: number;
+  // Extended snapshot fields
+  artifact_versions?: Record<string, number>;
+  stage_errors?: Record<string, { error?: string; retry_count?: number }>;
+  comment_counts?: Record<string, number>;
+  stage_triggers?: Record<string, string>;
+  artifact_meta?: Record<string, { type?: string; name?: string }>;
+  artifact_git_shas?: Record<string, string>;
+  cascade_parents?: Record<string, string>;
 }
 
 export interface PipelineEvent {

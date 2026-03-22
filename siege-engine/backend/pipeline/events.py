@@ -22,11 +22,22 @@ ARTIFACT_REVISED = "artifact_revised"
 STALE_RESOLVED = "stale_resolved"
 STALENESS_PROPAGATED = "staleness_propagated"
 ARTIFACT_PRUNED = "artifact_pruned"
+ARTIFACT_COMMITTED = "artifact_committed"
 
 # Cascade & carry-over
 CASCADE_STARTED = "cascade_started"
 CASCADE_COMPLETED = "cascade_completed"
 CARRIED_OVER = "carried_over"
+
+# Comments & feedback
+COMMENT_ADDED = "comment_added"
+
+# Progress
+GENERATION_PROGRESS = "generation_progress"
+
+# Pipeline state
+PIPELINE_PAUSED = "pipeline_paused"
+PIPELINE_RESUMED = "pipeline_resumed"
 
 # Global
 PIPELINE_RESET = "pipeline_reset"
@@ -39,6 +50,10 @@ ALL_EVENT_TYPES = frozenset({
     AWAITING_HUMAN_REVIEW, HUMAN_APPROVED, HUMAN_REJECTED, FEEDBACK_SAVED,
     STAGE_FAILED, STAGE_SKIPPED,
     ARTIFACT_REVISED, STALE_RESOLVED, STALENESS_PROPAGATED, ARTIFACT_PRUNED,
+    ARTIFACT_COMMITTED,
     CASCADE_STARTED, CASCADE_COMPLETED, CARRIED_OVER,
+    COMMENT_ADDED,
+    GENERATION_PROGRESS,
+    PIPELINE_PAUSED, PIPELINE_RESUMED,
     PIPELINE_RESET, STAGE_RETRIED,
 })

@@ -106,6 +106,13 @@ class EventStore:
                 is_paused=False,
                 paused_stage=None,
                 current_run_id=None,
+                artifact_versions={},
+                stage_errors={},
+                comment_counts={},
+                stage_triggers={},
+                artifact_meta={},
+                artifact_git_shas={},
+                cascade_parents={},
             )
             self.db.add(snapshot)
             self.db.flush()
@@ -123,6 +130,13 @@ def _snapshot_to_dict(snapshot: PipelineSnapshot) -> dict[str, Any]:
         "is_paused": snapshot.is_paused,
         "paused_stage": snapshot.paused_stage,
         "current_run_id": snapshot.current_run_id,
+        "artifact_versions": dict(snapshot.artifact_versions or {}),
+        "stage_errors": dict(snapshot.stage_errors or {}),
+        "comment_counts": dict(snapshot.comment_counts or {}),
+        "stage_triggers": dict(snapshot.stage_triggers or {}),
+        "artifact_meta": dict(snapshot.artifact_meta or {}),
+        "artifact_git_shas": dict(snapshot.artifact_git_shas or {}),
+        "cascade_parents": dict(snapshot.cascade_parents or {}),
     }
 
 
@@ -136,3 +150,10 @@ def _update_snapshot_from_dict(snapshot: PipelineSnapshot, state: dict[str, Any]
     snapshot.is_paused = state["is_paused"]
     snapshot.paused_stage = state["paused_stage"]
     snapshot.current_run_id = state.get("current_run_id")
+    snapshot.artifact_versions = state.get("artifact_versions", {})
+    snapshot.stage_errors = state.get("stage_errors", {})
+    snapshot.comment_counts = state.get("comment_counts", {})
+    snapshot.stage_triggers = state.get("stage_triggers", {})
+    snapshot.artifact_meta = state.get("artifact_meta", {})
+    snapshot.artifact_git_shas = state.get("artifact_git_shas", {})
+    snapshot.cascade_parents = state.get("cascade_parents", {})
