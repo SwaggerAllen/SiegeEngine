@@ -21,6 +21,7 @@ import { RunSelector } from '../components/pipeline/RunSelector';
 import { EventHistoryPanel } from '../components/pipeline/EventHistoryPanel';
 import { LogPanel } from '../components/pipeline/LogPanel';
 import { DebugStatePanel } from '../components/pipeline/DebugStatePanel';
+import { reconcilePipeline } from '../api/pipeline';
 import api from '../api/client';
 
 type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug';
@@ -40,6 +41,8 @@ export function ProjectDashboardPage() {
   const [paneExpanded, setPaneExpanded] = useState(false);
   const [initialStageKey, setInitialStageKey] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+  const [repairResult, setRepairResult] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -74,6 +77,26 @@ export function ProjectDashboardPage() {
       setEditPromptStageKey(null);
     }
   }, [editPromptStageKey, setEditPromptStageKey]);
+
+  const handleRepair = async () => {
+    if (!projectId || repairing) return;
+    setRepairing(true);
+    setRepairResult(null);
+    try {
+      const result = await reconcilePipeline(projectId);
+      const fixes = result.corrections.length + result.orphans_removed.length;
+      setRepairResult(fixes > 0 ? `Fixed ${fixes} issue${fixes > 1 ? 's' : ''}` : 'No issues found');
+      if (fixes > 0) {
+        fetchStatus(projectId);
+        fetchRuns(projectId);
+      }
+    } catch {
+      setRepairResult('Repair failed');
+    } finally {
+      setRepairing(false);
+      setTimeout(() => setRepairResult(null), 4000);
+    }
+  };
 
   if (!projectId) return null;
 
@@ -165,6 +188,31 @@ export function ProjectDashboardPage() {
             >
               Invites
             </button>
+          )}
+          <button
+            onClick={handleRepair}
+            disabled={repairing}
+            className="px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-50"
+            title="Repair: fix status mismatches and stuck runs"
+          >
+            <svg className={`w-4 h-4 inline ${repairing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {repairing ? (
+                <>
+                  <circle className="opacity-25" cx="12" cy="12" r="10" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" stroke="none" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </>
+              ) : (
+                <>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </>
+              )}
+            </svg>
+          </button>
+          {repairResult && (
+            <span className={`text-xs ${repairResult.startsWith('Fixed') ? 'text-green-400' : repairResult === 'No issues found' ? 'text-gray-400' : 'text-red-400'}`}>
+              {repairResult}
+            </span>
           )}
           <button
             onClick={() => { setActiveTab('debug'); clearSelection(); setMenuOpen(false); }}

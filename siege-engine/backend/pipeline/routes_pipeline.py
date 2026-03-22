@@ -1202,6 +1202,7 @@ def reconcile_statuses(
     from backend.pipeline.event_store import EventStore
     es = EventStore(db)
     snapshot = es.rebuild_snapshot(project_id)
+    corrections: list[dict] = []
 
     # Sync DB artifact statuses as projections
     artifacts = db.query(Artifact).filter_by(project_id=project_id).all()
@@ -1209,12 +1210,81 @@ def reconcile_statuses(
         snap_status = (snapshot.artifact_statuses or {}).get(art.id)
         if snap_status:
             try:
-                art.status = ArtifactStatus(snap_status)
+                new_status = ArtifactStatus(snap_status)
+                if art.status != new_status:
+                    corrections.append({
+                        "type": "artifact_status",
+                        "id": art.id,
+                        "from": art.status.value if art.status else None,
+                        "to": new_status.value,
+                    })
+                    art.status = new_status
             except ValueError:
                 pass
         snap_version = (snapshot.artifact_versions or {}).get(art.id)
         if snap_version is not None:
             art.version = snap_version
+
+    # Sync DB execution statuses from snapshot stage_statuses.
+    # The snapshot tracks stage status by stage_key; map executions via
+    # the execution_map to determine which execution is "current" and
+    # ensure its DB status matches the snapshot.
+    snap_stage_statuses = snapshot.stage_statuses or {}
+    snap_exec_map = snapshot.execution_map or {}
+    _status_map = {
+        "running": StageStatus.RUNNING,
+        "pending": StageStatus.PENDING,
+        "generating": StageStatus.RUNNING,
+        "awaiting_review": StageStatus.AWAITING_REVIEW,
+        "approved": StageStatus.APPROVED,
+        "rejected": StageStatus.REJECTED,
+        "failed": StageStatus.FAILED,
+        "ai_reviewing": StageStatus.AI_REVIEW,
+    }
+    for stage_key, snap_stage_status in snap_stage_statuses.items():
+        exec_entry = snap_exec_map.get(stage_key)
+        if not exec_entry:
+            continue
+        exec_id = exec_entry.get("execution_id")
+        if not exec_id:
+            continue
+        execution = db.get(StageExecution, exec_id)
+        if not execution:
+            continue
+        target_status = _status_map.get(snap_stage_status)
+        if target_status and execution.status != target_status:
+            corrections.append({
+                "type": "execution_status",
+                "id": exec_id,
+                "stage_key": stage_key,
+                "from": execution.status.value if execution.status else None,
+                "to": target_status.value,
+            })
+            execution.status = target_status
+            if target_status in (
+                StageStatus.APPROVED, StageStatus.REJECTED, StageStatus.FAILED,
+            ) and not execution.completed_at:
+                execution.completed_at = datetime.utcnow()
+
+    # Fix stuck runs: if snapshot says not running, complete any RUNNING runs.
+    snap_is_running = snapshot.is_running
+    snap_run_statuses = snapshot.run_status or {}
+    running_runs = (
+        db.query(PipelineRun)
+        .filter_by(project_id=project_id, status=PipelineRunStatus.RUNNING)
+        .all()
+    )
+    for run in running_runs:
+        snap_run_status = snap_run_statuses.get(run.run_id)
+        if snap_run_status != "running" or not snap_is_running:
+            corrections.append({
+                "type": "run_status",
+                "id": run.run_id,
+                "from": "running",
+                "to": "completed",
+            })
+            run.status = PipelineRunStatus.COMPLETED
+            run.completed_at = run.completed_at or datetime.utcnow()
 
     db.commit()
 
@@ -1226,7 +1296,7 @@ def reconcile_statuses(
     )
 
     return {
-        "corrections": [],
+        "corrections": corrections,
         "orphans_removed": [],
         "run_id": latest_run.run_id if latest_run else None,
         "run_number": latest_run.run_number if latest_run else None,
