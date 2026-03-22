@@ -145,6 +145,36 @@ def reconcile_project(db: Session, project_id: str) -> list[dict]:
             run.status = PipelineRunStatus.COMPLETED
             run.completed_at = run.completed_at or datetime.utcnow()
 
+    # ── Fix phantom "running" entries in snapshot run_status ─────────────
+    # After rebuilding the snapshot from events, some run_status entries may
+    # still show "running" even though the DB PipelineRun is already terminal
+    # (e.g. a previous reconciliation fixed the DB but never emitted the
+    # RUN_COMPLETED event, or a PIPELINE_RESET before the fix didn't cancel
+    # running entries).  Emit RUN_COMPLETED events to permanently fix these.
+    snap_run_statuses = snapshot.run_status or {}
+    for run_id, snap_status in list(snap_run_statuses.items()):
+        if snap_status != "running":
+            continue
+        db_run = (
+            db.query(PipelineRun)
+            .filter_by(run_id=run_id, project_id=project_id)
+            .first()
+        )
+        if db_run is None or db_run.status == PipelineRunStatus.RUNNING:
+            continue  # still legitimately running (or unknown)
+        terminal = db_run.status.value  # "completed", "failed", "cancelled"
+        corrections.append({
+            "type": "phantom_run_status",
+            "id": run_id,
+            "from": "running",
+            "to": terminal,
+        })
+        es.emit(
+            project_id, evt.RUN_COMPLETED,
+            {"run_id": run_id, "status": terminal},
+            run_id=run_id,
+        )
+
     # ── Fix zombie runs (running but no active executions) ──────────────
     still_running = (
         db.query(PipelineRun)
