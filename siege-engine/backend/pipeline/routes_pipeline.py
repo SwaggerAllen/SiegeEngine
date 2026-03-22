@@ -242,30 +242,34 @@ async def cancel_pipeline(
 ):
     project = _get_project_or_404(db, project_id)
 
-    # Mark all running/pending executions as failed
-    running = (
+    # Mark all active executions as failed (includes AWAITING_REVIEW for paused pipelines)
+    active_executions = (
         db.query(StageExecution)
         .filter_by(project_id=project_id)
         .filter(
-            StageExecution.status.in_(
-                [StageStatus.RUNNING, StageStatus.PENDING, StageStatus.AI_REVIEW]
-            )
+            StageExecution.status.in_([
+                StageStatus.RUNNING, StageStatus.PENDING,
+                StageStatus.AI_REVIEW, StageStatus.AWAITING_REVIEW,
+            ])
         )
         .all()
     )
     # Kill CLI processes and cancel worker tasks for each running execution
-    for e in running:
+    for e in active_executions:
         cancel_running_execution(e.id)
         e.status = StageStatus.FAILED
         e.error_message = "Cancelled by user"
 
-    # Cancel all queued jobs for this project's executions
-    all_exec_ids = {e.id for e in running}
+    # Cancel all queued jobs for this project
     from backend.models.job import Job
-    queued_jobs = db.query(Job).filter_by(status="queued").all()
+    queued_jobs = (
+        db.query(Job)
+        .filter(Job.status.in_(["queued", "running"]))
+        .all()
+    )
+    all_exec_ids = {e.id for e in active_executions}
     for job in queued_jobs:
         payload = job.payload or {}
-        # Cancel jobs that reference this project or any of its executions
         if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
             job.status = "cancelled"
 
@@ -279,15 +283,16 @@ async def cancel_pipeline(
     for a in in_progress_artifacts:
         a.status = ArtifactStatus.PENDING
 
-    # Also mark any active PipelineRun as cancelled
+    # Mark any active (running OR paused) PipelineRun as cancelled
     active_runs = (
         db.query(PipelineRun)
-        .filter_by(project_id=project_id, status=PipelineRunStatus.RUNNING)
+        .filter_by(project_id=project_id)
+        .filter(PipelineRun.status.in_([PipelineRunStatus.RUNNING, PipelineRunStatus.PAUSED]))
         .all()
     )
     for r in active_runs:
         r.status = PipelineRunStatus.CANCELLED
-        r.completed_at = datetime.utcnow()
+        r.completed_at = r.completed_at or datetime.utcnow()
 
     # Emit RUN_COMPLETED events so the snapshot's is_running updates
     from backend.pipeline.event_store import EventStore
@@ -306,11 +311,11 @@ async def cancel_pipeline(
         project_id,
         {
             "type": "pipeline_cancelled",
-            "cancelled_count": len(running),
+            "cancelled_count": len(active_executions),
         },
     )
 
-    result = {"status": "cancelled", "cancelled_count": len(running)}
+    result = {"status": "cancelled", "cancelled_count": len(active_executions)}
 
     # Optionally open a blocking PR
     if req.open_pr:
@@ -392,24 +397,26 @@ async def reset_all(
     """
     project = _get_project_or_404(db, project_id)
 
-    # 1. Cancel all active pipeline runs
+    # 1. Cancel all active pipeline runs (running OR paused)
     active_runs = (
         db.query(PipelineRun)
-        .filter_by(project_id=project_id, status=PipelineRunStatus.RUNNING)
+        .filter_by(project_id=project_id)
+        .filter(PipelineRun.status.in_([PipelineRunStatus.RUNNING, PipelineRunStatus.PAUSED]))
         .all()
     )
     for r in active_runs:
         r.status = PipelineRunStatus.CANCELLED
-        r.completed_at = datetime.utcnow()
+        r.completed_at = r.completed_at or datetime.utcnow()
 
-    # 2. Fail all in-flight executions
+    # 2. Fail all in-flight executions (including AWAITING_REVIEW for paused pipelines)
     in_flight = (
         db.query(StageExecution)
         .filter_by(project_id=project_id)
         .filter(
-            StageExecution.status.in_(
-                [StageStatus.RUNNING, StageStatus.PENDING, StageStatus.AI_REVIEW]
-            )
+            StageExecution.status.in_([
+                StageStatus.RUNNING, StageStatus.PENDING,
+                StageStatus.AI_REVIEW, StageStatus.AWAITING_REVIEW,
+            ])
         )
         .all()
     )
@@ -419,10 +426,10 @@ async def reset_all(
         e.error_message = "Reset by user"
         e.completed_at = e.completed_at or datetime.utcnow()
 
-    # Cancel all queued jobs for this project's executions
-    all_exec_ids = {e.id for e in in_flight}
+    # Cancel all queued jobs for this project
     from backend.models.job import Job
-    queued_jobs = db.query(Job).filter_by(status="queued").all()
+    all_exec_ids = {e.id for e in in_flight}
+    queued_jobs = db.query(Job).filter(Job.status.in_(["queued", "running"])).all()
     for job in queued_jobs:
         payload = job.payload or {}
         if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
