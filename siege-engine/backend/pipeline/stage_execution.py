@@ -319,6 +319,23 @@ class RejectionRegenerateStrategy(StageExecutionStrategy):
         execution = self.old_execution
         project_id = execution.project_id
 
+        # Guard: skip if there's already a RUNNING execution for this stage.
+        already_running = (
+            engine.db.query(StageExecution)
+            .filter(
+                StageExecution.project_id == project_id,
+                StageExecution.stage_key == execution.stage_key,
+                StageExecution.component_key == execution.component_key,
+                StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]),
+            )
+            .first()
+        )
+        if already_running:
+            raise SkipExecution(
+                f"stage {execution.stage_key}: execution {already_running.id} "
+                f"is already running"
+            )
+
         config = engine._get_config(project_id)
         if not config:
             raise ValueError("Pipeline config not found")
