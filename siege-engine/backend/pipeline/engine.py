@@ -1103,14 +1103,14 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         if pipeline_run:
             pipeline_run.status = PipelineRunStatus.COMPLETED
             pipeline_run.completed_at = datetime.utcnow()
-            self.db.commit()
 
-            # Emit run_completed event
+            # Emit event BEFORE commit so both are persisted atomically.
             self.events.emit(
                 project_id, evt.RUN_COMPLETED,
                 {"run_id": run_id, "status": "completed"},
                 run_id=run_id,
             )
+            self.db.commit()
 
             # Git checkpoint: commit siege-state.json + any remaining changes
             try:
