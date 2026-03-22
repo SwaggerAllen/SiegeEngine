@@ -331,14 +331,17 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         if not stage_def:
             raise ValueError(f"Stage definition not found: {stage_key}")
 
-        # Find the latest run for this project
-        pipeline_run = (
+        # Reuse an existing RUNNING run or create a new one so the
+        # execution is always associated with a proper PipelineRun.
+        latest_run = (
             self.db.query(PipelineRun)
             .filter_by(project_id=project_id)
             .order_by(PipelineRun.run_number.desc())
             .first()
         )
-        run_id = pipeline_run.run_id if pipeline_run else str(uuid.uuid4())
+        run_id, pipeline_run = self._ensure_active_run(
+            project_id, latest_run.run_id if latest_run else None
+        )
 
         fan_out = stage_def.fan_out_strategy
         if fan_out in (
