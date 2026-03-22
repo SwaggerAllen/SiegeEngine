@@ -31,10 +31,10 @@ from backend.models import (
     StageStatus,
     StopPoint,
 )
+from backend.pipeline import events as evt
 from backend.pipeline.artifact_ops import ArtifactOpsMixin
 from backend.pipeline.component_manager import ComponentManagerMixin
 from backend.pipeline.event_store import EventStore
-from backend.pipeline import events as evt
 from backend.pipeline.nodes.ai_review import ai_review
 from backend.pipeline.nodes.generate import generate
 from backend.pipeline.readiness import (
@@ -172,7 +172,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     "run_id": run_id,
                     "run_number": pipeline_run.run_number,
                     "ai_loops": pipeline_run.ai_loops,
-                    "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "end_of_phase",
+                    "stop_point": (
+                        pipeline_run.stop_point.value
+                        if pipeline_run.stop_point
+                        else "end_of_phase"
+                    ),
                     "start_stage_key": pipeline_run.start_stage_key,
                     "start_component_key": pipeline_run.start_component_key,
                 },
@@ -237,7 +241,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 "run_id": new_run_id,
                 "run_number": pipeline_run.run_number,
                 "ai_loops": pipeline_run.ai_loops,
-                "stop_point": pipeline_run.stop_point.value if pipeline_run.stop_point else "end_of_phase",
+                "stop_point": (
+                    pipeline_run.stop_point.value
+                    if pipeline_run.stop_point
+                    else "end_of_phase"
+                ),
                 "start_stage_key": pipeline_run.start_stage_key,
                 "start_component_key": pipeline_run.start_component_key,
             },
@@ -817,7 +825,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         """
         stages = sorted(config.stages, key=lambda s: s.order_index)
         has_inflight_work = False
-        generated_work_this_pass = False
 
         for stage_def in stages:
             # Skip stages outside run scope
@@ -930,7 +937,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     if stage_def.stage_key not in BRANCHING_STAGES:
                         await self._post_generation_hook(project_id, stage_def, None, execution)
 
-                generated_work_this_pass = True
 
                 # Check if pipeline should pause at this stage
                 if self._should_pause(stage_def, pipeline_run, project_id):
@@ -1040,7 +1046,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     )
                     return
 
-                generated_work_this_pass = True
 
                 # Check if pipeline should pause at this stage
                 if self._should_pause(stage_def, pipeline_run, project_id):
@@ -1176,7 +1181,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             run_id=execution.run_id,
         )
 
-        try:  # noqa: the finally below uninstalls log_streamer
+        try:  # the finally below uninstalls log_streamer
             self.events.emit(
                 project_id, evt.GENERATION_PROGRESS,
                 {
@@ -1335,7 +1340,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         except asyncio.CancelledError:
             logger.info(
-                "Stage %s cancelled for component=%s (force-restart)", stage_def.stage_key, component_key
+                "Stage %s cancelled for component=%s (force-restart)",
+                stage_def.stage_key,
+                component_key,
             )
             # Unstick artifact status so the retry can start clean
             art_status = None

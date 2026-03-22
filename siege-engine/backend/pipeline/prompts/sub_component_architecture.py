@@ -42,4 +42,6 @@ class SubComponentArchPrompt(PromptTemplate):
                 "Produce a detailed architecture for this sub-component.",
             },
         ]
-        return self._inject_feedback(messages, feedback, human_notes, current_content, upstream_changes)
+        return self._inject_feedback(
+            messages, feedback, human_notes, current_content, upstream_changes,
+        )

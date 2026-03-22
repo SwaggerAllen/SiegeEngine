@@ -1,6 +1,13 @@
 """Domain-split models package. Re-exports everything for backward compatibility."""
 
 from backend.database import Base
+from backend.models.artifact import (
+    Artifact,
+    ArtifactComment,
+    ArtifactDependency,
+    ComponentDefinition,
+)
+from backend.models.auth import GitHubCredential, InviteLink, User
 from backend.models.enums import (
     ArtifactStatus,
     ArtifactType,
@@ -10,14 +17,8 @@ from backend.models.enums import (
     StageStatus,
     StopPoint,
 )
-from backend.models.auth import GitHubCredential, InviteLink, User
-from backend.models.project import Project
-from backend.models.artifact import (
-    Artifact,
-    ArtifactComment,
-    ArtifactDependency,
-    ComponentDefinition,
-)
+from backend.models.input_document import InputDocument
+from backend.models.job import Job
 from backend.models.pipeline import (
     PipelineConfig,
     PipelineRun,
@@ -25,9 +26,8 @@ from backend.models.pipeline import (
     StageDefinition,
     StageExecution,
 )
-from backend.models.input_document import InputDocument
 from backend.models.pipeline_events import PipelineEvent, PipelineSnapshot
-from backend.models.job import Job
+from backend.models.project import Project
 
 __all__ = [
     "Base",

@@ -27,6 +27,8 @@ class SystemRequirementsPrompt(PromptTemplate):
             {"role": "system", "content": self.full_system_message},
             {"role": "user", "content": user_content},
         ]
-        return self._inject_feedback(messages, feedback, human_notes, current_content, upstream_changes)
+        return self._inject_feedback(
+            messages, feedback, human_notes, current_content, upstream_changes,
+        )
 
 

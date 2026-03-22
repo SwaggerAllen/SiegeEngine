@@ -98,7 +98,10 @@ def cancel_running_execution(execution_id: str) -> bool:
         # We check the job payload via a tag stored on the task
         task_exec_id = getattr(_current_task, "_execution_id", None)
         if task_exec_id == execution_id:
-            logger.info("Cancelling running task for execution %s (job %s)", execution_id, _current_job_id)
+            logger.info(
+                "Cancelling running task for execution %s (job %s)",
+                execution_id, _current_job_id,
+            )
             _current_task.cancel()
             return True
 
@@ -168,7 +171,10 @@ def _complete_job_sync(job_id: str, error: str | None = None) -> None:
                 job.locked_by = None
                 job.locked_at = None
                 job.error_message = error
-                logger.warning(f"Job {job.id} failed (retry {job.retry_count}/{job.max_retries}): {error}")
+                logger.warning(
+                    f"Job {job.id} failed"
+                    f" (retry {job.retry_count}/{job.max_retries}): {error}"
+                )
             else:
                 job.status = "failed"
                 job.error_message = error
@@ -372,7 +378,7 @@ async def worker_loop(poll_interval: float = 5.0) -> None:
 
         # Run handler as a tracked task so it can be cancelled by force-restart
         error = None
-        task = asyncio.current_task()
+        asyncio.current_task()
         handler_task = asyncio.create_task(handler(payload))
 
         # Tag the task with execution_id so cancel_running_execution can match it

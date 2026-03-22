@@ -1004,7 +1004,9 @@ def revert_to_sequence(
                         # Fall back to timestamp-based lookup
                         history = git_manager.get_file_history(project_id, art.file_path)
                         for commit in history:
-                            commit_time = dt.fromisoformat(commit["timestamp"].replace("Z", "+00:00"))
+                            commit_time = dt.fromisoformat(
+                                commit["timestamp"].replace("Z", "+00:00")
+                            )
                             if commit_time.replace(tzinfo=None) <= target_time.replace(tzinfo=None):
                                 restore_sha = commit["sha"]
                                 break

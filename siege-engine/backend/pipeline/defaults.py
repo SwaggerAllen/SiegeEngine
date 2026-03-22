@@ -87,7 +87,11 @@ DEFAULT_STAGES = [
         "display_name": "Sub-Component Architectures",
         "order_index": 6,
         "output_artifact_type": "sub_component_architecture",
-        "input_stage_keys": ["extract_sub_components", "component_architectures", "system_requirements"],
+        "input_stage_keys": [
+            "extract_sub_components",
+            "component_architectures",
+            "system_requirements",
+        ],
         "fan_out_strategy": "sub_component",
         "prompt_template_key": "sub_component_arch",
         "model_override": "claude-opus-4-20250514",

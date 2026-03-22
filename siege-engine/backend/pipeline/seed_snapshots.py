@@ -44,7 +44,10 @@ def seed_snapshot_for_project(db: Session, project_id: str) -> PipelineSnapshot:
     for ex in executions:
         key = f"{ex.stage_key}/{ex.component_key}" if ex.component_key else ex.stage_key
         prev = latest.get(key)
-        if prev is None or (ex.started_at and (not prev.started_at or ex.started_at > prev.started_at)):
+        if prev is None or (
+            ex.started_at
+            and (not prev.started_at or ex.started_at > prev.started_at)
+        ):
             latest[key] = ex
     for key, ex in latest.items():
         stage_statuses[key] = ex.status.value

@@ -16,7 +16,6 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -28,7 +27,6 @@ from backend.models import (
     ArtifactStatus,
     ArtifactType,
     ComponentDefinition,
-    PipelineRun,
     StageExecution,
 )
 from backend.models.pipeline_events import PipelineEvent, PipelineSnapshot

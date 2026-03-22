@@ -35,4 +35,6 @@ class ExtractSubComponentsPrompt(PromptTemplate):
                 "Evaluate whether this component needs sub-component decomposition.",
             },
         ]
-        return self._inject_feedback(messages, feedback, human_notes, current_content, upstream_changes)
+        return self._inject_feedback(
+            messages, feedback, human_notes, current_content, upstream_changes,
+        )

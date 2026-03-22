@@ -14,7 +14,6 @@ from backend.models import (
     ArtifactComment,
     ArtifactDependency,
     ArtifactStatus,
-    ComponentDefinition,
     PipelineConfig,
     PipelineRun,
     PipelineRunStatus,
@@ -500,7 +499,9 @@ class ArtifactOpsMixin:
             },
         )
 
-    def _ensure_active_run(self, project_id: str, old_run_id: str | None) -> tuple[str, PipelineRun | None]:
+    def _ensure_active_run(
+        self, project_id: str, old_run_id: str | None
+    ) -> tuple[str, PipelineRun | None]:
         """Return an active run for the given project, creating one if needed.
 
         If *old_run_id* refers to a RUNNING PipelineRun, reuse it.
@@ -752,7 +753,10 @@ class ArtifactOpsMixin:
         if not artifact:
             raise ValueError("Artifact not found")
         if artifact.status not in (ArtifactStatus.STALE, ArtifactStatus.AWAITING_REVIEW):
-            raise ValueError(f"Artifact is not stale or awaiting_review (status={artifact.status.value})")
+            raise ValueError(
+                f"Artifact is not stale or awaiting_review"
+                f" (status={artifact.status.value})"
+            )
 
         project_id = artifact.project_id
 
@@ -1322,7 +1326,11 @@ class ArtifactOpsMixin:
                     "stage_key": stage_def.stage_key,
                     "component_key": artifact.component_key,
                     "artifact_id": artifact_id,
-                    "artifact_status": original_artifact_status.value if original_artifact_status else "approved",
+                    "artifact_status": (
+                        original_artifact_status.value
+                        if original_artifact_status
+                        else "approved"
+                    ),
                     "error": str(e),
                 },
             )
@@ -1353,7 +1361,11 @@ class ArtifactOpsMixin:
 
         # Gather feedback notes and current content so the retry builds on
         # the previous version rather than generating from scratch.
-        feedback_notes = self._get_feedback_notes(execution.artifact_id) if execution.artifact_id else None
+        feedback_notes = (
+            self._get_feedback_notes(execution.artifact_id)
+            if execution.artifact_id
+            else None
+        )
         current_content = None
         if execution.artifact_id:
             existing_artifact = self.db.get(Artifact, execution.artifact_id)
@@ -1361,7 +1373,10 @@ class ArtifactOpsMixin:
                 current_content = existing_artifact.content
 
         input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
-        self._transition_execution(execution, StageStatus.RUNNING, error_message="", trigger="force_restart")
+        self._transition_execution(
+            execution, StageStatus.RUNNING,
+            error_message="", trigger="force_restart",
+        )
         execution.retry_count = (execution.retry_count or 0) + 1
         self.db.flush()
 

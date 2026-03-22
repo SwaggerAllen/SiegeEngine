@@ -11,12 +11,12 @@ import copy
 from typing import Any
 
 from backend.pipeline.events import (
+    AI_REVIEW_COMPLETED,
+    AI_REVIEW_STARTED,
     ARTIFACT_COMMITTED,
     ARTIFACT_PRUNED,
     ARTIFACT_REVISED,
     AWAITING_HUMAN_REVIEW,
-    AI_REVIEW_COMPLETED,
-    AI_REVIEW_STARTED,
     CARRIED_OVER,
     CASCADE_COMPLETED,
     CASCADE_STARTED,
@@ -71,7 +71,12 @@ def empty_snapshot() -> dict[str, Any]:
     }
 
 
-def apply_event(snapshot: dict[str, Any], event_type: str, payload: dict, sequence: int) -> dict[str, Any]:
+def apply_event(
+    snapshot: dict[str, Any],
+    event_type: str,
+    payload: dict,
+    sequence: int,
+) -> dict[str, Any]:
     """Apply a single event to a snapshot dict. Returns new snapshot (does NOT mutate input)."""
     snap = copy.deepcopy(snapshot)
     # Ensure new fields exist for snapshots created before they were added

@@ -552,12 +552,15 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
         (ArtifactType.COMPONENT_ARCHITECTURE.value, ArtifactType.COMPONENT_PLAN.value),
         (ArtifactType.COMPONENT_PLAN.value, ArtifactType.COMPONENT_PLAN.value),
     ]
+    _SC_REQ = ArtifactType.SUB_COMPONENT_REQUIREMENTS.value
+    _SC_ARCH = ArtifactType.SUB_COMPONENT_ARCHITECTURE.value
+    _SC_PLAN = ArtifactType.SUB_COMPONENT_PLAN.value
     _SUB_COMPONENT_DEP_PAIRS = [
-        (ArtifactType.SUB_COMPONENT_REQUIREMENTS.value, ArtifactType.SUB_COMPONENT_REQUIREMENTS.value),
-        (ArtifactType.SUB_COMPONENT_ARCHITECTURE.value, ArtifactType.SUB_COMPONENT_REQUIREMENTS.value),
-        (ArtifactType.SUB_COMPONENT_ARCHITECTURE.value, ArtifactType.SUB_COMPONENT_ARCHITECTURE.value),
-        (ArtifactType.SUB_COMPONENT_ARCHITECTURE.value, ArtifactType.SUB_COMPONENT_PLAN.value),
-        (ArtifactType.SUB_COMPONENT_PLAN.value, ArtifactType.SUB_COMPONENT_PLAN.value),
+        (_SC_REQ, _SC_REQ),
+        (_SC_ARCH, _SC_REQ),
+        (_SC_ARCH, _SC_ARCH),
+        (_SC_ARCH, _SC_PLAN),
+        (_SC_PLAN, _SC_PLAN),
     ]
     existing_edge_keys = {(e["source"], e["target"]) for e in edges}
     comp_defs = db.query(ComponentDefinition).filter_by(project_id=project_id).all()
