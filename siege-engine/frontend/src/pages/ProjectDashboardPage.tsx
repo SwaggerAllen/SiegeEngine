@@ -19,9 +19,10 @@ import { ChatPanel } from '../components/chat/ChatPanel';
 import InputDocsPanel from '../components/input-docs/InputDocsPanel';
 import { RunSelector } from '../components/pipeline/RunSelector';
 import { EventHistoryPanel } from '../components/pipeline/EventHistoryPanel';
+import { LogPanel } from '../components/pipeline/LogPanel';
 import api from '../api/client';
 
-type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history';
+type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs';
 
 export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -112,6 +113,7 @@ export function ProjectDashboardPage() {
     chat: 'Chat',
     settings: 'Settings',
     history: 'Event History',
+    logs: 'Logs',
   };
   const visibleTabs: Tab[] = isViewer
     ? ['documents', 'pipeline', 'chat']
@@ -290,6 +292,10 @@ export function ProjectDashboardPage() {
       ) : activeTab === 'history' ? (
         <div className="flex-1 overflow-hidden">
           <EventHistoryPanel projectId={projectId} />
+        </div>
+      ) : activeTab === 'logs' ? (
+        <div className="flex-1 overflow-hidden">
+          <LogPanel />
         </div>
       ) : (
         <div className="flex-1 overflow-auto">

@@ -500,8 +500,12 @@ class ArtifactOpsMixin:
             },
         )
 
-    def _ensure_run_for_regeneration(self, project_id: str, old_run_id: str | None) -> tuple[str, PipelineRun | None]:
-        """Ensure a regeneration belongs to a run. Returns (run_id, pipeline_run)."""
+    def _ensure_active_run(self, project_id: str, old_run_id: str | None) -> tuple[str, PipelineRun | None]:
+        """Return an active run for the given project, creating one if needed.
+
+        If *old_run_id* refers to a RUNNING PipelineRun, reuse it.
+        Otherwise create a new single-artifact run.  Returns (run_id, pipeline_run).
+        """
         from sqlalchemy import func
 
         # Try to find the existing run
@@ -569,7 +573,7 @@ class ArtifactOpsMixin:
                 self._mark_artifact_status(old_execution.artifact_id, ArtifactStatus.GENERATING)
 
             # Ensure regeneration belongs to a run
-            run_id, pipeline_run = self._ensure_run_for_regeneration(
+            run_id, pipeline_run = self._ensure_active_run(
                 project_id, old_execution.run_id
             )
             new_execution = StageExecution(
@@ -1361,7 +1365,10 @@ class ArtifactOpsMixin:
         if not stage_def:
             raise ValueError(f"Stage definition not found: {execution.stage_key}")
 
-        pipeline_run = self._lookup_pipeline_run(execution.run_id) if execution.run_id else None
+        # Ensure we have an active run — reuse an existing RUNNING run or
+        # create a new single-artifact run so the execution is always tracked.
+        run_id, pipeline_run = self._ensure_active_run(project_id, execution.run_id)
+        execution.run_id = run_id
 
         if execution.artifact_id:
             artifact = self.db.get(Artifact, execution.artifact_id)
@@ -1397,7 +1404,7 @@ class ArtifactOpsMixin:
             input_artifacts,
             execution.component_key,
             execution,
-            execution.run_id or str(uuid.uuid4()),
+            run_id,
             human_notes=feedback_notes,
             current_content=current_content,
             config=config,

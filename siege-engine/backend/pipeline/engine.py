@@ -331,14 +331,17 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         if not stage_def:
             raise ValueError(f"Stage definition not found: {stage_key}")
 
-        # Find the latest run for this project
-        pipeline_run = (
+        # Reuse an existing RUNNING run or create a new one so the
+        # execution is always associated with a proper PipelineRun.
+        latest_run = (
             self.db.query(PipelineRun)
             .filter_by(project_id=project_id)
             .order_by(PipelineRun.run_number.desc())
             .first()
         )
-        run_id = pipeline_run.run_id if pipeline_run else str(uuid.uuid4())
+        run_id, pipeline_run = self._ensure_active_run(
+            project_id, latest_run.run_id if latest_run else None
+        )
 
         fan_out = stage_def.fan_out_strategy
         if fan_out in (
@@ -1144,6 +1147,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         )
         logger.info("  input_artifacts keys: %s", list(input_artifacts.keys()))
 
+        # Stream backend logs to connected WebSocket clients
+        from backend.websocket.log_handler import WebSocketLogHandler
+        log_streamer = WebSocketLogHandler(project_id)
+        log_streamer.install()
+
         # Commit the RUNNING execution so other sessions (DAG endpoint) can see it
         self.db.commit()
 
@@ -1161,7 +1169,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             run_id=execution.run_id,
         )
 
-        try:
+        try:  # noqa: the finally below uninstalls log_streamer
             self.events.emit(
                 project_id, evt.GENERATION_PROGRESS,
                 {
@@ -1373,6 +1381,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     "error": str(e),
                 },
             )
+
+        finally:
+            log_streamer.uninstall()
 
     def _lookup_pipeline_run(self, run_id: str) -> PipelineRun | None:
         """Look up a PipelineRun by its run_id."""
