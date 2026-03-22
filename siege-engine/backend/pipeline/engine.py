@@ -1132,6 +1132,14 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             run_id=execution.run_id,
         )
 
+        # Keep the DB artifact status in sync with the snapshot (which the
+        # reducer just set to "generating").  Without this, a crash between
+        # here and generate() leaves the DB stale.
+        if execution.artifact_id:
+            artifact = self.db.get(Artifact, execution.artifact_id)
+            if artifact:
+                artifact.status = ArtifactStatus.GENERATING
+
         # Commit the RUNNING execution + STAGE_STARTED event together so
         # other sessions (DAG endpoint) can see them atomically.
         self.db.commit()
