@@ -86,6 +86,85 @@ Stages 9-10 run in the project's git repo with full tool access (bash, file edit
 - **WebSocket broadcasting**: Pipeline progress events stream to frontend in real-time.
 - **Setup component**: `project_setup` is injected for code stages to ensure scaffolding runs before component code.
 
+## Debugging Pipeline State
+
+The user may paste debug info from the **Debug State panel** (the info-circle button in the dashboard header). The **Repair button** (gear icon) is immediately to its left. Both are in `frontend/src/pages/ProjectDashboardPage.tsx`.
+
+### Reading the Debug Dump
+
+The debug dump has these sections, in order:
+
+1. **PROJECTION DRIFT DETECTED** (only if mismatches exist) — Shows where the snapshot and DB disagree. The snapshot is always correct; DB fields are stale projections.
+   ```
+   ARTIFACT System Architecture (4656763f): snapshot=rejected  db=generating
+   STAGE system_architecture: snapshot=rejected  db=running
+   ```
+
+2. **SNAPSHOT** — The authoritative pipeline state built from events:
+   - `is_running` / `is_paused` / `current_run_id` / `last_seq` — pipeline-level status
+   - `run_status` — status of each run (running/completed/failed/cancelled)
+   - `stage_statuses` — current status of each stage (approved/rejected/running/failed/etc.)
+   - `artifact_statuses` — current status of each artifact
+   - `stage_errors` — error messages per stage
+   - `stage_triggers` — what triggered each stage (clean_slate_migration, rejection_regenerate, pipeline_run)
+   - `execution_map` — which execution+artifact is "current" for each stage (key for reconcile)
+   - `artifact_meta` — artifact type and component key
+
+3. **RUNS** — All pipeline runs with status, timestamps, loop count, stop point
+
+4. **EXECUTIONS** — All stage executions with status, artifact link, run link, retry count. Look for:
+   - `running` executions with no matching active jobs = **stuck/orphaned**
+   - Same execution_id across multiple runs = **execution reuse bug**
+   - Multiple `running` executions for same stage = **duplicate regeneration**
+
+5. **ARTIFACTS** — All artifacts with status, version, content size, file path
+
+6. **RECENT EVENTS** — The event log (last N events). Each event has sequence number, type, run_id, timestamp, and payload. Key patterns to look for:
+   - `stage_started` with `execution_id: null` = **flush-before-emit bug** (execution ID not generated before event)
+   - `run_completed` appearing BEFORE `human_rejected` for same run = run completed while artifact was still awaiting review
+   - Multiple `stage_started` or `stage_failed` for same execution = **duplicate processing**
+   - No `stage_started` after `run_created` = execution created in DB but event never emitted
+
+7. **ACTIVE JOBS** — Currently running background jobs. If this shows `(none)` but executions are `running`, the execution is stuck.
+
+### Repair & Reconcile
+
+- **Repair button** (gear icon, dashboard header): Calls `POST /pipeline/{project_id}/reconcile`. Rebuilds the snapshot from events, then syncs DB projections to match. Also fixes stuck runs and orphaned executions. Shows "Fixed N issues" result.
+- **Reconcile endpoint** (`routes_pipeline.py`): Rebuilds snapshot via `EventStore.rebuild_snapshot()`, syncs artifact statuses, execution statuses (from `execution_map`), marks orphaned RUNNING executions as FAILED, and completes stuck RUNNING runs.
+- **Reconstruct endpoint** (`POST /pipeline/{project_id}/reconstruct`): Disaster recovery — wipes all pipeline state and rebuilds from git + siege-state.json. Nuclear option.
+
+### Key Debugging Files
+
+| File | What to look at |
+|------|-----------------|
+| `backend/pipeline/artifact_ops.py` | `_regenerate_stage`, `resume_stage`, `retry_stage`, `_try_complete_run` — where executions are created and state transitions happen |
+| `backend/pipeline/engine.py` | `_run_stage`, `_trigger_single_stage` — has concurrency guards (check for existing RUNNING execution before creating new one) |
+| `backend/pipeline/reducer.py` | Pure event reducer — maps event types to snapshot mutations. No DB access. |
+| `backend/pipeline/event_store.py` | `emit()` — appends event, flushes, updates materialized snapshot. `rebuild_snapshot()` — replays all events from scratch. |
+| `backend/pipeline/queue.py` | Job queue worker. `recover_stale_jobs()` re-queues running jobs on restart. `_handle_resume_stage` / `_handle_retry_stage` — job handlers. |
+| `backend/pipeline/routes_pipeline.py` | `reconcile_statuses` — the repair endpoint. `debug_state` — generates the debug dump. |
+| `frontend/src/pages/ProjectDashboardPage.tsx` | Debug button, repair button, repair handler |
+| `frontend/src/components/pipeline/DebugStatePanel.tsx` | Formats the debug dump text |
+
+### Known Pitfalls & Patterns
+
+1. **Atomic commit ordering**: When creating an execution and emitting its STAGE_STARTED event, the correct order is:
+   ```python
+   self.db.add(new_execution)
+   self.db.flush()          # Generate the DB ID
+   self.events.emit(...)    # Emit event (uses the ID, flushes event row)
+   self.db.commit()         # Commit execution + event atomically
+   ```
+   If you commit before emitting, a crash between commit and emit leaves a DB execution with no corresponding event (snapshot doesn't know about it). If you emit before flushing, execution_id is null in the event payload.
+
+2. **CancelledError vs Exception**: `asyncio.CancelledError` inherits from `BaseException`, not `Exception`. Async handlers that do cleanup in `except Exception` will miss cancellations (e.g., from force-restart). Always add a separate `except asyncio.CancelledError` handler that cleans up then re-raises. See `engine.py`'s `_run_stage` for the reference pattern.
+
+3. **Concurrency guards**: Before creating a new RUNNING execution, always check for existing RUNNING/AI_REVIEW executions for the same stage_key/component_key. `_trigger_single_stage` and `_trigger_fan_out_stage` in `engine.py` have this guard. `_regenerate_stage` and `retry_stage` in `artifact_ops.py` also have it now.
+
+4. **Job dedup**: `enqueue()` has no built-in deduplication. Call `cancel_jobs_by_type()` before `enqueue()` to prevent duplicate jobs (see `routes_stage.py` `force_restart_stage` and `trigger_stage` for examples).
+
+5. **recover_stale_jobs on restart**: When the server restarts, `recover_stale_jobs()` re-queues any jobs that were running. If the previous handler already created an execution before the crash, the re-queued handler will try to create another one — the concurrency guard (pitfall #3) prevents this from causing duplicates.
+
 ## Development
 
 ```bash
