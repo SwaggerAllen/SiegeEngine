@@ -17,7 +17,7 @@ from backend.models import (
 )
 from backend.pipeline.defaults import DEFAULT_STAGES
 from backend.pipeline.engine import PipelineEngine
-from backend.pipeline.queue import enqueue
+from backend.pipeline.queue import cancel_jobs_by_type, cancel_running_execution, enqueue
 from backend.pipeline.schemas import (
     RegenDownstreamRequest,
     ResolveStaleRequest,
@@ -226,6 +226,12 @@ async def force_restart_stage(
             "artifact_status": "pending",
         },
     )
+
+    # Cancel any in-flight work for this execution (kills CLI process + asyncio task)
+    cancel_running_execution(execution_id)
+
+    # Cancel any already-queued retry jobs for this execution to avoid duplicates
+    cancel_jobs_by_type(db, "retry_stage", execution_id=execution_id)
 
     # Retry via job queue
     enqueue(db, "retry_stage", {"execution_id": execution_id})

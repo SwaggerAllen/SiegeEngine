@@ -22,6 +22,10 @@ def _get_semaphore() -> asyncio.Semaphore:
 class CLIManager:
     """Manages Claude CLI subprocess invocations."""
 
+    def __init__(self):
+        # Track running processes by execution_id so force-restart can kill them
+        self._running_procs: dict[str, asyncio.subprocess.Process] = {}
+
     async def generate(
         self,
         prompt: str,
@@ -31,6 +35,7 @@ class CLIManager:
         tools: str | None = None,
         timeout: int | None = None,
         max_budget_usd: float | None = None,
+        execution_id: str | None = None,
     ) -> str:
         """
         Run claude CLI with a prompt and return the output text.
@@ -45,6 +50,7 @@ class CLIManager:
                    None = CLI default (all tools).
             timeout: Timeout in seconds. Defaults to cli_timeout_document setting.
             max_budget_usd: Maximum dollar amount for API calls.
+            execution_id: Optional execution ID for process tracking/cancellation.
         """
         if timeout is None:
             timeout = settings.cli_timeout_document
@@ -59,7 +65,17 @@ class CLIManager:
                 tools,
                 timeout,
                 max_budget_usd,
+                execution_id,
             )
+
+    def kill_process_for_execution(self, execution_id: str) -> bool:
+        """Kill a running CLI process for the given execution. Returns True if killed."""
+        proc = self._running_procs.get(execution_id)
+        if proc and proc.returncode is None:
+            logger.info("Killing CLI process for execution %s (pid=%s)", execution_id, proc.pid)
+            proc.kill()
+            return True
+        return False
 
     async def _invoke(
         self,
@@ -70,6 +86,7 @@ class CLIManager:
         tools: str | None,
         timeout: int,
         max_budget_usd: float | None,
+        execution_id: str | None = None,
     ) -> str:
         args = ["claude", "-p", "--output-format", "text"]
 
@@ -114,6 +131,9 @@ class CLIManager:
             env=env,
         )
 
+        if execution_id:
+            self._running_procs[execution_id] = proc
+
         try:
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(input=prompt.encode("utf-8")),
@@ -123,6 +143,13 @@ class CLIManager:
             proc.kill()
             await proc.wait()
             raise TimeoutError(f"Claude CLI timed out after {timeout}s")
+        except asyncio.CancelledError:
+            proc.kill()
+            await proc.wait()
+            raise
+        finally:
+            if execution_id:
+                self._running_procs.pop(execution_id, None)
 
         output = stdout.decode("utf-8", errors="replace")
         err_output = stderr.decode("utf-8", errors="replace")

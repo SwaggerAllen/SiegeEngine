@@ -628,6 +628,7 @@ class ArtifactOpsMixin:
                 self.db,
                 human_notes=feedback_notes,
                 current_content=existing_content,
+                execution_id=new_execution.id,
             )
             new_execution.artifact_id = artifact_id
 
@@ -1244,6 +1245,7 @@ class ArtifactOpsMixin:
                 self.db,
                 human_notes=accumulated,
                 current_content=existing_content,
+                execution_id=execution.id,
             )
             execution.artifact_id = new_artifact_id
 
@@ -1379,6 +1381,15 @@ class ArtifactOpsMixin:
         self._transition_execution(execution, StageStatus.RUNNING, error_message="", trigger="force_restart")
         execution.retry_count = (execution.retry_count or 0) + 1
         self.db.flush()
+
+        await ws_manager.broadcast(
+            project_id,
+            {
+                "type": "stage_started",
+                "stage_key": execution.stage_key,
+                "component_key": execution.component_key,
+            },
+        )
 
         await self._run_stage(
             project_id,

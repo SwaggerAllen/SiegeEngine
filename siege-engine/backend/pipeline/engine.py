@@ -7,6 +7,7 @@ documents are only generated after all its upstream dependency components have
 completed their full document cycle and received human approval.
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime
@@ -1188,6 +1189,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 self.db,
                 human_notes=human_notes,
                 current_content=current_content,
+                execution_id=execution.id,
             )
             execution.artifact_id = artifact_id
 
@@ -1282,6 +1284,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                             self.db,
                             feedback=feedback,
                             human_notes=human_notes,
+                            execution_id=execution.id,
                         )
                         execution.artifact_id = artifact_id
 
@@ -1314,6 +1317,29 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     "artifact_id": artifact_id,
                 },
             )
+
+        except asyncio.CancelledError:
+            logger.info(
+                "Stage %s cancelled for component=%s (force-restart)", stage_def.stage_key, component_key
+            )
+            # Unstick artifact status so the retry can start clean
+            art_status = None
+            if execution.artifact_id:
+                stuck_artifact = self.db.get(Artifact, execution.artifact_id)
+                if stuck_artifact and stuck_artifact.status in (
+                    ArtifactStatus.GENERATING,
+                    ArtifactStatus.AI_REVIEWING,
+                ):
+                    art_status = ArtifactStatus.PENDING
+
+            self._transition_execution(
+                execution, StageStatus.FAILED,
+                artifact_status=art_status,
+                error_message="Cancelled by force-restart",
+                set_completed=True,
+            )
+            self.db.commit()
+            raise  # Let the worker loop see the CancelledError
 
         except Exception as e:
             logger.exception(
