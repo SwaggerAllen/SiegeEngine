@@ -14,6 +14,7 @@ Adding a new trigger type:
 from __future__ import annotations
 
 import logging
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -21,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from backend.models import (
     Artifact,
+    ArtifactComment,
     ArtifactStatus,
     PipelineConfig,
     PipelineRun,
@@ -28,6 +30,7 @@ from backend.models import (
     StageExecution,
     StageStatus,
 )
+from backend.pipeline import events as evt
 
 if TYPE_CHECKING:
     from backend.pipeline.engine import PipelineEngine
@@ -53,6 +56,20 @@ class StageExecutionContext:
     trigger: str = "pipeline_run"
     human_notes: str | None = None
     current_content: str | None = None
+
+    # Error recovery: what status to restore the artifact to on failure.
+    # If None, defaults to ArtifactStatus.PENDING (first-generation).
+    # Rejection regeneration sets REJECTED, revision sets APPROVED.
+    error_artifact_status: ArtifactStatus | None = None
+
+    # The original artifact ID to restore on failure.  When generate()
+    # creates a new artifact, execution.artifact_id changes — but on
+    # error we need to restore the ORIGINAL artifact's status.
+    original_artifact_id: str | None = None
+
+    # If set, _run_stage adds a system_event comment on the artifact
+    # after successful generation, e.g. "Artifact regenerated".
+    version_comment: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +301,236 @@ class ManualTriggerStrategy(StageExecutionStrategy):
             trigger="manual_trigger",
             human_notes=human_notes,
             current_content=current_content,
+        )
+
+
+class RejectionRegenerateStrategy(StageExecutionStrategy):
+    """Prepare a stage execution triggered by human rejection.
+
+    When an artifact is rejected, the pipeline regenerates it with the
+    accumulated feedback.  On failure, the artifact is restored to its
+    pre-generation status (typically REJECTED).
+    """
+
+    def __init__(self, old_execution: StageExecution):
+        self.old_execution = old_execution
+
+    async def prepare(self, engine: PipelineEngine) -> StageExecutionContext:
+        execution = self.old_execution
+        project_id = execution.project_id
+
+        # Guard: skip if there's already a RUNNING execution for this stage.
+        already_running = (
+            engine.db.query(StageExecution)
+            .filter(
+                StageExecution.project_id == project_id,
+                StageExecution.stage_key == execution.stage_key,
+                StageExecution.component_key == execution.component_key,
+                StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]),
+            )
+            .first()
+        )
+        if already_running:
+            raise SkipExecution(
+                f"stage {execution.stage_key}: execution {already_running.id} "
+                f"is already running"
+            )
+
+        config = engine._get_config(project_id)
+        if not config:
+            raise ValueError("Pipeline config not found")
+
+        stage_def = next(
+            (s for s in config.stages if s.stage_key == execution.stage_key),
+            None,
+        )
+        if not stage_def:
+            raise ValueError(f"Stage definition not found: {execution.stage_key}")
+
+        # Capture original artifact status for error recovery.
+        original_artifact_status = None
+        if execution.artifact_id:
+            artifact = engine.db.get(Artifact, execution.artifact_id)
+            if artifact:
+                original_artifact_status = artifact.status
+
+        # Ensure we have an active run.
+        run_id, pipeline_run = engine._ensure_active_run(
+            project_id, execution.run_id,
+        )
+
+        # Create new execution.
+        new_execution = StageExecution(
+            project_id=project_id,
+            stage_key=execution.stage_key,
+            component_key=execution.component_key,
+            status=StageStatus.RUNNING,
+            started_at=datetime.utcnow(),
+            run_id=run_id,
+            retry_count=(execution.retry_count or 0) + 1,
+            artifact_id=execution.artifact_id,
+        )
+        engine.db.add(new_execution)
+        engine.db.flush()
+
+        # Mark artifact as GENERATING so the UI shows progress.
+        if execution.artifact_id:
+            engine._mark_artifact_status(
+                execution.artifact_id, ArtifactStatus.GENERATING,
+            )
+
+        input_artifacts = engine._gather_inputs(
+            project_id, stage_def, execution.component_key,
+            include_stale=True,
+        )
+
+        # Gather feedback and current content.
+        human_notes = (
+            engine._get_feedback_notes(execution.artifact_id)
+            if execution.artifact_id
+            else None
+        )
+        current_content = None
+        if execution.artifact_id:
+            existing_artifact = engine.db.get(Artifact, execution.artifact_id)
+            if existing_artifact and existing_artifact.content:
+                current_content = existing_artifact.content
+
+        return StageExecutionContext(
+            project_id=project_id,
+            stage_def=stage_def,
+            config=config,
+            execution=new_execution,
+            run_id=run_id,
+            pipeline_run=pipeline_run,
+            input_artifacts=input_artifacts,
+            trigger="rejection_regenerate",
+            human_notes=human_notes,
+            current_content=current_content,
+            error_artifact_status=original_artifact_status or ArtifactStatus.REJECTED,
+            original_artifact_id=execution.artifact_id,
+            version_comment="Artifact regenerated",
+        )
+
+
+class ArtifactRevisionStrategy(StageExecutionStrategy):
+    """Prepare a stage execution triggered by artifact revision.
+
+    The user provides feedback on an approved/stale artifact and requests
+    AI revision.  Creates a standalone execution (no PipelineRun) so it
+    doesn't interfere with pipeline flow.  On failure, the artifact is
+    restored to its pre-revision status (typically APPROVED).
+    """
+
+    def __init__(self, artifact_id: str, feedback: str, user_id: str | None = None):
+        self.artifact_id = artifact_id
+        self.feedback = feedback
+        self.user_id = user_id
+
+    async def prepare(self, engine: PipelineEngine) -> StageExecutionContext:
+        artifact = engine.db.get(Artifact, self.artifact_id)
+        if not artifact:
+            raise ValueError("Artifact not found")
+
+        # Guard: skip if there's already a RUNNING execution for this artifact.
+        already_running = (
+            engine.db.query(StageExecution)
+            .filter(
+                StageExecution.artifact_id == self.artifact_id,
+                StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]),
+            )
+            .first()
+        )
+        if already_running:
+            raise SkipExecution(
+                f"artifact {self.artifact_id}: execution {already_running.id} "
+                f"is already running"
+            )
+
+        original_artifact_status = artifact.status
+        project_id = artifact.project_id
+
+        config = engine._get_config(project_id)
+        if not config:
+            raise ValueError("Pipeline config not found")
+
+        stage_def = next(
+            (s for s in config.stages
+             if s.output_artifact_type == artifact.artifact_type.value),
+            None,
+        )
+        if not stage_def:
+            raise ValueError(
+                f"No stage definition for artifact type: {artifact.artifact_type.value}"
+            )
+
+        # Save feedback as a comment.
+        if self.feedback and self.feedback.strip():
+            engine.db.add(
+                ArtifactComment(
+                    artifact_id=self.artifact_id,
+                    project_id=project_id,
+                    author_id=self.user_id,
+                    content=self.feedback.strip(),
+                    comment_type="feedback",
+                    artifact_version=artifact.version,
+                )
+            )
+            engine.db.flush()
+
+        accumulated = engine._get_feedback_notes(self.artifact_id)
+
+        # Mark artifact as GENERATING.
+        engine._mark_artifact_status(self.artifact_id, ArtifactStatus.GENERATING)
+        engine.db.flush()
+
+        # Emit ARTIFACT_REVISED event.
+        engine.events.emit(
+            project_id, evt.ARTIFACT_REVISED,
+            {
+                "artifact_id": self.artifact_id,
+                "stage_key": stage_def.stage_key,
+                "component_key": artifact.component_key,
+                "feedback": self.feedback,
+            },
+        )
+
+        input_artifacts = engine._gather_inputs(
+            project_id, stage_def, artifact.component_key,
+            include_stale=True,
+        )
+
+        # Standalone run (no PipelineRun object).
+        run_id = str(uuid.uuid4())
+
+        execution = StageExecution(
+            project_id=project_id,
+            stage_key=stage_def.stage_key,
+            component_key=artifact.component_key,
+            status=StageStatus.RUNNING,
+            started_at=datetime.utcnow(),
+            run_id=run_id,
+            artifact_id=self.artifact_id,
+        )
+        engine.db.add(execution)
+        engine.db.flush()
+
+        current_content = artifact.content if artifact.content else None
+
+        return StageExecutionContext(
+            project_id=project_id,
+            stage_def=stage_def,
+            config=config,
+            execution=execution,
+            run_id=run_id,
+            pipeline_run=None,  # Standalone, no PipelineRun
+            input_artifacts=input_artifacts,
+            trigger="revision",
+            human_notes=accumulated,
+            current_content=current_content,
+            error_artifact_status=original_artifact_status or ArtifactStatus.APPROVED,
+            original_artifact_id=self.artifact_id,
+            version_comment="Artifact revised",
         )
 
 

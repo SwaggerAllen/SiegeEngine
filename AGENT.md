@@ -166,7 +166,13 @@ The debug dump has these sections, in order:
 
 5. **recover_stale_jobs on restart**: When the server restarts, `recover_stale_jobs()` re-queues any jobs that were running. If the previous handler already created an execution before the crash, the re-queued handler will try to create another one — the concurrency guard (pitfall #3) prevents this from causing duplicates.
 
-6. **Stage execution strategy pattern**: All stage execution goes through `_run_stage(ctx: StageExecutionContext)`, which handles the shared lifecycle (STAGE_STARTED event, generation, error handling, run completion via `_try_complete_run` in its `finally` block). Trigger-specific setup (creating executions, gathering inputs, ensuring runs) lives in strategy classes (`ForceRestartStrategy`, `ManualTriggerStrategy`) in `stage_execution.py`. To add a new trigger type: subclass `StageExecutionStrategy`, implement `prepare()`, call `engine.execute_strategy(strategy)`. The orchestrator (`_find_and_execute_next`) builds `StageExecutionContext` directly since it has complex multi-stage logic.
+6. **Stage execution strategy pattern**: All stage execution goes through `_run_stage(ctx: StageExecutionContext)`, which handles the shared lifecycle (STAGE_STARTED event, generation, AI review, error handling, artifact recovery, run completion via `_try_complete_run` in its `finally` block). Trigger-specific setup lives in strategy classes in `stage_execution.py`:
+   - `ForceRestartStrategy` — force-restart a failed/stuck execution
+   - `ManualTriggerStrategy` — manual stage trigger (single or fan-out entity)
+   - `RejectionRegenerateStrategy` — regenerate after human rejection
+   - `ArtifactRevisionStrategy` — revise an approved artifact with feedback
+
+   To add a new trigger: subclass `StageExecutionStrategy`, implement `prepare()`, call `engine.execute_strategy(strategy)`. The orchestrator (`_find_and_execute_next`) builds `StageExecutionContext` directly since it has complex multi-stage logic. Context fields `error_artifact_status` and `original_artifact_id` control error recovery per trigger type.
 
 ## Development Principles
 

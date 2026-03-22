@@ -1054,6 +1054,26 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         await self._run_stage(ctx)
         return ctx.execution
 
+    def _recover_artifact_on_error(self, ctx: "StageExecutionContext"):
+        """Restore artifact status after a failed stage execution.
+
+        Uses the context's error_artifact_status and original_artifact_id
+        to determine what to restore.  Falls back to unsticking
+        GENERATING/AI_REVIEWING → PENDING for first-generation stages.
+        """
+        fallback_status = ctx.error_artifact_status or ArtifactStatus.PENDING
+
+        # Restore the original artifact if it's stuck in a transient state.
+        target_id = ctx.original_artifact_id or (
+            ctx.execution.artifact_id if ctx.execution else None
+        )
+        if target_id:
+            stuck = self.db.get(Artifact, target_id)
+            if stuck and stuck.status in (
+                ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING,
+            ):
+                self._mark_artifact_status(target_id, fallback_status)
+
     async def _run_stage(
         self,
         ctx: "StageExecutionContext",
@@ -1148,8 +1168,20 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             )
             execution.artifact_id = artifact_id
 
-            # Record artifact git commit in event trail
+            # Record version comment (for regeneration/revision triggers)
             gen_artifact = self.db.get(Artifact, artifact_id)
+            if ctx.version_comment and gen_artifact:
+                from backend.models import ArtifactComment
+                self.db.add(ArtifactComment(
+                    artifact_id=artifact_id,
+                    project_id=project_id,
+                    author_id=None,
+                    content=f"{ctx.version_comment} to v{gen_artifact.version}",
+                    comment_type="system_event",
+                    artifact_version=gen_artifact.version,
+                ))
+
+            # Record artifact git commit in event trail
             if gen_artifact and gen_artifact.git_commit_sha:
                 self.events.emit(
                     project_id, evt.ARTIFACT_COMMITTED,
@@ -1279,19 +1311,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 stage_def.stage_key,
                 component_key,
             )
-            # Unstick artifact status so the retry can start clean
-            art_status = None
-            if execution.artifact_id:
-                stuck_artifact = self.db.get(Artifact, execution.artifact_id)
-                if stuck_artifact and stuck_artifact.status in (
-                    ArtifactStatus.GENERATING,
-                    ArtifactStatus.AI_REVIEWING,
-                ):
-                    art_status = ArtifactStatus.PENDING
-
+            self._recover_artifact_on_error(ctx)
             self._transition_execution(
                 execution, StageStatus.FAILED,
-                artifact_status=art_status,
                 error_message="Cancelled by force-restart",
                 set_completed=True,
             )
@@ -1302,19 +1324,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             logger.exception(
                 "Stage %s failed for component=%s: %s", stage_def.stage_key, component_key, e
             )
-            # Determine safe artifact status: unstick GENERATING/AI_REVIEWING → PENDING
-            art_status = None
-            if execution.artifact_id:
-                stuck_artifact = self.db.get(Artifact, execution.artifact_id)
-                if stuck_artifact and stuck_artifact.status in (
-                    ArtifactStatus.GENERATING,
-                    ArtifactStatus.AI_REVIEWING,
-                ):
-                    art_status = ArtifactStatus.PENDING
-
+            self._recover_artifact_on_error(ctx)
             self._transition_execution(
                 execution, StageStatus.FAILED,
-                artifact_status=art_status,
                 error_message=str(e),
                 set_completed=True,
             )
@@ -1346,6 +1358,20 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 logger.exception(
                     "Failed to complete run after stage %s", execution.stage_key,
                 )
+
+            # For standalone executions (no PipelineRun, e.g. revision),
+            # broadcast pipeline_completed so the frontend clears is_running.
+            if not ctx.pipeline_run:
+                try:
+                    await ws_manager.broadcast(
+                        project_id,
+                        {
+                            "type": "pipeline_completed",
+                            "run_id": run_id,
+                        },
+                    )
+                except Exception:
+                    pass
 
     def _lookup_pipeline_run(self, run_id: str) -> PipelineRun | None:
         """Look up a PipelineRun by its run_id."""
