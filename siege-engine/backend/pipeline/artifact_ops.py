@@ -1462,7 +1462,10 @@ class ArtifactOpsMixin:
         ForceRestartStrategy.prepare().  Lifecycle (event emission, error
         handling, run completion) is in _run_stage.
         """
-        from backend.pipeline.stage_execution import ForceRestartStrategy
+        from backend.pipeline.stage_execution import ForceRestartStrategy, SkipExecution
 
         strategy = ForceRestartStrategy(execution)
-        await self.execute_strategy(strategy)
+        try:
+            await self.execute_strategy(strategy)
+        except SkipExecution as e:
+            logger.warning("Skipping retry: %s", e)

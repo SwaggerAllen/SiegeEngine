@@ -443,9 +443,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 pipeline_run=pipeline_run,
                 component_key=entity_key,
             )
-            execution = await self.execute_strategy(strategy)
-            if execution is None:
-                # SkipExecution — already running, continue to next entity
+            try:
+                execution = await self.execute_strategy(strategy)
+            except SkipExecution:
                 continue
             execution_ids.append(execution.id)
 
@@ -1034,14 +1034,13 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         inputs, etc.).  This method calls _run_stage which handles the
         shared lifecycle (event emission, generation, error handling,
         run completion).
-        """
-        from backend.pipeline.stage_execution import SkipExecution
 
-        try:
-            ctx = await strategy.prepare(self)
-        except SkipExecution as e:
-            logger.warning("Skipping execution: %s", e)
-            return None
+        Raises SkipExecution if the strategy decides to skip (e.g.
+        already-running guard).  Callers decide how to handle it:
+        - Fan-out loops: catch and continue to next entity
+        - Single triggers: let it propagate as an error
+        """
+        ctx = await strategy.prepare(self)
 
         await ws_manager.broadcast(
             ctx.project_id,
