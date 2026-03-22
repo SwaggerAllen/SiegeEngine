@@ -27,6 +27,10 @@ _shutdown_event = asyncio.Event()
 # Notify event — set by enqueue() to wake the worker immediately
 _job_notify = asyncio.Event()
 
+# Currently running task — allows cancellation from force-restart
+_current_task: asyncio.Task | None = None
+_current_job_id: str | None = None
+
 
 def enqueue(
     db: Session,
@@ -71,6 +75,34 @@ def cancel_jobs_by_type(db: Session, job_type: str, **payload_filters) -> int:
     if cancelled:
         db.commit()
     return cancelled
+
+
+def cancel_running_execution(execution_id: str) -> bool:
+    """Cancel the currently running job if it's working on *execution_id*.
+
+    This cancels the asyncio Task (which propagates CancelledError through
+    the handler and into the CLI subprocess), and also directly kills the
+    CLI process for immediate teardown.
+
+    Returns True if a running task was cancelled.
+    """
+    global _current_task, _current_job_id
+
+    from backend.cli.manager import cli_manager
+
+    # Kill the CLI subprocess first (instant)
+    cli_manager.kill_process_for_execution(execution_id)
+
+    # Cancel the asyncio task if it matches
+    if _current_task and not _current_task.done():
+        # We check the job payload via a tag stored on the task
+        task_exec_id = getattr(_current_task, "_execution_id", None)
+        if task_exec_id == execution_id:
+            logger.info("Cancelling running task for execution %s (job %s)", execution_id, _current_job_id)
+            _current_task.cancel()
+            return True
+
+    return False
 
 
 def recover_stale_jobs(db: Session) -> int:
@@ -300,6 +332,8 @@ async def worker_loop(poll_interval: float = 5.0) -> None:
 
     DB operations run in asyncio.to_thread() so they never block the event loop.
     """
+    global _current_task, _current_job_id
+
     logger.info(f"Job queue worker started (id={_WORKER_ID})")
 
     while not _shutdown_event.is_set():
@@ -327,12 +361,29 @@ async def worker_loop(poll_interval: float = 5.0) -> None:
             await asyncio.to_thread(_complete_job_sync, job_id, f"Unknown job type: {job_type}")
             continue
 
+        # Run handler as a tracked task so it can be cancelled by force-restart
         error = None
+        task = asyncio.current_task()
+        handler_task = asyncio.create_task(handler(payload))
+
+        # Tag the task with execution_id so cancel_running_execution can match it
+        exec_id = payload.get("execution_id")
+        handler_task._execution_id = exec_id
+
+        _current_task = handler_task
+        _current_job_id = job_id
+
         try:
-            await handler(payload)
+            await handler_task
+        except asyncio.CancelledError:
+            logger.info("Job %s (%s) was cancelled", job_id, job_type)
+            error = "Cancelled by force-restart"
         except Exception as e:
             logger.exception(f"Job {job_id} ({job_type}) failed")
             error = str(e)[:1000]
+        finally:
+            _current_task = None
+            _current_job_id = None
 
         await asyncio.to_thread(_complete_job_sync, job_id, error)
 

@@ -113,6 +113,7 @@ async def generate(
     human_notes: str | None = None,
     current_content: str | None = None,
     upstream_changes: str | None = None,
+    execution_id: str | None = None,
 ) -> tuple[str, str]:
     """
     Run AI generation for a stage. Returns (content, artifact_id).
@@ -172,6 +173,7 @@ async def generate(
         tools=tools,
         timeout=timeout,
         max_budget_usd=max_budget,
+        execution_id=execution_id,
     )
     logger.info("CLI response received: %d chars", len(content) if content else 0)
 

@@ -23,7 +23,7 @@ from backend.models import (
     User,
 )
 from backend.pipeline.engine import PipelineEngine
-from backend.pipeline.queue import enqueue
+from backend.pipeline.queue import cancel_jobs_by_type, enqueue
 from backend.pipeline.schemas import (
     CancelRequest,
     PipelineStartRequest,
@@ -1052,6 +1052,7 @@ async def retry_stage(
     if execution.status.value != "failed":
         raise HTTPException(400, "Can only retry failed executions")
 
+    cancel_jobs_by_type(db, "retry_stage", execution_id=execution_id)
     enqueue(db, "retry_stage", {"execution_id": execution_id})
     return {"status": "retrying", "execution_id": execution_id}
 
