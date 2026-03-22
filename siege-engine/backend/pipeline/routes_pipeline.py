@@ -289,6 +289,16 @@ async def cancel_pipeline(
         r.status = PipelineRunStatus.CANCELLED
         r.completed_at = datetime.utcnow()
 
+    # Emit RUN_COMPLETED events so the snapshot's is_running updates
+    from backend.pipeline.event_store import EventStore
+    from backend.pipeline import events as _evt
+    es = EventStore(db)
+    for r in active_runs:
+        es.emit(project_id, _evt.RUN_COMPLETED, {
+            "run_id": r.run_id,
+            "status": "cancelled",
+        }, run_id=r.run_id)
+
     db.commit()
 
     # Broadcast cancellation so the UI updates immediately
@@ -404,9 +414,19 @@ async def reset_all(
         .all()
     )
     for e in in_flight:
+        cancel_running_execution(e.id)
         e.status = StageStatus.FAILED
         e.error_message = "Reset by user"
         e.completed_at = e.completed_at or datetime.utcnow()
+
+    # Cancel all queued jobs for this project's executions
+    all_exec_ids = {e.id for e in in_flight}
+    from backend.models.job import Job
+    queued_jobs = db.query(Job).filter_by(status="queued").all()
+    for job in queued_jobs:
+        payload = job.payload or {}
+        if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
+            job.status = "cancelled"
 
     db.flush()
 
@@ -459,18 +479,23 @@ async def reset_all(
         else:
             artifact.status = ArtifactStatus.PENDING
 
-    db.commit()
-
-    # Emit pipeline_reset event
+    # Emit events so the snapshot updates before commit
     from backend.pipeline.event_store import EventStore
     from backend.pipeline import events as _evt
-    EventStore(db).emit(project_id, _evt.PIPELINE_RESET, {}, run_id=run_id)
+    es = EventStore(db)
+    for r in active_runs:
+        es.emit(project_id, _evt.RUN_COMPLETED, {
+            "run_id": r.run_id,
+            "status": "cancelled",
+        }, run_id=r.run_id)
+    es.emit(project_id, _evt.PIPELINE_RESET, {}, run_id=run_id)
+
     db.commit()
 
     await ws_manager.broadcast(
         project_id,
         {
-            "type": "pipeline_completed",
+            "type": "pipeline_cancelled",
             "run_id": run_id,
             "message": "Pipeline reset to clean slate",
         },
