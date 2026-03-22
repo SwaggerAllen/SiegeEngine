@@ -137,8 +137,9 @@ The debug dump has these sections, in order:
 
 | File | What to look at |
 |------|-----------------|
+| `backend/pipeline/stage_execution.py` | `StageExecutionContext`, `StageExecutionStrategy` ABC, `ForceRestartStrategy`, `ManualTriggerStrategy` — strategy pattern for stage execution setup |
 | `backend/pipeline/artifact_ops.py` | `_regenerate_stage`, `resume_stage`, `retry_stage`, `_try_complete_run` — where executions are created and state transitions happen |
-| `backend/pipeline/engine.py` | `_run_stage`, `_trigger_single_stage` — has concurrency guards (check for existing RUNNING execution before creating new one) |
+| `backend/pipeline/engine.py` | `_run_stage` (takes `StageExecutionContext`), `execute_strategy`, `_find_and_execute_next` — the stage execution lifecycle |
 | `backend/pipeline/reducer.py` | Pure event reducer — maps event types to snapshot mutations. No DB access. |
 | `backend/pipeline/event_store.py` | `emit()` — appends event, flushes, updates materialized snapshot. `rebuild_snapshot()` — replays all events from scratch. |
 | `backend/pipeline/queue.py` | Job queue worker. `recover_stale_jobs()` re-queues running jobs on restart. `_handle_resume_stage` / `_handle_retry_stage` — job handlers. |
@@ -164,6 +165,12 @@ The debug dump has these sections, in order:
 4. **Job dedup**: `enqueue()` has no built-in deduplication. Call `cancel_jobs_by_type()` before `enqueue()` to prevent duplicate jobs (see `routes_stage.py` `force_restart_stage` and `trigger_stage` for examples).
 
 5. **recover_stale_jobs on restart**: When the server restarts, `recover_stale_jobs()` re-queues any jobs that were running. If the previous handler already created an execution before the crash, the re-queued handler will try to create another one — the concurrency guard (pitfall #3) prevents this from causing duplicates.
+
+6. **Stage execution strategy pattern**: All stage execution goes through `_run_stage(ctx: StageExecutionContext)`, which handles the shared lifecycle (STAGE_STARTED event, generation, error handling, run completion via `_try_complete_run` in its `finally` block). Trigger-specific setup (creating executions, gathering inputs, ensuring runs) lives in strategy classes (`ForceRestartStrategy`, `ManualTriggerStrategy`) in `stage_execution.py`. To add a new trigger type: subclass `StageExecutionStrategy`, implement `prepare()`, call `engine.execute_strategy(strategy)`. The orchestrator (`_find_and_execute_next`) builds `StageExecutionContext` directly since it has complex multi-stage logic.
+
+## Development Principles
+
+- **Always use the long-term solution.** If there's a better architectural approach, implement it now rather than using a quick fix with plans to refactor later. Writing code is fast — don't put off refactors due to time constraints.
 
 ## Development
 

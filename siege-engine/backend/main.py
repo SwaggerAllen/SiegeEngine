@@ -46,8 +46,9 @@ async def lifespan(app: FastAPI):
     # One-time clean slate migration: reset pipeline state, preserve documents
     _clean_slate_migration()
 
-    # Startup recovery: mark any in-flight executions as failed
-    _recover_crashed_executions()
+    # Startup recovery: reconcile all projects (rebuild snapshots, fix
+    # projection drift, kill orphaned executions, complete zombie runs).
+    _reconcile_all_projects()
 
     # One-time migration: move human_review_notes → ArtifactComment records
     _migrate_feedback_to_comments()
@@ -317,61 +318,29 @@ def _clean_slate_migration():
         db.close()
 
 
-def _recover_crashed_executions():
-    """Mark RUNNING/AI_REVIEW executions as FAILED after a server restart.
+def _reconcile_all_projects():
+    """Reconcile all projects on startup.
 
-    Emits STAGE_FAILED and RUN_COMPLETED events so the snapshot stays in sync.
-    Also updates DB models as projections.
+    Rebuilds snapshots from events, syncs DB projections, fixes orphaned
+    executions and zombie runs.  This replaces the old approach of just
+    marking stuck executions as failed — full reconcile catches all cases
+    including projection drift and zombie runs.
     """
-    from backend.models import PipelineRun, PipelineRunStatus, StageExecution, StageStatus
-    from backend.pipeline import events as evt
-    from backend.pipeline.event_store import EventStore
+    from backend.pipeline.reconcile import reconcile_all_projects
 
     db = SessionLocal()
     try:
-        now = datetime.utcnow()
-        es = EventStore(db)
-
-        stuck = (
-            db.query(StageExecution)
-            .filter(StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]))
-            .all()
-        )
-        if stuck:
-            logger.warning("Recovering %d stuck executions from previous run", len(stuck))
-            for execution in stuck:
-                # Emit event (updates snapshot via reducer)
-                es.emit(execution.project_id, evt.STAGE_FAILED, {
-                    "execution_id": execution.id,
-                    "stage_key": execution.stage_key,
-                    "component_key": execution.component_key,
-                    "artifact_id": execution.artifact_id,
-                    "error": "Server restarted during execution",
-                }, run_id=execution.run_id)
-                # DB projection
-                execution.status = StageStatus.FAILED
-                execution.error_message = "Server restarted during execution"
-                execution.completed_at = now
-
-        stuck_runs = (
-            db.query(PipelineRun)
-            .filter(PipelineRun.status == PipelineRunStatus.RUNNING)
-            .all()
-        )
-        if stuck_runs:
-            logger.warning("Recovering %d stuck pipeline runs from previous run", len(stuck_runs))
-            for run in stuck_runs:
-                # Emit event (updates snapshot via reducer)
-                es.emit(run.project_id, evt.RUN_COMPLETED, {
-                    "run_id": run.run_id,
-                    "status": "failed",
-                }, run_id=run.run_id)
-                # DB projection
-                run.status = PipelineRunStatus.FAILED
-                run.completed_at = now
-
-        if stuck or stuck_runs:
-            db.commit()
+        results = reconcile_all_projects(db)
+        if results:
+            total = sum(len(c) for c in results.values())
+            logger.warning(
+                "Startup reconcile: %d corrections across %d projects",
+                total, len(results),
+            )
+        else:
+            logger.info("Startup reconcile: all projects clean")
+    except Exception:
+        logger.exception("Startup reconcile failed (non-fatal)")
     finally:
         db.close()
 
