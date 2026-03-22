@@ -22,6 +22,8 @@ interface PipelineState {
   isViewingHistory: boolean;
   lastWSEvent: WSEvent | null;
   blockingPR: BlockingPR | null;
+  logEntries: Array<{ timestamp: string; level: string; logger: string; message: string }>;
+  clearLogs: () => void;
   reset: () => void;
   fetchConfig: (projectId: string) => Promise<void>;
   fetchStatus: (projectId: string) => Promise<void>;
@@ -60,10 +62,13 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   isViewingHistory: false,
   lastWSEvent: null,
   blockingPR: null,
+  logEntries: [],
+
+  clearLogs: () => set({ logEntries: [] }),
 
   reset: () => set({
     config: null, executions: [], snapshot: emptySnapshot(), isRunning: false, isPaused: false, pausedStage: null,
-    currentRunNumber: null, runs: [], selectedRunNumber: null, historicalState: null, isViewingHistory: false, lastWSEvent: null, blockingPR: null,
+    currentRunNumber: null, runs: [], selectedRunNumber: null, historicalState: null, isViewingHistory: false, lastWSEvent: null, blockingPR: null, logEntries: [],
   }),
 
   fetchConfig: async (projectId) => {
@@ -240,6 +245,14 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   updateFromWS: (event) => {
     // Always store the latest event so subscribers (e.g. CommentsPanel) can react
     set({ lastWSEvent: event });
+
+    // Accumulate log entries (keep last 500 to avoid unbounded growth)
+    if (event.type === 'log_entry') {
+      const prev = get().logEntries;
+      const next = prev.length >= 500 ? [...prev.slice(-400), event] : [...prev, event];
+      set({ logEntries: next });
+      return;  // log_entry doesn't affect pipeline snapshot state
+    }
 
     // Apply event through the reducer to update snapshot + derived state
     const prevSnapshot = get().snapshot;

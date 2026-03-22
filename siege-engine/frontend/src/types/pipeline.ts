@@ -114,4 +114,5 @@ export type WSEvent =
   | { type: 'comment_updated'; artifact_id: string; comment_id: string }
   | { type: 'comment_deleted'; artifact_id: string; comment_id: string }
   | { type: 'artifact_pruned'; artifact_id: string }
-  | { type: 'cascade_completed'; run_id?: string };
+  | { type: 'cascade_completed'; run_id?: string }
+  | { type: 'log_entry'; timestamp: string; level: string; logger: string; message: string };

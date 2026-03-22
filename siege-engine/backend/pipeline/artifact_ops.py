@@ -1375,3 +1375,21 @@ class ArtifactOpsMixin:
             config=config,
             pipeline_run=pipeline_run,
         )
+
+        # _run_stage emits STAGE_STARTED which sets is_running=true in the
+        # snapshot.  For a full pipeline run, RUN_COMPLETED clears it later.
+        # For a standalone force-restart retry (no active run), nothing would
+        # ever clear it, leaving the UI stuck on "Running…".  Fix: if there
+        # is no active pipeline run, clear is_running now.
+        active_run = (
+            self.db.query(PipelineRun)
+            .filter_by(project_id=project_id, status=PipelineRunStatus.RUNNING)
+            .first()
+        )
+        if not active_run:
+            snapshot = self.events.get_snapshot(project_id)
+            snapshot.is_running = False
+            self.db.commit()
+            await ws_manager.broadcast(
+                project_id, {"type": "pipeline_completed"},
+            )

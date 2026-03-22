@@ -1144,6 +1144,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         )
         logger.info("  input_artifacts keys: %s", list(input_artifacts.keys()))
 
+        # Stream backend logs to connected WebSocket clients
+        from backend.websocket.log_handler import WebSocketLogHandler
+        log_streamer = WebSocketLogHandler(project_id)
+        log_streamer.install()
+
         # Commit the RUNNING execution so other sessions (DAG endpoint) can see it
         self.db.commit()
 
@@ -1161,7 +1166,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             run_id=execution.run_id,
         )
 
-        try:
+        try:  # noqa: the finally below uninstalls log_streamer
             self.events.emit(
                 project_id, evt.GENERATION_PROGRESS,
                 {
@@ -1373,6 +1378,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     "error": str(e),
                 },
             )
+
+        finally:
+            log_streamer.uninstall()
 
     def _lookup_pipeline_run(self, run_id: str) -> PipelineRun | None:
         """Look up a PipelineRun by its run_id."""
