@@ -923,6 +923,15 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
                 if execution.status == StageStatus.FAILED:
                     logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
+                    if pipeline_run and pipeline_run.status == PipelineRunStatus.RUNNING:
+                        pipeline_run.status = PipelineRunStatus.FAILED
+                        pipeline_run.completed_at = datetime.utcnow()
+                        self.events.emit(
+                            project_id, evt.RUN_COMPLETED,
+                            {"run_id": run_id, "status": "failed"},
+                            run_id=run_id,
+                        )
+                        self.db.commit()
                     await ws_manager.broadcast(
                         project_id,
                         {
@@ -1037,6 +1046,15 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
                 if stage_failed:
                     logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
+                    if pipeline_run and pipeline_run.status == PipelineRunStatus.RUNNING:
+                        pipeline_run.status = PipelineRunStatus.FAILED
+                        pipeline_run.completed_at = datetime.utcnow()
+                        self.events.emit(
+                            project_id, evt.RUN_COMPLETED,
+                            {"run_id": run_id, "status": "failed"},
+                            run_id=run_id,
+                        )
+                        self.db.commit()
                     await ws_manager.broadcast(
                         project_id,
                         {
