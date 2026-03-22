@@ -21,6 +21,7 @@ from backend.models import (
     StageExecution,
     StageStatus,
 )
+from backend.models.job import Job
 from backend.pipeline import events as evt
 from backend.pipeline.event_store import EventStore
 
@@ -125,6 +126,80 @@ def reconcile_project(db: Session, project_id: str) -> list[dict]:
         orphan.status = StageStatus.FAILED
         orphan.completed_at = orphan.completed_at or datetime.utcnow()
 
+    # ── Fix zombie executions (RUNNING but no active job) ─────────────
+    # An execution can be marked RUNNING in both the snapshot and DB, but
+    # if there's no queued/running job backing it, the process is dead.
+    active_job_exec_ids = _active_job_execution_ids(db, project_id)
+    running_executions = (
+        db.query(StageExecution)
+        .filter(
+            StageExecution.project_id == project_id,
+            StageExecution.status.in_([
+                StageStatus.RUNNING, StageStatus.AI_REVIEW,
+            ]),
+        )
+        .all()
+    )
+    for ex in running_executions:
+        if ex.id not in active_job_exec_ids:
+            corrections.append({
+                "type": "zombie_execution",
+                "id": ex.id,
+                "stage_key": ex.stage_key,
+                "from": ex.status.value,
+                "to": "failed",
+            })
+            ex.status = StageStatus.FAILED
+            ex.error_message = ex.error_message or "Process died"
+            ex.completed_at = ex.completed_at or datetime.utcnow()
+            # Emit event so the snapshot reflects this
+            es.emit(project_id, evt.STAGE_FAILED, {
+                "execution_id": ex.id,
+                "stage_key": ex.stage_key,
+                "component_key": ex.component_key,
+                "artifact_id": ex.artifact_id,
+                "error": "Process died (no active job)",
+            }, run_id=ex.run_id)
+
+    # ── Enforce one active execution per stage ────────────────────────
+    # If multiple executions are RUNNING/AI_REVIEW for the same
+    # (stage_key, component_key), keep only the newest and fail the rest.
+    active_execs = (
+        db.query(StageExecution)
+        .filter(
+            StageExecution.project_id == project_id,
+            StageExecution.status.in_([
+                StageStatus.RUNNING, StageStatus.AI_REVIEW,
+            ]),
+        )
+        .order_by(StageExecution.started_at.desc())
+        .all()
+    )
+    seen_stages: dict[tuple, str] = {}
+    for ex in active_execs:
+        stage_tuple = (ex.stage_key, ex.component_key)
+        if stage_tuple in seen_stages:
+            corrections.append({
+                "type": "duplicate_execution",
+                "id": ex.id,
+                "stage_key": ex.stage_key,
+                "kept": seen_stages[stage_tuple],
+                "from": ex.status.value,
+                "to": "failed",
+            })
+            ex.status = StageStatus.FAILED
+            ex.error_message = "Duplicate execution"
+            ex.completed_at = ex.completed_at or datetime.utcnow()
+            es.emit(project_id, evt.STAGE_FAILED, {
+                "execution_id": ex.id,
+                "stage_key": ex.stage_key,
+                "component_key": ex.component_key,
+                "artifact_id": ex.artifact_id,
+                "error": "Duplicate execution",
+            }, run_id=ex.run_id)
+        else:
+            seen_stages[stage_tuple] = ex.id
+
     # ── Fix stuck runs (snapshot says not running) ──────────────────────
     snap_is_running = snapshot.is_running
     snap_run_statuses = snapshot.run_status or {}
@@ -210,6 +285,25 @@ def reconcile_project(db: Session, project_id: str) -> list[dict]:
 
     db.commit()
     return corrections
+
+
+def _active_job_execution_ids(
+    db: Session, project_id: str,
+) -> set[str]:
+    """Return execution IDs that have an active (queued/running) job."""
+    active_jobs = (
+        db.query(Job)
+        .filter(Job.status.in_(["queued", "running"]))
+        .all()
+    )
+    exec_ids: set[str] = set()
+    for job in active_jobs:
+        payload = job.payload or {}
+        job_project = payload.get("project_id")
+        job_exec = payload.get("execution_id")
+        if job_project == project_id and job_exec:
+            exec_ids.add(job_exec)
+    return exec_ids
 
 
 def reconcile_all_projects(db: Session) -> dict[str, list[dict]]:

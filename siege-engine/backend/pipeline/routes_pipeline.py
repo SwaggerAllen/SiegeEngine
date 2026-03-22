@@ -412,29 +412,39 @@ async def reset_all(
     from backend.pipeline.event_store import EventStore
     es = EventStore(db)
 
-    # 1. Find and cancel in-flight executions (operational: kill processes)
-    in_flight = (
+    # 1. Kill ALL running processes for this project's executions
+    all_project_execs = (
         db.query(StageExecution)
         .filter_by(project_id=project_id)
-        .filter(
-            StageExecution.status.in_([
-                StageStatus.RUNNING, StageStatus.PENDING,
-                StageStatus.AI_REVIEW, StageStatus.AWAITING_REVIEW,
-            ])
-        )
         .all()
     )
-    for e in in_flight:
+    all_exec_ids = {e.id for e in all_project_execs}
+    for e in all_project_execs:
         cancel_running_execution(e.id)
 
-    # Cancel all queued jobs for this project (operational)
+    # Cancel ALL queued/running jobs for this project (comprehensive)
     from backend.models.job import Job
-    all_exec_ids = {e.id for e in in_flight}
-    queued_jobs = db.query(Job).filter(Job.status.in_(["queued", "running"])).all()
-    for job in queued_jobs:
+    active_jobs = (
+        db.query(Job)
+        .filter(Job.status.in_(["queued", "running"]))
+        .all()
+    )
+    for job in active_jobs:
         payload = job.payload or {}
-        if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
+        if (
+            payload.get("project_id") == project_id
+            or payload.get("execution_id") in all_exec_ids
+        ):
             job.status = "cancelled"
+
+    # Narrow to in-flight executions for event emission
+    in_flight = [
+        e for e in all_project_execs
+        if e.status in (
+            StageStatus.RUNNING, StageStatus.PENDING,
+            StageStatus.AI_REVIEW, StageStatus.AWAITING_REVIEW,
+        )
+    ]
 
     # 2. Emit STAGE_FAILED for each in-flight execution
     for e in in_flight:

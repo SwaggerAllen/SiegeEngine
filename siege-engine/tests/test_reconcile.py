@@ -1,11 +1,13 @@
 """Tests for pipeline reconciliation logic."""
 
+from datetime import datetime
 
 from backend.models import (
     ArtifactStatus,
     PipelineRunStatus,
     StageStatus,
 )
+from backend.models.job import Job
 from backend.pipeline import events as evt
 from backend.pipeline.event_store import EventStore
 from backend.pipeline.reconcile import reconcile_project
@@ -220,3 +222,145 @@ class TestReconcileProject:
         assert len(phantom_corrections) == 0
         db.refresh(pipeline_run)
         assert pipeline_run.status == PipelineRunStatus.RUNNING
+
+    def test_fixes_zombie_execution_no_active_job(
+        self, db, project, pipeline_config, stage_def, pipeline_run,
+    ):
+        """A RUNNING execution with no active job is a zombie → FAILED."""
+        ex = make_execution(
+            db, project.id, run_id=pipeline_run.run_id,
+            status=StageStatus.RUNNING,
+        )
+        # Emit events so snapshot tracks this execution
+        es = EventStore(db)
+        es.emit(project.id, evt.RUN_CREATED, {
+            "run_id": pipeline_run.run_id,
+            "run_number": pipeline_run.run_number,
+            "ai_loops": 1,
+            "stop_point": "every_artifact",
+        }, run_id=pipeline_run.run_id)
+        es.emit(project.id, evt.STAGE_STARTED, {
+            "execution_id": ex.id,
+            "stage_key": stage_def.stage_key,
+            "component_key": None,
+            "artifact_id": None,
+            "trigger": "pipeline_run",
+            "retry_count": 0,
+        }, run_id=pipeline_run.run_id)
+        # No active job exists for this execution
+        db.commit()
+
+        corrections = reconcile_project(db, project.id)
+
+        db.refresh(ex)
+        assert ex.status == StageStatus.FAILED
+        zombie_exec = [
+            c for c in corrections if c["type"] == "zombie_execution"
+        ]
+        assert len(zombie_exec) == 1
+
+    def test_keeps_execution_with_active_job(
+        self, db, project, pipeline_config, stage_def, pipeline_run,
+    ):
+        """A RUNNING execution backed by an active job should stay."""
+        ex = make_execution(
+            db, project.id, run_id=pipeline_run.run_id,
+            status=StageStatus.RUNNING,
+        )
+        # Create a matching active job
+        job = Job(
+            job_type="retry_stage",
+            payload={
+                "project_id": project.id,
+                "execution_id": ex.id,
+            },
+            status="running",
+        )
+        db.add(job)
+        # Emit events so snapshot tracks this execution
+        es = EventStore(db)
+        es.emit(project.id, evt.RUN_CREATED, {
+            "run_id": pipeline_run.run_id,
+            "run_number": pipeline_run.run_number,
+            "ai_loops": 1,
+            "stop_point": "every_artifact",
+        }, run_id=pipeline_run.run_id)
+        es.emit(project.id, evt.STAGE_STARTED, {
+            "execution_id": ex.id,
+            "stage_key": stage_def.stage_key,
+            "component_key": None,
+            "artifact_id": None,
+            "trigger": "pipeline_run",
+            "retry_count": 0,
+        }, run_id=pipeline_run.run_id)
+        db.commit()
+
+        corrections = reconcile_project(db, project.id)
+
+        db.refresh(ex)
+        assert ex.status == StageStatus.RUNNING
+        zombie_exec = [
+            c for c in corrections if c["type"] == "zombie_execution"
+        ]
+        assert len(zombie_exec) == 0
+
+    def test_fixes_duplicate_running_executions(
+        self, db, project, pipeline_config, stage_def, pipeline_run,
+    ):
+        """Two RUNNING executions for the same stage → older one FAILED.
+
+        The orphan check catches the untracked execution first. The
+        duplicate check is an additional safety net for edge cases where
+        both survive earlier checks.
+        """
+        ex_old = make_execution(
+            db, project.id, run_id=pipeline_run.run_id,
+            status=StageStatus.RUNNING,
+        )
+        ex_old.started_at = datetime(2025, 1, 1, 0, 0, 0)
+        ex_new = make_execution(
+            db, project.id, run_id=pipeline_run.run_id,
+            status=StageStatus.RUNNING,
+        )
+        ex_new.started_at = datetime(2025, 1, 1, 1, 0, 0)
+        # Both need active jobs to avoid the zombie check firing
+        for ex in [ex_old, ex_new]:
+            db.add(Job(
+                job_type="retry_stage",
+                payload={
+                    "project_id": project.id,
+                    "execution_id": ex.id,
+                },
+                status="running",
+            ))
+        # Emit events for the newer execution only
+        es = EventStore(db)
+        es.emit(project.id, evt.RUN_CREATED, {
+            "run_id": pipeline_run.run_id,
+            "run_number": pipeline_run.run_number,
+            "ai_loops": 1,
+            "stop_point": "every_artifact",
+        }, run_id=pipeline_run.run_id)
+        es.emit(project.id, evt.STAGE_STARTED, {
+            "execution_id": ex_new.id,
+            "stage_key": stage_def.stage_key,
+            "component_key": None,
+            "artifact_id": None,
+            "trigger": "pipeline_run",
+            "retry_count": 0,
+        }, run_id=pipeline_run.run_id)
+        db.commit()
+
+        corrections = reconcile_project(db, project.id)
+
+        db.refresh(ex_old)
+        db.refresh(ex_new)
+        # ex_old gets caught by the orphan check (not in execution_map)
+        assert ex_old.status == StageStatus.FAILED
+        assert ex_new.status == StageStatus.RUNNING
+        # At least one correction targeted ex_old
+        fixes_for_old = [
+            c for c in corrections
+            if c["id"] == ex_old.id and c["to"] == "failed"
+        ]
+        assert len(fixes_for_old) >= 1
