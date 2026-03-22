@@ -1420,7 +1420,12 @@ class ArtifactOpsMixin:
             )
 
     async def retry_stage(self, execution: StageExecution):
-        """Re-run a failed stage execution."""
+        """Re-run a failed stage execution.
+
+        Creates a NEW execution record (rather than reusing the old one) so
+        that each run gets its own execution and retry counts don't accumulate
+        across runs.  The old execution stays in its terminal state.
+        """
         project_id = execution.project_id
 
         # Guard: skip if there's already a RUNNING execution for this stage.
@@ -1456,7 +1461,6 @@ class ArtifactOpsMixin:
         # Ensure we have an active run — reuse an existing RUNNING run or
         # create a new single-artifact run so the execution is always tracked.
         run_id, pipeline_run = self._ensure_active_run(project_id, execution.run_id)
-        execution.run_id = run_id
 
         if execution.artifact_id:
             artifact = self.db.get(Artifact, execution.artifact_id)
@@ -1476,13 +1480,23 @@ class ArtifactOpsMixin:
             if existing_artifact and existing_artifact.content:
                 current_content = existing_artifact.content
 
-        input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
-        self._transition_execution(
-            execution, StageStatus.RUNNING,
-            error_message="", trigger="force_restart",
+        # Create a NEW execution instead of reusing the old one.  This avoids
+        # reusing the same execution across multiple runs (which caused
+        # duplicate stage_started events and unbounded retry_count growth).
+        new_execution = StageExecution(
+            project_id=project_id,
+            stage_key=execution.stage_key,
+            component_key=execution.component_key,
+            status=StageStatus.RUNNING,
+            started_at=datetime.utcnow(),
+            run_id=run_id,
+            retry_count=(execution.retry_count or 0) + 1,
+            artifact_id=execution.artifact_id,
         )
-        execution.retry_count = (execution.retry_count or 0) + 1
+        self.db.add(new_execution)
         self.db.flush()
+
+        input_artifacts = self._gather_inputs(project_id, stage_def, execution.component_key)
 
         await ws_manager.broadcast(
             project_id,
@@ -1493,15 +1507,18 @@ class ArtifactOpsMixin:
             },
         )
 
+        # _run_stage emits the STAGE_STARTED event itself, so we don't call
+        # _transition_execution here (which would emit a duplicate event).
         await self._run_stage(
             project_id,
             stage_def,
             input_artifacts,
-            execution.component_key,
-            execution,
+            new_execution.component_key,
+            new_execution,
             run_id,
             human_notes=feedback_notes,
             current_content=current_content,
             config=config,
             pipeline_run=pipeline_run,
+            trigger="force_restart",
         )
