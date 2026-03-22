@@ -1181,7 +1181,15 @@ class ArtifactOpsMixin:
             project_id, stage_def, artifact.component_key, include_stale=True,
         )
 
-        run_id = str(uuid.uuid4())
+        # Use the latest PipelineRun's run_id so the DAG visualization picks
+        # up this execution (it only shows executions from the latest run).
+        latest_run = (
+            self.db.query(PipelineRun)
+            .filter_by(project_id=project_id)
+            .order_by(PipelineRun.run_number.desc())
+            .first()
+        )
+        run_id = latest_run.run_id if latest_run else str(uuid.uuid4())
         execution = StageExecution(
             project_id=project_id,
             stage_key=stage_def.stage_key,
