@@ -1350,6 +1350,17 @@ class ArtifactOpsMixin:
                 },
             )
 
+        finally:
+            # Signal the frontend that this single-artifact revision is done
+            # so it clears is_running.
+            await ws_manager.broadcast(
+                project_id,
+                {
+                    "type": "pipeline_completed",
+                    "run_id": run_id,
+                },
+            )
+
     async def retry_stage(self, execution: StageExecution):
         """Re-run a failed stage execution."""
         project_id = execution.project_id

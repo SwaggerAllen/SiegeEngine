@@ -183,6 +183,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const [reparsing, setReparsing] = useState(false);
   const [reparseResult, setReparseResult] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [actionsCollapsed, setActionsCollapsed] = useState(false);
   const fetchDAG = useDAGStore((s) => s.fetchDAG);
   const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
 
@@ -439,15 +440,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           )}
         </div>
 
-        {/* Action buttons */}
-        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
-          <button
-            onClick={() => handleStaleAction('approved')}
-            disabled={submitting}
-            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-          >
-            Approve
-          </button>
+        {/* Save Feedback always visible */}
+        <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
           <button
             onClick={() => handleStaleAction('save_feedback')}
             disabled={submitting || !notes.trim()}
@@ -455,46 +449,70 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           >
             {feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
           </button>
-          <button
-            onClick={() => handleStaleAction('rejected')}
-            disabled={submitting}
-            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-          >
-            Reject & Re-generate
-          </button>
-          <button
-            onClick={() => setShowEditor(!showEditor)}
-            className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-          >
-            {showEditor ? 'Hide Editor' : 'Edit & Approve'}
-          </button>
-          {canPrune && (
-            <button
-              onClick={handlePrune}
-              disabled={pruning}
-              className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
-            >
-              {pruning ? 'Pruning...' : '🗑 Prune'}
-            </button>
-          )}
-          {canReparse && (
-            <button
-              onClick={handleReparse}
-              disabled={reparsing}
-              className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-            >
-              {reparsing ? 'Reparsing...' : 'Reparse Children'}
-            </button>
-          )}
-          {reparseResult && (
-            <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
-              {reparseResult}
-            </span>
-          )}
         </div>
-        {!isInputDoc && (
-          <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
-        )}
+
+        {/* Collapsible action buttons */}
+        <div>
+          <button
+            onClick={() => setActionsCollapsed(!actionsCollapsed)}
+            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200 mb-1 md:hidden"
+          >
+            <svg className={`w-3 h-3 transition-transform ${actionsCollapsed ? '' : 'rotate-90'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            {actionsCollapsed ? 'Show actions' : 'Hide actions'}
+          </button>
+          <div className={`${actionsCollapsed ? 'hidden' : ''} md:block`}>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                onClick={() => handleStaleAction('approved')}
+                disabled={submitting}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => handleStaleAction('rejected')}
+                disabled={submitting}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+              >
+                Reject & Re-generate
+              </button>
+              <button
+                onClick={() => setShowEditor(!showEditor)}
+                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+              >
+                {showEditor ? 'Hide Editor' : 'Edit & Approve'}
+              </button>
+              {canPrune && (
+                <button
+                  onClick={handlePrune}
+                  disabled={pruning}
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
+                >
+                  {pruning ? 'Pruning...' : '🗑 Prune'}
+                </button>
+              )}
+              {canReparse && (
+                <button
+                  onClick={handleReparse}
+                  disabled={reparsing}
+                  className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+                >
+                  {reparsing ? 'Reparsing...' : 'Reparse Children'}
+                </button>
+              )}
+              {reparseResult && (
+                <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
+                  {reparseResult}
+                </span>
+              )}
+            </div>
+            {!isInputDoc && (
+              <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
+            )}
+          </div>
+        </div>
       </div>
     );
   }
@@ -546,7 +564,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
+        {/* Save Feedback always visible */}
+        <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
           <button
             onClick={() => handleAction('save_feedback')}
             disabled={submitting || !notes.trim()}
@@ -554,38 +573,54 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           >
             {feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
           </button>
-          <button
-            onClick={() => handleAction('rejected')}
-            disabled={submitting || !notes.trim()}
-            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-          >
-            {submitting ? 'Requesting...' : 'Request Changes & Re-generate'}
-          </button>
-          {canPrune && (
-            <button
-              onClick={handlePrune}
-              disabled={pruning}
-              className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
-            >
-              {pruning ? 'Pruning...' : '🗑 Prune'}
-            </button>
-          )}
-          {canReparse && (
-            <button
-              onClick={handleReparse}
-              disabled={reparsing}
-              className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-            >
-              {reparsing ? 'Reparsing...' : 'Reparse Children'}
-            </button>
-          )}
-          {reparseResult && (
-            <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
-              {reparseResult}
-            </span>
-          )}
         </div>
-        <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
+
+        <div>
+          <button
+            onClick={() => setActionsCollapsed(!actionsCollapsed)}
+            className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200 mb-1 md:hidden"
+          >
+            <svg className={`w-3 h-3 transition-transform ${actionsCollapsed ? '' : 'rotate-90'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            {actionsCollapsed ? 'Show actions' : 'Hide actions'}
+          </button>
+          <div className={`${actionsCollapsed ? 'hidden' : ''} md:block`}>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                onClick={() => handleAction('rejected')}
+                disabled={submitting || !notes.trim()}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+              >
+                {submitting ? 'Requesting...' : 'Request Changes & Re-generate'}
+              </button>
+              {canPrune && (
+                <button
+                  onClick={handlePrune}
+                  disabled={pruning}
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
+                >
+                  {pruning ? 'Pruning...' : '🗑 Prune'}
+                </button>
+              )}
+              {canReparse && (
+                <button
+                  onClick={handleReparse}
+                  disabled={reparsing}
+                  className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+                >
+                  {reparsing ? 'Reparsing...' : 'Reparse Children'}
+                </button>
+              )}
+              {reparseResult && (
+                <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
+                  {reparseResult}
+                </span>
+              )}
+            </div>
+            <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
+          </div>
+        </div>
       </div>
     );
   }
@@ -659,15 +694,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         )}
       </div>
 
-      {/* Action buttons */}
-      <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
-        <button
-          onClick={() => handleAction('approved')}
-          disabled={submitting}
-          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-        >
-          Approve
-        </button>
+      {/* Save Feedback always visible */}
+      <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
         <button
           onClick={() => handleAction('save_feedback')}
           disabled={submitting || !notes.trim()}
@@ -675,46 +703,70 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         >
           {feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
         </button>
-        <button
-          onClick={() => handleAction('rejected')}
-          disabled={submitting}
-          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-        >
-          Reject & Re-generate
-        </button>
-        <button
-          onClick={() => setShowEditor(!showEditor)}
-          className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-        >
-          {showEditor ? 'Hide Editor' : 'Edit & Approve'}
-        </button>
-        {canPrune && (
-          <button
-            onClick={handlePrune}
-            disabled={pruning}
-            className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
-          >
-            {pruning ? 'Pruning...' : '🗑 Prune'}
-          </button>
-        )}
-        {canReparse && (
-          <button
-            onClick={handleReparse}
-            disabled={reparsing}
-            className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-          >
-            {reparsing ? 'Reparsing...' : 'Reparse Children'}
-          </button>
-        )}
-        {reparseResult && (
-          <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
-            {reparseResult}
-          </span>
-        )}
       </div>
-      {!isInputDoc && (
-        <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
-      )}
+
+      {/* Collapsible action buttons */}
+      <div>
+        <button
+          onClick={() => setActionsCollapsed(!actionsCollapsed)}
+          className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200 mb-1 md:hidden"
+        >
+          <svg className={`w-3 h-3 transition-transform ${actionsCollapsed ? '' : 'rotate-90'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          {actionsCollapsed ? 'Show actions' : 'Hide actions'}
+        </button>
+        <div className={`${actionsCollapsed ? 'hidden' : ''} md:block`}>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button
+              onClick={() => handleAction('approved')}
+              disabled={submitting}
+              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => handleAction('rejected')}
+              disabled={submitting}
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              Reject & Re-generate
+            </button>
+            <button
+              onClick={() => setShowEditor(!showEditor)}
+              className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+            >
+              {showEditor ? 'Hide Editor' : 'Edit & Approve'}
+            </button>
+            {canPrune && (
+              <button
+                onClick={handlePrune}
+                disabled={pruning}
+                className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
+              >
+                {pruning ? 'Pruning...' : '🗑 Prune'}
+              </button>
+            )}
+            {canReparse && (
+              <button
+                onClick={handleReparse}
+                disabled={reparsing}
+                className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+              >
+                {reparsing ? 'Reparsing...' : 'Reparse Children'}
+              </button>
+            )}
+            {reparseResult && (
+              <span className={`text-xs ${reparseResult.startsWith('Restored') ? 'text-green-400' : reparseResult === 'No missing entities found' ? 'text-gray-400' : 'text-red-400'}`}>
+                {reparseResult}
+              </span>
+            )}
+          </div>
+          {!isInputDoc && (
+            <RunFromNodeControls projectId={projectId} stageKey={artifactStageKey} componentKey={artifact.component_key} artifactId={artifact.id} />
+          )}
+        </div>
+      </div>
     </div>
   );
 }
