@@ -213,7 +213,13 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   }, [projectId, artifact.id, artifact.status, execution, fetchStatus]);
 
   const handleAction = async (action: string) => {
-    if (!execution) return;
+    // Input docs may have no execution — fall back to artifact-based approval
+    if (!execution) {
+      if (isInputDoc) {
+        await handleStaleAction(action);
+      }
+      return;
+    }
     setSubmitting(true);
     try {
       await resumeStage(
