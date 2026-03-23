@@ -75,7 +75,13 @@ export function useWebSocket(projectId: string | undefined) {
     };
 
     ws.onmessage = (event) => {
-      const data: WSEvent = JSON.parse(event.data);
+      let data: WSEvent;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        console.error('[WS] Failed to parse message:', event.data);
+        return;
+      }
       console.log('[WS] Received:', data.type, data);
 
       // updateFromWS applies the event to both the snapshot AND the

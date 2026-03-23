@@ -40,7 +40,11 @@ export const useErrorLogStore = create<ErrorLogState>((set) => ({
       message,
       stack,
     };
-    set((state) => ({ errors: [...state.errors, entry] }));
+    set((state) => {
+      const prev = state.errors;
+      const next = prev.length >= 200 ? [...prev.slice(-150), entry] : [...prev, entry];
+      return { errors: next };
+    });
   },
 
   clear: () => set({ errors: [] }),
