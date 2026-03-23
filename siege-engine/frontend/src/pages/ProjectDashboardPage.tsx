@@ -21,6 +21,7 @@ import { RunSelector } from '../components/pipeline/RunSelector';
 import { EventHistoryPanel } from '../components/pipeline/EventHistoryPanel';
 import { LogPanel } from '../components/pipeline/LogPanel';
 import { DebugStatePanel } from '../components/pipeline/DebugStatePanel';
+import { PanelErrorBoundary } from '../components/ErrorBoundary';
 import { reconcilePipeline } from '../api/pipeline';
 import api from '../api/client';
 
@@ -51,8 +52,8 @@ export function ProjectDashboardPage() {
       fetchProject(projectId).catch((err) => console.error('[Dashboard] fetchProject failed:', err));
       fetchConfig(projectId).catch((err) => console.error('[Dashboard] fetchConfig failed:', err));
       fetchStatus(projectId).catch((err) => console.error('[Dashboard] fetchStatus failed:', err));
-      fetchRuns(projectId);
-      fetchBlockingPR(projectId);
+      fetchRuns(projectId).catch((err) => console.error('[Dashboard] fetchRuns failed:', err));
+      fetchBlockingPR(projectId).catch((err) => console.error('[Dashboard] fetchBlockingPR failed:', err));
     }
     return () => clearSelection();
   }, [projectId, resetPipeline, fetchProject, fetchConfig, fetchStatus, fetchRuns, fetchBlockingPR, clearSelection]);
@@ -300,11 +301,13 @@ export function ProjectDashboardPage() {
                       <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
                     </div>
                     <div className="md:w-1/3 overflow-auto p-3">
-                      <ReviewPanel
-                        projectId={projectId}
-                        artifact={selectedArtifact}
-                        execution={selectedExecution}
-                      />
+                      <PanelErrorBoundary fallbackLabel="Review panel error">
+                        <ReviewPanel
+                          projectId={projectId}
+                          artifact={selectedArtifact}
+                          execution={selectedExecution}
+                        />
+                      </PanelErrorBoundary>
                     </div>
                   </div>
                 ) : (
@@ -313,17 +316,21 @@ export function ProjectDashboardPage() {
                       <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
                     </div>
                     <div className="shrink-0 p-3 border-t border-gray-700 overflow-auto max-h-64">
-                      <ReviewPanel
-                        projectId={projectId}
-                        artifact={selectedArtifact}
-                        execution={selectedExecution}
-                      />
+                      <PanelErrorBoundary fallbackLabel="Review panel error">
+                        <ReviewPanel
+                          projectId={projectId}
+                          artifact={selectedArtifact}
+                          execution={selectedExecution}
+                        />
+                      </PanelErrorBoundary>
                     </div>
                   </>
                 )}
               </div>
             ) : activeTab === 'pipeline' && selectedStageKey ? (
-              <StageConfigPanel projectId={projectId} stageKey={selectedStageKey} />
+              <PanelErrorBoundary fallbackLabel="Stage config error">
+                <StageConfigPanel projectId={projectId} stageKey={selectedStageKey} />
+              </PanelErrorBoundary>
             ) : (
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="p-4 text-gray-500 text-sm shrink-0">

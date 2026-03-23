@@ -22,9 +22,11 @@ api.interceptors.response.use(
       if (!url.startsWith('/auth/login') && !url.startsWith('/auth/register')) {
         localStorage.removeItem('siege_engine_token');
         localStorage.removeItem('siege_engine_user');
-        import('../store/authStore').then(({ useAuthStore }) => {
-          useAuthStore.getState().logout();
-        });
+        import('../store/authStore')
+          .then(({ useAuthStore }) => {
+            useAuthStore.getState().logout();
+          })
+          .catch(() => {}); // prevent unhandled rejection if import fails during redirect
         window.location.href = '/login';
       }
     }

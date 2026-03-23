@@ -27,13 +27,15 @@ export function useVisibilityRefresh(
         if (elapsed >= STALE_THRESHOLD_MS && projectId) {
           console.log(`[VisibilityRefresh] Tab refocused after ${Math.round(elapsed / 1000)}s — refreshing`);
 
-          // Pull fresh state from all stores
-          useProjectStore.getState().fetchProject(projectId);
-          usePipelineStore.getState().fetchConfig(projectId);
-          usePipelineStore.getState().fetchStatus(projectId);
-          usePipelineStore.getState().fetchRuns(projectId);
-          useDAGStore.getState().fetchDAG(projectId);
-          useDAGStore.getState().fetchDocumentsDAG(projectId);
+          // Pull fresh state from all stores.
+          // .catch() prevents unhandled rejections that crash Safari.
+          const swallow = (err: unknown) => console.error('[VisibilityRefresh] fetch failed:', err);
+          useProjectStore.getState().fetchProject(projectId).catch(swallow);
+          usePipelineStore.getState().fetchConfig(projectId).catch(swallow);
+          usePipelineStore.getState().fetchStatus(projectId).catch(swallow);
+          usePipelineStore.getState().fetchRuns(projectId).catch(swallow);
+          useDAGStore.getState().fetchDAG(projectId).catch(swallow);
+          useDAGStore.getState().fetchDocumentsDAG(projectId).catch(swallow);
 
           // Reconnect WS in case the connection went stale
           reconnectWS();

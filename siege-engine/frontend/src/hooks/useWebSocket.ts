@@ -82,6 +82,10 @@ export function useWebSocket(projectId: string | undefined) {
       // executions array locally — no HTTP fetchStatus needed.
       updateFromWS(data);
 
+      // All fire-and-forget fetches below use .catch() to prevent unhandled
+      // promise rejections — Safari aggressively kills pages with stray rejections.
+      const swallow = (err: unknown) => console.error('[WS] fetch failed:', err);
+
       // Debounce DAG layout refreshes (node positions, edges, status colors).
       // Execution statuses are already patched locally above.
       const needsDAGRefresh =
@@ -101,8 +105,8 @@ export function useWebSocket(projectId: string | undefined) {
         if (debounceFetchRef.current) clearTimeout(debounceFetchRef.current);
         debounceFetchRef.current = setTimeout(() => {
           debounceFetchRef.current = null;
-          fetchDAG(projectId);
-          fetchDocumentsDAG(projectId);
+          fetchDAG(projectId).catch(swallow);
+          fetchDocumentsDAG(projectId).catch(swallow);
         }, FETCH_DEBOUNCE_MS);
       }
 
@@ -114,7 +118,7 @@ export function useWebSocket(projectId: string | undefined) {
         if (!currentlySelected) {
           console.log('[WS] Auto-selecting artifact for review:', data.artifact_id);
           selectArtifact(data.artifact_id);
-          fetchArtifact(data.artifact_id);
+          fetchArtifact(data.artifact_id).catch(swallow);
         } else {
           console.log('[WS] Artifact ready for review (not auto-selecting, user has selection):', data.artifact_id);
         }
@@ -122,17 +126,17 @@ export function useWebSocket(projectId: string | undefined) {
 
       // Refresh artifact after force restart so ReviewPanel clears the approved badge
       if (data.type === 'stage_failed' && data.artifact_id) {
-        fetchArtifact(data.artifact_id);
+        fetchArtifact(data.artifact_id).catch(swallow);
       }
 
       // Refresh artifact content after feedback is saved
       if (data.type === 'feedback_saved' && data.artifact_id) {
-        fetchArtifact(data.artifact_id);
+        fetchArtifact(data.artifact_id).catch(swallow);
       }
 
       // Refresh selected artifact when a stage completes (e.g. stale → approved)
       if (data.type === 'stage_completed' && data.artifact_id) {
-        fetchArtifact(data.artifact_id);
+        fetchArtifact(data.artifact_id).catch(swallow);
       }
 
       // Refresh selected artifact when a stage starts (e.g. after rejection triggers
@@ -140,7 +144,7 @@ export function useWebSocket(projectId: string | undefined) {
       if (data.type === 'stage_started') {
         const selectedId = useDAGStore.getState().selectedArtifactId;
         if (selectedId) {
-          fetchArtifact(selectedId);
+          fetchArtifact(selectedId).catch(swallow);
         }
       }
     };
