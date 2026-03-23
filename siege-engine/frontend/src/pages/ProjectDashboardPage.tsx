@@ -23,12 +23,10 @@ import { EventHistoryPanel } from '../components/pipeline/EventHistoryPanel';
 import { LogPanel } from '../components/pipeline/LogPanel';
 import { DebugStatePanel } from '../components/pipeline/DebugStatePanel';
 import { PanelErrorBoundary } from '../components/ErrorBoundary';
-import { ErrorLogPanel } from '../components/pipeline/ErrorLogPanel';
-import { useErrorLogStore } from '../store/errorLogStore';
 import { reconcilePipeline } from '../api/pipeline';
 import api from '../api/client';
 
-type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug' | 'errors';
+type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug';
 
 export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -52,7 +50,6 @@ export function ProjectDashboardPage() {
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
   const selectedStageKey = useDAGStore((s) => s.selectedStageKey);
   const { connected, reconnect } = useWebSocket(projectId);
-  const errorCount = useErrorLogStore((s) => s.errors.length);
   useVisibilityRefresh(projectId, reconnect);
   const [showInvites, setShowInvites] = useState(false);
   const [showPRDialog, setShowPRDialog] = useState(false);
@@ -162,7 +159,6 @@ export function ProjectDashboardPage() {
     history: 'Event History',
     logs: 'Logs',
     debug: 'Debug',
-    errors: 'Error Log',
   };
   const visibleTabs: Tab[] = isViewer
     ? ['documents', 'pipeline', 'chat']
@@ -246,24 +242,6 @@ export function ProjectDashboardPage() {
             <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-          </button>
-          <button
-            onClick={() => { setActiveTab('errors'); clearSelection(); setMenuOpen(false); }}
-            className={`px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 relative ${
-              activeTab === 'errors'
-                ? 'bg-red-600 text-white'
-                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-            }`}
-            title="Error Log"
-          >
-            <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
-            </svg>
-            {errorCount > 0 && (
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
-                {errorCount > 9 ? '9+' : errorCount}
-              </span>
-            )}
           </button>
           {connected ? (
             <span className="text-xs text-green-400">WS Connected</span>
@@ -431,10 +409,6 @@ export function ProjectDashboardPage() {
           <PanelErrorBoundary fallbackLabel="Debug panel error">
             <DebugStatePanel projectId={projectId} />
           </PanelErrorBoundary>
-        </div>
-      ) : activeTab === 'errors' ? (
-        <div className="flex-1 overflow-auto">
-          <ErrorLogPanel />
         </div>
       ) : (
         <div className="flex-1 overflow-auto">

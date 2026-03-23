@@ -1,5 +1,10 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { getDebugState } from '../../api/pipeline';
+import { usePipelineStore } from '../../store/pipelineStore';
+import { useDAGStore } from '../../store/dagStore';
+import { useProjectStore } from '../../store/projectStore';
+import { useAuthStore } from '../../store/authStore';
+import { useErrorLogStore } from '../../store/errorLogStore';
 
 interface DebugState {
   snapshot: Record<string, unknown>;
@@ -203,7 +208,11 @@ function formatDebugText(state: DebugState): string {
   return lines.join('\n');
 }
 
+type SubTab = 'backend' | 'frontend' | 'errors';
+
 export function DebugStatePanel({ projectId }: { projectId: string }) {
+  const errorCount = useErrorLogStore((s) => s.errors.length);
+  const [subTab, setSubTab] = useState<SubTab>('backend');
   const [state, setState] = useState<DebugState | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -228,15 +237,14 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
 
   const debugText = state ? formatDebugText(state) : '';
 
-  const handleCopy = async () => {
+  const handleCopy = async (text: string) => {
     try {
-      await navigator.clipboard.writeText(debugText);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback for non-secure contexts
       const textarea = document.createElement('textarea');
-      textarea.value = debugText;
+      textarea.value = text;
       document.body.appendChild(textarea);
       textarea.select();
       document.execCommand('copy');
@@ -249,44 +257,191 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
   return (
     <div className="h-full flex flex-col p-4 gap-3">
       <div className="flex items-center justify-between shrink-0">
-        <h2 className="text-lg font-bold text-white">Debug State</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-bold text-white">Debug State</h2>
+          <div className="flex rounded overflow-hidden border border-gray-600">
+            <button
+              onClick={() => setSubTab('backend')}
+              className={`px-3 py-1 text-xs ${subTab === 'backend' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+            >
+              Backend
+            </button>
+            <button
+              onClick={() => setSubTab('frontend')}
+              className={`px-3 py-1 text-xs ${subTab === 'frontend' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+            >
+              Frontend
+            </button>
+            <button
+              onClick={() => setSubTab('errors')}
+              className={`px-3 py-1 text-xs ${subTab === 'errors' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+            >
+              Errors{errorCount > 0 ? ` (${errorCount})` : ''}
+            </button>
+          </div>
+        </div>
         <div className="flex items-center gap-2">
+          {subTab === 'backend' && (
+            <button
+              onClick={fetchState}
+              disabled={loading}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded disabled:opacity-50"
+            >
+              {loading ? 'Loading...' : 'Refresh'}
+            </button>
+          )}
           <button
-            onClick={fetchState}
-            disabled={loading}
-            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded disabled:opacity-50"
-          >
-            {loading ? 'Loading...' : 'Refresh'}
-          </button>
-          <button
-            onClick={handleCopy}
-            disabled={!state}
+            onClick={() => handleCopy(subTab === 'backend' ? debugText : '')}
             className={`px-3 py-1.5 text-white text-xs rounded disabled:opacity-50 ${
-              copied
-                ? 'bg-green-600'
-                : 'bg-blue-600 hover:bg-blue-700'
+              copied ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
-            {copied ? 'Copied!' : 'Copy Debug State'}
+            {copied ? 'Copied!' : 'Copy'}
           </button>
         </div>
       </div>
 
-      {error && (
-        <div className="text-red-400 text-sm bg-red-900/30 border border-red-700 rounded px-3 py-2">
-          {error}
-        </div>
+      {subTab === 'backend' ? (
+        <>
+          {error && (
+            <div className="text-red-400 text-sm bg-red-900/30 border border-red-700 rounded px-3 py-2">
+              {error}
+            </div>
+          )}
+          {state && state.mismatches.length > 0 && (
+            <div className="text-yellow-300 text-xs bg-yellow-900/30 border border-yellow-700 rounded px-3 py-2 shrink-0">
+              {state.mismatches.length} projection drift{state.mismatches.length > 1 ? 's' : ''} detected (snapshot is source of truth)
+            </div>
+          )}
+          <pre className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-3 text-xs text-gray-300 font-mono whitespace-pre leading-relaxed">
+            {debugText || (loading ? 'Loading...' : 'No data')}
+          </pre>
+        </>
+      ) : subTab === 'frontend' ? (
+        <ZustandSubTab onCopy={handleCopy} />
+      ) : (
+        <ErrorsSubTab />
       )}
-
-      {state && state.mismatches.length > 0 && (
-        <div className="text-yellow-300 text-xs bg-yellow-900/30 border border-yellow-700 rounded px-3 py-2 shrink-0">
-          {state.mismatches.length} projection drift{state.mismatches.length > 1 ? 's' : ''} detected (snapshot is source of truth)
-        </div>
-      )}
-
-      <pre className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-3 text-xs text-gray-300 font-mono whitespace-pre leading-relaxed">
-        {debugText || (loading ? 'Loading...' : 'No data')}
-      </pre>
     </div>
+  );
+}
+
+/** Strip functions from state for display, truncate large strings/arrays */
+function sanitizeForDisplay(obj: unknown, depth = 0): unknown {
+  if (depth > 4) return '(max depth)';
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === 'function') return '(fn)';
+  if (typeof obj === 'string') {
+    return obj.length > 200 ? obj.slice(0, 200) + `...(${obj.length} chars)` : obj;
+  }
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    if (obj.length > 20) {
+      return [
+        ...obj.slice(0, 10).map((v) => sanitizeForDisplay(v, depth + 1)),
+        `...(${obj.length} items total)`,
+      ];
+    }
+    return obj.map((v) => sanitizeForDisplay(v, depth + 1));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    out[k] = sanitizeForDisplay(v, depth + 1);
+  }
+  return out;
+}
+
+function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
+  const renderCount = useRef(0);
+  renderCount.current += 1;
+
+  const snapshot = {
+    _meta: {
+      renderCount: renderCount.current,
+      capturedAt: new Date().toISOString(),
+    },
+    pipeline: sanitizeForDisplay(usePipelineStore.getState()),
+    dag: sanitizeForDisplay(useDAGStore.getState()),
+    project: sanitizeForDisplay(useProjectStore.getState()),
+    auth: sanitizeForDisplay(useAuthStore.getState()),
+    errors: sanitizeForDisplay(useErrorLogStore.getState()),
+  };
+
+  const text = JSON.stringify(snapshot, null, 2);
+
+  return (
+    <>
+      <div className="text-xs text-gray-400 shrink-0">
+        Render #{renderCount.current} — snapshot of all Zustand stores at render time (no live updates)
+      </div>
+      <pre className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-3 text-xs text-gray-300 font-mono whitespace-pre leading-relaxed">
+        {text}
+      </pre>
+      <button
+        onClick={() => onCopy(text)}
+        className="shrink-0 self-end px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
+      >
+        Copy Frontend State
+      </button>
+    </>
+  );
+}
+
+function ErrorsSubTab() {
+  const errors = useErrorLogStore((s) => s.errors);
+  const clear = useErrorLogStore((s) => s.clear);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  return (
+    <>
+      <div className="flex items-center justify-between shrink-0">
+        <span className="text-xs text-gray-400">{errors.length} error{errors.length !== 1 ? 's' : ''} captured</span>
+        {errors.length > 0 && (
+          <button
+            onClick={clear}
+            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {errors.length === 0 ? (
+        <p className="text-sm text-gray-500">No errors since last refresh.</p>
+      ) : (
+        <div className="flex-1 overflow-auto space-y-2">
+          {errors.map((entry) => (
+            <div
+              key={entry.id}
+              className="bg-gray-800 rounded p-2 text-xs border border-gray-700"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="text-gray-500">
+                    {new Date(entry.timestamp).toLocaleTimeString()}
+                  </span>
+                  <span className="ml-2 px-1.5 py-0.5 bg-red-900/50 text-red-400 rounded text-[10px]">
+                    {entry.source}
+                  </span>
+                </div>
+                {entry.stack && (
+                  <button
+                    onClick={() => setExpandedId(expandedId === entry.id ? null : entry.id)}
+                    className="text-gray-500 hover:text-gray-300 shrink-0"
+                  >
+                    {expandedId === entry.id ? '\u25B2' : '\u25BC'}
+                  </button>
+                )}
+              </div>
+              <p className="text-red-300 mt-1 break-words">{entry.message}</p>
+              {expandedId === entry.id && entry.stack && (
+                <pre className="mt-2 p-2 bg-gray-900 rounded text-gray-500 whitespace-pre-wrap break-words text-[10px] max-h-40 overflow-auto">
+                  {entry.stack}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
