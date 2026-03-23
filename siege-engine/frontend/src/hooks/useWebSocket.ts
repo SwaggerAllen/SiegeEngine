@@ -7,6 +7,7 @@ import type { WSEvent } from '../types/pipeline';
 const INITIAL_RETRY_MS = 1000;
 const MAX_RETRY_MS = 30000;
 const BACKOFF_FACTOR = 2;
+const FETCH_DEBOUNCE_MS = 300;
 
 export function useWebSocket(projectId: string | undefined) {
   const wsRef = useRef<WebSocket | null>(null);
@@ -14,10 +15,17 @@ export function useWebSocket(projectId: string | undefined) {
   const retryDelay = useRef(INITIAL_RETRY_MS);
   const mountedRef = useRef(true);
 
-  const { updateFromWS, fetchStatus } = usePipelineStore();
-  const { fetchDAG, fetchDocumentsDAG, selectArtifact } = useDAGStore();
-  const { fetchArtifact } = useProjectStore();
+  // Use individual selectors so this hook doesn't re-render on every store
+  // state change — only the function references matter here and they're stable.
+  const updateFromWS = usePipelineStore((s) => s.updateFromWS);
+  const fetchStatus = usePipelineStore((s) => s.fetchStatus);
+  const fetchDAG = useDAGStore((s) => s.fetchDAG);
+  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
+  const selectArtifact = useDAGStore((s) => s.selectArtifact);
+  const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
   const [connected, setConnected] = useState(false);
+  const debounceFetchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingStatusRef = useRef(false);
 
   const connect = useCallback(() => {
     if (!projectId || !mountedRef.current) return;
@@ -73,8 +81,7 @@ export function useWebSocket(projectId: string | undefined) {
       console.log('[WS] Received:', data.type, data);
       updateFromWS(data);
 
-      // Refresh DAG on state-changing events
-      if (
+      const needsDAGRefresh =
         data.type === 'stage_started' ||
         data.type === 'stage_completed' ||
         data.type === 'stage_awaiting_review' ||
@@ -83,21 +90,35 @@ export function useWebSocket(projectId: string | undefined) {
         data.type === 'pipeline_cancelled' ||
         data.type === 'pipeline_paused' ||
         data.type === 'staleness_propagated' ||
-        data.type === 'artifact_pruned'
-      ) {
-        fetchDAG(projectId);
-        fetchDocumentsDAG(projectId);
-        // fetchStatus for execution list refresh (isRunning/isPaused handled by local reducer)
-        fetchStatus(projectId);
-      }
-
-      // DAG refresh for feedback/comment events (no fetchStatus needed — no execution state change)
-      if (
+        data.type === 'artifact_pruned' ||
         data.type === 'feedback_saved' ||
-        data.type === 'comment_added'
-      ) {
-        fetchDAG(projectId);
-        fetchDocumentsDAG(projectId);
+        data.type === 'comment_added';
+
+      const needsStatusRefresh =
+        data.type === 'stage_started' ||
+        data.type === 'stage_completed' ||
+        data.type === 'stage_awaiting_review' ||
+        data.type === 'stage_failed' ||
+        data.type === 'pipeline_completed' ||
+        data.type === 'pipeline_cancelled' ||
+        data.type === 'pipeline_paused' ||
+        data.type === 'staleness_propagated' ||
+        data.type === 'artifact_pruned';
+
+      // Debounce DAG + status fetches — during busy runs many events arrive
+      // in quick succession and each would fire 3 HTTP requests without this.
+      if (needsStatusRefresh) pendingStatusRef.current = true;
+      if (needsDAGRefresh || needsStatusRefresh) {
+        if (debounceFetchRef.current) clearTimeout(debounceFetchRef.current);
+        debounceFetchRef.current = setTimeout(() => {
+          debounceFetchRef.current = null;
+          fetchDAG(projectId);
+          fetchDocumentsDAG(projectId);
+          if (pendingStatusRef.current) {
+            pendingStatusRef.current = false;
+            fetchStatus(projectId);
+          }
+        }, FETCH_DEBOUNCE_MS);
       }
 
       // Auto-select artifact when review is needed, but only if the user
@@ -154,6 +175,10 @@ export function useWebSocket(projectId: string | undefined) {
       if (retryTimer.current) {
         clearTimeout(retryTimer.current);
         retryTimer.current = null;
+      }
+      if (debounceFetchRef.current) {
+        clearTimeout(debounceFetchRef.current);
+        debounceFetchRef.current = null;
       }
       if (wsRef.current) {
         wsRef.current.onclose = null; // prevent reconnect on intentional cleanup
