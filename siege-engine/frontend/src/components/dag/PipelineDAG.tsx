@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useSafeEffect, useSafeMemo } from '../../hooks/useSafe';
 import {
   ReactFlow,
+  ReactFlowProvider,
   Background,
   Controls,
   MiniMap,
@@ -20,7 +21,15 @@ interface PipelineDAGProps {
   variant?: 'pipeline' | 'documents';
 }
 
-export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
+export function PipelineDAG(props: PipelineDAGProps) {
+  return (
+    <ReactFlowProvider>
+      <PipelineDAGInner {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
   const pipelineNodes = useDAGStore((s) => s.nodes);
   const pipelineEdges = useDAGStore((s) => s.edges);
   const docNodes = useDAGStore((s) => s.docNodes);
