@@ -119,7 +119,8 @@ export function EventHistoryPanel({ projectId }: Props) {
   const [collapsedRuns, setCollapsedRuns] = useState<Set<string>>(new Set());
   const [artifactNames, setArtifactNames] = useState<Record<string, string>>({});
   const [runNumbers, setRunNumbers] = useState<Record<string, number>>({});
-  const { fetchStatus, fetchRuns } = usePipelineStore();
+  const fetchStatus = usePipelineStore((s) => s.fetchStatus);
+  const fetchRuns = usePipelineStore((s) => s.fetchRuns);
 
   const PAGE_SIZE = 50;
 

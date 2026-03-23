@@ -19,8 +19,8 @@ const REVISABLE_STATUSES = new Set(['approved', 'stale']);
 type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
 
 export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
-  const { updateArtifact } = useProjectStore();
-  const { reviseArtifact } = usePipelineStore();
+  const updateArtifact = useProjectStore((s) => s.updateArtifact);
+  const reviseArtifact = usePipelineStore((s) => s.reviseArtifact);
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
   const [editing, setEditing] = useState(false);
