@@ -3,7 +3,7 @@
  * Mirrors backend/pipeline/reducer.py — apply WS events to a local snapshot.
  */
 
-import type { PipelineSnapshot, WSEvent } from '../types/pipeline';
+import type { PipelineSnapshot, StageExecution, StageExecutionStatus, WSEvent } from '../types/pipeline';
 
 export function emptySnapshot(): PipelineSnapshot {
   return {
@@ -129,4 +129,85 @@ export function applyWSEvent(snapshot: PipelineSnapshot, event: WSEvent): Pipeli
 
 function stageKey(stage: string, component?: string): string {
   return component ? `${stage}/${component}` : stage;
+}
+
+/**
+ * Find the most relevant execution for a stage_key/component_key pair.
+ * Prefers non-terminal statuses (running > awaiting_review > others).
+ */
+function findExecution(
+  executions: StageExecution[],
+  stageKey: string,
+  componentKey?: string,
+): number {
+  let bestIdx = -1;
+  for (let i = 0; i < executions.length; i++) {
+    const e = executions[i];
+    if (e.stage_key !== stageKey) continue;
+    if (componentKey !== undefined && e.component_key !== (componentKey || null)) continue;
+    if (bestIdx === -1) { bestIdx = i; continue; }
+    // Prefer active executions over terminal ones
+    const active = new Set(['running', 'ai_review', 'pending', 'awaiting_review']);
+    if (active.has(e.status) && !active.has(executions[bestIdx].status)) {
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+/**
+ * Patch executions array based on a WS event. Returns the original array
+ * unchanged if no patch is needed (callers can use referential equality
+ * to skip unnecessary store updates).
+ */
+export function patchExecutions(executions: StageExecution[], event: WSEvent): StageExecution[] {
+  switch (event.type) {
+    case 'stage_started': {
+      const idx = findExecution(executions, event.stage_key, event.component_key);
+      if (idx === -1) return executions;
+      const updated = [...executions];
+      updated[idx] = { ...updated[idx], status: 'running' as StageExecutionStatus };
+      return updated;
+    }
+
+    case 'stage_awaiting_review': {
+      const idx = findExecution(executions, event.stage_key, event.component_key);
+      if (idx === -1) return executions;
+      const updated = [...executions];
+      updated[idx] = {
+        ...updated[idx],
+        status: 'awaiting_review' as StageExecutionStatus,
+        artifact_id: event.artifact_id ?? updated[idx].artifact_id,
+      };
+      return updated;
+    }
+
+    case 'stage_completed': {
+      const idx = findExecution(executions, event.stage_key, event.component_key);
+      if (idx === -1) return executions;
+      const status = (event.status || 'approved') as StageExecutionStatus;
+      const updated = [...executions];
+      updated[idx] = {
+        ...updated[idx],
+        status,
+        artifact_id: event.artifact_id ?? updated[idx].artifact_id,
+      };
+      return updated;
+    }
+
+    case 'stage_failed': {
+      const idx = findExecution(executions, event.stage_key, event.component_key);
+      if (idx === -1) return executions;
+      const updated = [...executions];
+      updated[idx] = {
+        ...updated[idx],
+        status: 'failed' as StageExecutionStatus,
+        error_message: event.error ?? updated[idx].error_message,
+      };
+      return updated;
+    }
+
+    default:
+      return executions;
+  }
 }

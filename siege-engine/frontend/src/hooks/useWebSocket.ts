@@ -18,14 +18,12 @@ export function useWebSocket(projectId: string | undefined) {
   // Use individual selectors so this hook doesn't re-render on every store
   // state change — only the function references matter here and they're stable.
   const updateFromWS = usePipelineStore((s) => s.updateFromWS);
-  const fetchStatus = usePipelineStore((s) => s.fetchStatus);
   const fetchDAG = useDAGStore((s) => s.fetchDAG);
   const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
   const [connected, setConnected] = useState(false);
   const debounceFetchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingStatusRef = useRef(false);
 
   const connect = useCallback(() => {
     if (!projectId || !mountedRef.current) return;
@@ -79,8 +77,13 @@ export function useWebSocket(projectId: string | undefined) {
     ws.onmessage = (event) => {
       const data: WSEvent = JSON.parse(event.data);
       console.log('[WS] Received:', data.type, data);
+
+      // updateFromWS applies the event to both the snapshot AND the
+      // executions array locally — no HTTP fetchStatus needed.
       updateFromWS(data);
 
+      // Debounce DAG layout refreshes (node positions, edges, status colors).
+      // Execution statuses are already patched locally above.
       const needsDAGRefresh =
         data.type === 'stage_started' ||
         data.type === 'stage_completed' ||
@@ -94,30 +97,12 @@ export function useWebSocket(projectId: string | undefined) {
         data.type === 'feedback_saved' ||
         data.type === 'comment_added';
 
-      const needsStatusRefresh =
-        data.type === 'stage_started' ||
-        data.type === 'stage_completed' ||
-        data.type === 'stage_awaiting_review' ||
-        data.type === 'stage_failed' ||
-        data.type === 'pipeline_completed' ||
-        data.type === 'pipeline_cancelled' ||
-        data.type === 'pipeline_paused' ||
-        data.type === 'staleness_propagated' ||
-        data.type === 'artifact_pruned';
-
-      // Debounce DAG + status fetches — during busy runs many events arrive
-      // in quick succession and each would fire 3 HTTP requests without this.
-      if (needsStatusRefresh) pendingStatusRef.current = true;
-      if (needsDAGRefresh || needsStatusRefresh) {
+      if (needsDAGRefresh) {
         if (debounceFetchRef.current) clearTimeout(debounceFetchRef.current);
         debounceFetchRef.current = setTimeout(() => {
           debounceFetchRef.current = null;
           fetchDAG(projectId);
           fetchDocumentsDAG(projectId);
-          if (pendingStatusRef.current) {
-            pendingStatusRef.current = false;
-            fetchStatus(projectId);
-          }
         }, FETCH_DEBOUNCE_MS);
       }
 
@@ -158,12 +143,10 @@ export function useWebSocket(projectId: string | undefined) {
           fetchArtifact(selectedId);
         }
       }
-
-      // isRunning/isPaused are now updated by the local snapshot reducer in updateFromWS
     };
 
     wsRef.current = ws;
-  }, [projectId, updateFromWS, fetchStatus, fetchDAG, fetchDocumentsDAG, selectArtifact, fetchArtifact]);
+  }, [projectId, updateFromWS, fetchDAG, fetchDocumentsDAG, selectArtifact, fetchArtifact]);
 
   useEffect(() => {
     mountedRef.current = true;

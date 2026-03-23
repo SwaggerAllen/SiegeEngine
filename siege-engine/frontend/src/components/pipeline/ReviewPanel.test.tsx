@@ -7,20 +7,32 @@ import type { StageExecution } from '../../types/pipeline';
 const mockResumeStage = vi.fn();
 const mockPruneArtifact = vi.fn();
 
+const mockStoreState = {
+  resumeStage: mockResumeStage,
+  resolveStale: vi.fn(),
+  regenDownstream: vi.fn(),
+  forceRestartStage: vi.fn(),
+  pruneArtifact: mockPruneArtifact,
+  cancelStage: vi.fn(),
+  fetchStatus: vi.fn(),
+  config: { stages: [{ stage_key: 'system_requirements', output_artifact_type: 'system_requirements' }] },
+  isRunning: false,
+  runs: [],
+  startPipeline: vi.fn(),
+  resumeRun: vi.fn(),
+};
+
 vi.mock('../../store/pipelineStore', () => ({
-  usePipelineStore: vi.fn(() => ({
-    resumeStage: mockResumeStage,
-    resolveStale: vi.fn(),
-    regenDownstream: vi.fn(),
-    forceRestartStage: vi.fn(),
-    pruneArtifact: mockPruneArtifact,
-    cancelStage: vi.fn(),
-    config: { stages: [{ stage_key: 'system_requirements', output_artifact_type: 'system_requirements' }] },
-    isRunning: false,
-    runs: [],
-    startPipeline: vi.fn(),
-    resumeRun: vi.fn(),
-  })),
+  usePipelineStore: vi.fn((selector?: (s: typeof mockStoreState) => unknown) =>
+    selector ? selector(mockStoreState) : mockStoreState
+  ),
+}));
+
+vi.mock('../../store/dagStore', () => ({
+  useDAGStore: vi.fn((selector?: (s: Record<string, unknown>) => unknown) => {
+    const state = { fetchDAG: vi.fn(), fetchDocumentsDAG: vi.fn() };
+    return selector ? selector(state) : state;
+  }),
 }));
 
 vi.mock('../../store/authStore', () => ({
@@ -69,19 +81,21 @@ describe('ReviewPanel', () => {
     mockPruneArtifact.mockReset();
   });
 
-  it('renders prune button when execution is undefined (non-input artifact)', () => {
+  it('renders prune button when execution is undefined and artifact is not awaiting review', () => {
+    const approvedArtifact = { ...baseArtifact, status: 'approved' as const };
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={undefined} />
+      <ReviewPanel projectId="proj-1" artifact={approvedArtifact} execution={undefined} />
     );
     expect(screen.getByText('🗑 Prune Node')).toBeInTheDocument();
   });
 
-  it('renders prune button when execution.status is not awaiting_review', () => {
+  it('renders prune button when execution.status is approved and artifact is approved', () => {
+    const approvedArtifact = { ...baseArtifact, status: 'approved' as const };
     const approvedExecution = { ...awaitingExecution, status: 'approved' as const };
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={approvedExecution} />
+      <ReviewPanel projectId="proj-1" artifact={approvedArtifact} execution={approvedExecution} />
     );
-    expect(screen.getByText('🗑 Prune Node')).toBeInTheDocument();
+    expect(screen.getByText('🗑 Prune')).toBeInTheDocument();
   });
 
   it('renders no action buttons for input doc artifacts', () => {
