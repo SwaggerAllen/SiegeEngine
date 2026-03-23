@@ -710,241 +710,139 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         so downstream entities whose dependencies are met can progress even while
         sibling entities in earlier stages are still awaiting review.
 
+        Uses a while loop to re-scan after each pass, so that generating one
+        entity (e.g. component A's architecture) can unlock dependent entities
+        (e.g. component B that depends on A) in the same run.
+
         Key behaviors:
         - Dependencies are satisfied by "generated" status (not just approved)
         - AWAITING_REVIEW nodes do NOT block downstream generation
         - Only RUNNING/AI_REVIEW states represent truly in-flight work
         - Run scope is filtered by start_stage_key/start_component_key
-        - Stop point controls when the run halts
+        - Stop point is checked BEFORE executing a stage, not after
         """
         stages = sorted(config.stages, key=lambda s: s.order_index)
-        has_inflight_work = False
 
-        for stage_def in stages:
-            # Skip stages outside run scope
-            if not self._is_in_run_scope(stage_def, None, pipeline_run):
-                continue
+        while True:
+            did_work = False
+            has_inflight_work = False
+            hit_pause_boundary = False
+            pause_stage_def = None
 
-            # Check if stage is fully generated (has content for all entities)
-            if self._stage_fully_generated(project_id, stage_def, run_id):
-                logger.info("Stage %s: fully generated, skipping", stage_def.stage_key)
-                continue
-            logger.info(
-                "Stage %s: not fully generated (fan_out=%s), checking readiness",
-                stage_def.stage_key,
-                stage_def.fan_out_strategy.value if stage_def.fan_out_strategy else "none",
-            )
+            for stage_def in stages:
+                # Skip stages outside run scope
+                if not self._is_in_run_scope(stage_def, None, pipeline_run):
+                    continue
 
-            # Check if any executions are still truly in-flight (RUNNING/AI_REVIEW)
-            # First check THIS run (for run-completion flow control)
-            inflight_in_run = (
-                self.db.query(StageExecution)
-                .filter_by(
-                    project_id=project_id,
-                    stage_key=stage_def.stage_key,
-                    run_id=run_id,
-                )
-                .filter(
-                    StageExecution.status.in_(
-                        [StageStatus.RUNNING, StageStatus.AI_REVIEW]
+                # Check if stage is fully generated (has content for all entities)
+                if self._stage_fully_generated(project_id, stage_def, run_id):
+                    logger.info("Stage %s: fully generated, skipping", stage_def.stage_key)
+                    continue
+
+                # Check stop point BEFORE executing — prevents running stages
+                # past the phase boundary (e.g. extract_sub_components when the
+                # run should stop after component_architectures).
+                if self._should_pause(stage_def, pipeline_run, project_id):
+                    logger.info(
+                        "Stage %s is past stop point, not executing",
+                        stage_def.stage_key,
                     )
-                )
-                .count()
-            )
-            if inflight_in_run > 0:
-                has_inflight_work = True
+                    hit_pause_boundary = True
+                    pause_stage_def = stage_def
+                    break  # Don't look at later stages either
+
                 logger.info(
-                    "Stage %s has %d in-flight executions in this run, scanning downstream",
+                    "Stage %s: not fully generated (fan_out=%s), checking readiness",
                     stage_def.stage_key,
-                    inflight_in_run,
+                    stage_def.fan_out_strategy.value if stage_def.fan_out_strategy else "none",
                 )
-                continue
 
-            # Then check ALL runs to prevent duplicate cross-run executions.
-            # A stage running in another run should not be started again here.
-            inflight_anywhere = (
-                self.db.query(StageExecution)
-                .filter(
-                    StageExecution.project_id == project_id,
-                    StageExecution.stage_key == stage_def.stage_key,
-                    StageExecution.status.in_(
-                        [StageStatus.RUNNING, StageStatus.AI_REVIEW]
-                    ),
-                )
-                .count()
-            )
-            if inflight_anywhere > 0:
-                logger.info(
-                    "Stage %s has %d in-flight executions in other runs, "
-                    "skipping to prevent duplicate generation",
-                    stage_def.stage_key,
-                    inflight_anywhere,
-                )
-                continue
-
-            fan_out = stage_def.fan_out_strategy
-
-            if fan_out == FanOutStrategy.NONE:
-                # Single artifact stage — check if already has an execution
-                existing = (
+                # Check if any executions are still truly in-flight (RUNNING/AI_REVIEW)
+                # First check THIS run (for run-completion flow control)
+                inflight_in_run = (
                     self.db.query(StageExecution)
                     .filter_by(
                         project_id=project_id,
                         stage_key=stage_def.stage_key,
                         run_id=run_id,
                     )
-                    .filter(StageExecution.status.notin_([StageStatus.REJECTED]))
-                    .first()
+                    .filter(
+                        StageExecution.status.in_(
+                            [StageStatus.RUNNING, StageStatus.AI_REVIEW]
+                        )
+                    )
+                    .count()
                 )
-                if existing:
-                    # Already has a non-rejected execution (awaiting_review, approved, failed)
-                    if existing.status == StageStatus.FAILED:
-                        has_inflight_work = True
+                if inflight_in_run > 0:
+                    has_inflight_work = True
+                    logger.info(
+                        "Stage %s has %d in-flight executions in this run, scanning downstream",
+                        stage_def.stage_key,
+                        inflight_in_run,
+                    )
                     continue
 
-                # Check scope for non-fan-out
-                if not self._is_in_run_scope(stage_def, None, pipeline_run):
-                    continue
-
-                # regen_generated_only: skip if entity doesn't already have content
-                if pipeline_run and pipeline_run.regen_generated_only:
-                    if not self._entity_already_generated(
-                        project_id, stage_def.stage_key, None
-                    ):
-                        continue
-
-                # Guard: skip if this stage is already running in ANY run
-                # (belt-and-suspenders with the stage-level check above)
-                already_running = (
+                # Then check ALL runs to prevent duplicate cross-run executions.
+                # A stage running in another run should not be started again here.
+                inflight_anywhere = (
                     self.db.query(StageExecution)
                     .filter(
                         StageExecution.project_id == project_id,
                         StageExecution.stage_key == stage_def.stage_key,
-                        StageExecution.component_key.is_(None),
                         StageExecution.status.in_(
                             [StageStatus.RUNNING, StageStatus.AI_REVIEW]
                         ),
                     )
-                    .first()
+                    .count()
                 )
-                if already_running:
+                if inflight_anywhere > 0:
                     logger.info(
-                        "Stage %s already running (execution %s), skipping",
-                        stage_def.stage_key, already_running.id,
-                    )
-                    continue
-
-                # Execute single stage
-                input_artifacts = self._gather_inputs(project_id, stage_def)
-                rejected_notes = self._get_rejected_notes(project_id, stage_def)
-                execution = StageExecution(
-                    project_id=project_id,
-                    stage_key=stage_def.stage_key,
-                    status=StageStatus.RUNNING,
-                    started_at=datetime.utcnow(),
-                    run_id=run_id,
-                )
-                self.db.add(execution)
-                self.db.flush()
-
-                ctx = StageExecutionContext(
-                    project_id=project_id,
-                    stage_def=stage_def,
-                    config=config,
-                    execution=execution,
-                    run_id=run_id,
-                    pipeline_run=pipeline_run,
-                    input_artifacts=input_artifacts,
-                    human_notes=rejected_notes,
-                )
-                await self._run_stage(ctx)
-
-                if execution.status == StageStatus.FAILED:
-                    # Run completion is handled by _run_stage's finally block.
-                    logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
-                            "type": "pipeline_completed",
-                            "run_id": run_id,
-                        },
-                    )
-                    return
-
-                # Post-generation hooks (deferred for branching stages until approval)
-                if execution.status == StageStatus.AWAITING_REVIEW:
-                    if stage_def.stage_key not in BRANCHING_STAGES:
-                        await self._post_generation_hook(project_id, stage_def, None, execution)
-
-
-                # Check if pipeline should pause at this stage
-                if self._should_pause(stage_def, pipeline_run, project_id):
-                    self.events.emit(
-                        project_id, evt.PIPELINE_PAUSED,
-                        {"stage_key": stage_def.stage_key, "run_id": run_id},
-                        run_id=run_id,
-                    )
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
-                            "type": "pipeline_paused",
-                            "stage_key": stage_def.stage_key,
-                            "run_id": run_id,
-                            "message": f"Awaiting review for {stage_def.display_name}",
-                        },
-                    )
-                    return
-
-            elif fan_out in (
-                FanOutStrategy.COMPONENT,
-                FanOutStrategy.SUB_COMPONENT,
-                FanOutStrategy.LEAF,
-            ):
-                ready = self._get_ready_entities(
-                    project_id, stage_def, run_id, pipeline_run=pipeline_run
-                )
-                if not ready:
-                    # No entities ready — check if any entities exist at all
-                    all_entities = self._get_all_entities_for_stage(project_id, stage_def)
-                    if not all_entities:
-                        logger.info("No entities for stage %s, skipping", stage_def.stage_key)
-                        continue
-                    # Log why entities aren't ready
-                    for ek in all_entities[:5]:
-                        ex = (
-                            self.db.query(StageExecution)
-                            .filter_by(
-                                project_id=project_id,
-                                stage_key=stage_def.stage_key,
-                                run_id=run_id,
-                                component_key=ek,
-                            )
-                            .filter(StageExecution.status.notin_([StageStatus.REJECTED]))
-                            .first()
-                        )
-                        logger.info(
-                            "  entity %s not ready: existing_exec=%s (status=%s)",
-                            ek,
-                            ex.id if ex else None,
-                            ex.status.value if ex else "n/a",
-                        )
-                    logger.info(
-                        "Stage %s: %d entities exist but none ready, scanning downstream",
+                        "Stage %s has %d in-flight executions in other runs, "
+                        "skipping to prevent duplicate generation",
                         stage_def.stage_key,
-                        len(all_entities),
+                        inflight_anywhere,
                     )
                     continue
 
-                # Execute ready entities
-                stage_failed = False
-                for entity_key in ready:
-                    # Guard: skip if this entity is already running in ANY run
+                fan_out = stage_def.fan_out_strategy
+
+                if fan_out == FanOutStrategy.NONE:
+                    # Single artifact stage — check if already has an execution
+                    existing = (
+                        self.db.query(StageExecution)
+                        .filter_by(
+                            project_id=project_id,
+                            stage_key=stage_def.stage_key,
+                            run_id=run_id,
+                        )
+                        .filter(StageExecution.status.notin_([StageStatus.REJECTED]))
+                        .first()
+                    )
+                    if existing:
+                        # Already has a non-rejected execution (awaiting_review, approved, failed)
+                        if existing.status == StageStatus.FAILED:
+                            has_inflight_work = True
+                        continue
+
+                    # Check scope for non-fan-out
+                    if not self._is_in_run_scope(stage_def, None, pipeline_run):
+                        continue
+
+                    # regen_generated_only: skip if entity doesn't already have content
+                    if pipeline_run and pipeline_run.regen_generated_only:
+                        if not self._entity_already_generated(
+                            project_id, stage_def.stage_key, None
+                        ):
+                            continue
+
+                    # Guard: skip if this stage is already running in ANY run
+                    # (belt-and-suspenders with the stage-level check above)
                     already_running = (
                         self.db.query(StageExecution)
                         .filter(
                             StageExecution.project_id == project_id,
                             StageExecution.stage_key == stage_def.stage_key,
-                            StageExecution.component_key == entity_key,
+                            StageExecution.component_key.is_(None),
                             StageExecution.status.in_(
                                 [StageStatus.RUNNING, StageStatus.AI_REVIEW]
                             ),
@@ -953,17 +851,17 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     )
                     if already_running:
                         logger.info(
-                            "Entity %s/%s already running (execution %s), skipping",
-                            stage_def.stage_key, entity_key, already_running.id,
+                            "Stage %s already running (execution %s), skipping",
+                            stage_def.stage_key, already_running.id,
                         )
                         continue
 
-                    input_artifacts = self._gather_inputs(project_id, stage_def, entity_key)
-                    rejected_notes = self._get_rejected_notes(project_id, stage_def, entity_key)
+                    # Execute single stage
+                    input_artifacts = self._gather_inputs(project_id, stage_def)
+                    rejected_notes = self._get_rejected_notes(project_id, stage_def)
                     execution = StageExecution(
                         project_id=project_id,
                         stage_key=stage_def.stage_key,
-                        component_key=entity_key,
                         status=StageStatus.RUNNING,
                         started_at=datetime.utcnow(),
                         run_id=run_id,
@@ -982,52 +880,173 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         human_notes=rejected_notes,
                     )
                     await self._run_stage(ctx)
+                    did_work = True
 
                     if execution.status == StageStatus.FAILED:
-                        stage_failed = True
-                        break
+                        # Run completion is handled by _run_stage's finally block.
+                        logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
+                        await ws_manager.broadcast(
+                            project_id,
+                            {
+                                "type": "pipeline_completed",
+                                "run_id": run_id,
+                            },
+                        )
+                        return
 
                     # Post-generation hooks (deferred for branching stages until approval)
                     if execution.status == StageStatus.AWAITING_REVIEW:
                         if stage_def.stage_key not in BRANCHING_STAGES:
-                            await self._post_generation_hook(
-                                project_id, stage_def, entity_key, execution
+                            await self._post_generation_hook(project_id, stage_def, None, execution)
+
+                elif fan_out in (
+                    FanOutStrategy.COMPONENT,
+                    FanOutStrategy.SUB_COMPONENT,
+                    FanOutStrategy.LEAF,
+                ):
+                    ready = self._get_ready_entities(
+                        project_id, stage_def, run_id, pipeline_run=pipeline_run
+                    )
+                    if not ready:
+                        # No entities ready — check if any entities exist at all
+                        all_entities = self._get_all_entities_for_stage(project_id, stage_def)
+                        if not all_entities:
+                            logger.info("No entities for stage %s, skipping", stage_def.stage_key)
+                            continue
+                        # Log why entities aren't ready
+                        for ek in all_entities[:5]:
+                            ex = (
+                                self.db.query(StageExecution)
+                                .filter_by(
+                                    project_id=project_id,
+                                    stage_key=stage_def.stage_key,
+                                    run_id=run_id,
+                                    component_key=ek,
+                                )
+                                .filter(StageExecution.status.notin_([StageStatus.REJECTED]))
+                                .first()
                             )
+                            logger.info(
+                                "  entity %s not ready: existing_exec=%s (status=%s)",
+                                ek,
+                                ex.id if ex else None,
+                                ex.status.value if ex else "n/a",
+                            )
+                        logger.info(
+                            "Stage %s: %d entities exist but none ready, scanning downstream",
+                            stage_def.stage_key,
+                            len(all_entities),
+                        )
+                        continue
 
-                if stage_failed:
-                    # Run completion is handled by _run_stage's finally block.
-                    logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
-                            "type": "pipeline_completed",
-                            "run_id": run_id,
-                        },
-                    )
-                    return
+                    # Execute ready entities
+                    stage_failed = False
+                    for entity_key in ready:
+                        # Guard: skip if this entity is already running in ANY run
+                        already_running = (
+                            self.db.query(StageExecution)
+                            .filter(
+                                StageExecution.project_id == project_id,
+                                StageExecution.stage_key == stage_def.stage_key,
+                                StageExecution.component_key == entity_key,
+                                StageExecution.status.in_(
+                                    [StageStatus.RUNNING, StageStatus.AI_REVIEW]
+                                ),
+                            )
+                            .first()
+                        )
+                        if already_running:
+                            logger.info(
+                                "Entity %s/%s already running (execution %s), skipping",
+                                stage_def.stage_key, entity_key, already_running.id,
+                            )
+                            continue
 
+                        input_artifacts = self._gather_inputs(project_id, stage_def, entity_key)
+                        rejected_notes = self._get_rejected_notes(project_id, stage_def, entity_key)
+                        execution = StageExecution(
+                            project_id=project_id,
+                            stage_key=stage_def.stage_key,
+                            component_key=entity_key,
+                            status=StageStatus.RUNNING,
+                            started_at=datetime.utcnow(),
+                            run_id=run_id,
+                        )
+                        self.db.add(execution)
+                        self.db.flush()
 
-                # Check if pipeline should pause at this stage
-                if self._should_pause(stage_def, pipeline_run, project_id):
-                    self.events.emit(
-                        project_id, evt.PIPELINE_PAUSED,
-                        {"stage_key": stage_def.stage_key, "run_id": run_id},
-                        run_id=run_id,
-                    )
-                    await ws_manager.broadcast(
-                        project_id,
-                        {
-                            "type": "pipeline_paused",
-                            "stage_key": stage_def.stage_key,
-                            "run_id": run_id,
-                            "message": f"Awaiting review for {stage_def.display_name}",
-                        },
-                    )
-                    return
+                        ctx = StageExecutionContext(
+                            project_id=project_id,
+                            stage_def=stage_def,
+                            config=config,
+                            execution=execution,
+                            run_id=run_id,
+                            pipeline_run=pipeline_run,
+                            input_artifacts=input_artifacts,
+                            human_notes=rejected_notes,
+                        )
+                        await self._run_stage(ctx)
+                        did_work = True
 
-        # If in-flight work exists, the pipeline isn't finished — just no new work to do
-        if has_inflight_work:
-            return
+                        if execution.status == StageStatus.FAILED:
+                            stage_failed = True
+                            break
+
+                        # Post-generation hooks (deferred for branching stages until approval)
+                        if execution.status == StageStatus.AWAITING_REVIEW:
+                            if stage_def.stage_key not in BRANCHING_STAGES:
+                                await self._post_generation_hook(
+                                    project_id, stage_def, entity_key, execution
+                                )
+
+                    if stage_failed:
+                        # Run completion is handled by _run_stage's finally block.
+                        logger.error("Pipeline stopped: stage %s failed", stage_def.stage_key)
+                        await ws_manager.broadcast(
+                            project_id,
+                            {
+                                "type": "pipeline_completed",
+                                "run_id": run_id,
+                            },
+                        )
+                        return
+
+            # --- End of stage scan ---
+
+            # If we did work this pass, re-scan: generating entities may have
+            # unlocked dependent entities (e.g. component B depends on A's
+            # architecture, which was just generated).
+            if did_work:
+                logger.info("Work completed in this pass, re-scanning for newly-ready entities")
+                continue
+
+            # No new work was done.  Decide whether to pause or complete.
+            if hit_pause_boundary:
+                # All work before the stop point is done — emit pause.
+                self.events.emit(
+                    project_id, evt.PIPELINE_PAUSED,
+                    {"stage_key": pause_stage_def.stage_key, "run_id": run_id},
+                    run_id=run_id,
+                )
+                await ws_manager.broadcast(
+                    project_id,
+                    {
+                        "type": "pipeline_paused",
+                        "stage_key": pause_stage_def.stage_key,
+                        "run_id": run_id,
+                        "message": f"Awaiting review for {pause_stage_def.display_name}",
+                    },
+                )
+                return
+
+            if has_inflight_work:
+                # In-flight work exists but no new work to start — wait
+                return
+
+            # No more work anywhere — exit the while loop and complete
+            break
+
+        # --- All stages done, no inflight work, no pause boundary ---
 
         # If we get here, all stages are complete
         logger.info("Pipeline run_id=%s completed successfully", run_id)
