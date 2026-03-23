@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useSafeEffect } from '../hooks/useSafe';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { useProjectStore } from '../store/projectStore';
 import { usePipelineStore } from '../store/pipelineStore';
 import { useAuthStore } from '../store/authStore';
@@ -53,7 +53,9 @@ export function ProjectDashboardPage() {
   useVisibilityRefresh(projectId, reconnect);
   const [showInvites, setShowInvites] = useState(false);
   const [showPRDialog, setShowPRDialog] = useState(false);
-  const [activeTab, setActiveTab] = useState<Tab>('documents');
+  const [searchParams] = useSearchParams();
+  const initialTab = (searchParams.get('tab') as Tab) || 'documents';
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [paneExpanded, setPaneExpanded] = useState(false);
   const [initialStageKey, setInitialStageKey] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
