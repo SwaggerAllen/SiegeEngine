@@ -126,24 +126,33 @@ class EventStore:
 
 
 def _snapshot_to_dict(snapshot: PipelineSnapshot) -> dict[str, Any]:
-    """Convert a PipelineSnapshot ORM object to a plain dict for the reducer."""
+    """Convert a PipelineSnapshot ORM object to a plain dict for the reducer.
+
+    Uses copy.deepcopy for nested dict fields to fully detach from
+    SQLAlchemy-managed JSON column references.  Shallow dict() copies
+    share nested objects, which can cause "Set changed size during
+    iteration" if the ORM object is accessed while the reducer's
+    copy.deepcopy iterates over nested values.
+    """
+    import copy
+
     return {
         "last_sequence": snapshot.last_sequence,
-        "run_status": dict(snapshot.run_status or {}),
-        "stage_statuses": dict(snapshot.stage_statuses or {}),
-        "artifact_statuses": dict(snapshot.artifact_statuses or {}),
+        "run_status": copy.deepcopy(snapshot.run_status or {}),
+        "stage_statuses": copy.deepcopy(snapshot.stage_statuses or {}),
+        "artifact_statuses": copy.deepcopy(snapshot.artifact_statuses or {}),
         "is_running": snapshot.is_running,
         "is_paused": snapshot.is_paused,
         "paused_stage": snapshot.paused_stage,
         "current_run_id": snapshot.current_run_id,
-        "artifact_versions": dict(snapshot.artifact_versions or {}),
-        "stage_errors": dict(snapshot.stage_errors or {}),
-        "comment_counts": dict(snapshot.comment_counts or {}),
-        "stage_triggers": dict(snapshot.stage_triggers or {}),
-        "artifact_meta": dict(snapshot.artifact_meta or {}),
-        "artifact_git_shas": dict(snapshot.artifact_git_shas or {}),
-        "cascade_parents": dict(snapshot.cascade_parents or {}),
-        "execution_map": dict(snapshot.execution_map or {}),
+        "artifact_versions": copy.deepcopy(snapshot.artifact_versions or {}),
+        "stage_errors": copy.deepcopy(snapshot.stage_errors or {}),
+        "comment_counts": copy.deepcopy(snapshot.comment_counts or {}),
+        "stage_triggers": copy.deepcopy(snapshot.stage_triggers or {}),
+        "artifact_meta": copy.deepcopy(snapshot.artifact_meta or {}),
+        "artifact_git_shas": copy.deepcopy(snapshot.artifact_git_shas or {}),
+        "cascade_parents": copy.deepcopy(snapshot.cascade_parents or {}),
+        "execution_map": copy.deepcopy(snapshot.execution_map or {}),
     }
 
 
