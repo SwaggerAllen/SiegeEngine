@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { useSafeEffect } from '../../hooks/useSafe';
+// import { useSafeEffect } from '../../hooks/useSafe'; // DISABLED for debugging
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -49,14 +49,15 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   void fetchArtifact; void clearSelection;
   console.log('[PipelineDAG] render — rawNodes:', rawNodes.length, 'rawEdges:', rawEdges.length);
 
-  // === LAYER 2: Fetch effect ===
-  useSafeEffect('dag-fetch', () => {
-    if (variant === 'documents') {
-      fetchDocumentsDAG(projectId);
-    } else {
-      fetchDAG(projectId);
-    }
-  }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
+  // === LAYER 2: Fetch effect === DISABLED for debugging
+  // useSafeEffect('dag-fetch', () => {
+  //   if (variant === 'documents') {
+  //     fetchDocumentsDAG(projectId);
+  //   } else {
+  //     fetchDAG(projectId);
+  //   }
+  // }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
+  void fetchDAG; void fetchDocumentsDAG; // suppress unused
 
   // === LAYER 3: Dagre layout ===
   const nodes = useMemo(() => {
