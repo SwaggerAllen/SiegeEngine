@@ -35,7 +35,7 @@ function ExecutionRow({ exec, projectId }: { exec: StageExecution; projectId?: s
   const [expanded, setExpanded] = useState(false);
   const [actionInProgress, setActionInProgress] = useState(false);
   const badge = STATUS_BADGES[exec.status] || STATUS_BADGES.pending;
-  const { forceRestartStage } = usePipelineStore();
+  const forceRestartStage = usePipelineStore((s) => s.forceRestartStage);
 
   const handleForceRestart = async () => {
     if (!projectId) return;

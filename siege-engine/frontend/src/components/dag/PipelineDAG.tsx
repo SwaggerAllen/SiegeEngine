@@ -32,7 +32,8 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
     selectArtifact,
     selectStage,
   } = useDAGStore();
-  const { fetchArtifact, clearSelection } = useProjectStore();
+  const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
+  const clearSelection = useProjectStore((s) => s.clearSelection);
 
   const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
   const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;

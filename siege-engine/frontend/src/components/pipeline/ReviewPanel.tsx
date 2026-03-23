@@ -24,7 +24,11 @@ function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: 
   componentKey: string | null;
   artifactId?: string;
 }) {
-  const { startPipeline, resumeRun, regenDownstream, isRunning, runs } = usePipelineStore();
+  const startPipeline = usePipelineStore((s) => s.startPipeline);
+  const resumeRun = usePipelineStore((s) => s.resumeRun);
+  const regenDownstream = usePipelineStore((s) => s.regenDownstream);
+  const isRunning = usePipelineStore((s) => s.isRunning);
+  const runs = usePipelineStore((s) => s.runs);
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<'start' | 'resume'>('start');
   const [aiLoops, setAiLoops] = useState(1);
