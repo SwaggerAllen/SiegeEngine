@@ -23,6 +23,20 @@ export function emptySnapshot(): PipelineSnapshot {
  * Returns a new snapshot (does NOT mutate input).
  */
 export function applyWSEvent(snapshot: PipelineSnapshot, event: WSEvent): PipelineSnapshot {
+  // For events that don't modify the snapshot, return the ORIGINAL object.
+  // This lets callers use referential equality (newSnap === oldSnap) to skip
+  // unnecessary store updates — critical during active runs where high-frequency
+  // events (stage_progress, log_entry, comments, feedback_saved) would otherwise
+  // create a new snapshot object on every message and trigger re-render cascades.
+  switch (event.type) {
+    case 'stage_progress':
+    case 'feedback_saved':
+    case 'comment_added':
+    case 'comment_updated':
+    case 'comment_deleted':
+      return snapshot; // no-op — return original reference
+  }
+
   // Shallow-clone with new objects for mutated maps
   const snap: PipelineSnapshot = {
     ...snapshot,
@@ -40,10 +54,6 @@ export function applyWSEvent(snapshot: PipelineSnapshot, event: WSEvent): Pipeli
       snap.paused_stage = null;
       break;
     }
-
-    case 'stage_progress':
-      // Progress events don't change status
-      break;
 
     case 'stage_awaiting_review': {
       const key = stageKey(event.stage_key, event.component_key);
@@ -107,10 +117,6 @@ export function applyWSEvent(snapshot: PipelineSnapshot, event: WSEvent): Pipeli
       }
       break;
 
-    case 'feedback_saved':
-      // Feedback doesn't change status
-      break;
-
     case 'cascade_completed':
       snap.is_running = false;
       if (event.run_id) {
@@ -120,12 +126,6 @@ export function applyWSEvent(snapshot: PipelineSnapshot, event: WSEvent): Pipeli
 
     case 'artifact_pruned':
       delete snap.artifact_statuses[event.artifact_id];
-      break;
-
-    case 'comment_added':
-    case 'comment_updated':
-    case 'comment_deleted':
-      // Comment events don't affect pipeline status
       break;
   }
 

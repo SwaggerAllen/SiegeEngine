@@ -233,9 +233,6 @@ export const usePipelineStore = createSafeStore<PipelineState>('pipeline', (set,
   },
 
   updateFromWS: (event) => {
-    // Always store the latest event so subscribers (e.g. CommentsPanel) can react
-    set({ lastWSEvent: event });
-
     // Accumulate log entries (keep last 500 to avoid unbounded growth)
     if (event.type === 'log_entry') {
       const prev = get().logEntries;
@@ -244,9 +241,22 @@ export const usePipelineStore = createSafeStore<PipelineState>('pipeline', (set,
       return;  // log_entry doesn't affect pipeline snapshot state
     }
 
-    // Apply event through the reducer to update snapshot + derived state
+    // Store the latest event so subscribers (e.g. CommentsPanel) can react.
+    // Skip for high-frequency no-op events (stage_progress) to avoid
+    // unnecessary store notifications during active runs.
+    if (event.type !== 'stage_progress') {
+      set({ lastWSEvent: event });
+    }
+
+    // Apply event through the reducer to update snapshot + derived state.
+    // applyWSEvent returns the SAME object for no-op events (stage_progress,
+    // feedback_saved, comments) — use referential equality to skip set().
     const prevSnapshot = get().snapshot;
     const newSnapshot = applyWSEvent(prevSnapshot, event);
+
+    if (newSnapshot === prevSnapshot) {
+      return; // nothing changed — skip store update entirely
+    }
 
     const updates: Partial<PipelineState> = {
       snapshot: newSnapshot,
