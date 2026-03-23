@@ -349,38 +349,135 @@ function sanitizeForDisplay(obj: unknown, depth = 0): unknown {
   return out;
 }
 
-function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
-  const renderCount = useRef(0);
-  renderCount.current += 1;
-
-  const snapshot = {
-    _meta: {
-      renderCount: renderCount.current,
-      capturedAt: new Date().toISOString(),
-    },
+function grabSnapshot() {
+  return {
     pipeline: sanitizeForDisplay(usePipelineStore.getState()),
     dag: sanitizeForDisplay(useDAGStore.getState()),
     project: sanitizeForDisplay(useProjectStore.getState()),
     auth: sanitizeForDisplay(useAuthStore.getState()),
     errors: sanitizeForDisplay(useErrorLogStore.getState()),
   };
+}
 
-  const text = JSON.stringify(snapshot, null, 2);
+/** Shallow diff two objects, returning only changed/added/removed keys */
+function diffSnapshots(
+  prev: Record<string, unknown>,
+  next: Record<string, unknown>,
+  prefix = '',
+): string[] {
+  const lines: string[] = [];
+  const allKeys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  for (const key of allKeys) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const a = prev[key];
+    const b = next[key];
+    if (a === undefined) {
+      lines.push(`+ ${path}: ${JSON.stringify(b)}`);
+    } else if (b === undefined) {
+      lines.push(`- ${path}: ${JSON.stringify(a)}`);
+    } else if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null && !Array.isArray(a) && !Array.isArray(b)) {
+      lines.push(...diffSnapshots(a as Record<string, unknown>, b as Record<string, unknown>, path));
+    } else {
+      const aStr = JSON.stringify(a);
+      const bStr = JSON.stringify(b);
+      if (aStr !== bStr) {
+        lines.push(`~ ${path}:`);
+        lines.push(`    was: ${aStr.length > 200 ? aStr.slice(0, 200) + '...' : aStr}`);
+        lines.push(`    now: ${bStr.length > 200 ? bStr.slice(0, 200) + '...' : bStr}`);
+      }
+    }
+  }
+  return lines;
+}
+
+function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
+  const renderCount = useRef(0);
+  renderCount.current += 1;
+
+  const lastSnapshotRef = useRef<Record<string, unknown> | null>(null);
+  const [diffText, setDiffText] = useState<string | null>(null);
+  const [displaySnapshot, setDisplaySnapshot] = useState<Record<string, unknown> | null>(null);
+
+  // Take initial snapshot on first render
+  if (!lastSnapshotRef.current) {
+    lastSnapshotRef.current = grabSnapshot();
+    if (!displaySnapshot) {
+      // avoid setState during render — use ref and effect
+    }
+  }
+
+  useEffect(() => {
+    if (!displaySnapshot && lastSnapshotRef.current) {
+      setDisplaySnapshot(lastSnapshotRef.current);
+    }
+  }, [displaySnapshot]);
+
+  const handleRefresh = () => {
+    const next = grabSnapshot();
+    const prev = lastSnapshotRef.current;
+    if (prev) {
+      const changes = diffSnapshots(prev, next);
+      if (changes.length === 0) {
+        setDiffText('(no changes)');
+      } else {
+        setDiffText(changes.join('\n'));
+      }
+    }
+    lastSnapshotRef.current = next;
+    setDisplaySnapshot(next);
+  };
+
+  const current = displaySnapshot ?? lastSnapshotRef.current ?? {};
+  const fullText = JSON.stringify(
+    { _meta: { renderCount: renderCount.current, capturedAt: new Date().toISOString() }, ...current },
+    null,
+    2,
+  );
 
   return (
     <>
-      <div className="text-xs text-gray-400 shrink-0">
-        Render #{renderCount.current} — snapshot of all Zustand stores at render time (no live updates)
+      <div className="flex items-center justify-between shrink-0">
+        <span className="text-xs text-gray-400">
+          Render #{renderCount.current} — snapshot at render time
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRefresh}
+            className="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded"
+          >
+            Snapshot + Diff
+          </button>
+          <button
+            onClick={() => onCopy(fullText)}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
+          >
+            Copy
+          </button>
+        </div>
       </div>
+      {diffText !== null && (
+        <div className="shrink-0 max-h-48 overflow-auto">
+          <div className="text-xs font-semibold text-yellow-400 mb-1">Changes since last snapshot:</div>
+          <pre className="bg-gray-950 border border-yellow-700/50 rounded p-2 text-xs font-mono whitespace-pre leading-relaxed">
+            {diffText === '(no changes)'
+              ? <span className="text-gray-500">{diffText}</span>
+              : diffText.split('\n').map((line, i) => (
+                  <div key={i} className={
+                    line.startsWith('+') ? 'text-green-400' :
+                    line.startsWith('-') ? 'text-red-400' :
+                    line.startsWith('~') ? 'text-yellow-300' :
+                    line.startsWith('    was:') ? 'text-red-400/70' :
+                    line.startsWith('    now:') ? 'text-green-400/70' :
+                    'text-gray-400'
+                  }>{line}</div>
+                ))
+            }
+          </pre>
+        </div>
+      )}
       <pre className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-3 text-xs text-gray-300 font-mono whitespace-pre leading-relaxed">
-        {text}
+        {fullText}
       </pre>
-      <button
-        onClick={() => onCopy(text)}
-        className="shrink-0 self-end px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
-      >
-        Copy Frontend State
-      </button>
     </>
   );
 }
