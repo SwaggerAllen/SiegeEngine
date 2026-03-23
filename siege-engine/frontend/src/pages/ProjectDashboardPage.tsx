@@ -48,9 +48,9 @@ export function ProjectDashboardPage() {
   useEffect(() => {
     resetPipeline();
     if (projectId) {
-      fetchProject(projectId);
-      fetchConfig(projectId);
-      fetchStatus(projectId);
+      fetchProject(projectId).catch((err) => console.error('[Dashboard] fetchProject failed:', err));
+      fetchConfig(projectId).catch((err) => console.error('[Dashboard] fetchConfig failed:', err));
+      fetchStatus(projectId).catch((err) => console.error('[Dashboard] fetchStatus failed:', err));
       fetchRuns(projectId);
       fetchBlockingPR(projectId);
     }
