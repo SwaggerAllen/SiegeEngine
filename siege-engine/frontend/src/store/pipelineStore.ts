@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import * as pipelineApi from '../api/pipeline';
 import type { PipelineConfig, PipelineRun, PipelineSnapshot, PipelineStartOptions, StageExecution, WSEvent } from '../types/pipeline';
-import { applyWSEvent, emptySnapshot } from './pipelineReducer';
+import { applyWSEvent, patchExecutions, emptySnapshot } from './pipelineReducer';
 
 export interface BlockingPR {
   url: string;
@@ -264,6 +264,13 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       isPaused: newSnapshot.is_paused,
       pausedStage: newSnapshot.paused_stage,
     };
+
+    // Patch execution statuses locally — avoids needing fetchStatus on every WS event
+    const prevExecs = get().executions;
+    const newExecs = patchExecutions(prevExecs, event);
+    if (newExecs !== prevExecs) {
+      updates.executions = newExecs;
+    }
 
     // Update currentRunNumber on pipeline_completed
     if (event.type === 'pipeline_completed' && event.run_number) {
