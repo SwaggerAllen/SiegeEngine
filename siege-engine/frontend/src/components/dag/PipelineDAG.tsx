@@ -1,5 +1,6 @@
 // TODO: uncomment as layers are re-enabled
-// import { useCallback, useMemo, useState } from 'react';
+import { useMemo } from 'react';
+// import { useCallback, useState } from 'react';
 import { useSafeEffect } from '../../hooks/useSafe';
 import {
   ReactFlow,
@@ -8,7 +9,7 @@ import {
   // Controls,
   // MiniMap,
 } from '@xyflow/react';
-// import dagre from 'dagre';
+import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
 
 import { useDAGStore } from '../../store/dagStore';
@@ -60,28 +61,28 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
 
   // === LAYER 3: Dagre layout ===
-  // TODO: uncomment to test if layout memo causes the loop
-  // const nodes = useMemo(() => {
-  //   if (rawNodes.length === 0) return [];
-  //
-  //   const g = new dagre.graphlib.Graph();
-  //   g.setDefaultEdgeLabel(() => ({}));
-  //   g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
-  //
-  //   rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
-  //   rawEdges.forEach((e) => g.setEdge(e.source, e.target));
-  //   dagre.layout(g);
-  //
-  //   return rawNodes.map((n) => {
-  //     const pos = g.node(n.id);
-  //     if (!pos) return { ...n, data: { ...n.data, projectId }, position: { x: 0, y: 0 } };
-  //     return {
-  //       ...n,
-  //       data: { ...n.data, projectId },
-  //       position: { x: pos.x - 110, y: pos.y - 50 },
-  //     };
-  //   });
-  // }, [rawNodes, rawEdges, projectId]);
+  const nodes = useMemo(() => {
+    if (rawNodes.length === 0) return [];
+
+    const g = new dagre.graphlib.Graph();
+    g.setDefaultEdgeLabel(() => ({}));
+    g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
+
+    rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
+    rawEdges.forEach((e) => g.setEdge(e.source, e.target));
+    dagre.layout(g);
+
+    return rawNodes.map((n) => {
+      const pos = g.node(n.id);
+      if (!pos) return { ...n, data: { ...n.data, projectId }, position: { x: 0, y: 0 } };
+      return {
+        ...n,
+        data: { ...n.data, projectId },
+        position: { x: pos.x - 110, y: pos.y - 50 },
+      };
+    });
+  }, [rawNodes, rawEdges, projectId]);
+  void nodes;
 
   // === LAYER 4: Click handlers ===
   // TODO: uncomment to test if callbacks cause re-renders
