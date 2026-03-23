@@ -5,24 +5,20 @@ import { PipelineControls } from './PipelineControls';
 const mockCancelPipeline = vi.fn();
 const mockResetAll = vi.fn();
 
+// Mock usePipelineStore to support both selector and no-arg calls.
+// When called with a selector function, apply it to the mock state.
+let mockState: Record<string, unknown> = {};
+
 vi.mock('../../store/pipelineStore', () => ({
-  usePipelineStore: vi.fn(() => ({
-    isRunning: false,
-    isPaused: false,
-    currentRunNumber: null,
-    runs: [],
-    blockingPR: null,
-    cancelPipeline: mockCancelPipeline,
-    resetAll: mockResetAll,
-    checkBlockingPR: vi.fn(),
-    dismissBlockingPR: vi.fn(),
-  })),
+  usePipelineStore: vi.fn((selector?: (s: Record<string, unknown>) => unknown) => {
+    return selector ? selector(mockState) : mockState;
+  }),
 }));
 
 import { usePipelineStore } from '../../store/pipelineStore';
 
 function mockStoreValues(values: Record<string, unknown>) {
-  vi.mocked(usePipelineStore).mockReturnValue({
+  mockState = {
     isRunning: false,
     isPaused: false,
     currentRunNumber: null,
@@ -33,7 +29,12 @@ function mockStoreValues(values: Record<string, unknown>) {
     checkBlockingPR: vi.fn(),
     dismissBlockingPR: vi.fn(),
     ...values,
-  } as ReturnType<typeof usePipelineStore>);
+  };
+  // Also update the mock implementation for re-renders
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  vi.mocked(usePipelineStore).mockImplementation(((selector?: (s: any) => any) =>
+    selector ? selector(mockState) : mockState) as any,
+  );
 }
 
 describe('PipelineControls', () => {

@@ -4,8 +4,11 @@ import type { PipelineRun } from '../../types/pipeline';
 import { formatDateShort } from '../../utils/dateFormat';
 
 export function RunSelector({ projectId }: { projectId: string }) {
-  const { runs, fetchRuns, selectedRunNumber, isViewingHistory, selectRun } =
-    usePipelineStore();
+  const runs = usePipelineStore((s) => s.runs);
+  const fetchRuns = usePipelineStore((s) => s.fetchRuns);
+  const selectedRunNumber = usePipelineStore((s) => s.selectedRunNumber);
+  const isViewingHistory = usePipelineStore((s) => s.isViewingHistory);
+  const selectRun = usePipelineStore((s) => s.selectRun);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 

@@ -2,10 +2,15 @@ import { useState, useRef, useEffect } from 'react';
 import { usePipelineStore } from '../../store/pipelineStore';
 
 export function PipelineControls({ projectId, hasGitHub }: { projectId: string; hasGitHub?: boolean }) {
-  const {
-    isRunning, isPaused, currentRunNumber, runs, blockingPR,
-    cancelPipeline, resetAll, checkBlockingPR, dismissBlockingPR,
-  } = usePipelineStore();
+  const isRunning = usePipelineStore((s) => s.isRunning);
+  const isPaused = usePipelineStore((s) => s.isPaused);
+  const currentRunNumber = usePipelineStore((s) => s.currentRunNumber);
+  const runs = usePipelineStore((s) => s.runs);
+  const blockingPR = usePipelineStore((s) => s.blockingPR);
+  const cancelPipeline = usePipelineStore((s) => s.cancelPipeline);
+  const resetAll = usePipelineStore((s) => s.resetAll);
+  const checkBlockingPR = usePipelineStore((s) => s.checkBlockingPR);
+  const dismissBlockingPR = usePipelineStore((s) => s.dismissBlockingPR);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [checkingPR, setCheckingPR] = useState(false);
