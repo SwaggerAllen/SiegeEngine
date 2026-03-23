@@ -3,6 +3,25 @@ import * as pipelineApi from '../api/pipeline';
 import type { DAGResponse } from '../types/dag';
 import type { Node, Edge } from '@xyflow/react';
 
+/** Shallow-compare two arrays of plain objects by JSON-serialisable fields. */
+function nodesEqual(a: Node[], b: Node[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id || a[i].type !== b[i].type ||
+        a[i].position.x !== b[i].position.x || a[i].position.y !== b[i].position.y) return false;
+  }
+  return true;
+}
+
+function edgesEqual(a: Edge[], b: Edge[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id || a[i].source !== b[i].source ||
+        a[i].target !== b[i].target || a[i].type !== b[i].type) return false;
+  }
+  return true;
+}
+
 function mapNodes(data: DAGResponse): Node[] {
   return data.nodes.map((n) => ({
     id: n.id,
@@ -41,7 +60,7 @@ interface DAGState {
   setEditPromptStageKey: (key: string | null) => void;
 }
 
-export const useDAGStore = createSafeStore<DAGState>('dag', (set) => ({
+export const useDAGStore = createSafeStore<DAGState>('dag', (set, get) => ({
   nodes: [],
   edges: [],
   docNodes: [],
@@ -52,12 +71,24 @@ export const useDAGStore = createSafeStore<DAGState>('dag', (set) => ({
 
   fetchDAG: async (projectId) => {
     const data: DAGResponse = await pipelineApi.getDAG(projectId);
-    set({ nodes: mapNodes(data), edges: mapEdges(data) });
+    const newNodes = mapNodes(data);
+    const newEdges = mapEdges(data);
+    const { nodes, edges } = get();
+    const patch: Partial<DAGState> = {};
+    if (!nodesEqual(nodes, newNodes)) patch.nodes = newNodes;
+    if (!edgesEqual(edges, newEdges)) patch.edges = newEdges;
+    if (Object.keys(patch).length > 0) set(patch);
   },
 
   fetchDocumentsDAG: async (projectId) => {
     const data: DAGResponse = await pipelineApi.getDocumentsDAG(projectId);
-    set({ docNodes: mapNodes(data), docEdges: mapEdges(data) });
+    const newNodes = mapNodes(data);
+    const newEdges = mapEdges(data);
+    const { docNodes, docEdges } = get();
+    const patch: Partial<DAGState> = {};
+    if (!nodesEqual(docNodes, newNodes)) patch.docNodes = newNodes;
+    if (!edgesEqual(docEdges, newEdges)) patch.docEdges = newEdges;
+    if (Object.keys(patch).length > 0) set(patch);
   },
 
   selectArtifact: (id) => set({ selectedArtifactId: id, selectedStageKey: null }),
