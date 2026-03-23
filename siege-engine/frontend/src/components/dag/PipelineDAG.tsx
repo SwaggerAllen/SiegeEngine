@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 // TODO: uncomment with effects
 // import { useSafeEffect, useSafeMemo } from '../../hooks/useSafe';
-import { useSafeMemo } from '../../hooks/useSafe';
+import { useSafeEffect, useSafeMemo } from '../../hooks/useSafe';
 import {
   ReactFlow,
   Background,
@@ -24,14 +24,13 @@ interface PipelineDAGProps {
   variant?: 'pipeline' | 'documents';
 }
 
-export function PipelineDAG({ projectId: _projectId, variant = 'pipeline' }: PipelineDAGProps) {
+export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
   const pipelineNodes = useDAGStore((s) => s.nodes);
   const pipelineEdges = useDAGStore((s) => s.edges);
   const docNodes = useDAGStore((s) => s.docNodes);
   const docEdges = useDAGStore((s) => s.docEdges);
-  // TODO: uncomment with dag-fetch effect
-  // const fetchDAG = useDAGStore((s) => s.fetchDAG);
-  // const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
+  const fetchDAG = useDAGStore((s) => s.fetchDAG);
+  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const selectStage = useDAGStore((s) => s.selectStage);
   const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
@@ -40,14 +39,13 @@ export function PipelineDAG({ projectId: _projectId, variant = 'pipeline' }: Pip
   const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
   const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
 
-  // TODO: uncomment — disabled to isolate repaint bug
-  // useSafeEffect('dag-fetch', () => {
-  //   if (variant === 'documents') {
-  //     fetchDocumentsDAG(projectId);
-  //   } else {
-  //     fetchDAG(projectId);
-  //   }
-  // }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
+  useSafeEffect('dag-fetch', () => {
+    if (variant === 'documents') {
+      fetchDocumentsDAG(projectId);
+    } else {
+      fetchDAG(projectId);
+    }
+  }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
 
   const layoutedNodes = useSafeMemo('dagre-layout', () => {
     if (rawNodes.length === 0) return [];
