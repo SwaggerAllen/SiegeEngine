@@ -1,6 +1,6 @@
 // TODO: uncomment as layers are re-enabled
-import { useMemo } from 'react';
-// import { useCallback, useState } from 'react';
+import { useCallback, useMemo } from 'react';
+// import { useState } from 'react';
 import { useSafeEffect } from '../../hooks/useSafe';
 import {
   ReactFlow,
@@ -85,27 +85,28 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   void nodes;
 
   // === LAYER 4: Click handlers ===
-  // TODO: uncomment to test if callbacks cause re-renders
-  // const onNodeClick = useCallback(
-  //   (_: React.MouseEvent, node: { id: string; data?: Record<string, unknown> }) => {
-  //     if (variant === 'pipeline') {
-  //       selectStage((node.data?.stage_key as string) ?? null);
-  //     } else {
-  //       const hasArtifact = node.data?.has_artifact;
-  //       if (hasArtifact) {
-  //         selectArtifact(node.id);
-  //         fetchArtifact(node.id);
-  //       }
-  //     }
-  //   },
-  //   [variant, selectStage, selectArtifact, fetchArtifact]
-  // );
-  //
-  // const onPaneClick = useCallback(() => {
-  //   selectStage(null);
-  //   selectArtifact(null);
-  //   clearSelection();
-  // }, [selectStage, selectArtifact, clearSelection]);
+  const onNodeClick = useCallback(
+    (_: React.MouseEvent, node: { id: string; data?: Record<string, unknown> }) => {
+      if (variant === 'pipeline') {
+        selectStage((node.data?.stage_key as string) ?? null);
+      } else {
+        const hasArtifact = node.data?.has_artifact;
+        if (hasArtifact) {
+          selectArtifact(node.id);
+          fetchArtifact(node.id);
+        }
+      }
+    },
+    [variant, selectStage, selectArtifact, fetchArtifact]
+  );
+  void onNodeClick;
+
+  const onPaneClick = useCallback(() => {
+    selectStage(null);
+    selectArtifact(null);
+    clearSelection();
+  }, [selectStage, selectArtifact, clearSelection]);
+  void onPaneClick;
 
   // === LAYER 5: Minimap + full render ===
   // TODO: uncomment to test full ReactFlow render with all children
