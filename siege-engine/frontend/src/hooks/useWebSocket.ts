@@ -100,11 +100,18 @@ export function useWebSocket(projectId: string | undefined) {
         fetchDocumentsDAG(projectId);
       }
 
-      // Auto-select artifact when review is needed
+      // Auto-select artifact when review is needed, but only if the user
+      // isn't already viewing something — avoids stealing focus during a run
+      // that generates multiple components in sequence.
       if (data.type === 'stage_awaiting_review' && data.artifact_id) {
-        console.log('[WS] Auto-selecting artifact for review:', data.artifact_id);
-        selectArtifact(data.artifact_id);
-        fetchArtifact(data.artifact_id);
+        const currentlySelected = useDAGStore.getState().selectedArtifactId;
+        if (!currentlySelected) {
+          console.log('[WS] Auto-selecting artifact for review:', data.artifact_id);
+          selectArtifact(data.artifact_id);
+          fetchArtifact(data.artifact_id);
+        } else {
+          console.log('[WS] Artifact ready for review (not auto-selecting, user has selection):', data.artifact_id);
+        }
       }
 
       // Refresh artifact after force restart so ReviewPanel clears the approved badge
