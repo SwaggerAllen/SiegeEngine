@@ -1,6 +1,4 @@
 import { useCallback, useState } from 'react';
-// TODO: uncomment with effects
-// import { useSafeEffect, useSafeMemo } from '../../hooks/useSafe';
 import { useSafeEffect, useSafeMemo } from '../../hooks/useSafe';
 import {
   ReactFlow,
@@ -68,14 +66,13 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
     });
   }, [], [rawNodes, rawEdges]);
 
-  const [nodes, _setNodes, onNodesChange] = useNodesState(layoutedNodes);
-  const [edges, _setEdges, onEdgesChange] = useEdgesState(rawEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState(layoutedNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(rawEdges);
 
-  // TODO: uncomment — disabled to isolate repaint bug
-  // useSafeEffect('dag-sync-nodes', () => {
-  //   setNodes(layoutedNodes);
-  //   setEdges(rawEdges);
-  // }, [layoutedNodes, rawEdges, setNodes, setEdges]);
+  useSafeEffect('dag-sync-nodes', () => {
+    setNodes(layoutedNodes);
+    setEdges(rawEdges);
+  }, [layoutedNodes, rawEdges, setNodes, setEdges]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: { id: string; data?: { stage_key?: string; has_artifact?: boolean } }) => {
