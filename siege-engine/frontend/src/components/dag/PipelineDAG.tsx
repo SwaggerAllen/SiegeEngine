@@ -1,12 +1,11 @@
-import { useCallback, useMemo } from 'react';
-// import { useState } from 'react';  // Layer 5b: restore for MiniMap toggle
+import { useCallback, useMemo, useState } from 'react';
 import { useSafeEffect } from '../../hooks/useSafe';
 import {
   ReactFlow,
   ReactFlowProvider,
   Background,
-  // Controls,   // Layer 5b: restore
-  // MiniMap,     // Layer 5b: restore
+  Controls,
+  MiniMap,
 } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
@@ -106,10 +105,8 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   }, [selectStage, selectArtifact, clearSelection]);
 
 
-  // === LAYER 5a: real nodes/edges, default node type (no StageNode) ===
-  // Testing whether the loop is caused by StageNode, MiniMap, or just
-  // having real data in ReactFlow.  nodeTypes / Controls / MiniMap stripped.
-  void nodeTypes; // suppress unused — will restore in 5b
+  // === LAYER 5: Full render (WS disabled for debugging) ===
+  const [showMinimap, setShowMinimap] = useState(true);
 
   if (rawNodes.length === 0) {
     return (
@@ -123,12 +120,45 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
     <ReactFlow
       nodes={nodes}
       edges={rawEdges}
+      nodeTypes={nodeTypes}
       onNodeClick={onNodeClick}
       onPaneClick={onPaneClick}
       fitView
       className="bg-gray-900"
     >
       <Background color="#374151" gap={20} />
+      <Controls className="!bg-gray-800 !border-gray-600 [&>button]:!bg-gray-700 [&>button]:!text-white [&>button]:!border-gray-600" />
+      <button
+        onClick={() => setShowMinimap((v) => !v)}
+        className="absolute top-2 right-2 z-10 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"
+        title={showMinimap ? 'Hide minimap' : 'Show minimap'}
+      >
+        {showMinimap ? 'Hide Map' : 'Show Map'}
+      </button>
+      {showMinimap && (
+        <MiniMap
+          className="!bg-gray-800"
+          nodeColor={(n) => {
+            const artifactType = n.data?.artifact_type as string;
+            if (artifactType === 'component_map' || artifactType === 'sub_component_map') {
+              return '#818cf8';
+            }
+            const status = n.data?.status as string;
+            const colors: Record<string, string> = {
+              approved: '#22c55e',
+              awaiting_review: '#eab308',
+              generating: '#3b82f6',
+              running: '#3b82f6',
+              ai_reviewing: '#a855f7',
+              stale: '#f97316',
+              rejected: '#ef4444',
+              failed: '#ef4444',
+              pending: '#6b7280',
+            };
+            return colors[status] || '#6b7280';
+          }}
+        />
+      )}
     </ReactFlow>
   );
 }
