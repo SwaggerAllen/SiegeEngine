@@ -15,22 +15,13 @@ export function useWebSocket(projectId: string | undefined) {
   const retryDelay = useRef(INITIAL_RETRY_MS);
   const mountedRef = useRef(true);
 
-  // Store callbacks in refs so `connect` never changes identity.
-  // This prevents WS teardown/reconnect cycles caused by transient
-  // reference changes during rapid store updates (e.g. cancel/restart).
-  const updateFromWSRef = useRef(usePipelineStore.getState().updateFromWS);
-  const fetchDAGRef = useRef(useDAGStore.getState().fetchDAG);
-  const fetchDocumentsDAGRef = useRef(useDAGStore.getState().fetchDocumentsDAG);
-  const selectArtifactRef = useRef(useDAGStore.getState().selectArtifact);
-  const fetchArtifactRef = useRef(useProjectStore.getState().fetchArtifact);
-
-  // Keep refs current (these are stable in practice, but belt-and-suspenders)
-  updateFromWSRef.current = usePipelineStore.getState().updateFromWS;
-  fetchDAGRef.current = useDAGStore.getState().fetchDAG;
-  fetchDocumentsDAGRef.current = useDAGStore.getState().fetchDocumentsDAG;
-  selectArtifactRef.current = useDAGStore.getState().selectArtifact;
-  fetchArtifactRef.current = useProjectStore.getState().fetchArtifact;
-
+  // Use individual selectors so this hook doesn't re-render on every store
+  // state change — only the function references matter here and they're stable.
+  const updateFromWS = usePipelineStore((s) => s.updateFromWS);
+  const fetchDAG = useDAGStore((s) => s.fetchDAG);
+  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
+  const selectArtifact = useDAGStore((s) => s.selectArtifact);
+  const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
   const [connected, setConnected] = useState(false);
   const debounceFetchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -96,7 +87,7 @@ export function useWebSocket(projectId: string | undefined) {
       // updateFromWS applies the event to both the snapshot AND the
       // executions array locally — no HTTP fetchStatus needed.
       try {
-        updateFromWSRef.current(data);
+        updateFromWS(data);
       } catch (err) {
         // createSafeStore already logged the error; swallow here so a
         // bad event doesn't kill the WebSocket connection.
@@ -125,8 +116,8 @@ export function useWebSocket(projectId: string | undefined) {
         if (debounceFetchRef.current) clearTimeout(debounceFetchRef.current);
         debounceFetchRef.current = setTimeout(() => {
           debounceFetchRef.current = null;
-          fetchDAGRef.current(projectId);
-          fetchDocumentsDAGRef.current(projectId);
+          fetchDAG(projectId);
+          fetchDocumentsDAG(projectId);
         }, FETCH_DEBOUNCE_MS);
       }
 
@@ -137,8 +128,8 @@ export function useWebSocket(projectId: string | undefined) {
         const currentlySelected = useDAGStore.getState().selectedArtifactId;
         if (!currentlySelected) {
           console.log('[WS] Auto-selecting artifact for review:', data.artifact_id);
-          selectArtifactRef.current(data.artifact_id);
-          fetchArtifactRef.current(data.artifact_id);
+          selectArtifact(data.artifact_id);
+          fetchArtifact(data.artifact_id);
         } else {
           console.log('[WS] Artifact ready for review (not auto-selecting, user has selection):', data.artifact_id);
         }
@@ -146,17 +137,17 @@ export function useWebSocket(projectId: string | undefined) {
 
       // Refresh artifact after force restart so ReviewPanel clears the approved badge
       if (data.type === 'stage_failed' && data.artifact_id) {
-        fetchArtifactRef.current(data.artifact_id);
+        fetchArtifact(data.artifact_id);
       }
 
       // Refresh artifact content after feedback is saved
       if (data.type === 'feedback_saved' && data.artifact_id) {
-        fetchArtifactRef.current(data.artifact_id);
+        fetchArtifact(data.artifact_id);
       }
 
       // Refresh selected artifact when a stage completes (e.g. stale → approved)
       if (data.type === 'stage_completed' && data.artifact_id) {
-        fetchArtifactRef.current(data.artifact_id);
+        fetchArtifact(data.artifact_id);
       }
 
       // Refresh selected artifact when a stage starts (e.g. after rejection triggers
@@ -164,14 +155,13 @@ export function useWebSocket(projectId: string | undefined) {
       if (data.type === 'stage_started') {
         const selectedId = useDAGStore.getState().selectedArtifactId;
         if (selectedId) {
-          fetchArtifactRef.current(selectedId);
+          fetchArtifact(selectedId);
         }
       }
     };
 
     wsRef.current = ws;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, updateFromWS, fetchDAG, fetchDocumentsDAG, selectArtifact, fetchArtifact]);
 
   useEffect(() => {
     mountedRef.current = true;
