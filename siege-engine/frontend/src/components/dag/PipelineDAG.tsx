@@ -1,20 +1,21 @@
-import { useCallback, useState } from 'react';
-import { useSafeEffect, useSafeMemo } from '../../hooks/useSafe';
+// TODO: uncomment as layers are re-enabled
+// import { useCallback, useMemo, useState } from 'react';
+// import { useSafeEffect } from '../../hooks/useSafe';
 import {
   ReactFlow,
   ReactFlowProvider,
   Background,
-  Controls,
-  MiniMap,
+  // Controls,
+  // MiniMap,
 } from '@xyflow/react';
-import dagre from 'dagre';
+// import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
 
-import { useDAGStore } from '../../store/dagStore';
-import { useProjectStore } from '../../store/projectStore';
-import { StageNode } from './StageNode';
+// import { useDAGStore } from '../../store/dagStore';
+// import { useProjectStore } from '../../store/projectStore';
+// import { StageNode } from './StageNode';
 
-const nodeTypes = { stageNode: StageNode };
+// const nodeTypes = { stageNode: StageNode };
 
 interface PipelineDAGProps {
   projectId: string;
@@ -29,124 +30,149 @@ export function PipelineDAG(props: PipelineDAGProps) {
   );
 }
 
-function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
-  const pipelineNodes = useDAGStore((s) => s.nodes);
-  const pipelineEdges = useDAGStore((s) => s.edges);
-  const docNodes = useDAGStore((s) => s.docNodes);
-  const docEdges = useDAGStore((s) => s.docEdges);
-  const fetchDAG = useDAGStore((s) => s.fetchDAG);
-  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
-  const selectArtifact = useDAGStore((s) => s.selectArtifact);
-  const selectStage = useDAGStore((s) => s.selectStage);
-  const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
-  const clearSelection = useProjectStore((s) => s.clearSelection);
+function PipelineDAGInner(_props: PipelineDAGProps) {
+  // === LAYER 1: Store selectors ===
+  // TODO: uncomment to test if store subscriptions cause churn
+  // const pipelineNodes = useDAGStore((s) => s.nodes);
+  // const pipelineEdges = useDAGStore((s) => s.edges);
+  // const docNodes = useDAGStore((s) => s.docNodes);
+  // const docEdges = useDAGStore((s) => s.docEdges);
+  // const fetchDAG = useDAGStore((s) => s.fetchDAG);
+  // const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
+  // const selectArtifact = useDAGStore((s) => s.selectArtifact);
+  // const selectStage = useDAGStore((s) => s.selectStage);
+  // const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
+  // const clearSelection = useProjectStore((s) => s.clearSelection);
+  //
+  // const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
+  // const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
 
-  const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
-  const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
+  // === LAYER 2: Fetch effect ===
+  // TODO: uncomment to test if initial fetch triggers a loop
+  // useSafeEffect('dag-fetch', () => {
+  //   if (variant === 'documents') {
+  //     fetchDocumentsDAG(projectId);
+  //   } else {
+  //     fetchDAG(projectId);
+  //   }
+  // }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
 
-  useSafeEffect('dag-fetch', () => {
-    if (variant === 'documents') {
-      fetchDocumentsDAG(projectId);
-    } else {
-      fetchDAG(projectId);
-    }
-  }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
+  // === LAYER 3: Dagre layout ===
+  // TODO: uncomment to test if layout memo causes the loop
+  // const nodes = useMemo(() => {
+  //   if (rawNodes.length === 0) return [];
+  //
+  //   const g = new dagre.graphlib.Graph();
+  //   g.setDefaultEdgeLabel(() => ({}));
+  //   g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
+  //
+  //   rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
+  //   rawEdges.forEach((e) => g.setEdge(e.source, e.target));
+  //   dagre.layout(g);
+  //
+  //   return rawNodes.map((n) => {
+  //     const pos = g.node(n.id);
+  //     if (!pos) return { ...n, data: { ...n.data, projectId }, position: { x: 0, y: 0 } };
+  //     return {
+  //       ...n,
+  //       data: { ...n.data, projectId },
+  //       position: { x: pos.x - 110, y: pos.y - 50 },
+  //     };
+  //   });
+  // }, [rawNodes, rawEdges, projectId]);
 
-  const nodes = useSafeMemo('dagre-layout', () => {
-    if (rawNodes.length === 0) return [];
+  // === LAYER 4: Click handlers ===
+  // TODO: uncomment to test if callbacks cause re-renders
+  // const onNodeClick = useCallback(
+  //   (_: React.MouseEvent, node: { id: string; data?: Record<string, unknown> }) => {
+  //     if (variant === 'pipeline') {
+  //       selectStage((node.data?.stage_key as string) ?? null);
+  //     } else {
+  //       const hasArtifact = node.data?.has_artifact;
+  //       if (hasArtifact) {
+  //         selectArtifact(node.id);
+  //         fetchArtifact(node.id);
+  //       }
+  //     }
+  //   },
+  //   [variant, selectStage, selectArtifact, fetchArtifact]
+  // );
+  //
+  // const onPaneClick = useCallback(() => {
+  //   selectStage(null);
+  //   selectArtifact(null);
+  //   clearSelection();
+  // }, [selectStage, selectArtifact, clearSelection]);
 
-    const g = new dagre.graphlib.Graph();
-    g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
+  // === LAYER 5: Minimap + full render ===
+  // TODO: uncomment to test full ReactFlow render with all children
+  // const [showMinimap, setShowMinimap] = useState(true);
 
-    rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
-    rawEdges.forEach((e) => g.setEdge(e.source, e.target));
-    dagre.layout(g);
+  // if (rawNodes.length === 0) {
+  //   return (
+  //     <div className="flex items-center justify-center h-full text-gray-500">
+  //       {variant === 'documents' ? 'Loading documents...' : 'Loading pipeline stages...'}
+  //     </div>
+  //   );
+  // }
 
-    return rawNodes.map((n) => {
-      const pos = g.node(n.id);
-      if (!pos) return { ...n, position: { x: 0, y: 0 } };
-      return {
-        ...n,
-        position: { x: pos.x - 110, y: pos.y - 50 },
-      };
-    });
-  }, [], [rawNodes, rawEdges]);
-
-  const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: { id: string; data?: { stage_key?: string; has_artifact?: boolean } }) => {
-      if (variant === 'pipeline') {
-        selectStage(node.data?.stage_key ?? null);
-      } else {
-        const hasArtifact = node.data?.has_artifact;
-        if (hasArtifact) {
-          selectArtifact(node.id);
-          fetchArtifact(node.id);
-        }
-      }
-    },
-    [variant, selectStage, selectArtifact, fetchArtifact]
-  );
-
-  const onPaneClick = useCallback(() => {
-    selectStage(null);
-    selectArtifact(null);
-    clearSelection();
-  }, [selectStage, selectArtifact, clearSelection]);
-
-  const [showMinimap, setShowMinimap] = useState(true);
-
-  if (rawNodes.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full text-gray-500">
-        {variant === 'documents' ? 'Loading documents...' : 'Loading pipeline stages...'}
-      </div>
-    );
-  }
-
+  // Bare-minimum: empty ReactFlow + background
+  // If this still crashes, the problem is upstream (parent / WS store churn)
   return (
     <ReactFlow
-      nodes={nodes}
-      edges={rawEdges}
-      nodeTypes={nodeTypes}
-      onNodeClick={onNodeClick}
-      onPaneClick={onPaneClick}
+      nodes={[]}
+      edges={[]}
       fitView
       className="bg-gray-900"
     >
       <Background color="#374151" gap={20} />
-      <Controls className="!bg-gray-800 !border-gray-600 [&>button]:!bg-gray-700 [&>button]:!text-white [&>button]:!border-gray-600" />
-      <button
-        onClick={() => setShowMinimap((v) => !v)}
-        className="absolute top-2 right-2 z-10 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"
-        title={showMinimap ? 'Hide minimap' : 'Show minimap'}
-      >
-        {showMinimap ? 'Hide Map' : 'Show Map'}
-      </button>
-      {showMinimap && (
-        <MiniMap
-          className="!bg-gray-800"
-          nodeColor={(n) => {
-            const artifactType = n.data?.artifact_type as string;
-            if (artifactType === 'component_map' || artifactType === 'sub_component_map') {
-              return '#818cf8';
-            }
-            const status = n.data?.status as string;
-            const colors: Record<string, string> = {
-              approved: '#22c55e',
-              awaiting_review: '#eab308',
-              generating: '#3b82f6',
-              running: '#3b82f6',
-              ai_reviewing: '#a855f7',
-              stale: '#f97316',
-              rejected: '#ef4444',
-              failed: '#ef4444',
-              pending: '#6b7280',
-            };
-            return colors[status] || '#6b7280';
-          }}
-        />
-      )}
     </ReactFlow>
   );
+
+  // TODO: restore full render once loop is found
+  // return (
+  //   <ReactFlow
+  //     nodes={nodes}
+  //     edges={rawEdges}
+  //     nodeTypes={nodeTypes}
+  //     onNodeClick={onNodeClick}
+  //     onPaneClick={onPaneClick}
+  //     fitView
+  //     className="bg-gray-900"
+  //   >
+  //     <Background color="#374151" gap={20} />
+  //     <Controls className="!bg-gray-800 !border-gray-600 [&>button]:!bg-gray-700 [&>button]:!text-white [&>button]:!border-gray-600" />
+  //     <button
+  //       onClick={() => setShowMinimap((v) => !v)}
+  //       className="absolute top-2 right-2 z-10 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"
+  //       title={showMinimap ? 'Hide minimap' : 'Show minimap'}
+  //     >
+  //       {showMinimap ? 'Hide Map' : 'Show Map'}
+  //     </button>
+  //     {showMinimap && (
+  //       <MiniMap
+  //         className="!bg-gray-800"
+  //         nodeColor={(n) => {
+  //           const artifactType = n.data?.artifact_type as string;
+  //           if (artifactType === 'component_map' || artifactType === 'sub_component_map') {
+  //             return '#818cf8';
+  //           }
+  //           const status = n.data?.status as string;
+  //           const colors: Record<string, string> = {
+  //             approved: '#22c55e',
+  //             awaiting_review: '#eab308',
+  //             generating: '#3b82f6',
+  //             running: '#3b82f6',
+  //             ai_reviewing: '#a855f7',
+  //             stale: '#f97316',
+  //             rejected: '#ef4444',
+  //             failed: '#ef4444',
+  //             pending: '#6b7280',
+  //           };
+  //           return colors[status] || '#6b7280';
+  //         }}
+  //       />
+  //     )}
+  //   </ReactFlow>
+  // );
 }
