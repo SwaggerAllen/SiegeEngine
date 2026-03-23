@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { createSafeStore } from './createSafeStore';
 import api from '../api/client';
 
 interface AuthState {
@@ -36,7 +36,7 @@ function getInitialAuth(): { token: string | null; user: AuthState['user']; isAu
 
 const initialAuth = getInitialAuth();
 
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = createSafeStore<AuthState>('auth', (set) => ({
   token: initialAuth.token,
   user: initialAuth.user,
   isAuthenticated: initialAuth.isAuthenticated,

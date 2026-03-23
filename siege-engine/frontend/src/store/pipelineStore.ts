@@ -1,7 +1,7 @@
-import { create } from 'zustand';
 import * as pipelineApi from '../api/pipeline';
 import type { PipelineConfig, PipelineRun, PipelineSnapshot, PipelineStartOptions, StageExecution, WSEvent } from '../types/pipeline';
 import { applyWSEvent, patchExecutions, emptySnapshot } from './pipelineReducer';
+import { createSafeStore } from './createSafeStore';
 
 export interface BlockingPR {
   url: string;
@@ -48,7 +48,7 @@ interface PipelineState {
   updateFromWS: (event: WSEvent) => void;
 }
 
-export const usePipelineStore = create<PipelineState>((set, get) => ({
+export const usePipelineStore = createSafeStore<PipelineState>('pipeline', (set, get) => ({
   config: null,
   executions: [],
   snapshot: emptySnapshot(),
@@ -90,30 +90,21 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
   },
 
   fetchRuns: async (projectId) => {
-    try {
-      const runs = await pipelineApi.listRuns(projectId);
-      const activeRun = runs.find((r: PipelineRun) => r.status === 'running' || r.status === 'paused');
-      set({
-        runs,
-        currentRunNumber: activeRun?.run_number ?? (runs.length > 0 ? runs[0].run_number : null),
-        // isRunning/isPaused now derived from snapshot via fetchStatus and WS events
-      });
-    } catch (err) {
-      console.error('[Pipeline] Failed to fetch runs:', err);
-    }
+    const runs = await pipelineApi.listRuns(projectId);
+    const activeRun = runs.find((r: PipelineRun) => r.status === 'running' || r.status === 'paused');
+    set({
+      runs,
+      currentRunNumber: activeRun?.run_number ?? (runs.length > 0 ? runs[0].run_number : null),
+    });
   },
 
   fetchBlockingPR: async (projectId) => {
-    try {
-      const data = await pipelineApi.getBlockingPR(projectId);
-      set({
-        blockingPR: data.blocking_pr_url
-          ? { url: data.blocking_pr_url, number: data.blocking_pr_number! }
-          : null,
-      });
-    } catch (err) {
-      console.error('[Pipeline] Failed to fetch blocking PR:', err);
-    }
+    const data = await pipelineApi.getBlockingPR(projectId);
+    set({
+      blockingPR: data.blocking_pr_url
+        ? { url: data.blocking_pr_url, number: data.blocking_pr_number! }
+        : null,
+    });
   },
 
   startPipeline: async (projectId, options) => {
@@ -177,10 +168,8 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       console.error('[Pipeline] PR creation failed:', result.pr_error);
       throw new Error(result.pr_error);
     }
-    // Snapshot reconciles via fetchStatus
-    const swallow = (err: unknown) => console.error('[Pipeline] post-cancel fetch failed:', err);
-    get().fetchRuns(projectId).catch(swallow);
-    get().fetchStatus(projectId).catch(swallow);
+    get().fetchRuns(projectId);
+    get().fetchStatus(projectId);
   },
 
   resetAll: async (projectId) => {

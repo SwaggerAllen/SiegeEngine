@@ -221,6 +221,27 @@ The debug dump has these sections, in order:
 
 - **Always use the long-term solution.** If there's a better architectural approach, implement it now rather than using a quick fix with plans to refactor later. Writing code is fast — don't put off refactors due to time constraints.
 
+### Safe-by-default async error handling
+
+All Zustand stores use `createSafeStore` (`frontend/src/store/createSafeStore.ts`) instead of bare `create()`. This wrapper automatically catches errors from every async store action and logs them to errorLogStore. It also marks promise rejections as "handled", so fire-and-forget calls like `fetchStatus(projectId)` never cause unhandled rejection crashes.
+
+**Do NOT add manual `.catch()` handlers to store action calls** unless the component needs to update UI on error (e.g. show a "Failed" message, reset a loading spinner). The middleware handles it.
+
+**To add a new store:** Use `createSafeStore('storeName', (set, get) => ({ ... }))`.
+
+**Error logging layers (from innermost to outermost):**
+
+| Layer | Source | What it catches |
+|-------|--------|----------------|
+| API interceptor | `api/client.ts` | Every HTTP error (status + URL context) |
+| Store middleware | `store/createSafeStore.ts` | Every store action failure (store.action name) |
+| Error boundaries | `components/ErrorBoundary.tsx` | React render crashes (panel label) |
+| Global handler | `main.tsx` | Stray rejections from non-store code |
+
+All layers log to `errorLogStore` → visible in the Error Log panel.
+
+The `errorLogStore` itself uses bare `create()` (not `createSafeStore`) to avoid circular dependencies.
+
 ## Quality Gates
 
 **All frontend changes must pass these checks before committing:**
