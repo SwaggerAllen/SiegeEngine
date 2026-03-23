@@ -5,6 +5,7 @@ import { useDAGStore } from '../../store/dagStore';
 import { useProjectStore } from '../../store/projectStore';
 import { useAuthStore } from '../../store/authStore';
 import { useErrorLogStore } from '../../store/errorLogStore';
+import { getRecordedSnapshots, clearRecordedSnapshots } from '../../lib/snapshotRecorder';
 
 interface DebugState {
   snapshot: Record<string, unknown>;
@@ -397,13 +398,15 @@ function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
   const lastSnapshotRef = useRef<Record<string, unknown> | null>(null);
   const [diffText, setDiffText] = useState<string | null>(null);
   const [displaySnapshot, setDisplaySnapshot] = useState<Record<string, unknown> | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [expandedEntry, setExpandedEntry] = useState<number | null>(null);
+
+  // Load recorded snapshots from sessionStorage (survives crash/reload)
+  const recorded = showHistory ? getRecordedSnapshots() : [];
 
   // Take initial snapshot on first render
   if (!lastSnapshotRef.current) {
     lastSnapshotRef.current = grabSnapshot();
-    if (!displaySnapshot) {
-      // avoid setState during render — use ref and effect
-    }
   }
 
   useEffect(() => {
@@ -448,6 +451,12 @@ function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
             Snapshot + Diff
           </button>
           <button
+            onClick={() => setShowHistory(!showHistory)}
+            className={`px-3 py-1.5 text-white text-xs rounded ${showHistory ? 'bg-purple-600 hover:bg-purple-700' : 'bg-purple-800 hover:bg-purple-700'}`}
+          >
+            {showHistory ? 'Hide' : 'Show'} Auto-Capture ({getRecordedSnapshots().length})
+          </button>
+          <button
             onClick={() => onCopy(fullText)}
             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
           >
@@ -455,6 +464,76 @@ function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
           </button>
         </div>
       </div>
+
+      {/* Auto-captured history from before the crash */}
+      {showHistory && (
+        <div className="shrink-0 max-h-72 overflow-auto border border-purple-700/50 rounded bg-gray-950 p-2">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-purple-400">
+              Auto-Captured Snapshots (recorded from DAG view, 500ms interval)
+            </span>
+            <button
+              onClick={() => { clearRecordedSnapshots(); setShowHistory(false); }}
+              className="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-[10px] rounded"
+            >
+              Clear
+            </button>
+          </div>
+          {recorded.length === 0 ? (
+            <p className="text-xs text-gray-500">No snapshots recorded yet. Navigate to the DAG view to start capturing.</p>
+          ) : (
+            <div className="space-y-1">
+              {recorded.map((entry, i) => {
+                const time = new Date(entry.ts).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                const diffCount = entry.diff ? entry.diff.length : 0;
+                const isExpanded = expandedEntry === i;
+                return (
+                  <div key={i} className="text-xs">
+                    <button
+                      onClick={() => setExpandedEntry(isExpanded ? null : i)}
+                      className="w-full text-left flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-800"
+                    >
+                      <span className="text-gray-500 font-mono">{time}</span>
+                      <span className="text-gray-500">#{entry.seq}</span>
+                      {entry.diff === null ? (
+                        <span className="text-purple-400">(baseline)</span>
+                      ) : diffCount === 0 ? (
+                        <span className="text-gray-600">(no changes — skipped)</span>
+                      ) : (
+                        <span className="text-yellow-400">{diffCount} change{diffCount !== 1 ? 's' : ''}</span>
+                      )}
+                      <span className="ml-auto text-gray-600">{isExpanded ? '\u25B2' : '\u25BC'}</span>
+                    </button>
+                    {isExpanded && (
+                      <pre className="ml-4 mt-1 mb-2 p-2 bg-gray-900 rounded text-[10px] font-mono whitespace-pre leading-relaxed max-h-40 overflow-auto">
+                        {entry.diff === null
+                          ? 'Initial baseline snapshot'
+                          : entry.diff.map((line, j) => (
+                              <div key={j} className={
+                                line.startsWith('+') ? 'text-green-400' :
+                                line.startsWith('-') ? 'text-red-400' :
+                                line.startsWith('~') ? 'text-yellow-300' :
+                                'text-gray-400'
+                              }>{line}</div>
+                            ))
+                        }
+                        <button
+                          onClick={() => onCopy(JSON.stringify(entry.stores, null, 2))}
+                          className="mt-2 px-2 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded"
+                        >
+                          Copy full snapshot
+                        </button>
+                      </pre>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Live diff */}
       {diffText !== null && (
         <div className="shrink-0 max-h-48 overflow-auto">
           <div className="text-xs font-semibold text-yellow-400 mb-1">Changes since last snapshot:</div>
