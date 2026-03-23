@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { createSafeStore } from './createSafeStore';
 import * as projectApi from '../api/projects';
 import type { Artifact, Project, ProjectDetail } from '../types/project';
 
@@ -16,7 +16,7 @@ interface ProjectState {
   clearSelection: () => void;
 }
 
-export const useProjectStore = create<ProjectState>((set) => ({
+export const useProjectStore = createSafeStore<ProjectState>('project', (set) => ({
   projects: [],
   currentProject: null,
   selectedArtifact: null,

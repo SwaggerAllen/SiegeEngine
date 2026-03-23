@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { createSafeStore } from './createSafeStore';
 import * as pipelineApi from '../api/pipeline';
 import type { DAGResponse } from '../types/dag';
 import type { Node, Edge } from '@xyflow/react';
@@ -41,7 +41,7 @@ interface DAGState {
   setEditPromptStageKey: (key: string | null) => void;
 }
 
-export const useDAGStore = create<DAGState>((set) => ({
+export const useDAGStore = createSafeStore<DAGState>('dag', (set) => ({
   nodes: [],
   edges: [],
   docNodes: [],

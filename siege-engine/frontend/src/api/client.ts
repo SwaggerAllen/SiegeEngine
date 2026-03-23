@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { useErrorLogStore } from '../store/errorLogStore';
 
 const api = axios.create({
   baseURL: '/api',
@@ -16,6 +17,15 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Log all API errors to the error log for mobile debugging
+    const url = error.config?.url || 'unknown';
+    const method = (error.config?.method || 'unknown').toUpperCase();
+    const status = error.response?.status;
+    const label = status
+      ? `API ${status} ${method} ${url}`
+      : `API Network Error ${method} ${url}`;
+    useErrorLogStore.getState().pushError(label, error.message || error);
+
     if (error.response?.status === 401) {
       // Don't intercept 401s from auth endpoints — let LoginPage handle those
       const url = error.config?.url || '';

@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { usePipelineStore } from '../store/pipelineStore';
 import { useDAGStore } from '../store/dagStore';
-import { useErrorLogStore } from '../store/errorLogStore';
 
 const STALE_THRESHOLD_MS = 30_000; // 30 seconds
 
@@ -28,18 +27,14 @@ export function useVisibilityRefresh(
         if (elapsed >= STALE_THRESHOLD_MS && projectId) {
           console.log(`[VisibilityRefresh] Tab refocused after ${Math.round(elapsed / 1000)}s — refreshing`);
 
-          // Pull fresh state from all stores.
-          // .catch() prevents unhandled rejections that crash Safari.
-          const swallow = (err: unknown) => {
-            console.error('[VisibilityRefresh] fetch failed:', err);
-            useErrorLogStore.getState().pushError('VisibilityRefresh', err);
-          };
-          useProjectStore.getState().fetchProject(projectId).catch(swallow);
-          usePipelineStore.getState().fetchConfig(projectId).catch(swallow);
-          usePipelineStore.getState().fetchStatus(projectId).catch(swallow);
-          usePipelineStore.getState().fetchRuns(projectId).catch(swallow);
-          useDAGStore.getState().fetchDAG(projectId).catch(swallow);
-          useDAGStore.getState().fetchDocumentsDAG(projectId).catch(swallow);
+          // All store actions are safe by default (createSafeStore handles
+          // unhandled rejections), so no manual .catch() needed.
+          useProjectStore.getState().fetchProject(projectId);
+          usePipelineStore.getState().fetchConfig(projectId);
+          usePipelineStore.getState().fetchStatus(projectId);
+          usePipelineStore.getState().fetchRuns(projectId);
+          useDAGStore.getState().fetchDAG(projectId);
+          useDAGStore.getState().fetchDocumentsDAG(projectId);
 
           // Reconnect WS in case the connection went stale
           reconnectWS();

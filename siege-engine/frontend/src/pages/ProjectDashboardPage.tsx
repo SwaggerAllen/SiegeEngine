@@ -50,17 +50,15 @@ export function ProjectDashboardPage() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const logErr = (label: string) => (err: unknown) => {
-      console.error(`[Dashboard] ${label} failed:`, err);
-      useErrorLogStore.getState().pushError(`Dashboard.${label}`, err);
-    };
     resetPipeline();
     if (projectId) {
-      fetchProject(projectId).catch(logErr('fetchProject'));
-      fetchConfig(projectId).catch(logErr('fetchConfig'));
-      fetchStatus(projectId).catch(logErr('fetchStatus'));
-      fetchRuns(projectId).catch(logErr('fetchRuns'));
-      fetchBlockingPR(projectId).catch(logErr('fetchBlockingPR'));
+      // All store actions are safe by default (createSafeStore handles
+      // unhandled rejections and error logging), so no manual .catch() needed.
+      fetchProject(projectId);
+      fetchConfig(projectId);
+      fetchStatus(projectId);
+      fetchRuns(projectId);
+      fetchBlockingPR(projectId);
     }
     return () => clearSelection();
   }, [projectId, resetPipeline, fetchProject, fetchConfig, fetchStatus, fetchRuns, fetchBlockingPR, clearSelection]);

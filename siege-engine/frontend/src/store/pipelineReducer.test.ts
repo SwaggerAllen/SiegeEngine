@@ -136,6 +136,55 @@ describe('applyWSEvent', () => {
     expect(snap.run_status['r1']).toBe('completed');
   });
 
+  it('preserves awaiting_review artifact status on stage_failed', () => {
+    const snap = {
+      ...emptySnapshot(),
+      artifact_statuses: { 'art-1': 'awaiting_review' },
+      stage_statuses: { 'design': 'awaiting_review' },
+    };
+    const result = applyWSEvent(snap, {
+      type: 'stage_failed',
+      stage_key: 'design',
+      error: 'Cancelled by user',
+      artifact_id: 'art-1',
+    });
+
+    expect(result.stage_statuses['design']).toBe('failed');
+    expect(result.artifact_statuses['art-1']).toBe('awaiting_review'); // preserved!
+  });
+
+  it('preserves approved artifact status on stage_failed', () => {
+    const snap = {
+      ...emptySnapshot(),
+      artifact_statuses: { 'art-1': 'approved' },
+      stage_statuses: { 'design': 'approved' },
+    };
+    const result = applyWSEvent(snap, {
+      type: 'stage_failed',
+      stage_key: 'design',
+      error: 'Cancelled by user',
+      artifact_id: 'art-1',
+    });
+
+    expect(result.artifact_statuses['art-1']).toBe('approved'); // preserved!
+  });
+
+  it('resets generating artifact status to pending on stage_failed', () => {
+    const snap = {
+      ...emptySnapshot(),
+      artifact_statuses: { 'art-1': 'generating' },
+      stage_statuses: { 'design': 'running' },
+    };
+    const result = applyWSEvent(snap, {
+      type: 'stage_failed',
+      stage_key: 'design',
+      error: 'timeout',
+      artifact_id: 'art-1',
+    });
+
+    expect(result.artifact_statuses['art-1']).toBe('pending'); // reset
+  });
+
   it('propagates staleness to multiple artifacts', () => {
     const snap = applyWSEvent(emptySnapshot(), {
       type: 'staleness_propagated',
