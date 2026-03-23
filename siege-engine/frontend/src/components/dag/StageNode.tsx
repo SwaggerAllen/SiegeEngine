@@ -42,7 +42,8 @@ const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 export function StageNode({ data }: { data: DAGNodeData }) {
   const { id: projectId } = useParams<{ id: string }>();
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
-  const { forceRestartStage, cancelStage } = usePipelineStore();
+  const forceRestartStage = usePipelineStore((s) => s.forceRestartStage);
+  const cancelStage = usePipelineStore((s) => s.cancelStage);
   const [restarting, setRestarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
@@ -56,7 +57,7 @@ export function StageNode({ data }: { data: DAGNodeData }) {
     : isPlaceholder
     ? 'bg-blue-900/60 border-blue-400 border-dashed animate-pulse'
     : STATUS_COLORS[data.status] || STATUS_COLORS.pending;
-  const statusLabel = isPlaceholder ? 'Generating...' : isInputDoc ? 'Input' : isBranchingNode && data.status === 'pending' ? 'Branching' : (STATUS_LABELS[data.status] || data.status.replace('_', ' '));
+  const statusLabel = isPlaceholder ? 'Generating...' : isInputDoc ? 'Input' : isBranchingNode && data.status === 'pending' ? 'Branching' : (STATUS_LABELS[data.status] || (data.status ?? 'pending').replace('_', ' '));
   const pi = data.prompt_info;
   const isProcessing = data.is_active || ACTIVE_STATUSES.has(data.status);
   const spinnerColor = data.status === 'ai_reviewing' ? 'stage-spinner--purple' : 'stage-spinner--blue';

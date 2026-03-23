@@ -48,21 +48,31 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
   const layoutedNodes = useMemo(() => {
     if (rawNodes.length === 0) return [];
 
-    const g = new dagre.graphlib.Graph();
-    g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
+    try {
+      const g = new dagre.graphlib.Graph();
+      g.setDefaultEdgeLabel(() => ({}));
+      g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
 
-    rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
-    rawEdges.forEach((e) => g.setEdge(e.source, e.target));
-    dagre.layout(g);
+      rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
+      rawEdges.forEach((e) => g.setEdge(e.source, e.target));
+      dagre.layout(g);
 
-    return rawNodes.map((n) => {
-      const pos = g.node(n.id);
-      return {
+      return rawNodes.map((n) => {
+        const pos = g.node(n.id);
+        if (!pos) return { ...n, position: { x: 0, y: 0 } };
+        return {
+          ...n,
+          position: { x: pos.x - 110, y: pos.y - 50 },
+        };
+      });
+    } catch (err) {
+      console.error('[PipelineDAG] dagre layout failed:', err);
+      // Fall back to raw positions (stacked vertically)
+      return rawNodes.map((n, i) => ({
         ...n,
-        position: { x: pos.x - 110, y: pos.y - 50 },
-      };
-    });
+        position: n.position ?? { x: 0, y: i * 120 },
+      }));
+    }
   }, [rawNodes, rawEdges]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutedNodes);

@@ -301,7 +301,9 @@ export function ProjectDashboardPage() {
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
           {!paneExpanded && (
             <div className="h-64 md:h-auto md:w-3/5 border-b md:border-b-0 md:border-r border-gray-700 shrink-0 md:shrink">
-              <PipelineDAG projectId={projectId} variant={activeTab === 'documents' ? 'documents' : 'pipeline'} />
+              <PanelErrorBoundary fallbackLabel="DAG render error">
+                <PipelineDAG projectId={projectId} variant={activeTab === 'documents' ? 'documents' : 'pipeline'} />
+              </PanelErrorBoundary>
             </div>
           )}
           <div className={`flex-1 ${paneExpanded ? 'w-full' : 'md:w-2/5'} flex flex-col overflow-hidden`}>
