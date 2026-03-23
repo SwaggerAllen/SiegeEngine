@@ -470,15 +470,23 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         """
         from sqlalchemy import func
 
-        # Reconcile mismatches: if an artifact is APPROVED but its latest
-        # execution is not, sync the execution so it gets carried over
-        # instead of silently dropping it.
+        # Reconcile mismatches: if an artifact is APPROVED but its owning
+        # execution is AWAITING_REVIEW or REJECTED, sync the execution so
+        # it gets carried over instead of silently dropping it.
+        #
+        # Only reconcile executions that plausibly represent the current
+        # state of the artifact (AWAITING_REVIEW, REJECTED).  Old FAILED
+        # retries should NOT be promoted to APPROVED — they are genuinely
+        # failed attempts and promoting them emits spurious events.
         mismatched = (
             self.db.query(StageExecution)
             .filter_by(project_id=project_id)
             .filter(StageExecution.run_id != new_run_id)
             .filter(StageExecution.artifact_id.isnot(None))
-            .filter(StageExecution.status != StageStatus.APPROVED)
+            .filter(StageExecution.status.in_([
+                StageStatus.AWAITING_REVIEW,
+                StageStatus.REJECTED,
+            ]))
             .join(Artifact, StageExecution.artifact_id == Artifact.id)
             .filter(Artifact.status == ArtifactStatus.APPROVED)
             .all()
@@ -728,7 +736,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             )
 
             # Check if any executions are still truly in-flight (RUNNING/AI_REVIEW)
-            inflight_count = (
+            # First check THIS run (for run-completion flow control)
+            inflight_in_run = (
                 self.db.query(StageExecution)
                 .filter_by(
                     project_id=project_id,
@@ -742,12 +751,34 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 )
                 .count()
             )
-            if inflight_count > 0:
+            if inflight_in_run > 0:
                 has_inflight_work = True
                 logger.info(
-                    "Stage %s has %d in-flight executions, scanning downstream",
+                    "Stage %s has %d in-flight executions in this run, scanning downstream",
                     stage_def.stage_key,
-                    inflight_count,
+                    inflight_in_run,
+                )
+                continue
+
+            # Then check ALL runs to prevent duplicate cross-run executions.
+            # A stage running in another run should not be started again here.
+            inflight_anywhere = (
+                self.db.query(StageExecution)
+                .filter(
+                    StageExecution.project_id == project_id,
+                    StageExecution.stage_key == stage_def.stage_key,
+                    StageExecution.status.in_(
+                        [StageStatus.RUNNING, StageStatus.AI_REVIEW]
+                    ),
+                )
+                .count()
+            )
+            if inflight_anywhere > 0:
+                logger.info(
+                    "Stage %s has %d in-flight executions in other runs, "
+                    "skipping to prevent duplicate generation",
+                    stage_def.stage_key,
+                    inflight_anywhere,
                 )
                 continue
 
@@ -781,6 +812,27 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         project_id, stage_def.stage_key, None
                     ):
                         continue
+
+                # Guard: skip if this stage is already running in ANY run
+                # (belt-and-suspenders with the stage-level check above)
+                already_running = (
+                    self.db.query(StageExecution)
+                    .filter(
+                        StageExecution.project_id == project_id,
+                        StageExecution.stage_key == stage_def.stage_key,
+                        StageExecution.component_key.is_(None),
+                        StageExecution.status.in_(
+                            [StageStatus.RUNNING, StageStatus.AI_REVIEW]
+                        ),
+                    )
+                    .first()
+                )
+                if already_running:
+                    logger.info(
+                        "Stage %s already running (execution %s), skipping",
+                        stage_def.stage_key, already_running.id,
+                    )
+                    continue
 
                 # Execute single stage
                 input_artifacts = self._gather_inputs(project_id, stage_def)
@@ -886,6 +938,26 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 # Execute ready entities
                 stage_failed = False
                 for entity_key in ready:
+                    # Guard: skip if this entity is already running in ANY run
+                    already_running = (
+                        self.db.query(StageExecution)
+                        .filter(
+                            StageExecution.project_id == project_id,
+                            StageExecution.stage_key == stage_def.stage_key,
+                            StageExecution.component_key == entity_key,
+                            StageExecution.status.in_(
+                                [StageStatus.RUNNING, StageStatus.AI_REVIEW]
+                            ),
+                        )
+                        .first()
+                    )
+                    if already_running:
+                        logger.info(
+                            "Entity %s/%s already running (execution %s), skipping",
+                            stage_def.stage_key, entity_key, already_running.id,
+                        )
+                        continue
+
                     input_artifacts = self._gather_inputs(project_id, stage_def, entity_key)
                     rejected_notes = self._get_rejected_notes(project_id, stage_def, entity_key)
                     execution = StageExecution(
