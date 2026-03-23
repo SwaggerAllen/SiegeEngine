@@ -1,6 +1,6 @@
 // TODO: uncomment as layers are re-enabled
 // import { useCallback, useMemo, useState } from 'react';
-// import { useSafeEffect } from '../../hooks/useSafe';
+import { useSafeEffect } from '../../hooks/useSafe';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -30,7 +30,7 @@ export function PipelineDAG(props: PipelineDAGProps) {
   );
 }
 
-function PipelineDAGInner({ variant = 'pipeline' }: PipelineDAGProps) {
+function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
   // === LAYER 1: Store selectors ===
   const pipelineNodes = useDAGStore((s) => s.nodes);
   const pipelineEdges = useDAGStore((s) => s.edges);
@@ -46,19 +46,18 @@ function PipelineDAGInner({ variant = 'pipeline' }: PipelineDAGProps) {
   const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
   const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
   // Keep subscriptions active but satisfy noUnusedLocals
-  void fetchDAG; void fetchDocumentsDAG; void selectArtifact;
-  void selectStage; void fetchArtifact; void clearSelection;
+  void selectArtifact; void selectStage;
+  void fetchArtifact; void clearSelection;
   console.log('[PipelineDAG] render — rawNodes:', rawNodes.length, 'rawEdges:', rawEdges.length);
 
   // === LAYER 2: Fetch effect ===
-  // TODO: uncomment to test if initial fetch triggers a loop
-  // useSafeEffect('dag-fetch', () => {
-  //   if (variant === 'documents') {
-  //     fetchDocumentsDAG(projectId);
-  //   } else {
-  //     fetchDAG(projectId);
-  //   }
-  // }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
+  useSafeEffect('dag-fetch', () => {
+    if (variant === 'documents') {
+      fetchDocumentsDAG(projectId);
+    } else {
+      fetchDAG(projectId);
+    }
+  }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
 
   // === LAYER 3: Dagre layout ===
   // TODO: uncomment to test if layout memo causes the loop
