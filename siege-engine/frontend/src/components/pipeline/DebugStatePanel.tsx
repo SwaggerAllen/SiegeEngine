@@ -470,7 +470,7 @@ function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
         <div className="shrink-0 max-h-72 overflow-auto border border-purple-700/50 rounded bg-gray-950 p-2">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-purple-400">
-              Auto-Captured Snapshots (recorded from DAG view, 500ms interval)
+              Auto-Captured Snapshots (recorded from DAG view, 100ms interval)
             </span>
             <button
               onClick={() => { clearRecordedSnapshots(); setShowHistory(false); }}

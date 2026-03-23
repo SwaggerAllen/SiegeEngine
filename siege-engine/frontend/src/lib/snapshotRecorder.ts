@@ -132,7 +132,7 @@ export function startRecording(): () => void {
   if (activeCount === 1) {
     // Take an immediate baseline
     capture();
-    intervalId = setInterval(capture, 500);
+    intervalId = setInterval(capture, 100);
   }
   return () => {
     activeCount--;
