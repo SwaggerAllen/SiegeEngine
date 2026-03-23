@@ -151,6 +151,7 @@ export function ProjectDashboardPage() {
     history: 'Event History',
     logs: 'Logs',
     debug: 'Debug',
+    errors: 'Error Log',
   };
   const visibleTabs: Tab[] = isViewer
     ? ['documents', 'pipeline', 'chat']

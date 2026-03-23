@@ -4,6 +4,8 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
+RUN npm run typecheck
+RUN npm run test:run
 RUN npm run build
 
 # Stage 2: Runtime

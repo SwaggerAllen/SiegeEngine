@@ -221,6 +221,24 @@ The debug dump has these sections, in order:
 
 - **Always use the long-term solution.** If there's a better architectural approach, implement it now rather than using a quick fix with plans to refactor later. Writing code is fast — don't put off refactors due to time constraints.
 
+## Quality Gates
+
+**All frontend changes must pass these checks before committing:**
+
+```bash
+cd siege-engine/frontend
+npm run typecheck    # tsc --noEmit (catches type errors)
+npm run test:run     # vitest run (unit tests)
+npm run lint         # eslint (code quality)
+npm run build        # vite production build
+```
+
+Or run all at once: `npm run ci`
+
+The Docker build (`Dockerfile` stage 1) runs `typecheck`, `test:run`, and `build` in sequence — a type error or test failure will fail the deploy.
+
+**Backend changes** should be tested with `pytest` from the repo root.
+
 ## Development
 
 ```bash
