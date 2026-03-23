@@ -139,7 +139,7 @@ The debug dump has these sections, in order:
 |------|-----------------|
 | `backend/pipeline/stage_execution.py` | `StageExecutionContext`, `StageExecutionStrategy` ABC, `ForceRestartStrategy`, `ManualTriggerStrategy` — strategy pattern for stage execution setup |
 | `backend/pipeline/artifact_ops.py` | `_regenerate_stage`, `resume_stage`, `retry_stage`, `_try_complete_run` — where executions are created and state transitions happen |
-| `backend/pipeline/engine.py` | `_run_stage` (takes `StageExecutionContext`), `execute_strategy`, `_find_and_execute_next` — the stage execution lifecycle |
+| `backend/pipeline/engine.py` | `_run_stage` (takes `StageExecutionContext`), `execute_strategy`, `_find_and_execute_next` (re-looping stage scanner with cross-run guards and pre-execution pause checks) — the stage execution lifecycle |
 | `backend/pipeline/reducer.py` | Pure event reducer — maps event types to snapshot mutations. No DB access. |
 | `backend/pipeline/event_store.py` | `emit()` — appends event, flushes, updates materialized snapshot. `rebuild_snapshot()` — replays all events from scratch. |
 | `backend/pipeline/queue.py` | Job queue worker. `_handle_resume_stage` / `_handle_retry_stage` — job handlers. `cancel_all_stale_jobs()` cleans up on startup. |
@@ -160,9 +160,9 @@ The debug dump has these sections, in order:
 
 2. **CancelledError vs Exception**: `asyncio.CancelledError` inherits from `BaseException`, not `Exception`. Async handlers that do cleanup in `except Exception` will miss cancellations (e.g., from force-restart). Always add a separate `except asyncio.CancelledError` handler that cleans up then re-raises. See `engine.py`'s `_run_stage` for the reference pattern.
 
-3. **Concurrency guards**: Before creating a new RUNNING execution, always check for existing RUNNING/AI_REVIEW executions for the same stage_key/component_key. `_trigger_single_stage` and `_trigger_fan_out_stage` in `engine.py` have this guard. `_regenerate_stage` and `retry_stage` in `artifact_ops.py` also have it now.
+3. **Concurrency guards — cross-run**: Before creating a new RUNNING execution, always check for existing RUNNING/AI_REVIEW executions for the same stage_key/component_key **across ALL runs**, not just the current run. The strategy classes (`ForceRestartStrategy`, `RejectionRegenerateStrategy`, etc.) in `stage_execution.py` query project-wide. The orchestrator `_find_and_execute_next` in `engine.py` has both a stage-level cross-run inflight check and per-entity guards before creating executions. Previous bug: the inflight check was scoped to `run_id`, so concurrent runs could create duplicate executions for the same stage.
 
-4. **Job dedup**: `enqueue()` has no built-in deduplication. Call `cancel_jobs_by_type()` before `enqueue()` to prevent duplicate jobs (see `routes_stage.py` `force_restart_stage` and `trigger_stage` for examples).
+4. **Job dedup**: `enqueue()` checks for existing queued jobs with the same type + payload before creating duplicates. Call `cancel_jobs_by_type()` before `enqueue()` for additional safety (see `routes_stage.py` `force_restart_stage` and `trigger_stage` for examples).
 
 5. **No stale job recovery**: `recover_stale_jobs()` was removed. On server restart, the startup reconciliation marks orphaned RUNNING executions as FAILED and completes stuck runs. Users restart work manually via the UI, which creates fresh runs and executions rather than resuming stale state.
 
@@ -185,6 +185,14 @@ The debug dump has these sections, in order:
 11. **DB projections are write-only for pipeline state**: `Artifact.status`, `StageExecution.status`, and similar DB fields are updated for query convenience and UI display, but pipeline state decisions must ALWAYS read from the `PipelineSnapshot`. When drift is detected between snapshot and DB, the snapshot wins. The reconcile endpoint fixes drift by syncing DB → snapshot.
 
 12. **CLI concurrency**: `MAX_CONCURRENT_LLM_CALLS` is set to 1. Higher values caused resource issues. The semaphore in `cli/manager.py` enforces this. Don't increase without load testing.
+
+13. **Phase boundary enforcement**: `_should_pause` must be checked BEFORE entering a stage's execution loop, not after. The check acts as a gate: stages past the stop point (e.g. `extract_sub_components` when the run stops at `component_architectures`) are never entered. Previously the check was after execution, so boundary-crossing stages ran before the pause was detected.
+
+14. **Cascading readiness re-loop**: `_find_and_execute_next` wraps its stage scan in a `while True` loop. After each pass that did work, it re-scans all stages. This handles cascading dependencies — e.g., generating component A's architecture unlocks component B (which depends on A). Without the re-loop, B would be missed because the scan already moved past `component_architectures`.
+
+15. **`_carry_over_approved` mismatch reconciliation**: When carrying over approved executions into a new run, the mismatch reconciliation only syncs AWAITING_REVIEW and REJECTED executions whose artifacts are APPROVED. Old FAILED retries are excluded — promoting them emits spurious `HUMAN_APPROVED` events that flood the event log. If you see a burst of `human_approved` events all at the same timestamp, this reconciliation is the likely source.
+
+16. **Snapshot dict isolation**: `_snapshot_to_dict` in `event_store.py` uses `copy.deepcopy` on all JSON column values, not shallow `dict()` copies. Shallow copies share nested objects with SQLAlchemy-managed references, which can cause "Set changed size during iteration" when the reducer's `copy.deepcopy` iterates over nested values.
 
 ## Development Principles
 
