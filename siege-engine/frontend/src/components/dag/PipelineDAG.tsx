@@ -11,8 +11,8 @@ import {
 // import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
 
-// import { useDAGStore } from '../../store/dagStore';
-// import { useProjectStore } from '../../store/projectStore';
+import { useDAGStore } from '../../store/dagStore';
+import { useProjectStore } from '../../store/projectStore';
 // import { StageNode } from './StageNode';
 
 // const nodeTypes = { stageNode: StageNode };
@@ -30,22 +30,25 @@ export function PipelineDAG(props: PipelineDAGProps) {
   );
 }
 
-function PipelineDAGInner(_props: PipelineDAGProps) {
+function PipelineDAGInner({ variant = 'pipeline' }: PipelineDAGProps) {
   // === LAYER 1: Store selectors ===
-  // TODO: uncomment to test if store subscriptions cause churn
-  // const pipelineNodes = useDAGStore((s) => s.nodes);
-  // const pipelineEdges = useDAGStore((s) => s.edges);
-  // const docNodes = useDAGStore((s) => s.docNodes);
-  // const docEdges = useDAGStore((s) => s.docEdges);
-  // const fetchDAG = useDAGStore((s) => s.fetchDAG);
-  // const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
-  // const selectArtifact = useDAGStore((s) => s.selectArtifact);
-  // const selectStage = useDAGStore((s) => s.selectStage);
-  // const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
-  // const clearSelection = useProjectStore((s) => s.clearSelection);
-  //
-  // const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
-  // const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
+  const pipelineNodes = useDAGStore((s) => s.nodes);
+  const pipelineEdges = useDAGStore((s) => s.edges);
+  const docNodes = useDAGStore((s) => s.docNodes);
+  const docEdges = useDAGStore((s) => s.docEdges);
+  const fetchDAG = useDAGStore((s) => s.fetchDAG);
+  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
+  const selectArtifact = useDAGStore((s) => s.selectArtifact);
+  const selectStage = useDAGStore((s) => s.selectStage);
+  const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
+  const clearSelection = useProjectStore((s) => s.clearSelection);
+
+  const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
+  const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
+  // Keep subscriptions active but satisfy noUnusedLocals
+  void fetchDAG; void fetchDocumentsDAG; void selectArtifact;
+  void selectStage; void fetchArtifact; void clearSelection;
+  console.log('[PipelineDAG] render — rawNodes:', rawNodes.length, 'rawEdges:', rawEdges.length);
 
   // === LAYER 2: Fetch effect ===
   // TODO: uncomment to test if initial fetch triggers a loop
