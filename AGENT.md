@@ -235,12 +235,62 @@ All Zustand stores use `createSafeStore` (`frontend/src/store/createSafeStore.ts
 |-------|--------|----------------|
 | API interceptor | `api/client.ts` | Every HTTP error (status + URL context) |
 | Store middleware | `store/createSafeStore.ts` | Every store action failure (store.action name) |
+| Safe hooks | `hooks/useSafe.ts` | Errors in useEffect/useMemo/useCallback bodies |
 | Error boundaries | `components/ErrorBoundary.tsx` | React render crashes (panel label) |
 | Global handler | `main.tsx` | Stray rejections from non-store code |
 
 All layers log to `errorLogStore` → visible in the Error Log panel.
 
 The `errorLogStore` itself uses bare `create()` (not `createSafeStore`) to avoid circular dependencies.
+
+### Safe hook wrappers (`hooks/useSafe.ts`)
+
+React error boundaries only catch errors during render. Errors in useEffect, useMemo, and callbacks are NOT caught and will crash the page. Safe hook wrappers catch those errors, log them to errorLogStore, and return safe fallbacks.
+
+**Always use safe hooks in dashboard-level and data-heavy components:**
+
+| Hook | Use instead of | Behavior on error |
+|------|---------------|-------------------|
+| `useSafeEffect(label, effect, deps)` | `useEffect` | Catches sync throws, logs to errorLogStore |
+| `useSafeMemo(label, factory, fallback, deps)` | `useMemo` | Returns fallback value on error |
+| `useSafeCallback(label, callback, deps)` | `useCallback` | Catches errors, logs them, re-throws for async |
+
+The `label` parameter appears in error log entries (e.g. `useSafeEffect(dashboard-init)`).
+
+### Zustand store subscriptions — ALWAYS use selectors
+
+**NEVER use bare `useXxxStore()` without a selector.** Bare calls subscribe to the ENTIRE store — every state change triggers a re-render, even unrelated ones. This causes render storms, especially with WebSocket events that update `lastWSEvent` on every message.
+
+```tsx
+// BAD — re-renders on every WS event, every fetch, every state change
+const { isRunning, currentRunNumber } = usePipelineStore();
+
+// GOOD — only re-renders when these specific values change
+const isRunning = usePipelineStore((s) => s.isRunning);
+const currentRunNumber = usePipelineStore((s) => s.currentRunNumber);
+```
+
+This applies to ALL stores: `usePipelineStore`, `useProjectStore`, `useDAGStore`, `useAuthStore`, `useErrorLogStore`.
+
+### Test mocks must support selector calls
+
+When components use individual selectors (`useStore((s) => s.field)`), test mocks must handle the selector function. Use this pattern:
+
+```tsx
+let mockState: Record<string, unknown> = {};
+
+vi.mock('../../store/pipelineStore', () => ({
+  usePipelineStore: vi.fn((selector?: (s: Record<string, unknown>) => unknown) => {
+    return selector ? selector(mockState) : mockState;
+  }),
+}));
+
+function mockStoreValues(values: Record<string, unknown>) {
+  mockState = { ...defaults, ...values };
+  vi.mocked(usePipelineStore).mockImplementation(((selector?: (s: any) => any) =>
+    selector ? selector(mockState) : mockState) as any);
+}
+```
 
 ## Quality Gates
 
