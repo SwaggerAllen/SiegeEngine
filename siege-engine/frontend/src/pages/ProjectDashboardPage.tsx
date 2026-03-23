@@ -22,14 +22,13 @@ import { RunSelector } from '../components/pipeline/RunSelector';
 import { EventHistoryPanel } from '../components/pipeline/EventHistoryPanel';
 import { LogPanel } from '../components/pipeline/LogPanel';
 import { DebugStatePanel } from '../components/pipeline/DebugStatePanel';
-import { ZustandStatePanel } from '../components/pipeline/ZustandStatePanel';
 import { PanelErrorBoundary } from '../components/ErrorBoundary';
 import { ErrorLogPanel } from '../components/pipeline/ErrorLogPanel';
 import { useErrorLogStore } from '../store/errorLogStore';
 import { reconcilePipeline } from '../api/pipeline';
 import api from '../api/client';
 
-type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug' | 'zustand' | 'errors';
+type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug' | 'errors';
 
 export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -163,7 +162,6 @@ export function ProjectDashboardPage() {
     history: 'Event History',
     logs: 'Logs',
     debug: 'Debug',
-    zustand: 'Zustand',
     errors: 'Error Log',
   };
   const visibleTabs: Tab[] = isViewer
@@ -432,12 +430,6 @@ export function ProjectDashboardPage() {
         <div className="flex-1 overflow-hidden">
           <PanelErrorBoundary fallbackLabel="Debug panel error">
             <DebugStatePanel projectId={projectId} />
-          </PanelErrorBoundary>
-        </div>
-      ) : activeTab === 'zustand' ? (
-        <div className="flex-1 overflow-hidden">
-          <PanelErrorBoundary fallbackLabel="Zustand state error">
-            <ZustandStatePanel />
           </PanelErrorBoundary>
         </div>
       ) : activeTab === 'errors' ? (
