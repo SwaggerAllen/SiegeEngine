@@ -723,11 +723,20 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         """
         stages = sorted(config.stages, key=lambda s: s.order_index)
 
+        _pass_num = 0
         while True:
+            _pass_num += 1
             did_work = False
             has_inflight_work = False
             hit_pause_boundary = False
             pause_stage_def = None
+
+            logger.info(
+                "[orchestrator] === Pass %d === run_id=%s start_stage=%s stop_point=%s",
+                _pass_num, run_id,
+                pipeline_run.start_stage_key if pipeline_run else None,
+                pipeline_run.stop_point.value if pipeline_run and pipeline_run.stop_point else None,
+            )
 
             for stage_def in stages:
                 # Skip stages outside run scope
@@ -742,10 +751,16 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 # Check stop point BEFORE executing — prevents running stages
                 # past the phase boundary (e.g. extract_sub_components when the
                 # run should stop after component_architectures).
-                if self._should_pause(stage_def, pipeline_run, project_id):
+                should_pause = self._should_pause(stage_def, pipeline_run, project_id)
+                if should_pause:
+                    _start_order = self._get_start_order(pipeline_run, project_id) if pipeline_run else -1
+                    _phase_complete = self._starting_phase_complete(pipeline_run, project_id) if pipeline_run else False
                     logger.info(
-                        "Stage %s is past stop point, not executing",
-                        stage_def.stage_key,
+                        "[orchestrator] Stage %s (order=%d) past stop point — "
+                        "start_order=%d, starting_phase_complete=%s, effective_order=%d",
+                        stage_def.stage_key, stage_def.order_index,
+                        _start_order, _phase_complete,
+                        _start_order + (1 if _phase_complete else 0),
                     )
                     hit_pause_boundary = True
                     pause_stage_def = stage_def
@@ -904,8 +919,16 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     FanOutStrategy.SUB_COMPONENT,
                     FanOutStrategy.LEAF,
                 ):
+                    all_entities_for_log = self._get_all_entities_for_stage(project_id, stage_def)
                     ready = self._get_ready_entities(
                         project_id, stage_def, run_id, pipeline_run=pipeline_run
+                    )
+                    logger.info(
+                        "[orchestrator] Stage %s fan-out: %d total entities, %d ready: %s",
+                        stage_def.stage_key,
+                        len(all_entities_for_log),
+                        len(ready),
+                        ready[:10],
                     )
                     if not ready:
                         # No entities ready — check if any entities exist at all
@@ -1012,6 +1035,13 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         return
 
             # --- End of stage scan ---
+
+            logger.info(
+                "[orchestrator] Pass %d result: did_work=%s, has_inflight=%s, hit_pause=%s (stage=%s)",
+                _pass_num, did_work, has_inflight_work,
+                hit_pause_boundary,
+                pause_stage_def.stage_key if pause_stage_def else None,
+            )
 
             # If we did work this pass, re-scan: generating entities may have
             # unlocked dependent entities (e.g. component B depends on A's

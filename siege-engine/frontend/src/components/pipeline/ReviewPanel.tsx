@@ -49,7 +49,10 @@ function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: 
           ai_loops: aiLoops,
           stop_point: stopPoint,
           start_stage_key: stageKey,
-          start_component_key: componentKey,
+          // Only scope to a specific component for fresh "start" runs.
+          // Resume runs should process ALL components at the stage level,
+          // not just the one the user is currently viewing.
+          start_component_key: mode === 'resume' ? null : componentKey,
         };
         if (mode === 'resume') {
           await resumeRun(projectId, options);
