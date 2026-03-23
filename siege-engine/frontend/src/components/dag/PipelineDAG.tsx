@@ -1,5 +1,7 @@
 import { useCallback, useState } from 'react';
-import { useSafeEffect, useSafeMemo } from '../../hooks/useSafe';
+// TODO: uncomment with effects
+// import { useSafeEffect, useSafeMemo } from '../../hooks/useSafe';
+import { useSafeMemo } from '../../hooks/useSafe';
 import {
   ReactFlow,
   Background,
@@ -22,13 +24,14 @@ interface PipelineDAGProps {
   variant?: 'pipeline' | 'documents';
 }
 
-export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
+export function PipelineDAG({ projectId: _projectId, variant = 'pipeline' }: PipelineDAGProps) {
   const pipelineNodes = useDAGStore((s) => s.nodes);
   const pipelineEdges = useDAGStore((s) => s.edges);
   const docNodes = useDAGStore((s) => s.docNodes);
   const docEdges = useDAGStore((s) => s.docEdges);
-  const fetchDAG = useDAGStore((s) => s.fetchDAG);
-  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
+  // TODO: uncomment with dag-fetch effect
+  // const fetchDAG = useDAGStore((s) => s.fetchDAG);
+  // const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const selectStage = useDAGStore((s) => s.selectStage);
   const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
@@ -37,13 +40,14 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
   const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
   const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
 
-  useSafeEffect('dag-fetch', () => {
-    if (variant === 'documents') {
-      fetchDocumentsDAG(projectId);
-    } else {
-      fetchDAG(projectId);
-    }
-  }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
+  // TODO: uncomment — disabled to isolate repaint bug
+  // useSafeEffect('dag-fetch', () => {
+  //   if (variant === 'documents') {
+  //     fetchDocumentsDAG(projectId);
+  //   } else {
+  //     fetchDAG(projectId);
+  //   }
+  // }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
 
   const layoutedNodes = useSafeMemo('dagre-layout', () => {
     if (rawNodes.length === 0) return [];
@@ -66,13 +70,14 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
     });
   }, [], [rawNodes, rawEdges]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(layoutedNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(rawEdges);
+  const [nodes, _setNodes, onNodesChange] = useNodesState(layoutedNodes);
+  const [edges, _setEdges, onEdgesChange] = useEdgesState(rawEdges);
 
-  useSafeEffect('dag-sync-nodes', () => {
-    setNodes(layoutedNodes);
-    setEdges(rawEdges);
-  }, [layoutedNodes, rawEdges, setNodes, setEdges]);
+  // TODO: uncomment — disabled to isolate repaint bug
+  // useSafeEffect('dag-sync-nodes', () => {
+  //   setNodes(layoutedNodes);
+  //   setEdges(rawEdges);
+  // }, [layoutedNodes, rawEdges, setNodes, setEdges]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: { id: string; data?: { stage_key?: string; has_artifact?: boolean } }) => {

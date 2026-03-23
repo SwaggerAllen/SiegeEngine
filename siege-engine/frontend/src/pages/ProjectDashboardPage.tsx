@@ -7,8 +7,7 @@ import { useAuthStore } from '../store/authStore';
 import { useDAGStore } from '../store/dagStore';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useVisibilityRefresh } from '../hooks/useVisibilityRefresh';
-// TEMP: commented out to isolate crash source
-// import { PipelineDAG } from '../components/dag/PipelineDAG';
+import { PipelineDAG } from '../components/dag/PipelineDAG';
 import { PipelineControls } from '../components/pipeline/PipelineControls';
 import { StageStatusList } from '../components/pipeline/StageStatus';
 import { ArtifactEditor } from '../components/editor/ArtifactEditor';
@@ -316,9 +315,7 @@ export function ProjectDashboardPage() {
           {!paneExpanded && (
             <div className="h-64 md:h-auto md:w-3/5 border-b md:border-b-0 md:border-r border-gray-700 shrink-0 md:shrink">
               <PanelErrorBoundary fallbackLabel="DAG render error">
-                {/* TEMP: commented out to isolate crash source */}
-                {/* <PipelineDAG projectId={projectId} variant={activeTab === 'documents' ? 'documents' : 'pipeline'} /> */}
-                <div className="flex items-center justify-center h-full text-gray-500">DAG disabled for debugging</div>
+                <PipelineDAG projectId={projectId} variant={activeTab === 'documents' ? 'documents' : 'pipeline'} />
               </PanelErrorBoundary>
             </div>
           )}
