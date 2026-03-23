@@ -1,5 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSafeEffect } from '../../hooks/useSafe';
+import { startRecording } from '../../lib/snapshotRecorder';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -48,6 +49,12 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   void selectArtifact; void selectStage;
   void fetchArtifact; void clearSelection;
   console.log('[PipelineDAG] render — rawNodes:', rawNodes.length, 'rawEdges:', rawEdges.length);
+
+  // === AUTO-CAPTURE: record store snapshots while DAG is mounted ===
+  useEffect(() => {
+    const stop = startRecording();
+    return stop;
+  }, []);
 
   // === LAYER 2: Fetch effect ===
   useSafeEffect('dag-fetch', () => {
