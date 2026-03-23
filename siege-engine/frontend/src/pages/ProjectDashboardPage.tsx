@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
+import { useSafeEffect } from '../hooks/useSafe';
 import { useParams, Link } from 'react-router-dom';
 import { useProjectStore } from '../store/projectStore';
 import { usePipelineStore } from '../store/pipelineStore';
@@ -31,11 +32,25 @@ type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'setti
 
 export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
-  const { currentProject, fetchProject, selectedArtifact, clearSelection } =
-    useProjectStore();
-  const { executions, fetchConfig, fetchStatus, fetchRuns, fetchBlockingPR, currentRunNumber, isRunning, isViewingHistory, reset: resetPipeline } = usePipelineStore();
-  const { user } = useAuthStore();
-  const { editPromptStageKey, setEditPromptStageKey, selectedStageKey } = useDAGStore();
+  // Use individual selectors to avoid re-rendering on every unrelated store change.
+  // Without selectors, usePipelineStore() re-renders this component on every WS event.
+  const currentProject = useProjectStore((s) => s.currentProject);
+  const fetchProject = useProjectStore((s) => s.fetchProject);
+  const selectedArtifact = useProjectStore((s) => s.selectedArtifact);
+  const clearSelection = useProjectStore((s) => s.clearSelection);
+  const executions = usePipelineStore((s) => s.executions);
+  const fetchConfig = usePipelineStore((s) => s.fetchConfig);
+  const fetchStatus = usePipelineStore((s) => s.fetchStatus);
+  const fetchRuns = usePipelineStore((s) => s.fetchRuns);
+  const fetchBlockingPR = usePipelineStore((s) => s.fetchBlockingPR);
+  const currentRunNumber = usePipelineStore((s) => s.currentRunNumber);
+  const isRunning = usePipelineStore((s) => s.isRunning);
+  const isViewingHistory = usePipelineStore((s) => s.isViewingHistory);
+  const resetPipeline = usePipelineStore((s) => s.reset);
+  const user = useAuthStore((s) => s.user);
+  const editPromptStageKey = useDAGStore((s) => s.editPromptStageKey);
+  const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
+  const selectedStageKey = useDAGStore((s) => s.selectedStageKey);
   const { connected, reconnect } = useWebSocket(projectId);
   const errorCount = useErrorLogStore((s) => s.errors.length);
   useVisibilityRefresh(projectId, reconnect);
@@ -49,11 +64,9 @@ export function ProjectDashboardPage() {
   const [repairResult, setRepairResult] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  useSafeEffect('dashboard-init', () => {
     resetPipeline();
     if (projectId) {
-      // All store actions are safe by default (createSafeStore handles
-      // unhandled rejections and error logging), so no manual .catch() needed.
       fetchProject(projectId);
       fetchConfig(projectId);
       fetchStatus(projectId);
@@ -64,7 +77,7 @@ export function ProjectDashboardPage() {
   }, [projectId, resetPipeline, fetchProject, fetchConfig, fetchStatus, fetchRuns, fetchBlockingPR, clearSelection]);
 
   // Close hamburger menu on outside click
-  useEffect(() => {
+  useSafeEffect('menu-outside-click', () => {
     if (!menuOpen) return;
     const handleClick = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -76,7 +89,7 @@ export function ProjectDashboardPage() {
   }, [menuOpen]);
 
   // When a DAG node's "Edit" prompt button is clicked, switch to prompts tab
-  useEffect(() => {
+  useSafeEffect('edit-prompt-redirect', () => {
     if (editPromptStageKey) {
       setInitialStageKey(editPromptStageKey);
       setActiveTab('prompts');

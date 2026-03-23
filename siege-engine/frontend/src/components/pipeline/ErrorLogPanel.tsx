@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useErrorLogStore } from '../../store/errorLogStore';
 
 export function ErrorLogPanel() {
-  const { errors, clear } = useErrorLogStore();
+  const errors = useErrorLogStore((s) => s.errors);
+  const clear = useErrorLogStore((s) => s.clear);
   const [copied, setCopied] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
 

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useSafeMemo } from '../../hooks/useSafe';
+import { useCallback, useState } from 'react';
+import { useSafeEffect, useSafeMemo } from '../../hooks/useSafe';
 import {
   ReactFlow,
   Background,
@@ -23,23 +23,21 @@ interface PipelineDAGProps {
 }
 
 export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
-  const {
-    nodes: pipelineNodes,
-    edges: pipelineEdges,
-    docNodes,
-    docEdges,
-    fetchDAG,
-    fetchDocumentsDAG,
-    selectArtifact,
-    selectStage,
-  } = useDAGStore();
+  const pipelineNodes = useDAGStore((s) => s.nodes);
+  const pipelineEdges = useDAGStore((s) => s.edges);
+  const docNodes = useDAGStore((s) => s.docNodes);
+  const docEdges = useDAGStore((s) => s.docEdges);
+  const fetchDAG = useDAGStore((s) => s.fetchDAG);
+  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
+  const selectArtifact = useDAGStore((s) => s.selectArtifact);
+  const selectStage = useDAGStore((s) => s.selectStage);
   const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
   const clearSelection = useProjectStore((s) => s.clearSelection);
 
   const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
   const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
 
-  useEffect(() => {
+  useSafeEffect('dag-fetch', () => {
     if (variant === 'documents') {
       fetchDocumentsDAG(projectId);
     } else {
@@ -71,7 +69,7 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutedNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(rawEdges);
 
-  useEffect(() => {
+  useSafeEffect('dag-sync-nodes', () => {
     setNodes(layoutedNodes);
     setEdges(rawEdges);
   }, [layoutedNodes, rawEdges, setNodes, setEdges]);

@@ -29,9 +29,9 @@ type ViewItem =
   | { kind: 'input_doc'; doc: InputDocument };
 
 export default function InputDocsPanel({ projectId }: InputDocsPanelProps) {
-  const { user } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const isViewer = user?.role === 'viewer';
-  const { currentProject } = useProjectStore();
+  const currentProject = useProjectStore((s) => s.currentProject);
 
   const [inputDocs, setInputDocs] = useState<InputDocument[]>([]);
   const [projectDocArtifact, setProjectDocArtifact] = useState<Artifact | null>(null);
