@@ -457,6 +457,13 @@ function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
             {showHistory ? 'Hide' : 'Show'} Auto-Capture ({getRecordedSnapshots().length})
           </button>
           <button
+            onClick={() => { clearRecordedSnapshots(); setShowHistory(false); }}
+            className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-xs rounded"
+            title="Clear all recorded snapshots from sessionStorage"
+          >
+            Clear Snapshots
+          </button>
+          <button
             onClick={() => onCopy(fullText)}
             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
           >
