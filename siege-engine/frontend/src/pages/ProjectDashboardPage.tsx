@@ -324,7 +324,9 @@ export function ProjectDashboardPage() {
                 ) ? (
                   <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                     <div className="flex-1 md:w-2/3 overflow-auto border-b md:border-b-0 md:border-r border-gray-700">
-                      <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
+                      <PanelErrorBoundary fallbackLabel="Editor error">
+                        <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
+                      </PanelErrorBoundary>
                     </div>
                     <div className="md:w-1/3 overflow-auto p-3">
                       <PanelErrorBoundary fallbackLabel="Review panel error">
@@ -339,7 +341,9 @@ export function ProjectDashboardPage() {
                 ) : (
                   <>
                     <div className="flex-1 overflow-auto">
-                      <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
+                      <PanelErrorBoundary fallbackLabel="Editor error">
+                        <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
+                      </PanelErrorBoundary>
                     </div>
                     <div className="shrink-0 p-3 border-t border-gray-700 overflow-auto max-h-64">
                       <PanelErrorBoundary fallbackLabel="Review panel error">
@@ -366,7 +370,9 @@ export function ProjectDashboardPage() {
                 </div>
                 {activeTab === 'pipeline' && (
                   <div className="flex-1 p-4 border-t border-gray-700 overflow-auto min-h-0">
-                    <StageStatusList executions={executions} projectId={projectId} />
+                    <PanelErrorBoundary fallbackLabel="Stage status error">
+                      <StageStatusList executions={executions} projectId={projectId} />
+                    </PanelErrorBoundary>
                   </div>
                 )}
               </div>
@@ -375,31 +381,43 @@ export function ProjectDashboardPage() {
         </div>
       ) : activeTab === 'prompts' ? (
         <div className="flex-1 overflow-hidden">
-          <PromptEditorPanel
-            projectId={projectId}
-            initialStageKey={initialStageKey}
-            onStageKeyConsumed={() => setInitialStageKey(null)}
-          />
+          <PanelErrorBoundary fallbackLabel="Prompt editor error">
+            <PromptEditorPanel
+              projectId={projectId}
+              initialStageKey={initialStageKey}
+              onStageKeyConsumed={() => setInitialStageKey(null)}
+            />
+          </PanelErrorBoundary>
         </div>
       ) : activeTab === 'input-docs' ? (
         <div className="flex-1 overflow-hidden">
-          <InputDocsPanel projectId={projectId} />
+          <PanelErrorBoundary fallbackLabel="Input docs error">
+            <InputDocsPanel projectId={projectId} />
+          </PanelErrorBoundary>
         </div>
       ) : activeTab === 'chat' ? (
         <div className="flex-1 overflow-hidden">
-          <ChatPanel projectId={projectId} />
+          <PanelErrorBoundary fallbackLabel="Chat error">
+            <ChatPanel projectId={projectId} />
+          </PanelErrorBoundary>
         </div>
       ) : activeTab === 'history' ? (
         <div className="flex-1 overflow-hidden">
-          <EventHistoryPanel projectId={projectId} />
+          <PanelErrorBoundary fallbackLabel="Event history error">
+            <EventHistoryPanel projectId={projectId} />
+          </PanelErrorBoundary>
         </div>
       ) : activeTab === 'logs' ? (
         <div className="flex-1 overflow-hidden">
-          <LogPanel />
+          <PanelErrorBoundary fallbackLabel="Log panel error">
+            <LogPanel />
+          </PanelErrorBoundary>
         </div>
       ) : activeTab === 'debug' ? (
         <div className="flex-1 overflow-hidden">
-          <DebugStatePanel projectId={projectId} />
+          <PanelErrorBoundary fallbackLabel="Debug panel error">
+            <DebugStatePanel projectId={projectId} />
+          </PanelErrorBoundary>
         </div>
       ) : activeTab === 'errors' ? (
         <div className="flex-1 overflow-auto">
@@ -407,7 +425,9 @@ export function ProjectDashboardPage() {
         </div>
       ) : (
         <div className="flex-1 overflow-auto">
-          <ProjectSettingsPanel projectId={projectId} />
+          <PanelErrorBoundary fallbackLabel="Settings error">
+            <ProjectSettingsPanel projectId={projectId} />
+          </PanelErrorBoundary>
         </div>
       )}
 
