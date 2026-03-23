@@ -21,10 +21,13 @@ import { RunSelector } from '../components/pipeline/RunSelector';
 import { EventHistoryPanel } from '../components/pipeline/EventHistoryPanel';
 import { LogPanel } from '../components/pipeline/LogPanel';
 import { DebugStatePanel } from '../components/pipeline/DebugStatePanel';
+import { PanelErrorBoundary } from '../components/ErrorBoundary';
+import { ErrorLogPanel } from '../components/pipeline/ErrorLogPanel';
+import { useErrorLogStore } from '../store/errorLogStore';
 import { reconcilePipeline } from '../api/pipeline';
 import api from '../api/client';
 
-type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug';
+type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug' | 'errors';
 
 export function ProjectDashboardPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -34,6 +37,7 @@ export function ProjectDashboardPage() {
   const { user } = useAuthStore();
   const { editPromptStageKey, setEditPromptStageKey, selectedStageKey } = useDAGStore();
   const { connected, reconnect } = useWebSocket(projectId);
+  const errorCount = useErrorLogStore((s) => s.errors.length);
   useVisibilityRefresh(projectId, reconnect);
   const [showInvites, setShowInvites] = useState(false);
   const [showPRDialog, setShowPRDialog] = useState(false);
@@ -46,13 +50,17 @@ export function ProjectDashboardPage() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const logErr = (label: string) => (err: unknown) => {
+      console.error(`[Dashboard] ${label} failed:`, err);
+      useErrorLogStore.getState().pushError(`Dashboard.${label}`, err);
+    };
     resetPipeline();
     if (projectId) {
-      fetchProject(projectId).catch((err) => console.error('[Dashboard] fetchProject failed:', err));
-      fetchConfig(projectId).catch((err) => console.error('[Dashboard] fetchConfig failed:', err));
-      fetchStatus(projectId).catch((err) => console.error('[Dashboard] fetchStatus failed:', err));
-      fetchRuns(projectId);
-      fetchBlockingPR(projectId);
+      fetchProject(projectId).catch(logErr('fetchProject'));
+      fetchConfig(projectId).catch(logErr('fetchConfig'));
+      fetchStatus(projectId).catch(logErr('fetchStatus'));
+      fetchRuns(projectId).catch(logErr('fetchRuns'));
+      fetchBlockingPR(projectId).catch(logErr('fetchBlockingPR'));
     }
     return () => clearSelection();
   }, [projectId, resetPipeline, fetchProject, fetchConfig, fetchStatus, fetchRuns, fetchBlockingPR, clearSelection]);
@@ -227,6 +235,24 @@ export function ProjectDashboardPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </button>
+          <button
+            onClick={() => { setActiveTab('errors'); clearSelection(); setMenuOpen(false); }}
+            className={`px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 relative ${
+              activeTab === 'errors'
+                ? 'bg-red-600 text-white'
+                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+            }`}
+            title="Error Log"
+          >
+            <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            {errorCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
+                {errorCount > 9 ? '9+' : errorCount}
+              </span>
+            )}
+          </button>
           {connected ? (
             <span className="text-xs text-green-400">WS Connected</span>
           ) : (
@@ -300,11 +326,13 @@ export function ProjectDashboardPage() {
                       <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
                     </div>
                     <div className="md:w-1/3 overflow-auto p-3">
-                      <ReviewPanel
-                        projectId={projectId}
-                        artifact={selectedArtifact}
-                        execution={selectedExecution}
-                      />
+                      <PanelErrorBoundary fallbackLabel="Review panel error">
+                        <ReviewPanel
+                          projectId={projectId}
+                          artifact={selectedArtifact}
+                          execution={selectedExecution}
+                        />
+                      </PanelErrorBoundary>
                     </div>
                   </div>
                 ) : (
@@ -313,17 +341,21 @@ export function ProjectDashboardPage() {
                       <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
                     </div>
                     <div className="shrink-0 p-3 border-t border-gray-700 overflow-auto max-h-64">
-                      <ReviewPanel
-                        projectId={projectId}
-                        artifact={selectedArtifact}
-                        execution={selectedExecution}
-                      />
+                      <PanelErrorBoundary fallbackLabel="Review panel error">
+                        <ReviewPanel
+                          projectId={projectId}
+                          artifact={selectedArtifact}
+                          execution={selectedExecution}
+                        />
+                      </PanelErrorBoundary>
                     </div>
                   </>
                 )}
               </div>
             ) : activeTab === 'pipeline' && selectedStageKey ? (
-              <StageConfigPanel projectId={projectId} stageKey={selectedStageKey} />
+              <PanelErrorBoundary fallbackLabel="Stage config error">
+                <StageConfigPanel projectId={projectId} stageKey={selectedStageKey} />
+              </PanelErrorBoundary>
             ) : (
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="p-4 text-gray-500 text-sm shrink-0">
@@ -367,6 +399,10 @@ export function ProjectDashboardPage() {
       ) : activeTab === 'debug' ? (
         <div className="flex-1 overflow-hidden">
           <DebugStatePanel projectId={projectId} />
+        </div>
+      ) : activeTab === 'errors' ? (
+        <div className="flex-1 overflow-auto">
+          <ErrorLogPanel />
         </div>
       ) : (
         <div className="flex-1 overflow-auto">

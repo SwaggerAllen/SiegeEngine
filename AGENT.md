@@ -88,7 +88,28 @@ Stages 9-10 run in the project's git repo with full tool access (bash, file edit
 
 ## Debugging Pipeline State
 
-The user may paste debug info from the **Debug State panel** (the info-circle button in the dashboard header). The **Repair button** (gear icon) is immediately to its left. Both are in `frontend/src/pages/ProjectDashboardPage.tsx`.
+The user may paste debug info from the **Debug State panel** (the info-circle button in the dashboard header). The **Repair button** (gear icon) is immediately to its left. The **Error Log** (warning-triangle button with red badge) is to the right of the debug button. All three are in `frontend/src/pages/ProjectDashboardPage.tsx`.
+
+### Error Log Panel
+
+The **Error Log** button (warning triangle icon, next to the debug button) opens a panel showing all frontend errors captured since the last page refresh. A red badge shows the error count. This is designed for mobile debugging where browser devtools aren't available.
+
+**What gets captured:**
+- Unhandled promise rejections (global `unhandledrejection` listener)
+- Global JS errors (`window.onerror`)
+- WebSocket fetch failures (DAG refresh, artifact fetch)
+- Visibility refresh failures (tab-refocus fetches)
+- Dashboard init fetch failures (fetchProject, fetchConfig, fetchStatus, fetchRuns, fetchBlockingPR)
+- React error boundary catches (both top-level `ErrorBoundary` and panel-level `PanelErrorBoundary`)
+
+Each error entry shows: timestamp, source label (e.g. `WS fetch`, `VisibilityRefresh`, `Dashboard.fetchRuns`, `PanelErrorBoundary(Review panel error)`), error message, and expandable stack trace.
+
+The **Copy All** button copies every error as formatted text for easy pasting into bug reports. The **Clear** button resets the log.
+
+**Key files:**
+- `frontend/src/store/errorLogStore.ts` — Zustand store, `pushError(source, error)` API
+- `frontend/src/components/pipeline/ErrorLogPanel.tsx` — UI with copy/clear
+- `frontend/src/main.tsx` — Global `unhandledrejection` and `error` listeners
 
 ### Reading the Debug Dump
 
