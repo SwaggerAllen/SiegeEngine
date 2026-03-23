@@ -167,7 +167,13 @@ interface ReviewPanelProps {
 const REGENERATING_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
-  const { resumeStage, resolveStale, forceRestartStage, pruneArtifact, cancelStage, fetchStatus, config } = usePipelineStore();
+  const resumeStage = usePipelineStore((s) => s.resumeStage);
+  const resolveStale = usePipelineStore((s) => s.resolveStale);
+  const forceRestartStage = usePipelineStore((s) => s.forceRestartStage);
+  const pruneArtifact = usePipelineStore((s) => s.pruneArtifact);
+  const cancelStage = usePipelineStore((s) => s.cancelStage);
+  const fetchStatus = usePipelineStore((s) => s.fetchStatus);
+  const config = usePipelineStore((s) => s.config);
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
 
@@ -204,6 +210,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   // Track whether we already attempted a fetchStatus for a missing execution
   // to avoid an infinite re-fetch loop (fetchStatus updates the store → parent
   // re-derives execution as still undefined → effect re-fires → repeat).
+  // The guard naturally resets when artifact.id changes because the check is
+  // `ref !== artifact.id`, so no separate reset effect is needed.
   const fetchedMissingExecRef = useRef<string | null>(null);
 
   // Fetch feedback count when switching artifacts
@@ -221,11 +229,6 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
       fetchStatus(projectId);
     }
   }, [projectId, artifact.id, artifact.status, execution, fetchStatus]);
-
-  // Reset the guard when the artifact changes
-  useEffect(() => {
-    fetchedMissingExecRef.current = null;
-  }, [artifact.id]);
 
   const handleAction = async (action: string) => {
     // Input docs may have no execution — fall back to artifact-based approval
