@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectListPage } from './pages/ProjectListPage';
 import { ProjectCreatePage } from './pages/ProjectCreatePage';
@@ -24,6 +25,7 @@ export default function App() {
   }, [loadFromStorage, checkTokenExpiry]);
 
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
@@ -55,5 +57,6 @@ export default function App() {
         <Route path="/" element={<Navigate to="/projects" replace />} />
       </Routes>
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }

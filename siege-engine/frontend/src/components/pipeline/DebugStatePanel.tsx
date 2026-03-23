@@ -81,11 +81,18 @@ function formatDebugText(state: DebugState): string {
     }
   }
 
-  const stageErrors = snap.stage_errors as Record<string, string>;
-  if (Object.keys(stageErrors).length > 0) {
+  const stageErrors = snap.stage_errors as Record<string, unknown> | undefined;
+  if (stageErrors && Object.keys(stageErrors).length > 0) {
     lines.push(`stage_errors:`);
     for (const [key, err] of Object.entries(stageErrors)) {
-      lines.push(`  ${key}: ${err}`);
+      if (err && typeof err === 'object') {
+        const obj = err as Record<string, unknown>;
+        const errMsg = obj.error || '(no message)';
+        const retries = obj.retry_count != null ? ` (retries: ${obj.retry_count})` : '';
+        lines.push(`  ${key}: ${errMsg}${retries}`);
+      } else {
+        lines.push(`  ${key}: ${err}`);
+      }
     }
   }
 
