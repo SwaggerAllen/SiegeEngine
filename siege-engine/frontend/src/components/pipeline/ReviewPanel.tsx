@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { useAuthStore } from '../../store/authStore';
 import { useDAGStore } from '../../store/dagStore';
@@ -201,6 +201,11 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const isFanout = artifact.artifact_type === 'component_map' || artifact.artifact_type === 'sub_component_map';
   const canReparse = !isViewer && isFanout && !isGenerating;
 
+  // Track whether we already attempted a fetchStatus for a missing execution
+  // to avoid an infinite re-fetch loop (fetchStatus updates the store → parent
+  // re-derives execution as still undefined → effect re-fires → repeat).
+  const fetchedMissingExecRef = useRef<string | null>(null);
+
   // Fetch feedback count when switching artifacts
   useEffect(() => {
     setFeedbackSaved(false);
@@ -210,10 +215,17 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     }).catch(() => {});
     // If the artifact is awaiting_review but we have no matching execution,
     // refresh executions so the feedback UI can work properly.
-    if (artifact.status === 'awaiting_review' && !execution) {
+    // Only attempt once per artifact to avoid an infinite loop.
+    if (artifact.status === 'awaiting_review' && !execution && fetchedMissingExecRef.current !== artifact.id) {
+      fetchedMissingExecRef.current = artifact.id;
       fetchStatus(projectId);
     }
   }, [projectId, artifact.id, artifact.status, execution, fetchStatus]);
+
+  // Reset the guard when the artifact changes
+  useEffect(() => {
+    fetchedMissingExecRef.current = null;
+  }, [artifact.id]);
 
   const handleAction = async (action: string) => {
     // Input docs may have no execution — fall back to artifact-based approval
