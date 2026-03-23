@@ -4,7 +4,6 @@ import type { DAGNodeData } from '../../types/dag';
 import { useDAGStore } from '../../store/dagStore';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { RESTARTABLE_STATUSES } from '../../types/pipeline';
-import { useParams } from 'react-router-dom';
 
 const STATUS_COLORS: Record<string, string> = {
   pending: 'bg-gray-700 border-gray-500',
@@ -39,8 +38,8 @@ function formatModelName(model: string): string {
 const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
 const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
-export function StageNode({ data }: { data: DAGNodeData }) {
-  const { id: projectId } = useParams<{ id: string }>();
+export function StageNode({ data }: { data: DAGNodeData & { projectId?: string } }) {
+  const projectId = data.projectId;
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
   const forceRestartStage = usePipelineStore((s) => s.forceRestartStage);
   const cancelStage = usePipelineStore((s) => s.cancelStage);

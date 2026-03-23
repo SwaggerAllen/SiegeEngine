@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import { useSafeEffect, useSafeMemo } from '../../hooks/useSafe';
+import { useCallback, useMemo, useState } from 'react';
+import { useSafeEffect } from '../../hooks/useSafe';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -52,7 +52,7 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
     }
   }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
 
-  const nodes = useSafeMemo('dagre-layout', () => {
+  const nodes = useMemo(() => {
     if (rawNodes.length === 0) return [];
 
     const g = new dagre.graphlib.Graph();
@@ -65,18 +65,19 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
 
     return rawNodes.map((n) => {
       const pos = g.node(n.id);
-      if (!pos) return { ...n, position: { x: 0, y: 0 } };
+      if (!pos) return { ...n, data: { ...n.data, projectId }, position: { x: 0, y: 0 } };
       return {
         ...n,
+        data: { ...n.data, projectId },
         position: { x: pos.x - 110, y: pos.y - 50 },
       };
     });
-  }, [], [rawNodes, rawEdges]);
+  }, [rawNodes, rawEdges, projectId]);
 
   const onNodeClick = useCallback(
-    (_: React.MouseEvent, node: { id: string; data?: { stage_key?: string; has_artifact?: boolean } }) => {
+    (_: React.MouseEvent, node: { id: string; data?: Record<string, unknown> }) => {
       if (variant === 'pipeline') {
-        selectStage(node.data?.stage_key ?? null);
+        selectStage((node.data?.stage_key as string) ?? null);
       } else {
         const hasArtifact = node.data?.has_artifact;
         if (hasArtifact) {
