@@ -257,29 +257,7 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
   return (
     <div className="h-full flex flex-col p-4 gap-3">
       <div className="flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-bold text-white">Debug State</h2>
-          <div className="flex rounded overflow-hidden border border-gray-600">
-            <button
-              onClick={() => setSubTab('backend')}
-              className={`px-3 py-1 text-xs ${subTab === 'backend' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
-            >
-              Backend
-            </button>
-            <button
-              onClick={() => setSubTab('frontend')}
-              className={`px-3 py-1 text-xs ${subTab === 'frontend' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
-            >
-              Frontend
-            </button>
-            <button
-              onClick={() => setSubTab('errors')}
-              className={`px-3 py-1 text-xs ${subTab === 'errors' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
-            >
-              Errors{errorCount > 0 ? ` (${errorCount})` : ''}
-            </button>
-          </div>
-        </div>
+        <h2 className="text-lg font-bold text-white">Debug State</h2>
         <div className="flex items-center gap-2">
           {subTab === 'backend' && (
             <button
@@ -299,6 +277,26 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
             {copied ? 'Copied!' : 'Copy'}
           </button>
         </div>
+      </div>
+      <div className="flex rounded overflow-hidden border border-gray-600 self-start shrink-0">
+        <button
+          onClick={() => setSubTab('backend')}
+          className={`px-3 py-1 text-xs ${subTab === 'backend' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+        >
+          Backend
+        </button>
+        <button
+          onClick={() => setSubTab('frontend')}
+          className={`px-3 py-1 text-xs ${subTab === 'frontend' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+        >
+          Frontend
+        </button>
+        <button
+          onClick={() => setSubTab('errors')}
+          className={`px-3 py-1 text-xs ${subTab === 'errors' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+        >
+          Errors{errorCount > 0 ? ` (${errorCount})` : ''}
+        </button>
       </div>
 
       {subTab === 'backend' ? (
