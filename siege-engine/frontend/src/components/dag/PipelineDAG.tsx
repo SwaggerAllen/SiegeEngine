@@ -5,8 +5,6 @@ import {
   Background,
   Controls,
   MiniMap,
-  useNodesState,
-  useEdgesState,
 } from '@xyflow/react';
 import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
@@ -45,7 +43,7 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
     }
   }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
 
-  const layoutedNodes = useSafeMemo('dagre-layout', () => {
+  const nodes = useSafeMemo('dagre-layout', () => {
     if (rawNodes.length === 0) return [];
 
     const g = new dagre.graphlib.Graph();
@@ -65,14 +63,6 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
       };
     });
   }, [], [rawNodes, rawEdges]);
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(layoutedNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(rawEdges);
-
-  useSafeEffect('dag-sync-nodes', () => {
-    setNodes(layoutedNodes);
-    setEdges(rawEdges);
-  }, [layoutedNodes, rawEdges, setNodes, setEdges]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: { id: string; data?: { stage_key?: string; has_artifact?: boolean } }) => {
@@ -108,9 +98,7 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
   return (
     <ReactFlow
       nodes={nodes}
-      edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
+      edges={rawEdges}
       nodeTypes={nodeTypes}
       onNodeClick={onNodeClick}
       onPaneClick={onPaneClick}
