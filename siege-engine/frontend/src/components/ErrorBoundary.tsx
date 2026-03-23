@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react';
+import { useErrorLogStore } from '../store/errorLogStore';
 
 interface Props {
   children: ReactNode;
@@ -20,6 +21,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary] Caught render error:', error, info.componentStack);
+    useErrorLogStore.getState().pushError('ErrorBoundary', error);
   }
 
   render() {
@@ -59,6 +61,10 @@ export class PanelErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[PanelErrorBoundary] Caught render error:', error, info.componentStack);
+    useErrorLogStore.getState().pushError(
+      `PanelErrorBoundary(${this.props.fallbackLabel || 'panel'})`,
+      error,
+    );
   }
 
   render() {

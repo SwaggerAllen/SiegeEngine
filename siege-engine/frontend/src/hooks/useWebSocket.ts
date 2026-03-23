@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { usePipelineStore } from '../store/pipelineStore';
 import { useDAGStore } from '../store/dagStore';
 import { useProjectStore } from '../store/projectStore';
+import { useErrorLogStore } from '../store/errorLogStore';
 import type { WSEvent } from '../types/pipeline';
 
 const INITIAL_RETRY_MS = 1000;
@@ -84,7 +85,10 @@ export function useWebSocket(projectId: string | undefined) {
 
       // All fire-and-forget fetches below use .catch() to prevent unhandled
       // promise rejections — Safari aggressively kills pages with stray rejections.
-      const swallow = (err: unknown) => console.error('[WS] fetch failed:', err);
+      const swallow = (err: unknown) => {
+        console.error('[WS] fetch failed:', err);
+        useErrorLogStore.getState().pushError('WS fetch', err);
+      };
 
       // Debounce DAG layout refreshes (node positions, edges, status colors).
       // Execution statuses are already patched locally above.

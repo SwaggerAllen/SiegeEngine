@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { usePipelineStore } from '../store/pipelineStore';
 import { useDAGStore } from '../store/dagStore';
+import { useErrorLogStore } from '../store/errorLogStore';
 
 const STALE_THRESHOLD_MS = 30_000; // 30 seconds
 
@@ -29,7 +30,10 @@ export function useVisibilityRefresh(
 
           // Pull fresh state from all stores.
           // .catch() prevents unhandled rejections that crash Safari.
-          const swallow = (err: unknown) => console.error('[VisibilityRefresh] fetch failed:', err);
+          const swallow = (err: unknown) => {
+            console.error('[VisibilityRefresh] fetch failed:', err);
+            useErrorLogStore.getState().pushError('VisibilityRefresh', err);
+          };
           useProjectStore.getState().fetchProject(projectId).catch(swallow);
           usePipelineStore.getState().fetchConfig(projectId).catch(swallow);
           usePipelineStore.getState().fetchStatus(projectId).catch(swallow);
