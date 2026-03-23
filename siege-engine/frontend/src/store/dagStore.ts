@@ -3,12 +3,21 @@ import * as pipelineApi from '../api/pipeline';
 import type { DAGResponse } from '../types/dag';
 import type { Node, Edge } from '@xyflow/react';
 
-/** Shallow-compare two arrays of plain objects by JSON-serialisable fields. */
+/** Compare two node arrays by id, type, position, and data fields that drive rendering. */
 function nodesEqual(a: Node[], b: Node[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (a[i].id !== b[i].id || a[i].type !== b[i].type ||
         a[i].position.x !== b[i].position.x || a[i].position.y !== b[i].position.y) return false;
+    // Compare data fields that affect rendering (status, version, is_active, etc.)
+    const da = a[i].data as Record<string, unknown> | undefined;
+    const db = b[i].data as Record<string, unknown> | undefined;
+    if (da !== db) {
+      if (!da || !db) return false;
+      if (da.status !== db.status || da.version !== db.version ||
+          da.is_active !== db.is_active || da.has_artifact !== db.has_artifact ||
+          da.execution_status !== db.execution_status) return false;
+    }
   }
   return true;
 }
@@ -17,7 +26,8 @@ function edgesEqual(a: Edge[], b: Edge[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (a[i].id !== b[i].id || a[i].source !== b[i].source ||
-        a[i].target !== b[i].target || a[i].type !== b[i].type) return false;
+        a[i].target !== b[i].target || a[i].type !== b[i].type ||
+        a[i].animated !== b[i].animated) return false;
   }
   return true;
 }

@@ -87,6 +87,7 @@ let seq = 0;
 let lastStores: Record<string, unknown> | null = null;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let activeCount = 0;
+let sessionInitialized = false;
 
 function capture() {
   const stores = grabStores();
@@ -126,10 +127,17 @@ function capture() {
   }
 }
 
-/** Start auto-capturing every 500ms. Call the returned function to stop. */
+/** Start auto-capturing every 100ms. Call the returned function to stop. */
 export function startRecording(): () => void {
   activeCount++;
   if (activeCount === 1) {
+    // Clear stale snapshots from previous page load so logs are fresh
+    if (!sessionInitialized) {
+      sessionInitialized = true;
+      sessionStorage.removeItem(STORAGE_KEY);
+      seq = 0;
+      lastStores = null;
+    }
     // Take an immediate baseline
     capture();
     intervalId = setInterval(capture, 100);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSafeEffect } from '../../hooks/useSafe';
 import { startRecording } from '../../lib/snapshotRecorder';
 import {
@@ -31,11 +32,14 @@ export function PipelineDAG(props: PipelineDAGProps) {
 }
 
 function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
-  // === LAYER 1: Store selectors ===
-  const pipelineNodes = useDAGStore((s) => s.nodes);
-  const pipelineEdges = useDAGStore((s) => s.edges);
-  const docNodes = useDAGStore((s) => s.docNodes);
-  const docEdges = useDAGStore((s) => s.docEdges);
+  // === LAYER 1: Store selectors — only subscribe to the variant we need ===
+  const { rawNodes, rawEdges } = useDAGStore(
+    useShallow((s) =>
+      variant === 'documents'
+        ? { rawNodes: s.docNodes, rawEdges: s.docEdges }
+        : { rawNodes: s.nodes, rawEdges: s.edges }
+    ),
+  );
   const fetchDAG = useDAGStore((s) => s.fetchDAG);
   const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
@@ -43,12 +47,7 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
   const clearSelection = useProjectStore((s) => s.clearSelection);
 
-  const rawNodes = variant === 'documents' ? docNodes : pipelineNodes;
-  const rawEdges = variant === 'documents' ? docEdges : pipelineEdges;
-  // Keep subscriptions active but satisfy noUnusedLocals
-  void selectArtifact; void selectStage;
-  void fetchArtifact; void clearSelection;
-  console.log('[PipelineDAG] render — rawNodes:', rawNodes.length, 'rawEdges:', rawEdges.length);
+  console.log('[PipelineDAG] render — variant:', variant, 'rawNodes:', rawNodes.length, 'rawEdges:', rawEdges.length);
 
   // === AUTO-CAPTURE: record store snapshots while DAG is mounted ===
   useEffect(() => {
