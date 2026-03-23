@@ -86,7 +86,14 @@ export function useWebSocket(projectId: string | undefined) {
 
       // updateFromWS applies the event to both the snapshot AND the
       // executions array locally — no HTTP fetchStatus needed.
-      updateFromWS(data);
+      try {
+        updateFromWS(data);
+      } catch (err) {
+        // createSafeStore already logged the error; swallow here so a
+        // bad event doesn't kill the WebSocket connection.
+        console.error('[WS] updateFromWS threw:', err);
+        return;
+      }
 
       // All store actions are safe by default (createSafeStore handles
       // unhandled rejections), so no manual .catch() needed on fire-and-forget calls.

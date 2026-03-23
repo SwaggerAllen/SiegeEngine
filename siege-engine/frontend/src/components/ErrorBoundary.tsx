@@ -48,14 +48,33 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 }
 
+/** Max crashes before circuit breaker locks the panel in error state. */
+const CIRCUIT_BREAKER_LIMIT = 3;
+/** Reset the crash counter after this many ms of stability. */
+const CIRCUIT_BREAKER_RESET_MS = 30_000;
+
+interface PanelState {
+  hasError: boolean;
+  error: Error | null;
+  /** Number of times this boundary has caught an error since last reset. */
+  crashCount: number;
+  /** Whether the circuit breaker has tripped (too many crashes). */
+  tripped: boolean;
+}
+
 /**
  * Lightweight error boundary for individual panels/sections.
  * Recovers in-place without requiring a full page reload.
+ *
+ * Includes a circuit breaker: if the panel crashes 3+ times within 30s,
+ * the Retry button is replaced with a "locked" state that requires a
+ * page reload — preventing crash loops.
  */
-export class PanelErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false, error: null };
+export class PanelErrorBoundary extends Component<Props, PanelState> {
+  state: PanelState = { hasError: false, error: null, crashCount: 0, tripped: false };
+  private resetTimer: ReturnType<typeof setTimeout> | null = null;
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<PanelState> {
     return { hasError: true, error };
   }
 
@@ -65,6 +84,25 @@ export class PanelErrorBoundary extends Component<Props, State> {
       `PanelErrorBoundary(${this.props.fallbackLabel || 'panel'})`,
       error,
     );
+
+    this.setState((prev) => {
+      const crashCount = prev.crashCount + 1;
+      const tripped = crashCount >= CIRCUIT_BREAKER_LIMIT;
+      if (tripped) {
+        console.warn(`[PanelErrorBoundary] Circuit breaker tripped for "${this.props.fallbackLabel}" after ${crashCount} crashes`);
+      }
+      return { crashCount, tripped };
+    });
+
+    // Reset crash counter after a period of stability
+    if (this.resetTimer) clearTimeout(this.resetTimer);
+    this.resetTimer = setTimeout(() => {
+      this.setState({ crashCount: 0, tripped: false });
+    }, CIRCUIT_BREAKER_RESET_MS);
+  }
+
+  componentWillUnmount() {
+    if (this.resetTimer) clearTimeout(this.resetTimer);
   }
 
   render() {
@@ -77,12 +115,19 @@ export class PanelErrorBoundary extends Component<Props, State> {
           <pre className="text-xs text-gray-500 max-w-md truncate">
             {this.state.error?.message}
           </pre>
-          <button
-            onClick={() => this.setState({ hasError: false, error: null })}
-            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs"
-          >
-            Retry
-          </button>
+          {this.state.tripped ? (
+            <p className="text-xs text-yellow-500">
+              Panel crashed {this.state.crashCount} times — retry disabled.
+              Reload the page to try again.
+            </p>
+          ) : (
+            <button
+              onClick={() => this.setState({ hasError: false, error: null })}
+              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs"
+            >
+              Retry
+            </button>
+          )}
         </div>
       );
     }
