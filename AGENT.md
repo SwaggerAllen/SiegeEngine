@@ -194,6 +194,8 @@ The debug dump has these sections, in order:
 
 16. **Snapshot dict isolation**: `_snapshot_to_dict` in `event_store.py` uses `copy.deepcopy` on all JSON column values, not shallow `dict()` copies. Shallow copies share nested objects with SQLAlchemy-managed references, which can cause "Set changed size during iteration" when the reducer's `copy.deepcopy` iterates over nested values.
 
+17. **Resume runs must NOT be component-scoped**: `RunFromNodeControls` in ReviewPanel.tsx passes `start_component_key` to scope runs. For Resume runs, this must be `null` — otherwise only the viewed component is processed and siblings are silently skipped by `_is_in_run_scope`. Fresh Start runs may scope to a single component. StageConfigPanel's resume already omits `start_component_key`.
+
 ## Development Principles
 
 - **Always use the long-term solution.** If there's a better architectural approach, implement it now rather than using a quick fix with plans to refactor later. Writing code is fast — don't put off refactors due to time constraints.
