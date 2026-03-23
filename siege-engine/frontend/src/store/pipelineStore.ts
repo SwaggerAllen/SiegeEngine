@@ -178,8 +178,9 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
       throw new Error(result.pr_error);
     }
     // Snapshot reconciles via fetchStatus
-    get().fetchRuns(projectId);
-    get().fetchStatus(projectId);
+    const swallow = (err: unknown) => console.error('[Pipeline] post-cancel fetch failed:', err);
+    get().fetchRuns(projectId).catch(swallow);
+    get().fetchStatus(projectId).catch(swallow);
   },
 
   resetAll: async (projectId) => {

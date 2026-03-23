@@ -276,18 +276,29 @@ async def cancel_pipeline(
         if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
             job.status = "cancelled"
 
-    # Emit STAGE_FAILED events for each active execution (snapshot updates via reducer)
+    # Preserve awaiting_review executions that have valid artifacts —
+    # auto-approve them so the next run carries them over instead of
+    # regenerating from scratch.
     for e in active_executions:
-        es.emit(project_id, _evt.STAGE_FAILED, {
-            "execution_id": e.id,
-            "stage_key": e.stage_key,
-            "component_key": e.component_key,
-            "artifact_id": e.artifact_id,
-            "error": "Cancelled by user",
-        }, run_id=e.run_id)
-        # DB projections
-        e.status = StageStatus.FAILED
-        e.error_message = "Cancelled by user"
+        if e.status == StageStatus.AWAITING_REVIEW and e.artifact_id:
+            es.emit(project_id, _evt.HUMAN_APPROVED, {
+                "execution_id": e.id,
+                "stage_key": e.stage_key,
+                "component_key": e.component_key,
+                "artifact_id": e.artifact_id,
+            }, run_id=e.run_id)
+            e.status = StageStatus.APPROVED
+            e.completed_at = e.completed_at or datetime.utcnow()
+        else:
+            es.emit(project_id, _evt.STAGE_FAILED, {
+                "execution_id": e.id,
+                "stage_key": e.stage_key,
+                "component_key": e.component_key,
+                "artifact_id": e.artifact_id,
+                "error": "Cancelled by user",
+            }, run_id=e.run_id)
+            e.status = StageStatus.FAILED
+            e.error_message = "Cancelled by user"
 
     # Reset in-progress artifacts as DB projections
     in_progress_artifacts = (

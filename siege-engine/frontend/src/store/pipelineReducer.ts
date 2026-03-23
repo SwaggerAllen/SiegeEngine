@@ -68,7 +68,12 @@ export function applyWSEvent(snapshot: PipelineSnapshot, event: WSEvent): Pipeli
       const key = stageKey(event.stage_key, event.component_key);
       snap.stage_statuses[key] = 'failed';
       if (event.artifact_id) {
-        snap.artifact_statuses[event.artifact_id] = event.artifact_status || 'pending';
+        // Preserve artifact status if it was already reviewed — a stage
+        // failure (e.g. cancellation) shouldn't nuke a valid artifact.
+        const current = snapshot.artifact_statuses[event.artifact_id];
+        if (current !== 'approved' && current !== 'awaiting_review') {
+          snap.artifact_statuses[event.artifact_id] = event.artifact_status || 'pending';
+        }
       }
       break;
     }
