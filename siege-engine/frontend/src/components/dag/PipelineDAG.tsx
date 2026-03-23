@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSafeMemo } from '../../hooks/useSafe';
 import {
   ReactFlow,
   Background,
@@ -46,35 +47,26 @@ export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProp
     }
   }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
 
-  const layoutedNodes = useMemo(() => {
+  const layoutedNodes = useSafeMemo('dagre-layout', () => {
     if (rawNodes.length === 0) return [];
 
-    try {
-      const g = new dagre.graphlib.Graph();
-      g.setDefaultEdgeLabel(() => ({}));
-      g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
+    const g = new dagre.graphlib.Graph();
+    g.setDefaultEdgeLabel(() => ({}));
+    g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
 
-      rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
-      rawEdges.forEach((e) => g.setEdge(e.source, e.target));
-      dagre.layout(g);
+    rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
+    rawEdges.forEach((e) => g.setEdge(e.source, e.target));
+    dagre.layout(g);
 
-      return rawNodes.map((n) => {
-        const pos = g.node(n.id);
-        if (!pos) return { ...n, position: { x: 0, y: 0 } };
-        return {
-          ...n,
-          position: { x: pos.x - 110, y: pos.y - 50 },
-        };
-      });
-    } catch (err) {
-      console.error('[PipelineDAG] dagre layout failed:', err);
-      // Fall back to raw positions (stacked vertically)
-      return rawNodes.map((n, i) => ({
+    return rawNodes.map((n) => {
+      const pos = g.node(n.id);
+      if (!pos) return { ...n, position: { x: 0, y: 0 } };
+      return {
         ...n,
-        position: n.position ?? { x: 0, y: i * 120 },
-      }));
-    }
-  }, [rawNodes, rawEdges]);
+        position: { x: pos.x - 110, y: pos.y - 50 },
+      };
+    });
+  }, [], [rawNodes, rawEdges]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(layoutedNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(rawEdges);
