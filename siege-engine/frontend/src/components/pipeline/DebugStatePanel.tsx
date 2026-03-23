@@ -127,8 +127,8 @@ function formatDebugText(state: DebugState): string {
 
   lines.push('');
 
-  // Runs
-  lines.push(`=== RUNS (${state.runs.length}) ===`);
+  // Runs (backend caps at most recent 20)
+  lines.push(`=== RUNS (showing ${state.runs.length}) ===`);
   for (const r of state.runs) {
     const parts = [
       `#${r.run_number}`,
@@ -144,8 +144,8 @@ function formatDebugText(state: DebugState): string {
   }
   lines.push('');
 
-  // Executions
-  lines.push(`=== EXECUTIONS (${state.executions.length}) ===`);
+  // Executions (backend caps at most recent 40)
+  lines.push(`=== EXECUTIONS (showing ${state.executions.length}) ===`);
   // Build artifact name lookup
   const artNameMap: Record<string, string> = {};
   for (const a of state.artifacts) {

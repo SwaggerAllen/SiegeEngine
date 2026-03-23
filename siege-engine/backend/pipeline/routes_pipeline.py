@@ -647,6 +647,8 @@ def get_snapshot(
 def get_debug_state(
     project_id: str,
     max_events: int = 30,
+    max_runs: int = 20,
+    max_executions: int = 40,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
@@ -679,11 +681,13 @@ def get_debug_state(
         "execution_map": snapshot.execution_map or {},
     }
 
-    # Runs
+    # Runs (most recent first, capped)
+    run_limit = min(max(max_runs, 5), 100)
     runs = (
         db.query(PipelineRun)
         .filter_by(project_id=project_id)
         .order_by(PipelineRun.run_number.desc())
+        .limit(run_limit)
         .all()
     )
     runs_data = [
@@ -703,11 +707,13 @@ def get_debug_state(
         for r in runs
     ]
 
-    # Executions
+    # Executions (most recent first, capped)
+    exec_limit = min(max(max_executions, 10), 200)
     executions = (
         db.query(StageExecution)
         .filter_by(project_id=project_id)
         .order_by(StageExecution.started_at.desc().nullslast())
+        .limit(exec_limit)
         .all()
     )
     exec_data = [

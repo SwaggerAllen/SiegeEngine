@@ -78,11 +78,15 @@ export const useAuthStore = createSafeStore<AuthState>('auth', (set) => ({
         localStorage.removeItem('siege_engine_user');
         return;
       }
-      set({
-        token,
-        user: JSON.parse(userStr),
-        isAuthenticated: true,
-      });
+      let user: AuthState['user'];
+      try {
+        user = JSON.parse(userStr);
+      } catch {
+        localStorage.removeItem('siege_engine_token');
+        localStorage.removeItem('siege_engine_user');
+        return;
+      }
+      set({ token, user, isAuthenticated: true });
     }
   },
 

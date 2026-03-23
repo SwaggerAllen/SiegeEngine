@@ -50,7 +50,14 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
     };
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let data: any;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        console.error('[Chat WS] Failed to parse message:', event.data);
+        return;
+      }
 
       switch (data.type) {
         case 'response_start':
