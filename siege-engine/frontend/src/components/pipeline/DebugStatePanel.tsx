@@ -208,9 +208,10 @@ function formatDebugText(state: DebugState): string {
   return lines.join('\n');
 }
 
-type SubTab = 'backend' | 'frontend';
+type SubTab = 'backend' | 'frontend' | 'errors';
 
 export function DebugStatePanel({ projectId }: { projectId: string }) {
+  const errorCount = useErrorLogStore((s) => s.errors.length);
   const [subTab, setSubTab] = useState<SubTab>('backend');
   const [state, setState] = useState<DebugState | null>(null);
   const [loading, setLoading] = useState(false);
@@ -271,6 +272,12 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
             >
               Frontend
             </button>
+            <button
+              onClick={() => setSubTab('errors')}
+              className={`px-3 py-1 text-xs ${subTab === 'errors' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+            >
+              Errors{errorCount > 0 ? ` (${errorCount})` : ''}
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -310,8 +317,10 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
             {debugText || (loading ? 'Loading...' : 'No data')}
           </pre>
         </>
-      ) : (
+      ) : subTab === 'frontend' ? (
         <ZustandSubTab onCopy={handleCopy} />
+      ) : (
+        <ErrorsSubTab />
       )}
     </div>
   );
@@ -360,16 +369,6 @@ function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
 
   const text = JSON.stringify(snapshot, null, 2);
 
-  // Wire up copy to parent button
-  useEffect(() => {
-    // Expose current text for the Copy button in parent
-    copyRef.current = text;
-  });
-  const copyRef = useRef(text);
-  // Override parent copy with our text
-  const origOnCopy = onCopy;
-  void origOnCopy;
-
   return (
     <>
       <div className="text-xs text-gray-400 shrink-0">
@@ -384,6 +383,65 @@ function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
       >
         Copy Frontend State
       </button>
+    </>
+  );
+}
+
+function ErrorsSubTab() {
+  const errors = useErrorLogStore((s) => s.errors);
+  const clear = useErrorLogStore((s) => s.clear);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  return (
+    <>
+      <div className="flex items-center justify-between shrink-0">
+        <span className="text-xs text-gray-400">{errors.length} error{errors.length !== 1 ? 's' : ''} captured</span>
+        {errors.length > 0 && (
+          <button
+            onClick={clear}
+            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {errors.length === 0 ? (
+        <p className="text-sm text-gray-500">No errors since last refresh.</p>
+      ) : (
+        <div className="flex-1 overflow-auto space-y-2">
+          {errors.map((entry) => (
+            <div
+              key={entry.id}
+              className="bg-gray-800 rounded p-2 text-xs border border-gray-700"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="text-gray-500">
+                    {new Date(entry.timestamp).toLocaleTimeString()}
+                  </span>
+                  <span className="ml-2 px-1.5 py-0.5 bg-red-900/50 text-red-400 rounded text-[10px]">
+                    {entry.source}
+                  </span>
+                </div>
+                {entry.stack && (
+                  <button
+                    onClick={() => setExpandedId(expandedId === entry.id ? null : entry.id)}
+                    className="text-gray-500 hover:text-gray-300 shrink-0"
+                  >
+                    {expandedId === entry.id ? '\u25B2' : '\u25BC'}
+                  </button>
+                )}
+              </div>
+              <p className="text-red-300 mt-1 break-words">{entry.message}</p>
+              {expandedId === entry.id && entry.stack && (
+                <pre className="mt-2 p-2 bg-gray-900 rounded text-gray-500 whitespace-pre-wrap break-words text-[10px] max-h-40 overflow-auto">
+                  {entry.stack}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
