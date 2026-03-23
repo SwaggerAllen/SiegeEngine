@@ -227,7 +227,7 @@ The debug dump has these sections, in order:
 
 ```bash
 cd siege-engine/frontend
-npm run typecheck    # tsc --noEmit (catches type errors)
+npm run typecheck    # tsc -b --noEmit (catches type errors; -b follows project references)
 npm run test:run     # vitest run (unit tests)
 npm run lint         # eslint (code quality)
 npm run build        # vite production build
