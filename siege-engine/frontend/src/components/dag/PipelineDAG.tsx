@@ -65,37 +65,53 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   const clearSelection = useDAGStore((s) => s.clearSelection);
 
   // === LAYER 3: Dagre layout ===
-  const nodes = useMemo(() => {
-    if (rawNodes.length === 0) return [];
+  // Topology key — stable primitive that only changes when node IDs or edge
+  // connections change. Status/data field updates do NOT change it, so the
+  // expensive dagre layout step is skipped on every pipeline tick.
+  const topologyKey = useMemo(
+    () =>
+      rawNodes.map((n) => n.id).join('\0') +
+      '|' +
+      rawEdges.map((e) => `${e.source}>${e.target}`).join('\0'),
+    [rawNodes, rawEdges],
+  );
 
+  // Positions — only re-runs when topology changes. Returns a Map so the
+  // cheap nodes memo below can apply positions without re-running dagre.
+  const positions = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    if (rawNodes.length === 0) return map;
     try {
       const g = new dagre.graphlib.Graph();
       g.setDefaultEdgeLabel(() => ({}));
       g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
-
       rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
       rawEdges.forEach((e) => g.setEdge(e.source, e.target));
       dagre.layout(g);
-
-      return rawNodes.map((n) => {
+      rawNodes.forEach((n) => {
         const pos = g.node(n.id);
-        if (!pos) return { ...n, data: { ...n.data, projectId }, position: { x: 0, y: 0 } };
-        return {
-          ...n,
-          data: { ...n.data, projectId },
-          position: { x: pos.x - 110, y: pos.y - 50 },
-        };
+        map.set(n.id, pos ? { x: pos.x - 110, y: pos.y - 50 } : { x: 0, y: 0 });
       });
     } catch (err) {
       console.error('[PipelineDAG] Dagre layout failed:', err);
       // Fall back to simple vertical stacking
-      return rawNodes.map((n, i) => ({
+      rawNodes.forEach((n, i) => map.set(n.id, { x: 0, y: i * 120 }));
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topologyKey]); // rawNodes/rawEdges intentionally excluded: topologyKey captures when layout must change
+
+  // Final nodes — cheap map that applies positions and injects projectId.
+  // Re-runs on data changes (status, version, etc.) without re-running dagre.
+  const nodes = useMemo(
+    () =>
+      rawNodes.map((n) => ({
         ...n,
         data: { ...n.data, projectId },
-        position: { x: 0, y: i * 120 },
-      }));
-    }
-  }, [rawNodes, rawEdges, projectId]);
+        position: positions.get(n.id) ?? { x: 0, y: 0 },
+      })),
+    [rawNodes, positions, projectId],
+  );
 
   // === LAYER 4: Click handlers ===
   const onNodeClick = useCallback(
