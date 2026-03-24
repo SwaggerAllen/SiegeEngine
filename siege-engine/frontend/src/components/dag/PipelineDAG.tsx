@@ -23,34 +23,13 @@ function detectCycle(
   nodeIds: string[],
   edges: { source: string; target: string }[],
 ): string | null {
-  const adj = new Map<string, string[]>();
-  for (const id of nodeIds) adj.set(id, []);
-  for (const e of edges) adj.get(e.source)?.push(e.target);
-
-  const visited = new Set<string>();
-  const inStack = new Set<string>();
-
-  function dfs(node: string): string | null {
-    visited.add(node);
-    inStack.add(node);
-    for (const neighbor of adj.get(node) ?? []) {
-      if (inStack.has(neighbor)) return `${node} → ${neighbor}`;
-      if (!visited.has(neighbor)) {
-        const found = dfs(neighbor);
-        if (found) return found;
-      }
-    }
-    inStack.delete(node);
-    return null;
-  }
-
-  for (const id of nodeIds) {
-    if (!visited.has(id)) {
-      const found = dfs(id);
-      if (found) return found;
-    }
-  }
-  return null;
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  for (const id of nodeIds) g.setNode(id, {});
+  for (const e of edges) g.setEdge(e.source, e.target);
+  if (dagre.graphlib.alg.isAcyclic(g)) return null;
+  const cycles = dagre.graphlib.alg.findCycles(g);
+  return cycles.length > 0 ? cycles[0].join(' → ') : 'unknown cycle';
 }
 
 const MINIMAP_COLORS: Record<string, string> = {

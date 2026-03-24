@@ -1,3 +1,4 @@
+import graphlib as _graphlib
 from collections import defaultdict, deque
 
 from sqlalchemy import select
@@ -61,40 +62,16 @@ def _get_latest_run_executions(
 def _check_acyclic(edges: list[dict]) -> None:
     """Raise ValueError if the edge list contains a directed cycle.
 
-    Uses an iterative DFS (white/gray/black colouring) to avoid hitting
-    Python's recursion limit on large graphs.
+    Uses stdlib graphlib.TopologicalSorter which raises CycleError for cycles.
     """
-    adj: dict[str, list[str]] = {}
+    ts: _graphlib.TopologicalSorter[str] = _graphlib.TopologicalSorter()
     for e in edges:
-        adj.setdefault(e["source"], []).append(e["target"])
-
-    all_nodes: set[str] = set(adj.keys())
-    for targets in adj.values():
-        all_nodes.update(targets)
-
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color: dict[str, int] = {}
-
-    for start in all_nodes:
-        if color.get(start, WHITE) != WHITE:
-            continue
-        stack: list[tuple[str, object]] = [(start, iter(adj.get(start, [])))]
-        color[start] = GRAY
-        while stack:
-            node, children = stack[-1]
-            try:
-                child = next(children)  # type: ignore[call-overload]
-                c = color.get(child, WHITE)
-                if c == GRAY:
-                    raise ValueError(
-                        f"Cycle detected in DAG: edge '{node}' → '{child}' closes a cycle"
-                    )
-                if c == WHITE:
-                    color[child] = GRAY
-                    stack.append((child, iter(adj.get(child, []))))
-            except StopIteration:
-                color[node] = BLACK
-                stack.pop()
+        ts.add(e["target"], e["source"])
+    try:
+        # prepare() detects cycles immediately without full iteration
+        ts.prepare()
+    except _graphlib.CycleError as exc:
+        raise ValueError(f"Cycle detected in DAG: {exc}") from exc
 
 
 def build_dependency_graph(db: Session, project_id: str) -> dict[str, list[str]]:
