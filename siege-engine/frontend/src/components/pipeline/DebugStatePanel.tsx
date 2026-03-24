@@ -611,19 +611,22 @@ function CombinedLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
     ...tqEntries.map((e) => ({ kind: 'tq' as const, ...e })),
   ].sort((a, b) => a.ts.localeCompare(b.ts));
 
+  const filterLower = filter.toLowerCase();
   const filtered = filter
     ? merged.filter((e) =>
         e.kind === 'debug'
-          ? e.tag.includes(filter) || e.msg.includes(filter)
-          : e.type.includes(filter) || e.key.includes(filter) || e.status.includes(filter),
+          ? e.tag.toLowerCase().includes(filterLower) || e.msg.toLowerCase().includes(filterLower)
+          : e.key.toLowerCase().includes(filterLower) || e.type.toLowerCase().includes(filterLower) || e.status.toLowerCase().includes(filterLower),
       )
     : merged;
 
-  const copyText = filtered.map((e) =>
-    e.kind === 'debug'
-      ? `${e.ts} | dbg | [${e.tag}] ${e.msg.split('\n')[0]}`
-      : `${e.ts} |  tq | ${e.type.padEnd(32)} | obs=${e.observers} | ${e.status}/${e.fetchStatus} | ${e.key}`,
-  ).join('\n');
+  const copyText = filtered
+    .map((e) =>
+      e.kind === 'debug'
+        ? `${e.ts} [dbg] [${e.tag}] ${e.msg}`
+        : `${e.ts} [tq]  ${e.type.padEnd(32)} obs=${e.observers} ${e.status}/${e.fetchStatus} ${e.key}`,
+    )
+    .join('\n');
 
   const handleCopy = () => { onCopy(copyText); setCopied(true); setTimeout(() => setCopied(false), 2000); };
   const handleClear = () => {
@@ -644,7 +647,7 @@ function CombinedLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
       <div className="flex items-center gap-2 shrink-0">
         <input
           type="text"
-          placeholder="filter by tag / event / key / status…"
+          placeholder="filter by tag / key / type / status…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className="flex-1 min-w-0 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-xs text-white placeholder-gray-500"
@@ -667,7 +670,7 @@ function CombinedLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
       </div>
       <div className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-2 font-mono text-[10px]">
         {filtered.length === 0 ? (
-          <p className="text-gray-500">No log entries yet.</p>
+          <p className="text-gray-500 text-xs">No log entries yet.</p>
         ) : (
           <table className="w-full border-collapse">
             <thead>
@@ -675,7 +678,9 @@ function CombinedLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
                 <th className="text-left py-0.5 pr-2">time</th>
                 <th className="text-left py-0.5 pr-2">src</th>
                 <th className="text-left py-0.5 pr-2">event / tag</th>
-                <th className="text-left py-0.5">detail</th>
+                <th className="text-left py-0.5 pr-2">obs</th>
+                <th className="text-left py-0.5 pr-2">status</th>
+                <th className="text-left py-0.5">key / message</th>
               </tr>
             </thead>
             <tbody>
@@ -683,35 +688,37 @@ function CombinedLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
                 e.kind === 'tq' ? (
                   <tr key={i} className="border-b border-gray-800/30 hover:bg-gray-900/50">
                     <td className="py-0.5 pr-2 text-gray-500 whitespace-nowrap">{e.ts}</td>
-                    <td className="py-0.5 pr-2"><span className="px-1 rounded bg-teal-900/60 text-teal-400">tq</span></td>
-                    <td className={`py-0.5 pr-2 whitespace-nowrap ${e.observers === 0 ? 'text-red-400' : 'text-gray-400'}`}>
-                      {e.type} <span className="text-gray-600">obs={e.observers}</span>
+                    <td className="py-0.5 pr-2">
+                      <span className="px-1 rounded bg-teal-900/60 text-teal-400">tq</span>
                     </td>
-                    <td className="py-0.5 text-gray-300 max-w-xs truncate" title={e.key}>
-                      <span className={`font-semibold mr-1 ${tqStatusColor(e.status, e.fetchStatus)}`}>{e.status}/{e.fetchStatus}</span>
-                      {e.key}
+                    <td className="py-0.5 pr-2 text-gray-400 whitespace-nowrap">{e.type}</td>
+                    <td className={`py-0.5 pr-2 whitespace-nowrap ${e.observers === 0 ? 'text-red-400' : 'text-gray-400'}`}>{e.observers}</td>
+                    <td className={`py-0.5 pr-2 whitespace-nowrap font-semibold ${tqStatusColor(e.status, e.fetchStatus)}`}>
+                      {e.status}/{e.fetchStatus}
                     </td>
+                    <td className="py-0.5 text-gray-300 max-w-xs truncate" title={e.key}>{e.key}</td>
                   </tr>
                 ) : (
-                  <>
-                    <tr
-                      key={i}
-                      className="border-b border-gray-800/30 hover:bg-gray-900/50 cursor-pointer"
-                      onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
-                    >
-                      <td className="py-0.5 pr-2 text-gray-500 whitespace-nowrap">{e.ts}</td>
-                      <td className="py-0.5 pr-2"><span className="px-1 rounded bg-yellow-900/60 text-yellow-400">dbg</span></td>
-                      <td className="py-0.5 pr-2 text-yellow-400 whitespace-nowrap">[{e.tag}]</td>
-                      <td className="py-0.5 text-gray-300 max-w-xs truncate" title={e.msg}>{e.msg.split('\n')[0]}</td>
-                    </tr>
-                    {expandedIdx === i && e.msg.includes('\n') && (
-                      <tr key={`${i}-exp`} className="border-b border-gray-800/30">
-                        <td colSpan={4} className="pb-1.5 pl-8">
-                          <pre className="text-gray-500 whitespace-pre-wrap break-all leading-relaxed">{e.msg.split('\n').slice(1).join('\n')}</pre>
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                  <tr
+                    key={i}
+                    className="border-b border-gray-800/30 hover:bg-gray-900/50 cursor-pointer"
+                    onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
+                  >
+                    <td className="py-0.5 pr-2 text-gray-500 whitespace-nowrap align-top">{e.ts}</td>
+                    <td className="py-0.5 pr-2 align-top">
+                      <span className="px-1 rounded bg-yellow-900/60 text-yellow-400">dbg</span>
+                    </td>
+                    <td className="py-0.5 pr-2 text-yellow-300 whitespace-nowrap align-top">{e.tag}</td>
+                    <td className="py-0.5 pr-2 text-gray-600 align-top">—</td>
+                    <td className="py-0.5 pr-2 text-gray-600 align-top">—</td>
+                    <td className="py-0.5 text-gray-300 align-top">
+                      {expandedIdx === i ? (
+                        <pre className="whitespace-pre-wrap break-all">{e.msg}</pre>
+                      ) : (
+                        <span className="truncate block max-w-xs" title={e.msg}>{e.msg}</span>
+                      )}
+                    </td>
+                  </tr>
                 )
               )}
             </tbody>
