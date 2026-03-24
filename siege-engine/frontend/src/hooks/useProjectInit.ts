@@ -38,7 +38,9 @@ export function useProjectInit(projectId: string): { ready: boolean; error: Erro
   }, [project.data]);
 
   // --- Gate rendering on critical data ---
-  const ready = project.isSuccess;
+  // Use `project.data` instead of `isSuccess` so a background refetch after
+  // remount doesn't flash the skeleton when cached data is still available.
+  const ready = !!project.data;
   const error = project.error instanceof Error
     ? project.error
     : project.error
