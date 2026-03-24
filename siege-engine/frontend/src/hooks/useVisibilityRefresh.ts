@@ -1,14 +1,13 @@
 import { useEffect, useRef } from 'react';
-import { useProjectStore } from '../store/projectStore';
-import { usePipelineStore } from '../store/pipelineStore';
-import { useDAGStore } from '../store/dagStore';
 
 const STALE_THRESHOLD_MS = 30_000; // 30 seconds
 
 /**
- * Triggers a full project state refresh when the user returns to the tab
- * after being away for 30+ seconds.  Also reconnects the WebSocket since
- * browser-backgrounded connections commonly drop.
+ * Reconnects the WebSocket when the user returns to the tab after 30+ seconds.
+ *
+ * Data refetching is now handled by TanStack Query's built-in refetchOnWindowFocus
+ * (with staleTime: 30_000 matching this threshold). This hook only handles WS
+ * reconnection since browser-backgrounded connections commonly drop.
  */
 export function useVisibilityRefresh(
   projectId: string | undefined,
@@ -25,18 +24,7 @@ export function useVisibilityRefresh(
         hiddenAtRef.current = null;
 
         if (elapsed >= STALE_THRESHOLD_MS && projectId) {
-          console.log(`[VisibilityRefresh] Tab refocused after ${Math.round(elapsed / 1000)}s — refreshing`);
-
-          // All store actions are safe by default (createSafeStore handles
-          // unhandled rejections), so no manual .catch() needed.
-          useProjectStore.getState().fetchProject(projectId);
-          usePipelineStore.getState().fetchConfig(projectId);
-          usePipelineStore.getState().fetchStatus(projectId);
-          usePipelineStore.getState().fetchRuns(projectId);
-          useDAGStore.getState().fetchDAG(projectId);
-          useDAGStore.getState().fetchDocumentsDAG(projectId);
-
-          // Reconnect WS in case the connection went stale
+          console.log(`[VisibilityRefresh] Tab refocused after ${Math.round(elapsed / 1000)}s — reconnecting WS`);
           reconnectWS();
         }
       }
