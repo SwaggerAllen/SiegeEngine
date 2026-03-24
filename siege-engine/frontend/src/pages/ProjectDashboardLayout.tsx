@@ -15,6 +15,7 @@ import { RunSelector } from '../components/pipeline/RunSelector';
 import { TabSkeleton } from '../components/DashboardSkeleton';
 import { reconcilePipeline } from '../api/pipeline';
 import api from '../api/client';
+import { debugLog } from '../lib/debugLog';
 import type { DashboardContext } from '../components/tabs/types';
 import type { StageExecution } from '../schemas/pipeline';
 import type { Artifact } from '../types/project';
@@ -115,6 +116,13 @@ function DashboardInner({
 
   // Derive selected artifact from TQ cache
   const { data: selectedArtifact = null } = useArtifact(selectedArtifactId);
+
+  // Lifecycle logging — helps diagnose doom-loop remounts
+  useEffect(() => {
+    debugLog('DashboardInner.lifecycle', `MOUNT projectId=${projectId}`);
+    return () => { debugLog('DashboardInner.lifecycle', `UNMOUNT projectId=${projectId}`); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Reset UI state when project changes
   useEffect(() => {
