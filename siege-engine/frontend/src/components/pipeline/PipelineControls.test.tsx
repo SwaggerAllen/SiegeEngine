@@ -9,14 +9,13 @@ const mockResetAll = vi.fn();
 // Mock TQ query hooks
 let mockIsRunning = false;
 let mockIsPaused = false;
-let mockCurrentRunNumber: number | null = null;
 let mockRuns: Array<{ id: string; run_number: number; status: string; run_id: string }> = [];
 let mockBlockingPR: { blocking_pr_url: string | null; blocking_pr_number: number | null } | null = null;
 
 vi.mock('../../hooks/queries/usePipelineQueries', () => ({
-  useIsRunning: () => mockIsRunning,
-  useIsPaused: () => mockIsPaused,
-  useCurrentRunNumber: () => mockCurrentRunNumber,
+  usePipelineStatus: () => ({
+    data: { snapshot: { is_running: mockIsRunning, is_paused: mockIsPaused } },
+  }),
   usePipelineRuns: () => ({ data: mockRuns }),
   useBlockingPR: () => ({ data: mockBlockingPR }),
 }));
@@ -31,13 +30,11 @@ vi.mock('../../hooks/mutations/usePipelineMutations', () => ({
 function setMockState(values: {
   isRunning?: boolean;
   isPaused?: boolean;
-  currentRunNumber?: number | null;
   runs?: typeof mockRuns;
   blockingPR?: typeof mockBlockingPR;
 }) {
   mockIsRunning = values.isRunning ?? false;
   mockIsPaused = values.isPaused ?? false;
-  mockCurrentRunNumber = values.currentRunNumber ?? null;
   mockRuns = values.runs ?? [];
   mockBlockingPR = values.blockingPR ?? null;
 }
@@ -62,7 +59,10 @@ describe('PipelineControls', () => {
   });
 
   it('shows run number badge when running with a current run', () => {
-    setMockState({ isRunning: true, currentRunNumber: 3 });
+    setMockState({
+      isRunning: true,
+      runs: [{ id: '1', run_number: 3, status: 'running', run_id: 'r-1' }],
+    });
     render(<PipelineControls projectId="proj-1" />, { wrapper: TestQueryWrapper });
 
     expect(screen.getByText('Run #3')).toBeInTheDocument();
