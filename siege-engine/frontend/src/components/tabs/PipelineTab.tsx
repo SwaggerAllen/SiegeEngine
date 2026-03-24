@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { useOutletContext } from 'react-router-dom';
-import type { DashboardContext } from './types';
+import { useState, useMemo } from 'react';
+import { useParams } from 'react-router-dom';
 import { useDAGStore } from '../../store/dagStore';
+import { useArtifact } from '../../hooks/queries/useProjectQueries';
 import { useExecutions } from '../../hooks/queries/usePipelineQueries';
+import { findSelectedExecution } from '../../pages/ProjectDashboardLayout';
 import { PipelineDAG } from '../dag/PipelineDAG';
 import { ArtifactEditor } from '../editor/ArtifactEditor';
 import { ReviewPanel } from '../pipeline/ReviewPanel';
@@ -11,9 +12,15 @@ import { StageStatusList } from '../pipeline/StageStatus';
 import { PanelErrorBoundary } from '../ErrorBoundary';
 
 export function PipelineTab() {
-  const { projectId, selectedArtifact, selectedExecution } = useOutletContext<DashboardContext>();
+  const { id: projectId } = useParams<{ id: string }>();
   const selectedStageKey = useDAGStore((s) => s.selectedStageKey);
-  const executions = useExecutions(projectId);
+  const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
+  const { data: selectedArtifact = null } = useArtifact(selectedArtifactId);
+  const executions = useExecutions(projectId!);
+  const selectedExecution = useMemo(
+    () => (selectedArtifact ? findSelectedExecution(executions, selectedArtifact) : undefined),
+    [executions, selectedArtifact],
+  );
   const [paneExpanded, setPaneExpanded] = useState(false);
 
   return (
@@ -21,7 +28,7 @@ export function PipelineTab() {
       {!paneExpanded && (
         <div className="h-64 md:h-auto md:w-3/5 border-b md:border-b-0 md:border-r border-gray-700 shrink-0 md:shrink">
           <PanelErrorBoundary fallbackLabel="DAG render error">
-            <PipelineDAG projectId={projectId} variant="pipeline" />
+            <PipelineDAG projectId={projectId!} variant="pipeline" />
           </PanelErrorBoundary>
         </div>
       )}
@@ -44,12 +51,12 @@ export function PipelineTab() {
               <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                 <div className="flex-1 md:w-2/3 overflow-auto border-b md:border-b-0 md:border-r border-gray-700">
                   <PanelErrorBoundary fallbackLabel="Editor error">
-                    <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
+                    <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} />
                   </PanelErrorBoundary>
                 </div>
                 <div className="md:w-1/3 overflow-auto p-3">
                   <PanelErrorBoundary fallbackLabel="Review panel error">
-                    <ReviewPanel projectId={projectId} artifact={selectedArtifact} execution={selectedExecution} />
+                    <ReviewPanel projectId={projectId!} artifact={selectedArtifact} execution={selectedExecution} />
                   </PanelErrorBoundary>
                 </div>
               </div>
@@ -57,12 +64,12 @@ export function PipelineTab() {
               <>
                 <div className="flex-1 overflow-auto">
                   <PanelErrorBoundary fallbackLabel="Editor error">
-                    <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId} />
+                    <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} />
                   </PanelErrorBoundary>
                 </div>
                 <div className="shrink-0 p-3 border-t border-gray-700 overflow-auto max-h-64">
                   <PanelErrorBoundary fallbackLabel="Review panel error">
-                    <ReviewPanel projectId={projectId} artifact={selectedArtifact} execution={selectedExecution} />
+                    <ReviewPanel projectId={projectId!} artifact={selectedArtifact} execution={selectedExecution} />
                   </PanelErrorBoundary>
                 </div>
               </>
@@ -70,7 +77,7 @@ export function PipelineTab() {
           </div>
         ) : selectedStageKey ? (
           <PanelErrorBoundary fallbackLabel="Stage config error">
-            <StageConfigPanel projectId={projectId} stageKey={selectedStageKey} />
+            <StageConfigPanel projectId={projectId!} stageKey={selectedStageKey} />
           </PanelErrorBoundary>
         ) : (
           <div className="flex-1 flex flex-col min-h-0">
@@ -79,7 +86,7 @@ export function PipelineTab() {
             </div>
             <div className="flex-1 p-4 border-t border-gray-700 overflow-auto min-h-0">
               <PanelErrorBoundary fallbackLabel="Stage status error">
-                <StageStatusList executions={executions} projectId={projectId} />
+                <StageStatusList executions={executions} projectId={projectId!} />
               </PanelErrorBoundary>
             </div>
           </div>

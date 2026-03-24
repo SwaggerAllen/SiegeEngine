@@ -1,10 +1,9 @@
-import { useOutletContext } from 'react-router-dom';
-import type { DashboardContext } from './types';
+import { useParams } from 'react-router-dom';
 import { EventHistoryPanel } from '../pipeline/EventHistoryPanel';
 import { PanelErrorBoundary } from '../ErrorBoundary';
 
 export default function HistoryTab() {
-  const { projectId } = useOutletContext<DashboardContext>();
+  const { id: projectId } = useParams<{ id: string }>();
   return (
     <div className="flex-1 overflow-hidden">
       <PanelErrorBoundary fallbackLabel="Event history error">

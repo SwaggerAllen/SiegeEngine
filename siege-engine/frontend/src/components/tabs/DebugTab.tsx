@@ -1,10 +1,9 @@
-import { useOutletContext } from 'react-router-dom';
-import type { DashboardContext } from './types';
+import { useParams } from 'react-router-dom';
 import { DebugStatePanel } from '../pipeline/DebugStatePanel';
 import { PanelErrorBoundary } from '../ErrorBoundary';
 
 export default function DebugTab() {
-  const { projectId } = useOutletContext<DashboardContext>();
+  const { id: projectId } = useParams<{ id: string }>();
   return (
     <div className="flex-1 overflow-hidden">
       <PanelErrorBoundary fallbackLabel="Debug panel error">

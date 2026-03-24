@@ -1,10 +1,9 @@
-import { useOutletContext } from 'react-router-dom';
-import type { DashboardContext } from './types';
+import { useParams } from 'react-router-dom';
 import { ProjectSettingsPanel } from '../project/ProjectSettingsPanel';
 import { PanelErrorBoundary } from '../ErrorBoundary';
 
 export default function SettingsTab() {
-  const { projectId } = useOutletContext<DashboardContext>();
+  const { id: projectId } = useParams<{ id: string }>();
   return (
     <div className="flex-1 overflow-auto">
       <PanelErrorBoundary fallbackLabel="Settings error">

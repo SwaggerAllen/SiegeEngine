@@ -5,8 +5,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../store/authStore';
 import { useDAGStore } from '../store/dagStore';
 import { usePipelineUIStore } from '../store/pipelineUIStore';
-import { useProject, useArtifact } from '../hooks/queries/useProjectQueries';
-import { useExecutions, useCurrentRunNumber, useIsRunning, pipelineKeys } from '../hooks/queries/usePipelineQueries';
+import { useProject } from '../hooks/queries/useProjectQueries';
+import { useCurrentRunNumber, useIsRunning, pipelineKeys } from '../hooks/queries/usePipelineQueries';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useVisibilityRefresh } from '../hooks/useVisibilityRefresh';
 import { PipelineControls } from '../components/pipeline/PipelineControls';
@@ -16,7 +16,6 @@ import { TabSkeleton } from '../components/DashboardSkeleton';
 import { reconcilePipeline } from '../api/pipeline';
 import api from '../api/client';
 import { debugLog } from '../lib/debugLog';
-import type { DashboardContext } from '../components/tabs/types';
 import type { StageExecution } from '../schemas/pipeline';
 import type { Artifact } from '../types/project';
 
@@ -88,37 +87,31 @@ export function ProjectDashboardLayout() {
   }
 
   if (!projectId) return null;
-  return <DashboardInner projectId={projectId} />;
+  return <DashboardLayout projectId={projectId} />;
 }
 
 // ---------------------------------------------------------------------------
-// DashboardInner — layout skeleton + outlet context assembly only
+// DashboardLayout — layout skeleton only
 //
-// TQ subscriptions here are limited to what the outlet context actually needs:
-//   - useExecutions  (pipeline/runs)    → selectedExecution
-//   - useArtifact    (projects/artifact) → selectedArtifact
-//
-// Everything else (project detail, run status, WS) lives in DashboardHeader.
+// No TQ subscriptions beyond what DashboardHeader needs.
+// Tabs that need artifact/execution data (DocumentsTab, PipelineTab) fetch
+// it themselves via useParams + useDAGStore + useArtifact + useExecutions.
 // ---------------------------------------------------------------------------
 
-function DashboardInner({ projectId }: { projectId: string }) {
+function DashboardLayout({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // TQ: only what the outlet context needs
-  const executions = useExecutions(projectId);
-  const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
   const editPromptStageKey = useDAGStore((s) => s.editPromptStageKey);
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
-  const { data: selectedArtifact = null } = useArtifact(selectedArtifactId);
 
   // Auth: only role check for visibleTabs
   const user = useAuthStore((s) => s.user);
 
   // Lifecycle logging — helps diagnose doom-loop remounts
   useEffect(() => {
-    debugLog('DashboardInner.lifecycle', `MOUNT projectId=${projectId}`);
-    return () => { debugLog('DashboardInner.lifecycle', `UNMOUNT projectId=${projectId}`); };
+    debugLog('DashboardLayout.lifecycle', `MOUNT projectId=${projectId}`);
+    return () => { debugLog('DashboardLayout.lifecycle', `UNMOUNT projectId=${projectId}`); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -139,16 +132,6 @@ function DashboardInner({ projectId }: { projectId: string }) {
   const pathSegments = location.pathname.split('/');
   const activeTab = (pathSegments[pathSegments.length - 1] || 'documents') as Tab;
 
-  const selectedExecution = useMemo(
-    () => (selectedArtifact ? findSelectedExecution(executions, selectedArtifact) : undefined),
-    [executions, selectedArtifact],
-  );
-
-  const outletContext = useMemo<DashboardContext>(
-    () => ({ projectId, selectedArtifact, selectedExecution }),
-    [projectId, selectedArtifact, selectedExecution],
-  );
-
   const isViewer = user?.role === 'viewer';
   const visibleTabs = useMemo<Tab[]>(
     () =>
@@ -163,7 +146,7 @@ function DashboardInner({ projectId }: { projectId: string }) {
       <DashboardHeader projectId={projectId} />
       <DashboardNav visibleTabs={visibleTabs} activeTab={activeTab} />
       <Suspense fallback={<TabSkeleton />}>
-        <Outlet context={outletContext} />
+        <Outlet />
       </Suspense>
     </div>
   );
