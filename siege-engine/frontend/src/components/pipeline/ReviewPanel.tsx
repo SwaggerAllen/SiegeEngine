@@ -215,9 +215,10 @@ interface ReviewPanelProps {
   projectId: string;
   artifact: Artifact;
   execution: StageExecution | undefined;
+  compactMobile?: boolean;
 }
 
-export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
+export function ReviewPanel({ projectId, artifact, execution, compactMobile = false }: ReviewPanelProps) {
   const s = useReviewState(projectId, artifact, execution);
 
   const runControls = !s.isInputDoc ? (
@@ -336,46 +337,48 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           </button>
         </div>
 
-        <div>
-          <CollapseToggle
-            collapsed={s.actionsCollapsed}
-            onToggle={() => s.setActionsCollapsed(!s.actionsCollapsed)}
-          />
-          <div className={`${s.actionsCollapsed ? 'hidden' : ''} md:block`}>
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <button
-                onClick={() => s.handleStaleAction('approved')}
-                disabled={s.submitting}
-                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-              >
-                Approve
-              </button>
-              <button
-                onClick={() => s.handleStaleAction('rejected')}
-                disabled={s.submitting}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-              >
-                Reject &amp; Re-generate
-              </button>
-              <button
-                onClick={() => s.setShowEditor(!s.showEditor)}
-                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-              >
-                {s.showEditor ? 'Hide Editor' : 'Edit & Approve'}
-              </button>
-              <ActionButtonsBar
-                canPrune={s.canPrune}
-                canReparse={s.canReparse}
-                pruning={s.pruning}
-                reparsing={s.reparsing}
-                reparseResult={s.reparseResult}
-                onPrune={s.handlePrune}
-                onReparse={s.handleReparse}
-              />
+        {!compactMobile && (
+          <div>
+            <CollapseToggle
+              collapsed={s.actionsCollapsed}
+              onToggle={() => s.setActionsCollapsed(!s.actionsCollapsed)}
+            />
+            <div className={`${s.actionsCollapsed ? 'hidden' : ''} md:block`}>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={() => s.handleStaleAction('approved')}
+                  disabled={s.submitting}
+                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+                >
+                  Approve
+                </button>
+                <button
+                  onClick={() => s.handleStaleAction('rejected')}
+                  disabled={s.submitting}
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+                >
+                  Reject &amp; Re-generate
+                </button>
+                <button
+                  onClick={() => s.setShowEditor(!s.showEditor)}
+                  className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+                >
+                  {s.showEditor ? 'Hide Editor' : 'Edit & Approve'}
+                </button>
+                <ActionButtonsBar
+                  canPrune={s.canPrune}
+                  canReparse={s.canReparse}
+                  pruning={s.pruning}
+                  reparsing={s.reparsing}
+                  reparseResult={s.reparseResult}
+                  onPrune={s.handlePrune}
+                  onReparse={s.handleReparse}
+                />
+              </div>
+              {runControls}
             </div>
-            {runControls}
           </div>
-        </div>
+        )}
       </div>
     );
   }
@@ -431,38 +434,40 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
           </button>
         </div>
 
-        <div>
-          <CollapseToggle
-            collapsed={s.actionsCollapsed}
-            onToggle={() => s.setActionsCollapsed(!s.actionsCollapsed)}
-          />
-          <div className={`${s.actionsCollapsed ? 'hidden' : ''} md:block`}>
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <button
-                onClick={() => s.handleAction('rejected')}
-                disabled={s.submitting || !s.notes.trim()}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-              >
-                {s.submitting ? 'Requesting...' : 'Request Changes & Re-generate'}
-              </button>
-              <ActionButtonsBar
-                canPrune={s.canPrune}
-                canReparse={s.canReparse}
-                pruning={s.pruning}
-                reparsing={s.reparsing}
-                reparseResult={s.reparseResult}
-                onPrune={s.handlePrune}
-                onReparse={s.handleReparse}
+        {!compactMobile && (
+          <div>
+            <CollapseToggle
+              collapsed={s.actionsCollapsed}
+              onToggle={() => s.setActionsCollapsed(!s.actionsCollapsed)}
+            />
+            <div className={`${s.actionsCollapsed ? 'hidden' : ''} md:block`}>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={() => s.handleAction('rejected')}
+                  disabled={s.submitting || !s.notes.trim()}
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+                >
+                  {s.submitting ? 'Requesting...' : 'Request Changes & Re-generate'}
+                </button>
+                <ActionButtonsBar
+                  canPrune={s.canPrune}
+                  canReparse={s.canReparse}
+                  pruning={s.pruning}
+                  reparsing={s.reparsing}
+                  reparseResult={s.reparseResult}
+                  onPrune={s.handlePrune}
+                  onReparse={s.handleReparse}
+                />
+              </div>
+              <RunFromNodeControls
+                projectId={projectId}
+                stageKey={s.artifactStageKey}
+                componentKey={artifact.component_key}
+                artifactId={artifact.id}
               />
             </div>
-            <RunFromNodeControls
-              projectId={projectId}
-              stageKey={s.artifactStageKey}
-              componentKey={artifact.component_key}
-              artifactId={artifact.id}
-            />
           </div>
-        </div>
+        )}
       </div>
     );
   }
@@ -519,46 +524,48 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         </button>
       </div>
 
-      <div>
-        <CollapseToggle
-          collapsed={s.actionsCollapsed}
-          onToggle={() => s.setActionsCollapsed(!s.actionsCollapsed)}
-        />
-        <div className={`${s.actionsCollapsed ? 'hidden' : ''} md:block`}>
-          <div className="flex flex-wrap items-center gap-2 pt-1">
-            <button
-              onClick={() => s.handleAction('approved')}
-              disabled={s.submitting}
-              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-            >
-              Approve
-            </button>
-            <button
-              onClick={() => s.handleAction('rejected')}
-              disabled={s.submitting}
-              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-            >
-              Reject &amp; Re-generate
-            </button>
-            <button
-              onClick={() => s.setShowEditor(!s.showEditor)}
-              className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-            >
-              {s.showEditor ? 'Hide Editor' : 'Edit & Approve'}
-            </button>
-            <ActionButtonsBar
-              canPrune={s.canPrune}
-              canReparse={s.canReparse}
-              pruning={s.pruning}
-              reparsing={s.reparsing}
-              reparseResult={s.reparseResult}
-              onPrune={s.handlePrune}
-              onReparse={s.handleReparse}
-            />
+      {!compactMobile && (
+        <div>
+          <CollapseToggle
+            collapsed={s.actionsCollapsed}
+            onToggle={() => s.setActionsCollapsed(!s.actionsCollapsed)}
+          />
+          <div className={`${s.actionsCollapsed ? 'hidden' : ''} md:block`}>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                onClick={() => s.handleAction('approved')}
+                disabled={s.submitting}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => s.handleAction('rejected')}
+                disabled={s.submitting}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+              >
+                Reject &amp; Re-generate
+              </button>
+              <button
+                onClick={() => s.setShowEditor(!s.showEditor)}
+                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+              >
+                {s.showEditor ? 'Hide Editor' : 'Edit & Approve'}
+              </button>
+              <ActionButtonsBar
+                canPrune={s.canPrune}
+                canReparse={s.canReparse}
+                pruning={s.pruning}
+                reparsing={s.reparsing}
+                reparseResult={s.reparseResult}
+                onPrune={s.handlePrune}
+                onReparse={s.handleReparse}
+              />
+            </div>
+            {runControls}
           </div>
-          {runControls}
         </div>
-      </div>
+      )}
     </div>
   );
 }

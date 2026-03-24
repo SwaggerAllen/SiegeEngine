@@ -3,6 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { PipelineControls } from './PipelineControls';
 import { TestQueryWrapper } from '../../test/queryWrapper';
 
+async function expandControls(user: ReturnType<typeof userEvent.setup>) {
+  const toggle = screen.queryByTitle('Show run controls');
+  if (toggle) await user.click(toggle);
+}
+
 const mockCancelPipeline = vi.fn();
 const mockResetAll = vi.fn();
 
@@ -51,33 +56,41 @@ describe('PipelineControls', () => {
     expect(screen.queryByText('Start Run')).not.toBeInTheDocument();
   });
 
-  it('shows Cancel button when running', () => {
+  it('shows Cancel button when running', async () => {
+    const user = userEvent.setup();
     setMockState({ isRunning: true });
     render(<PipelineControls projectId="proj-1" />, { wrapper: TestQueryWrapper });
+    await expandControls(user);
 
     expect(screen.getByText('Cancel')).toBeInTheDocument();
   });
 
-  it('shows run number badge when running with a current run', () => {
+  it('shows run number badge when running with a current run', async () => {
+    const user = userEvent.setup();
     setMockState({
       isRunning: true,
       runs: [{ id: '1', run_number: 3, status: 'running', run_id: 'r-1' }],
     });
     render(<PipelineControls projectId="proj-1" />, { wrapper: TestQueryWrapper });
+    await expandControls(user);
 
     expect(screen.getByText('Run #3')).toBeInTheDocument();
   });
 
-  it('shows "Paused for review" when isPaused', () => {
+  it('shows "Paused for review" when isPaused', async () => {
+    const user = userEvent.setup();
     setMockState({ isRunning: true, isPaused: true });
     render(<PipelineControls projectId="proj-1" />, { wrapper: TestQueryWrapper });
+    await expandControls(user);
 
     expect(screen.getByText('Paused for review')).toBeInTheDocument();
   });
 
-  it('shows "Running..." when running but not paused', () => {
+  it('shows "Running..." when running but not paused', async () => {
+    const user = userEvent.setup();
     setMockState({ isRunning: true, isPaused: false });
     render(<PipelineControls projectId="proj-1" />, { wrapper: TestQueryWrapper });
+    await expandControls(user);
 
     expect(screen.getByText('Running...')).toBeInTheDocument();
   });
@@ -91,6 +104,7 @@ describe('PipelineControls', () => {
     const user = userEvent.setup();
     setMockState({ isRunning: true });
     render(<PipelineControls projectId="proj-1" />, { wrapper: TestQueryWrapper });
+    await expandControls(user);
 
     // Click Cancel to open dialog
     await user.click(screen.getByText('Cancel'));
@@ -100,11 +114,13 @@ describe('PipelineControls', () => {
     expect(mockCancelPipeline).toHaveBeenCalledWith(undefined);
   });
 
-  it('shows Reset All button when there is a completed run', () => {
+  it('shows Reset All button when there is a completed run', async () => {
+    const user = userEvent.setup();
     setMockState({
       runs: [{ id: '1', run_number: 1, status: 'completed', run_id: 'r-1' }],
     });
     render(<PipelineControls projectId="proj-1" />, { wrapper: TestQueryWrapper });
+    await expandControls(user);
 
     expect(screen.getByText('Reset All')).toBeInTheDocument();
   });

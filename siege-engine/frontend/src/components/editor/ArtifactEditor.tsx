@@ -18,7 +18,7 @@ const REVISABLE_STATUSES = new Set(['approved', 'stale']);
 
 type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
 
-export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
+export function ArtifactEditor({ artifact, projectId, compactMobile = false }: { artifact: Artifact; projectId: string; compactMobile?: boolean }) {
   const updateArtifactMutation = useUpdateArtifact();
   const reviseArtifactMutation = useReviseArtifact(projectId);
   const { user } = useAuthStore();
@@ -187,8 +187,8 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
 
   return (
     <div className="h-full flex flex-col min-w-0 max-w-full overflow-x-hidden">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between px-3 py-2 border-b border-gray-700 gap-2">
+      {/* Header — hidden in compact mobile mode */}
+      <div className={`flex flex-wrap items-center justify-between px-3 py-2 border-b border-gray-700 gap-2${compactMobile ? ' hidden' : ''}`}>
         <div className="min-w-0 flex items-center gap-2">
           <span className="text-sm font-medium text-white truncate">{artifact.name}</span>
           {history.length > 1 ? (
@@ -279,7 +279,8 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
       </div>
 
       {/* Tab bar */}
-      <div className="border-b border-gray-700 px-3 flex gap-4 shrink-0">
+      {/* Tab bar — hidden in compact mobile mode */}
+      <div className={`border-b border-gray-700 px-3 flex gap-4 shrink-0${compactMobile ? ' hidden' : ''}`}>
         <button
           onClick={() => setActiveTab('document')}
           className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
