@@ -5,6 +5,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import App from './App';
 import { queryClient } from './lib/queryClient';
 import { useErrorLogStore } from './store/errorLogStore';
+import { debugError } from './lib/debugLog';
 import './index.css';
 
 // Safety net: prevent stray unhandled rejections from crashing Safari.
@@ -12,12 +13,14 @@ import './index.css';
 // catches anything that slips through (e.g. third-party libraries).
 window.addEventListener('unhandledrejection', (event) => {
   console.error('[Unhandled Rejection]', event.reason);
+  debugError('unhandledrejection', event.reason);
   useErrorLogStore.getState().pushError('unhandledrejection', event.reason);
   event.preventDefault(); // Prevents Safari from terminating the page
 });
 
 window.addEventListener('error', (event) => {
   console.error('[Global Error]', event.error || event.message);
+  debugError('window.error', event.error || event.message);
   useErrorLogStore.getState().pushError('window.onerror', event.error || event.message);
 });
 

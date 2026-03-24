@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import api from './client';
+import { debugLog, debugError } from '../lib/debugLog';
 import {
   PipelineConfigSchema,
   PipelineEventPageSchema,
@@ -288,23 +289,37 @@ export async function reconcilePipeline(projectId: string): Promise<ReconcileRes
 // ──── DAG (separate router, stays as REST) ────
 
 export async function getDAG(projectId: string): Promise<DAGResponse> {
-  const { data } = await api.get(`/dag/${projectId}`);
-  const result = DAGResponseSchema.safeParse(data);
-  if (!result.success) {
-    console.warn('[getDAG] Schema validation failed, returning empty DAG:', result.error.issues);
-    return { nodes: [], edges: [] };
+  debugLog('api.getDAG', `fetching ${projectId}`);
+  try {
+    const { data } = await api.get(`/dag/${projectId}`);
+    const result = DAGResponseSchema.safeParse(data);
+    if (!result.success) {
+      debugLog('api.getDAG', `schema fail: ${JSON.stringify(result.error.issues).slice(0, 200)}`);
+      return { nodes: [], edges: [] };
+    }
+    debugLog('api.getDAG', `ok: ${result.data.nodes.length} nodes, ${result.data.edges.length} edges`);
+    return result.data;
+  } catch (err) {
+    debugError('api.getDAG', err);
+    throw err;
   }
-  return result.data;
 }
 
 export async function getDocumentsDAG(projectId: string): Promise<DAGResponse> {
-  const { data } = await api.get(`/dag/${projectId}/documents`);
-  const result = DAGResponseSchema.safeParse(data);
-  if (!result.success) {
-    console.warn('[getDocumentsDAG] Schema validation failed, returning empty DAG:', result.error.issues);
-    return { nodes: [], edges: [] };
+  debugLog('api.getDocsDAG', `fetching ${projectId}`);
+  try {
+    const { data } = await api.get(`/dag/${projectId}/documents`);
+    const result = DAGResponseSchema.safeParse(data);
+    if (!result.success) {
+      debugLog('api.getDocsDAG', `schema fail: ${JSON.stringify(result.error.issues).slice(0, 200)}`);
+      return { nodes: [], edges: [] };
+    }
+    debugLog('api.getDocsDAG', `ok: ${result.data.nodes.length} nodes, ${result.data.edges.length} edges`);
+    return result.data;
+  } catch (err) {
+    debugError('api.getDocsDAG', err);
+    throw err;
   }
-  return result.data;
 }
 
 export async function getStaleArtifacts(projectId: string) {
