@@ -1,3 +1,4 @@
+import graphlib as _graphlib
 from collections import defaultdict, deque
 
 from sqlalchemy import select
@@ -56,6 +57,21 @@ def _get_latest_run_executions(
     )
 
     return latest_run, run_execs + out_of_run_execs
+
+
+def _check_acyclic(edges: list[dict]) -> None:
+    """Raise ValueError if the edge list contains a directed cycle.
+
+    Uses stdlib graphlib.TopologicalSorter which raises CycleError for cycles.
+    """
+    ts: _graphlib.TopologicalSorter[str] = _graphlib.TopologicalSorter()
+    for e in edges:
+        ts.add(e["target"], e["source"])
+    try:
+        # prepare() detects cycles immediately without full iteration
+        ts.prepare()
+    except _graphlib.CycleError as exc:
+        raise ValueError(f"Cycle detected in DAG: {exc}") from exc
 
 
 def build_dependency_graph(db: Session, project_id: str) -> dict[str, list[str]]:
@@ -291,6 +307,7 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
             )
             edge_idx += 1
 
+    _check_acyclic(edges)
     return {"nodes": nodes, "edges": edges}
 
 
@@ -594,4 +611,5 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                         )
                         edge_idx += 1
 
+    _check_acyclic(edges)
     return {"nodes": nodes, "edges": edges}
