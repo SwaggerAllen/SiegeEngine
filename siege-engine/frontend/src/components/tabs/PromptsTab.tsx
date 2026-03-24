@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { useParams, useLocation } from 'react-router-dom';
 import { PromptEditorPanel } from '../pipeline/PromptEditorPanel';
 import { PanelErrorBoundary } from '../ErrorBoundary';
 
@@ -14,7 +14,7 @@ export default function PromptsTab() {
     <div className="flex-1 overflow-hidden">
       <PanelErrorBoundary fallbackLabel="Prompt editor error">
         <PromptEditorPanel
-          projectId={projectId}
+          projectId={projectId!}
           initialStageKey={initialStageKey}
           onStageKeyConsumed={() => setInitialStageKey(null)}
         />
