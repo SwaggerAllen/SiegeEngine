@@ -1,4 +1,4 @@
-import { useRef, useState, useMemo, Suspense } from 'react';
+import { useRef, useState, useMemo, useEffect, Suspense } from 'react';
 import { useSafeEffect } from '../hooks/useSafe';
 import { useParams, useSearchParams, useNavigate, useLocation, Link, Outlet, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -9,11 +9,10 @@ import { useProject, useArtifact } from '../hooks/queries/useProjectQueries';
 import { useExecutions, useCurrentRunNumber, useIsRunning, pipelineKeys } from '../hooks/queries/usePipelineQueries';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useVisibilityRefresh } from '../hooks/useVisibilityRefresh';
-import { useProjectInit } from '../hooks/useProjectInit';
 import { PipelineControls } from '../components/pipeline/PipelineControls';
 import { InvitePanel } from '../components/auth/InvitePanel';
 import { RunSelector } from '../components/pipeline/RunSelector';
-import { DashboardSkeleton, TabSkeleton } from '../components/DashboardSkeleton';
+import { TabSkeleton } from '../components/DashboardSkeleton';
 import { reconcilePipeline } from '../api/pipeline';
 import api from '../api/client';
 import type { DashboardContext } from '../components/tabs/types';
@@ -101,7 +100,7 @@ function DashboardInner({
 }) {
   // TQ queries
   const queryClient = useQueryClient();
-  const { data: currentProject } = useProject(projectId);
+  const { data: currentProject, error: projectError } = useProject(projectId);
   const executions = useExecutions(projectId);
   const currentRunNumber = useCurrentRunNumber(projectId);
   const isRunning = useIsRunning(projectId);
@@ -117,8 +116,13 @@ function DashboardInner({
   // Derive selected artifact from TQ cache
   const { data: selectedArtifact = null } = useArtifact(selectedArtifactId);
 
-  // Initialization gate
-  const { ready, error } = useProjectInit(projectId);
+  // Reset UI state when project changes
+  useEffect(() => {
+    usePipelineUIStore.getState().reset();
+    return () => {
+      useDAGStore.getState().clearSelection();
+    };
+  }, [projectId]);
 
   // WebSocket + visibility refresh (stay in layout, persist across tab switches)
   const { connected, reconnect } = useWebSocket(projectId);
@@ -192,24 +196,16 @@ function DashboardInner({
 
   const outletContext: DashboardContext = { projectId, selectedArtifact, selectedExecution };
 
-  if (error) {
+  if (projectError) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-900 text-white">
         <div className="text-center">
           <h1 className="text-xl font-bold text-red-400 mb-2">Failed to load project</h1>
-          <p className="text-gray-400 text-sm">{error.message}</p>
+          <p className="text-gray-400 text-sm">{projectError instanceof Error ? projectError.message : 'Unknown error'}</p>
           <Link to="/projects" className="mt-4 inline-block px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm">
             Back to Projects
           </Link>
         </div>
-      </div>
-    );
-  }
-
-  if (!ready) {
-    return (
-      <div className="h-screen flex flex-col bg-gray-900 text-white">
-        <DashboardSkeleton />
       </div>
     );
   }
