@@ -1,6 +1,6 @@
-import { useRef, useState, useMemo, useEffect, Suspense } from 'react';
+import { useState, useMemo, useEffect, Suspense, memo, useRef } from 'react';
 import { useSafeEffect } from '../hooks/useSafe';
-import { useParams, useSearchParams, useNavigate, useLocation, Link, Outlet, Navigate } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, useLocation, Link, NavLink, Outlet, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../store/authStore';
 import { useDAGStore } from '../store/dagStore';
@@ -73,10 +73,12 @@ const tabLabels: Record<Tab, string> = {
   debug: 'Debug',
 };
 
+// ---------------------------------------------------------------------------
+// ProjectDashboardLayout — thin route wrapper, no hooks beyond params
+// ---------------------------------------------------------------------------
+
 export function ProjectDashboardLayout() {
   const { id: projectId } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const location = useLocation();
   const [searchParams] = useSearchParams();
 
   // Legacy ?tab=X redirect — one-time migration
@@ -86,75 +88,45 @@ export function ProjectDashboardLayout() {
   }
 
   if (!projectId) return null;
-
-  return <DashboardInner projectId={projectId} navigate={navigate} location={location} />;
+  return <DashboardInner projectId={projectId} />;
 }
 
-function DashboardInner({
-  projectId,
-  navigate,
-  location,
-}: {
-  projectId: string;
-  navigate: ReturnType<typeof useNavigate>;
-  location: ReturnType<typeof useLocation>;
-}) {
-  // TQ queries
-  const queryClient = useQueryClient();
-  const { data: currentProject, error: projectError } = useProject(projectId);
-  const executions = useExecutions(projectId);
-  const currentRunNumber = useCurrentRunNumber(projectId);
-  const isRunning = useIsRunning(projectId);
+// ---------------------------------------------------------------------------
+// DashboardInner — layout skeleton + outlet context assembly only
+//
+// TQ subscriptions here are limited to what the outlet context actually needs:
+//   - useExecutions  (pipeline/runs)    → selectedExecution
+//   - useArtifact    (projects/artifact) → selectedArtifact
+//
+// Everything else (project detail, run status, WS) lives in DashboardHeader.
+// ---------------------------------------------------------------------------
 
-  // Zustand stores (UI-only state)
+function DashboardInner({ projectId }: { projectId: string }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // TQ: only what the outlet context needs
+  const executions = useExecutions(projectId);
   const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
-  const clearSelection = useDAGStore((s) => s.clearSelection);
-  const isViewingHistory = usePipelineUIStore((s) => s.isViewingHistory);
-  const user = useAuthStore((s) => s.user);
   const editPromptStageKey = useDAGStore((s) => s.editPromptStageKey);
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
-
-  // Derive selected artifact from TQ cache
   const { data: selectedArtifact = null } = useArtifact(selectedArtifactId);
+
+  // Auth: only role check for visibleTabs
+  const user = useAuthStore((s) => s.user);
 
   // Lifecycle logging — helps diagnose doom-loop remounts
   useEffect(() => {
     debugLog('DashboardInner.lifecycle', `MOUNT projectId=${projectId}`);
     return () => { debugLog('DashboardInner.lifecycle', `UNMOUNT projectId=${projectId}`); };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Reset UI state when project changes
   useEffect(() => {
     usePipelineUIStore.getState().reset();
-    return () => {
-      useDAGStore.getState().clearSelection();
-    };
+    return () => { useDAGStore.getState().clearSelection(); };
   }, [projectId]);
-
-  // WebSocket + visibility refresh (stay in layout, persist across tab switches)
-  const { connected, reconnect } = useWebSocket(projectId);
-  useVisibilityRefresh(projectId, reconnect);
-
-  // Local UI state
-  const [showInvites, setShowInvites] = useState(false);
-  const [showPRDialog, setShowPRDialog] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [repairing, setRepairing] = useState(false);
-  const [repairResult, setRepairResult] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  // Close hamburger menu on outside click
-  useSafeEffect('menu-outside-click', () => {
-    if (!menuOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [menuOpen]);
 
   // Edit-prompt redirect: DAG node "Edit" → navigate to prompts tab
   useSafeEffect('edit-prompt-redirect', () => {
@@ -163,6 +135,77 @@ function DashboardInner({
       setEditPromptStageKey(null);
     }
   }, [editPromptStageKey, setEditPromptStageKey, navigate]);
+
+  const pathSegments = location.pathname.split('/');
+  const activeTab = (pathSegments[pathSegments.length - 1] || 'documents') as Tab;
+
+  const selectedExecution = useMemo(
+    () => (selectedArtifact ? findSelectedExecution(executions, selectedArtifact) : undefined),
+    [executions, selectedArtifact],
+  );
+
+  const outletContext = useMemo<DashboardContext>(
+    () => ({ projectId, selectedArtifact, selectedExecution }),
+    [projectId, selectedArtifact, selectedExecution],
+  );
+
+  const isViewer = user?.role === 'viewer';
+  const visibleTabs = useMemo<Tab[]>(
+    () =>
+      isViewer
+        ? ['documents', 'pipeline', 'chat']
+        : ['documents', 'pipeline', 'prompts', 'input-docs', 'chat', 'settings', 'history'],
+    [isViewer],
+  );
+
+  return (
+    <div className="h-screen flex flex-col bg-gray-900 text-white">
+      <DashboardHeader projectId={projectId} />
+      <DashboardNav visibleTabs={visibleTabs} activeTab={activeTab} />
+      <Suspense fallback={<TabSkeleton />}>
+        <Outlet context={outletContext} />
+      </Suspense>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DashboardHeader — all TQ header queries + dialogs
+//
+// Isolated so that project/pipeline data updates only re-render the header,
+// not the outlet and its children.
+// ---------------------------------------------------------------------------
+
+const DashboardHeader = memo(function DashboardHeader({
+  projectId,
+}: {
+  projectId: string;
+}) {
+  const queryClient = useQueryClient();
+
+  // TQ subscriptions owned by this component
+  const { data: currentProject, error: projectError } = useProject(projectId);
+  const currentRunNumber = useCurrentRunNumber(projectId);
+  const isRunning = useIsRunning(projectId);
+
+  // WS lives here so its state changes (connected/reconnecting) don't touch the outlet
+  const { connected, reconnect } = useWebSocket(projectId);
+  useVisibilityRefresh(projectId, reconnect);
+
+  // Zustand
+  const user = useAuthStore((s) => s.user);
+  const isViewingHistory = usePipelineUIStore((s) => s.isViewingHistory);
+  const clearSelection = useDAGStore((s) => s.clearSelection);
+
+  const isAdmin = user?.role === 'admin';
+  const isViewer = user?.role === 'viewer';
+  const hasRemote = !!currentProject?.remote_url;
+
+  // Local dialog + repair state — changes only re-render this component
+  const [showInvites, setShowInvites] = useState(false);
+  const [showPRDialog, setShowPRDialog] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+  const [repairResult, setRepairResult] = useState<string | null>(null);
 
   const handleRepair = async () => {
     if (repairing) return;
@@ -184,33 +227,18 @@ function DashboardInner({
     }
   };
 
-  // Derive active tab from URL path
-  const pathSegments = location.pathname.split('/');
-  const activeTab = (pathSegments[pathSegments.length - 1] || 'documents') as Tab;
-
-  // Memoized so downstream components get a stable reference when neither
-  // executions nor selectedArtifact have actually changed.
-  const selectedExecution = useMemo(
-    () => (selectedArtifact ? findSelectedExecution(executions, selectedArtifact) : undefined),
-    [executions, selectedArtifact],
-  );
-
-  const isAdmin = user?.role === 'admin';
-  const isViewer = user?.role === 'viewer';
-  const hasRemote = !!currentProject?.remote_url;
-  const visibleTabs: Tab[] = isViewer
-    ? ['documents', 'pipeline', 'chat']
-    : ['documents', 'pipeline', 'prompts', 'input-docs', 'chat', 'settings', 'history'];
-
-  const outletContext: DashboardContext = { projectId, selectedArtifact, selectedExecution };
-
   if (projectError) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-900 text-white">
+      <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center text-white">
         <div className="text-center">
           <h1 className="text-xl font-bold text-red-400 mb-2">Failed to load project</h1>
-          <p className="text-gray-400 text-sm">{projectError instanceof Error ? projectError.message : 'Unknown error'}</p>
-          <Link to="/projects" className="mt-4 inline-block px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm">
+          <p className="text-gray-400 text-sm">
+            {projectError instanceof Error ? projectError.message : 'Unknown error'}
+          </p>
+          <Link
+            to="/projects"
+            className="mt-4 inline-block px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
+          >
             Back to Projects
           </Link>
         </div>
@@ -219,8 +247,7 @@ function DashboardInner({
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-900 text-white">
-      {/* Header */}
+    <>
       <header className="border-b border-gray-700 px-3 md:px-4 py-2 md:py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-2 md:gap-4 min-w-0">
           <Link to="/projects" className="text-gray-400 hover:text-white text-sm shrink-0">
@@ -237,7 +264,9 @@ function DashboardInner({
         </div>
         <div className="flex items-center gap-2 md:gap-4 flex-wrap">
           <RunSelector projectId={projectId} />
-          {!isViewer && !isViewingHistory && <PipelineControls projectId={projectId} hasGitHub={!!currentProject?.github_repo_slug} />}
+          {!isViewer && !isViewingHistory && (
+            <PipelineControls projectId={projectId} hasGitHub={!!currentProject?.github_repo_slug} />
+          )}
           {isViewingHistory && (
             <span className="text-xs bg-yellow-600/30 text-yellow-300 px-2 py-0.5 rounded-full border border-yellow-500/30">
               Viewing history (read-only)
@@ -265,38 +294,74 @@ function DashboardInner({
             className="px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-50"
             title="Repair: fix status mismatches and stuck runs"
           >
-            <svg className={`w-4 h-4 inline ${repairing ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg
+              className={`w-4 h-4 inline ${repairing ? 'animate-spin' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
               {repairing ? (
                 <>
                   <circle className="opacity-25" cx="12" cy="12" r="10" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" stroke="none" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    stroke="none"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                  />
                 </>
               ) : (
                 <>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                  />
                 </>
               )}
             </svg>
           </button>
           {repairResult && (
-            <span className={`text-xs ${repairResult.startsWith('Fixed') ? 'text-green-400' : repairResult === 'No issues found' ? 'text-gray-400' : 'text-red-400'}`}>
+            <span
+              className={`text-xs ${
+                repairResult.startsWith('Fixed')
+                  ? 'text-green-400'
+                  : repairResult === 'No issues found'
+                  ? 'text-gray-400'
+                  : 'text-red-400'
+              }`}
+            >
               {repairResult}
             </span>
           )}
-          <button
-            onClick={() => { navigate('debug'); clearSelection(); setMenuOpen(false); }}
-            className={`px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 ${
-              activeTab === 'debug'
-                ? 'bg-yellow-600 text-white'
-                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-            }`}
+          <NavLink
+            to="debug"
+            onClick={clearSelection}
+            className={({ isActive }) =>
+              `px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 ${
+                isActive
+                  ? 'bg-yellow-600 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+              }`
+            }
             title="Debug State"
           >
             <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              />
             </svg>
-          </button>
+          </NavLink>
           {connected ? (
             <span className="text-xs text-green-400">WS Connected</span>
           ) : (
@@ -310,52 +375,87 @@ function DashboardInner({
           )}
         </div>
       </header>
-
-      {/* Navigation menu */}
-      <div className="border-b border-gray-700 px-4 shrink-0 relative" ref={menuRef}>
-        <button
-          onClick={() => setMenuOpen(!menuOpen)}
-          className="flex items-center gap-2 py-2 text-sm text-gray-300 hover:text-white min-h-[44px]"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-          <span>{tabLabels[activeTab] || tabLabels.documents}</span>
-        </button>
-        {menuOpen && (
-          <div className="absolute left-0 top-full z-50 w-48 bg-gray-800 border border-gray-700 rounded-b-lg shadow-xl">
-            {visibleTabs.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => { navigate(tab); clearSelection(); setMenuOpen(false); }}
-                className={`w-full text-left px-4 py-3 text-sm ${
-                  activeTab === tab
-                    ? 'bg-gray-700 text-white'
-                    : 'text-gray-300 hover:bg-gray-700 hover:text-white'
-                }`}
-              >
-                {tabLabels[tab]}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Tab content via nested route */}
-      <Suspense fallback={<TabSkeleton />}>
-        <Outlet context={outletContext} />
-      </Suspense>
-
       {showInvites && <InvitePanel onClose={() => setShowInvites(false)} />}
       {showPRDialog && (
-        <PRDialog
-          projectId={projectId}
-          onClose={() => setShowPRDialog(false)}
-        />
+        <PRDialog projectId={projectId} onClose={() => setShowPRDialog(false)} />
+      )}
+    </>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// DashboardNav — hamburger menu with fully local state
+//
+// menuOpen lives here so toggling it never re-renders DashboardInner or
+// the outlet. No TQ subscriptions.
+// ---------------------------------------------------------------------------
+
+const DashboardNav = memo(function DashboardNav({
+  visibleTabs,
+  activeTab,
+}: {
+  visibleTabs: Tab[];
+  activeTab: Tab;
+}) {
+  const clearSelection = useDAGStore((s) => s.clearSelection);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close the menu whenever the active tab changes (e.g. debug button in header)
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [activeTab]);
+
+  // Close on outside click
+  useSafeEffect('menu-outside-click', () => {
+    if (!menuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [menuOpen]);
+
+  return (
+    <div className="border-b border-gray-700 px-4 shrink-0 relative" ref={menuRef}>
+      <button
+        onClick={() => setMenuOpen((o) => !o)}
+        className="flex items-center gap-2 py-2 text-sm text-gray-300 hover:text-white min-h-[44px]"
+      >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+        <span>{tabLabels[activeTab] || tabLabels.documents}</span>
+      </button>
+      {menuOpen && (
+        <div className="absolute left-0 top-full z-50 w-48 bg-gray-800 border border-gray-700 rounded-b-lg shadow-xl">
+          {visibleTabs.map((tab) => (
+            <NavLink
+              key={tab}
+              to={tab}
+              onClick={() => { clearSelection(); setMenuOpen(false); }}
+              className={({ isActive }) =>
+                `block w-full text-left px-4 py-3 text-sm ${
+                  isActive
+                    ? 'bg-gray-700 text-white'
+                    : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                }`
+              }
+            >
+              {tabLabels[tab]}
+            </NavLink>
+          ))}
+        </div>
       )}
     </div>
   );
-}
+});
+
+// ---------------------------------------------------------------------------
+// PRDialog — standalone, no shared state dependencies
+// ---------------------------------------------------------------------------
 
 function PRDialog({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const [title, setTitle] = useState('');
