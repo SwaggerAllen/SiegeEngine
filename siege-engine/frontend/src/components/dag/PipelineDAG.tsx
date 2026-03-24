@@ -30,6 +30,36 @@ const MINIMAP_COLORS: Record<string, string> = {
   pending: '#6b7280',
 };
 
+interface CachedNode {
+  serialized: string;
+  node: {
+    id: string;
+    type: string;
+    data: Record<string, unknown>;
+    position: { x: number; y: number };
+    width: number;
+    height: number;
+  };
+}
+
+interface CachedEdge {
+  serialized: string;
+  edge: {
+    id: string;
+    source: string;
+    target: string;
+    type: string | undefined;
+    animated: boolean | undefined;
+  };
+}
+
+/** Returns true when every element of `next` is reference-equal to the
+ *  corresponding element of `prev`. Used to keep array references stable
+ *  so XYFlow's StoreUpdater skips setNodes/setEdges on unchanged polls. */
+function sameElements<T>(next: T[], prev: T[]): boolean {
+  return next.length === prev.length && next.every((item, i) => item === prev[i]);
+}
+
 interface PipelineDAGProps {
   projectId: string;
   variant?: 'pipeline' | 'documents';
@@ -89,15 +119,26 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
     }));
   }, [dagData]);
 
+  const edgeRefCache = useRef(new Map<string, CachedEdge>());
+  const prevEdgesRef = useRef<CachedEdge['edge'][]>([]);
+
   const rawEdges = useMemo(() => {
     if (!dagData) return [];
-    return dagData.edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      type: e.type,
-      animated: e.animated,
-    }));
+    const currentIds = new Set(dagData.edges.map((e) => e.id));
+    for (const id of edgeRefCache.current.keys()) {
+      if (!currentIds.has(id)) edgeRefCache.current.delete(id);
+    }
+    const next = dagData.edges.map((e) => {
+      const serialized = `${e.source}|${e.target}|${e.type ?? ''}|${String(e.animated ?? false)}`;
+      const cached = edgeRefCache.current.get(e.id);
+      if (cached && cached.serialized === serialized) return cached.edge;
+      const edge = { id: e.id, source: e.source, target: e.target, type: e.type, animated: e.animated };
+      edgeRefCache.current.set(e.id, { serialized, edge });
+      return edge;
+    });
+    if (sameElements(next, prevEdgesRef.current)) return prevEdgesRef.current;
+    prevEdgesRef.current = next;
+    return next;
   }, [dagData]);
 
   // === UI state from Zustand (selection only) ===
@@ -140,29 +181,18 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topologyKey]); // rawNodes/rawEdges intentionally excluded: topologyKey captures when layout must change
 
-  // Per-node object cache. XYFlow's adoptUserNodes checks reference equality
-  // (userNode === internalNode.internals.userNode) to decide whether to skip
-  // rebuilding a node's internals (position clamping, z-index, handle bounds).
-  // Without this cache every TQ poll produces new object references → XYFlow
-  // rebuilds every node's internals and emits a 'replace' change for each one,
-  // even when nothing visually changed. The cache returns the same object
-  // reference when data and position are both unchanged.
+  // Per-node/edge object caches. XYFlow's adoptUserNodes checks reference
+  // equality (userNode === internalNode.internals.userNode) to skip rebuilding
+  // node internals (position clamping, z-index, handle bounds). Stable element
+  // refs also let sameElements() return the previous array unchanged, so
+  // StoreUpdater's useEffect sees fieldValue === previousFieldValue and skips
+  // setNodes/setEdges entirely — zero XYFlow work on polls with no real changes.
   //
   // Position stability: positions is a useMemo([topologyKey]), so when topology
   // hasn't changed the same Map instance (and same {x,y} object refs) are
   // returned — making `cached.node.position === pos` a valid cheap check.
-  interface CachedNode {
-    serialized: string;
-    node: {
-      id: string;
-      type: string;
-      data: Record<string, unknown>;
-      position: { x: number; y: number };
-      width: number;
-      height: number;
-    };
-  }
   const nodeRefCache = useRef(new Map<string, CachedNode>());
+  const prevNodesRef = useRef<CachedNode['node'][]>([]);
 
   // Final nodes — applies positions and injects projectId. Reuses cached object
   // references when content is unchanged so XYFlow can skip internal rebuilds.
@@ -173,7 +203,7 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
     for (const id of nodeRefCache.current.keys()) {
       if (!currentIds.has(id)) nodeRefCache.current.delete(id);
     }
-    return rawNodes.map((n) => {
+    const next = rawNodes.map((n) => {
       const pos = positions.get(n.id) ?? { x: 0, y: 0 };
       const serialized = JSON.stringify(n.data) + '|' + projectId;
       const cached = nodeRefCache.current.get(n.id);
@@ -190,6 +220,9 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
       nodeRefCache.current.set(n.id, { serialized, node });
       return node;
     });
+    if (sameElements(next, prevNodesRef.current)) return prevNodesRef.current;
+    prevNodesRef.current = next;
+    return next;
   }, [rawNodes, positions, projectId]);
 
   // === Click handlers ===
