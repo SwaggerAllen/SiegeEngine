@@ -1,38 +1,42 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ReviewPanel } from './ReviewPanel';
+import { TestQueryWrapper } from '../../test/queryWrapper';
 import type { Artifact } from '../../types/project';
 import type { StageExecution } from '../../types/pipeline';
 
 const mockResumeStage = vi.fn();
 const mockPruneArtifact = vi.fn();
 
-const mockStoreState = {
-  resumeStage: mockResumeStage,
-  resolveStale: vi.fn(),
-  regenDownstream: vi.fn(),
-  forceRestartStage: vi.fn(),
-  pruneArtifact: mockPruneArtifact,
-  cancelStage: vi.fn(),
-  fetchStatus: vi.fn(),
-  config: { stages: [{ stage_key: 'system_requirements', output_artifact_type: 'system_requirements' }] },
-  isRunning: false,
-  runs: [],
-  startPipeline: vi.fn(),
-  resumeRun: vi.fn(),
-};
-
-vi.mock('../../store/pipelineStore', () => ({
-  usePipelineStore: vi.fn((selector?: (s: typeof mockStoreState) => unknown) =>
-    selector ? selector(mockStoreState) : mockStoreState
-  ),
+// Mock TQ hooks
+vi.mock('../../hooks/queries/usePipelineQueries', () => ({
+  useIsRunning: () => false,
+  usePipelineRuns: () => ({ data: [] }),
+  usePipelineConfigData: () => ({
+    stages: [{ stage_key: 'system_requirements', output_artifact_type: 'system_requirements' }],
+  }),
+  pipelineKeys: {
+    status: (id: string) => ['pipeline', id, 'status'],
+    runs: (id: string) => ['pipeline', id, 'runs'],
+  },
 }));
 
-vi.mock('../../store/dagStore', () => ({
-  useDAGStore: vi.fn((selector?: (s: Record<string, unknown>) => unknown) => {
-    const state = { fetchDAG: vi.fn(), fetchDocumentsDAG: vi.fn() };
-    return selector ? selector(state) : state;
-  }),
+vi.mock('../../hooks/mutations/usePipelineMutations', () => ({
+  useStartPipeline: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
+  useResumeRun: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
+  useRegenDownstream: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
+  useResumeStage: () => ({ mutateAsync: mockResumeStage, mutate: mockResumeStage }),
+  useResolveStale: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
+  useForceRestartStage: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
+  usePruneArtifact: () => ({ mutateAsync: mockPruneArtifact, mutate: mockPruneArtifact }),
+  useCancelStage: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
+}));
+
+vi.mock('../../hooks/queries/useDAGQueries', () => ({
+  dagKeys: {
+    workflow: (id: string) => ['dag', id, 'workflow'],
+    documents: (id: string) => ['dag', id, 'documents'],
+  },
 }));
 
 vi.mock('../../store/authStore', () => ({
@@ -84,7 +88,8 @@ describe('ReviewPanel', () => {
   it('renders prune button when execution is undefined and artifact is not awaiting review', () => {
     const approvedArtifact = { ...baseArtifact, status: 'approved' as const };
     render(
-      <ReviewPanel projectId="proj-1" artifact={approvedArtifact} execution={undefined} />
+      <ReviewPanel projectId="proj-1" artifact={approvedArtifact} execution={undefined} />,
+      { wrapper: TestQueryWrapper }
     );
     expect(screen.getByText('🗑 Prune Node')).toBeInTheDocument();
   });
@@ -93,7 +98,8 @@ describe('ReviewPanel', () => {
     const approvedArtifact = { ...baseArtifact, status: 'approved' as const };
     const approvedExecution = { ...awaitingExecution, status: 'approved' as const };
     render(
-      <ReviewPanel projectId="proj-1" artifact={approvedArtifact} execution={approvedExecution} />
+      <ReviewPanel projectId="proj-1" artifact={approvedArtifact} execution={approvedExecution} />,
+      { wrapper: TestQueryWrapper }
     );
     expect(screen.getByText('🗑 Prune')).toBeInTheDocument();
   });
@@ -101,7 +107,8 @@ describe('ReviewPanel', () => {
   it('renders no action buttons for input doc artifacts', () => {
     const inputArtifact = { ...baseArtifact, artifact_type: 'project_doc' };
     render(
-      <ReviewPanel projectId="proj-1" artifact={inputArtifact} execution={undefined} />
+      <ReviewPanel projectId="proj-1" artifact={inputArtifact} execution={undefined} />,
+      { wrapper: TestQueryWrapper }
     );
     expect(screen.queryByText('🗑 Prune Node')).not.toBeInTheDocument();
     expect(screen.queryByText('Start Run')).not.toBeInTheDocument();
@@ -110,7 +117,8 @@ describe('ReviewPanel', () => {
 
   it('renders Approve, Save Feedback, and Reject buttons when awaiting_review', () => {
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      { wrapper: TestQueryWrapper }
     );
     expect(screen.getByText('Approve')).toBeInTheDocument();
     expect(screen.getByText('Save Feedback')).toBeInTheDocument();
@@ -119,7 +127,8 @@ describe('ReviewPanel', () => {
 
   it('starts with empty notes textarea (no pre-population)', () => {
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      { wrapper: TestQueryWrapper }
     );
     const textarea = screen.getByPlaceholderText('Add feedback for re-generation...');
     expect(textarea).toHaveValue('');
@@ -127,7 +136,8 @@ describe('ReviewPanel', () => {
 
   it('disables Save Feedback when notes are empty', () => {
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      { wrapper: TestQueryWrapper }
     );
     const saveBtn = screen.getByText('Save Feedback');
     expect(saveBtn).toBeDisabled();
@@ -136,7 +146,8 @@ describe('ReviewPanel', () => {
   it('enables Save Feedback when user types notes', async () => {
     const user = userEvent.setup();
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      { wrapper: TestQueryWrapper }
     );
     const textarea = screen.getByPlaceholderText('Add feedback for re-generation...');
     await user.type(textarea, 'Some feedback');
@@ -150,13 +161,17 @@ describe('ReviewPanel', () => {
     mockResumeStage.mockResolvedValue(undefined);
 
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      { wrapper: TestQueryWrapper }
     );
     await user.click(screen.getByText('Approve'));
 
-    expect(mockResumeStage).toHaveBeenCalledWith(
-      'proj-1', 'exec-1', 'approved', undefined, undefined
-    );
+    expect(mockResumeStage).toHaveBeenCalledWith({
+      executionId: 'exec-1',
+      action: 'approved',
+      notes: undefined,
+      editedContent: undefined,
+    });
   });
 
   it('calls resumeStage with "rejected" when Reject is clicked', async () => {
@@ -164,13 +179,17 @@ describe('ReviewPanel', () => {
     mockResumeStage.mockResolvedValue(undefined);
 
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      { wrapper: TestQueryWrapper }
     );
     await user.click(screen.getByText('Reject & Re-generate'));
 
-    expect(mockResumeStage).toHaveBeenCalledWith(
-      'proj-1', 'exec-1', 'rejected', undefined, undefined
-    );
+    expect(mockResumeStage).toHaveBeenCalledWith({
+      executionId: 'exec-1',
+      action: 'rejected',
+      notes: undefined,
+      editedContent: undefined,
+    });
   });
 
   it('calls resumeStage with "save_feedback" when Save Feedback is clicked', async () => {
@@ -178,16 +197,20 @@ describe('ReviewPanel', () => {
     mockResumeStage.mockResolvedValue(undefined);
 
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      { wrapper: TestQueryWrapper }
     );
 
     const textarea = screen.getByPlaceholderText('Add feedback for re-generation...');
     await user.type(textarea, 'Some feedback');
     await user.click(screen.getByText('Save Feedback'));
 
-    expect(mockResumeStage).toHaveBeenCalledWith(
-      'proj-1', 'exec-1', 'save_feedback', 'Some feedback', undefined
-    );
+    expect(mockResumeStage).toHaveBeenCalledWith({
+      executionId: 'exec-1',
+      action: 'save_feedback',
+      notes: 'Some feedback',
+      editedContent: undefined,
+    });
   });
 
   it('shows "Feedback Saved" after save_feedback action', async () => {
@@ -195,7 +218,8 @@ describe('ReviewPanel', () => {
     mockResumeStage.mockResolvedValue(undefined);
 
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      { wrapper: TestQueryWrapper }
     );
 
     const textarea = screen.getByPlaceholderText('Add feedback for re-generation...');

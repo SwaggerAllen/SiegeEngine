@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { DAGNodeData } from '../../types/dag';
 import { useDAGStore } from '../../store/dagStore';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { useForceRestartStage, useCancelStage } from '../../hooks/mutations/usePipelineMutations';
 import { RESTARTABLE_STATUSES } from '../../types/pipeline';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -41,8 +41,8 @@ const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 export function StageNode({ data }: { data: DAGNodeData & { projectId?: string } }) {
   const projectId = data.projectId;
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
-  const forceRestartStage = usePipelineStore((s) => s.forceRestartStage);
-  const cancelStage = usePipelineStore((s) => s.cancelStage);
+  const forceRestartMutation = useForceRestartStage(projectId ?? '');
+  const cancelStageMutation = useCancelStage(projectId ?? '');
   const [restarting, setRestarting] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
@@ -87,7 +87,7 @@ export function StageNode({ data }: { data: DAGNodeData & { projectId?: string }
     if (!projectId || !data.execution_id) return;
     setRestarting(true);
     try {
-      await forceRestartStage(projectId, data.execution_id);
+      await forceRestartMutation.mutateAsync(data.execution_id);
     } catch (err) {
       console.error('Force restart failed:', err);
     } finally {
@@ -100,7 +100,7 @@ export function StageNode({ data }: { data: DAGNodeData & { projectId?: string }
     if (!projectId || !data.execution_id) return;
     setCancelling(true);
     try {
-      await cancelStage(projectId, data.execution_id);
+      await cancelStageMutation.mutateAsync(data.execution_id);
     } catch (err) {
       console.error('Cancel stage failed:', err);
     } finally {

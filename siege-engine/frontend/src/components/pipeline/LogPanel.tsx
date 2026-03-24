@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { usePipelineUIStore } from '../../store/pipelineUIStore';
 
 const LEVEL_COLORS: Record<string, string> = {
   error: 'text-red-400',
@@ -9,8 +9,8 @@ const LEVEL_COLORS: Record<string, string> = {
 };
 
 export function LogPanel() {
-  const logEntries = usePipelineStore((s) => s.logEntries);
-  const clearLogs = usePipelineStore((s) => s.clearLogs);
+  const logEntries = usePipelineUIStore((s) => s.logEntries);
+  const clearLogs = usePipelineUIStore((s) => s.clearLogs);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);

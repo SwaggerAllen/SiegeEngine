@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { StageExecution } from '../../types/pipeline';
 import { RESTARTABLE_STATUSES } from '../../types/pipeline';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { useForceRestartStage } from '../../hooks/mutations/usePipelineMutations';
 import { formatTime } from '../../utils/dateFormat';
 
 const STATUS_BADGES: Record<string, { bg: string; text: string }> = {
@@ -35,13 +35,13 @@ function ExecutionRow({ exec, projectId }: { exec: StageExecution; projectId?: s
   const [expanded, setExpanded] = useState(false);
   const [actionInProgress, setActionInProgress] = useState(false);
   const badge = STATUS_BADGES[exec.status] || STATUS_BADGES.pending;
-  const forceRestartStage = usePipelineStore((s) => s.forceRestartStage);
+  const forceRestartMutation = useForceRestartStage(projectId ?? '');
 
   const handleForceRestart = async () => {
     if (!projectId) return;
     setActionInProgress(true);
     try {
-      await forceRestartStage(projectId, exec.id);
+      await forceRestartMutation.mutateAsync(exec.id);
     } catch (err) {
       console.error('Force restart failed:', err);
     } finally {

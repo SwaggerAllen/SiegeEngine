@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../store/authStore';
-import { useDAGStore } from '../../store/dagStore';
+import { dagKeys } from '../../hooks/queries/useDAGQueries';
+import { useIsRunning, usePipelineRuns, usePipelineConfigData, pipelineKeys } from '../../hooks/queries/usePipelineQueries';
+import { useStartPipeline, useResumeRun, useRegenDownstream, useResumeStage, useResolveStale, useForceRestartStage, usePruneArtifact, useCancelStage } from '../../hooks/mutations/usePipelineMutations';
 import { listComments } from '../../api/comments';
 import { reparseFanout } from '../../api/pipeline';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
@@ -24,11 +26,11 @@ function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: 
   componentKey: string | null;
   artifactId?: string;
 }) {
-  const startPipeline = usePipelineStore((s) => s.startPipeline);
-  const resumeRun = usePipelineStore((s) => s.resumeRun);
-  const regenDownstream = usePipelineStore((s) => s.regenDownstream);
-  const isRunning = usePipelineStore((s) => s.isRunning);
-  const runs = usePipelineStore((s) => s.runs);
+  const startPipelineMutation = useStartPipeline(projectId);
+  const resumeRunMutation = useResumeRun(projectId);
+  const regenDownstreamMutation = useRegenDownstream(projectId);
+  const isRunning = useIsRunning(projectId);
+  const { data: runs = [] } = usePipelineRuns(projectId);
   const [expanded, setExpanded] = useState(false);
   const [mode, setMode] = useState<'start' | 'resume'>('start');
   const [aiLoops, setAiLoops] = useState(1);
@@ -47,7 +49,7 @@ function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: 
     setStarting(true);
     try {
       if (isRegen && artifactId) {
-        await regenDownstream(projectId, artifactId);
+        await regenDownstreamMutation.mutateAsync(artifactId);
       } else {
         const options: PipelineStartOptions = {
           ai_loops: aiLoops,
@@ -59,9 +61,9 @@ function RunFromNodeControls({ projectId, stageKey, componentKey, artifactId }: 
           start_component_key: mode === 'resume' ? null : componentKey,
         };
         if (mode === 'resume') {
-          await resumeRun(projectId, options);
+          await resumeRunMutation.mutateAsync(options);
         } else {
-          await startPipeline(projectId, options);
+          await startPipelineMutation.mutateAsync(options);
         }
       }
     } catch (err) {
@@ -171,13 +173,13 @@ interface ReviewPanelProps {
 const REGENERATING_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps) {
-  const resumeStage = usePipelineStore((s) => s.resumeStage);
-  const resolveStale = usePipelineStore((s) => s.resolveStale);
-  const forceRestartStage = usePipelineStore((s) => s.forceRestartStage);
-  const pruneArtifact = usePipelineStore((s) => s.pruneArtifact);
-  const cancelStage = usePipelineStore((s) => s.cancelStage);
-  const fetchStatus = usePipelineStore((s) => s.fetchStatus);
-  const config = usePipelineStore((s) => s.config);
+  const queryClient = useQueryClient();
+  const resumeStageMutation = useResumeStage(projectId);
+  const resolveStaleM = useResolveStale(projectId);
+  const forceRestartMutation = useForceRestartStage(projectId);
+  const pruneArtifactMutation = usePruneArtifact(projectId);
+  const cancelStageMutation = useCancelStage(projectId);
+  const config = usePipelineConfigData(projectId);
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
 
@@ -197,8 +199,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const [reparseResult, setReparseResult] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [actionsCollapsed, setActionsCollapsed] = useState(false);
-  const fetchDAG = useDAGStore((s) => s.fetchDAG);
-  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
+  // DAG invalidation via TQ
 
   const isAwaitingReview = execution?.status === 'awaiting_review'
     || artifact.status === 'awaiting_review';
@@ -230,9 +231,10 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     // Only attempt once per artifact to avoid an infinite loop.
     if (artifact.status === 'awaiting_review' && !execution && fetchedMissingExecRef.current !== artifact.id) {
       fetchedMissingExecRef.current = artifact.id;
-      fetchStatus(projectId);
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
     }
-  }, [projectId, artifact.id, artifact.status, execution, fetchStatus]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, artifact.id, artifact.status, execution]);
 
   const handleAction = async (action: string) => {
     // Input docs may have no execution — fall back to artifact-based approval
@@ -244,13 +246,12 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     }
     setSubmitting(true);
     try {
-      await resumeStage(
-        projectId,
-        execution.id,
+      await resumeStageMutation.mutateAsync({
+        executionId: execution.id,
         action,
-        notes || undefined,
-        showEditor && editedContent ? editedContent : undefined
-      );
+        notes: notes || undefined,
+        editedContent: showEditor && editedContent ? editedContent : undefined,
+      });
       if (action === 'save_feedback') {
         setFeedbackSaved(true);
         setFeedbackCount((c) => c + 1);
@@ -260,7 +261,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         clearEditedContent();
         setShowEditor(false);
         setFeedbackSaved(false);
-        fetchStatus(projectId);
+        queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
       }
     } finally {
       setSubmitting(false);
@@ -270,13 +271,12 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
   const handleStaleAction = async (action: string) => {
     setSubmitting(true);
     try {
-      await resolveStale(
-        projectId,
-        artifact.id,
+      await resolveStaleM.mutateAsync({
+        artifactId: artifact.id,
         action,
-        notes || undefined,
-        showEditor && editedContent ? editedContent : undefined
-      );
+        notes: notes || undefined,
+        editedContent: showEditor && editedContent ? editedContent : undefined,
+      });
       if (action === 'save_feedback') {
         setFeedbackSaved(true);
         setFeedbackCount((c) => c + 1);
@@ -286,7 +286,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         clearEditedContent();
         setShowEditor(false);
         setFeedbackSaved(false);
-        fetchStatus(projectId);
+        queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
       }
     } finally {
       setSubmitting(false);
@@ -297,7 +297,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     if (!execution) return;
     setRestarting(true);
     try {
-      await forceRestartStage(projectId, execution.id);
+      await forceRestartMutation.mutateAsync(execution.id);
     } catch (err) {
       console.error('Force restart failed:', err);
     } finally {
@@ -311,7 +311,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     }
     setPruning(true);
     try {
-      await pruneArtifact(projectId, artifact.id);
+      await pruneArtifactMutation.mutateAsync(artifact.id);
     } catch (err) {
       console.error('Prune failed:', err);
     } finally {
@@ -329,7 +329,8 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
         : 'No missing entities found';
       setReparseResult(msg);
       if (result.added.length > 0 || result.removed.length > 0) {
-        await Promise.all([fetchDAG(projectId), fetchDocumentsDAG(projectId)]);
+        queryClient.invalidateQueries({ queryKey: dagKeys.workflow(projectId) });
+        queryClient.invalidateQueries({ queryKey: dagKeys.documents(projectId) });
       }
     } catch (err) {
       console.error('Reparse failed:', err);
@@ -343,7 +344,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
     if (!execution) return;
     setCancelling(true);
     try {
-      await cancelStage(projectId, execution.id);
+      await cancelStageMutation.mutateAsync(execution.id);
     } catch (err) {
       console.error('Cancel failed:', err);
     } finally {

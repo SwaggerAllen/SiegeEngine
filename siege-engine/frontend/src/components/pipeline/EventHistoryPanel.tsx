@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import * as pipelineApi from '../../api/pipeline';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { pipelineKeys } from '../../hooks/queries/usePipelineQueries';
 import type { PipelineEvent, PipelineSnapshot } from '../../types/pipeline';
 import { formatDateTimeSec } from '../../utils/dateFormat';
 
@@ -119,8 +120,7 @@ export function EventHistoryPanel({ projectId }: Props) {
   const [collapsedRuns, setCollapsedRuns] = useState<Set<string>>(new Set());
   const [artifactNames, setArtifactNames] = useState<Record<string, string>>({});
   const [runNumbers, setRunNumbers] = useState<Record<string, number>>({});
-  const fetchStatus = usePipelineStore((s) => s.fetchStatus);
-  const fetchRuns = usePipelineStore((s) => s.fetchRuns);
+  const queryClient = useQueryClient();
 
   const PAGE_SIZE = 50;
 
@@ -227,8 +227,8 @@ export function EventHistoryPanel({ projectId }: Props) {
       setRevertResult(parts.join(' — '));
       // Refresh everything
       loadEvents();
-      fetchStatus(projectId);
-      fetchRuns(projectId);
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.runs(projectId) });
       setSelectedSeq(null);
       setPreviewSnapshot(null);
     } catch (err) {

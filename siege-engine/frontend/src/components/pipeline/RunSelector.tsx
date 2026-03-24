@@ -1,20 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { usePipelineRuns } from '../../hooks/queries/usePipelineQueries';
+import { usePipelineUIStore } from '../../store/pipelineUIStore';
+import * as pipelineApi from '../../api/pipeline';
 import type { PipelineRun } from '../../types/pipeline';
 import { formatDateShort } from '../../utils/dateFormat';
 
 export function RunSelector({ projectId }: { projectId: string }) {
-  const runs = usePipelineStore((s) => s.runs);
-  const fetchRuns = usePipelineStore((s) => s.fetchRuns);
-  const selectedRunNumber = usePipelineStore((s) => s.selectedRunNumber);
-  const isViewingHistory = usePipelineStore((s) => s.isViewingHistory);
-  const selectRun = usePipelineStore((s) => s.selectRun);
+  const { data: runs = [] } = usePipelineRuns(projectId);
+  const selectedRunNumber = usePipelineUIStore((s) => s.selectedRunNumber);
+  const isViewingHistory = usePipelineUIStore((s) => s.isViewingHistory);
+  const setSelectedRun = usePipelineUIStore((s) => s.setSelectedRun);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    fetchRuns(projectId);
-  }, [projectId, fetchRuns]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -61,7 +58,7 @@ export function RunSelector({ projectId }: { projectId: string }) {
         <div className="absolute top-full mt-1 right-0 z-50 w-56 bg-gray-800 border border-gray-600 rounded-lg shadow-xl overflow-hidden">
           {/* Current / live option */}
           <button
-            onClick={() => { selectRun(projectId, null); setOpen(false); }}
+            onClick={() => { setSelectedRun(null); setOpen(false); }}
             className={`w-full px-3 py-2 text-left text-sm hover:bg-gray-700 flex items-center justify-between ${
               !isViewingHistory ? 'bg-gray-700 text-white' : 'text-gray-300'
             }`}
@@ -79,7 +76,15 @@ export function RunSelector({ projectId }: { projectId: string }) {
             {runs.map((run: PipelineRun) => (
               <button
                 key={run.id}
-                onClick={() => { selectRun(projectId, run.run_number); setOpen(false); }}
+                onClick={async () => {
+                  try {
+                    const state = await pipelineApi.getRunState(projectId, run.run_number);
+                    setSelectedRun(run.run_number, state);
+                  } catch (err) {
+                    console.error('[RunSelector] Failed to fetch run state:', err);
+                  }
+                  setOpen(false);
+                }}
                 disabled={!run.git_commit_sha}
                 className={`w-full px-3 py-2 text-left text-sm hover:bg-gray-700 flex items-center justify-between disabled:opacity-40 disabled:cursor-not-allowed ${
                   isViewingHistory && selectedRunNumber === run.run_number
