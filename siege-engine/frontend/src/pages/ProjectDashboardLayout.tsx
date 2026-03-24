@@ -14,7 +14,7 @@ import { useProjectInit } from '../hooks/useProjectInit';
 import { PipelineControls } from '../components/pipeline/PipelineControls';
 import { InvitePanel } from '../components/auth/InvitePanel';
 import { RunSelector } from '../components/pipeline/RunSelector';
-import { DashboardSkeleton, TabSkeleton } from '../components/DashboardSkeleton';
+import { TabSkeleton } from '../components/DashboardSkeleton';
 import { reconcilePipeline } from '../api/pipeline';
 import api from '../api/client';
 import type { DashboardContext } from '../components/tabs/types';
@@ -61,7 +61,8 @@ function DashboardInner({
 }) {
   // TQ queries
   const queryClient = useQueryClient();
-  const { data: currentProject } = useProject(projectId);
+  const projectQuery = useProject(projectId);
+  const currentProject = projectQuery.data;
   const executions = useExecutions(projectId);
   const currentRunNumber = useCurrentRunNumber(projectId);
   const isRunning = useIsRunning(projectId);
@@ -74,8 +75,8 @@ function DashboardInner({
   const editPromptStageKey = useDAGStore((s) => s.editPromptStageKey);
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
 
-  // Initialization gate
-  const { ready, error } = useProjectInit(projectId);
+  // Prefetch all project queries in parallel (no rendering gate)
+  useProjectInit(projectId);
 
   // WebSocket + visibility refresh (stay in layout, persist across tab switches)
   const { connected, reconnect } = useWebSocket(projectId);
@@ -161,24 +162,17 @@ function DashboardInner({
 
   const outletContext: DashboardContext = { projectId, selectedArtifact, selectedExecution };
 
-  if (error) {
+  // Only show error page for hard failures (404, network error) — not transient states
+  if (projectQuery.isError) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-900 text-white">
         <div className="text-center">
           <h1 className="text-xl font-bold text-red-400 mb-2">Failed to load project</h1>
-          <p className="text-gray-400 text-sm">{error.message}</p>
+          <p className="text-gray-400 text-sm">{projectQuery.error?.message}</p>
           <Link to="/projects" className="mt-4 inline-block px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm">
             Back to Projects
           </Link>
         </div>
-      </div>
-    );
-  }
-
-  if (!ready) {
-    return (
-      <div className="h-screen flex flex-col bg-gray-900 text-white">
-        <DashboardSkeleton />
       </div>
     );
   }
