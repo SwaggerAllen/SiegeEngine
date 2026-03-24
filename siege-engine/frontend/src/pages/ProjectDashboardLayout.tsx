@@ -2,11 +2,10 @@ import { useRef, useState, Suspense } from 'react';
 import { useSafeEffect } from '../hooks/useSafe';
 import { useParams, useSearchParams, useNavigate, useLocation, Link, Outlet, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { useProjectStore } from '../store/projectStore';
 import { useAuthStore } from '../store/authStore';
 import { useDAGStore } from '../store/dagStore';
 import { usePipelineUIStore } from '../store/pipelineUIStore';
-import { useProject } from '../hooks/queries/useProjectQueries';
+import { useProject, useArtifact } from '../hooks/queries/useProjectQueries';
 import { useExecutions, useCurrentRunNumber, useIsRunning, pipelineKeys } from '../hooks/queries/usePipelineQueries';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useVisibilityRefresh } from '../hooks/useVisibilityRefresh';
@@ -67,12 +66,15 @@ function DashboardInner({
   const isRunning = useIsRunning(projectId);
 
   // Zustand stores (UI-only state)
-  const selectedArtifact = useProjectStore((s) => s.selectedArtifact);
-  const clearSelection = useProjectStore((s) => s.clearSelection);
+  const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
+  const clearSelection = useDAGStore((s) => s.clearSelection);
   const isViewingHistory = usePipelineUIStore((s) => s.isViewingHistory);
   const user = useAuthStore((s) => s.user);
   const editPromptStageKey = useDAGStore((s) => s.editPromptStageKey);
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
+
+  // Derive selected artifact from TQ cache
+  const { data: selectedArtifact = null } = useArtifact(selectedArtifactId);
 
   // Initialization gate
   const { ready, error } = useProjectInit(projectId);

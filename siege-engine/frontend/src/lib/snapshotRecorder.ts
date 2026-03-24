@@ -2,9 +2,8 @@
  * Auto-captures Zustand store snapshots to sessionStorage on an interval.
  * Survives page reloads so the debug view can show what happened before a crash.
  */
-import { usePipelineStore } from '../store/pipelineStore';
+import { usePipelineUIStore } from '../store/pipelineUIStore';
 import { useDAGStore } from '../store/dagStore';
-import { useProjectStore } from '../store/projectStore';
 import { useAuthStore } from '../store/authStore';
 import { useErrorLogStore } from '../store/errorLogStore';
 
@@ -43,9 +42,8 @@ function sanitize(obj: unknown, depth = 0): unknown {
 
 function grabStores(): Record<string, unknown> {
   return {
-    pipeline: sanitize(usePipelineStore.getState()),
+    pipelineUI: sanitize(usePipelineUIStore.getState()),
     dag: sanitize(useDAGStore.getState()),
-    project: sanitize(useProjectStore.getState()),
     auth: sanitize(useAuthStore.getState()),
     errors: sanitize(useErrorLogStore.getState()),
   };

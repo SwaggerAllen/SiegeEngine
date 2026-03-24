@@ -10,7 +10,6 @@ import dagre from 'dagre';
 import '@xyflow/react/dist/style.css';
 
 import { useDAGStore } from '../../store/dagStore';
-import { useProjectStore } from '../../store/projectStore';
 import { useDAGData, useDocumentsDAGData } from '../../hooks/queries/useDAGQueries';
 import { StageNode } from './StageNode';
 import { debugLogDedup } from '../../lib/debugLog';
@@ -63,8 +62,7 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   // === UI state from Zustand (selection only) ===
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const selectStage = useDAGStore((s) => s.selectStage);
-  const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
-  const clearSelection = useProjectStore((s) => s.clearSelection);
+  const clearSelection = useDAGStore((s) => s.clearSelection);
 
   // === LAYER 3: Dagre layout ===
   const nodes = useMemo(() => {
@@ -108,18 +106,15 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
         const hasArtifact = node.data?.has_artifact;
         if (hasArtifact) {
           selectArtifact(node.id);
-          fetchArtifact(node.id);
         }
       }
     },
-    [variant, selectStage, selectArtifact, fetchArtifact]
+    [variant, selectStage, selectArtifact]
   );
 
   const onPaneClick = useCallback(() => {
-    selectStage(null);
-    selectArtifact(null);
     clearSelection();
-  }, [selectStage, selectArtifact, clearSelection]);
+  }, [clearSelection]);
 
   // === LAYER 5: Render ===
   // NOTE: all hooks must be above early returns to satisfy Rules of Hooks

@@ -1,8 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { getDebugState } from '../../api/pipeline';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { usePipelineUIStore } from '../../store/pipelineUIStore';
 import { useDAGStore } from '../../store/dagStore';
-import { useProjectStore } from '../../store/projectStore';
 import { useAuthStore } from '../../store/authStore';
 import { useErrorLogStore } from '../../store/errorLogStore';
 import { getRecordedSnapshots, clearRecordedSnapshots } from '../../lib/snapshotRecorder';
@@ -363,9 +362,8 @@ function sanitizeForDisplay(obj: unknown, depth = 0): unknown {
 
 function grabSnapshot() {
   return {
-    pipeline: sanitizeForDisplay(usePipelineStore.getState()),
+    pipelineUI: sanitizeForDisplay(usePipelineUIStore.getState()),
     dag: sanitizeForDisplay(useDAGStore.getState()),
-    project: sanitizeForDisplay(useProjectStore.getState()),
     auth: sanitizeForDisplay(useAuthStore.getState()),
     errors: sanitizeForDisplay(useErrorLogStore.getState()),
   };
