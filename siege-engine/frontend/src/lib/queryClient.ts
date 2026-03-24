@@ -35,6 +35,21 @@ export const queryClient = new QueryClient({
 // Wire up global query error handler
 queryClient.getQueryCache().config.onError = handleQueryError as never;
 
+// Patch clear() and removeQueries() to log a stack trace so we can catch
+// any call-site that nukes the cache (even from third-party code).
+const _origClear = queryClient.clear.bind(queryClient);
+queryClient.clear = (...args) => {
+  const stack = new Error('queryClient.clear() called').stack ?? 'no stack';
+  debugError('TQ.clear', stack);
+  return _origClear(...args);
+};
+const _origRemove = queryClient.removeQueries.bind(queryClient);
+queryClient.removeQueries = (...args) => {
+  const stack = new Error('queryClient.removeQueries() called').stack ?? 'no stack';
+  debugError('TQ.removeQueries', stack);
+  return _origRemove(...args);
+};
+
 // Record all cache mutations to localStorage so they survive tab navigation
 queryClient.getQueryCache().subscribe((event) => {
   if (!event?.query) return;
