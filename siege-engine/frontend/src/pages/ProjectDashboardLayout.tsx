@@ -81,12 +81,6 @@ function DashboardInner({
   const { connected, reconnect } = useWebSocket(projectId);
   useVisibilityRefresh(projectId, reconnect);
 
-  // Track whether we've ever been ready — once true, never show the skeleton
-  // again (prevents child unmount/remount on hard refresh refetch).
-  const hasBeenReady = useRef(false);
-  if (ready) hasBeenReady.current = true;
-  const showSkeleton = !hasBeenReady.current && !ready;
-
   // Local UI state
   const [showInvites, setShowInvites] = useState(false);
   const [showPRDialog, setShowPRDialog] = useState(false);
@@ -181,7 +175,7 @@ function DashboardInner({
     );
   }
 
-  if (showSkeleton) {
+  if (!ready) {
     return (
       <div className="h-screen flex flex-col bg-gray-900 text-white">
         <DashboardSkeleton />
