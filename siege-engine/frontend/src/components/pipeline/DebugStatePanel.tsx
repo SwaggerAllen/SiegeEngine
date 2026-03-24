@@ -6,6 +6,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useErrorLogStore } from '../../store/errorLogStore';
 import { getRecordedSnapshots, clearRecordedSnapshots } from '../../lib/snapshotRecorder';
 import { getDebugLog, clearDebugLog, type DebugEntry } from '../../lib/debugLog';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface DebugState {
   snapshot: Record<string, unknown>;
@@ -209,7 +210,7 @@ function formatDebugText(state: DebugState): string {
   return lines.join('\n');
 }
 
-type SubTab = 'backend' | 'frontend' | 'errors' | 'log';
+type SubTab = 'backend' | 'frontend' | 'errors' | 'log' | 'queries';
 
 export function DebugStatePanel({ projectId }: { projectId: string }) {
   const errorCount = useErrorLogStore((s) => s.errors.length);
@@ -306,6 +307,12 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
         >
           Log
         </button>
+        <button
+          onClick={() => setSubTab('queries')}
+          className={`px-3 py-1 text-xs ${subTab === 'queries' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+        >
+          TQ Cache
+        </button>
       </div>
 
       {subTab === 'backend' ? (
@@ -328,6 +335,8 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
         <ZustandSubTab onCopy={handleCopy} />
       ) : subTab === 'log' ? (
         <DebugLogSubTab onCopy={handleCopy} />
+      ) : subTab === 'queries' ? (
+        <QueryCacheSubTab onCopy={handleCopy} />
       ) : (
         <ErrorsSubTab />
       )}
@@ -626,6 +635,132 @@ function DebugLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
               <pre className="text-gray-300 whitespace-pre-wrap break-all mt-0.5 leading-relaxed">{e.msg}</pre>
             </div>
           ))
+        )}
+      </div>
+    </>
+  );
+}
+
+function QueryCacheSubTab({ onCopy }: { onCopy: (text: string) => void }) {
+  const queryClient = useQueryClient();
+  const [rows, setRows] = useState<ReturnType<typeof snapshotCache>>([]);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+
+  function snapshotCache() {
+    return queryClient.getQueryCache().getAll().map((q) => ({
+      key: JSON.stringify(q.queryKey),
+      status: q.state.status,
+      fetchStatus: q.state.fetchStatus,
+      isStale: q.isStale(),
+      dataUpdatedAt: q.state.dataUpdatedAt,
+      errorUpdatedAt: q.state.errorUpdatedAt,
+      observers: q.getObserversCount(),
+      error: q.state.error ? String(q.state.error) : null,
+      dataPreview: (() => {
+        const d = q.state.data as Record<string, unknown> | undefined;
+        if (!d) return null;
+        if (typeof d === 'object' && 'nodes' in d && Array.isArray(d.nodes))
+          return `nodes=${d.nodes.length}`;
+        if (Array.isArray(d)) return `[${d.length} items]`;
+        return typeof d;
+      })(),
+    }));
+  }
+
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!pausedRef.current) setRows(snapshotCache());
+    }, 250);
+    setRows(snapshotCache());
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryClient]);
+
+  function statusColor(status: string, fetchStatus: string) {
+    if (fetchStatus === 'fetching') return 'text-blue-400';
+    if (status === 'success') return 'text-green-400';
+    if (status === 'error') return 'text-red-400';
+    return 'text-gray-400'; // pending / idle
+  }
+
+  const copyText = rows.map((r) =>
+    `${new Date(r.dataUpdatedAt).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })} | ${r.status}/${r.fetchStatus} | obs=${r.observers} | stale=${r.isStale} | ${r.dataPreview ?? 'no data'} | ${r.error ?? ''} | ${r.key}`
+  ).join('\n');
+
+  return (
+    <>
+      <div className="flex items-center justify-between shrink-0">
+        <span className="text-xs text-gray-400">
+          {rows.length} queries — refreshes every 250 ms
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPaused((p) => !p)}
+            className={`px-3 py-1.5 text-white text-xs rounded ${paused ? 'bg-orange-600 hover:bg-orange-700' : 'bg-gray-700 hover:bg-gray-600'}`}
+          >
+            {paused ? 'Paused — click to resume' : 'Pause'}
+          </button>
+          <button
+            onClick={() => { queryClient.clear(); setRows([]); }}
+            className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-xs rounded"
+            title="Remove all queries from cache (forces fresh fetches)"
+          >
+            Clear All
+          </button>
+          <button
+            onClick={() => onCopy(copyText)}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
+          >
+            Copy All
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-2 font-mono text-xs">
+        {rows.length === 0 ? (
+          <p className="text-gray-500">No queries in cache</p>
+        ) : (
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="text-gray-500 text-[10px] border-b border-gray-800">
+                <th className="text-left py-1 pr-2">key</th>
+                <th className="text-left py-1 pr-2">status</th>
+                <th className="text-left py-1 pr-2">fetchStatus</th>
+                <th className="text-left py-1 pr-2">obs</th>
+                <th className="text-left py-1 pr-2">stale</th>
+                <th className="text-left py-1 pr-2">data</th>
+                <th className="text-left py-1 pr-2">updatedAt</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-900/50">
+                  <td className="py-0.5 pr-3 text-gray-300 max-w-xs truncate" title={r.key}>{r.key}</td>
+                  <td className={`py-0.5 pr-3 font-semibold ${statusColor(r.status, r.fetchStatus)}`}>{r.status}</td>
+                  <td className={`py-0.5 pr-3 ${r.fetchStatus === 'fetching' ? 'text-blue-400' : 'text-gray-500'}`}>{r.fetchStatus}</td>
+                  <td className="py-0.5 pr-3 text-gray-400">{r.observers}</td>
+                  <td className={`py-0.5 pr-3 ${r.isStale ? 'text-yellow-400' : 'text-gray-600'}`}>{r.isStale ? 'yes' : 'no'}</td>
+                  <td className="py-0.5 pr-3 text-gray-400">{r.dataPreview ?? <span className="text-gray-600">—</span>}</td>
+                  <td className="py-0.5 text-gray-600">
+                    {r.dataUpdatedAt ? new Date(r.dataUpdatedAt).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {rows.some((r) => r.error) && (
+          <div className="mt-2 pt-2 border-t border-gray-800">
+            {rows.filter((r) => r.error).map((r, i) => (
+              <div key={i} className="text-red-400 mb-1">
+                <span className="text-gray-500">{r.key}: </span>{r.error}
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </>
