@@ -12,7 +12,7 @@ import '@xyflow/react/dist/style.css';
 import { useDAGStore } from '../../store/dagStore';
 import { useDAGData, useDocumentsDAGData } from '../../hooks/queries/useDAGQueries';
 import { StageNode } from './StageNode';
-import { debugLogDedup } from '../../lib/debugLog';
+import { debugLog, debugLogDedup } from '../../lib/debugLog';
 import type { DAGResponse } from '../../types/dag';
 import type { UseQueryResult } from '@tanstack/react-query';
 
