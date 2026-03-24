@@ -715,9 +715,9 @@ function QueryCacheSubTab({ onCopy }: { onCopy: (text: string) => void }) {
             {paused ? 'Paused — click to resume' : 'Pause'}
           </button>
           <button
-            onClick={() => { queryClient.clear(); setRows([]); }}
+            onClick={() => { clearTQLog(); setRows([]); }}
             className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-xs rounded"
-            title="Remove all queries from cache (forces fresh fetches)"
+            title="Clear TQ log from localStorage (does not affect application query cache)"
           >
             Clear All
           </button>
