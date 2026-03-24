@@ -11,6 +11,15 @@ import { DAGResponseSchema } from '../schemas/dag';
 import type { PipelineConfig, PipelineEventPage, PipelineRun, PipelineSnapshot, PipelineStartOptions, StageDefinition } from '../types/pipeline';
 import type { DAGResponse } from '../types/dag';
 
+// ──── Unified action helper ────
+
+async function pipelineAction(projectId: string, action: Record<string, unknown>) {
+  const { data } = await api.post(`/pipeline/${projectId}/action`, action);
+  return data;
+}
+
+// ──── Config (CRUD — stays as REST) ────
+
 export async function getPipelineConfig(projectId: string): Promise<PipelineConfig> {
   const { data } = await api.get(`/pipeline/${projectId}/config`);
   return PipelineConfigSchema.parse(data);
@@ -24,21 +33,34 @@ export async function updatePipelineConfig(
   return PipelineConfigSchema.parse(data);
 }
 
+// ──── Pipeline lifecycle (via /action) ────
+
 export async function startPipeline(
   projectId: string,
   options?: PipelineStartOptions
 ) {
-  const { data } = await api.post(`/pipeline/${projectId}/start`, options || {});
-  return data;
+  return pipelineAction(projectId, { type: 'start', ...options });
 }
 
 export async function resumeRun(
   projectId: string,
   options?: PipelineStartOptions
 ) {
-  const { data } = await api.post(`/pipeline/${projectId}/resume-run`, options || {});
-  return data;
+  return pipelineAction(projectId, { type: 'resume_run', ...options });
 }
+
+export async function cancelPipeline(
+  projectId: string,
+  options?: { open_pr?: boolean; pr_title?: string; pr_body?: string; base_branch?: string }
+) {
+  return pipelineAction(projectId, { type: 'cancel', ...options });
+}
+
+export async function resetAll(projectId: string) {
+  return pipelineAction(projectId, { type: 'reset_all' });
+}
+
+// ──── Reads (stay as individual GETs) ────
 
 export async function listRuns(projectId: string): Promise<PipelineRun[]> {
   const { data } = await api.get(`/pipeline/${projectId}/runs`);
@@ -50,91 +72,15 @@ export async function getRunState(projectId: string, runNumber: number) {
   return data;
 }
 
-export async function resumeStage(
-  projectId: string,
-  executionId: string,
-  action: string,
-  notes?: string,
-  editedContent?: string
-) {
-  const { data } = await api.post(`/pipeline/${projectId}/resume`, {
-    execution_id: executionId,
-    action,
-    notes,
-    edited_content: editedContent,
-  });
-  return data;
-}
-
-export async function reviseArtifact(
-  projectId: string,
-  artifactId: string,
-  feedback: string
-) {
-  const { data } = await api.post(`/pipeline/${projectId}/revise`, {
-    artifact_id: artifactId,
-    feedback,
-  });
-  return data;
-}
-
-export async function resolveStale(
-  projectId: string,
-  artifactId: string,
-  action: string,
-  notes?: string,
-  editedContent?: string
-) {
-  const { data } = await api.post(`/pipeline/${projectId}/resolve-stale`, {
-    artifact_id: artifactId,
-    action,
-    notes,
-    edited_content: editedContent,
-  });
-  return data;
-}
-
-export async function regenDownstream(
-  projectId: string,
-  artifactId: string,
-) {
-  const { data } = await api.post(`/pipeline/${projectId}/regen-downstream`, {
-    artifact_id: artifactId,
-  });
-  return data;
-}
-
-export async function regenerateArtifacts(
-  projectId: string,
-  artifactIds: string[]
-) {
-  const { data } = await api.post(`/pipeline/${projectId}/regenerate`, {
-    artifact_ids: artifactIds,
-  });
-  return data;
-}
-
 export async function getPipelineStatus(projectId: string) {
   const { data } = await api.get(`/pipeline/${projectId}/status`);
   return data;
 }
 
 export async function getSnapshot(projectId: string): Promise<PipelineSnapshot> {
-  const { data } = await api.get(`/pipeline/${projectId}/snapshot`);
-  return PipelineSnapshotSchema.parse(data);
-}
-
-export async function cancelPipeline(
-  projectId: string,
-  options?: { open_pr?: boolean; pr_title?: string; pr_body?: string; base_branch?: string }
-) {
-  const { data } = await api.post(`/pipeline/${projectId}/cancel`, options || {});
-  return data;
-}
-
-export async function resetAll(projectId: string) {
-  const { data } = await api.post(`/pipeline/${projectId}/reset-all`);
-  return data;
+  // Snapshot is now served by /status — extract snapshot portion
+  const { data } = await api.get(`/pipeline/${projectId}/status`);
+  return PipelineSnapshotSchema.parse(data.snapshot);
 }
 
 export async function getDebugState(projectId: string) {
@@ -147,29 +93,82 @@ export async function getBlockingPR(projectId: string) {
   return data as { blocking_pr_url: string | null; blocking_pr_number: number | null };
 }
 
-export async function checkBlockingPR(projectId: string) {
-  const { data } = await api.post(`/pipeline/${projectId}/blocking-pr/check`);
-  return data as { blocking: boolean; pr_state?: string; blocking_pr_url?: string; blocking_pr_number?: number };
+// ──── Stage actions (via /action) ────
+
+export async function resumeStage(
+  projectId: string,
+  executionId: string,
+  action: string,
+  notes?: string,
+  editedContent?: string
+) {
+  return pipelineAction(projectId, {
+    type: 'resume_stage',
+    execution_id: executionId,
+    action,
+    notes,
+    edited_content: editedContent,
+  });
 }
 
-export async function dismissBlockingPR(projectId: string) {
-  const { data } = await api.post(`/pipeline/${projectId}/blocking-pr/dismiss`);
-  return data;
+export async function reviseArtifact(
+  projectId: string,
+  artifactId: string,
+  feedback: string
+) {
+  return pipelineAction(projectId, {
+    type: 'revise',
+    artifact_id: artifactId,
+    feedback,
+  });
+}
+
+export async function resolveStale(
+  projectId: string,
+  artifactId: string,
+  action: string,
+  notes?: string,
+  editedContent?: string
+) {
+  return pipelineAction(projectId, {
+    type: 'resolve_stale',
+    artifact_id: artifactId,
+    action,
+    notes,
+    edited_content: editedContent,
+  });
+}
+
+export async function regenDownstream(
+  projectId: string,
+  artifactId: string,
+) {
+  return pipelineAction(projectId, {
+    type: 'regen_downstream',
+    artifact_id: artifactId,
+  });
+}
+
+export async function regenerateArtifacts(
+  projectId: string,
+  artifactIds: string[]
+) {
+  return pipelineAction(projectId, {
+    type: 'regenerate',
+    artifact_ids: artifactIds,
+  });
 }
 
 export async function retryStage(projectId: string, executionId: string) {
-  const { data } = await api.post(`/pipeline/${projectId}/retry/${executionId}`);
-  return data;
+  return pipelineAction(projectId, { type: 'retry', execution_id: executionId });
 }
 
 export async function cancelStage(projectId: string, executionId: string) {
-  const { data } = await api.post(`/pipeline/${projectId}/cancel-stage/${executionId}`);
-  return data;
+  return pipelineAction(projectId, { type: 'cancel_stage', execution_id: executionId });
 }
 
 export async function forceRestartStage(projectId: string, executionId: string) {
-  const { data } = await api.post(`/pipeline/${projectId}/force-restart/${executionId}`);
-  return data;
+  return pipelineAction(projectId, { type: 'force_restart', execution_id: executionId });
 }
 
 export async function triggerStage(
@@ -177,16 +176,15 @@ export async function triggerStage(
   stageKey: string,
   componentKey?: string | null
 ) {
-  const { data } = await api.post(`/pipeline/${projectId}/trigger-stage`, {
+  return pipelineAction(projectId, {
+    type: 'trigger_stage',
     stage_key: stageKey,
     component_key: componentKey ?? null,
   });
-  return data;
 }
 
 export async function pruneArtifact(projectId: string, artifactId: string) {
-  const { data } = await api.delete(`/pipeline/${projectId}/prune/${artifactId}`);
-  return data;
+  return pipelineAction(projectId, { type: 'prune', artifact_id: artifactId });
 }
 
 export async function reparseFanout(projectId: string, artifactId: string): Promise<{
@@ -194,9 +192,22 @@ export async function reparseFanout(projectId: string, artifactId: string): Prom
   removed: string[];
   total: number;
 }> {
-  const { data } = await api.post(`/pipeline/${projectId}/artifacts/${artifactId}/reparse`);
-  return data;
+  return pipelineAction(projectId, { type: 'reparse', artifact_id: artifactId });
 }
+
+// ──── Blocking PR (via /action) ────
+
+export async function checkBlockingPR(projectId: string) {
+  return pipelineAction(projectId, { type: 'check_blocking_pr' }) as Promise<{
+    blocking: boolean; pr_state?: string; blocking_pr_url?: string; blocking_pr_number?: number
+  }>;
+}
+
+export async function dismissBlockingPR(projectId: string) {
+  return pipelineAction(projectId, { type: 'dismiss_blocking_pr' });
+}
+
+// ──── Artifact reads ────
 
 export interface ArtifactDiff {
   diff: string;
@@ -210,6 +221,8 @@ export async function getArtifactDiff(projectId: string, artifactId: string): Pr
   const { data } = await api.get(`/pipeline/${projectId}/artifacts/${artifactId}/diff`);
   return data;
 }
+
+// ──── Events ────
 
 export async function listEvents(
   projectId: string,
@@ -231,9 +244,48 @@ export async function revertToSequence(
   projectId: string,
   sequence: number
 ): Promise<{ status: string; reverted_to_sequence: number; events_deleted: number; artifacts_restored: number; artifacts_deleted: number }> {
-  const { data } = await api.post(`/pipeline/${projectId}/events/revert-to/${sequence}`);
-  return data;
+  return pipelineAction(projectId, { type: 'revert', sequence });
 }
+
+// ──── Prompt preview (via /action) ────
+
+export interface PromptPreviewMessage {
+  role: string;
+  content: string;
+}
+
+export interface PromptPreview {
+  messages: PromptPreviewMessage[];
+  model: string;
+  temperature: number;
+}
+
+export async function getPromptPreview(
+  projectId: string,
+  artifactId: string,
+  humanNotes?: string,
+): Promise<PromptPreview> {
+  return pipelineAction(projectId, {
+    type: 'prompt_preview',
+    artifact_id: artifactId,
+    human_notes: humanNotes ?? null,
+  });
+}
+
+// ──── Admin / recovery (via /action) ────
+
+export interface ReconcileResult {
+  corrections: Array<Record<string, unknown>>;
+  orphans_removed: Array<Record<string, unknown>>;
+  run_id: string;
+  run_number: number;
+}
+
+export async function reconcilePipeline(projectId: string): Promise<ReconcileResult> {
+  return pipelineAction(projectId, { type: 'reconcile' });
+}
+
+// ──── DAG (separate router, stays as REST) ────
 
 export async function getDAG(projectId: string): Promise<DAGResponse> {
   const { data } = await api.get(`/dag/${projectId}`);
@@ -264,6 +316,8 @@ export async function getComponents(projectId: string): Promise<ComponentInfo[]>
   return data;
 }
 
+// ──── Stage config (CRUD — stays as REST) ────
+
 export async function updateStageConfig(
   projectId: string,
   stageKey: string,
@@ -279,39 +333,4 @@ export async function resetStageConfig(
 ): Promise<StageDefinition> {
   const { data } = await api.post(`/pipeline/${projectId}/stages/${stageKey}/reset`);
   return StageDefinitionSchema.parse(data);
-}
-
-export interface ReconcileResult {
-  corrections: Array<Record<string, unknown>>;
-  orphans_removed: Array<Record<string, unknown>>;
-  run_id: string;
-  run_number: number;
-}
-
-export async function reconcilePipeline(projectId: string): Promise<ReconcileResult> {
-  const { data } = await api.post(`/pipeline/${projectId}/reconcile`);
-  return data;
-}
-
-export interface PromptPreviewMessage {
-  role: string;
-  content: string;
-}
-
-export interface PromptPreview {
-  messages: PromptPreviewMessage[];
-  model: string;
-  temperature: number;
-}
-
-export async function getPromptPreview(
-  projectId: string,
-  artifactId: string,
-  humanNotes?: string,
-): Promise<PromptPreview> {
-  const { data } = await api.post(`/pipeline/${projectId}/prompt-preview`, {
-    artifact_id: artifactId,
-    human_notes: humanNotes ?? null,
-  });
-  return data;
 }

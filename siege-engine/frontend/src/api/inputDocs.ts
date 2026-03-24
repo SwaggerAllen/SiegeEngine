@@ -33,6 +33,6 @@ export async function deleteInputDoc(projectId: string, docId: string) {
 }
 
 export async function propagateChanges(projectId: string) {
-  const { data } = await api.post(`/pipeline/${projectId}/propagate`);
+  const { data } = await api.post(`/pipeline/${projectId}/action`, { type: 'propagate' });
   return data;
 }
