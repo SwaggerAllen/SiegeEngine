@@ -81,6 +81,7 @@ export function useSafeCallback<T extends (...args: never[]) => unknown>(
     } catch (err) {
       console.error(`[useSafeCallback:${label}]`, err);
       useErrorLogStore.getState().pushError(`useSafeCallback(${label})`, err);
+      throw err; // re-throw so callers receive the error (consistent with async path)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps) as T;
