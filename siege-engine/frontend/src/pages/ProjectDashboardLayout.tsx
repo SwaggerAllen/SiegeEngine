@@ -2,11 +2,10 @@ import { useRef, useState, Suspense } from 'react';
 import { useSafeEffect } from '../hooks/useSafe';
 import { useParams, useSearchParams, useNavigate, useLocation, Link, Outlet, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { useProjectStore } from '../store/projectStore';
 import { useAuthStore } from '../store/authStore';
 import { useDAGStore } from '../store/dagStore';
 import { usePipelineUIStore } from '../store/pipelineUIStore';
-import { useProject } from '../hooks/queries/useProjectQueries';
+import { useProject, useArtifact } from '../hooks/queries/useProjectQueries';
 import { useExecutions, useCurrentRunNumber, useIsRunning, pipelineKeys } from '../hooks/queries/usePipelineQueries';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useVisibilityRefresh } from '../hooks/useVisibilityRefresh';
@@ -18,6 +17,47 @@ import { DashboardSkeleton, TabSkeleton } from '../components/DashboardSkeleton'
 import { reconcilePipeline } from '../api/pipeline';
 import api from '../api/client';
 import type { DashboardContext } from '../components/tabs/types';
+import type { StageExecution } from '../schemas/pipeline';
+import type { Artifact } from '../types/project';
+
+/**
+ * Find the most relevant StageExecution for a selected artifact.
+ *
+ * Fallback priority:
+ * 1. Exact artifact match + awaiting_review (show Approve/Reject)
+ * 2. Exact artifact match, any status
+ * 3. Component key match, no artifact_id yet (generation died before artifact was created)
+ * 4. Component key match, both awaiting_review (regeneration edge case with stale artifact_id)
+ *
+ * Input docs (project_doc) skip component_key fallbacks — they have no StageExecution.
+ */
+export function findSelectedExecution(
+  executions: StageExecution[],
+  artifact: Artifact,
+): StageExecution | undefined {
+  const isInputDoc = artifact.artifact_type === 'project_doc';
+  return (
+    executions.find((e) => e.artifact_id === artifact.id && e.status === 'awaiting_review') ??
+    executions.find((e) => e.artifact_id === artifact.id) ??
+    (!isInputDoc
+      ? executions.find(
+          (e) =>
+            !e.artifact_id &&
+            e.component_key === (artifact.component_key ?? null) &&
+            ['running', 'ai_review', 'failed', 'awaiting_review'].includes(e.status) &&
+            ['generating', 'ai_reviewing', 'pending', 'awaiting_review'].includes(artifact.status),
+        )
+      : undefined) ??
+    (!isInputDoc
+      ? executions.find(
+          (e) =>
+            e.component_key === (artifact.component_key ?? null) &&
+            e.status === 'awaiting_review' &&
+            artifact.status === 'awaiting_review',
+        )
+      : undefined)
+  );
+}
 
 type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug';
 
@@ -67,12 +107,15 @@ function DashboardInner({
   const isRunning = useIsRunning(projectId);
 
   // Zustand stores (UI-only state)
-  const selectedArtifact = useProjectStore((s) => s.selectedArtifact);
-  const clearSelection = useProjectStore((s) => s.clearSelection);
+  const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
+  const clearSelection = useDAGStore((s) => s.clearSelection);
   const isViewingHistory = usePipelineUIStore((s) => s.isViewingHistory);
   const user = useAuthStore((s) => s.user);
   const editPromptStageKey = useDAGStore((s) => s.editPromptStageKey);
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
+
+  // Derive selected artifact from TQ cache
+  const { data: selectedArtifact = null } = useArtifact(selectedArtifactId);
 
   // Initialization gate
   const { ready, error } = useProjectInit(projectId);
@@ -133,23 +176,8 @@ function DashboardInner({
   const pathSegments = location.pathname.split('/');
   const activeTab = (pathSegments[pathSegments.length - 1] || 'documents') as Tab;
 
-  // Derive selectedExecution (complex matching logic preserved from original)
-  const isInputDoc = selectedArtifact?.artifact_type === 'project_doc';
   const selectedExecution = selectedArtifact
-    ? executions.find((e) => e.artifact_id === selectedArtifact.id && e.status === 'awaiting_review')
-      || executions.find((e) => e.artifact_id === selectedArtifact.id)
-      || (!isInputDoc && executions.find((e) =>
-          !e.artifact_id
-          && e.component_key === (selectedArtifact.component_key ?? null)
-          && ['running', 'ai_review', 'failed', 'awaiting_review'].includes(e.status)
-          && ['generating', 'ai_reviewing', 'pending', 'awaiting_review'].includes(selectedArtifact.status)
-        ))
-      || (!isInputDoc && executions.find((e) =>
-          e.component_key === (selectedArtifact.component_key ?? null)
-          && e.status === 'awaiting_review'
-          && selectedArtifact.status === 'awaiting_review'
-        ))
-      || undefined
+    ? findSelectedExecution(executions, selectedArtifact)
     : undefined;
 
   const isAdmin = user?.role === 'admin';

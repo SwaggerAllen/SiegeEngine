@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useProject } from './queries/useProjectQueries';
 import { usePipelineConfig, usePipelineStatus, usePipelineRuns, useBlockingPR } from './queries/usePipelineQueries';
 import { useDAGData, useDocumentsDAGData } from './queries/useDAGQueries';
-import { useProjectStore } from '../store/projectStore';
+import { useDAGStore } from '../store/dagStore';
 import { usePipelineUIStore } from '../store/pipelineUIStore';
 import { debugLogDedup } from '../lib/debugLog';
 
@@ -26,16 +26,9 @@ export function useProjectInit(projectId: string): { ready: boolean; error: Erro
   useEffect(() => {
     usePipelineUIStore.getState().reset();
     return () => {
-      useProjectStore.getState().clearSelection();
+      useDAGStore.getState().clearSelection();
     };
   }, [projectId]);
-
-  // --- Bridge: sync project data to Zustand for selectedArtifact/currentProject consumers ---
-  useEffect(() => {
-    if (project.data) {
-      useProjectStore.setState({ currentProject: project.data, loading: false });
-    }
-  }, [project.data]);
 
   // --- Gate rendering on critical data ---
   // Once ready for a given projectId, never flip back to false.

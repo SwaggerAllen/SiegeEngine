@@ -8,8 +8,8 @@ import {
   type InputDocument,
 } from '../../api/inputDocs';
 import { getArtifact, updateArtifact } from '../../api/projects';
-import { useProjectStore } from '../../store/projectStore';
 import { useAuthStore } from '../../store/authStore';
+import { useProject } from '../../hooks/queries/useProjectQueries';
 import type { Artifact } from '../../types/project';
 
 interface InputDocsPanelProps {
@@ -31,7 +31,7 @@ type ViewItem =
 export default function InputDocsPanel({ projectId }: InputDocsPanelProps) {
   const user = useAuthStore((s) => s.user);
   const isViewer = user?.role === 'viewer';
-  const currentProject = useProjectStore((s) => s.currentProject);
+  const { data: currentProject } = useProject(projectId);
 
   const [inputDocs, setInputDocs] = useState<InputDocument[]>([]);
   const [projectDocArtifact, setProjectDocArtifact] = useState<Artifact | null>(null);

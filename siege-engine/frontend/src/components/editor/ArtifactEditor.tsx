@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
-import { useProjectStore } from '../../store/projectStore';
 import { useAuthStore } from '../../store/authStore';
 import { useReviseArtifact } from '../../hooks/mutations/usePipelineMutations';
+import { useUpdateArtifact } from '../../hooks/mutations/useProjectMutations';
 import { formatDateTime } from '../../utils/dateFormat';
 import { getArtifactHistory, getArtifactVersion } from '../../api/projects';
 import { getPromptPreview } from '../../api/pipeline';
@@ -19,7 +19,7 @@ const REVISABLE_STATUSES = new Set(['approved', 'stale']);
 type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
 
 export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
-  const updateArtifact = useProjectStore((s) => s.updateArtifact);
+  const updateArtifactMutation = useUpdateArtifact();
   const reviseArtifactMutation = useReviseArtifact(projectId);
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
@@ -141,7 +141,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
   const handleSave = async () => {
     setSaving(true);
     try {
-      await updateArtifact(artifact.id, content);
+      await updateArtifactMutation.mutateAsync({ artifactId: artifact.id, content });
       clearContent();
       setEditing(false);
     } finally {
@@ -165,7 +165,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
     if (!historicalContent) return;
     setRestoringVersion(true);
     try {
-      await updateArtifact(artifact.id, historicalContent);
+      await updateArtifactMutation.mutateAsync({ artifactId: artifact.id, content: historicalContent });
       setViewingSha(null);
       setHistoricalContent(null);
     } finally {

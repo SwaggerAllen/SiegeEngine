@@ -63,7 +63,7 @@ export function ErrorLogPanel() {
       </div>
 
       {errors.length === 0 ? (
-        <p className="text-sm text-gray-500">No errors since last refresh.</p>
+        <p className="text-sm text-gray-500">No errors logged.</p>
       ) : (
         <div className="space-y-2 max-h-[calc(100vh-200px)] overflow-auto">
           {errors.map((entry) => (
