@@ -1,16 +1,20 @@
 import { useState, useRef, useEffect } from 'react';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { useIsRunning, useIsPaused, useCurrentRunNumber, usePipelineRuns, useBlockingPR } from '../../hooks/queries/usePipelineQueries';
+import { useCancelPipeline, useResetAll, useCheckBlockingPR, useDismissBlockingPR } from '../../hooks/mutations/usePipelineMutations';
 
 export function PipelineControls({ projectId, hasGitHub }: { projectId: string; hasGitHub?: boolean }) {
-  const isRunning = usePipelineStore((s) => s.isRunning);
-  const isPaused = usePipelineStore((s) => s.isPaused);
-  const currentRunNumber = usePipelineStore((s) => s.currentRunNumber);
-  const runs = usePipelineStore((s) => s.runs);
-  const blockingPR = usePipelineStore((s) => s.blockingPR);
-  const cancelPipeline = usePipelineStore((s) => s.cancelPipeline);
-  const resetAll = usePipelineStore((s) => s.resetAll);
-  const checkBlockingPR = usePipelineStore((s) => s.checkBlockingPR);
-  const dismissBlockingPR = usePipelineStore((s) => s.dismissBlockingPR);
+  const isRunning = useIsRunning(projectId);
+  const isPaused = useIsPaused(projectId);
+  const currentRunNumber = useCurrentRunNumber(projectId);
+  const { data: runs = [] } = usePipelineRuns(projectId);
+  const { data: blockingPRData } = useBlockingPR(projectId);
+  const blockingPR = blockingPRData?.blocking_pr_url
+    ? { url: blockingPRData.blocking_pr_url, number: blockingPRData.blocking_pr_number! }
+    : null;
+  const cancelPipelineMutation = useCancelPipeline(projectId);
+  const resetAllMutation = useResetAll(projectId);
+  const checkBlockingPRMutation = useCheckBlockingPR(projectId);
+  const dismissBlockingPRMutation = useDismissBlockingPR(projectId);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [checkingPR, setCheckingPR] = useState(false);
@@ -43,7 +47,7 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
     setShowCancelDialog(false);
     setCancelError(null);
     try {
-      await cancelPipeline(projectId, openPR ? { open_pr: true } : undefined);
+      await cancelPipelineMutation.mutateAsync(openPR ? { open_pr: true } : undefined);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to create PR';
       setCancelError(message);
@@ -55,7 +59,7 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
     setShowCancelDialog(false);
     setCancelError(null);
     try {
-      await resetAll(projectId);
+      await resetAllMutation.mutateAsync();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Reset failed';
       setCancelError(message);
@@ -65,8 +69,8 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
   const handleCheckPR = async () => {
     setCheckingPR(true);
     try {
-      const stillBlocking = await checkBlockingPR(projectId);
-      if (!stillBlocking) {
+      const result = await checkBlockingPRMutation.mutateAsync();
+      if (!result.blocking) {
         setPrCleared(true);
       }
     } finally {
@@ -103,7 +107,7 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
             {checkingPR ? 'Checking...' : 'Check PR'}
           </button>
           <button
-            onClick={() => dismissBlockingPR(projectId)}
+            onClick={() => dismissBlockingPRMutation.mutate()}
             className="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded min-h-[44px] md:min-h-0"
           >
             Dismiss

@@ -1,10 +1,13 @@
 import { useRef, useState, Suspense } from 'react';
 import { useSafeEffect } from '../hooks/useSafe';
 import { useParams, useSearchParams, useNavigate, useLocation, Link, Outlet, Navigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useProjectStore } from '../store/projectStore';
-import { usePipelineStore } from '../store/pipelineStore';
 import { useAuthStore } from '../store/authStore';
 import { useDAGStore } from '../store/dagStore';
+import { usePipelineUIStore } from '../store/pipelineUIStore';
+import { useProject } from '../hooks/queries/useProjectQueries';
+import { useExecutions, useCurrentRunNumber, useIsRunning, pipelineKeys } from '../hooks/queries/usePipelineQueries';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useVisibilityRefresh } from '../hooks/useVisibilityRefresh';
 import { useProjectInit } from '../hooks/useProjectInit';
@@ -56,16 +59,17 @@ function DashboardInner({
   navigate: ReturnType<typeof useNavigate>;
   location: ReturnType<typeof useLocation>;
 }) {
-  // Store selectors
-  const currentProject = useProjectStore((s) => s.currentProject);
+  // TQ queries
+  const queryClient = useQueryClient();
+  const { data: currentProject } = useProject(projectId);
+  const executions = useExecutions(projectId);
+  const currentRunNumber = useCurrentRunNumber(projectId);
+  const isRunning = useIsRunning(projectId);
+
+  // Zustand stores (UI-only state)
   const selectedArtifact = useProjectStore((s) => s.selectedArtifact);
   const clearSelection = useProjectStore((s) => s.clearSelection);
-  const executions = usePipelineStore((s) => s.executions);
-  const fetchStatus = usePipelineStore((s) => s.fetchStatus);
-  const fetchRuns = usePipelineStore((s) => s.fetchRuns);
-  const currentRunNumber = usePipelineStore((s) => s.currentRunNumber);
-  const isRunning = usePipelineStore((s) => s.isRunning);
-  const isViewingHistory = usePipelineStore((s) => s.isViewingHistory);
+  const isViewingHistory = usePipelineUIStore((s) => s.isViewingHistory);
   const user = useAuthStore((s) => s.user);
   const editPromptStageKey = useDAGStore((s) => s.editPromptStageKey);
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
@@ -114,8 +118,8 @@ function DashboardInner({
       const fixes = result.corrections.length + result.orphans_removed.length;
       setRepairResult(fixes > 0 ? `Fixed ${fixes} issue${fixes > 1 ? 's' : ''}` : 'No issues found');
       if (fixes > 0) {
-        fetchStatus(projectId);
-        fetchRuns(projectId);
+        queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
+        queryClient.invalidateQueries({ queryKey: pipelineKeys.runs(projectId) });
       }
     } catch {
       setRepairResult('Repair failed');

@@ -1,14 +1,20 @@
+import { z } from 'zod';
 import api from './client';
+import {
+  ArtifactSchema,
+  ProjectSchema,
+  ProjectDetailSchema,
+} from '../schemas/project';
 import type { Artifact, Project, ProjectDetail } from '../types/project';
 
 export async function listProjects(): Promise<Project[]> {
   const { data } = await api.get('/projects/');
-  return data;
+  return z.array(ProjectSchema).parse(data);
 }
 
 export async function getProject(id: string): Promise<ProjectDetail> {
   const { data } = await api.get(`/projects/${id}`);
-  return data;
+  return ProjectDetailSchema.parse(data);
 }
 
 export async function createProject(
@@ -21,7 +27,7 @@ export async function createProject(
     description,
     project_doc_content: projectDocContent,
   });
-  return data;
+  return ProjectSchema.parse(data);
 }
 
 export async function updateProject(
@@ -29,7 +35,7 @@ export async function updateProject(
   updates: { name?: string; description?: string }
 ): Promise<Project> {
   const { data } = await api.put(`/projects/${id}`, updates);
-  return data;
+  return ProjectSchema.parse(data);
 }
 
 export async function deleteProject(id: string): Promise<void> {
@@ -38,7 +44,7 @@ export async function deleteProject(id: string): Promise<void> {
 
 export async function getArtifact(artifactId: string): Promise<Artifact> {
   const { data } = await api.get(`/projects/artifacts/${artifactId}`);
-  return data;
+  return ArtifactSchema.parse(data);
 }
 
 export async function updateArtifact(
@@ -46,7 +52,7 @@ export async function updateArtifact(
   content: string
 ): Promise<Artifact> {
   const { data } = await api.put(`/projects/artifacts/${artifactId}`, { content });
-  return data;
+  return ArtifactSchema.parse(data);
 }
 
 export async function getArtifactDiff(artifactId: string) {

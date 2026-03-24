@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { updateStageConfig, resetStageConfig, reconcilePipeline } from '../../api/pipeline';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { usePipelineConfigData, useIsRunning, usePipelineRuns, pipelineKeys } from '../../hooks/queries/usePipelineQueries';
+import { useTriggerStage, useStartPipeline, useResumeRun } from '../../hooks/mutations/usePipelineMutations';
+import { dagKeys } from '../../hooks/queries/useDAGQueries';
 import { useDAGStore } from '../../store/dagStore';
 import type { PipelineStartOptions } from '../../types/pipeline';
 
@@ -23,9 +26,8 @@ interface StageConfigPanelProps {
 }
 
 export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps) {
-  const config = usePipelineStore((s) => s.config);
-  const fetchConfig = usePipelineStore((s) => s.fetchConfig);
-  const fetchDAG = useDAGStore((s) => s.fetchDAG);
+  const queryClient = useQueryClient();
+  const config = usePipelineConfigData(projectId);
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
 
   const stageDef = config?.stages.find((s) => s.stage_key === stageKey);
@@ -38,11 +40,11 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
     human_review_enabled: boolean;
   } | null>(null);
 
-  const triggerStage = usePipelineStore((s) => s.triggerStage);
-  const startPipeline = usePipelineStore((s) => s.startPipeline);
-  const resumeRun = usePipelineStore((s) => s.resumeRun);
-  const isRunning = usePipelineStore((s) => s.isRunning);
-  const runs = usePipelineStore((s) => s.runs);
+  const triggerStageMutation = useTriggerStage(projectId);
+  const startPipelineMutation = useStartPipeline(projectId);
+  const resumeRunMutation = useResumeRun(projectId);
+  const isRunning = useIsRunning(projectId);
+  const { data: runs = [] } = usePipelineRuns(projectId);
 
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -55,9 +57,7 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
   const [aiLoops, setAiLoops] = useState(1);
   const [stopPoint, setStopPoint] = useState('end_of_phase');
   const [startingRun, setStartingRun] = useState(false);
-  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
-  const fetchStatus = usePipelineStore((s) => s.fetchStatus);
-  const fetchRuns = usePipelineStore((s) => s.fetchRuns);
+  // Removed: imperative refetch replaced by queryClient.invalidateQueries
 
   const hasCompletedRun = runs.some(
     (r) => r.status === 'completed' || r.status === 'paused' || r.status === 'cancelled' || r.status === 'failed'
@@ -88,7 +88,8 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
         human_review_enabled: form.human_review_enabled,
       });
       setSaved(true);
-      await Promise.all([fetchConfig(projectId), fetchDAG(projectId)]);
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.config(projectId) });
+      queryClient.invalidateQueries({ queryKey: dagKeys.workflow(projectId) });
     } finally {
       setSaving(false);
     }
@@ -106,7 +107,8 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
         human_review_enabled: updated.human_review_enabled,
       });
       setSaved(false);
-      await Promise.all([fetchConfig(projectId), fetchDAG(projectId)]);
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.config(projectId) });
+      queryClient.invalidateQueries({ queryKey: dagKeys.workflow(projectId) });
     } finally {
       setResetting(false);
     }
@@ -119,7 +121,7 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
   const handleTrigger = async () => {
     setTriggering(true);
     try {
-      await triggerStage(projectId, stageKey);
+      await triggerStageMutation.mutateAsync({ stageKey });
     } catch (err) {
       console.error('[StageConfig] Trigger failed:', err);
     } finally {
@@ -135,12 +137,10 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
       const fixes = result.corrections.length + result.orphans_removed.length;
       setRepairResult(fixes > 0 ? `Fixed ${fixes} issue${fixes > 1 ? 's' : ''}` : 'No issues found');
       if (fixes > 0) {
-        await Promise.all([
-          fetchDAG(projectId),
-          fetchDocumentsDAG(projectId),
-          fetchStatus(projectId),
-          fetchRuns(projectId),
-        ]);
+        queryClient.invalidateQueries({ queryKey: dagKeys.workflow(projectId) });
+        queryClient.invalidateQueries({ queryKey: dagKeys.documents(projectId) });
+        queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
+        queryClient.invalidateQueries({ queryKey: pipelineKeys.runs(projectId) });
       }
     } catch {
       setRepairResult('Repair failed');
@@ -377,9 +377,9 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
                           start_stage_key: stageKey,
                         };
                         if (runMode === 'resume') {
-                          await resumeRun(projectId, options);
+                          await resumeRunMutation.mutateAsync(options);
                         } else {
-                          await startPipeline(projectId, options);
+                          await startPipelineMutation.mutateAsync(options);
                         }
                         setShowRunConfig(false);
                       } catch (err) {

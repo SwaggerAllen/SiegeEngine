@@ -1,9 +1,19 @@
+import { z } from 'zod';
 import api from './client';
+import {
+  PipelineConfigSchema,
+  PipelineEventPageSchema,
+  PipelineRunSchema,
+  PipelineSnapshotSchema,
+  StageDefinitionSchema,
+} from '../schemas/pipeline';
+import { DAGResponseSchema } from '../schemas/dag';
 import type { PipelineConfig, PipelineEventPage, PipelineRun, PipelineSnapshot, PipelineStartOptions, StageDefinition } from '../types/pipeline';
+import type { DAGResponse } from '../types/dag';
 
 export async function getPipelineConfig(projectId: string): Promise<PipelineConfig> {
   const { data } = await api.get(`/pipeline/${projectId}/config`);
-  return data;
+  return PipelineConfigSchema.parse(data);
 }
 
 export async function updatePipelineConfig(
@@ -11,7 +21,7 @@ export async function updatePipelineConfig(
   updates: { execution_mode?: string; default_model?: string; default_temperature?: number }
 ): Promise<PipelineConfig> {
   const { data } = await api.put(`/pipeline/${projectId}/config`, updates);
-  return data;
+  return PipelineConfigSchema.parse(data);
 }
 
 export async function startPipeline(
@@ -32,7 +42,7 @@ export async function resumeRun(
 
 export async function listRuns(projectId: string): Promise<PipelineRun[]> {
   const { data } = await api.get(`/pipeline/${projectId}/runs`);
-  return data;
+  return z.array(PipelineRunSchema).parse(data);
 }
 
 export async function getRunState(projectId: string, runNumber: number) {
@@ -111,7 +121,7 @@ export async function getPipelineStatus(projectId: string) {
 
 export async function getSnapshot(projectId: string): Promise<PipelineSnapshot> {
   const { data } = await api.get(`/pipeline/${projectId}/snapshot`);
-  return data;
+  return PipelineSnapshotSchema.parse(data);
 }
 
 export async function cancelPipeline(
@@ -206,7 +216,7 @@ export async function listEvents(
   params?: { run_id?: string; event_type?: string; limit?: number; offset?: number }
 ): Promise<PipelineEventPage> {
   const { data } = await api.get(`/pipeline/${projectId}/events`, { params });
-  return data;
+  return PipelineEventPageSchema.parse(data);
 }
 
 export async function getSnapshotAtSequence(
@@ -214,7 +224,7 @@ export async function getSnapshotAtSequence(
   sequence: number
 ): Promise<PipelineSnapshot> {
   const { data } = await api.get(`/pipeline/${projectId}/events/snapshot-at/${sequence}`);
-  return data;
+  return PipelineSnapshotSchema.parse(data);
 }
 
 export async function revertToSequence(
@@ -225,14 +235,14 @@ export async function revertToSequence(
   return data;
 }
 
-export async function getDAG(projectId: string) {
+export async function getDAG(projectId: string): Promise<DAGResponse> {
   const { data } = await api.get(`/dag/${projectId}`);
-  return data;
+  return DAGResponseSchema.parse(data);
 }
 
-export async function getDocumentsDAG(projectId: string) {
+export async function getDocumentsDAG(projectId: string): Promise<DAGResponse> {
   const { data } = await api.get(`/dag/${projectId}/documents`);
-  return data;
+  return DAGResponseSchema.parse(data);
 }
 
 export async function getStaleArtifacts(projectId: string) {
@@ -260,7 +270,7 @@ export async function updateStageConfig(
   updates: Partial<Pick<StageDefinition, 'display_name' | 'model_override' | 'temperature_override' | 'ai_review_enabled' | 'human_review_enabled'>>
 ): Promise<StageDefinition> {
   const { data } = await api.put(`/pipeline/${projectId}/stages/${stageKey}`, updates);
-  return data;
+  return StageDefinitionSchema.parse(data);
 }
 
 export async function resetStageConfig(
@@ -268,7 +278,7 @@ export async function resetStageConfig(
   stageKey: string
 ): Promise<StageDefinition> {
   const { data } = await api.post(`/pipeline/${projectId}/stages/${stageKey}/reset`);
-  return data;
+  return StageDefinitionSchema.parse(data);
 }
 
 export interface ReconcileResult {

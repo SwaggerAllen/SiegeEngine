@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { listComments, createComment, updateComment, deleteComment } from '../../api/comments';
 import type { Comment } from '../../api/comments';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { usePipelineUIStore } from '../../store/pipelineUIStore';
 import { useAuthStore } from '../../store/authStore';
 import { formatDateTime } from '../../utils/dateFormat';
 
@@ -26,7 +26,7 @@ export function CommentsPanel({ projectId, artifactId, compact }: CommentsPanelP
   const { user } = useAuthStore();
 
   // Subscribe to WS events for live refresh
-  const wsEvents = usePipelineStore((s) => s.lastWSEvent);
+  const wsEvents = usePipelineUIStore((s) => s.lastWSEvent);
 
   const fetchComments = useCallback(async () => {
     try {

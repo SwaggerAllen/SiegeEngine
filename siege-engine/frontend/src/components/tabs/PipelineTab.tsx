@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { DashboardContext } from './types';
 import { useDAGStore } from '../../store/dagStore';
-import { usePipelineStore } from '../../store/pipelineStore';
+import { useExecutions } from '../../hooks/queries/usePipelineQueries';
 import { PipelineDAG } from '../dag/PipelineDAG';
 import { ArtifactEditor } from '../editor/ArtifactEditor';
 import { ReviewPanel } from '../pipeline/ReviewPanel';
@@ -13,7 +13,7 @@ import { PanelErrorBoundary } from '../ErrorBoundary';
 export function PipelineTab() {
   const { projectId, selectedArtifact, selectedExecution } = useOutletContext<DashboardContext>();
   const selectedStageKey = useDAGStore((s) => s.selectedStageKey);
-  const executions = usePipelineStore((s) => s.executions);
+  const executions = useExecutions(projectId);
   const [paneExpanded, setPaneExpanded] = useState(false);
 
   return (

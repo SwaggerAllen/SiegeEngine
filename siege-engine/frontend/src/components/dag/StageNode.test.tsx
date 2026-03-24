@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StageNode } from './StageNode';
 import type { DAGNodeData } from '../../types/dag';
+import { TestQueryWrapper } from '../../test/queryWrapper';
 
 const mockSetEditPromptStageKey = vi.fn();
 
@@ -15,6 +16,13 @@ vi.mock('../../store/dagStore', () => ({
   useDAGStore: vi.fn((selector: (s: Record<string, unknown>) => unknown) =>
     selector({ setEditPromptStageKey: mockSetEditPromptStageKey })
   ),
+}));
+
+const mockForceRestart = vi.fn();
+const mockCancelStage = vi.fn();
+vi.mock('../../hooks/mutations/usePipelineMutations', () => ({
+  useForceRestartStage: () => ({ mutateAsync: mockForceRestart, mutate: mockForceRestart }),
+  useCancelStage: () => ({ mutateAsync: mockCancelStage, mutate: mockCancelStage }),
 }));
 
 const baseData: DAGNodeData = {

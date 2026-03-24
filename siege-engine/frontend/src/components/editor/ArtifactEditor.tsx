@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { useProjectStore } from '../../store/projectStore';
-import { usePipelineStore } from '../../store/pipelineStore';
 import { useAuthStore } from '../../store/authStore';
+import { useReviseArtifact } from '../../hooks/mutations/usePipelineMutations';
 import { formatDateTime } from '../../utils/dateFormat';
 import { getArtifactHistory, getArtifactVersion } from '../../api/projects';
 import { getPromptPreview } from '../../api/pipeline';
@@ -20,7 +20,7 @@ type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dep
 
 export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
   const updateArtifact = useProjectStore((s) => s.updateArtifact);
-  const reviseArtifact = usePipelineStore((s) => s.reviseArtifact);
+  const reviseArtifactMutation = useReviseArtifact(projectId);
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
   const [editing, setEditing] = useState(false);
@@ -153,7 +153,7 @@ export function ArtifactEditor({ artifact, projectId }: { artifact: Artifact; pr
     if (!feedback.trim()) return;
     setSubmittingRevision(true);
     try {
-      await reviseArtifact(projectId, artifact.id, feedback);
+      await reviseArtifactMutation.mutateAsync({ artifactId: artifact.id, feedback });
       clearFeedback();
       setShowRevise(false);
     } finally {
