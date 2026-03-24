@@ -621,28 +621,6 @@ def get_status(
     }
 
 
-@pipeline_router.get("/{project_id}/snapshot")
-def get_snapshot(
-    project_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-):
-    """Return the materialized pipeline snapshot."""
-    from backend.pipeline.event_store import EventStore
-    es = EventStore(db)
-    snapshot = es.get_snapshot(project_id)
-    return {
-        "is_running": snapshot.is_running,
-        "is_paused": snapshot.is_paused,
-        "paused_stage": snapshot.paused_stage,
-        "current_run_id": snapshot.current_run_id,
-        "stage_statuses": snapshot.stage_statuses or {},
-        "artifact_statuses": snapshot.artifact_statuses or {},
-        "run_status": snapshot.run_status or {},
-        "last_sequence": snapshot.last_sequence,
-    }
-
-
 @pipeline_router.get("/{project_id}/debug-state")
 def get_debug_state(
     project_id: str,

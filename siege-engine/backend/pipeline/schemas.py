@@ -1,4 +1,9 @@
-from pydantic import BaseModel
+from typing import Annotated, Literal, Union
+
+from pydantic import BaseModel, Field
+
+
+# ──── Legacy request schemas (kept for internal use) ────
 
 
 class PipelineStartRequest(BaseModel):
@@ -57,6 +62,160 @@ class PromptPreviewRequest(BaseModel):
 class TriggerStageRequest(BaseModel):
     stage_key: str
     component_key: str | None = None
+
+
+# ──── Discriminated union: POST /action ────
+
+
+class StartAction(BaseModel):
+    type: Literal["start"] = "start"
+    ai_loops: int = 1
+    stop_point: str = "end_of_phase"
+    start_stage_key: str | None = None
+    start_component_key: str | None = None
+
+
+class ResumeRunAction(BaseModel):
+    type: Literal["resume_run"] = "resume_run"
+    ai_loops: int = 1
+    stop_point: str = "end_of_phase"
+    start_stage_key: str | None = None
+    start_component_key: str | None = None
+
+
+class PropagateAction(BaseModel):
+    type: Literal["propagate"] = "propagate"
+
+
+class CancelAction(BaseModel):
+    type: Literal["cancel"] = "cancel"
+    open_pr: bool = False
+    pr_title: str | None = None
+    pr_body: str | None = None
+    base_branch: str = "main"
+
+
+class ResetAllAction(BaseModel):
+    type: Literal["reset_all"] = "reset_all"
+
+
+class ResumeStageAction(BaseModel):
+    type: Literal["resume_stage"] = "resume_stage"
+    execution_id: str
+    action: str  # "approved", "rejected", or "save_feedback"
+    notes: str | None = None
+    edited_content: str | None = None
+
+
+class ReviseAction(BaseModel):
+    type: Literal["revise"] = "revise"
+    artifact_id: str
+    feedback: str
+
+
+class ResolveStaleAction(BaseModel):
+    type: Literal["resolve_stale"] = "resolve_stale"
+    artifact_id: str
+    action: str  # "approved", "rejected", or "save_feedback"
+    notes: str | None = None
+    edited_content: str | None = None
+
+
+class RegenDownstreamAction(BaseModel):
+    type: Literal["regen_downstream"] = "regen_downstream"
+    artifact_id: str
+
+
+class CancelStageAction(BaseModel):
+    type: Literal["cancel_stage"] = "cancel_stage"
+    execution_id: str
+
+
+class ForceRestartAction(BaseModel):
+    type: Literal["force_restart"] = "force_restart"
+    execution_id: str
+
+
+class TriggerStageAction(BaseModel):
+    type: Literal["trigger_stage"] = "trigger_stage"
+    stage_key: str
+    component_key: str | None = None
+
+
+class RetryAction(BaseModel):
+    type: Literal["retry"] = "retry"
+    execution_id: str
+
+
+class PruneAction(BaseModel):
+    type: Literal["prune"] = "prune"
+    artifact_id: str
+
+
+class ReparseAction(BaseModel):
+    type: Literal["reparse"] = "reparse"
+    artifact_id: str
+
+
+class RegenerateAction(BaseModel):
+    type: Literal["regenerate"] = "regenerate"
+    artifact_ids: list[str]
+
+
+class PromptPreviewAction(BaseModel):
+    type: Literal["prompt_preview"] = "prompt_preview"
+    artifact_id: str
+    human_notes: str | None = None
+
+
+class ReconcileAction(BaseModel):
+    type: Literal["reconcile"] = "reconcile"
+
+
+class ReconstructAction(BaseModel):
+    type: Literal["reconstruct"] = "reconstruct"
+
+
+class RevertAction(BaseModel):
+    type: Literal["revert"] = "revert"
+    sequence: int
+
+
+class CheckBlockingPRAction(BaseModel):
+    type: Literal["check_blocking_pr"] = "check_blocking_pr"
+
+
+class DismissBlockingPRAction(BaseModel):
+    type: Literal["dismiss_blocking_pr"] = "dismiss_blocking_pr"
+
+
+PipelineAction = Annotated[
+    Union[
+        StartAction,
+        ResumeRunAction,
+        PropagateAction,
+        CancelAction,
+        ResetAllAction,
+        ResumeStageAction,
+        ReviseAction,
+        ResolveStaleAction,
+        RegenDownstreamAction,
+        CancelStageAction,
+        ForceRestartAction,
+        TriggerStageAction,
+        RetryAction,
+        PruneAction,
+        ReparseAction,
+        RegenerateAction,
+        PromptPreviewAction,
+        ReconcileAction,
+        ReconstructAction,
+        RevertAction,
+        CheckBlockingPRAction,
+        DismissBlockingPRAction,
+    ],
+    Field(discriminator="type"),
+]
 
 
 class StageDefinitionResponse(BaseModel):
