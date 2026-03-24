@@ -1,11 +1,13 @@
 import { z } from 'zod';
 
 export const ArtifactStatusSchema = z.enum([
+  'pending',
   'generating',
+  'ai_reviewing',
   'awaiting_review',
   'approved',
+  'rejected',
   'stale',
-  'ai_reviewing',
 ]);
 
 export const ArtifactSummarySchema = z.object({
@@ -27,7 +29,7 @@ export const ProjectSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   artifact_count: z.number(),
-  pipeline_status: z.string().optional(),
+  pipeline_status: z.string().nullable().optional(),
 });
 
 export const ProjectDetailSchema = ProjectSchema.extend({
