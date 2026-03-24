@@ -7,7 +7,7 @@ export default function HistoryTab() {
   return (
     <div className="flex-1 overflow-hidden">
       <PanelErrorBoundary fallbackLabel="Event history error">
-        <EventHistoryPanel projectId={projectId} />
+        <EventHistoryPanel projectId={projectId!} />
       </PanelErrorBoundary>
     </div>
   );

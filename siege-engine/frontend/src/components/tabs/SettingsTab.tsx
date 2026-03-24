@@ -7,7 +7,7 @@ export default function SettingsTab() {
   return (
     <div className="flex-1 overflow-auto">
       <PanelErrorBoundary fallbackLabel="Settings error">
-        <ProjectSettingsPanel projectId={projectId} />
+        <ProjectSettingsPanel projectId={projectId!} />
       </PanelErrorBoundary>
     </div>
   );

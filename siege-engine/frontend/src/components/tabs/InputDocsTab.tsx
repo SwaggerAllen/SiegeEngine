@@ -7,7 +7,7 @@ export default function InputDocsTab() {
   return (
     <div className="flex-1 overflow-hidden">
       <PanelErrorBoundary fallbackLabel="Input docs error">
-        <InputDocsPanel projectId={projectId} />
+        <InputDocsPanel projectId={projectId!} />
       </PanelErrorBoundary>
     </div>
   );

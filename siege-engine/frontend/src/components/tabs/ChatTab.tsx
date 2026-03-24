@@ -7,7 +7,7 @@ export default function ChatTab() {
   return (
     <div className="flex-1 overflow-hidden">
       <PanelErrorBoundary fallbackLabel="Chat error">
-        <ChatPanel projectId={projectId} />
+        <ChatPanel projectId={projectId!} />
       </PanelErrorBoundary>
     </div>
   );

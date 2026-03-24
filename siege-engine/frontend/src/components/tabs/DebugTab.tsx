@@ -7,7 +7,7 @@ export default function DebugTab() {
   return (
     <div className="flex-1 overflow-hidden">
       <PanelErrorBoundary fallbackLabel="Debug panel error">
-        <DebugStatePanel projectId={projectId} />
+        <DebugStatePanel projectId={projectId!} />
       </PanelErrorBoundary>
     </div>
   );
