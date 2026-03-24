@@ -289,12 +289,22 @@ export async function reconcilePipeline(projectId: string): Promise<ReconcileRes
 
 export async function getDAG(projectId: string): Promise<DAGResponse> {
   const { data } = await api.get(`/dag/${projectId}`);
-  return DAGResponseSchema.parse(data);
+  const result = DAGResponseSchema.safeParse(data);
+  if (!result.success) {
+    console.warn('[getDAG] Schema validation failed, returning empty DAG:', result.error.issues);
+    return { nodes: [], edges: [] };
+  }
+  return result.data;
 }
 
 export async function getDocumentsDAG(projectId: string): Promise<DAGResponse> {
   const { data } = await api.get(`/dag/${projectId}/documents`);
-  return DAGResponseSchema.parse(data);
+  const result = DAGResponseSchema.safeParse(data);
+  if (!result.success) {
+    console.warn('[getDocumentsDAG] Schema validation failed, returning empty DAG:', result.error.issues);
+    return { nodes: [], edges: [] };
+  }
+  return result.data;
 }
 
 export async function getStaleArtifacts(projectId: string) {

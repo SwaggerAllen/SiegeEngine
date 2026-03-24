@@ -69,23 +69,33 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   const nodes = useMemo(() => {
     if (rawNodes.length === 0) return [];
 
-    const g = new dagre.graphlib.Graph();
-    g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
+    try {
+      const g = new dagre.graphlib.Graph();
+      g.setDefaultEdgeLabel(() => ({}));
+      g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
 
-    rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
-    rawEdges.forEach((e) => g.setEdge(e.source, e.target));
-    dagre.layout(g);
+      rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
+      rawEdges.forEach((e) => g.setEdge(e.source, e.target));
+      dagre.layout(g);
 
-    return rawNodes.map((n) => {
-      const pos = g.node(n.id);
-      if (!pos) return { ...n, data: { ...n.data, projectId }, position: { x: 0, y: 0 } };
-      return {
+      return rawNodes.map((n) => {
+        const pos = g.node(n.id);
+        if (!pos) return { ...n, data: { ...n.data, projectId }, position: { x: 0, y: 0 } };
+        return {
+          ...n,
+          data: { ...n.data, projectId },
+          position: { x: pos.x - 110, y: pos.y - 50 },
+        };
+      });
+    } catch (err) {
+      console.error('[PipelineDAG] Dagre layout failed:', err);
+      // Fall back to simple vertical stacking
+      return rawNodes.map((n, i) => ({
         ...n,
         data: { ...n.data, projectId },
-        position: { x: pos.x - 110, y: pos.y - 50 },
-      };
-    });
+        position: { x: 0, y: i * 120 },
+      }));
+    }
   }, [rawNodes, rawEdges, projectId]);
 
   // === LAYER 4: Click handlers ===
@@ -111,7 +121,13 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   }, [selectStage, selectArtifact, clearSelection]);
 
   // === LAYER 5: Render ===
+  // NOTE: all hooks must be above early returns to satisfy Rules of Hooks
   const [showMinimap, setShowMinimap] = useState(true);
+
+  // Debug: log query state to diagnose loading issues
+  if (!dagData) {
+    console.debug(`[PipelineDAG] variant=${variant} status=${activeQuery.status} isLoading=${activeQuery.isLoading} isFetching=${activeQuery.isFetching} isError=${activeQuery.isError} error=${activeQuery.error}`);
+  }
 
   if (activeQuery.isError) {
     return (
