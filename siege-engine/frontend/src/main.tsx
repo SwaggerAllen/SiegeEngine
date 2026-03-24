@@ -5,8 +5,12 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import App from './App';
 import { queryClient } from './lib/queryClient';
 import { useErrorLogStore } from './store/errorLogStore';
-import { debugError } from './lib/debugLog';
+import { debugLog, debugError } from './lib/debugLog';
 import './index.css';
+
+// Mark the start of each page session in the debug log so localStorage entries
+// from previous page loads are visually separated from the current session.
+debugLog('page', `LOAD url=${window.location.pathname}`);
 
 // Safety net: prevent stray unhandled rejections from crashing Safari.
 // All fire-and-forget promises SHOULD have .catch() handlers, but this

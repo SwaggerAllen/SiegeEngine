@@ -53,7 +53,7 @@ function NavigationLogger() {
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuthStore();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
@@ -63,7 +63,8 @@ function LazyTab({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const { loadFromStorage, checkTokenExpiry } = useAuthStore();
+  const loadFromStorage = useAuthStore((s) => s.loadFromStorage);
+  const checkTokenExpiry = useAuthStore((s) => s.checkTokenExpiry);
 
   useEffect(() => {
     loadFromStorage();
