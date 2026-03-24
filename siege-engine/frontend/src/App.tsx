@@ -10,8 +10,6 @@ import { GitHubCallbackPage } from './pages/GitHubCallbackPage';
 import { DocumentsTab } from './components/tabs/DocumentsTab';
 import { PipelineTab } from './components/tabs/PipelineTab';
 import { TabSkeleton } from './components/DashboardSkeleton';
-import { DebugOverlay } from './components/DebugOverlay';
-// DebugOverlay: floating mini-panel for doom-loop scenarios where /debug is unreachable
 
 // Lazy-loaded tabs (infrequently accessed)
 const PromptsTab = lazy(() => import('./components/tabs/PromptsTab'));
@@ -44,7 +42,6 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-    <DebugOverlay />
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
