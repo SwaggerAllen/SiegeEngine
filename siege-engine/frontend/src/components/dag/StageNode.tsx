@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { DAGNodeData } from '../../types/dag';
 import { useDAGStore } from '../../store/dagStore';
@@ -38,7 +38,7 @@ function formatModelName(model: string): string {
 const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
 const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
-export function StageNode({ data }: { data: DAGNodeData & { projectId?: string } }) {
+export const StageNode = memo(function StageNode({ data }: { data: DAGNodeData & { projectId?: string } }) {
   const projectId = data.projectId;
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
   const forceRestartMutation = useForceRestartStage(projectId ?? '');
@@ -172,4 +172,4 @@ export function StageNode({ data }: { data: DAGNodeData & { projectId?: string }
       <Handle type="source" position={Position.Bottom} className="!bg-gray-400" />
     </div>
   );
-}
+});
