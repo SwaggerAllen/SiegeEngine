@@ -38,10 +38,13 @@ const DebugTab = lazyRetry(() => import('./components/tabs/DebugTab'));
 
 function NavigationLogger() {
   const location = useLocation();
-  const prev = useRef(location.pathname);
+  // Initialize to null so the first effect fire (on mount, and StrictMode's
+  // simulated remount) is skipped rather than logged as a false "reload".
+  const prev = useRef<string | null>(null);
   useEffect(() => {
     const from = prev.current;
     prev.current = location.pathname;
+    if (from === null) return; // skip initial mount fire
     debugLog('nav', from === location.pathname
       ? `reload ${location.pathname}`
       : `${from} → ${location.pathname}`);
