@@ -55,3 +55,15 @@ export function getDebugLog(): DebugEntry[] {
 export function clearDebugLog() {
   localStorage.removeItem(STORAGE_KEY);
 }
+
+/**
+ * Deduplicating wrapper: only logs when the message for a given tag changes.
+ * Designed for hot render paths where the same status is emitted repeatedly.
+ */
+const _lastMsg = new Map<string, string>();
+
+export function debugLogDedup(tag: string, msg: string) {
+  if (_lastMsg.get(tag) === msg) return;
+  _lastMsg.set(tag, msg);
+  debugLog(tag, msg);
+}
