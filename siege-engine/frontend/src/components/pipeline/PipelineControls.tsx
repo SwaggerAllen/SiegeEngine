@@ -1,12 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
-import { useIsRunning, useIsPaused, useCurrentRunNumber, usePipelineRuns, useBlockingPR } from '../../hooks/queries/usePipelineQueries';
+import { usePipelineStatus, usePipelineRuns, useBlockingPR } from '../../hooks/queries/usePipelineQueries';
 import { useCancelPipeline, useResetAll, useCheckBlockingPR, useDismissBlockingPR } from '../../hooks/mutations/usePipelineMutations';
 
 export function PipelineControls({ projectId, hasGitHub }: { projectId: string; hasGitHub?: boolean }) {
-  const isRunning = useIsRunning(projectId);
-  const isPaused = useIsPaused(projectId);
-  const currentRunNumber = useCurrentRunNumber(projectId);
+  const { data: statusData } = usePipelineStatus(projectId);
+  const snapshot = statusData?.snapshot;
+  const isRunning = snapshot?.is_running ?? false;
+  const isPaused = snapshot?.is_paused ?? false;
+
   const { data: runs = [] } = usePipelineRuns(projectId);
+  const activeRun = runs.find((r) => r.status === 'running' || r.status === 'paused');
+  const currentRunNumber = activeRun?.run_number ?? runs[0]?.run_number ?? null;
   const { data: blockingPRData } = useBlockingPR(projectId);
   const blockingPR = blockingPRData?.blocking_pr_url
     ? { url: blockingPRData.blocking_pr_url, number: blockingPRData.blocking_pr_number! }
