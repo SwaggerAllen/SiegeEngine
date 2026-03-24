@@ -1,7 +1,8 @@
-import { useEffect, Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, useRef, Suspense, lazy } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { debugLog } from './lib/debugLog';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectListPage } from './pages/ProjectListPage';
 import { ProjectCreatePage } from './pages/ProjectCreatePage';
@@ -19,6 +20,19 @@ const SettingsTab = lazy(() => import('./components/tabs/SettingsTab'));
 const HistoryTab = lazy(() => import('./components/tabs/HistoryTab'));
 const LogsTab = lazy(() => import('./components/tabs/LogsTab'));
 const DebugTab = lazy(() => import('./components/tabs/DebugTab'));
+
+function NavigationLogger() {
+  const location = useLocation();
+  const prev = useRef(location.pathname);
+  useEffect(() => {
+    const from = prev.current;
+    prev.current = location.pathname;
+    debugLog('nav', from === location.pathname
+      ? `reload ${location.pathname}`
+      : `${from} → ${location.pathname}`);
+  }, [location]);
+  return null;
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
@@ -43,6 +57,7 @@ export default function App() {
   return (
     <ErrorBoundary>
     <BrowserRouter>
+      <NavigationLogger />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/github/callback" element={<GitHubCallbackPage />} />
