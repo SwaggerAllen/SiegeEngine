@@ -67,3 +67,44 @@ export function debugLogDedup(tag: string, msg: string) {
   _lastMsg.set(tag, msg);
   debugLog(tag, msg);
 }
+
+// ---------------------------------------------------------------------------
+// TQ cache event log — survives navigation via localStorage
+// ---------------------------------------------------------------------------
+
+const TQ_LOG_KEY = 'siege_tq_log';
+const TQ_MAX_ENTRIES = 200;
+
+export interface TQLogEntry {
+  ts: string;
+  type: string;  // TanStack Query event type (e.g. "observerResultsUpdated")
+  key: string;   // stringified query key
+  status: string;
+  fetchStatus: string;
+  dataUpdatedAt: number;
+  observers: number;
+}
+
+export function recordTQEvent(entry: TQLogEntry) {
+  try {
+    const raw = localStorage.getItem(TQ_LOG_KEY);
+    const entries: TQLogEntry[] = raw ? JSON.parse(raw) : [];
+    entries.push(entry);
+    localStorage.setItem(TQ_LOG_KEY, JSON.stringify(entries.slice(-TQ_MAX_ENTRIES)));
+  } catch {
+    // localStorage full or unavailable
+  }
+}
+
+export function getTQLog(): TQLogEntry[] {
+  try {
+    const raw = localStorage.getItem(TQ_LOG_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function clearTQLog() {
+  localStorage.removeItem(TQ_LOG_KEY);
+}

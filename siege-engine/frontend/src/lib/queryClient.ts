@@ -1,6 +1,6 @@
 import { QueryClient, type Mutation, type Query } from '@tanstack/react-query';
 import { useErrorLogStore } from '../store/errorLogStore';
-import { debugError } from './debugLog';
+import { debugError, recordTQEvent } from './debugLog';
 
 function handleQueryError(error: Error, query: Query) {
   const key = query.queryKey.join('.');
@@ -34,3 +34,18 @@ export const queryClient = new QueryClient({
 
 // Wire up global query error handler
 queryClient.getQueryCache().config.onError = handleQueryError as never;
+
+// Record all cache mutations to localStorage so they survive tab navigation
+queryClient.getQueryCache().subscribe((event) => {
+  if (!event?.query) return;
+  const q = event.query;
+  recordTQEvent({
+    ts: new Date().toISOString().slice(11, 23),
+    type: event.type,
+    key: JSON.stringify(q.queryKey),
+    status: q.state.status,
+    fetchStatus: q.state.fetchStatus,
+    dataUpdatedAt: q.state.dataUpdatedAt,
+    observers: q.getObserversCount(),
+  });
+});

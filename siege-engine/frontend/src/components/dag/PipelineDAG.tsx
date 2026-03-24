@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -43,6 +43,13 @@ function WorkflowDAGInner({ projectId }: { projectId: string }) {
 
 function DocumentsDAGInner({ projectId }: { projectId: string }) {
   const query = useDocumentsDAGData(projectId);
+
+  useEffect(() => {
+    debugLog('DAG.lifecycle', `DocumentsDAGInner MOUNT projectId=${projectId}`);
+    return () => { debugLog('DAG.lifecycle', `DocumentsDAGInner UNMOUNT projectId=${projectId}`); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return <DAGCanvas projectId={projectId} variant="documents" query={query} />;
 }
 
