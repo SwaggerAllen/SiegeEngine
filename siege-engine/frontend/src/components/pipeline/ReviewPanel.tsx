@@ -481,6 +481,7 @@ export function ReviewPanel({ projectId, artifact, execution }: ReviewPanelProps
               reparseResult={s.reparseResult}
               onPrune={s.handlePrune}
               onReparse={s.handleReparse}
+              pruneLabel={execution ? '🗑 Prune' : '🗑 Prune Node'}
             />
           </div>
         )}
