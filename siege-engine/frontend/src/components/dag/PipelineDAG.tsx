@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useShallow } from 'zustand/react/shallow';
-import { startRecording } from '../../lib/snapshotRecorder';
+import { useCallback, useMemo, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -13,6 +11,7 @@ import '@xyflow/react/dist/style.css';
 
 import { useDAGStore } from '../../store/dagStore';
 import { useProjectStore } from '../../store/projectStore';
+import { useDAGData, useDocumentsDAGData } from '../../hooks/queries/useDAGQueries';
 import { StageNode } from './StageNode';
 
 const nodeTypes = { stageNode: StageNode };
@@ -31,24 +30,39 @@ export function PipelineDAG(props: PipelineDAGProps) {
 }
 
 function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
-  // === LAYER 1: Store selectors — only subscribe to the variant we need ===
-  const { rawNodes, rawEdges } = useDAGStore(
-    useShallow((s) =>
-      variant === 'documents'
-        ? { rawNodes: s.docNodes, rawEdges: s.docEdges }
-        : { rawNodes: s.nodes, rawEdges: s.edges }
-    ),
-  );
+  // === LAYER 1: Read DAG data from TanStack Query ===
+  const { data: workflowData } = useDAGData(projectId);
+  const { data: documentsData } = useDocumentsDAGData(projectId);
+
+  const dagData = variant === 'documents' ? documentsData : workflowData;
+
+  // Map TQ response into ReactFlow nodes/edges
+  const rawNodes = useMemo(() => {
+    if (!dagData) return [];
+    return dagData.nodes.map((n) => ({
+      id: n.id,
+      type: n.type,
+      data: n.data as unknown as Record<string, unknown>,
+      position: n.position,
+    }));
+  }, [dagData]);
+
+  const rawEdges = useMemo(() => {
+    if (!dagData) return [];
+    return dagData.edges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      type: e.type,
+      animated: e.animated,
+    }));
+  }, [dagData]);
+
+  // === UI state from Zustand (selection only) ===
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const selectStage = useDAGStore((s) => s.selectStage);
   const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
   const clearSelection = useProjectStore((s) => s.clearSelection);
-
-  // === AUTO-CAPTURE: record store snapshots while DAG is mounted ===
-  useEffect(() => {
-    const stop = startRecording();
-    return stop;
-  }, []);
 
   // === LAYER 3: Dagre layout ===
   const nodes = useMemo(() => {
@@ -89,15 +103,13 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
     [variant, selectStage, selectArtifact, fetchArtifact]
   );
 
-
   const onPaneClick = useCallback(() => {
     selectStage(null);
     selectArtifact(null);
     clearSelection();
   }, [selectStage, selectArtifact, clearSelection]);
 
-
-  // === LAYER 5: Full render (WS disabled for debugging) ===
+  // === LAYER 5: Render ===
   const [showMinimap, setShowMinimap] = useState(true);
 
   if (rawNodes.length === 0) {
