@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -17,6 +17,18 @@ import type { DAGResponse } from '../../types/dag';
 import type { UseQueryResult } from '@tanstack/react-query';
 
 const nodeTypes = { stageNode: StageNode };
+
+const MINIMAP_COLORS: Record<string, string> = {
+  approved: '#22c55e',
+  awaiting_review: '#eab308',
+  generating: '#3b82f6',
+  running: '#3b82f6',
+  ai_reviewing: '#a855f7',
+  stale: '#f97316',
+  rejected: '#ef4444',
+  failed: '#ef4444',
+  pending: '#6b7280',
+};
 
 interface PipelineDAGProps {
   projectId: string;
@@ -128,21 +140,57 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topologyKey]); // rawNodes/rawEdges intentionally excluded: topologyKey captures when layout must change
 
-  // Final nodes — cheap map that applies positions and injects projectId.
-  // Re-runs on data changes (status, version, etc.) without re-running dagre.
+  // Per-node object cache. XYFlow's adoptUserNodes checks reference equality
+  // (userNode === internalNode.internals.userNode) to decide whether to skip
+  // rebuilding a node's internals (position clamping, z-index, handle bounds).
+  // Without this cache every TQ poll produces new object references → XYFlow
+  // rebuilds every node's internals and emits a 'replace' change for each one,
+  // even when nothing visually changed. The cache returns the same object
+  // reference when data and position are both unchanged.
+  //
+  // Position stability: positions is a useMemo([topologyKey]), so when topology
+  // hasn't changed the same Map instance (and same {x,y} object refs) are
+  // returned — making `cached.node.position === pos` a valid cheap check.
+  interface CachedNode {
+    serialized: string;
+    node: {
+      id: string;
+      type: string;
+      data: Record<string, unknown>;
+      position: { x: number; y: number };
+      width: number;
+      height: number;
+    };
+  }
+  const nodeRefCache = useRef(new Map<string, CachedNode>());
+
+  // Final nodes — applies positions and injects projectId. Reuses cached object
+  // references when content is unchanged so XYFlow can skip internal rebuilds.
   // width/height must be provided so XYFlow skips DOM measurement and avoids
   // the dimension-change render loop (xyflow/xyflow#3925).
-  const nodes = useMemo(
-    () =>
-      rawNodes.map((n) => ({
+  const nodes = useMemo(() => {
+    const currentIds = new Set(rawNodes.map((n) => n.id));
+    for (const id of nodeRefCache.current.keys()) {
+      if (!currentIds.has(id)) nodeRefCache.current.delete(id);
+    }
+    return rawNodes.map((n) => {
+      const pos = positions.get(n.id) ?? { x: 0, y: 0 };
+      const serialized = JSON.stringify(n.data) + '|' + projectId;
+      const cached = nodeRefCache.current.get(n.id);
+      if (cached && cached.serialized === serialized && cached.node.position === pos) {
+        return cached.node;
+      }
+      const node = {
         ...n,
         data: { ...n.data, projectId },
-        position: positions.get(n.id) ?? { x: 0, y: 0 },
+        position: pos,
         width: 220,
         height: 100,
-      })),
-    [rawNodes, positions, projectId],
-  );
+      };
+      nodeRefCache.current.set(n.id, { serialized, node });
+      return node;
+    });
+  }, [rawNodes, positions, projectId]);
 
   // === Click handlers ===
   const onNodeClick = useCallback(
@@ -167,6 +215,12 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
   // trying to reconcile internal state against the nodes/edges props.
   const onNodesChange = useCallback(() => {}, []);
   const onEdgesChange = useCallback(() => {}, []);
+
+  const minimapNodeColor = useCallback((n: { data?: Record<string, unknown> }) => {
+    const artifactType = n.data?.artifact_type as string;
+    if (artifactType === 'component_map' || artifactType === 'sub_component_map') return '#818cf8';
+    return MINIMAP_COLORS[n.data?.status as string] || '#6b7280';
+  }, []);
 
   const [showMinimap, setShowMinimap] = useState(true);
 
@@ -214,25 +268,7 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
       {showMinimap && (
         <MiniMap
           className="!bg-gray-800"
-          nodeColor={(n) => {
-            const artifactType = n.data?.artifact_type as string;
-            if (artifactType === 'component_map' || artifactType === 'sub_component_map') {
-              return '#818cf8';
-            }
-            const status = n.data?.status as string;
-            const colors: Record<string, string> = {
-              approved: '#22c55e',
-              awaiting_review: '#eab308',
-              generating: '#3b82f6',
-              running: '#3b82f6',
-              ai_reviewing: '#a855f7',
-              stale: '#f97316',
-              rejected: '#ef4444',
-              failed: '#ef4444',
-              pending: '#6b7280',
-            };
-            return colors[status] || '#6b7280';
-          }}
+          nodeColor={minimapNodeColor}
         />
       )}
     </ReactFlow>
