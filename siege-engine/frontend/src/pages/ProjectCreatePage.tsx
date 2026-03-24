@@ -1,14 +1,13 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useProjectStore } from '../store/projectStore';
+import { useCreateProject } from '../hooks/mutations/useProjectMutations';
 
 export function ProjectCreatePage() {
-  const { createProject } = useProjectStore();
+  const createProjectMutation = useCreateProject();
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [content, setContent] = useState('');
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -17,16 +16,17 @@ export function ProjectCreatePage() {
       setError('Name and project document are required');
       return;
     }
-    setLoading(true);
     setError('');
     try {
-      const id = await createProject(name, description || null, content);
-      navigate(`/projects/${id}`);
+      const project = await createProjectMutation.mutateAsync({
+        name,
+        description: description || null,
+        content,
+      });
+      navigate(`/projects/${project.id}`);
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       setError(detail || 'Failed to create project');
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -83,10 +83,10 @@ export function ProjectCreatePage() {
           <div className="flex gap-3">
             <button
               type="submit"
-              disabled={loading}
+              disabled={createProjectMutation.isPending}
               className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded font-medium disabled:opacity-50"
             >
-              {loading ? 'Creating...' : 'Create Project'}
+              {createProjectMutation.isPending ? 'Creating...' : 'Create Project'}
             </button>
             <Link
               to="/projects"

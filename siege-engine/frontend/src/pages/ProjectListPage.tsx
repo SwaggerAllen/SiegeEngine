@@ -1,16 +1,13 @@
-import { useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useProjectStore } from '../store/projectStore';
+import { useProjects } from '../hooks/queries/useProjectQueries';
+import { useDeleteProject } from '../hooks/mutations/useProjectMutations';
 import { useAuthStore } from '../store/authStore';
 
 export function ProjectListPage() {
-  const { projects, fetchProjects, deleteProject, loading } = useProjectStore();
+  const { data: projects, isLoading } = useProjects();
+  const deleteProjectMutation = useDeleteProject();
   const { logout, user } = useAuthStore();
   const navigate = useNavigate();
-
-  useEffect(() => {
-    fetchProjects();
-  }, [fetchProjects]);
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -38,9 +35,9 @@ export function ProjectListPage() {
           </Link>
         </div>
 
-        {loading ? (
+        {isLoading ? (
           <p className="text-gray-400">Loading...</p>
-        ) : projects.length === 0 ? (
+        ) : !projects || projects.length === 0 ? (
           <div className="text-center py-16">
             <p className="text-gray-400 mb-4">No projects yet</p>
             <Link
@@ -67,7 +64,7 @@ export function ProjectListPage() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm('Delete this project?')) deleteProject(project.id);
+                      if (confirm('Delete this project?')) deleteProjectMutation.mutate(project.id);
                     }}
                     className="text-red-400 hover:text-red-300"
                   >
