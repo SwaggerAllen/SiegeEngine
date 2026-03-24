@@ -779,6 +779,8 @@ function QueryCacheSubTab({ onCopy }: { onCopy: (text: string) => void }) {
 function TQLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
   const [entries, setEntries] = useState<TQLogEntry[]>([]);
   const [filter, setFilter] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [cleared, setCleared] = useState(false);
 
   useEffect(() => {
     setEntries(getTQLog());
@@ -794,6 +796,19 @@ function TQLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
     `${e.ts} | ${e.type.padEnd(32)} | obs=${e.observers} | ${e.status}/${e.fetchStatus} | ${e.key}`
   ).join('\n');
 
+  const handleCopy = () => {
+    onCopy(copyText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleClear = () => {
+    clearTQLog();
+    setEntries([]);
+    setCleared(true);
+    setTimeout(() => setCleared(false), 2000);
+  };
+
   function statusColor(status: string, fetchStatus: string) {
     if (fetchStatus === 'fetching') return 'text-blue-400';
     if (status === 'success') return 'text-green-400';
@@ -803,26 +818,32 @@ function TQLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
 
   return (
     <>
-      <div className="flex items-center justify-between shrink-0 gap-2">
+      <div className="flex items-center gap-2 shrink-0">
         <input
           type="text"
           placeholder="filter by key / type / status…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="flex-1 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-xs text-white placeholder-gray-500"
+          className="flex-1 min-w-0 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-xs text-white placeholder-gray-500"
         />
-        <span className="text-xs text-gray-500 shrink-0">{filtered.length} / {entries.length} events</span>
+        <span className="text-xs text-gray-500 shrink-0">{filtered.length} / {entries.length}</span>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
         <button
-          onClick={() => onCopy(copyText)}
-          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded shrink-0"
+          onClick={handleCopy}
+          className={`px-3 py-1.5 text-white text-xs rounded shrink-0 transition-colors ${
+            copied ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'
+          }`}
         >
-          Copy
+          {copied ? 'Copied!' : 'Copy log'}
         </button>
         <button
-          onClick={() => { clearTQLog(); setEntries([]); }}
-          className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-xs rounded shrink-0"
+          onClick={handleClear}
+          className={`px-3 py-1.5 text-white text-xs rounded shrink-0 transition-colors ${
+            cleared ? 'bg-green-600' : 'bg-red-700 hover:bg-red-600'
+          }`}
         >
-          Clear
+          {cleared ? 'Cleared!' : 'Clear log'}
         </button>
       </div>
       <div className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-2 font-mono text-[10px]">
