@@ -6,6 +6,7 @@ import { useProjectStore } from '../../store/projectStore';
 import { useAuthStore } from '../../store/authStore';
 import { useErrorLogStore } from '../../store/errorLogStore';
 import { getRecordedSnapshots, clearRecordedSnapshots } from '../../lib/snapshotRecorder';
+import { getDebugLog, clearDebugLog, type DebugEntry } from '../../lib/debugLog';
 
 interface DebugState {
   snapshot: Record<string, unknown>;
@@ -209,7 +210,7 @@ function formatDebugText(state: DebugState): string {
   return lines.join('\n');
 }
 
-type SubTab = 'backend' | 'frontend' | 'errors';
+type SubTab = 'backend' | 'frontend' | 'errors' | 'log';
 
 export function DebugStatePanel({ projectId }: { projectId: string }) {
   const errorCount = useErrorLogStore((s) => s.errors.length);
@@ -269,14 +270,16 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
               {loading ? 'Loading...' : 'Refresh'}
             </button>
           )}
-          <button
-            onClick={() => handleCopy(subTab === 'backend' ? debugText : '')}
-            className={`px-3 py-1.5 text-white text-xs rounded disabled:opacity-50 ${
-              copied ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'
-            }`}
-          >
-            {copied ? 'Copied!' : 'Copy'}
-          </button>
+          {subTab === 'backend' && (
+            <button
+              onClick={() => handleCopy(debugText)}
+              className={`px-3 py-1.5 text-white text-xs rounded disabled:opacity-50 ${
+                copied ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'
+              }`}
+            >
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
+          )}
         </div>
       </div>
       <div className="flex rounded overflow-hidden border border-gray-600 self-start shrink-0">
@@ -298,6 +301,12 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
         >
           Errors{errorCount > 0 ? ` (${errorCount})` : ''}
         </button>
+        <button
+          onClick={() => setSubTab('log')}
+          className={`px-3 py-1 text-xs ${subTab === 'log' ? 'bg-yellow-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+        >
+          Log
+        </button>
       </div>
 
       {subTab === 'backend' ? (
@@ -318,6 +327,8 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
         </>
       ) : subTab === 'frontend' ? (
         <ZustandSubTab onCopy={handleCopy} />
+      ) : subTab === 'log' ? (
+        <DebugLogSubTab onCopy={handleCopy} />
       ) : (
         <ErrorsSubTab />
       )}
@@ -564,6 +575,61 @@ function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
       <pre className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-3 text-xs text-gray-300 font-mono whitespace-pre leading-relaxed">
         {fullText}
       </pre>
+    </>
+  );
+}
+
+function DebugLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
+  const [entries, setEntries] = useState<DebugEntry[]>([]);
+
+  useEffect(() => {
+    setEntries(getDebugLog());
+    const interval = setInterval(() => setEntries(getDebugLog()), 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const logText = entries.map((e) => `${e.ts} [${e.tag}] ${e.msg}`).join('\n');
+
+  return (
+    <>
+      <div className="flex items-center justify-between shrink-0">
+        <span className="text-xs text-gray-400">
+          {entries.length} log entries (localStorage, survives reload)
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setEntries(getDebugLog())}
+            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded"
+          >
+            Refresh
+          </button>
+          <button
+            onClick={() => onCopy(logText)}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
+          >
+            Copy
+          </button>
+          <button
+            onClick={() => { clearDebugLog(); setEntries([]); }}
+            className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-xs rounded"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-3 font-mono text-xs">
+        {entries.length === 0 ? (
+          <p className="text-gray-500">No debug log entries yet</p>
+        ) : (
+          entries.slice().reverse().map((e, i) => (
+            <div key={i} className="mb-1.5 pb-1.5 border-b border-gray-800/50">
+              <span className="text-gray-500">{e.ts}</span>{' '}
+              <span className="text-yellow-400">[{e.tag}]</span>
+              <pre className="text-gray-300 whitespace-pre-wrap break-all mt-0.5 leading-relaxed">{e.msg}</pre>
+            </div>
+          ))
+        )}
+      </div>
     </>
   );
 }
