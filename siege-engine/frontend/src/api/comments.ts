@@ -1,22 +1,9 @@
+import { z } from 'zod';
 import api from './client';
+import { CommentSchema } from '../schemas/comments';
+import type { Comment } from '../schemas/comments';
 
-export interface CommentAuthor {
-  id: string;
-  username: string;
-}
-
-export interface Comment {
-  id: string;
-  artifact_id: string;
-  project_id: string;
-  author: CommentAuthor | null;
-  content: string;
-  comment_type: 'comment' | 'system_event' | 'feedback';
-  parent_id: string | null;
-  artifact_version: number | null;
-  created_at: string;
-  updated_at: string | null;
-}
+export type { Comment, CommentAuthor } from '../schemas/comments';
 
 export async function listComments(
   projectId: string,
@@ -25,7 +12,7 @@ export async function listComments(
   const { data } = await api.get(
     `/comments/${projectId}/artifacts/${artifactId}/comments`,
   );
-  return data;
+  return z.array(CommentSchema).parse(data);
 }
 
 export async function createComment(
@@ -38,7 +25,7 @@ export async function createComment(
     `/comments/${projectId}/artifacts/${artifactId}/comments`,
     { content, parent_id: parentId ?? null },
   );
-  return data;
+  return CommentSchema.parse(data);
 }
 
 export async function updateComment(
@@ -51,7 +38,7 @@ export async function updateComment(
     `/comments/${projectId}/artifacts/${artifactId}/comments/${commentId}`,
     { content },
   );
-  return data;
+  return CommentSchema.parse(data);
 }
 
 export async function deleteComment(

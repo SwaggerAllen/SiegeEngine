@@ -1,19 +1,13 @@
+import { z } from 'zod';
 import api from './client';
+import { InputDocumentSchema } from '../schemas/inputDocs';
+import type { InputDocument } from '../schemas/inputDocs';
 
-export interface InputDocument {
-  id: string;
-  name: string;
-  content: string;
-  doc_type: string;
-  inject_into_stages: string[];
-  version: number;
-  created_at: string;
-  updated_at: string;
-}
+export type { InputDocument } from '../schemas/inputDocs';
 
 export async function listInputDocs(projectId: string): Promise<InputDocument[]> {
   const { data } = await api.get(`/pipeline/${projectId}/input-docs`);
-  return data;
+  return z.array(InputDocumentSchema).parse(data);
 }
 
 export async function createInputDoc(
