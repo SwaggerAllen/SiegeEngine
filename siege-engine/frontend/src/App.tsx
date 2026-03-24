@@ -1,4 +1,4 @@
-import { useEffect, useRef, Suspense, lazy } from 'react';
+import { useEffect, useRef, Suspense, lazy, type ComponentType } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -12,14 +12,29 @@ import { DocumentsTab } from './components/tabs/DocumentsTab';
 import { PipelineTab } from './components/tabs/PipelineTab';
 import { TabSkeleton } from './components/DashboardSkeleton';
 
+/**
+ * Retry wrapper for React.lazy — if the dynamic import fails (e.g. Vite HMR
+ * invalidated the chunk URL), retry once before giving up.
+ */
+function lazyRetry<T extends ComponentType<unknown>>(
+  importFn: () => Promise<{ default: T }>,
+) {
+  return lazy(() =>
+    importFn().catch(() => {
+      // First attempt failed (stale chunk URL after HMR) — retry
+      return importFn();
+    }),
+  );
+}
+
 // Lazy-loaded tabs (infrequently accessed)
-const PromptsTab = lazy(() => import('./components/tabs/PromptsTab'));
-const InputDocsTab = lazy(() => import('./components/tabs/InputDocsTab'));
-const ChatTab = lazy(() => import('./components/tabs/ChatTab'));
-const SettingsTab = lazy(() => import('./components/tabs/SettingsTab'));
-const HistoryTab = lazy(() => import('./components/tabs/HistoryTab'));
-const LogsTab = lazy(() => import('./components/tabs/LogsTab'));
-const DebugTab = lazy(() => import('./components/tabs/DebugTab'));
+const PromptsTab = lazyRetry(() => import('./components/tabs/PromptsTab'));
+const InputDocsTab = lazyRetry(() => import('./components/tabs/InputDocsTab'));
+const ChatTab = lazyRetry(() => import('./components/tabs/ChatTab'));
+const SettingsTab = lazyRetry(() => import('./components/tabs/SettingsTab'));
+const HistoryTab = lazyRetry(() => import('./components/tabs/HistoryTab'));
+const LogsTab = lazyRetry(() => import('./components/tabs/LogsTab'));
+const DebugTab = lazyRetry(() => import('./components/tabs/DebugTab'));
 
 function NavigationLogger() {
   const location = useLocation();
