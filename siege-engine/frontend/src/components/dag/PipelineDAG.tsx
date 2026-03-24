@@ -103,12 +103,16 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
 
   // Final nodes — cheap map that applies positions and injects projectId.
   // Re-runs on data changes (status, version, etc.) without re-running dagre.
+  // width/height must be provided so XYFlow skips DOM measurement and avoids
+  // the dimension-change render loop (xyflow/xyflow#3925).
   const nodes = useMemo(
     () =>
       rawNodes.map((n) => ({
         ...n,
         data: { ...n.data, projectId },
         position: positions.get(n.id) ?? { x: 0, y: 0 },
+        width: 220,
+        height: 100,
       })),
     [rawNodes, positions, projectId],
   );
@@ -131,6 +135,12 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   const onPaneClick = useCallback(() => {
     clearSelection();
   }, [clearSelection]);
+
+  // No-op handlers required in controlled mode so XYFlow knows changes are
+  // intentionally discarded (read-only DAG). Without these, XYFlow keeps
+  // trying to reconcile internal state against the nodes/edges props.
+  const onNodesChange = useCallback(() => {}, []);
+  const onEdgesChange = useCallback(() => {}, []);
 
   // === LAYER 5: Render ===
   // NOTE: all hooks must be above early returns to satisfy Rules of Hooks
@@ -164,6 +174,8 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
       nodeTypes={nodeTypes}
       onNodeClick={onNodeClick}
       onPaneClick={onPaneClick}
+      onNodesChange={onNodesChange}
+      onEdgesChange={onEdgesChange}
       fitView
       className="bg-gray-900"
     >

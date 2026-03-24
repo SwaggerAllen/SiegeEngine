@@ -80,9 +80,11 @@ export function usePausedStage(projectId: string): string | null {
   return snapshot?.paused_stage ?? null;
 }
 
+const EMPTY_EXECUTIONS: StageExecution[] = [];
+
 export function useExecutions(projectId: string): StageExecution[] {
   const { data } = usePipelineStatus(projectId);
-  return data?.stages ?? [];
+  return data?.stages ?? EMPTY_EXECUTIONS;
 }
 
 export function usePipelineConfigData(projectId: string): PipelineConfig | null {

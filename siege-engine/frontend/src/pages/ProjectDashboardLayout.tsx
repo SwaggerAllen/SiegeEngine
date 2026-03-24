@@ -1,4 +1,4 @@
-import { useRef, useState, Suspense } from 'react';
+import { useRef, useState, useMemo, Suspense } from 'react';
 import { useSafeEffect } from '../hooks/useSafe';
 import { useParams, useSearchParams, useNavigate, useLocation, Link, Outlet, Navigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -176,9 +176,12 @@ function DashboardInner({
   const pathSegments = location.pathname.split('/');
   const activeTab = (pathSegments[pathSegments.length - 1] || 'documents') as Tab;
 
-  const selectedExecution = selectedArtifact
-    ? findSelectedExecution(executions, selectedArtifact)
-    : undefined;
+  // Memoized so downstream components get a stable reference when neither
+  // executions nor selectedArtifact have actually changed.
+  const selectedExecution = useMemo(
+    () => (selectedArtifact ? findSelectedExecution(executions, selectedArtifact) : undefined),
+    [executions, selectedArtifact],
+  );
 
   const isAdmin = user?.role === 'admin';
   const isViewer = user?.role === 'viewer';

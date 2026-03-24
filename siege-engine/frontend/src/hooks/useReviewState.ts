@@ -72,7 +72,7 @@ export function useReviewState(
   const pruneArtifactMutation = usePruneArtifact(projectId);
   const cancelStageMutation = useCancelStage(projectId);
   const config = usePipelineConfigData(projectId);
-  const { user } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const isViewer = user?.role === 'viewer';
 
   const artifactStageKey =
