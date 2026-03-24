@@ -651,7 +651,7 @@ function ErrorsSubTab() {
         )}
       </div>
       {errors.length === 0 ? (
-        <p className="text-sm text-gray-500">No errors since last refresh.</p>
+        <p className="text-sm text-gray-500">No errors logged.</p>
       ) : (
         <div className="flex-1 overflow-auto space-y-2">
           {errors.map((entry) => (
