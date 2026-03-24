@@ -215,6 +215,8 @@ type SubTab = 'backend' | 'frontend' | 'errors' | 'log' | 'queries';
 
 export function DebugStatePanel({ projectId }: { projectId: string }) {
   const errorCount = useErrorLogStore((s) => s.errors.length);
+  const dagHidden = usePipelineUIStore((s) => s.dagHidden);
+  const toggleDagHidden = usePipelineUIStore((s) => s.toggleDagHidden);
   const [subTab, setSubTab] = useState<SubTab>('backend');
   const [state, setState] = useState<DebugState | null>(null);
   const [loading, setLoading] = useState(false);
@@ -262,6 +264,14 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
       <div className="flex items-center justify-between shrink-0">
         <h2 className="text-lg font-bold text-white">Debug State</h2>
         <div className="flex items-center gap-2">
+          <button
+            onClick={toggleDagHidden}
+            className={`px-3 py-1.5 text-white text-xs rounded ${
+              dagHidden ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-gray-700 hover:bg-gray-600'
+            }`}
+          >
+            {dagHidden ? 'DAG: off' : 'DAG: on'}
+          </button>
           {subTab === 'backend' && (
             <button
               onClick={fetchState}

@@ -18,11 +18,15 @@ interface PipelineUIState {
   lastWSEvent: WSEvent | null;
   logEntries: LogEntry[];
 
+  // Debug flags
+  dagHidden: boolean;
+
   // Actions
   setSelectedRun: (runNumber: number | null, state?: Record<string, unknown> | null) => void;
   setLastWSEvent: (event: WSEvent | null) => void;
   addLogEntry: (entry: LogEntry) => void;
   clearLogs: () => void;
+  toggleDagHidden: () => void;
   reset: () => void;
 }
 
@@ -32,6 +36,7 @@ export const usePipelineUIStore = create<PipelineUIState>((set, get) => ({
   isViewingHistory: false,
   lastWSEvent: null,
   logEntries: [],
+  dagHidden: false,
 
   setSelectedRun: (runNumber, state = null) =>
     set({
@@ -49,6 +54,8 @@ export const usePipelineUIStore = create<PipelineUIState>((set, get) => ({
   },
 
   clearLogs: () => set({ logEntries: [] }),
+
+  toggleDagHidden: () => set((s) => ({ dagHidden: !s.dagHidden })),
 
   reset: () =>
     set({
