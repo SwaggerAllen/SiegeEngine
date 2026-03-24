@@ -13,6 +13,8 @@ import { useDAGStore } from '../../store/dagStore';
 import { useDAGData, useDocumentsDAGData } from '../../hooks/queries/useDAGQueries';
 import { StageNode } from './StageNode';
 import { debugLogDedup } from '../../lib/debugLog';
+import type { DAGResponse } from '../../types/dag';
+import type { UseQueryResult } from '@tanstack/react-query';
 
 const nodeTypes = { stageNode: StageNode };
 
@@ -21,21 +23,41 @@ interface PipelineDAGProps {
   variant?: 'pipeline' | 'documents';
 }
 
-export function PipelineDAG(props: PipelineDAGProps) {
+// Public entry point: picks the right inner component based on variant so
+// each view subscribes to exactly one TQ query (no cross-subscription churn).
+export function PipelineDAG({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
   return (
     <ReactFlowProvider>
-      <PipelineDAGInner {...props} />
+      {variant === 'documents'
+        ? <DocumentsDAGInner projectId={projectId} />
+        : <WorkflowDAGInner projectId={projectId} />
+      }
     </ReactFlowProvider>
   );
 }
 
-function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
-  // === LAYER 1: Read DAG data from TanStack Query ===
-  const workflowQuery = useDAGData(projectId);
-  const documentsQuery = useDocumentsDAGData(projectId);
+function WorkflowDAGInner({ projectId }: { projectId: string }) {
+  const query = useDAGData(projectId);
+  return <DAGCanvas projectId={projectId} variant="pipeline" query={query} />;
+}
 
-  const activeQuery = variant === 'documents' ? documentsQuery : workflowQuery;
-  const dagData = activeQuery.data;
+function DocumentsDAGInner({ projectId }: { projectId: string }) {
+  const query = useDocumentsDAGData(projectId);
+  return <DAGCanvas projectId={projectId} variant="documents" query={query} />;
+}
+
+// ---------------------------------------------------------------------------
+// DAGCanvas — pure rendering, no TQ subscriptions
+// ---------------------------------------------------------------------------
+
+interface DAGCanvasProps {
+  projectId: string;
+  variant: 'pipeline' | 'documents';
+  query: UseQueryResult<DAGResponse>;
+}
+
+function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
+  const { data: dagData, status, isLoading, isFetching, error, isError } = query;
 
   // Map TQ response into ReactFlow nodes/edges
   const rawNodes = useMemo(() => {
@@ -64,7 +86,7 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   const selectStage = useDAGStore((s) => s.selectStage);
   const clearSelection = useDAGStore((s) => s.clearSelection);
 
-  // === LAYER 3: Dagre layout ===
+  // === Dagre layout ===
   // Topology key — stable primitive that only changes when node IDs or edge
   // connections change. Status/data field updates do NOT change it, so the
   // expensive dagre layout step is skipped on every pipeline tick.
@@ -76,8 +98,7 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
     [rawNodes, rawEdges],
   );
 
-  // Positions — only re-runs when topology changes. Returns a Map so the
-  // cheap nodes memo below can apply positions without re-running dagre.
+  // Positions — only re-runs when topology changes.
   const positions = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
     if (rawNodes.length === 0) return map;
@@ -94,7 +115,6 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
       });
     } catch (err) {
       console.error('[PipelineDAG] Dagre layout failed:', err);
-      // Fall back to simple vertical stacking
       rawNodes.forEach((n, i) => map.set(n.id, { x: 0, y: i * 120 }));
     }
     return map;
@@ -117,14 +137,13 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
     [rawNodes, positions, projectId],
   );
 
-  // === LAYER 4: Click handlers ===
+  // === Click handlers ===
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: { id: string; data?: Record<string, unknown> }) => {
       if (variant === 'pipeline') {
         selectStage((node.data?.stage_key as string) ?? null);
       } else {
-        const hasArtifact = node.data?.has_artifact;
-        if (hasArtifact) {
+        if (node.data?.has_artifact) {
           selectArtifact(node.id);
         }
       }
@@ -142,17 +161,14 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   const onNodesChange = useCallback(() => {}, []);
   const onEdgesChange = useCallback(() => {}, []);
 
-  // === LAYER 5: Render ===
-  // NOTE: all hooks must be above early returns to satisfy Rules of Hooks
   const [showMinimap, setShowMinimap] = useState(true);
 
-  // Debug: log query state to diagnose loading issues
-  debugLogDedup(`DAG.render.${variant}`, `variant=${variant} hasData=${!!dagData} nodes=${rawNodes.length} status=${activeQuery.status} isLoading=${activeQuery.isLoading} isFetching=${activeQuery.isFetching} error=${activeQuery.error ?? 'none'}`);
+  debugLogDedup(`DAG.render.${variant}`, `variant=${variant} hasData=${!!dagData} nodes=${rawNodes.length} status=${status} isLoading=${isLoading} isFetching=${isFetching} error=${error ?? 'none'}`);
 
-  if (activeQuery.isError) {
+  if (isError) {
     return (
       <div className="flex items-center justify-center h-full text-red-400">
-        Failed to load {variant === 'documents' ? 'documents' : 'pipeline'}: {String(activeQuery.error)}
+        Failed to load {variant === 'documents' ? 'documents' : 'pipeline'}: {String(error)}
       </div>
     );
   }
@@ -160,7 +176,7 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   if (!dagData || rawNodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500">
-        {activeQuery.isLoading
+        {isLoading
           ? (variant === 'documents' ? 'Loading documents...' : 'Loading pipeline stages...')
           : (variant === 'documents' ? 'No documents yet' : 'No pipeline stages yet')}
       </div>
