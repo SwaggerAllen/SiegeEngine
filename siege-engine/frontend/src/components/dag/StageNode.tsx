@@ -110,19 +110,19 @@ export const StageNode = memo(function StageNode({ data }: { data: DAGNodeData &
 
   return (
     <div
-      className={`px-4 py-3 rounded-lg border-2 shadow-lg min-w-[180px] ${colorClass} ${
+      className={`px-4 py-3 rounded-lg border-2 shadow-lg w-[220px] overflow-hidden ${colorClass} ${
         data.is_active ? 'ring-2 ring-blue-400 ring-offset-2 ring-offset-gray-900' : ''
       }`}
     >
       <Handle type="target" position={Position.Top} className="!bg-gray-400" />
-      <div className="font-semibold text-sm text-white flex items-center gap-1.5">
+      <div className="font-semibold text-sm text-white flex items-center gap-1.5 min-w-0">
         {isProcessing && (
           <span className={`stage-spinner ${spinnerColor} shrink-0`} />
         )}
-        {data.label}
+        <span className="truncate">{data.label}</span>
       </div>
       {data.component_key && (
-        <div className="text-xs text-gray-300 mt-0.5">{data.component_key}</div>
+        <div className="text-xs text-gray-300 mt-0.5 truncate">{data.component_key}</div>
       )}
       <div className="text-xs mt-1 text-gray-300 flex items-center justify-between">
         <span>{statusLabel}</span>
