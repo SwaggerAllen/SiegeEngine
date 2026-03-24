@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useSafeEffect } from '../../hooks/useSafe';
 import { startRecording } from '../../lib/snapshotRecorder';
 import {
   ReactFlow,
@@ -40,29 +39,16 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
         : { rawNodes: s.nodes, rawEdges: s.edges }
     ),
   );
-  const fetchDAG = useDAGStore((s) => s.fetchDAG);
-  const fetchDocumentsDAG = useDAGStore((s) => s.fetchDocumentsDAG);
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const selectStage = useDAGStore((s) => s.selectStage);
   const fetchArtifact = useProjectStore((s) => s.fetchArtifact);
   const clearSelection = useProjectStore((s) => s.clearSelection);
-
-  console.log('[PipelineDAG] render — variant:', variant, 'rawNodes:', rawNodes.length, 'rawEdges:', rawEdges.length);
 
   // === AUTO-CAPTURE: record store snapshots while DAG is mounted ===
   useEffect(() => {
     const stop = startRecording();
     return stop;
   }, []);
-
-  // === LAYER 2: Fetch effect ===
-  useSafeEffect('dag-fetch', () => {
-    if (variant === 'documents') {
-      fetchDocumentsDAG(projectId);
-    } else {
-      fetchDAG(projectId);
-    }
-  }, [projectId, variant, fetchDAG, fetchDocumentsDAG]);
 
   // === LAYER 3: Dagre layout ===
   const nodes = useMemo(() => {
