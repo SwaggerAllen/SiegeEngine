@@ -6,6 +6,7 @@ interface ActionButtonsBarProps {
   reparseResult: string | null;
   onPrune: () => void;
   onReparse: () => void;
+  pruneLabel?: string;
 }
 
 export function ActionButtonsBar({
@@ -16,6 +17,7 @@ export function ActionButtonsBar({
   reparseResult,
   onPrune,
   onReparse,
+  pruneLabel = '🗑 Prune',
 }: ActionButtonsBarProps) {
   if (!canPrune && !canReparse) return null;
   return (
@@ -26,7 +28,7 @@ export function ActionButtonsBar({
           disabled={pruning}
           className="px-3 py-1.5 bg-gray-700 hover:bg-red-700 text-gray-300 hover:text-white text-xs rounded disabled:opacity-50 transition-colors min-h-[44px] md:min-h-0"
         >
-          {pruning ? 'Pruning...' : '🗑 Prune'}
+          {pruning ? 'Pruning...' : pruneLabel}
         </button>
       )}
       {canReparse && (

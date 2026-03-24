@@ -39,10 +39,11 @@ vi.mock('../../hooks/queries/useDAGQueries', () => ({
   },
 }));
 
+const mockAuthState = { user: { id: 'user-1', username: 'admin', role: 'admin' } };
 vi.mock('../../store/authStore', () => ({
-  useAuthStore: vi.fn(() => ({
-    user: { id: 'user-1', username: 'admin', role: 'admin' },
-  })),
+  useAuthStore: vi.fn((selector?: (s: typeof mockAuthState) => unknown) =>
+    selector ? selector(mockAuthState) : mockAuthState
+  ),
 }));
 
 vi.mock('../../api/comments', () => ({
