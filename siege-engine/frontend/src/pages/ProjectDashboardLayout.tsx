@@ -143,8 +143,7 @@ function DashboardLayout({ projectId }: { projectId: string }) {
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white">
-      <DashboardHeader projectId={projectId} />
-      <DashboardNav visibleTabs={visibleTabs} activeTab={activeTab} />
+      <DashboardHeader projectId={projectId} visibleTabs={visibleTabs} activeTab={activeTab} />
       <Suspense fallback={<TabSkeleton />}>
         <Outlet />
       </Suspense>
@@ -161,8 +160,12 @@ function DashboardLayout({ projectId }: { projectId: string }) {
 
 const DashboardHeader = memo(function DashboardHeader({
   projectId,
+  visibleTabs,
+  activeTab,
 }: {
   projectId: string;
+  visibleTabs: Tab[];
+  activeTab: Tab;
 }) {
   const queryClient = useQueryClient();
 
@@ -189,6 +192,24 @@ const DashboardHeader = memo(function DashboardHeader({
   const [showPRDialog, setShowPRDialog] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [repairResult, setRepairResult] = useState<string | null>(null);
+
+  // Nav menu state (moved here so toggling never re-renders the Outlet)
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useSafeEffect('header-menu-outside-click', () => {
+    if (!menuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [menuOpen]);
+
+  // Close menu when active tab changes
+  useEffect(() => { setMenuOpen(false); }, [activeTab]);
 
   const handleRepair = async () => {
     if (repairing) return;
@@ -356,6 +377,38 @@ const DashboardHeader = memo(function DashboardHeader({
               WS Reconnecting...
             </button>
           )}
+          {/* Hamburger nav menu */}
+          <div ref={menuRef} className="relative">
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              className="flex items-center gap-1.5 px-2 py-1 text-sm text-gray-300 hover:text-white min-h-[44px] md:min-h-0"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+              <span className="hidden sm:inline text-xs">{tabLabels[activeTab] || tabLabels.documents}</span>
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-full z-50 w-48 bg-gray-800 border border-gray-700 rounded-b-lg shadow-xl">
+                {visibleTabs.map((tab) => (
+                  <NavLink
+                    key={tab}
+                    to={tab}
+                    onClick={() => { clearSelection(); setMenuOpen(false); }}
+                    className={({ isActive }) =>
+                      `block w-full text-left px-4 py-3 text-sm ${
+                        isActive
+                          ? 'bg-gray-700 text-white'
+                          : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                      }`
+                    }
+                  >
+                    {tabLabels[tab]}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </header>
       {showInvites && <InvitePanel onClose={() => setShowInvites(false)} />}
@@ -366,75 +419,6 @@ const DashboardHeader = memo(function DashboardHeader({
   );
 });
 
-// ---------------------------------------------------------------------------
-// DashboardNav — hamburger menu with fully local state
-//
-// menuOpen lives here so toggling it never re-renders DashboardInner or
-// the outlet. No TQ subscriptions.
-// ---------------------------------------------------------------------------
-
-const DashboardNav = memo(function DashboardNav({
-  visibleTabs,
-  activeTab,
-}: {
-  visibleTabs: Tab[];
-  activeTab: Tab;
-}) {
-  const clearSelection = useDAGStore((s) => s.clearSelection);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  // Close the menu whenever the active tab changes (e.g. debug button in header)
-  useEffect(() => {
-    setMenuOpen(false);
-  }, [activeTab]);
-
-  // Close on outside click
-  useSafeEffect('menu-outside-click', () => {
-    if (!menuOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [menuOpen]);
-
-  return (
-    <div className="border-b border-gray-700 px-4 shrink-0 relative" ref={menuRef}>
-      <button
-        onClick={() => setMenuOpen((o) => !o)}
-        className="flex items-center gap-2 py-2 text-sm text-gray-300 hover:text-white min-h-[44px]"
-      >
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-        <span>{tabLabels[activeTab] || tabLabels.documents}</span>
-      </button>
-      {menuOpen && (
-        <div className="absolute left-0 top-full z-50 w-48 bg-gray-800 border border-gray-700 rounded-b-lg shadow-xl">
-          {visibleTabs.map((tab) => (
-            <NavLink
-              key={tab}
-              to={tab}
-              onClick={() => { clearSelection(); setMenuOpen(false); }}
-              className={({ isActive }) =>
-                `block w-full text-left px-4 py-3 text-sm ${
-                  isActive
-                    ? 'bg-gray-700 text-white'
-                    : 'text-gray-300 hover:bg-gray-700 hover:text-white'
-                }`
-              }
-            >
-              {tabLabels[tab]}
-            </NavLink>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-});
 
 // ---------------------------------------------------------------------------
 // PRDialog — standalone, no shared state dependencies
