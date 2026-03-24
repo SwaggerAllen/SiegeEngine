@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react';
 import { useErrorLogStore } from '../store/errorLogStore';
+import { debugError } from '../lib/debugLog';
 
 interface Props {
   children: ReactNode;
@@ -21,6 +22,8 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary] Caught render error:', error, info.componentStack);
+    debugError('ErrorBoundary', error);
+    debugError('ErrorBoundary.stack', info.componentStack ?? 'no component stack');
     useErrorLogStore.getState().pushError('ErrorBoundary', error);
   }
 
@@ -80,6 +83,8 @@ export class PanelErrorBoundary extends Component<Props, PanelState> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[PanelErrorBoundary] Caught render error:', error, info.componentStack);
+    debugError(`PanelEB(${this.props.fallbackLabel || 'panel'})`, error);
+    debugError(`PanelEB(${this.props.fallbackLabel || 'panel'}).stack`, info.componentStack ?? 'no component stack');
     useErrorLogStore.getState().pushError(
       `PanelErrorBoundary(${this.props.fallbackLabel || 'panel'})`,
       error,

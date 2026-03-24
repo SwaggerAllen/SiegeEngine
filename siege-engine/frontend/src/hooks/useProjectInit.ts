@@ -4,6 +4,7 @@ import { usePipelineConfig, usePipelineStatus, usePipelineRuns, useBlockingPR } 
 import { useDAGData, useDocumentsDAGData } from './queries/useDAGQueries';
 import { useProjectStore } from '../store/projectStore';
 import { usePipelineUIStore } from '../store/pipelineUIStore';
+import { debugLog } from '../lib/debugLog';
 
 /**
  * Centralized initialization for the project dashboard.
@@ -43,6 +44,8 @@ export function useProjectInit(projectId: string): { ready: boolean; error: Erro
     : project.error
       ? new Error('Failed to load project')
       : null;
+
+  debugLog('useProjectInit', `ready=${ready} projectStatus=${project.status} error=${error?.message ?? 'none'}`);
 
   return { ready, error };
 }

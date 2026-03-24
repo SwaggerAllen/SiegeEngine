@@ -13,6 +13,7 @@ import { useDAGStore } from '../../store/dagStore';
 import { useProjectStore } from '../../store/projectStore';
 import { useDAGData, useDocumentsDAGData } from '../../hooks/queries/useDAGQueries';
 import { StageNode } from './StageNode';
+import { debugLog } from '../../lib/debugLog';
 
 const nodeTypes = { stageNode: StageNode };
 
@@ -125,9 +126,7 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   const [showMinimap, setShowMinimap] = useState(true);
 
   // Debug: log query state to diagnose loading issues
-  if (!dagData) {
-    console.debug(`[PipelineDAG] variant=${variant} status=${activeQuery.status} isLoading=${activeQuery.isLoading} isFetching=${activeQuery.isFetching} isError=${activeQuery.isError} error=${activeQuery.error}`);
-  }
+  debugLog('DAG.render', `variant=${variant} hasData=${!!dagData} nodes=${rawNodes.length} status=${activeQuery.status} isLoading=${activeQuery.isLoading} isFetching=${activeQuery.isFetching} error=${activeQuery.error ?? 'none'}`);
 
   if (activeQuery.isError) {
     return (

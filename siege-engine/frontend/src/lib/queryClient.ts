@@ -1,8 +1,10 @@
 import { QueryClient, type Mutation, type Query } from '@tanstack/react-query';
 import { useErrorLogStore } from '../store/errorLogStore';
+import { debugError } from './debugLog';
 
 function handleQueryError(error: Error, query: Query) {
   const key = query.queryKey.join('.');
+  debugError(`TQ.${key}`, error);
   useErrorLogStore.getState().pushError(`query.${key}`, error);
 }
 
