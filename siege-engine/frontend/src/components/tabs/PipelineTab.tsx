@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useDAGStore } from '../../store/dagStore';
+import { usePipelineUIStore } from '../../store/pipelineUIStore';
 import { useArtifact } from '../../hooks/queries/useProjectQueries';
 import { useExecutions } from '../../hooks/queries/usePipelineQueries';
 import { findSelectedExecution } from '../../pages/ProjectDashboardLayout';
@@ -13,6 +14,7 @@ import { PanelErrorBoundary } from '../ErrorBoundary';
 
 export function PipelineTab() {
   const { id: projectId } = useParams<{ id: string }>();
+  const dagHidden = usePipelineUIStore((s) => s.dagHidden);
   const selectedStageKey = useDAGStore((s) => s.selectedStageKey);
   const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
   const { data: selectedArtifact = null } = useArtifact(selectedArtifactId);
@@ -25,11 +27,16 @@ export function PipelineTab() {
 
   return (
     <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-      {!paneExpanded && (
+      {!paneExpanded && !dagHidden && (
         <div className="h-64 md:h-auto md:w-3/5 border-b md:border-b-0 md:border-r border-gray-700 shrink-0 md:shrink">
           <PanelErrorBoundary fallbackLabel="DAG render error">
             <PipelineDAG projectId={projectId!} variant="pipeline" />
           </PanelErrorBoundary>
+        </div>
+      )}
+      {!paneExpanded && dagHidden && (
+        <div className="h-64 md:h-auto md:w-3/5 border-b md:border-b-0 md:border-r border-gray-700 shrink-0 md:shrink flex items-center justify-center text-yellow-400 text-xs">
+          [DEBUG: DAG hidden]
         </div>
       )}
       <div className={`flex-1 ${paneExpanded ? 'w-full' : 'md:w-2/5'} flex flex-col overflow-hidden`}>
