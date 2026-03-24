@@ -38,9 +38,14 @@ function formatModelName(model: string): string {
 const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
 const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
-export const StageNode = memo(function StageNode({ data }: { data: DAGNodeData & { projectId?: string } }) {
+export const StageNode = memo(function StageNode({ id, data }: { id: string; data: DAGNodeData & { projectId?: string } }) {
   const projectId = data.projectId;
   const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
+  const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
+  const selectedStageKey = useDAGStore((s) => s.selectedStageKey);
+  const isSelected =
+    (data.has_artifact && selectedArtifactId === id) ||
+    (!data.has_artifact && selectedStageKey === data.stage_key);
   const forceRestartMutation = useForceRestartStage(projectId ?? '');
   const cancelStageMutation = useCancelStage(projectId ?? '');
   const [restarting, setRestarting] = useState(false);
@@ -110,8 +115,12 @@ export const StageNode = memo(function StageNode({ data }: { data: DAGNodeData &
 
   return (
     <div
-      className={`px-4 py-3 rounded-lg border-2 shadow-lg w-[220px] overflow-hidden ${colorClass} ${
-        data.is_active ? 'ring-2 ring-blue-400 ring-offset-2 ring-offset-gray-900' : ''
+      className={`px-4 py-3 rounded-lg border-2 shadow-lg w-[220px] overflow-hidden cursor-pointer ${colorClass} ${
+        isSelected
+          ? 'ring-2 ring-white ring-offset-2 ring-offset-gray-900'
+          : data.is_active
+          ? 'ring-2 ring-blue-400 ring-offset-2 ring-offset-gray-900'
+          : ''
       }`}
     >
       <Handle type="target" position={Position.Top} className="!bg-gray-400" />
