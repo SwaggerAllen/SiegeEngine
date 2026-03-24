@@ -211,7 +211,7 @@ function formatDebugText(state: DebugState): string {
   return lines.join('\n');
 }
 
-type SubTab = 'backend' | 'frontend' | 'errors' | 'log' | 'queries' | 'tqlog';
+type SubTab = 'backend' | 'frontend' | 'errors' | 'log' | 'queries';
 
 export function DebugStatePanel({ projectId }: { projectId: string }) {
   const errorCount = useErrorLogStore((s) => s.errors.length);
@@ -304,7 +304,7 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
         </button>
         <button
           onClick={() => setSubTab('log')}
-          className={`px-3 py-1 text-xs ${subTab === 'log' ? 'bg-yellow-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+          className={`px-3 py-1 text-xs ${subTab === 'log' ? 'bg-teal-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
         >
           Log
         </button>
@@ -313,12 +313,6 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
           className={`px-3 py-1 text-xs ${subTab === 'queries' ? 'bg-cyan-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
         >
           TQ Cache
-        </button>
-        <button
-          onClick={() => setSubTab('tqlog')}
-          className={`px-3 py-1 text-xs ${subTab === 'tqlog' ? 'bg-teal-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
-        >
-          TQ Log
         </button>
       </div>
 
@@ -341,11 +335,9 @@ export function DebugStatePanel({ projectId }: { projectId: string }) {
       ) : subTab === 'frontend' ? (
         <ZustandSubTab onCopy={handleCopy} />
       ) : subTab === 'log' ? (
-        <DebugLogSubTab onCopy={handleCopy} />
+        <CombinedLogSubTab onCopy={handleCopy} />
       ) : subTab === 'queries' ? (
         <QueryCacheSubTab onCopy={handleCopy} />
-      ) : subTab === 'tqlog' ? (
-        <TQLogSubTab onCopy={handleCopy} />
       ) : (
         <ErrorsSubTab />
       )}
@@ -595,55 +587,135 @@ function ZustandSubTab({ onCopy }: { onCopy: (text: string) => void }) {
   );
 }
 
-function DebugLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
-  const [entries, setEntries] = useState<DebugEntry[]>([]);
+type MergedLogEntry =
+  | { kind: 'debug'; ts: string; tag: string; msg: string }
+  | { kind: 'tq'; ts: string; type: string; key: string; status: string; fetchStatus: string; observers: number };
+
+function CombinedLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
+  const [debugEntries, setDebugEntries] = useState<DebugEntry[]>([]);
+  const [tqEntries, setTqEntries] = useState<TQLogEntry[]>([]);
+  const [filter, setFilter] = useState('');
+  const [copied, setCopied] = useState(false);
+  const [cleared, setCleared] = useState(false);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   useEffect(() => {
-    setEntries(getDebugLog());
-    const interval = setInterval(() => setEntries(getDebugLog()), 2000);
+    const refresh = () => { setDebugEntries(getDebugLog()); setTqEntries(getTQLog()); };
+    refresh();
+    const interval = setInterval(refresh, 1000);
     return () => clearInterval(interval);
   }, []);
 
-  const logText = entries.map((e) => `${e.ts} [${e.tag}] ${e.msg}`).join('\n');
+  const merged: MergedLogEntry[] = [
+    ...debugEntries.map((e) => ({ kind: 'debug' as const, ...e })),
+    ...tqEntries.map((e) => ({ kind: 'tq' as const, ...e })),
+  ].sort((a, b) => a.ts.localeCompare(b.ts));
+
+  const filtered = filter
+    ? merged.filter((e) =>
+        e.kind === 'debug'
+          ? e.tag.includes(filter) || e.msg.includes(filter)
+          : e.type.includes(filter) || e.key.includes(filter) || e.status.includes(filter),
+      )
+    : merged;
+
+  const copyText = filtered.map((e) =>
+    e.kind === 'debug'
+      ? `${e.ts} | dbg | [${e.tag}] ${e.msg.split('\n')[0]}`
+      : `${e.ts} |  tq | ${e.type.padEnd(32)} | obs=${e.observers} | ${e.status}/${e.fetchStatus} | ${e.key}`,
+  ).join('\n');
+
+  const handleCopy = () => { onCopy(copyText); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+  const handleClear = () => {
+    clearDebugLog(); clearTQLog();
+    setDebugEntries([]); setTqEntries([]);
+    setCleared(true); setTimeout(() => setCleared(false), 2000);
+  };
+
+  function tqStatusColor(status: string, fetchStatus: string) {
+    if (fetchStatus === 'fetching') return 'text-blue-400';
+    if (status === 'success') return 'text-green-400';
+    if (status === 'error') return 'text-red-400';
+    return 'text-yellow-300';
+  }
 
   return (
     <>
-      <div className="flex items-center justify-between shrink-0">
-        <span className="text-xs text-gray-400">
-          {entries.length} log entries (localStorage, survives reload)
-        </span>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setEntries(getDebugLog())}
-            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded"
-          >
-            Refresh
-          </button>
-          <button
-            onClick={() => onCopy(logText)}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
-          >
-            Copy
-          </button>
-          <button
-            onClick={() => { clearDebugLog(); setEntries([]); }}
-            className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white text-xs rounded"
-          >
-            Clear
-          </button>
-        </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <input
+          type="text"
+          placeholder="filter by tag / event / key / status…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="flex-1 min-w-0 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-xs text-white placeholder-gray-500"
+        />
+        <span className="text-xs text-gray-500 shrink-0">{filtered.length} / {merged.length}</span>
       </div>
-      <div className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-3 font-mono text-xs">
-        {entries.length === 0 ? (
-          <p className="text-gray-500">No debug log entries yet</p>
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          onClick={handleCopy}
+          className={`px-3 py-1.5 text-white text-xs rounded shrink-0 transition-colors ${copied ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'}`}
+        >
+          {copied ? 'Copied!' : 'Copy log'}
+        </button>
+        <button
+          onClick={handleClear}
+          className={`px-3 py-1.5 text-white text-xs rounded shrink-0 transition-colors ${cleared ? 'bg-green-600' : 'bg-red-700 hover:bg-red-600'}`}
+        >
+          {cleared ? 'Cleared!' : 'Clear log'}
+        </button>
+      </div>
+      <div className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-2 font-mono text-[10px]">
+        {filtered.length === 0 ? (
+          <p className="text-gray-500">No log entries yet.</p>
         ) : (
-          entries.slice().reverse().map((e, i) => (
-            <div key={i} className="mb-1.5 pb-1.5 border-b border-gray-800/50">
-              <span className="text-gray-500">{e.ts}</span>{' '}
-              <span className="text-yellow-400">[{e.tag}]</span>
-              <pre className="text-gray-300 whitespace-pre-wrap break-all mt-0.5 leading-relaxed">{e.msg}</pre>
-            </div>
-          ))
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="text-gray-600 border-b border-gray-800 sticky top-0 bg-gray-950">
+                <th className="text-left py-0.5 pr-2">time</th>
+                <th className="text-left py-0.5 pr-2">src</th>
+                <th className="text-left py-0.5 pr-2">event / tag</th>
+                <th className="text-left py-0.5">detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.slice().reverse().map((e, i) =>
+                e.kind === 'tq' ? (
+                  <tr key={i} className="border-b border-gray-800/30 hover:bg-gray-900/50">
+                    <td className="py-0.5 pr-2 text-gray-500 whitespace-nowrap">{e.ts}</td>
+                    <td className="py-0.5 pr-2"><span className="px-1 rounded bg-teal-900/60 text-teal-400">tq</span></td>
+                    <td className={`py-0.5 pr-2 whitespace-nowrap ${e.observers === 0 ? 'text-red-400' : 'text-gray-400'}`}>
+                      {e.type} <span className="text-gray-600">obs={e.observers}</span>
+                    </td>
+                    <td className="py-0.5 text-gray-300 max-w-xs truncate" title={e.key}>
+                      <span className={`font-semibold mr-1 ${tqStatusColor(e.status, e.fetchStatus)}`}>{e.status}/{e.fetchStatus}</span>
+                      {e.key}
+                    </td>
+                  </tr>
+                ) : (
+                  <>
+                    <tr
+                      key={i}
+                      className="border-b border-gray-800/30 hover:bg-gray-900/50 cursor-pointer"
+                      onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}
+                    >
+                      <td className="py-0.5 pr-2 text-gray-500 whitespace-nowrap">{e.ts}</td>
+                      <td className="py-0.5 pr-2"><span className="px-1 rounded bg-yellow-900/60 text-yellow-400">dbg</span></td>
+                      <td className="py-0.5 pr-2 text-yellow-400 whitespace-nowrap">[{e.tag}]</td>
+                      <td className="py-0.5 text-gray-300 max-w-xs truncate" title={e.msg}>{e.msg.split('\n')[0]}</td>
+                    </tr>
+                    {expandedIdx === i && e.msg.includes('\n') && (
+                      <tr key={`${i}-exp`} className="border-b border-gray-800/30">
+                        <td colSpan={4} className="pb-1.5 pl-8">
+                          <pre className="text-gray-500 whitespace-pre-wrap break-all leading-relaxed">{e.msg.split('\n').slice(1).join('\n')}</pre>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                )
+              )}
+            </tbody>
+          </table>
         )}
       </div>
     </>
@@ -770,110 +842,6 @@ function QueryCacheSubTab({ onCopy }: { onCopy: (text: string) => void }) {
               </div>
             ))}
           </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-function TQLogSubTab({ onCopy }: { onCopy: (text: string) => void }) {
-  const [entries, setEntries] = useState<TQLogEntry[]>([]);
-  const [filter, setFilter] = useState('');
-  const [copied, setCopied] = useState(false);
-  const [cleared, setCleared] = useState(false);
-
-  useEffect(() => {
-    setEntries(getTQLog());
-    const interval = setInterval(() => setEntries(getTQLog()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const filtered = filter
-    ? entries.filter((e) => e.key.includes(filter) || e.type.includes(filter) || e.status.includes(filter))
-    : entries;
-
-  const copyText = filtered.map((e) =>
-    `${e.ts} | ${e.type.padEnd(32)} | obs=${e.observers} | ${e.status}/${e.fetchStatus} | ${e.key}`
-  ).join('\n');
-
-  const handleCopy = () => {
-    onCopy(copyText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleClear = () => {
-    clearTQLog();
-    setEntries([]);
-    setCleared(true);
-    setTimeout(() => setCleared(false), 2000);
-  };
-
-  function statusColor(status: string, fetchStatus: string) {
-    if (fetchStatus === 'fetching') return 'text-blue-400';
-    if (status === 'success') return 'text-green-400';
-    if (status === 'error') return 'text-red-400';
-    return 'text-yellow-300'; // pending
-  }
-
-  return (
-    <>
-      <div className="flex items-center gap-2 shrink-0">
-        <input
-          type="text"
-          placeholder="filter by key / type / status…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="flex-1 min-w-0 px-2 py-1 bg-gray-800 border border-gray-600 rounded text-xs text-white placeholder-gray-500"
-        />
-        <span className="text-xs text-gray-500 shrink-0">{filtered.length} / {entries.length}</span>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <button
-          onClick={handleCopy}
-          className={`px-3 py-1.5 text-white text-xs rounded shrink-0 transition-colors ${
-            copied ? 'bg-green-600' : 'bg-blue-600 hover:bg-blue-700'
-          }`}
-        >
-          {copied ? 'Copied!' : 'Copy log'}
-        </button>
-        <button
-          onClick={handleClear}
-          className={`px-3 py-1.5 text-white text-xs rounded shrink-0 transition-colors ${
-            cleared ? 'bg-green-600' : 'bg-red-700 hover:bg-red-600'
-          }`}
-        >
-          {cleared ? 'Cleared!' : 'Clear log'}
-        </button>
-      </div>
-      <div className="flex-1 overflow-auto bg-gray-950 border border-gray-700 rounded p-2 font-mono text-[10px]">
-        {filtered.length === 0 ? (
-          <p className="text-gray-500">No TQ events recorded yet. Navigate to the documents tab to generate events.</p>
-        ) : (
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="text-gray-600 border-b border-gray-800 sticky top-0 bg-gray-950">
-                <th className="text-left py-0.5 pr-2">time</th>
-                <th className="text-left py-0.5 pr-2">event</th>
-                <th className="text-left py-0.5 pr-2">obs</th>
-                <th className="text-left py-0.5 pr-2">status</th>
-                <th className="text-left py-0.5">key</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.slice().reverse().map((e, i) => (
-                <tr key={i} className="border-b border-gray-800/30 hover:bg-gray-900/50">
-                  <td className="py-0.5 pr-2 text-gray-500 whitespace-nowrap">{e.ts}</td>
-                  <td className="py-0.5 pr-2 text-gray-400 whitespace-nowrap">{e.type}</td>
-                  <td className={`py-0.5 pr-2 whitespace-nowrap ${e.observers === 0 ? 'text-red-400' : 'text-gray-400'}`}>{e.observers}</td>
-                  <td className={`py-0.5 pr-2 whitespace-nowrap font-semibold ${statusColor(e.status, e.fetchStatus)}`}>
-                    {e.status}/{e.fetchStatus}
-                  </td>
-                  <td className="py-0.5 text-gray-300 max-w-xs truncate" title={e.key}>{e.key}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         )}
       </div>
     </>
