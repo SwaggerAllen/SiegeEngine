@@ -18,6 +18,18 @@ import type { UseQueryResult } from '@tanstack/react-query';
 
 const nodeTypes = { stageNode: StageNode };
 
+const MINIMAP_COLORS: Record<string, string> = {
+  approved: '#22c55e',
+  awaiting_review: '#eab308',
+  generating: '#3b82f6',
+  running: '#3b82f6',
+  ai_reviewing: '#a855f7',
+  stale: '#f97316',
+  rejected: '#ef4444',
+  failed: '#ef4444',
+  pending: '#6b7280',
+};
+
 interface PipelineDAGProps {
   projectId: string;
   variant?: 'pipeline' | 'documents';
@@ -204,6 +216,12 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
   const onNodesChange = useCallback(() => {}, []);
   const onEdgesChange = useCallback(() => {}, []);
 
+  const minimapNodeColor = useCallback((n: { data?: Record<string, unknown> }) => {
+    const artifactType = n.data?.artifact_type as string;
+    if (artifactType === 'component_map' || artifactType === 'sub_component_map') return '#818cf8';
+    return MINIMAP_COLORS[n.data?.status as string] || '#6b7280';
+  }, []);
+
   const [showMinimap, setShowMinimap] = useState(true);
 
   debugLogDedup(`DAG.render.${variant}`, `variant=${variant} hasData=${!!dagData} nodes=${rawNodes.length} status=${status} isLoading=${isLoading} isFetching=${isFetching} error=${error ?? 'none'}`);
@@ -250,25 +268,7 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
       {showMinimap && (
         <MiniMap
           className="!bg-gray-800"
-          nodeColor={(n) => {
-            const artifactType = n.data?.artifact_type as string;
-            if (artifactType === 'component_map' || artifactType === 'sub_component_map') {
-              return '#818cf8';
-            }
-            const status = n.data?.status as string;
-            const colors: Record<string, string> = {
-              approved: '#22c55e',
-              awaiting_review: '#eab308',
-              generating: '#3b82f6',
-              running: '#3b82f6',
-              ai_reviewing: '#a855f7',
-              stale: '#f97316',
-              rejected: '#ef4444',
-              failed: '#ef4444',
-              pending: '#6b7280',
-            };
-            return colors[status] || '#6b7280';
-          }}
+          nodeColor={minimapNodeColor}
         />
       )}
     </ReactFlow>
