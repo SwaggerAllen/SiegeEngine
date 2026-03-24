@@ -31,10 +31,11 @@ export function PipelineDAG(props: PipelineDAGProps) {
 
 function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps) {
   // === LAYER 1: Read DAG data from TanStack Query ===
-  const { data: workflowData } = useDAGData(projectId);
-  const { data: documentsData } = useDocumentsDAGData(projectId);
+  const workflowQuery = useDAGData(projectId);
+  const documentsQuery = useDocumentsDAGData(projectId);
 
-  const dagData = variant === 'documents' ? documentsData : workflowData;
+  const activeQuery = variant === 'documents' ? documentsQuery : workflowQuery;
+  const dagData = activeQuery.data;
 
   // Map TQ response into ReactFlow nodes/edges
   const rawNodes = useMemo(() => {
@@ -112,10 +113,20 @@ function PipelineDAGInner({ projectId, variant = 'pipeline' }: PipelineDAGProps)
   // === LAYER 5: Render ===
   const [showMinimap, setShowMinimap] = useState(true);
 
-  if (rawNodes.length === 0) {
+  if (activeQuery.isError) {
+    return (
+      <div className="flex items-center justify-center h-full text-red-400">
+        Failed to load {variant === 'documents' ? 'documents' : 'pipeline'}: {String(activeQuery.error)}
+      </div>
+    );
+  }
+
+  if (!dagData || rawNodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500">
-        {variant === 'documents' ? 'Loading documents...' : 'Loading pipeline stages...'}
+        {activeQuery.isLoading
+          ? (variant === 'documents' ? 'Loading documents...' : 'Loading pipeline stages...')
+          : (variant === 'documents' ? 'No documents yet' : 'No pipeline stages yet')}
       </div>
     );
   }
