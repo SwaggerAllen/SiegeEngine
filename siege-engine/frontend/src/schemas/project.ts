@@ -8,6 +8,7 @@ export const ArtifactStatusSchema = z.enum([
   'approved',
   'rejected',
   'stale',
+  'failed',
 ]);
 
 export const ArtifactSummarySchema = z.object({
@@ -48,7 +49,7 @@ export const ArtifactSchema = z.object({
   ai_review_feedback: z.record(z.string(), z.unknown()).nullable(),
   human_review_notes: z.string().nullable(),
   file_path: z.string().nullable(),
-  git_commit_sha: z.string().nullable(),
+  git_commit_sha: z.string().nullish(),
   language: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
