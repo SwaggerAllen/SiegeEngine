@@ -19,7 +19,10 @@ def get_dag(
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
-    return dag_service.get_dag_visualization_data(db, project_id)
+    try:
+        return dag_service.get_dag_visualization_data(db, project_id)
+    except ValueError as exc:
+        raise HTTPException(500, str(exc)) from exc
 
 
 @router.get("/{project_id}/documents")
@@ -31,7 +34,10 @@ def get_documents_dag(
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
-    return dag_service.get_documents_dag(db, project_id)
+    try:
+        return dag_service.get_documents_dag(db, project_id)
+    except ValueError as exc:
+        raise HTTPException(500, str(exc)) from exc
 
 
 @router.get("/{project_id}/components")

@@ -18,6 +18,41 @@ import type { UseQueryResult } from '@tanstack/react-query';
 
 const nodeTypes = { stageNode: StageNode };
 
+/** Returns a description of the first cycle found, or null if the graph is acyclic. */
+function detectCycle(
+  nodeIds: string[],
+  edges: { source: string; target: string }[],
+): string | null {
+  const adj = new Map<string, string[]>();
+  for (const id of nodeIds) adj.set(id, []);
+  for (const e of edges) adj.get(e.source)?.push(e.target);
+
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+
+  function dfs(node: string): string | null {
+    visited.add(node);
+    inStack.add(node);
+    for (const neighbor of adj.get(node) ?? []) {
+      if (inStack.has(neighbor)) return `${node} → ${neighbor}`;
+      if (!visited.has(neighbor)) {
+        const found = dfs(neighbor);
+        if (found) return found;
+      }
+    }
+    inStack.delete(node);
+    return null;
+  }
+
+  for (const id of nodeIds) {
+    if (!visited.has(id)) {
+      const found = dfs(id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 const MINIMAP_COLORS: Record<string, string> = {
   approved: '#22c55e',
   awaiting_review: '#eab308',
@@ -141,6 +176,11 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
     return next;
   }, [dagData]);
 
+  const cycleError = useMemo(
+    () => (dagData ? detectCycle(rawNodes.map((n) => n.id), rawEdges) : null),
+    [dagData, rawNodes, rawEdges],
+  );
+
   // === UI state from Zustand (selection only) ===
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const selectStage = useDAGStore((s) => s.selectStage);
@@ -263,6 +303,15 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
     return (
       <div className="flex items-center justify-center h-full text-red-400">
         Failed to load {variant === 'documents' ? 'documents' : 'pipeline'}: {String(error)}
+      </div>
+    );
+  }
+
+  if (cycleError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-2 text-red-400">
+        <span className="font-semibold">Cycle detected in DAG</span>
+        <span className="text-xs text-red-300 font-mono">{cycleError}</span>
       </div>
     );
   }
