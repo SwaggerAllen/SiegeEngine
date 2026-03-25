@@ -12,6 +12,7 @@ import type { PromptPreview } from '../../api/pipeline';
 import type { Artifact } from '../../types/project';
 import { CommentsPanel } from '../comments/CommentsPanel';
 import { ComponentDependencyList } from './ComponentDependencyList';
+import { ContentSearchBar } from './ContentSearchBar';
 import DiffView from './DiffView';
 
 const REVISABLE_STATUSES = new Set(['approved', 'stale']);
@@ -37,6 +38,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
   const [restoringVersion, setRestoringVersion] = useState(false);
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [loadingPrompt, setLoadingPrompt] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   interface ReviewIssue {
     severity: string;
@@ -410,9 +412,14 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
         </div>
       )}
 
+      {/* Search bar — available for document, feedback, and prompt tabs */}
+      {(activeTab === 'document' || activeTab === 'feedback' || activeTab === 'prompt') && (
+        <ContentSearchBar containerRef={contentRef} contentKey={`${artifact.id}:${activeTab}:${editing}`} />
+      )}
+
       {/* Content area */}
       {activeTab === 'document' ? (
-        <>
+        <div ref={contentRef} className="flex-1 flex flex-col overflow-hidden">
           {isViewingHistory ? (
             <div className={proseClasses}>
               <Markdown>{historicalContent || 'Loading...'}</Markdown>
@@ -428,10 +435,10 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
               <Markdown>{artifact.content || 'No content'}</Markdown>
             </div>
           )}
-        </>
+        </div>
       ) : activeTab === 'feedback' ? (
         /* AI Feedback tab: summary + full document */
-        <div className="flex-1 overflow-auto">
+        <div ref={contentRef} className="flex-1 overflow-auto">
           {/* AI Review summary */}
           {reviewFeedback && (
             <div className="mx-3 mt-3 bg-gray-800 p-3 rounded text-sm">
@@ -483,7 +490,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
         <DiffView projectId={projectId} artifactId={artifact.id} artifactVersion={artifact.version} />
       ) : activeTab === 'prompt' ? (
         /* Prompt Preview tab */
-        <div className="flex-1 overflow-auto p-3 space-y-3">
+        <div ref={contentRef} className="flex-1 overflow-auto p-3 space-y-3">
           {loadingPrompt ? (
             <div className="text-sm text-gray-400">Loading prompt preview...</div>
           ) : promptPreview ? (
