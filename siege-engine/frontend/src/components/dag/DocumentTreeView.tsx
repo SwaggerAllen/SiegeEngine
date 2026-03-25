@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useDAGStore } from '../../store/dagStore';
 import type { SearchableNode } from './PipelineDAG';
 
@@ -173,6 +173,44 @@ function getArtifactType(n: SearchableNode): string {
   return n.stageKey;
 }
 
+/**
+ * Filter a tree to only include documents matching `query` and the ancestor
+ * folders needed to reach them. Returns [filteredTree, keysToExpand].
+ */
+function filterTree(
+  tree: TreeNode[],
+  query: string,
+): [TreeNode[], Set<string>] {
+  const q = query.toLowerCase();
+  const keysToExpand = new Set<string>();
+
+  function walk(nodes: TreeNode[]): TreeNode[] {
+    const result: TreeNode[] = [];
+    for (const treeNode of nodes) {
+      if (treeNode.type === 'document') {
+        const n = treeNode.node!;
+        const matches =
+          n.label.toLowerCase().includes(q) ||
+          (n.componentKey && n.componentKey.toLowerCase().includes(q)) ||
+          n.status.toLowerCase().includes(q) ||
+          n.stageKey.replace(/_/g, ' ').toLowerCase().includes(q);
+        if (matches) result.push(treeNode);
+      } else {
+        // Folder: recurse, keep if any children survive
+        const filteredChildren = walk(treeNode.children ?? []);
+        if (filteredChildren.length > 0) {
+          keysToExpand.add(treeNode.key);
+          result.push({ ...treeNode, children: filteredChildren });
+        }
+      }
+    }
+    return result;
+  }
+
+  const filtered = walk(tree);
+  return [filtered, keysToExpand];
+}
+
 // ---------------------------------------------------------------------------
 // Folder row
 // ---------------------------------------------------------------------------
@@ -316,8 +354,31 @@ function TreeBranch({
 export function DocumentTreeView({ nodes }: { nodes: SearchableNode[] }) {
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const tree = useMemo(() => buildTree(nodes), [nodes]);
+
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Filter tree and compute which folders to force-expand
+  const [displayTree, searchExpandedKeys] = useMemo(() => {
+    if (!searchQuery.trim()) return [tree, null] as const;
+    return filterTree(tree, searchQuery);
+  }, [tree, searchQuery]);
+
+  // Count matching docs for the results badge
+  const matchCount = useMemo(() => {
+    if (!searchQuery.trim()) return 0;
+    function countDocs(nodes: TreeNode[]): number {
+      let count = 0;
+      for (const n of nodes) {
+        if (n.type === 'document') count++;
+        else if (n.children) count += countDocs(n.children);
+      }
+      return count;
+    }
+    return countDocs(displayTree);
+  }, [displayTree, searchQuery]);
 
   // Start with top-level folders expanded
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => {
@@ -325,6 +386,10 @@ export function DocumentTreeView({ nodes }: { nodes: SearchableNode[] }) {
     initial.add('components-root');
     return initial;
   });
+
+  // When searching, force-expand ancestor folders of matches.
+  // When not searching, use manual expandedKeys.
+  const effectiveExpandedKeys = searchExpandedKeys ?? expandedKeys;
 
   const toggleKey = useCallback((key: string) => {
     setExpandedKeys((prev) => {
@@ -345,18 +410,71 @@ export function DocumentTreeView({ nodes }: { nodes: SearchableNode[] }) {
     [selectArtifact],
   );
 
+  // Keyboard shortcut: focus search on Ctrl/Cmd+F when tree is visible
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        // Only capture if tree view is in the DOM
+        if (inputRef.current) {
+          e.preventDefault();
+          inputRef.current.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
+
   return (
     <div className="h-full flex flex-col bg-gray-900 overflow-hidden">
+      {/* Search bar */}
+      <div className="px-2 pt-2 pb-1 border-b border-gray-800">
+        <div className="relative">
+          <input
+            ref={inputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setSearchQuery('');
+                inputRef.current?.blur();
+              }
+            }}
+            placeholder="Filter documents..."
+            className="w-full px-3 py-1.5 bg-gray-800 text-white text-sm rounded border border-gray-700 focus:border-blue-500 focus:outline-none placeholder-gray-500"
+          />
+          {searchQuery ? (
+            <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              <span className="text-xs text-gray-500">
+                {matchCount} {matchCount === 1 ? 'match' : 'matches'}
+              </span>
+              <button
+                onClick={() => { setSearchQuery(''); inputRef.current?.focus(); }}
+                className="text-gray-500 hover:text-gray-300 text-sm px-1"
+              >
+                ✕
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Tree */}
       <div className="flex-1 overflow-y-auto py-1">
         {tree.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-500 text-sm">
             No documents yet
           </div>
+        ) : displayTree.length === 0 && searchQuery.trim() ? (
+          <div className="flex items-center justify-center h-32 text-gray-500 text-sm">
+            No matching documents
+          </div>
         ) : (
           <TreeBranch
-            nodes={tree}
+            nodes={displayTree}
             depth={0}
-            expandedKeys={expandedKeys}
+            expandedKeys={effectiveExpandedKeys}
             toggleKey={toggleKey}
             selectedArtifactId={selectedArtifactId}
             onSelectArtifact={onSelectArtifact}
