@@ -165,7 +165,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
     if (!historicalContent) return;
     setRestoringVersion(true);
     try {
-      await updateArtifactMutation.mutateAsync({ artifactId: artifact.id, content: historicalContent });
+      await updateArtifactMutation.mutateAsync({ artifactId: artifact.id, content: historicalContent, clearAiReview: true });
       setViewingSha(null);
       setHistoricalContent(null);
     } finally {

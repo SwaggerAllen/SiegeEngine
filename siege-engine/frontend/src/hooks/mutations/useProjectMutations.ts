@@ -29,8 +29,8 @@ export function useUpdateArtifact() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: ['projects', 'updateArtifact'],
-    mutationFn: (params: { artifactId: string; content: string }) =>
-      projectApi.updateArtifact(params.artifactId, params.content),
+    mutationFn: (params: { artifactId: string; content: string; clearAiReview?: boolean }) =>
+      projectApi.updateArtifact(params.artifactId, params.content, params.clearAiReview),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: projectKeys.artifact(variables.artifactId) });
     },
