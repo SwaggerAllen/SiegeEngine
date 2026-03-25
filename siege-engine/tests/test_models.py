@@ -20,6 +20,7 @@ class TestArtifactStatus:
             "awaiting_review",
             "approved",
             "rejected",
+            "failed",
             "stale",
         }
         actual = {s.value for s in ArtifactStatus}

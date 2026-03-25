@@ -8,6 +8,7 @@ Create Date: 2026-03-25 12:00:00.000000
 from typing import Sequence, Union
 
 from alembic import op
+from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = 'f6a7b8c9d0e1'
@@ -17,10 +18,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute("ALTER TYPE artifactstatus ADD VALUE IF NOT EXISTS 'FAILED' BEFORE 'STALE'")
+    # SQLite stores enums as plain strings, so no schema change needed.
+    # For PostgreSQL, add the new value to the native enum type.
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        op.execute("ALTER TYPE artifactstatus ADD VALUE IF NOT EXISTS 'FAILED' BEFORE 'STALE'")
 
 
 def downgrade() -> None:
     # PostgreSQL does not support removing enum values.
-    # To fully revert, recreate the type without FAILED and update references.
+    # SQLite needs no change.
     pass
