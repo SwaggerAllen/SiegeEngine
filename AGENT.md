@@ -80,7 +80,7 @@ Stages 9-10 run in the project's git repo with full tool access (bash, file edit
 - **Event sourcing**: All pipeline state changes go through events (`pipeline/events.py` → `reducer.py` → `event_store.py`). The `PipelineSnapshot` is the **single source of truth** for pipeline state. DB model status fields (`Artifact.status`, `StageExecution.status`) are projections — written for query convenience but never read for state decisions. The snapshot carries artifact metadata (name, type, component_key via `artifact_meta`), execution mapping (`execution_map`), and all statuses.
 - **CLI-based generation**: All LLM calls go through Claude CLI subprocess (`cli/manager.py`), not direct API. Enables tool access, budget control, and reproducibility.
 - **Semaphore concurrency**: `MAX_CONCURRENT_LLM_CALLS` (default 5) limits parallel CLI invocations.
-- **Review gates**: Pipeline pauses at `awaiting_review` status (read from snapshot). Frontend shows ReviewPanel for approve/reject/edit. Resume via `POST /api/pipeline/{project_id}/resume`.
+- **Review gates**: Pipeline pauses at `awaiting_review` status (read from snapshot). Frontend shows ReviewPanel with independent action buttons: **Approve** (accept artifact), **Reject** (mark as rejected), and **Regenerate** (force restart to produce new output). Resume via `POST /api/pipeline/{project_id}/resume`.
 - **Staleness propagation**: Editing/rejecting an artifact emits `STALENESS_PROPAGATED` events marking downstream artifacts as stale via BFS traversal.
 - **Prompt customization**: Each stage's system message, output format, and context template are editable via the PromptEditorPanel and stored in DB (PromptConfig).
 - **WebSocket broadcasting**: Pipeline progress events stream to frontend in real-time.
