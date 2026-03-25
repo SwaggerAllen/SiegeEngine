@@ -212,8 +212,8 @@ def _handle_stage_failed(snap: dict, p: dict) -> None:
         # Preserve artifact status if it was already reviewed — a stage
         # failure (e.g. cancellation) shouldn't nuke a valid artifact.
         current = snap["artifact_statuses"].get(p["artifact_id"])
-        if current not in ("approved", "awaiting_review"):
-            snap["artifact_statuses"][p["artifact_id"]] = "pending"
+        if current not in ("approved", "awaiting_review", "stale", "rejected"):
+            snap["artifact_statuses"][p["artifact_id"]] = "failed"
     # Track error message
     if p.get("error"):
         snap["stage_errors"][key] = {

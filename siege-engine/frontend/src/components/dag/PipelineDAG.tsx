@@ -21,7 +21,6 @@ import type { UseQueryResult } from '@tanstack/react-query';
 
 const nodeTypes = { stageNode: StageNode };
 
-const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
 const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 /** Estimate node height based on which sections will render in StageNode. */
