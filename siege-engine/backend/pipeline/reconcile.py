@@ -231,6 +231,32 @@ def reconcile_project(db: Session, project_id: str) -> list[dict]:
                 run_id=run.run_id,
             )
 
+    # ── Fix stale is_running flag ──────────────────────────────────────
+    # If is_running is True in the snapshot but no run in run_status is
+    # "running", no RUN_COMPLETED event can clear it.  Emit a synthetic
+    # RUN_COMPLETED for current_run_id (or the newest running entry) to
+    # force is_running=False through the reducer.
+    snapshot_after_fixes = es.get_snapshot(project_id)
+    if snapshot_after_fixes.is_running:
+        any_running = any(
+            s == "running"
+            for s in (snapshot_after_fixes.run_status or {}).values()
+        )
+        if not any_running:
+            target_run_id = snapshot_after_fixes.current_run_id
+            if target_run_id:
+                corrections.append({
+                    "type": "stale_is_running",
+                    "run_id": target_run_id,
+                    "from": "is_running=True",
+                    "to": "is_running=False",
+                })
+                es.emit(
+                    project_id, evt.RUN_COMPLETED,
+                    {"run_id": target_run_id, "status": "failed"},
+                    run_id=target_run_id,
+                )
+
     # ══════════════════════════════════════════════════════════════════════
     # Phase 3: Sync DB projections from final snapshot state
     # ══════════════════════════════════════════════════════════════════════

@@ -10,6 +10,7 @@ class ArtifactStatus(str, enum.Enum):
     AWAITING_REVIEW = "awaiting_review"
     APPROVED = "approved"
     REJECTED = "rejected"
+    FAILED = "failed"
     STALE = "stale"
 
 
