@@ -53,3 +53,4 @@ class ArtifactResponse(BaseModel):
 
 class ArtifactUpdate(BaseModel):
     content: str
+    clear_ai_review: bool = False

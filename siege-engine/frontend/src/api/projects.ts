@@ -49,9 +49,10 @@ export async function getArtifact(artifactId: string): Promise<Artifact> {
 
 export async function updateArtifact(
   artifactId: string,
-  content: string
+  content: string,
+  clearAiReview = false
 ): Promise<Artifact> {
-  const { data } = await api.put(`/projects/artifacts/${artifactId}`, { content });
+  const { data } = await api.put(`/projects/artifacts/${artifactId}`, { content, clear_ai_review: clearAiReview });
   return ArtifactSchema.parse(data);
 }
 

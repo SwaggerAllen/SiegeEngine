@@ -158,6 +158,8 @@ def update_artifact(
 
     artifact.content = req.content
     artifact.version += 1
+    if req.clear_ai_review:
+        artifact.ai_review_feedback = None
 
     # Commit to git
     if artifact.file_path:
