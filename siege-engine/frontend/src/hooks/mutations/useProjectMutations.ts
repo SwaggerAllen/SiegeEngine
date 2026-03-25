@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as projectApi from '../../api/projects';
 import { projectKeys } from '../queries/useProjectQueries';
+import { pipelineKeys } from '../queries/usePipelineQueries';
 
 export function useCreateProject() {
   const queryClient = useQueryClient();
@@ -25,7 +26,7 @@ export function useDeleteProject() {
   });
 }
 
-export function useUpdateArtifact() {
+export function useUpdateArtifact(projectId?: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: ['projects', 'updateArtifact'],
@@ -33,6 +34,9 @@ export function useUpdateArtifact() {
       projectApi.updateArtifact(params.artifactId, params.content),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: projectKeys.artifact(variables.artifactId) });
+      if (projectId) {
+        queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
+      }
     },
   });
 }

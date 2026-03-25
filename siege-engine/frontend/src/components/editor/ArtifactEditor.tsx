@@ -20,7 +20,7 @@ const REVISABLE_STATUSES = new Set(['approved', 'stale']);
 type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
 
 export function ArtifactEditor({ artifact, projectId, compactMobile = false, viewOnly = false }: { artifact: Artifact; projectId: string; compactMobile?: boolean; viewOnly?: boolean }) {
-  const updateArtifactMutation = useUpdateArtifact();
+  const updateArtifactMutation = useUpdateArtifact(projectId);
   const reviseArtifactMutation = useReviseArtifact(projectId);
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
