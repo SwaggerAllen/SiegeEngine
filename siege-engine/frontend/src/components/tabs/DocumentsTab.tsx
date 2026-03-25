@@ -22,9 +22,9 @@ export function DocumentsTab() {
     [executions, selectedArtifact],
   );
 
-  // Pane + review mode state
+  // Pane + view mode state
   const [paneOpen, setPaneOpen] = useState(false);
-  const [reviewMode, setReviewMode] = useState(false);
+  const [viewMode, setViewMode] = useState<'dag' | 'review' | 'edit'>('dag');
 
   // Auto-open pane when a node is selected; close+reset on deselect
   useEffect(() => {
@@ -32,9 +32,16 @@ export function DocumentsTab() {
       setPaneOpen(true);
     } else {
       setPaneOpen(false);
-      setReviewMode(false);
+      setViewMode('dag');
     }
   }, [selectedArtifact?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const btnClass = (active: boolean) =>
+    `px-2 py-0.5 text-xs rounded shrink-0 ${
+      active
+        ? 'bg-blue-600 text-white hover:bg-blue-500'
+        : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
+    }`;
 
   const paneHandle = (
     <>
@@ -44,20 +51,21 @@ export function DocumentsTab() {
             {selectedArtifact.component_key ?? selectedArtifact.artifact_type}
           </span>
           <ArtifactStatusBadge status={selectedArtifact.status} />
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setReviewMode((m) => !m);
-              setPaneOpen(true);
-            }}
-            className={`px-2 py-0.5 text-xs rounded shrink-0 ${
-              reviewMode
-                ? 'bg-blue-600 text-white hover:bg-blue-500'
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
-            }`}
-          >
-            {reviewMode ? '← DAG' : 'Review'}
-          </button>
+          {viewMode === 'dag' ? (
+            <>
+              <button onClick={(e) => { e.stopPropagation(); setViewMode('review'); setPaneOpen(true); }} className={btnClass(false)}>Review</button>
+              <button onClick={(e) => { e.stopPropagation(); setViewMode('edit'); setPaneOpen(true); }} className={btnClass(false)}>Edit</button>
+            </>
+          ) : (
+            <>
+              <button onClick={(e) => { e.stopPropagation(); setViewMode('dag'); }} className={btnClass(false)}>← DAG</button>
+              {viewMode === 'review' ? (
+                <button onClick={(e) => { e.stopPropagation(); setViewMode('edit'); }} className={btnClass(false)}>✏ Edit</button>
+              ) : (
+                <button onClick={(e) => { e.stopPropagation(); setViewMode('review'); }} className={btnClass(false)}>👁 View</button>
+              )}
+            </>
+          )}
         </>
       ) : (
         <span className="text-gray-500 text-xs flex-1">Select a node to review</span>
@@ -67,11 +75,15 @@ export function DocumentsTab() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Main area: DAG or document editor in review mode */}
+      {/* Main area: DAG, markdown view, or editor */}
       <div className="flex-1 overflow-hidden">
-        {reviewMode && selectedArtifact ? (
+        {selectedArtifact && viewMode === 'review' ? (
+          <PanelErrorBoundary fallbackLabel="Viewer error">
+            <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} viewOnly={true} />
+          </PanelErrorBoundary>
+        ) : selectedArtifact && viewMode === 'edit' ? (
           <PanelErrorBoundary fallbackLabel="Editor error">
-            <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} />
+            <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} viewOnly={false} />
           </PanelErrorBoundary>
         ) : dagHidden ? (
           <div className="h-full flex items-center justify-center text-yellow-400 text-xs">
@@ -93,7 +105,7 @@ export function DocumentsTab() {
                 projectId={projectId!}
                 artifact={selectedArtifact}
                 execution={selectedExecution}
-                mode={reviewMode ? 'feedback' : 'actions'}
+                mode={viewMode === 'review' ? 'feedback' : 'actions'}
               />
             </PanelErrorBoundary>
           </div>
