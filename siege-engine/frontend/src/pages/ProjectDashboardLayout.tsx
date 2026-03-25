@@ -1,19 +1,15 @@
-import { useState, useMemo, useEffect, Suspense, memo, useRef } from 'react';
+import { useState, useMemo, useEffect, Suspense, memo } from 'react';
 import { useSafeEffect } from '../hooks/useSafe';
-import { useParams, useSearchParams, useNavigate, useLocation, Link, NavLink, Outlet, Navigate } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useParams, useSearchParams, useNavigate, useLocation, Link, Outlet, Navigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useDAGStore } from '../store/dagStore';
 import { usePipelineUIStore } from '../store/pipelineUIStore';
 import { useProject } from '../hooks/queries/useProjectQueries';
-import { useCurrentRunNumber, useIsRunning, pipelineKeys } from '../hooks/queries/usePipelineQueries';
+import { useCurrentRunNumber, useIsRunning } from '../hooks/queries/usePipelineQueries';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useVisibilityRefresh } from '../hooks/useVisibilityRefresh';
-import { PipelineControls } from '../components/pipeline/PipelineControls';
-import { InvitePanel } from '../components/auth/InvitePanel';
-import { RunSelector } from '../components/pipeline/RunSelector';
 import { TabSkeleton } from '../components/DashboardSkeleton';
-import { reconcilePipeline } from '../api/pipeline';
+import { HeaderDrawer } from '../components/layout/HeaderDrawer';
 import api from '../api/client';
 import { debugLog } from '../lib/debugLog';
 import type { StageExecution } from '../schemas/pipeline';
@@ -167,8 +163,6 @@ const DashboardHeader = memo(function DashboardHeader({
   visibleTabs: Tab[];
   activeTab: Tab;
 }) {
-  const queryClient = useQueryClient();
-
   // TQ subscriptions owned by this component
   const { data: currentProject, error: projectError } = useProject(projectId);
   const currentRunNumber = useCurrentRunNumber(projectId);
@@ -179,60 +173,10 @@ const DashboardHeader = memo(function DashboardHeader({
   useVisibilityRefresh(projectId, reconnect);
 
   // Zustand
-  const user = useAuthStore((s) => s.user);
   const isViewingHistory = usePipelineUIStore((s) => s.isViewingHistory);
-  const clearSelection = useDAGStore((s) => s.clearSelection);
 
-  const isAdmin = user?.role === 'admin';
-  const isViewer = user?.role === 'viewer';
-  const hasRemote = !!currentProject?.remote_url;
-
-  // Local dialog + repair state — changes only re-render this component
-  const [showInvites, setShowInvites] = useState(false);
-  const [showPRDialog, setShowPRDialog] = useState(false);
-  const [repairing, setRepairing] = useState(false);
-  const [repairResult, setRepairResult] = useState<string | null>(null);
-
-  // Nav menu state (moved here so toggling never re-renders the Outlet)
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  // Controls row collapse (mobile only — always visible on md+)
-  const [controlsOpen, setControlsOpen] = useState(false);
-
-  useSafeEffect('header-menu-outside-click', () => {
-    if (!menuOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [menuOpen]);
-
-  // Close menu when active tab changes
-  useEffect(() => { setMenuOpen(false); }, [activeTab]);
-
-  const handleRepair = async () => {
-    if (repairing) return;
-    setRepairing(true);
-    setRepairResult(null);
-    try {
-      const result = await reconcilePipeline(projectId);
-      const fixes = result.corrections.length + result.orphans_removed.length;
-      setRepairResult(fixes > 0 ? `Fixed ${fixes} issue${fixes > 1 ? 's' : ''}` : 'No issues found');
-      if (fixes > 0) {
-        queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
-        queryClient.invalidateQueries({ queryKey: pipelineKeys.runs(projectId) });
-      }
-    } catch {
-      setRepairResult('Repair failed');
-    } finally {
-      setRepairing(false);
-      setTimeout(() => setRepairResult(null), 4000);
-    }
-  };
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const pageName = tabLabels[activeTab] ?? tabLabels.documents;
 
   if (projectError) {
     return (
@@ -255,184 +199,53 @@ const DashboardHeader = memo(function DashboardHeader({
 
   return (
     <>
-      <header className="border-b border-gray-700 px-3 md:px-4 py-2 md:py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-2 md:gap-4 min-w-0">
-          <Link to="/projects" className="text-gray-400 hover:text-white text-sm shrink-0">
-            &larr; Projects
-          </Link>
-          <h1 className="text-sm md:text-lg font-bold truncate">
-            {currentProject?.name || 'Loading...'}
-          </h1>
-          {isRunning && currentRunNumber && (
-            <span className="text-xs bg-blue-600/30 text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/30 shrink-0">
-              Run #{currentRunNumber}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {/* Collapsible controls — hidden on mobile unless toggled, always shown md+ */}
-          <div className={`${controlsOpen ? 'flex' : 'hidden'} md:flex items-center gap-2 md:gap-4 flex-wrap`}>
-            <RunSelector projectId={projectId} />
-            {!isViewer && !isViewingHistory && (
-              <PipelineControls projectId={projectId} hasGitHub={!!currentProject?.github_repo_slug} />
+      <header className="border-b border-gray-700 px-3 py-2 flex items-center gap-3 shrink-0">
+        <Link to="/projects" className="text-gray-400 hover:text-white shrink-0" aria-label="Back to projects">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </Link>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <h1 className="text-sm font-bold truncate">{currentProject?.name || 'Loading...'}</h1>
+            {isRunning && currentRunNumber && (
+              <span className="text-xs bg-blue-600/30 text-blue-300 px-1.5 py-0.5 rounded-full border border-blue-500/30 shrink-0">
+                #{currentRunNumber}
+              </span>
             )}
             {isViewingHistory && (
-              <span className="text-xs bg-yellow-600/30 text-yellow-300 px-2 py-0.5 rounded-full border border-yellow-500/30">
-                Viewing history (read-only)
+              <span className="text-xs bg-yellow-600/30 text-yellow-300 px-1.5 py-0.5 rounded-full border border-yellow-500/30 shrink-0">
+                History
               </span>
             )}
-            {!isViewer && hasRemote && !isViewingHistory && (
-              <button
-                onClick={() => setShowPRDialog(true)}
-                className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded min-h-[44px] md:min-h-0"
-              >
-                Open PR
-              </button>
-            )}
-            {isAdmin && (
-              <button
-                onClick={() => setShowInvites(true)}
-                className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded min-h-[44px] md:min-h-0"
-              >
-                Invites
-              </button>
-            )}
-            <button
-              onClick={handleRepair}
-              disabled={repairing}
-              className="px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-50"
-              title="Repair: fix status mismatches and stuck runs"
-            >
-              <svg
-                className={`w-4 h-4 inline ${repairing ? 'animate-spin' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                {repairing ? (
-                  <>
-                    <circle className="opacity-25" cx="12" cy="12" r="10" strokeWidth="4" />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      stroke="none"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </>
-                ) : (
-                  <>
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                    />
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                    />
-                  </>
-                )}
-              </svg>
-            </button>
-            {repairResult && (
-              <span
-                className={`text-xs ${
-                  repairResult.startsWith('Fixed')
-                    ? 'text-green-400'
-                    : repairResult === 'No issues found'
-                    ? 'text-gray-400'
-                    : 'text-red-400'
-                }`}
-              >
-                {repairResult}
-              </span>
-            )}
-            <NavLink
-              to="debug"
-              onClick={clearSelection}
-              className={({ isActive }) =>
-                `px-2 py-1 text-xs rounded min-h-[44px] md:min-h-0 ${
-                  isActive
-                    ? 'bg-yellow-600 text-white'
-                    : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                }`
-              }
-              title="Debug State"
-            >
-              <svg className="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-            </NavLink>
           </div>
-          {/* Mobile toggle for controls row */}
-          <button
-            onClick={() => setControlsOpen((o) => !o)}
-            className="md:hidden p-1 text-gray-400 hover:text-white"
-            title={controlsOpen ? 'Hide controls' : 'Show controls'}
-          >
-            <svg
-              className={`w-4 h-4 transition-transform ${controlsOpen ? 'rotate-180' : ''}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-          {!connected && (
-            <button
-              onClick={reconnect}
-              className="text-xs text-yellow-400 animate-pulse hover:text-yellow-300 cursor-pointer"
-              title="Click to reconnect now"
-            >
-              WS Reconnecting...
-            </button>
-          )}
-          {/* Hamburger nav menu */}
-          <div ref={menuRef} className="relative">
-            <button
-              onClick={() => setMenuOpen((o) => !o)}
-              className="flex items-center gap-1.5 px-2 py-1 text-sm text-gray-300 hover:text-white min-h-[44px] md:min-h-0"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-              <span className="hidden sm:inline text-xs">{tabLabels[activeTab] || tabLabels.documents}</span>
-            </button>
-            {menuOpen && (
-              <div className="absolute right-0 top-full z-50 w-48 bg-gray-800 border border-gray-700 rounded-b-lg shadow-xl">
-                {visibleTabs.map((tab) => (
-                  <NavLink
-                    key={tab}
-                    to={tab}
-                    onClick={() => { clearSelection(); setMenuOpen(false); }}
-                    className={({ isActive }) =>
-                      `block w-full text-left px-4 py-3 text-sm ${
-                        isActive
-                          ? 'bg-gray-700 text-white'
-                          : 'text-gray-300 hover:bg-gray-700 hover:text-white'
-                      }`
-                    }
-                  >
-                    {tabLabels[tab]}
-                  </NavLink>
-                ))}
-              </div>
-            )}
-          </div>
+          <p className="text-xs text-gray-400 leading-none mt-0.5">{pageName}</p>
         </div>
+        {!connected && (
+          <button
+            onClick={reconnect}
+            className="text-xs text-yellow-400 animate-pulse hover:text-yellow-300 shrink-0"
+            title="Click to reconnect WebSocket"
+          >
+            WS↻
+          </button>
+        )}
+        <button
+          onClick={() => setDrawerOpen(true)}
+          className="p-2 text-gray-400 hover:text-white shrink-0"
+          aria-label="Open menu"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
       </header>
-      {showInvites && <InvitePanel onClose={() => setShowInvites(false)} />}
-      {showPRDialog && (
-        <PRDialog projectId={projectId} onClose={() => setShowPRDialog(false)} />
+      {drawerOpen && (
+        <HeaderDrawer
+          projectId={projectId}
+          visibleTabs={visibleTabs}
+          onClose={() => setDrawerOpen(false)}
+        />
       )}
     </>
   );
@@ -443,7 +256,7 @@ const DashboardHeader = memo(function DashboardHeader({
 // PRDialog — standalone, no shared state dependencies
 // ---------------------------------------------------------------------------
 
-function PRDialog({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+export function PRDialog({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [baseBranch, setBaseBranch] = useState('main');
