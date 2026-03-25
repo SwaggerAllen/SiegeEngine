@@ -187,7 +187,6 @@ class ForceRestartStrategy(StageExecutionStrategy):
 
         input_artifacts = engine._gather_inputs(
             project_id, stage_def, execution.component_key,
-            include_stale=True,
         )
 
         return StageExecutionContext(
@@ -382,7 +381,6 @@ class RejectionRegenerateStrategy(StageExecutionStrategy):
 
         input_artifacts = engine._gather_inputs(
             project_id, stage_def, execution.component_key,
-            include_stale=True,
         )
 
         # Gather feedback and current content.
@@ -498,7 +496,6 @@ class ArtifactRevisionStrategy(StageExecutionStrategy):
 
         input_artifacts = engine._gather_inputs(
             project_id, stage_def, artifact.component_key,
-            include_stale=True,
         )
 
         # Standalone run (no PipelineRun object).
