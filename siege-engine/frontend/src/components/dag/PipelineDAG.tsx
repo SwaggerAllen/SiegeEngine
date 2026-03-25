@@ -146,6 +146,7 @@ function DocumentsDAGInner({ projectId }: { projectId: string }) {
       componentKey: n.data.component_key,
       status: n.data.status,
       stageKey: n.data.stage_key,
+      artifactType: n.data.artifact_type,
       hasArtifact: n.data.has_artifact,
     }));
   }, [query.data]);
@@ -184,6 +185,7 @@ export interface SearchableNode {
   componentKey: string | null;
   status: string;
   stageKey: string;
+  artifactType: string;
   hasArtifact: boolean;
 }
 
@@ -366,6 +368,7 @@ function DAGCanvas({ projectId, variant, query, onTreeView }: DAGCanvasProps) {
       componentKey: n.data.component_key,
       status: n.data.status,
       stageKey: n.data.stage_key,
+      artifactType: n.data.artifact_type,
       hasArtifact: n.data.has_artifact,
     }));
   }, [dagData]);

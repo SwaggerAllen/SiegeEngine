@@ -68,7 +68,7 @@ function buildTree(nodes: SearchableNode[]): TreeNode[] {
 
   // 1. System-level docs
   const systemDocs = nodes
-    .filter((n) => SYSTEM_ARTIFACT_TYPES.has(n.stageKey) || (!n.componentKey && SYSTEM_ARTIFACT_TYPES.has(getArtifactType(n))))
+    .filter((n) => SYSTEM_ARTIFACT_TYPES.has(getArtifactType(n)))
     .sort((a, b) => (SYSTEM_ORDER[getArtifactType(a)] ?? 99) - (SYSTEM_ORDER[getArtifactType(b)] ?? 99));
 
   for (const doc of systemDocs) {
@@ -168,9 +168,9 @@ function buildTree(nodes: SearchableNode[]): TreeNode[] {
   return tree;
 }
 
-/** Derive artifact_type from the node's stageKey (they typically match). */
+/** Return the artifact type for tree classification. */
 function getArtifactType(n: SearchableNode): string {
-  return n.stageKey;
+  return n.artifactType;
 }
 
 /**
