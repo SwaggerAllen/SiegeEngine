@@ -599,13 +599,16 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                     edge_key = (src_node["id"], tgt_node["id"])
                     if edge_key not in existing_edge_keys:
                         existing_edge_keys.add(edge_key)
+                        is_animated = src_node["data"].get("is_active", False) or tgt_node["data"].get(
+                            "is_active", False
+                        )
                         edges.append(
                             {
                                 "id": f"dep_edge_{edge_idx}",
                                 "source": src_node["id"],
                                 "target": tgt_node["id"],
                                 "type": "default",
-                                "animated": False,
+                                "animated": is_animated,
                                 "style": {"strokeDasharray": "5 5", "stroke": "#818cf8"},
                             }
                         )

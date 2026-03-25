@@ -15,10 +15,45 @@ import { useDAGData, useDocumentsDAGData } from '../../hooks/queries/useDAGQueri
 import { StageNode } from './StageNode';
 import { DocumentTreeView } from './DocumentTreeView';
 import { debugLog, debugLogDedup } from '../../lib/debugLog';
+import { RESTARTABLE_STATUSES } from '../../types/pipeline';
 import type { DAGResponse } from '../../types/dag';
 import type { UseQueryResult } from '@tanstack/react-query';
 
 const nodeTypes = { stageNode: StageNode };
+
+const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
+const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
+
+/** Estimate node height based on which sections will render in StageNode. */
+function estimateNodeHeight(data: Record<string, unknown>): number {
+  let h = 60; // base: padding (24) + label + status line
+
+  // Component key adds a second text line
+  if (data.component_key) h += 18;
+
+  const hasPromptInfo = !!data.prompt_info;
+  const executionStatus = data.execution_status as string | null;
+
+  const canCancel = !!(
+    data.execution_id
+    && executionStatus
+    && CANCELABLE_EXEC_STATUSES.has(executionStatus)
+  );
+
+  const canRestart = !!(
+    data.execution_id
+    && executionStatus
+    && RESTARTABLE_STATUSES.has(executionStatus)
+  );
+
+  // Cancel or restart button
+  if (canCancel || (canRestart && !canCancel)) h += 32;
+
+  // Prompt info section (separator + model line)
+  if (hasPromptInfo) h += 30;
+
+  return h;
+}
 
 /** Returns a description of the first cycle found, or null if the graph is acyclic. */
 function detectCycle(
@@ -111,6 +146,7 @@ function DocumentsDAGInner({ projectId }: { projectId: string }) {
       componentKey: n.data.component_key,
       status: n.data.status,
       stageKey: n.data.stage_key,
+      artifactType: n.data.artifact_type,
       hasArtifact: n.data.has_artifact,
     }));
   }, [query.data]);
@@ -149,6 +185,7 @@ export interface SearchableNode {
   componentKey: string | null;
   status: string;
   stageKey: string;
+  artifactType: string;
   hasArtifact: boolean;
 }
 
@@ -331,6 +368,7 @@ function DAGCanvas({ projectId, variant, query, onTreeView }: DAGCanvasProps) {
       componentKey: n.data.component_key,
       status: n.data.status,
       stageKey: n.data.stage_key,
+      artifactType: n.data.artifact_type,
       hasArtifact: n.data.has_artifact,
     }));
   }, [dagData]);
@@ -368,15 +406,24 @@ function DAGCanvas({ projectId, variant, query, onTreeView }: DAGCanvasProps) {
   const clearSelection = useDAGStore((s) => s.clearSelection);
 
   // === Dagre layout ===
-  // Topology key — stable primitive that only changes when node IDs or edge
-  // connections change. Status/data field updates do NOT change it, so the
-  // expensive dagre layout step is skipped on every pipeline tick.
+  // Per-node height estimates, keyed by node id.
+  const nodeHeights = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const n of rawNodes) {
+      map.set(n.id, estimateNodeHeight(n.data));
+    }
+    return map;
+  }, [rawNodes]);
+
+  // Topology key — stable primitive that only changes when node IDs, edge
+  // connections, or node heights change. Pure status updates that don't affect
+  // height skip the expensive dagre layout step.
   const topologyKey = useMemo(
     () =>
-      rawNodes.map((n) => n.id).join('\0') +
+      rawNodes.map((n) => `${n.id}:${nodeHeights.get(n.id) ?? 100}`).join('\0') +
       '|' +
       rawEdges.map((e) => `${e.source}>${e.target}`).join('\0'),
-    [rawNodes, rawEdges],
+    [rawNodes, rawEdges, nodeHeights],
   );
 
   // Positions — only re-runs when topology changes.
@@ -387,12 +434,16 @@ function DAGCanvas({ projectId, variant, query, onTreeView }: DAGCanvasProps) {
       const g = new dagre.graphlib.Graph();
       g.setDefaultEdgeLabel(() => ({}));
       g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
-      rawNodes.forEach((n) => g.setNode(n.id, { width: 220, height: 100 }));
+      rawNodes.forEach((n) => {
+        const h = nodeHeights.get(n.id) ?? 100;
+        g.setNode(n.id, { width: 220, height: h });
+      });
       rawEdges.forEach((e) => g.setEdge(e.source, e.target));
       dagre.layout(g);
       rawNodes.forEach((n) => {
         const pos = g.node(n.id);
-        map.set(n.id, pos ? { x: pos.x - 110, y: pos.y - 50 } : { x: 0, y: 0 });
+        const h = nodeHeights.get(n.id) ?? 100;
+        map.set(n.id, pos ? { x: pos.x - 110, y: pos.y - h / 2 } : { x: 0, y: 0 });
       });
     } catch (err) {
       console.error('[PipelineDAG] Dagre layout failed:', err);
@@ -426,9 +477,10 @@ function DAGCanvas({ projectId, variant, query, onTreeView }: DAGCanvasProps) {
     }
     const next = rawNodes.map((n) => {
       const pos = positions.get(n.id) ?? { x: 0, y: 0 };
+      const h = nodeHeights.get(n.id) ?? 100;
       const serialized = JSON.stringify(n.data) + '|' + projectId;
       const cached = nodeRefCache.current.get(n.id);
-      if (cached && cached.serialized === serialized && cached.node.position === pos) {
+      if (cached && cached.serialized === serialized && cached.node.position === pos && cached.node.height === h) {
         return cached.node;
       }
       const node = {
@@ -436,7 +488,7 @@ function DAGCanvas({ projectId, variant, query, onTreeView }: DAGCanvasProps) {
         data: { ...n.data, projectId },
         position: pos,
         width: 220,
-        height: 100,
+        height: h,
       };
       nodeRefCache.current.set(n.id, { serialized, node });
       return node;
@@ -444,7 +496,7 @@ function DAGCanvas({ projectId, variant, query, onTreeView }: DAGCanvasProps) {
     if (sameElements(next, prevNodesRef.current)) return prevNodesRef.current;
     prevNodesRef.current = next;
     return next;
-  }, [rawNodes, positions, projectId]);
+  }, [rawNodes, positions, projectId, nodeHeights]);
 
   // === Click handlers ===
   const onNodeClick = useCallback(

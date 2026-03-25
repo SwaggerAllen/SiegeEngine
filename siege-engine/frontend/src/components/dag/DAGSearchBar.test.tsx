@@ -32,6 +32,7 @@ const sampleNodes: SearchableNode[] = [
     componentKey: null,
     status: 'approved',
     stageKey: 'system_requirements',
+    artifactType: 'system_requirements',
     hasArtifact: true,
   },
   {
@@ -40,6 +41,7 @@ const sampleNodes: SearchableNode[] = [
     componentKey: 'auth-module',
     status: 'pending',
     stageKey: 'system_architecture',
+    artifactType: 'system_architecture',
     hasArtifact: false,
   },
   {
@@ -48,6 +50,7 @@ const sampleNodes: SearchableNode[] = [
     componentKey: 'auth-module',
     status: 'running',
     stageKey: 'code_generation',
+    artifactType: 'code',
     hasArtifact: false,
   },
   {
@@ -56,6 +59,7 @@ const sampleNodes: SearchableNode[] = [
     componentKey: null,
     status: 'awaiting_review',
     stageKey: 'test_plan',
+    artifactType: 'high_level_plan',
     hasArtifact: true,
   },
 ];

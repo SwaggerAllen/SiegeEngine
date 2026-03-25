@@ -23,6 +23,7 @@ const sampleNodes: SearchableNode[] = [
     componentKey: null,
     status: 'approved',
     stageKey: 'project_doc',
+    artifactType: 'project_doc',
     hasArtifact: true,
   },
   {
@@ -31,6 +32,7 @@ const sampleNodes: SearchableNode[] = [
     componentKey: null,
     status: 'approved',
     stageKey: 'system_requirements',
+    artifactType: 'system_requirements',
     hasArtifact: true,
   },
   {
@@ -39,6 +41,7 @@ const sampleNodes: SearchableNode[] = [
     componentKey: null,
     status: 'awaiting_review',
     stageKey: 'system_architecture',
+    artifactType: 'system_architecture',
     hasArtifact: true,
   },
   {
@@ -46,7 +49,8 @@ const sampleNodes: SearchableNode[] = [
     label: 'Component Map',
     componentKey: null,
     status: 'approved',
-    stageKey: 'component_map',
+    stageKey: 'extract_components',
+    artifactType: 'component_map',
     hasArtifact: true,
   },
   // Component-level docs
@@ -56,6 +60,7 @@ const sampleNodes: SearchableNode[] = [
     componentKey: 'auth',
     status: 'approved',
     stageKey: 'component_requirements',
+    artifactType: 'component_requirements',
     hasArtifact: true,
   },
   {
@@ -63,7 +68,8 @@ const sampleNodes: SearchableNode[] = [
     label: 'Auth Architecture',
     componentKey: 'auth',
     status: 'stale',
-    stageKey: 'component_architecture',
+    stageKey: 'component_architectures',
+    artifactType: 'component_architecture',
     hasArtifact: true,
   },
   {
@@ -72,6 +78,17 @@ const sampleNodes: SearchableNode[] = [
     componentKey: 'api',
     status: 'pending',
     stageKey: 'component_requirements',
+    artifactType: 'component_requirements',
+    hasArtifact: true,
+  },
+  // Sub-component map (fanout node)
+  {
+    id: 'art-10',
+    label: 'Auth Sub-Component Map',
+    componentKey: 'auth',
+    status: 'approved',
+    stageKey: 'extract_sub_components',
+    artifactType: 'sub_component_map',
     hasArtifact: true,
   },
   // Sub-component docs
@@ -81,6 +98,7 @@ const sampleNodes: SearchableNode[] = [
     componentKey: 'auth.login',
     status: 'approved',
     stageKey: 'sub_component_requirements',
+    artifactType: 'sub_component_requirements',
     hasArtifact: true,
   },
   {
@@ -88,7 +106,8 @@ const sampleNodes: SearchableNode[] = [
     label: 'Auth Login Architecture',
     componentKey: 'auth.login',
     status: 'generating',
-    stageKey: 'sub_component_architecture',
+    stageKey: 'sub_component_architectures',
+    artifactType: 'sub_component_architecture',
     hasArtifact: true,
   },
 ];
@@ -140,6 +159,25 @@ describe('DocumentTreeView', () => {
     await user.click(screen.getByText('auth'));
 
     expect(screen.getByText('Sub-components')).toBeInTheDocument();
+  });
+
+  it('shows sub_component_map fanout node inside a component folder', async () => {
+    const user = userEvent.setup();
+    render(<DocumentTreeView nodes={sampleNodes} />);
+
+    // Expand auth component
+    await user.click(screen.getByText('auth'));
+
+    // The sub-component map (fanout node) should be visible as a document
+    expect(screen.getByText('Auth Sub-Component Map')).toBeInTheDocument();
+  });
+
+  it('shows component_map fanout node at system level', () => {
+    render(<DocumentTreeView nodes={sampleNodes} />);
+
+    // Component Map has stageKey='extract_components' but artifactType='component_map'
+    // so it should appear at system level
+    expect(screen.getByText('Component Map')).toBeInTheDocument();
   });
 
   it('expands Sub-components folder to show sub-component folders', async () => {
