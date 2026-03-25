@@ -113,9 +113,11 @@ export const StageNode = memo(function StageNode({ id, data }: { id: string; dat
     }
   };
 
+  const componentKeyLabel = data.component_key ? data.component_key.replace(/_/g, ' ') : null;
+
   return (
     <div
-      className={`px-4 py-3 rounded-lg border-2 shadow-lg w-[220px] overflow-hidden cursor-pointer ${colorClass} ${
+      className={`px-4 py-3 rounded-lg border-2 shadow-lg w-[240px] overflow-hidden cursor-pointer ${colorClass} ${
         isSelected
           ? 'ring-2 ring-white ring-offset-2 ring-offset-gray-900'
           : data.is_active
@@ -124,15 +126,19 @@ export const StageNode = memo(function StageNode({ id, data }: { id: string; dat
       }`}
     >
       <Handle type="target" position={Position.Top} className="!bg-gray-400" />
-      <div className="font-semibold text-sm text-white flex items-center gap-1.5 min-w-0">
+      <div className="flex items-start gap-1.5 min-w-0">
         {isProcessing && (
-          <span className={`stage-spinner ${spinnerColor} shrink-0`} />
+          <span className={`stage-spinner ${spinnerColor} shrink-0 mt-0.5`} />
         )}
-        <span className="truncate">{data.label}</span>
+        <div className="min-w-0">
+          {componentKeyLabel && (
+            <div className="font-semibold text-sm text-white truncate">{componentKeyLabel}</div>
+          )}
+          <div className={`truncate ${componentKeyLabel ? 'text-xs text-gray-300 mt-0.5' : 'font-semibold text-sm text-white'}`}>
+            {data.label}
+          </div>
+        </div>
       </div>
-      {data.component_key && (
-        <div className="text-xs text-gray-300 mt-0.5 truncate">{data.component_key}</div>
-      )}
       <div className="text-xs mt-1 text-gray-300 flex items-center justify-between">
         <span>{statusLabel}</span>
         {data.has_artifact && data.version > 0 && (
