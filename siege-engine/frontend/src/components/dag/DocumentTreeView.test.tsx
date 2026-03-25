@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DocumentTreeView } from './DocumentTreeView';
 import type { SearchableNode } from './PipelineDAG';
+import type { DAGEdge } from './DocumentTreeView';
 
 const mockSelectArtifact = vi.fn();
 const mockSelectedArtifactId = vi.fn(() => null);
@@ -112,6 +113,29 @@ const sampleNodes: SearchableNode[] = [
   },
 ];
 
+const sampleEdges: DAGEdge[] = [
+  // project_doc → system_requirements
+  { id: 'e0', source: 'art-1', target: 'art-2', type: 'default', animated: false },
+  // system_requirements → system_architecture
+  { id: 'e1', source: 'art-2', target: 'art-3', type: 'default', animated: false },
+  // system_requirements → component_map
+  { id: 'e2', source: 'art-2', target: 'art-4', type: 'default', animated: false },
+  // system_architecture → component_map
+  { id: 'e3', source: 'art-3', target: 'art-4', type: 'default', animated: false },
+  // component_map → auth requirements
+  { id: 'e4', source: 'art-4', target: 'art-5', type: 'default', animated: false },
+  // auth requirements → auth architecture
+  { id: 'e5', source: 'art-5', target: 'art-6', type: 'default', animated: false },
+  // component_map → api requirements
+  { id: 'e6', source: 'art-4', target: 'art-7', type: 'default', animated: false },
+  // auth architecture → auth sub-component map
+  { id: 'e7', source: 'art-6', target: 'art-10', type: 'default', animated: false },
+  // auth sub-component map → auth login requirements
+  { id: 'e8', source: 'art-10', target: 'art-8', type: 'default', animated: false },
+  // auth login requirements → auth login architecture
+  { id: 'e9', source: 'art-8', target: 'art-9', type: 'default', animated: false },
+];
+
 describe('DocumentTreeView', () => {
   beforeEach(() => {
     mockSelectArtifact.mockReset();
@@ -119,7 +143,7 @@ describe('DocumentTreeView', () => {
   });
 
   it('renders system-level docs at root level', () => {
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
     expect(screen.getByText('Project Document')).toBeInTheDocument();
     expect(screen.getByText('System Requirements')).toBeInTheDocument();
     expect(screen.getByText('System Architecture')).toBeInTheDocument();
@@ -127,13 +151,12 @@ describe('DocumentTreeView', () => {
   });
 
   it('renders Components folder', () => {
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
     expect(screen.getByText('Components')).toBeInTheDocument();
   });
 
   it('expands Components folder to show component folders', async () => {
-    const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     // Components folder starts expanded by default
     expect(screen.getByText('auth')).toBeInTheDocument();
@@ -142,7 +165,7 @@ describe('DocumentTreeView', () => {
 
   it('expands a component folder to show its docs', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     // Click the auth component folder to expand
     await user.click(screen.getByText('auth'));
@@ -153,7 +176,7 @@ describe('DocumentTreeView', () => {
 
   it('shows Sub-components folder inside a component', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     // Expand auth component
     await user.click(screen.getByText('auth'));
@@ -163,30 +186,25 @@ describe('DocumentTreeView', () => {
 
   it('shows sub_component_map fanout node inside a component folder', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     // Expand auth component
     await user.click(screen.getByText('auth'));
 
-    // The sub-component map (fanout node) should be visible as a document
     expect(screen.getByText('Auth Sub-Component Map')).toBeInTheDocument();
   });
 
   it('shows component_map fanout node at system level', () => {
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    // Component Map has stageKey='extract_components' but artifactType='component_map'
-    // so it should appear at system level
     expect(screen.getByText('Component Map')).toBeInTheDocument();
   });
 
   it('expands Sub-components folder to show sub-component folders', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    // Expand auth
     await user.click(screen.getByText('auth'));
-    // Expand Sub-components
     await user.click(screen.getByText('Sub-components'));
 
     expect(screen.getByText('login')).toBeInTheDocument();
@@ -194,7 +212,7 @@ describe('DocumentTreeView', () => {
 
   it('shows sub-component docs when sub-component folder is expanded', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     await user.click(screen.getByText('auth'));
     await user.click(screen.getByText('Sub-components'));
@@ -206,7 +224,7 @@ describe('DocumentTreeView', () => {
 
   it('calls selectArtifact when a document is clicked', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     await user.click(screen.getByText('System Requirements'));
 
@@ -215,9 +233,8 @@ describe('DocumentTreeView', () => {
 
   it('calls selectArtifact when a component doc is clicked', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    // Expand auth component
     await user.click(screen.getByText('auth'));
     await user.click(screen.getByText('Auth Requirements'));
 
@@ -226,51 +243,47 @@ describe('DocumentTreeView', () => {
 
   it('collapses a folder when clicked twice', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    // Components folder starts expanded
     expect(screen.getByText('auth')).toBeInTheDocument();
 
-    // Click to collapse
     await user.click(screen.getByText('Components'));
     expect(screen.queryByText('auth')).not.toBeInTheDocument();
 
-    // Click to expand again
     await user.click(screen.getByText('Components'));
     expect(screen.getByText('auth')).toBeInTheDocument();
   });
 
   it('shows "No documents yet" when nodes array is empty', () => {
-    render(<DocumentTreeView nodes={[]} />);
+    render(<DocumentTreeView nodes={[]} edges={[]} />);
     expect(screen.getByText('No documents yet')).toBeInTheDocument();
   });
 
   it('shows status dots with correct colors', () => {
-    render(<DocumentTreeView nodes={sampleNodes} />);
-    // System Requirements has status 'approved' - check it has the green dot
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
     const sysReqRow = screen.getByText('System Requirements').closest('button');
     const dot = sysReqRow?.querySelector('.bg-green-500');
     expect(dot).toBeInTheDocument();
   });
 
+  // ── Search tests ────────────────────────────────────────────────────
+
   it('renders the search input', () => {
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
     expect(screen.getByPlaceholderText('Filter documents...')).toBeInTheDocument();
   });
 
   it('filters documents by label', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     await user.type(screen.getByPlaceholderText('Filter documents...'), 'Auth');
 
-    // Auth-related docs should be visible
     expect(screen.getByText('Auth Requirements')).toBeInTheDocument();
     expect(screen.getByText('Auth Architecture')).toBeInTheDocument();
     expect(screen.getByText('Auth Login Requirements')).toBeInTheDocument();
     expect(screen.getByText('Auth Login Architecture')).toBeInTheDocument();
 
-    // Non-matching docs should be gone
     expect(screen.queryByText('Project Document')).not.toBeInTheDocument();
     expect(screen.queryByText('System Requirements')).not.toBeInTheDocument();
     expect(screen.queryByText('API Requirements')).not.toBeInTheDocument();
@@ -278,16 +291,12 @@ describe('DocumentTreeView', () => {
 
   it('auto-expands ancestor folders for search matches', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    // Search for a sub-component doc — should auto-expand all parent folders
     await user.type(screen.getByPlaceholderText('Filter documents...'), 'Login');
 
-    // The sub-component docs are visible without manual folder clicks
     expect(screen.getByText('Auth Login Requirements')).toBeInTheDocument();
     expect(screen.getByText('Auth Login Architecture')).toBeInTheDocument();
-
-    // Ancestor folders should be visible too
     expect(screen.getByText('Components')).toBeInTheDocument();
     expect(screen.getByText('auth')).toBeInTheDocument();
     expect(screen.getByText('Sub-components')).toBeInTheDocument();
@@ -296,17 +305,16 @@ describe('DocumentTreeView', () => {
 
   it('shows match count badge', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     await user.type(screen.getByPlaceholderText('Filter documents...'), 'Requirements');
 
-    // Should match: System Requirements, Auth Requirements, API Requirements, Auth Login Requirements
     expect(screen.getByText('4 matches')).toBeInTheDocument();
   });
 
   it('shows singular "match" for single result', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     await user.type(screen.getByPlaceholderText('Filter documents...'), 'Project Document');
 
@@ -315,7 +323,7 @@ describe('DocumentTreeView', () => {
 
   it('shows "No matching documents" when search has no results', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     await user.type(screen.getByPlaceholderText('Filter documents...'), 'xyznonexistent');
 
@@ -324,25 +332,22 @@ describe('DocumentTreeView', () => {
 
   it('clears search and restores tree when clear button is clicked', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     const input = screen.getByPlaceholderText('Filter documents...');
     await user.type(input, 'Auth');
 
-    // Non-matching doc hidden
     expect(screen.queryByText('Project Document')).not.toBeInTheDocument();
 
-    // Click clear button
     await user.click(screen.getByText('✕'));
 
-    // All docs restored
     expect(screen.getByText('Project Document')).toBeInTheDocument();
     expect(input).toHaveValue('');
   });
 
   it('filters by component key', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     await user.type(screen.getByPlaceholderText('Filter documents...'), 'api');
 
@@ -352,18 +357,17 @@ describe('DocumentTreeView', () => {
 
   it('filters by status', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     await user.type(screen.getByPlaceholderText('Filter documents...'), 'stale');
 
-    // Auth Architecture has status 'stale'
     expect(screen.getByText('Auth Architecture')).toBeInTheDocument();
     expect(screen.getByText('1 match')).toBeInTheDocument();
   });
 
   it('clears search on Escape key', async () => {
     const user = userEvent.setup();
-    render(<DocumentTreeView nodes={sampleNodes} />);
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
     const input = screen.getByPlaceholderText('Filter documents...');
     await user.type(input, 'Auth');
@@ -373,5 +377,77 @@ describe('DocumentTreeView', () => {
 
     expect(input).toHaveValue('');
     expect(screen.getByText('Project Document')).toBeInTheDocument();
+  });
+
+  // ── Dependency / Dependents tests ───────────────────────────────────
+
+  it('shows Dependencies label on nodes that have dependencies', () => {
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
+    // System Requirements depends on Project Document
+    const depLabels = screen.getAllByText(/Dependencies \(\d+\)/);
+    expect(depLabels.length).toBeGreaterThan(0);
+  });
+
+  it('shows Dependents label on nodes that have dependents', () => {
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
+    // Project Document has dependents (System Requirements)
+    const depLabels = screen.getAllByText(/Dependents \(\d+\)/);
+    expect(depLabels.length).toBeGreaterThan(0);
+  });
+
+  it('expands Dependencies to show dependency list', async () => {
+    const user = userEvent.setup();
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
+
+    // System Requirements has dependency on Project Document
+    // Find the Dependencies label for System Requirements
+    const depButtons = screen.getAllByText(/Dependencies \(1\)/);
+    await user.click(depButtons[0]);
+
+    // Should show "Project Document" as a dependency link
+    // (it already appears at the top level, so check the dep list has it)
+    const projDocButtons = screen.getAllByText('Project Document');
+    // One at the top level, one in the dep list
+    expect(projDocButtons.length).toBe(2);
+  });
+
+  it('expands Dependents to show dependent list', async () => {
+    const user = userEvent.setup();
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
+
+    // Project Document has dependents: System Requirements
+    const depButtons = screen.getAllByText(/Dependents \(1\)/);
+    await user.click(depButtons[0]);
+
+    // System Requirements should appear in the dependents list
+    const sysReqButtons = screen.getAllByText('System Requirements');
+    expect(sysReqButtons.length).toBe(2);
+  });
+
+  it('clicking a dependency link calls selectArtifact', async () => {
+    const user = userEvent.setup();
+    render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
+
+    // Expand Dependencies on System Requirements (depends on Project Document)
+    const depButtons = screen.getAllByText(/Dependencies \(1\)/);
+    await user.click(depButtons[0]);
+
+    // Click the dependency link
+    const projDocButtons = screen.getAllByText('Project Document');
+    // The second one is in the dep list (smaller button)
+    const depLink = projDocButtons.find((el) => el.closest('.text-xs'));
+    expect(depLink).toBeTruthy();
+    await user.click(depLink!);
+
+    expect(mockSelectArtifact).toHaveBeenCalledWith('art-1');
+  });
+
+  it('works without edges (backward compatible)', () => {
+    render(<DocumentTreeView nodes={sampleNodes} />);
+    expect(screen.getByText('Project Document')).toBeInTheDocument();
+    expect(screen.getByText('Components')).toBeInTheDocument();
+    // No Dependencies/Dependents labels when no edges
+    expect(screen.queryByText(/Dependencies/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Dependents/)).not.toBeInTheDocument();
   });
 });
