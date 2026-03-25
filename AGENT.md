@@ -49,14 +49,17 @@ siege-engine/
     src/
       api/               # Axios client with auth
       components/
-        dag/             # PipelineDAG, StageNode (React Flow + Dagre)
-        editor/          # ArtifactEditor (Monaco, markdown, diff view)
-        pipeline/        # ReviewPanel, StageStatus, PromptEditorPanel
+        dag/             # PipelineDAG, StageNode, DAGSearchBar (React Flow + Dagre)
+        editor/          # ArtifactEditor, ArtifactPromptDebugView, ContentSearchBar, DiffView
+        pipeline/        # ReviewPanel, BottomPane, StageStatus, ActionButtonsBar, FeedbackSection
+        tabs/            # PipelineTab, DocumentsTab, PromptsTab, InputDocsTab, ChatTab, etc.
+        comments/        # CommentsPanel
         chat/            # ChatPanel (WebSocket)
-      hooks/             # useWebSocket (pipeline progress)
-      pages/             # Login, ProjectList, ProjectCreate, ProjectDashboard
-      store/             # Zustand: authStore, projectStore, pipelineStore, dagStore
+      hooks/             # useReviewState, useWebSocket, useLocalDraft, useSafe, query/mutation hooks
+      pages/             # Login, ProjectList, ProjectCreate, ProjectDashboardLayout
+      store/             # Zustand: authStore, projectStore, pipelineStore, dagStore, pipelineUIStore
       types/             # TypeScript interfaces
+      schemas/           # Zod schemas (dag, pipeline, etc.)
 ```
 
 ## Pipeline Stages
@@ -80,11 +83,134 @@ Stages 9-10 run in the project's git repo with full tool access (bash, file edit
 - **Event sourcing**: All pipeline state changes go through events (`pipeline/events.py` → `reducer.py` → `event_store.py`). The `PipelineSnapshot` is the **single source of truth** for pipeline state. DB model status fields (`Artifact.status`, `StageExecution.status`) are projections — written for query convenience but never read for state decisions. The snapshot carries artifact metadata (name, type, component_key via `artifact_meta`), execution mapping (`execution_map`), and all statuses.
 - **CLI-based generation**: All LLM calls go through Claude CLI subprocess (`cli/manager.py`), not direct API. Enables tool access, budget control, and reproducibility.
 - **Semaphore concurrency**: `MAX_CONCURRENT_LLM_CALLS` (default 5) limits parallel CLI invocations.
-- **Review gates**: Pipeline pauses at `awaiting_review` status (read from snapshot). Frontend shows ReviewPanel for approve/reject/edit. Resume via `POST /api/pipeline/{project_id}/resume`.
+- **Review gates**: Pipeline pauses at `awaiting_review` status (read from snapshot). Frontend shows ReviewPanel with independent action buttons: **Approve** (accept artifact), **Reject** (mark as rejected without regenerating), and **Regenerate** (force restart to produce new output). Resume via `POST /api/pipeline/{project_id}/resume`.
 - **Staleness propagation**: Editing/rejecting an artifact emits `STALENESS_PROPAGATED` events marking downstream artifacts as stale via BFS traversal.
 - **Prompt customization**: Each stage's system message, output format, and context template are editable via the PromptEditorPanel and stored in DB (PromptConfig).
 - **WebSocket broadcasting**: Pipeline progress events stream to frontend in real-time.
 - **Setup component**: `project_setup` is injected for code stages to ensure scaffolding runs before component code.
+
+## Frontend UI Architecture
+
+### Dashboard Layout & Tabs
+
+The project dashboard (`pages/ProjectDashboardLayout.tsx`) renders a tab bar and an `<Outlet />` for the active tab. Route pattern: `/projects/:id/:tab`. Tabs visible depend on user role (viewers see fewer tabs).
+
+**Tabs** (in `components/tabs/`):
+- **Documents** — artifact-level DAG, primary review interface
+- **Pipeline** — stage-level DAG, pipeline control
+- **Prompts** — edit prompt configurations per stage
+- **Input Docs** — manage project input documents
+- **Chat** — WebSocket chat with Claude CLI
+- **Settings** — project settings
+- **History** — event history browser
+- **Logs** — execution log viewer
+- **Debug** — debug tools
+
+### DAG Views (PipelineDAG + StageNode)
+
+Both the Documents and Pipeline tabs render `PipelineDAG` (`components/dag/PipelineDAG.tsx`), which uses XYFlow (React Flow) + dagre for auto-layout.
+
+- **Pipeline variant** (`variant='pipeline'`): Shows stages as nodes. Click → `dagStore.selectStage(stage_key)`.
+- **Documents variant** (`variant='documents'`): Shows individual artifacts as nodes. Click → `dagStore.selectArtifact(id)`. Both variants include a **DAGSearchBar** for filtering nodes by label, component key, status, or stage name.
+
+**StageNode** (`components/dag/StageNode.tsx`) renders each DAG node with: component key label, main label, status badge (color-coded + animated for active states), version number, model name, and conditional action buttons (cancel/restart/edit prompt). Selection shows a white ring.
+
+**dagStore** (`store/dagStore.ts`) manages selection state:
+- `selectedArtifactId` / `selectedStageKey` — mutually exclusive
+- `selectArtifact(id)`, `selectStage(key)`, `clearSelection()`
+- `editPromptStageKey` — when set, dashboard navigates to Prompts tab
+
+### Tab Layout: Main Area + Bottom Pane
+
+Both PipelineTab and DocumentsTab share the same two-panel layout:
+
+```
+┌────────────────────────────────┐
+│  Main Area                     │  ← DAG, or ArtifactEditor, or PromptDebugView
+│  (flex-1, overflow-hidden)     │
+├────────────────────────────────┤
+│  BottomPane (collapsible)      │  ← ReviewPanel, StageConfigPanel, or StageStatusList
+│  handle: name + status + btns │
+│  content: actions / feedback   │
+└────────────────────────────────┘
+```
+
+**View modes** (local state in each tab): `'dag'` | `'review'` | `'edit'` | `'prompt'`
+- `dag` — PipelineDAG in main area, ReviewPanel (mode='actions') in bottom pane
+- `review` — ArtifactEditor (viewOnly=true) in main area, ReviewPanel (mode='feedback') in bottom pane
+- `edit` — ArtifactEditor (viewOnly=false) in main area, ReviewPanel (mode='feedback') in bottom pane
+- `prompt` — ArtifactPromptDebugView in main area, ReviewPanel (mode='feedback') in bottom pane
+
+The **BottomPane** (`components/pipeline/BottomPane.tsx`) handle always shows the artifact/stage name + status badge. When an artifact is selected and viewMode is `'dag'`, buttons appear: **Review**, **Edit**, **Prompt**. In other view modes: **← DAG** to return, plus toggle between **✏ Edit** and **👁 View**.
+
+### ArtifactEditor
+
+`components/editor/ArtifactEditor.tsx` — the main content viewer/editor for artifacts.
+
+**Props**: `artifact`, `projectId`, `viewOnly` (read-only vs editable), `compactMobile`
+
+**Internal tabs** (within the editor, separate from the dashboard tabs):
+- **Document** — markdown-rendered content (view) or textarea (edit mode)
+- **Diff** — version history diff (visible when version > 1)
+- **AI Feedback** — AI review summary + full review document (visible when feedback exists)
+- **Comments** — threaded comments on the artifact
+- **Dependencies** — component dependency list (visible for component_map/sub_component_map artifacts)
+- **Prompt Preview** — the prompt that was/would be sent to Claude
+
+**Key features**:
+- Version history dropdown to view/restore previous versions
+- Edit + Save buttons (when not viewOnly and user is not viewer role)
+- "Request AI Revision" button for approved/stale artifacts
+- **ContentSearchBar** — in-document text search (see below)
+- Local draft persistence via `useLocalDraft` hook
+
+### ContentSearchBar
+
+`components/editor/ContentSearchBar.tsx` — reusable find-in-document overlay.
+
+- **Opening**: tappable search icon button (always visible, mobile-friendly) or **Ctrl/Cmd+F** keyboard shortcut
+- **Features**: case-insensitive text matching, yellow highlights on all matches, orange active match with auto-scroll, prev/next navigation (▲/▼ buttons or Enter/Shift+Enter), match counter ("3/12")
+- **Closing**: Escape key or ✕ button, clears all highlights
+- **Integration**: wraps a `containerRef` to a scrollable content div. Used in ArtifactEditor (document, feedback, and prompt tabs) and ArtifactPromptDebugView.
+- All touch targets are 44px minimum for mobile.
+
+### ReviewPanel
+
+`components/pipeline/ReviewPanel.tsx` — context-sensitive action panel shown in the bottom pane.
+
+**Props**: `projectId`, `artifact`, `execution`, `mode: 'actions' | 'feedback'`
+- `'actions'` — status badges + action buttons (shown when DAG is visible)
+- `'feedback'` — feedback textarea + save button (shown when viewing/editing artifact)
+
+**State-dependent rendering** (via `useReviewState` hook):
+
+| Artifact State | Actions Mode | Feedback Mode |
+|----------------|-------------|---------------|
+| Awaiting Review | Approve, Reject, Regenerate | Save Feedback |
+| Approved | Reject, Regenerate, Prune | Save Feedback, Reject |
+| Stale | Approve, Reject, Regenerate, Prune | Save Feedback |
+| Generating | Cancel Generation | (nothing) |
+| Failed/Rejected/Stuck | Force Restart Stage | (nothing) |
+| Viewer or Input Doc | Prune only (if applicable) | (nothing) |
+
+**Sub-components**:
+- **RunFromNodeControls** (inline in ReviewPanel) — start/resume pipeline from a specific node with configurable AI loops (0–10) and stop point (end of phase / before code / every artifact / regen downstream)
+- **FeedbackSection** (`components/pipeline/FeedbackSection.tsx`) — textarea for review notes with previous feedback count
+- **ActionButtonsBar** (`components/pipeline/ActionButtonsBar.tsx`) — conditional Prune and Reparse Children buttons
+
+### useReviewState Hook
+
+`hooks/useReviewState.ts` — encapsulates all ReviewPanel state and action handlers.
+
+**Key state**: `notes` (feedback text), `editedContent`, `showEditor`, `submitting`/`restarting`/`cancelling` flags, `feedbackSaved`, `feedbackCount`.
+
+**Derived flags**: `isViewer`, `isAwaitingReview`, `isRestartable`, `isStale`, `isBeingRegenerated`, `isInputDoc`, `isGenerating`, `canPrune`, `canReparse`.
+
+**Action handlers**: `handleAction(action)` (approve/reject/save_feedback), `handleStaleAction(action)`, `handleRestart()`, `handlePrune()`, `handleReparse()`, `handleCancel()`.
+
+### Mobile Considerations
+
+All interactive elements use `min-h-[44px]` touch targets per iOS/Android guidelines. The DAG search bar, content search bar, review buttons, and bottom pane handle are all tappable without requiring a keyboard. The ContentSearchBar shows a visible search icon button rather than relying solely on Ctrl+F.
 
 ## Debugging Pipeline State
 

@@ -23,13 +23,6 @@ export interface ReviewStateResult {
   // Draft state
   notes: string;
   setNotes: (v: string | ((prev: string) => string)) => void;
-  editedContent: string;
-  setEditedContent: (v: string | ((prev: string) => string)) => void;
-  // UI state
-  showEditor: boolean;
-  setShowEditor: (v: boolean) => void;
-  actionsCollapsed: boolean;
-  setActionsCollapsed: (v: boolean) => void;
   // Loading flags
   submitting: boolean;
   restarting: boolean;
@@ -79,8 +72,6 @@ export function useReviewState(
     config?.stages.find((s) => s.output_artifact_type === artifact.artifact_type)?.stage_key ?? null;
 
   const [notes, setNotes, clearNotes] = useLocalDraft(`review-notes:${artifact.id}`);
-  const [editedContent, setEditedContent, clearEditedContent] = useLocalDraft(`review-edit:${artifact.id}`);
-  const [showEditor, setShowEditor] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [feedbackSaved, setFeedbackSaved] = useState(false);
   const [feedbackCount, setFeedbackCount] = useState(0);
@@ -89,7 +80,6 @@ export function useReviewState(
   const [reparsing, setReparsing] = useState(false);
   const [reparseResult, setReparseResult] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
-  const [actionsCollapsed, setActionsCollapsed] = useState(false);
 
   const fetchedMissingExecRef = useRef<string | null>(null);
   // Use the execution id (primitive) rather than the execution object to avoid
@@ -147,7 +137,6 @@ export function useReviewState(
         artifactId: artifact.id,
         action,
         notes: notes || undefined,
-        editedContent: showEditor && editedContent ? editedContent : undefined,
       });
       if (action === 'save_feedback') {
         setFeedbackSaved(true);
@@ -155,8 +144,6 @@ export function useReviewState(
         clearNotes();
       } else {
         clearNotes();
-        clearEditedContent();
-        setShowEditor(false);
         setFeedbackSaved(false);
         queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
       }
@@ -176,7 +163,6 @@ export function useReviewState(
         executionId: execution.id,
         action,
         notes: notes || undefined,
-        editedContent: showEditor && editedContent ? editedContent : undefined,
       });
       if (action === 'save_feedback') {
         setFeedbackSaved(true);
@@ -184,8 +170,6 @@ export function useReviewState(
         clearNotes();
       } else {
         clearNotes();
-        clearEditedContent();
-        setShowEditor(false);
         setFeedbackSaved(false);
         queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
       }
@@ -260,12 +244,6 @@ export function useReviewState(
   return {
     notes,
     setNotes,
-    editedContent,
-    setEditedContent,
-    showEditor,
-    setShowEditor,
-    actionsCollapsed,
-    setActionsCollapsed,
     submitting,
     restarting,
     pruning,

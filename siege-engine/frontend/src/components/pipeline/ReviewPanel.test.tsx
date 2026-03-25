@@ -122,7 +122,7 @@ describe('ReviewPanel', () => {
       { wrapper: TestQueryWrapper }
     );
     expect(screen.getByText('Approve')).toBeInTheDocument();
-    expect(screen.getByText('Reject & Re-generate')).toBeInTheDocument();
+    expect(screen.getByText('Reject')).toBeInTheDocument();
     expect(screen.queryByText('Save Feedback')).not.toBeInTheDocument();
   });
 
@@ -192,7 +192,7 @@ describe('ReviewPanel', () => {
       <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
       { wrapper: TestQueryWrapper }
     );
-    await user.click(screen.getByText('Reject & Re-generate'));
+    await user.click(screen.getByText('Reject'));
 
     expect(mockResumeStage).toHaveBeenCalledWith({
       executionId: 'exec-1',

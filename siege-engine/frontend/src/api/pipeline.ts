@@ -101,7 +101,7 @@ export async function resumeStage(
   executionId: string,
   action: string,
   notes?: string,
-  editedContent?: string
+  editedContent?: string,
 ) {
   return pipelineAction(projectId, {
     type: 'resume_stage',
