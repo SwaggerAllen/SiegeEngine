@@ -185,12 +185,14 @@ async def force_restart_stage(
     if not execution or execution.project_id != project_id:
         raise HTTPException(404, "Execution not found")
 
-    restartable_statuses = {"running", "ai_review", "failed", "rejected"}
+    restartable_statuses = {
+        "running", "ai_review", "failed", "rejected",
+        "awaiting_review", "approved",
+    }
     if execution.status.value not in restartable_statuses:
         raise HTTPException(
             400,
-            f"Can only force-restart stuck, failed, or rejected executions, "
-            f"current status: {execution.status.value}",
+            f"Cannot force-restart execution with status: {execution.status.value}",
         )
 
     # Reset execution to failed and artifact to pending so regeneration starts fresh.
