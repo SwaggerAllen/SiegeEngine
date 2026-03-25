@@ -13,6 +13,7 @@ import '@xyflow/react/dist/style.css';
 import { useDAGStore } from '../../store/dagStore';
 import { useDAGData, useDocumentsDAGData } from '../../hooks/queries/useDAGQueries';
 import { StageNode } from './StageNode';
+import { DocumentTreeView } from './DocumentTreeView';
 import { debugLog, debugLogDedup } from '../../lib/debugLog';
 import type { DAGResponse } from '../../types/dag';
 import type { UseQueryResult } from '@tanstack/react-query';
@@ -100,6 +101,19 @@ function WorkflowDAGInner({ projectId }: { projectId: string }) {
 
 function DocumentsDAGInner({ projectId }: { projectId: string }) {
   const query = useDocumentsDAGData(projectId);
+  const [viewMode, setViewMode] = useState<'dag' | 'tree'>('dag');
+
+  const searchableNodes = useMemo<SearchableNode[]>(() => {
+    if (!query.data) return [];
+    return query.data.nodes.map((n) => ({
+      id: n.id,
+      label: n.data.label,
+      componentKey: n.data.component_key,
+      status: n.data.status,
+      stageKey: n.data.stage_key,
+      hasArtifact: n.data.has_artifact,
+    }));
+  }, [query.data]);
 
   useEffect(() => {
     debugLog('DAG.lifecycle', `DocumentsDAGInner MOUNT projectId=${projectId}`);
@@ -107,7 +121,22 @@ function DocumentsDAGInner({ projectId }: { projectId: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return <DAGCanvas projectId={projectId} variant="documents" query={query} />;
+  if (viewMode === 'tree') {
+    return (
+      <div className="h-full relative">
+        <DocumentTreeView nodes={searchableNodes} />
+        <button
+          onClick={() => setViewMode('dag')}
+          className="absolute top-2 right-2 z-10 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"
+          title="Switch to DAG view"
+        >
+          DAG View
+        </button>
+      </div>
+    );
+  }
+
+  return <DAGCanvas projectId={projectId} variant="documents" query={query} onTreeView={() => setViewMode('tree')} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,9 +305,10 @@ interface DAGCanvasProps {
   projectId: string;
   variant: 'pipeline' | 'documents';
   query: UseQueryResult<DAGResponse>;
+  onTreeView?: () => void;
 }
 
-function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
+function DAGCanvas({ projectId, variant, query, onTreeView }: DAGCanvasProps) {
   const { data: dagData, status, isLoading, isFetching, error, isError } = query;
 
   // Map TQ response into ReactFlow nodes/edges
@@ -492,13 +522,24 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
       <Background color="#374151" gap={20} />
       <Controls className="!bg-gray-800 !border-gray-600 [&>button]:!bg-gray-700 [&>button]:!text-white [&>button]:!border-gray-600" />
       <DAGSearchBar nodes={searchableNodes} variant={variant} />
-      <button
-        onClick={() => setShowMinimap((v) => !v)}
-        className="absolute top-2 right-2 z-10 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"
-        title={showMinimap ? 'Hide minimap' : 'Show minimap'}
-      >
-        {showMinimap ? 'Hide Map' : 'Show Map'}
-      </button>
+      <div className="absolute top-2 right-2 z-10 flex flex-col gap-1">
+        <button
+          onClick={() => setShowMinimap((v) => !v)}
+          className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"
+          title={showMinimap ? 'Hide minimap' : 'Show minimap'}
+        >
+          {showMinimap ? 'Hide Map' : 'Show Map'}
+        </button>
+        {onTreeView && (
+          <button
+            onClick={onTreeView}
+            className="px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"
+            title="Switch to tree view"
+          >
+            Tree View
+          </button>
+        )}
+      </div>
       {showMinimap && (
         <MiniMap
           className="!bg-gray-800"
