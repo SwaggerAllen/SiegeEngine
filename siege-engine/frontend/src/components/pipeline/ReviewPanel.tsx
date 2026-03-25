@@ -346,6 +346,13 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
             onReparse={s.handleReparse}
           />
         </div>
+        {s.showEditor && (
+          <textarea
+            value={s.editedContent || artifact.content || ''}
+            onChange={(e) => s.setEditedContent(e.target.value)}
+            className="w-full h-40 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
+          />
+        )}
         {runControls}
       </div>
     );
@@ -395,13 +402,20 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
             label="Request Changes (optional)"
             placeholder="Add feedback to request changes..."
           />
-          <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
+          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
             <button
               onClick={() => s.handleAction('save_feedback')}
               disabled={s.submitting || !s.notes.trim()}
               className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
             >
               {s.feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+            </button>
+            <button
+              onClick={() => s.handleAction('rejected')}
+              disabled={s.submitting}
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              Reject &amp; Re-generate
             </button>
           </div>
         </div>
@@ -414,10 +428,10 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <button
             onClick={() => s.handleAction('rejected')}
-            disabled={s.submitting || !s.notes.trim()}
+            disabled={s.submitting}
             className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
           >
-            {s.submitting ? 'Requesting...' : 'Request Changes & Re-generate'}
+            {s.submitting ? 'Rejecting...' : 'Reject &amp; Re-generate'}
           </button>
           <ActionButtonsBar
             canPrune={s.canPrune}
@@ -522,6 +536,13 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
           onReparse={s.handleReparse}
         />
       </div>
+      {s.showEditor && (
+        <textarea
+          value={s.editedContent || artifact.content || ''}
+          onChange={(e) => s.setEditedContent(e.target.value)}
+          className="w-full h-40 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
+        />
+      )}
       {runControls}
     </div>
   );

@@ -18,7 +18,7 @@ const REVISABLE_STATUSES = new Set(['approved', 'stale']);
 
 type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
 
-export function ArtifactEditor({ artifact, projectId, compactMobile = false }: { artifact: Artifact; projectId: string; compactMobile?: boolean }) {
+export function ArtifactEditor({ artifact, projectId, compactMobile = false, viewOnly = false }: { artifact: Artifact; projectId: string; compactMobile?: boolean; viewOnly?: boolean }) {
   const updateArtifactMutation = useUpdateArtifact();
   const reviseArtifactMutation = useReviseArtifact(projectId);
   const { user } = useAuthStore();
@@ -230,7 +230,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false }: {
             {artifact.status}
           </span>
         </div>
-        {!isViewer && !isViewingHistory && (
+        {!isViewer && !isViewingHistory && !viewOnly && (
           <div className="flex gap-2">
             {editing ? (
               <>
@@ -278,9 +278,8 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false }: {
         )}
       </div>
 
-      {/* Tab bar */}
-      {/* Tab bar — hidden in compact mobile mode */}
-      <div className={`border-b border-gray-700 px-3 flex gap-4 shrink-0${compactMobile ? ' hidden' : ''}`}>
+      {/* Tab bar — hidden in compact mobile mode and view-only mode */}
+      <div className={`border-b border-gray-700 px-3 flex gap-4 shrink-0${compactMobile || viewOnly ? ' hidden' : ''}`}>
         <button
           onClick={() => setActiveTab('document')}
           className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
@@ -351,8 +350,8 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false }: {
         )}
       </div>
 
-      {/* Revision request section - only on document tab, not while viewing history */}
-      {showRevise && activeTab === 'document' && !isViewingHistory && (
+      {/* Revision request section - only on document tab, not while viewing history or view-only */}
+      {showRevise && activeTab === 'document' && !isViewingHistory && !viewOnly && (
         <div className="px-3 py-2 border-b border-gray-700 bg-gray-800/50 space-y-2">
           <label className="block text-xs text-gray-400">
             Describe what changes you want the AI to make:
@@ -412,13 +411,13 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false }: {
       )}
 
       {/* Content area */}
-      {activeTab === 'document' ? (
+      {activeTab === 'document' || viewOnly ? (
         <>
           {isViewingHistory ? (
             <div className={proseClasses}>
               <Markdown>{historicalContent || 'Loading...'}</Markdown>
             </div>
-          ) : editing ? (
+          ) : editing && !viewOnly ? (
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
