@@ -87,6 +87,7 @@ export function PipelineTab() {
             projectId={projectId!}
             artifact={selectedArtifact}
             execution={selectedExecution}
+            mode={reviewMode ? 'feedback' : 'actions'}
           />
         </PanelErrorBoundary>
       </div>

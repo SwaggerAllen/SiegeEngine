@@ -116,19 +116,28 @@ describe('ReviewPanel', () => {
     expect(screen.queryByText('Regen Downstream')).not.toBeInTheDocument();
   });
 
-  it('renders Approve, Save Feedback, and Reject buttons when awaiting_review', () => {
+  it('renders Approve and Reject buttons in actions mode when awaiting_review', () => {
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} mode="actions" />,
       { wrapper: TestQueryWrapper }
     );
     expect(screen.getByText('Approve')).toBeInTheDocument();
-    expect(screen.getByText('Save Feedback')).toBeInTheDocument();
     expect(screen.getByText('Reject & Re-generate')).toBeInTheDocument();
+    expect(screen.queryByText('Save Feedback')).not.toBeInTheDocument();
+  });
+
+  it('renders Save Feedback textarea in feedback mode when awaiting_review', () => {
+    render(
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} mode="feedback" />,
+      { wrapper: TestQueryWrapper }
+    );
+    expect(screen.getByText('Save Feedback')).toBeInTheDocument();
+    expect(screen.queryByText('Approve')).not.toBeInTheDocument();
   });
 
   it('starts with empty notes textarea (no pre-population)', () => {
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} mode="feedback" />,
       { wrapper: TestQueryWrapper }
     );
     const textarea = screen.getByPlaceholderText('Add feedback for re-generation...');
@@ -137,7 +146,7 @@ describe('ReviewPanel', () => {
 
   it('disables Save Feedback when notes are empty', () => {
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} mode="feedback" />,
       { wrapper: TestQueryWrapper }
     );
     const saveBtn = screen.getByText('Save Feedback');
@@ -147,7 +156,7 @@ describe('ReviewPanel', () => {
   it('enables Save Feedback when user types notes', async () => {
     const user = userEvent.setup();
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} mode="feedback" />,
       { wrapper: TestQueryWrapper }
     );
     const textarea = screen.getByPlaceholderText('Add feedback for re-generation...');
@@ -198,7 +207,7 @@ describe('ReviewPanel', () => {
     mockResumeStage.mockResolvedValue(undefined);
 
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} mode="feedback" />,
       { wrapper: TestQueryWrapper }
     );
 
@@ -219,7 +228,7 @@ describe('ReviewPanel', () => {
     mockResumeStage.mockResolvedValue(undefined);
 
     render(
-      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} />,
+      <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} mode="feedback" />,
       { wrapper: TestQueryWrapper }
     );
 
