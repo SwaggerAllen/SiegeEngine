@@ -229,12 +229,12 @@ function DAGSearchBar({
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
           placeholder="Search nodes..."
-          className="w-full px-3 py-1.5 bg-gray-800 text-white text-xs rounded border border-gray-600 focus:border-blue-500 focus:outline-none placeholder-gray-500"
+          className="w-full px-3 py-2 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none placeholder-gray-500 min-h-[44px]"
         />
         {query && (
           <button
             onClick={() => { setQuery(''); setOpen(false); }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-xs"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-sm min-h-[44px] min-w-[44px] flex items-center justify-center"
           >
             ✕
           </button>
@@ -243,18 +243,18 @@ function DAGSearchBar({
       {open && query.trim() && (
         <div className="mt-1 max-h-60 overflow-y-auto bg-gray-800 border border-gray-600 rounded shadow-lg">
           {matches.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-gray-500">No matches</div>
+            <div className="px-3 py-2 text-sm text-gray-500">No matches</div>
           ) : (
             matches.map((node, i) => (
               <button
                 key={node.id}
                 onClick={() => selectNode(node)}
                 onMouseEnter={() => setHighlightIdx(i)}
-                className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 ${
+                className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 min-h-[44px] ${
                   i === highlightIdx ? 'bg-gray-700' : 'hover:bg-gray-700/50'
                 }`}
               >
-                <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOTS[node.status] ?? 'bg-gray-500'}`} />
+                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_DOTS[node.status] ?? 'bg-gray-500'}`} />
                 <span className="text-white truncate">{node.label}</span>
                 {node.componentKey && (
                   <span className="text-gray-500 truncate ml-auto">{node.componentKey}</span>

@@ -114,6 +114,11 @@ export function ContentSearchBar({ containerRef, contentKey }: ContentSearchBarP
     };
   }, [containerRef]);
 
+  const handleOpen = useCallback(() => {
+    setOpen(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }, []);
+
   // Keyboard shortcut: Ctrl/Cmd+F to open
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -122,13 +127,12 @@ export function ContentSearchBar({ containerRef, contentKey }: ContentSearchBarP
         const container = containerRef.current;
         if (!container || container.offsetParent === null) return;
         e.preventDefault();
-        setOpen(true);
-        setTimeout(() => inputRef.current?.focus(), 0);
+        handleOpen();
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [containerRef]);
+  }, [containerRef, handleOpen]);
 
   const goTo = useCallback(
     (idx: number) => {
@@ -162,7 +166,21 @@ export function ContentSearchBar({ containerRef, contentKey }: ContentSearchBarP
     marksRef.current = [];
   };
 
-  if (!open) return null;
+  if (!open) {
+    return (
+      <div className="flex justify-end px-3 py-1 border-b border-gray-700">
+        <button
+          onClick={handleOpen}
+          className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded"
+          title="Search in document (Ctrl+F)"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </button>
+      </div>
+    );
+  }
 
   const matchCount = marksRef.current.length;
 
@@ -177,7 +195,7 @@ export function ContentSearchBar({ containerRef, contentKey }: ContentSearchBarP
           onKeyDown={handleKeyDown}
           placeholder="Find in document..."
           autoFocus
-          className="w-full px-3 py-1 bg-gray-700 text-white text-xs rounded border border-gray-600 focus:border-blue-500 focus:outline-none placeholder-gray-500 pr-16"
+          className="w-full px-3 py-2 bg-gray-700 text-white text-sm rounded border border-gray-600 focus:border-blue-500 focus:outline-none placeholder-gray-500 pr-20 min-h-[44px]"
         />
         {query && (
           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
@@ -188,7 +206,7 @@ export function ContentSearchBar({ containerRef, contentKey }: ContentSearchBarP
       <button
         onClick={() => goTo(currentIdx - 1)}
         disabled={matchCount === 0}
-        className="px-1.5 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded disabled:opacity-30"
+        className="min-h-[44px] min-w-[44px] flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white text-sm rounded disabled:opacity-30"
         title="Previous match (Shift+Enter)"
       >
         ▲
@@ -196,14 +214,14 @@ export function ContentSearchBar({ containerRef, contentKey }: ContentSearchBarP
       <button
         onClick={() => goTo(currentIdx + 1)}
         disabled={matchCount === 0}
-        className="px-1.5 py-1 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded disabled:opacity-30"
+        className="min-h-[44px] min-w-[44px] flex items-center justify-center bg-gray-700 hover:bg-gray-600 text-white text-sm rounded disabled:opacity-30"
         title="Next match (Enter)"
       >
         ▼
       </button>
       <button
         onClick={handleClose}
-        className="px-1.5 py-1 text-gray-400 hover:text-white text-xs"
+        className="min-h-[44px] min-w-[44px] flex items-center justify-center text-gray-400 hover:text-white text-sm"
         title="Close (Escape)"
       >
         ✕
