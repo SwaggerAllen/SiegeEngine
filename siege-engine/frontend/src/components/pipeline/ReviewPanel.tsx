@@ -179,35 +179,6 @@ function RunFromNodeControls({
 }
 
 // ---------------------------------------------------------------------------
-// Shared sub-components
-// ---------------------------------------------------------------------------
-
-function CollapseToggle({
-  collapsed,
-  onToggle,
-}: {
-  collapsed: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      onClick={onToggle}
-      className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200 mb-1 md:hidden"
-    >
-      <svg
-        className={`w-3 h-3 transition-transform ${collapsed ? '' : 'rotate-90'}`}
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-      </svg>
-      {collapsed ? 'Show actions' : 'Hide actions'}
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // ReviewPanel
 // ---------------------------------------------------------------------------
 
@@ -215,10 +186,18 @@ interface ReviewPanelProps {
   projectId: string;
   artifact: Artifact;
   execution: StageExecution | undefined;
+  /**
+   * 'actions' (default) — show status badges and action buttons (approve/reject/restart/cancel).
+   *   Rendered in the bottom pane when the DAG is visible.
+   * 'feedback' — show the feedback textarea and save/submit buttons only.
+   *   Rendered in the bottom pane when the artifact editor is visible (review mode).
+   */
+  mode?: 'actions' | 'feedback';
+  /** @deprecated kept for call-site compatibility; has no effect */
   compactMobile?: boolean;
 }
 
-export function ReviewPanel({ projectId, artifact, execution, compactMobile = false }: ReviewPanelProps) {
+export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }: ReviewPanelProps) {
   const s = useReviewState(projectId, artifact, execution);
 
   const runControls = !s.isInputDoc ? (
@@ -232,6 +211,9 @@ export function ReviewPanel({ projectId, artifact, execution, compactMobile = fa
 
   // ── Restartable (failed / rejected / stuck) ──────────────────────────────
   if (!s.isViewer && s.isRestartable && !s.isAwaitingReview && !s.isGenerating) {
+    // Feedback mode: nothing actionable here (no feedback textarea for error recovery)
+    if (mode === 'feedback') return null;
+
     const statusLabel =
       execution!.status === 'failed'
         ? 'Failed'
@@ -302,6 +284,29 @@ export function ReviewPanel({ projectId, artifact, execution, compactMobile = fa
 
   // ── Stale, not being regenerated ─────────────────────────────────────────
   if (!s.isViewer && s.isStale && !s.isBeingRegenerated) {
+    if (mode === 'feedback') {
+      return (
+        <div className="space-y-3">
+          <FeedbackSection
+            notes={s.notes}
+            onNotesChange={(v) => { s.setNotes(v); }}
+            feedbackCount={s.feedbackCount}
+            placeholder="Add feedback for re-generation..."
+          />
+          <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
+            <button
+              onClick={() => s.handleStaleAction('save_feedback')}
+              disabled={s.submitting || !s.notes.trim()}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              {s.feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // actions mode
     return (
       <div className="space-y-3">
         <div className="flex items-center gap-2 text-sm">
@@ -310,75 +315,38 @@ export function ReviewPanel({ projectId, artifact, execution, compactMobile = fa
             Upstream inputs have changed since this was generated.
           </span>
         </div>
-
-        <div className="space-y-3">
-          <FeedbackSection
-            notes={s.notes}
-            onNotesChange={(v) => { s.setNotes(v); }}
-            feedbackCount={s.feedbackCount}
-            placeholder="Add feedback for re-generation..."
-          />
-          {s.showEditor && (
-            <textarea
-              value={s.editedContent || artifact.content || ''}
-              onChange={(e) => s.setEditedContent(e.target.value)}
-              className="w-full h-48 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
-            />
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
+        <div className="flex flex-wrap items-center gap-2 pt-1">
           <button
-            onClick={() => s.handleStaleAction('save_feedback')}
-            disabled={s.submitting || !s.notes.trim()}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            onClick={() => s.handleStaleAction('approved')}
+            disabled={s.submitting}
+            className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
           >
-            {s.feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+            Approve
           </button>
+          <button
+            onClick={() => s.handleStaleAction('rejected')}
+            disabled={s.submitting}
+            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            Reject &amp; Re-generate
+          </button>
+          <button
+            onClick={() => s.setShowEditor(!s.showEditor)}
+            className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+          >
+            {s.showEditor ? 'Hide Editor' : 'Edit & Approve'}
+          </button>
+          <ActionButtonsBar
+            canPrune={s.canPrune}
+            canReparse={s.canReparse}
+            pruning={s.pruning}
+            reparsing={s.reparsing}
+            reparseResult={s.reparseResult}
+            onPrune={s.handlePrune}
+            onReparse={s.handleReparse}
+          />
         </div>
-
-        {!compactMobile && (
-          <div>
-            <CollapseToggle
-              collapsed={s.actionsCollapsed}
-              onToggle={() => s.setActionsCollapsed(!s.actionsCollapsed)}
-            />
-            <div className={`${s.actionsCollapsed ? 'hidden' : ''} md:block`}>
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  onClick={() => s.handleStaleAction('approved')}
-                  disabled={s.submitting}
-                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-                >
-                  Approve
-                </button>
-                <button
-                  onClick={() => s.handleStaleAction('rejected')}
-                  disabled={s.submitting}
-                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-                >
-                  Reject &amp; Re-generate
-                </button>
-                <button
-                  onClick={() => s.setShowEditor(!s.showEditor)}
-                  className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-                >
-                  {s.showEditor ? 'Hide Editor' : 'Edit & Approve'}
-                </button>
-                <ActionButtonsBar
-                  canPrune={s.canPrune}
-                  canReparse={s.canReparse}
-                  pruning={s.pruning}
-                  reparsing={s.reparsing}
-                  reparseResult={s.reparseResult}
-                  onPrune={s.handlePrune}
-                  onReparse={s.handleReparse}
-                />
-              </div>
-              {runControls}
-            </div>
-          </div>
-        )}
+        {runControls}
       </div>
     );
   }
@@ -390,6 +358,9 @@ export function ReviewPanel({ projectId, artifact, execution, compactMobile = fa
     execution &&
     (execution.status === 'running' || execution.status === 'ai_review' || execution.status === 'pending')
   ) {
+    // Feedback mode: nothing to show while generating
+    if (mode === 'feedback') return null;
+
     return (
       <div className="space-y-3">
         <div className="flex items-center gap-2 text-sm">
@@ -414,66 +385,65 @@ export function ReviewPanel({ projectId, artifact, execution, compactMobile = fa
   // ── Approved (non-viewer, non-input doc) ──────────────────────────────────
   const isApproved = artifact.status === 'approved' && execution?.status === 'approved';
   if (!s.isViewer && !s.isAwaitingReview && isApproved && !s.isInputDoc) {
+    if (mode === 'feedback') {
+      return (
+        <div className="space-y-3">
+          <FeedbackSection
+            notes={s.notes}
+            onNotesChange={(v) => { s.setNotes(v); }}
+            feedbackCount={s.feedbackCount}
+            label="Request Changes (optional)"
+            placeholder="Add feedback to request changes..."
+          />
+          <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
+            <button
+              onClick={() => s.handleAction('save_feedback')}
+              disabled={s.submitting || !s.notes.trim()}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              {s.feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // actions mode
     return (
       <div className="space-y-3">
-        <FeedbackSection
-          notes={s.notes}
-          onNotesChange={(v) => { s.setNotes(v); }}
-          feedbackCount={s.feedbackCount}
-          label="Request Changes (optional)"
-          placeholder="Add feedback to request changes..."
-        />
-
-        <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
+        <div className="flex flex-wrap items-center gap-2 pt-1">
           <button
-            onClick={() => s.handleAction('save_feedback')}
+            onClick={() => s.handleAction('rejected')}
             disabled={s.submitting || !s.notes.trim()}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
           >
-            {s.feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+            {s.submitting ? 'Requesting...' : 'Request Changes & Re-generate'}
           </button>
+          <ActionButtonsBar
+            canPrune={s.canPrune}
+            canReparse={s.canReparse}
+            pruning={s.pruning}
+            reparsing={s.reparsing}
+            reparseResult={s.reparseResult}
+            onPrune={s.handlePrune}
+            onReparse={s.handleReparse}
+          />
         </div>
-
-        {!compactMobile && (
-          <div>
-            <CollapseToggle
-              collapsed={s.actionsCollapsed}
-              onToggle={() => s.setActionsCollapsed(!s.actionsCollapsed)}
-            />
-            <div className={`${s.actionsCollapsed ? 'hidden' : ''} md:block`}>
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  onClick={() => s.handleAction('rejected')}
-                  disabled={s.submitting || !s.notes.trim()}
-                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-                >
-                  {s.submitting ? 'Requesting...' : 'Request Changes & Re-generate'}
-                </button>
-                <ActionButtonsBar
-                  canPrune={s.canPrune}
-                  canReparse={s.canReparse}
-                  pruning={s.pruning}
-                  reparsing={s.reparsing}
-                  reparseResult={s.reparseResult}
-                  onPrune={s.handlePrune}
-                  onReparse={s.handleReparse}
-                />
-              </div>
-              <RunFromNodeControls
-                projectId={projectId}
-                stageKey={s.artifactStageKey}
-                componentKey={artifact.component_key}
-                artifactId={artifact.id}
-              />
-            </div>
-          </div>
-        )}
+        <RunFromNodeControls
+          projectId={projectId}
+          stageKey={s.artifactStageKey}
+          componentKey={artifact.component_key}
+          artifactId={artifact.id}
+        />
       </div>
     );
   }
 
   // ── Viewer or non-actionable ──────────────────────────────────────────────
   if (s.isViewer || !s.isAwaitingReview) {
+    // Feedback mode: nothing to show for viewer/non-actionable
+    if (mode === 'feedback') return null;
+
     return (
       <div className="space-y-2">
         {(s.canPrune || s.canReparse) && (
@@ -496,8 +466,8 @@ export function ReviewPanel({ projectId, artifact, execution, compactMobile = fa
   }
 
   // ── Awaiting review (default) ─────────────────────────────────────────────
-  return (
-    <div className="space-y-3">
+  if (mode === 'feedback') {
+    return (
       <div className="space-y-3">
         <FeedbackSection
           notes={s.notes}
@@ -505,67 +475,54 @@ export function ReviewPanel({ projectId, artifact, execution, compactMobile = fa
           feedbackCount={s.feedbackCount}
           placeholder="Add feedback for re-generation..."
         />
-        {s.showEditor && (
-          <textarea
-            value={s.editedContent || artifact.content || ''}
-            onChange={(e) => s.setEditedContent(e.target.value)}
-            className="w-full h-48 px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 font-mono focus:border-blue-500 focus:outline-none"
-          />
-        )}
-      </div>
-
-      <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
-        <button
-          onClick={() => s.handleAction('save_feedback')}
-          disabled={s.submitting || !s.notes.trim()}
-          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-        >
-          {s.feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
-        </button>
-      </div>
-
-      {!compactMobile && (
-        <div>
-          <CollapseToggle
-            collapsed={s.actionsCollapsed}
-            onToggle={() => s.setActionsCollapsed(!s.actionsCollapsed)}
-          />
-          <div className={`${s.actionsCollapsed ? 'hidden' : ''} md:block`}>
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <button
-                onClick={() => s.handleAction('approved')}
-                disabled={s.submitting}
-                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-              >
-                Approve
-              </button>
-              <button
-                onClick={() => s.handleAction('rejected')}
-                disabled={s.submitting}
-                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-              >
-                Reject &amp; Re-generate
-              </button>
-              <button
-                onClick={() => s.setShowEditor(!s.showEditor)}
-                className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
-              >
-                {s.showEditor ? 'Hide Editor' : 'Edit & Approve'}
-              </button>
-              <ActionButtonsBar
-                canPrune={s.canPrune}
-                canReparse={s.canReparse}
-                pruning={s.pruning}
-                reparsing={s.reparsing}
-                reparseResult={s.reparseResult}
-                onPrune={s.handlePrune}
-                onReparse={s.handleReparse}
-              />
-            </div>
-            {runControls}
-          </div>
+        <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
+          <button
+            onClick={() => s.handleAction('save_feedback')}
+            disabled={s.submitting || !s.notes.trim()}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+          >
+            {s.feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+          </button>
         </div>
-      )}
+      </div>
+    );
+  }
+
+  // actions mode — awaiting review
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <button
+          onClick={() => s.handleAction('approved')}
+          disabled={s.submitting}
+          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+        >
+          Approve
+        </button>
+        <button
+          onClick={() => s.handleAction('rejected')}
+          disabled={s.submitting}
+          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+        >
+          Reject &amp; Re-generate
+        </button>
+        <button
+          onClick={() => s.setShowEditor(!s.showEditor)}
+          className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
+        >
+          {s.showEditor ? 'Hide Editor' : 'Edit & Approve'}
+        </button>
+        <ActionButtonsBar
+          canPrune={s.canPrune}
+          canReparse={s.canReparse}
+          pruning={s.pruning}
+          reparsing={s.reparsing}
+          reparseResult={s.reparseResult}
+          onPrune={s.handlePrune}
+          onReparse={s.handleReparse}
+        />
+      </div>
+      {runControls}
     </div>
   );
 }
