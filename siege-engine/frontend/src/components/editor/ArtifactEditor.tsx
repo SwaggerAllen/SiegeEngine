@@ -20,7 +20,7 @@ const REVISABLE_STATUSES = new Set(['approved', 'stale']);
 type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
 
 export function ArtifactEditor({ artifact, projectId, compactMobile = false, viewOnly = false }: { artifact: Artifact; projectId: string; compactMobile?: boolean; viewOnly?: boolean }) {
-  const updateArtifactMutation = useUpdateArtifact();
+  const updateArtifactMutation = useUpdateArtifact(projectId);
   const reviseArtifactMutation = useReviseArtifact(projectId);
   const { user } = useAuthStore();
   const isViewer = user?.role === 'viewer';
@@ -36,6 +36,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
   const [historicalContent, setHistoricalContent] = useState<string | null>(null);
   const [loadingVersion, setLoadingVersion] = useState(false);
   const [restoringVersion, setRestoringVersion] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [loadingPrompt, setLoadingPrompt] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -126,15 +127,18 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
       // Back to current
       setViewingSha(null);
       setHistoricalContent(null);
+      setRestoreError(null);
       return;
     }
     setLoadingVersion(true);
+    setRestoreError(null);
     try {
       const result = await getArtifactVersion(artifact.id, sha);
       setViewingSha(sha);
       setHistoricalContent(result.content);
     } catch (err) {
       console.error('Failed to load version:', err);
+      setRestoreError('Failed to load this version. The commit may no longer exist.');
     } finally {
       setLoadingVersion(false);
     }
@@ -166,10 +170,14 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
   const handleRestore = async () => {
     if (!historicalContent) return;
     setRestoringVersion(true);
+    setRestoreError(null);
     try {
       await updateArtifactMutation.mutateAsync({ artifactId: artifact.id, content: historicalContent, clearAiReview: true });
       setViewingSha(null);
       setHistoricalContent(null);
+    } catch (err) {
+      console.error('Failed to restore version:', err);
+      setRestoreError('Failed to restore this version. Please try again.');
     } finally {
       setRestoringVersion(false);
     }
@@ -393,6 +401,9 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
             {' — read only'}
           </span>
           <div className="ml-auto flex items-center gap-3">
+            {restoreError && (
+              <span className="text-xs text-red-400">{restoreError}</span>
+            )}
             {!isViewer && (
               <button
                 onClick={handleRestore}

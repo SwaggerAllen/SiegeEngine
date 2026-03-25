@@ -171,9 +171,22 @@ def update_artifact(
         )
         artifact.git_commit_sha = sha
 
-    # Propagate staleness
+    # Emit event so the snapshot reflects the new version/SHA
     from backend.pipeline.event_store import EventStore
-    propagate_staleness(db, artifact_id, event_store=EventStore(db))
+    from backend.pipeline import events as evt
+    event_store = EventStore(db)
+    event_store.emit(
+        artifact.project_id, evt.ARTIFACT_COMMITTED,
+        {
+            "artifact_id": artifact_id,
+            "git_commit_sha": artifact.git_commit_sha,
+            "version": artifact.version,
+            "artifact_type": artifact.artifact_type.value,
+        },
+    )
+
+    # Propagate staleness
+    propagate_staleness(db, artifact_id, event_store=event_store)
 
     db.commit()
     db.refresh(artifact)
