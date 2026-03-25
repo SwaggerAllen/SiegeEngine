@@ -46,7 +46,6 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
   }, [showCancelDialog, showResetConfirm]);
 
   const [cancelError, setCancelError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(true);
 
   const handleCancel = async (openPR: boolean) => {
     setShowCancelDialog(false);
@@ -122,27 +121,8 @@ export function PipelineControls({ projectId, hasGitHub }: { projectId: string; 
     );
   }
 
-  if (collapsed) {
-    return (
-      <button
-        onClick={() => setCollapsed(false)}
-        className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs rounded min-h-[44px] md:min-h-0"
-        title="Show run controls"
-      >
-        ⚙ Controls
-      </button>
-    );
-  }
-
   return (
-    <div className="flex items-center gap-2 relative">
-      <button
-        onClick={() => setCollapsed(true)}
-        className="text-gray-500 hover:text-gray-300 text-xs"
-        title="Hide controls"
-      >
-        ✕
-      </button>
+    <div className="flex items-center gap-2 relative flex-wrap">
       {!isRunning ? (
         <div className="flex items-center gap-1.5">
           {hasCompletedRun && (

@@ -8,6 +8,7 @@ import { findSelectedExecution } from '../../pages/ProjectDashboardLayout';
 import { PipelineDAG } from '../dag/PipelineDAG';
 import { ArtifactEditor } from '../editor/ArtifactEditor';
 import { ReviewPanel } from '../pipeline/ReviewPanel';
+import { BottomPane, ArtifactStatusBadge } from '../pipeline/BottomPane';
 import { PanelErrorBoundary } from '../ErrorBoundary';
 
 export function DocumentsTab() {
@@ -20,84 +21,85 @@ export function DocumentsTab() {
     () => (selectedArtifact ? findSelectedExecution(executions, selectedArtifact) : undefined),
     [executions, selectedArtifact],
   );
-  const [paneExpanded, setPaneExpanded] = useState(false);
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+
+  // Pane + review mode state
+  const [paneOpen, setPaneOpen] = useState(false);
+  const [reviewMode, setReviewMode] = useState(false);
+
+  // Auto-open pane when a node is selected; close+reset on deselect
   useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)');
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
+    if (selectedArtifact) {
+      setPaneOpen(true);
+    } else {
+      setPaneOpen(false);
+      setReviewMode(false);
+    }
+  }, [selectedArtifact?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const paneHandle = (
+    <>
+      {selectedArtifact ? (
+        <>
+          <span className="text-xs font-mono text-gray-300 truncate min-w-0 flex-1">
+            {selectedArtifact.component_key ?? selectedArtifact.artifact_type}
+          </span>
+          <ArtifactStatusBadge status={selectedArtifact.status} />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setReviewMode((m) => !m);
+              setPaneOpen(true);
+            }}
+            className={`px-2 py-0.5 text-xs rounded shrink-0 ${
+              reviewMode
+                ? 'bg-blue-600 text-white hover:bg-blue-500'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
+            }`}
+          >
+            {reviewMode ? '← DAG' : 'Review'}
+          </button>
+        </>
+      ) : (
+        <span className="text-gray-500 text-xs flex-1">Select a node to review</span>
+      )}
+    </>
+  );
 
   return (
-    <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-      {!paneExpanded && (
-        <div className={`${selectedArtifact ? 'h-64 md:h-auto md:w-3/5' : 'flex-1'} border-b md:border-b-0 ${selectedArtifact ? 'md:border-r' : ''} border-gray-700 shrink-0 md:shrink`}>
-          {dagHidden ? (
-            <div className="h-full flex items-center justify-center text-yellow-400 text-xs">[DEBUG: DAG hidden]</div>
-          ) : (
-            <PanelErrorBoundary fallbackLabel="DAG render error">
-              <PipelineDAG projectId={projectId!} variant="documents" />
-            </PanelErrorBoundary>
-          )}
-        </div>
-      )}
-      {selectedArtifact && (
-        <div className={`flex-1 ${paneExpanded ? 'w-full' : 'md:w-2/5'} flex flex-col overflow-hidden`}>
-          <div className="flex items-center justify-end px-3 py-1 border-b border-gray-700 shrink-0">
-            <button
-              onClick={() => setPaneExpanded(!paneExpanded)}
-              className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white text-xs rounded"
-              title={paneExpanded ? 'Collapse pane' : 'Expand to full width'}
-            >
-              {paneExpanded ? '\u21E5 Collapse' : '\u21E4 Expand'}
-            </button>
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Main area: DAG or document editor in review mode */}
+      <div className="flex-1 overflow-hidden">
+        {reviewMode && selectedArtifact ? (
+          <PanelErrorBoundary fallbackLabel="Editor error">
+            <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} />
+          </PanelErrorBoundary>
+        ) : dagHidden ? (
+          <div className="h-full flex items-center justify-center text-yellow-400 text-xs">
+            [DEBUG: DAG hidden]
           </div>
-          {paneExpanded && isMobile ? (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <div className="h-1/2 overflow-auto border-b border-gray-700">
-                <PanelErrorBoundary fallbackLabel="Editor error">
-                  <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} compactMobile />
-                </PanelErrorBoundary>
-              </div>
-              <div className="h-1/2 overflow-auto p-3">
-                <PanelErrorBoundary fallbackLabel="Review panel error">
-                  <ReviewPanel projectId={projectId!} artifact={selectedArtifact} execution={selectedExecution} compactMobile />
-                </PanelErrorBoundary>
-              </div>
-            </div>
-          ) : paneExpanded && (
-            (selectedExecution && ['awaiting_review', 'running', 'ai_review', 'failed'].includes(selectedExecution.status))
-            || selectedArtifact.status === 'stale'
-          ) ? (
-            <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-              <div className="flex-1 md:w-2/3 overflow-auto border-b md:border-b-0 md:border-r border-gray-700">
-                <PanelErrorBoundary fallbackLabel="Editor error">
-                  <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} />
-                </PanelErrorBoundary>
-              </div>
-              <div className="md:w-1/3 overflow-auto p-3">
-                <PanelErrorBoundary fallbackLabel="Review panel error">
-                  <ReviewPanel projectId={projectId!} artifact={selectedArtifact} execution={selectedExecution} />
-                </PanelErrorBoundary>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="flex-1 overflow-auto">
-                <PanelErrorBoundary fallbackLabel="Editor error">
-                  <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} />
-                </PanelErrorBoundary>
-              </div>
-              <div className="shrink-0 p-3 border-t border-gray-700 overflow-auto max-h-64">
-                <PanelErrorBoundary fallbackLabel="Review panel error">
-                  <ReviewPanel projectId={projectId!} artifact={selectedArtifact} execution={selectedExecution} />
-                </PanelErrorBoundary>
-              </div>
-            </>
-          )}
-        </div>
-      )}
+        ) : (
+          <PanelErrorBoundary fallbackLabel="DAG render error">
+            <PipelineDAG projectId={projectId!} variant="documents" />
+          </PanelErrorBoundary>
+        )}
+      </div>
+
+      {/* Bottom action pane */}
+      <BottomPane handle={paneHandle} open={paneOpen} onOpenChange={setPaneOpen}>
+        {selectedArtifact ? (
+          <div className="p-3">
+            <PanelErrorBoundary fallbackLabel="Review panel error">
+              <ReviewPanel
+                projectId={projectId!}
+                artifact={selectedArtifact}
+                execution={selectedExecution}
+              />
+            </PanelErrorBoundary>
+          </div>
+        ) : (
+          <div className="p-4 text-gray-500 text-sm">Select a node to see review options.</div>
+        )}
+      </BottomPane>
     </div>
   );
 }
