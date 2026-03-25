@@ -15,7 +15,7 @@ export function BottomPane({ handle, open, onOpenChange, children }: BottomPaneP
   return (
     <div className="shrink-0 border-t border-gray-700 bg-gray-900">
       <div
-        className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none min-h-[44px]"
+        className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none min-h-[57px]"
         onClick={() => onOpenChange(!open)}
       >
         {handle}

@@ -52,7 +52,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
   const canRevise = !isViewer && REVISABLE_STATUSES.has(artifact.status);
   const reviewFeedback = artifact.ai_review_feedback as ReviewFeedback | null;
   const isViewingHistory = viewingSha !== null;
-  const isComponentMap = artifact.artifact_type === 'component_map';
+  const isComponentMap = artifact.artifact_type === 'component_map' || artifact.artifact_type === 'sub_component_map';
 
   // Reset tab when artifact changes and feedback is gone
   useEffect(() => {
@@ -279,7 +279,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
       </div>
 
       {/* Tab bar — hidden in compact mobile mode and view-only mode */}
-      <div className={`border-b border-gray-700 px-3 flex gap-4 shrink-0${compactMobile || viewOnly ? ' hidden' : ''}`}>
+      <div className={`border-b border-gray-700 px-3 flex gap-4 shrink-0${compactMobile ? ' hidden' : ''}`}>
         <button
           onClick={() => setActiveTab('document')}
           className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
@@ -411,7 +411,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
       )}
 
       {/* Content area */}
-      {activeTab === 'document' || viewOnly ? (
+      {activeTab === 'document' ? (
         <>
           {isViewingHistory ? (
             <div className={proseClasses}>
@@ -502,7 +502,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
   );
 }
 
-function PromptPreviewPanel({ preview }: { preview: PromptPreview }) {
+export function PromptPreviewPanel({ preview }: { preview: PromptPreview }) {
   const roleColors: Record<string, string> = {
     system: 'text-purple-400 bg-purple-950/30 border-purple-700/40',
     user: 'text-blue-400 bg-blue-950/30 border-blue-700/40',
