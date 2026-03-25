@@ -450,6 +450,12 @@ def _migrate_feedback_to_comments():
 
 app = FastAPI(title="SiegeEngine", version="0.1.0", lifespan=lifespan)
 
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
