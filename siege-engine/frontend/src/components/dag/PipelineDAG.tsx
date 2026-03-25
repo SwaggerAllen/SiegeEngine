@@ -114,7 +114,7 @@ function DocumentsDAGInner({ projectId }: { projectId: string }) {
 // DAGSearchBar — floating search overlay for finding nodes
 // ---------------------------------------------------------------------------
 
-interface SearchableNode {
+export interface SearchableNode {
   id: string;
   label: string;
   componentKey: string | null;
@@ -123,7 +123,7 @@ interface SearchableNode {
   hasArtifact: boolean;
 }
 
-function DAGSearchBar({
+export function DAGSearchBar({
   nodes,
   variant,
 }: {
@@ -491,7 +491,7 @@ function DAGCanvas({ projectId, variant, query }: DAGCanvasProps) {
     >
       <Background color="#374151" gap={20} />
       <Controls className="!bg-gray-800 !border-gray-600 [&>button]:!bg-gray-700 [&>button]:!text-white [&>button]:!border-gray-600" />
-      {variant === 'documents' && <DAGSearchBar nodes={searchableNodes} variant={variant} />}
+      <DAGSearchBar nodes={searchableNodes} variant={variant} />
       <button
         onClick={() => setShowMinimap((v) => !v)}
         className="absolute top-2 right-2 z-10 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"

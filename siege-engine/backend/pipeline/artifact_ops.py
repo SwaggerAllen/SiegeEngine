@@ -260,7 +260,8 @@ class ArtifactOpsMixin:
                     },
                 )
 
-            await self._regenerate_stage(execution)
+            # Rejection no longer auto-regenerates. Users can explicitly
+            # regenerate via the separate "Regenerate" button (force restart).
 
         elif action == "save_feedback":
             logger.info(
