@@ -211,8 +211,13 @@ def _handle_stage_failed(snap: dict, p: dict) -> None:
     if p.get("artifact_id"):
         # Preserve artifact status if it was already reviewed — a stage
         # failure (e.g. cancellation) shouldn't nuke a valid artifact.
+        # Exception: force_restart is an explicit user action that should
+        # always reset the artifact to pending so regeneration can start.
+        is_force_restart = p.get("trigger") == "force_restart"
         current = snap["artifact_statuses"].get(p["artifact_id"])
-        if current not in ("approved", "awaiting_review", "stale", "rejected"):
+        if is_force_restart:
+            snap["artifact_statuses"][p["artifact_id"]] = "pending"
+        elif current not in ("approved", "awaiting_review", "stale", "rejected"):
             snap["artifact_statuses"][p["artifact_id"]] = "failed"
     # Track error message
     if p.get("error"):

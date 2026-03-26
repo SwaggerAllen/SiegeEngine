@@ -2,6 +2,15 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useDAGStore } from '../../store/dagStore';
 import type { SearchableNode } from './PipelineDAG';
 
+// ── Edge type (matches DAGResponse.edges) ────────────────────────────────
+export interface DAGEdge {
+  id: string;
+  source: string;
+  target: string;
+  type: string;
+  animated: boolean;
+}
+
 // Artifact types that live at system level (no component_key)
 const SYSTEM_ARTIFACT_TYPES = new Set([
   'project_doc',
@@ -63,13 +72,82 @@ interface TreeNode {
   key: string;
 }
 
-function buildTree(nodes: SearchableNode[]): TreeNode[] {
+// ── Dependency maps ──────────────────────────────────────────────────────
+
+interface DepMaps {
+  /** nodeId → list of node IDs that are direct dependencies (inputs) */
+  dependencies: Map<string, string[]>;
+  /** nodeId → list of node IDs that directly depend on this node */
+  dependents: Map<string, string[]>;
+}
+
+function buildDepMaps(edges: DAGEdge[]): DepMaps {
+  const dependencies = new Map<string, string[]>();
+  const dependents = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!dependencies.has(e.target)) dependencies.set(e.target, []);
+    dependencies.get(e.target)!.push(e.source);
+    if (!dependents.has(e.source)) dependents.set(e.source, []);
+    dependents.get(e.source)!.push(e.target);
+  }
+  return { dependencies, dependents };
+}
+
+// ── Topological sort for dependency ordering ─────────────────────────────
+
+function topoSort(nodeIds: string[], edges: DAGEdge[]): Map<string, number> {
+  const idSet = new Set(nodeIds);
+  const inDeg = new Map<string, number>();
+  const adj = new Map<string, string[]>();
+  for (const id of nodeIds) {
+    inDeg.set(id, 0);
+    adj.set(id, []);
+  }
+  for (const e of edges) {
+    if (!idSet.has(e.source) || !idSet.has(e.target)) continue;
+    adj.get(e.source)!.push(e.target);
+    inDeg.set(e.target, (inDeg.get(e.target) ?? 0) + 1);
+  }
+  const queue: string[] = [];
+  for (const [id, deg] of inDeg) {
+    if (deg === 0) queue.push(id);
+  }
+  const order = new Map<string, number>();
+  let idx = 0;
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    order.set(cur, idx++);
+    for (const next of adj.get(cur) ?? []) {
+      const newDeg = (inDeg.get(next) ?? 1) - 1;
+      inDeg.set(next, newDeg);
+      if (newDeg === 0) queue.push(next);
+    }
+  }
+  // Nodes not reached (cycles) get a high order
+  for (const id of nodeIds) {
+    if (!order.has(id)) order.set(id, idx++);
+  }
+  return order;
+}
+
+// ── Tree builder ─────────────────────────────────────────────────────────
+
+function buildTree(nodes: SearchableNode[], edges: DAGEdge[]): TreeNode[] {
+  const topoOrder = topoSort(nodes.map((n) => n.id), edges);
+  const depSort = (a: SearchableNode, b: SearchableNode) =>
+    (topoOrder.get(a.id) ?? 999) - (topoOrder.get(b.id) ?? 999);
+
   const tree: TreeNode[] = [];
 
-  // 1. System-level docs
+  // 1. System-level docs — sorted by dependency order
   const systemDocs = nodes
     .filter((n) => SYSTEM_ARTIFACT_TYPES.has(getArtifactType(n)))
-    .sort((a, b) => (SYSTEM_ORDER[getArtifactType(a)] ?? 99) - (SYSTEM_ORDER[getArtifactType(b)] ?? 99));
+    .sort((a, b) => {
+      const oa = SYSTEM_ORDER[getArtifactType(a)] ?? 99;
+      const ob = SYSTEM_ORDER[getArtifactType(b)] ?? 99;
+      if (oa !== ob) return oa - ob;
+      return depSort(a, b);
+    });
 
   for (const doc of systemDocs) {
     tree.push({ type: 'document', label: doc.label, node: doc, key: `doc-${doc.id}` });
@@ -83,7 +161,6 @@ function buildTree(nodes: SearchableNode[]): TreeNode[] {
     if (!n.componentKey) continue;
     if (SYSTEM_ARTIFACT_TYPES.has(getArtifactType(n))) continue;
 
-    // Check if this is a sub-component (component_key contains ".")
     const dotIdx = n.componentKey.indexOf('.');
     if (dotIdx !== -1) {
       const parentKey = n.componentKey.substring(0, dotIdx);
@@ -96,22 +173,33 @@ function buildTree(nodes: SearchableNode[]): TreeNode[] {
       if (!componentMap.has(n.componentKey)) componentMap.set(n.componentKey, []);
       componentMap.get(n.componentKey)!.push(n);
     } else {
-      // Sub-component level docs without dot notation — group by component_key
-      // This handles cases where component_key is the sub-component directly
       if (!componentMap.has(n.componentKey)) componentMap.set(n.componentKey, []);
       componentMap.get(n.componentKey)!.push(n);
     }
   }
 
-  // Collect all component keys (from both maps)
-  const allComponentKeys = new Set([...componentMap.keys(), ...subComponentMap.keys()]);
+  // Sort components by earliest dependency order of their nodes
+  const allComponentKeys = [...new Set([...componentMap.keys(), ...subComponentMap.keys()])];
+  const compMinOrder = (key: string): number => {
+    const docs = componentMap.get(key) ?? [];
+    const subDocs = [...(subComponentMap.get(key)?.values() ?? [])].flat();
+    const all = [...docs, ...subDocs];
+    if (all.length === 0) return 999;
+    return Math.min(...all.map((n) => topoOrder.get(n.id) ?? 999));
+  };
+  allComponentKeys.sort((a, b) => compMinOrder(a) - compMinOrder(b) || a.localeCompare(b));
 
-  if (allComponentKeys.size > 0) {
+  if (allComponentKeys.length > 0) {
     const componentChildren: TreeNode[] = [];
 
-    for (const compKey of [...allComponentKeys].sort()) {
+    for (const compKey of allComponentKeys) {
       const compDocs = (componentMap.get(compKey) ?? [])
-        .sort((a, b) => (COMPONENT_DOC_ORDER[getArtifactType(a)] ?? 99) - (COMPONENT_DOC_ORDER[getArtifactType(b)] ?? 99));
+        .sort((a, b) => {
+          const oa = COMPONENT_DOC_ORDER[getArtifactType(a)] ?? 99;
+          const ob = COMPONENT_DOC_ORDER[getArtifactType(b)] ?? 99;
+          if (oa !== ob) return oa - ob;
+          return depSort(a, b);
+        });
 
       const compChildren: TreeNode[] = compDocs.map((d) => ({
         type: 'document' as const,
@@ -123,11 +211,22 @@ function buildTree(nodes: SearchableNode[]): TreeNode[] {
       // Sub-components folder
       const subs = subComponentMap.get(compKey);
       if (subs && subs.size > 0) {
+        const subEntries = [...subs.entries()];
+        // Sort sub-components by earliest dependency order
+        subEntries.sort(([, aDocs], [, bDocs]) => {
+          const aMin = Math.min(...aDocs.map((n) => topoOrder.get(n.id) ?? 999));
+          const bMin = Math.min(...bDocs.map((n) => topoOrder.get(n.id) ?? 999));
+          return aMin - bMin;
+        });
+
         const subFolders: TreeNode[] = [];
-        for (const [subKey, subDocs] of [...subs.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-          const sortedSubDocs = subDocs.sort(
-            (a, b) => (SUB_COMPONENT_DOC_ORDER[getArtifactType(a)] ?? 99) - (SUB_COMPONENT_DOC_ORDER[getArtifactType(b)] ?? 99),
-          );
+        for (const [subKey, subDocs] of subEntries) {
+          const sortedSubDocs = subDocs.sort((a, b) => {
+            const oa = SUB_COMPONENT_DOC_ORDER[getArtifactType(a)] ?? 99;
+            const ob = SUB_COMPONENT_DOC_ORDER[getArtifactType(b)] ?? 99;
+            if (oa !== ob) return oa - ob;
+            return depSort(a, b);
+          });
           const subLabel = subKey.includes('.') ? subKey.split('.').slice(1).join('.') : subKey;
           subFolders.push({
             type: 'folder',
@@ -212,6 +311,60 @@ function filterTree(
 }
 
 // ---------------------------------------------------------------------------
+// Dependency/Dependents pill list
+// ---------------------------------------------------------------------------
+
+function DepList({
+  label,
+  nodeIds,
+  nodeMap,
+  onSelect,
+}: {
+  label: string;
+  nodeIds: string[];
+  nodeMap: Map<string, SearchableNode>;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (nodeIds.length === 0) return null;
+
+  return (
+    <div className="ml-10 mb-0.5">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1"
+      >
+        <span className="w-3 text-center transition-transform duration-150"
+          style={{ transform: open ? 'rotate(90deg)' : undefined, fontSize: '8px' }}
+        >▶</span>
+        {label} ({nodeIds.length})
+      </button>
+      {open && (
+        <div className="ml-4 mt-0.5 space-y-px">
+          {nodeIds.map((depId) => {
+            const dep = nodeMap.get(depId);
+            if (!dep) return null;
+            return (
+              <button
+                key={depId}
+                onClick={(e) => { e.stopPropagation(); onSelect(depId); }}
+                className="flex items-center gap-1.5 px-1 py-0.5 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 rounded w-full text-left"
+              >
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOTS[dep.status] ?? 'bg-gray-500'}`} />
+                <span className="truncate">{dep.label}</span>
+                {dep.componentKey && (
+                  <span className="text-gray-600 text-[10px] ml-auto truncate max-w-[60px]">{dep.componentKey}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Folder row
 // ---------------------------------------------------------------------------
 
@@ -257,30 +410,47 @@ function DocumentRow({
   depth,
   selected,
   onClick,
+  depMaps,
+  nodeMap,
+  onSelectDep,
 }: {
   node: TreeNode;
   depth: number;
   selected: boolean;
   onClick: () => void;
+  depMaps: DepMaps;
+  nodeMap: Map<string, SearchableNode>;
+  onSelectDep: (id: string) => void;
 }) {
   const searchNode = node.node!;
+  const deps = depMaps.dependencies.get(searchNode.id) ?? [];
+  const dependents = depMaps.dependents.get(searchNode.id) ?? [];
+
   return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center gap-1.5 px-2 py-1.5 text-sm text-left ${
-        selected
-          ? 'bg-blue-900/40 text-white'
-          : 'hover:bg-gray-700/50 text-gray-300'
-      }`}
-      style={{ paddingLeft: `${depth * 16 + 8}px` }}
-    >
-      <span className="w-4 shrink-0" /> {/* spacer to align with folder arrows */}
-      <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOTS[searchNode.status] ?? 'bg-gray-500'}`} />
-      <span className="truncate">{node.label}</span>
-      {searchNode.componentKey && (
-        <span className="text-gray-600 text-xs ml-auto truncate max-w-[80px]">{searchNode.componentKey}</span>
+    <div>
+      <button
+        onClick={onClick}
+        className={`w-full flex items-center gap-1.5 px-2 py-1.5 text-sm text-left ${
+          selected
+            ? 'bg-blue-900/40 text-white'
+            : 'hover:bg-gray-700/50 text-gray-300'
+        }`}
+        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+      >
+        <span className="w-4 shrink-0" /> {/* spacer to align with folder arrows */}
+        <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOTS[searchNode.status] ?? 'bg-gray-500'}`} />
+        <span className="truncate">{node.label}</span>
+        {searchNode.componentKey && (
+          <span className="text-gray-600 text-xs ml-auto truncate max-w-[80px]">{searchNode.componentKey}</span>
+        )}
+      </button>
+      {deps.length > 0 && (
+        <DepList label="Dependencies" nodeIds={deps} nodeMap={nodeMap} onSelect={onSelectDep} />
       )}
-    </button>
+      {dependents.length > 0 && (
+        <DepList label="Dependents" nodeIds={dependents} nodeMap={nodeMap} onSelect={onSelectDep} />
+      )}
+    </div>
   );
 }
 
@@ -295,6 +465,8 @@ function TreeBranch({
   toggleKey,
   selectedArtifactId,
   onSelectArtifact,
+  depMaps,
+  nodeMap,
 }: {
   nodes: TreeNode[];
   depth: number;
@@ -302,6 +474,8 @@ function TreeBranch({
   toggleKey: (key: string) => void;
   selectedArtifactId: string | null;
   onSelectArtifact: (id: string) => void;
+  depMaps: DepMaps;
+  nodeMap: Map<string, SearchableNode>;
 }) {
   return (
     <>
@@ -324,6 +498,8 @@ function TreeBranch({
                   toggleKey={toggleKey}
                   selectedArtifactId={selectedArtifactId}
                   onSelectArtifact={onSelectArtifact}
+                  depMaps={depMaps}
+                  nodeMap={nodeMap}
                 />
               )}
             </div>
@@ -340,6 +516,9 @@ function TreeBranch({
                 onSelectArtifact(treeNode.node.id);
               }
             }}
+            depMaps={depMaps}
+            nodeMap={nodeMap}
+            onSelectDep={onSelectArtifact}
           />
         );
       })}
@@ -351,12 +530,25 @@ function TreeBranch({
 // Public component
 // ---------------------------------------------------------------------------
 
-export function DocumentTreeView({ nodes }: { nodes: SearchableNode[] }) {
+export function DocumentTreeView({
+  nodes,
+  edges = [],
+}: {
+  nodes: SearchableNode[];
+  edges?: DAGEdge[];
+}) {
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const tree = useMemo(() => buildTree(nodes), [nodes]);
+  const depMaps = useMemo(() => buildDepMaps(edges), [edges]);
+  const nodeMap = useMemo(() => {
+    const m = new Map<string, SearchableNode>();
+    for (const n of nodes) m.set(n.id, n);
+    return m;
+  }, [nodes]);
+
+  const tree = useMemo(() => buildTree(nodes, edges), [nodes, edges]);
 
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -478,6 +670,8 @@ export function DocumentTreeView({ nodes }: { nodes: SearchableNode[] }) {
             toggleKey={toggleKey}
             selectedArtifactId={selectedArtifactId}
             onSelectArtifact={onSelectArtifact}
+            depMaps={depMaps}
+            nodeMap={nodeMap}
           />
         )}
       </div>
