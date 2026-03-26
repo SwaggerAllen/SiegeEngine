@@ -25,16 +25,15 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Export Anthropic API key so langchain-anthropic can find it.
-    # Use direct assignment (not setdefault) so SIEGE_ANTHROPIC_API_KEY
-    # always takes precedence over any stale ANTHROPIC_API_KEY in the env.
+    # Export Anthropic API key for langchain-anthropic (structured extraction).
+    # CLI subprocesses use their own login credentials and do NOT inherit this.
     if not settings.anthropic_api_key:
         raise RuntimeError(
             "SIEGE_ANTHROPIC_API_KEY is not set. "
             "Add it to your .env file or set it as an environment variable."
         )
     os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
-    logger.info("ANTHROPIC_API_KEY set from config (%d chars)", len(settings.anthropic_api_key))
+    logger.info("ANTHROPIC_API_KEY set for API use (%d chars)", len(settings.anthropic_api_key))
 
     # Ensure data directories exist
     Path(settings.git_repos_base_path).mkdir(parents=True, exist_ok=True)

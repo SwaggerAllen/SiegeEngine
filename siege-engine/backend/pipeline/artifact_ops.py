@@ -594,9 +594,10 @@ class ArtifactOpsMixin:
         artifact = self.db.get(Artifact, artifact_id)
         if not artifact:
             raise ValueError("Artifact not found")
-        if artifact.status not in (ArtifactStatus.STALE, ArtifactStatus.AWAITING_REVIEW):
+        allowed = (ArtifactStatus.STALE, ArtifactStatus.AWAITING_REVIEW, ArtifactStatus.REJECTED)
+        if artifact.status not in allowed:
             raise ValueError(
-                f"Artifact is not stale or awaiting_review"
+                f"Artifact is not stale, awaiting_review, or rejected"
                 f" (status={artifact.status.value})"
             )
 

@@ -105,21 +105,17 @@ class CLIManager:
         # Don't persist sessions for pipeline generation
         args.append("--no-session-persistence")
 
-        # Pass full env with API key explicitly set and CLAUDECODE stripped
-        api_key = settings.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        # Pass full env with CLAUDECODE stripped; CLI uses its own login credentials
         env = {**os.environ}
         env.pop("CLAUDECODE", None)
-        env["ANTHROPIC_API_KEY"] = api_key
+        env.pop("ANTHROPIC_API_KEY", None)
 
         logger.info(
-            "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds, api_key_len=%d, api_key=%s...%s",
+            "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds (using CLI login credentials)",
             model or "default",
             tools or "default",
             working_dir or ".",
             timeout,
-            len(api_key),
-            api_key[:12] if api_key else "MISSING",
-            api_key[-6:] if api_key else "",
         )
 
         proc = await asyncio.create_subprocess_exec(
@@ -198,10 +194,9 @@ class CLIManager:
 
         args.append("--dangerously-skip-permissions")
 
-        api_key = settings.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         env = {**os.environ}
         env.pop("CLAUDECODE", None)
-        env["ANTHROPIC_API_KEY"] = api_key
+        env.pop("ANTHROPIC_API_KEY", None)
 
         proc = await asyncio.create_subprocess_exec(
             *args,
