@@ -20,20 +20,6 @@ primary_region = 'sjc'
   source = 'siege_data'
   destination = '/data'
 
-[build]
-
-[deploy]
-  strategy = 'immediate'
-
-[env]
-  SIEGE_CORS_ORIGINS = '["https://siege-engine.fly.dev"]'
-  SIEGE_DATABASE_URL = 'sqlite:////data/siege_engine.db'
-  SIEGE_GIT_REPOS_BASE_PATH = '/data/repos'
-
-[[mounts]]
-  source = 'siege_data'
-  destination = '/data'
-
 [http_service]
   internal_port = 8000
   force_https = true
