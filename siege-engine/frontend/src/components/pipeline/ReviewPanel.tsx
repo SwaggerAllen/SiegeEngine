@@ -242,6 +242,15 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {isRejected && (
+            <button
+              onClick={() => s.handleAction('approved')}
+              disabled={s.submitting}
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              Approve
+            </button>
+          )}
           <button
             onClick={s.handleRestart}
             disabled={s.restarting}
