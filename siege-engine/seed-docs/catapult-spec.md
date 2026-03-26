@@ -300,19 +300,23 @@ Stop-point checks (phase boundaries, user-configured pause points) must be evalu
 
 Before creating a new execution for a node, check for existing RUNNING executions for the same node **across all runs**, not just the current run. Scoping this check to a single run allows duplicate executions when sub-runs or manual triggers overlap.
 
-### A.19.9 Execution Retry Creates New Records
+### A.19.9 Retries Are Sub-Runs
 
-Each retry of a failed execution creates a new execution record with an incremented retry count, rather than mutating the existing record. This preserves the event history and audit trail. The old execution remains in its terminal state.
+Failed executions are not retried in-place. A retry is a sub-run: it pauses the current run, creates a new run scoped to the failed node, executes, and returns control to the parent. This keeps the execution model uniform — there is no special "retry" concept, just the same sub-run machinery used everywhere else. The original failed execution remains in its terminal state in the event log.
 
-### A.19.10 Reconciliation on Startup
+### A.19.10 Git-Before-DB Commit Ordering
+
+When an operation produces both a git commit and a database event, the git commit must happen **before** the database commit. If the database succeeds but git fails, the event log references a nonexistent commit — corrupted event history that is difficult to recover from. If git succeeds but the database fails, the result is an orphaned git commit that can be cleaned up trivially without data loss. Always order: git commit → DB commit.
+
+### A.19.11 Reconciliation on Startup
 
 On server startup, the system must reconcile all projects: rebuild materialized state from events, detect and resolve orphaned executions (RUNNING with no active job → mark FAILED), complete zombie runs (RUNNING with no active executions → mark FAILED), and cancel stale queued jobs. This is a first-class recovery mechanism, not an afterthought.
 
-### A.19.11 LLM Output Parsing Resilience
+### A.19.12 LLM Output Parsing Resilience
 
 LLM output format is unreliable. All structured output extraction (component lists, dependency DAGs, code files, plans) must use multiple parsing strategies with fallbacks. Try strict parsing first, fall back to regex extraction, then to smaller-model re-extraction. Never fail a stage because the LLM returned valid content in an unexpected format.
 
-### A.19.12 LLM Concurrency Limits
+### A.19.13 LLM Concurrency Limits
 
 Parallel execution within phases (A.3.4) must respect a configurable concurrency limit for LLM calls. Siege Engine hardcoded this to 1 after higher values caused resource exhaustion and rate limiting cascades. The limit should be configurable per project but default to conservative values. Exponential backoff on rate limit errors (3 attempts, 1s base delay).
 
@@ -340,7 +344,7 @@ This gives us:
 
 Commanded's process managers coordinate multi-step workflows (flow runs, phase transitions, boulder execution). Aggregates enforce invariants (pessimistic locking, status transitions, template pinning).
 
-Critical constraint from Siege Engine: the event-sourced snapshot (materialized from events) is the **single source of truth** for all pipeline and document state. Database fields on model tables are read-only projections for query convenience. All status reads during flow execution must come from the snapshot, never from DB model fields. Siege Engine's most recurring bug class was reading stale status from DB projections instead of the authoritative snapshot.
+Critical constraint from Siege Engine: the event-sourced snapshot (materialized from events) is the **single source of truth** for all pipeline and document state. There are no duplicate status fields on separate DB model tables — the snapshot is the only place pipeline/document state lives. This eliminates an entire class of bugs (stale projections, sync drift) and simplifies rollback: reverting events is sufficient, there are no secondary tables to reconcile.
 
 ## B.4 Oban
 
