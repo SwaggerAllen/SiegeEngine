@@ -11,7 +11,6 @@ class ArtifactStatus(str, enum.Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     FAILED = "failed"
-    STALE = "stale"
 
 
 class ArtifactType(str, enum.Enum):

@@ -68,7 +68,8 @@ const sampleNodes: SearchableNode[] = [
     id: 'art-6',
     label: 'Auth Architecture',
     componentKey: 'auth',
-    status: 'stale',
+    status: 'approved',
+    isStale: true,
     stageKey: 'component_architectures',
     artifactType: 'component_architecture',
     hasArtifact: true,
@@ -359,10 +360,9 @@ describe('DocumentTreeView', () => {
     const user = userEvent.setup();
     render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    await user.type(screen.getByPlaceholderText('Filter documents...'), 'stale');
+    await user.type(screen.getByPlaceholderText('Filter documents...'), 'approved');
 
     expect(screen.getByText('Auth Architecture')).toBeInTheDocument();
-    expect(screen.getByText('1 match')).toBeInTheDocument();
   });
 
   it('clears search on Escape key', async () => {

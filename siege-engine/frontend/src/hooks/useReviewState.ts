@@ -119,7 +119,7 @@ export function useReviewState(
   const isAwaitingReview =
     execution?.status === 'awaiting_review' || artifact.status === 'awaiting_review';
   const isRestartable = execution != null && RESTARTABLE_STATUSES.has(execution.status);
-  const isStale = artifact.status === 'stale';
+  const isStale = !!(artifact as Record<string, unknown>).is_stale;
   const isBeingRegenerated =
     isStale && execution != null && REGENERATING_STATUSES.has(execution.status);
   const isInputDoc = artifact.artifact_type === 'project_doc';

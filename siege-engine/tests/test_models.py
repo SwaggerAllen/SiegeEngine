@@ -21,14 +21,12 @@ class TestArtifactStatus:
             "approved",
             "rejected",
             "failed",
-            "stale",
         }
         actual = {s.value for s in ArtifactStatus}
         assert actual == expected
 
     def test_string_values(self):
         assert ArtifactStatus.APPROVED == "approved"
-        assert ArtifactStatus.STALE == "stale"
 
 
 class TestArtifactType:

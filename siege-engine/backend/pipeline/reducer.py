@@ -68,6 +68,8 @@ def empty_snapshot() -> dict[str, Any]:
         "cascade_parents": {},
         # New: execution ID + artifact ID per stage/component
         "execution_map": {},
+        # Staleness as a separate boolean layer (artifact_id → True/False)
+        "artifact_stale": {},
     }
 
 
@@ -217,7 +219,7 @@ def _handle_stage_failed(snap: dict, p: dict) -> None:
         current = snap["artifact_statuses"].get(p["artifact_id"])
         if is_force_restart:
             snap["artifact_statuses"][p["artifact_id"]] = "pending"
-        elif current not in ("approved", "awaiting_review", "stale", "rejected"):
+        elif current not in ("approved", "awaiting_review", "rejected"):
             snap["artifact_statuses"][p["artifact_id"]] = "failed"
     # Track error message
     if p.get("error"):
@@ -247,6 +249,8 @@ def _handle_artifact_revised(snap: dict, p: dict) -> None:
 def _handle_stale_resolved(snap: dict, p: dict) -> None:
     artifact_id = p["artifact_id"]
     action = p.get("action", "approved")
+    # Clear the stale flag
+    snap.setdefault("artifact_stale", {})[artifact_id] = False
     if action == "approved":
         snap["artifact_statuses"][artifact_id] = "approved"
     elif action == "rejected":
@@ -258,8 +262,9 @@ def _handle_stale_resolved(snap: dict, p: dict) -> None:
 
 
 def _handle_staleness_propagated(snap: dict, p: dict) -> None:
+    stale_dict = snap.setdefault("artifact_stale", {})
     for aid in p.get("stale_ids", []):
-        snap["artifact_statuses"][aid] = "stale"
+        stale_dict[aid] = True
 
 
 def _handle_cascade_started(snap: dict, p: dict) -> None:
@@ -293,6 +298,7 @@ def _handle_artifact_pruned(snap: dict, p: dict) -> None:
     snap["artifact_meta"].pop(artifact_id, None)
     snap["artifact_git_shas"].pop(artifact_id, None)
     snap["comment_counts"].pop(artifact_id, None)
+    snap.setdefault("artifact_stale", {}).pop(artifact_id, None)
     # Remove stage status and execution_map entry if provided
     if p.get("stage_key"):
         key = _stage_key(p)
@@ -316,6 +322,8 @@ def _handle_pipeline_reset(snap: dict, p: dict) -> None:
     snap["stage_errors"].clear()
     snap["stage_triggers"].clear()
     snap["execution_map"].clear()
+    # Clear all stale flags
+    snap.setdefault("artifact_stale", {}).clear()
 
 
 def _handle_stage_retried(snap: dict, p: dict) -> None:

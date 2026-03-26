@@ -13,7 +13,6 @@ const STATUS_COLORS: Record<string, string> = {
   awaiting_review: 'bg-yellow-900 border-yellow-400',
   approved: 'bg-green-900 border-green-400',
   rejected: 'bg-red-900 border-red-400',
-  stale: 'bg-orange-900 border-orange-400',
   failed: 'bg-red-900 border-red-400',
 };
 
@@ -25,7 +24,6 @@ const STATUS_LABELS: Record<string, string> = {
   awaiting_review: 'Awaiting Review',
   approved: 'Approved',
   rejected: 'Rejected',
-  stale: 'Stale',
   failed: 'Failed',
 };
 
@@ -54,13 +52,15 @@ export const StageNode = memo(function StageNode({ id, data }: { id: string; dat
   const isInputDoc = data.artifact_type === 'project_doc';
   const isBranchingNode = data.artifact_type === 'component_map' || data.artifact_type === 'sub_component_map';
   const isPlaceholder = !data.has_artifact && data.is_active;
-  const colorClass = isInputDoc
+  const isStale = !!(data as Record<string, unknown>).is_stale;
+  const baseColorClass = isInputDoc
     ? 'bg-cyan-900 border-cyan-400'
     : isBranchingNode
     ? 'bg-indigo-900 border-indigo-400'
     : isPlaceholder
     ? 'bg-blue-900/60 border-blue-400 border-dashed animate-pulse'
     : STATUS_COLORS[data.status] || STATUS_COLORS.pending;
+  const colorClass = isStale ? `${baseColorClass} ring-2 ring-orange-400 ring-inset` : baseColorClass;
   const statusLabel = isPlaceholder ? 'Generating...' : isInputDoc ? 'Input' : isBranchingNode && data.status === 'pending' ? 'Branching' : (STATUS_LABELS[data.status] || (data.status ?? 'pending').replace('_', ' '));
   const pi = data.prompt_info;
   const isProcessing = data.is_active || ACTIVE_STATUSES.has(data.status);
@@ -140,7 +140,14 @@ export const StageNode = memo(function StageNode({ id, data }: { id: string; dat
         </div>
       </div>
       <div className="text-xs mt-1 text-gray-300 flex items-center justify-between">
-        <span>{statusLabel}</span>
+        <span className="flex items-center gap-1">
+          {statusLabel}
+          {isStale && (
+            <span className="px-1 py-0.5 text-[10px] bg-orange-600 text-white rounded" title="Upstream inputs have changed">
+              stale
+            </span>
+          )}
+        </span>
         {data.has_artifact && data.version > 0 && (
           <span className="text-gray-500">v{data.version}</span>
         )}

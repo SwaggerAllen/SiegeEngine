@@ -112,8 +112,9 @@ export function applyWSEvent(snapshot: PipelineSnapshot, event: WSEvent): Pipeli
       break;
 
     case 'staleness_propagated':
+      if (!snap.artifact_stale) snap.artifact_stale = {};
       for (const aid of event.stale_artifact_ids) {
-        snap.artifact_statuses[aid] = 'stale';
+        snap.artifact_stale[aid] = true;
       }
       break;
 
