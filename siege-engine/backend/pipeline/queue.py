@@ -61,7 +61,8 @@ def enqueue(
         if json.dumps(candidate.payload, sort_keys=True) == payload_json:
             logger.info(
                 "Dedup: reusing existing queued job %s type=%s",
-                candidate.id, job_type,
+                candidate.id,
+                job_type,
             )
             return candidate.id
 
@@ -125,13 +126,13 @@ def cancel_running_execution(execution_id: str) -> bool:
         if task_exec_id == execution_id:
             logger.info(
                 "Cancelling running task for execution %s (job %s)",
-                execution_id, _current_job_id,
+                execution_id,
+                _current_job_id,
             )
             _current_task.cancel()
             return True
 
     return False
-
 
 
 def _claim_next_sync() -> tuple[str, str, dict] | None:
@@ -141,9 +142,7 @@ def _claim_next_sync() -> tuple[str, str, dict] | None:
     """
     db = SessionLocal()
     try:
-        has_queued = db.execute(
-            text("SELECT 1 FROM jobs WHERE status = 'queued' LIMIT 1")
-        ).first()
+        has_queued = db.execute(text("SELECT 1 FROM jobs WHERE status = 'queued' LIMIT 1")).first()
         if not has_queued:
             return None
 
@@ -185,8 +184,7 @@ def _complete_job_sync(job_id: str, error: str | None = None) -> None:
                 job.locked_at = None
                 job.error_message = error
                 logger.warning(
-                    f"Job {job.id} failed"
-                    f" (retry {job.retry_count}/{job.max_retries}): {error}"
+                    f"Job {job.id} failed (retry {job.retry_count}/{job.max_retries}): {error}"
                 )
             else:
                 job.status = "failed"
@@ -203,6 +201,7 @@ def _complete_job_sync(job_id: str, error: str | None = None) -> None:
 
 
 # ── Job Handlers ──────────────────────────────────────────────────────────────
+
 
 async def _handle_start_pipeline(payload: dict) -> None:
     """Handle a start_pipeline job."""
@@ -295,6 +294,7 @@ async def _handle_retry_stage(payload: dict) -> None:
     try:
         engine = PipelineEngine(db)
         from backend.models import StageExecution
+
         execution = db.get(StageExecution, payload["execution_id"])
         if execution:
             await engine.retry_stage(execution)
@@ -345,6 +345,7 @@ _JOB_HANDLERS = {
 
 
 # ── Worker Loop ───────────────────────────────────────────────────────────────
+
 
 async def worker_loop(poll_interval: float = 5.0) -> None:
     """Main worker loop. Waits for job notifications, polls in a thread.

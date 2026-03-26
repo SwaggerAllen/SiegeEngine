@@ -59,7 +59,10 @@ class EventStore:
 
         logger.debug(
             "[EventStore] project=%s seq=%d type=%s run=%s",
-            project_id, seq, event_type, run_id,
+            project_id,
+            seq,
+            event_type,
+            run_id,
         )
         return event
 
@@ -95,11 +98,7 @@ class EventStore:
 
     def _get_or_create_snapshot(self, project_id: str) -> PipelineSnapshot:
         """Get existing snapshot or create a new one."""
-        snapshot = (
-            self.db.query(PipelineSnapshot)
-            .filter_by(project_id=project_id)
-            .first()
-        )
+        snapshot = self.db.query(PipelineSnapshot).filter_by(project_id=project_id).first()
         if not snapshot:
             snapshot = PipelineSnapshot(
                 project_id=project_id,

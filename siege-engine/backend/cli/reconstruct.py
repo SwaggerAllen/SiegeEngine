@@ -56,9 +56,7 @@ def reconstruct_from_git(
     # ── Step 1: Read siege-state.json ─────────────────────────────────
     ref = commit_sha or "HEAD"
     try:
-        state_json = git_manager.get_file_at_version(
-            project_id, "siege-state.json", ref
-        )
+        state_json = git_manager.get_file_at_version(project_id, "siege-state.json", ref)
         state = json.loads(state_json)
     except Exception as e:
         raise ValueError(
@@ -100,9 +98,7 @@ def reconstruct_from_git(
         file_path = art_data.get("file_path")
         if file_path:
             try:
-                content = git_manager.get_file_at_version(
-                    project_id, file_path, ref
-                )
+                content = git_manager.get_file_at_version(project_id, file_path, ref)
             except Exception:
                 logger.warning(
                     "Could not read artifact file %s from git, skipping content",
@@ -164,11 +160,15 @@ def reconstruct_from_git(
     from backend.pipeline.event_store import EventStore
 
     es = EventStore(db)
-    es.emit(project_id, "pipeline_reset", {
-        "reconstructed_from": ref,
-        "artifact_count": artifact_count,
-        "component_count": comp_count,
-    })
+    es.emit(
+        project_id,
+        "pipeline_reset",
+        {
+            "reconstructed_from": ref,
+            "artifact_count": artifact_count,
+            "component_count": comp_count,
+        },
+    )
 
     db.commit()
 
@@ -185,9 +185,7 @@ def reconstruct_from_git(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Reconstruct pipeline state from git repository"
-    )
+    parser = argparse.ArgumentParser(description="Reconstruct pipeline state from git repository")
     parser.add_argument("project_id", help="Project ID to reconstruct")
     parser.add_argument(
         "--commit",

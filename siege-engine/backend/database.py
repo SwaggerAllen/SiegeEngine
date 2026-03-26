@@ -101,23 +101,29 @@ def _add_missing_columns():
 
     # Extended snapshot columns (added in d4e5f6a7b8c9 migration)
     for col in (
-        "artifact_versions", "stage_errors", "comment_counts",
-        "stage_triggers", "artifact_meta", "artifact_git_shas",
-        "cascade_parents", "execution_map", "artifact_stale",
+        "artifact_versions",
+        "stage_errors",
+        "comment_counts",
+        "stage_triggers",
+        "artifact_meta",
+        "artifact_git_shas",
+        "cascade_parents",
+        "execution_map",
+        "artifact_stale",
     ):
-        _ensure_column(
-            inspector, "pipeline_snapshots", col, "JSON NOT NULL DEFAULT '{}'"
-        )
+        _ensure_column(inspector, "pipeline_snapshots", col, "JSON NOT NULL DEFAULT '{}'")
 
     # Migrate existing STALE status to is_stale boolean
     if inspector.has_table("artifacts"):
         columns = [c["name"] for c in inspector.get_columns("artifacts")]
         if "is_stale" in columns:
             with engine.begin() as conn:
-                conn.execute(text(
-                    "UPDATE artifacts SET is_stale = 1, status = 'approved' "
-                    "WHERE status = 'stale'"
-                ))
+                conn.execute(
+                    text(
+                        "UPDATE artifacts SET is_stale = 1, status = 'approved' "
+                        "WHERE status = 'stale'"
+                    )
+                )
 
 
 def _ensure_column(inspector, table: str, column: str, col_def: str):

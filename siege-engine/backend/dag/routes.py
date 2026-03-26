@@ -68,6 +68,7 @@ def get_components(
 
     # Read status from snapshot (source of truth)
     from backend.pipeline.event_store import EventStore
+
     snapshot = EventStore(db).get_snapshot(project_id)
     artifact_status = (snapshot.artifact_statuses or {}).get(artifact.id) if artifact else None
     is_reviewing = artifact_status in (
@@ -177,6 +178,7 @@ def propagate(
     _user: User = Depends(get_current_user),
 ):
     from backend.pipeline.event_store import EventStore
+
     stale_ids = dag_service.propagate_staleness(db, artifact_id, event_store=EventStore(db))
     db.commit()
     return {"stale_ids": stale_ids}

@@ -2,7 +2,6 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
-
 # ──── Legacy request schemas (kept for internal use) ────
 
 
