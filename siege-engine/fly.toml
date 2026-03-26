@@ -4,7 +4,21 @@
 #
 
 app = 'siege-engine'
-primary_region = 'iad'
+primary_region = 'sjc'
+
+[build]
+
+[deploy]
+  strategy = 'immediate'
+
+[env]
+  SIEGE_CORS_ORIGINS = '["https://siege-engine.fly.dev"]'
+  SIEGE_DATABASE_URL = 'sqlite:////data/siege_engine.db'
+  SIEGE_GIT_REPOS_BASE_PATH = '/data/repos'
+
+[[mounts]]
+  source = 'siege_data'
+  destination = '/data'
 
 [build]
 
