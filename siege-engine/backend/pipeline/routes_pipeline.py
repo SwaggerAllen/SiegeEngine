@@ -198,7 +198,7 @@ async def propagate_changes(
     # Count stale artifacts
     stale_count = (
         db.query(Artifact)
-        .filter_by(project_id=project_id, status=ArtifactStatus.STALE)
+        .filter_by(project_id=project_id, is_stale=True)
         .count()
     )
     if stale_count == 0:

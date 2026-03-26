@@ -15,7 +15,7 @@ import { ComponentDependencyList } from './ComponentDependencyList';
 import { ContentSearchBar } from './ContentSearchBar';
 import DiffView from './DiffView';
 
-const REVISABLE_STATUSES = new Set(['approved', 'stale']);
+const REVISABLE_STATUSES = new Set(['approved']);
 
 type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
 
@@ -230,8 +230,6 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
             className={`text-xs px-1.5 py-0.5 rounded ${
               artifact.status === 'approved'
                 ? 'bg-green-900 text-green-300'
-                : artifact.status === 'stale'
-                ? 'bg-orange-900 text-orange-300'
                 : artifact.status === 'awaiting_review'
                 ? 'bg-yellow-900 text-yellow-300'
                 : 'bg-gray-700 text-gray-300'
@@ -239,6 +237,11 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
           >
             {artifact.status}
           </span>
+          {!!(artifact as Record<string, unknown>).is_stale && (
+            <span className="text-xs px-1.5 py-0.5 rounded bg-orange-900 text-orange-300">
+              stale
+            </span>
+          )}
         </div>
         {!isViewer && !isViewingHistory && !viewOnly && (
           <div className="flex gap-2">

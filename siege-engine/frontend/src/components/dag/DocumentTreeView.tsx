@@ -58,7 +58,6 @@ const STATUS_DOTS: Record<string, string> = {
   generating: 'bg-blue-500',
   running: 'bg-blue-500',
   ai_reviewing: 'bg-purple-500',
-  stale: 'bg-orange-500',
   rejected: 'bg-red-500',
   failed: 'bg-red-700',
   pending: 'bg-gray-500',

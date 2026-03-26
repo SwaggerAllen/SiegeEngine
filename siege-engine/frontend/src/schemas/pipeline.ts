@@ -87,6 +87,7 @@ export const PipelineSnapshotSchema = z.object({
   })).optional(),
   artifact_git_shas: z.record(z.string(), z.string()).optional(),
   cascade_parents: z.record(z.string(), z.string()).optional(),
+  artifact_stale: z.record(z.string(), z.boolean()).optional(),
 });
 
 // --- Events ---

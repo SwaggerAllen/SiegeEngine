@@ -11,6 +11,7 @@ export const DAGNodeDataSchema = z.object({
   label: z.string(),
   artifact_type: z.string(),
   status: z.string(),
+  is_stale: z.boolean().optional().default(false),
   component_key: z.string().nullable(),
   version: z.number(),
   stage_key: z.string(),

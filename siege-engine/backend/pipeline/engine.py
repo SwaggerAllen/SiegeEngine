@@ -262,10 +262,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         # Additionally carry over AWAITING_REVIEW executions from the previous run
         # Read stale artifact IDs from snapshot (source of truth)
         _snap = self.events.get_snapshot(project_id)
-        stale_artifact_ids = {
-            aid for aid, status in (_snap.artifact_statuses or {}).items()
-            if status == "stale"
-        }
+        _stale_dict = getattr(_snap, "artifact_stale", None) or {}
+        stale_artifact_ids = {aid for aid, is_stale in _stale_dict.items() if is_stale}
         review_execs = (
             self.db.query(StageExecution)
             .filter_by(
@@ -464,7 +462,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
     def _carry_over_approved(self, project_id: str, new_run_id: str) -> int:
         """Carry over the most recent APPROVED execution for each (stage, component)
-        across ALL previous runs.  Skips executions whose artifact is currently STALE.
+        across ALL previous runs.  Skips executions whose artifact is currently stale.
 
         Returns the number of executions carried over.
         """
@@ -506,10 +504,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         # Read stale artifact IDs from snapshot (source of truth)
         _snap = self.events.get_snapshot(project_id)
-        stale_artifact_ids = {
-            aid for aid, status in (_snap.artifact_statuses or {}).items()
-            if status == "stale"
-        }
+        _stale_dict2 = getattr(_snap, "artifact_stale", None) or {}
+        stale_artifact_ids = {aid for aid, is_stale in _stale_dict2.items() if is_stale}
 
         # For each (stage_key, component_key), find the most recent APPROVED
         # execution across all runs (by completed_at desc).

@@ -7,7 +7,6 @@ export const ArtifactStatusSchema = z.enum([
   'awaiting_review',
   'approved',
   'rejected',
-  'stale',
   'failed',
 ]);
 
@@ -16,6 +15,7 @@ export const ArtifactSummarySchema = z.object({
   name: z.string(),
   artifact_type: z.string(),
   status: ArtifactStatusSchema,
+  is_stale: z.boolean().optional().default(false),
   component_key: z.string().nullable(),
   version: z.number(),
 });
@@ -45,6 +45,7 @@ export const ArtifactSchema = z.object({
   component_key: z.string().nullable(),
   content: z.string().nullable(),
   status: ArtifactStatusSchema,
+  is_stale: z.boolean().optional().default(false),
   version: z.number(),
   ai_review_feedback: z.record(z.string(), z.unknown()).nullable(),
   human_review_notes: z.string().nullable(),

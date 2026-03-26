@@ -365,7 +365,7 @@ class ArtifactOpsMixin:
         rejected_stage_order_index: int,
         config: PipelineConfig,
     ) -> list[str]:
-        """Cascade-reject downstream AWAITING_REVIEW executions, mark their artifacts STALE.
+        """Cascade-reject downstream AWAITING_REVIEW executions, mark their artifacts as stale.
 
         Returns list of stale artifact IDs for WS broadcast.
         """
@@ -396,9 +396,11 @@ class ArtifactOpsMixin:
                 )
                 self._transition_execution(
                     exc, StageStatus.REJECTED,
-                    artifact_status=ArtifactStatus.STALE,
                 )
                 if exc.artifact_id:
+                    art = self.db.get(Artifact, exc.artifact_id)
+                    if art:
+                        art.is_stale = True
                     stale_artifact_ids.append(exc.artifact_id)
 
         self.db.flush()
@@ -411,7 +413,7 @@ class ArtifactOpsMixin:
         approved_stage_order_index: int,
         config: PipelineConfig,
     ) -> list[str]:
-        """After approving a regenerated stage, mark downstream artifacts as STALE.
+        """After approving a regenerated stage, mark downstream artifacts as stale.
 
         Executions are kept as APPROVED so that auto-generation does NOT
         re-trigger. The user must explicitly regenerate stale nodes.
@@ -444,7 +446,9 @@ class ArtifactOpsMixin:
                         exc.stage_key,
                         exc.component_key,
                     )
-                    self._mark_artifact_status(exc.artifact_id, ArtifactStatus.STALE)
+                    art = self.db.get(Artifact, exc.artifact_id)
+                    if art:
+                        art.is_stale = True
                     stale_artifact_ids.append(exc.artifact_id)
 
         self.db.flush()
@@ -594,11 +598,11 @@ class ArtifactOpsMixin:
         artifact = self.db.get(Artifact, artifact_id)
         if not artifact:
             raise ValueError("Artifact not found")
-        allowed = (ArtifactStatus.STALE, ArtifactStatus.AWAITING_REVIEW, ArtifactStatus.REJECTED)
-        if artifact.status not in allowed:
+        allowed = (ArtifactStatus.AWAITING_REVIEW, ArtifactStatus.REJECTED)
+        if not artifact.is_stale and artifact.status not in allowed:
             raise ValueError(
                 f"Artifact is not stale, awaiting_review, or rejected"
-                f" (status={artifact.status.value})"
+                f" (status={artifact.status.value}, is_stale={artifact.is_stale})"
             )
 
         project_id = artifact.project_id
@@ -714,6 +718,7 @@ class ArtifactOpsMixin:
                     },
                 )
             self._mark_artifact_status(artifact_id, ArtifactStatus.APPROVED)
+            artifact.is_stale = False
 
             # Emit stale_resolved event
             self.events.emit(

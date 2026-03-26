@@ -95,7 +95,7 @@ def propagate_staleness(db: Session, artifact_id: str, event_store=None) -> list
     """Propagate staleness to downstream artifacts via dependency graph.
 
     Emits STALENESS_PROPAGATED event (updates snapshot via reducer),
-    then sets artifact.status = STALE as DB projection.
+    then sets artifact.is_stale = True as DB projection.
     event_store should always be provided; the parameter is optional only
     for backward compatibility during migration.
     """
@@ -115,7 +115,7 @@ def propagate_staleness(db: Session, artifact_id: str, event_store=None) -> list
         visited.add(current_id)
 
         current = db.get(Artifact, current_id)
-        if current and current.status != ArtifactStatus.STALE:
+        if current and not current.is_stale:
             stale_ids.append(current_id)
 
         for downstream_id in graph.get(current_id, []):
@@ -129,11 +129,11 @@ def propagate_staleness(db: Session, artifact_id: str, event_store=None) -> list
             {"source_artifact_id": artifact_id, "stale_ids": stale_ids},
         )
 
-    # DB projection: set artifact.status = STALE
+    # DB projection: set artifact.is_stale = True
     for sid in stale_ids:
         art = db.get(Artifact, sid)
         if art:
-            art.status = ArtifactStatus.STALE
+            art.is_stale = True
 
     return stale_ids
 
@@ -179,10 +179,8 @@ def get_stale_artifacts(db: Session, project_id: str) -> list[str]:
     from backend.pipeline.event_store import EventStore
     es = EventStore(db)
     snapshot = es.get_snapshot(project_id)
-    return [
-        aid for aid, status in (snapshot.artifact_statuses or {}).items()
-        if status == "stale"
-    ]
+    stale_dict = getattr(snapshot, "artifact_stale", None) or {}
+    return [aid for aid, is_stale in stale_dict.items() if is_stale]
 
 
 def _build_prompt_info(stage_def: StageDefinition) -> dict:
@@ -380,6 +378,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
     artifact_versions = snapshot.artifact_versions or {}
     stage_statuses = snapshot.stage_statuses or {}
     execution_map = snapshot.execution_map or {}
+    artifact_stale = getattr(snapshot, "artifact_stale", None) or {}
 
     artifacts = (
         db.execute(select(Artifact).where(Artifact.project_id == project_id)).scalars().all()
@@ -406,6 +405,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                     "label": doc.name,
                     "artifact_type": doc.artifact_type.value,
                     "status": doc_status,
+                    "is_stale": artifact_stale.get(doc.id, False),
                     "component_key": None,
                     "version": artifact_versions.get(doc.id, doc.version),
                     "stage_key": "project_doc",
@@ -444,6 +444,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                         "label": art.name,
                         "artifact_type": art.artifact_type.value,
                         "status": art_status,
+                        "is_stale": artifact_stale.get(art.id, False),
                         "component_key": art.component_key,
                         "version": artifact_versions.get(art.id, art.version),
                         "stage_key": stage_def.stage_key,
@@ -500,6 +501,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                         "label": label,
                         "artifact_type": stage_def.output_artifact_type,
                         "status": display_status,
+                        "is_stale": False,
                         "component_key": comp_key_val,
                         "version": 0,
                         "stage_key": stage_def.stage_key,

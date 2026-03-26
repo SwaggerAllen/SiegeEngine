@@ -45,6 +45,7 @@ class ArtifactResponse(BaseModel):
     human_review_notes: str | None
     file_path: str | None
     language: str | None
+    is_stale: bool = False
     created_at: str
     updated_at: str
 

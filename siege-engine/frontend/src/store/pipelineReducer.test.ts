@@ -191,7 +191,7 @@ describe('applyWSEvent', () => {
       stale_artifact_ids: ['a1', 'a2'],
     });
 
-    expect(snap.artifact_statuses['a1']).toBe('stale');
-    expect(snap.artifact_statuses['a2']).toBe('stale');
+    expect(snap.artifact_stale?.['a1']).toBe(true);
+    expect(snap.artifact_stale?.['a2']).toBe(true);
   });
 });

@@ -4,7 +4,7 @@ Determines which stages/entities are ready to execute based on what has
 already been generated in the current run.
 
 Dependencies are satisfied when parent artifacts have been *generated*
-(status in: approved, awaiting_review, stale) — approval is not required
+(status in: approved, awaiting_review) — approval is not required
 for downstream generation to proceed.
 
 Status reads use the PipelineSnapshot (event-sourced source of truth).
@@ -40,7 +40,7 @@ _ARTIFACT_TYPE_TO_STAGE_KEY: dict[ArtifactType, str] = {
 }
 
 # Statuses that indicate an artifact has been generated (has content).
-_GENERATED_STATUSES = {"approved", "awaiting_review", "stale"}
+_GENERATED_STATUSES = {"approved", "awaiting_review"}
 
 # Stage keys grouped by level for readiness checks.
 COMPONENT_STAGE_ORDER = [

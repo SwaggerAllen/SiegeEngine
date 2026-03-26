@@ -486,7 +486,6 @@ export function EventHistoryPanel({ projectId }: Props) {
                                 status === 'running' ? 'bg-blue-600 text-white' :
                                 status === 'awaiting_review' ? 'bg-yellow-600 text-white' :
                                 status === 'failed' ? 'bg-red-700 text-white' :
-                                status === 'stale' ? 'bg-orange-700 text-white' :
                                 'bg-gray-600 text-gray-300'
                               }`}>
                                 {status}
@@ -533,7 +532,6 @@ export function EventHistoryPanel({ projectId }: Props) {
                               status === 'approved' ? 'bg-green-700 text-white' :
                               status === 'generating' ? 'bg-blue-600 text-white' :
                               status === 'awaiting_review' ? 'bg-yellow-600 text-white' :
-                              status === 'stale' ? 'bg-orange-700 text-white' :
                               status === 'pending' ? 'bg-gray-600 text-gray-300' :
                               'bg-gray-600 text-gray-300'
                             }`}>
