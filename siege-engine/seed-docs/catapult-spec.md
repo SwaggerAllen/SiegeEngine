@@ -90,7 +90,7 @@ A flow run always starts with an input document, expands it into a requirements 
 
 ### A.3.1.1 Input Document Lifecycle
 
-The raw input document (user-provided) never changes. The **expanded input document** (requirements doc produced by phase 1) is a living document that can be updated — specifically, upward propagation may modify it when discovered requirements affect the project level (Section A.2.4). All other flows treat the expanded input doc as a read-only input.
+The raw input document (user-provided) never changes. The **expanded input document** (requirements doc produced by phase 1) is a living document that can be updated by any flow that modifies the project's requirements: upward propagation (when discovered requirements affect the project level), feature requests (when the feature introduces new requirements), and refactors (when restructuring reveals or changes requirements).
 
 ### A.3.2 Propagation
 
