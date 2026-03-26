@@ -49,25 +49,36 @@ The default flow. Generates all documents from scratch, walking the full documen
 
 ### A.2.2 Feature Request Flow
 
-Input is a feature description. At each architecture node, produces a plan document analyzing what needs to change, updates the architecture document, then propagates downward to affected leaf boulders where it generates a PR commit. Leaf nodes use the plan from their parent boulder.
+Input is a feature description. At each boulder level:
+
+1. A **plan node** takes the expanded input doc and the boulder's current architecture doc, and produces a plan describing what changes are needed at this level to achieve the feature
+2. An **architecture update node** takes the plan and updates the architecture doc accordingly
+3. The plan propagates downward as input to child boulders' plan nodes
+
+At leaf boulders, the plan from the parent boulder drives PR generation. Each plan builds on its parent's plan, creating a chain of increasingly specific change descriptions from system level down to implementation.
 
 ### A.2.3 Refactor Flow
 
-Input is a refactoring objective. Same structure as feature request: plan at each architecture node, update the architecture, propagate downward to leaf boulders for PR generation.
+Input is a refactoring objective. Same structure as feature request: plan at each architecture node (taking expanded input + current architecture), update the architecture given the plan, propagate the plan downward to leaf boulders for PR generation.
 
 ### A.2.4 Upward Propagation Flow
 
-Always initiated by the user. Used when new requirements discovered at downstream nodes need to propagate through the rest of the system. Starts at the tree's root and walks downward, but its purpose is to synchronize upstream documentation with changes that originated below. At each fan-out node, determines which children need updates based on the changes being propagated.
+Always initiated by the user. Used when new requirements discovered at downstream nodes need to propagate through the rest of the system. The algorithm is:
+
+1. **Upward pass**: Walk from the originating node up to the project root, collecting changes at each level
+2. **Downward pass**: Walk back down from the root through all fan-out nodes, routing changes to affected children — including children that were not on the original upward path but are impacted by the changes
+
+At fan-out nodes during the downward pass, the system identifies which children need updates. This means an upward propagation can trigger downstream changes in sibling subtrees — e.g., a bug fix that reveals a new requirement may update documentation going up and require code changes in an unrelated component going back down. Upward propagation may also update the expanded requirements document if the discovered changes affect project-level requirements.
 
 ### A.2.5 Bug Fix Flow
 
-Input is a PR that fixes a bug (not the bug itself). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates as an upward propagation: walking from each touched leaf up to the project root, updating documentation at each level to reflect what the code change reveals. Parent nodes wait for all descendant propagations to complete before updating, so changes from multiple touched leaves are merged into a single coherent update at each fan-out node rather than applied piecemeal.
+Input is a PR that fixes a bug (not the bug itself). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates as an upward propagation (Section A.2.4): walking from each touched leaf up to the project root, regenerating architecture documents at each level given the PR's changes. Parent nodes wait for all descendant propagations to complete before regenerating, so changes from multiple touched leaves are merged into a single coherent architecture update at each fan-out node. Unlike feature request and refactor flows, bug fix does not produce separate plan documents — the PR itself serves as the source of truth, and architectures are regenerated directly to reflect what the code change reveals.
 
 ## A.3 Phases
 
-Every flow run walks the document DAG in five phases. Each phase has a boulder template defining the processing steps for that phase.
+Every flow run walks the document DAG in five phases. Each phase has a boulder template defining the processing steps for that phase. Phases correspond directly to tree depth — phase 2 is the system level, phase 3 is the component level, and so on. Downward flows walk phases in order (1→5); upward propagation walks upward through phases then back down, potentially revisiting phases during the downward pass.
 
-1. **Input Expansion** — Takes raw user input and expands it into a structured requirements document
+1. **Input Expansion** — Takes raw user input and expands it into a structured requirements document (the "expanded input doc")
 2. **System Docs** — Produces or updates system-level architecture for the system boulder
 3. **Component Docs** — Instantiated once per component boulder; produces or updates component-level architecture
 4. **Subcomponent Docs** — Instantiated once per subcomponent boulder; produces or updates subcomponent-level architecture
@@ -75,13 +86,17 @@ Every flow run walks the document DAG in five phases. Each phase has a boulder t
 
 ### A.3.1 Phase Traversal
 
-A flow run always starts with an input document, expands it into a requirements document, then walks the tree from one particular node out to its furthest descendants. At each node it generates or edits one or more documents as defined by its flow type.
+A flow run always starts with an input document, expands it into a requirements document (the expanded input doc), then walks the tree from one particular node out to its furthest descendants. At each node it generates or edits one or more documents as defined by its flow type.
+
+### A.3.1.1 Input Document Lifecycle
+
+The raw input document (user-provided) never changes. The **expanded input document** (requirements doc produced by phase 1) is a living document that can be updated — specifically, upward propagation may modify it when discovered requirements affect the project level (Section A.2.4). All other flows treat the expanded input doc as a read-only input.
 
 ### A.3.2 Propagation
 
 By default, propagation of changes goes **downward**. At fan-out nodes, the system generates a routing document determining which child nodes to visit.
 
-**Upward propagation** goes up to the tree's first ancestor and then downward, with fan-out routing at each level. Upward propagation is always user-initiated and is specifically for ensuring changes found at downstream nodes make it through the rest of the system. During upward propagation, parent nodes wait for propagation from **all** descendants to complete before updating, so that inputs are merged and each parent regenerates only once per propagation run.
+**Upward propagation** is a two-pass algorithm (see Section A.2.4). During the upward pass, changes are collected bottom-up — parent nodes wait for **all** descendants to complete before updating, so inputs are merged and each parent regenerates only once. During the downward pass, fan-out routing identifies additional children impacted by the merged changes. Upward propagation is always user-initiated.
 
 ### A.3.3 Fan-Out
 
@@ -122,6 +137,8 @@ All nodes in boulder templates are visible to users. Users can see and understan
 
 Flow runs can spawn sub-runs. For example, a refactor sub-run during a scaffolding run, or an upward propagation sub-run during a refactor. Only one run or sub-run may be active at a time per project — sub-runs pause their parent run, execute, and then the parent resumes.
 
+When a sub-run completes, the parent run resumes and sees the current state of all nodes — including any modifications made by the sub-run. Nodes that the parent run has not yet processed will simply receive updated context reflecting the sub-run's changes. This is the intended mechanism for handling mid-flow discoveries: if reviewing a component reveals a missing upstream requirement, the user kicks off an upward propagation sub-run, it modifies the relevant upstream nodes, and when the parent resumes, all remaining unprocessed nodes pick up the new context naturally.
+
 ## A.6 Review and Approval
 
 Every document and commit produced by the system goes through review:
@@ -134,9 +151,11 @@ Every document and commit produced by the system goes through review:
 
 Some node types can be configured for auto-approval, skipping human review. This is configurable per node type, per phase, or per project.
 
-### A.6.2 Review Granularity
+### A.6.2 Review Cadence and Granularity
 
 Review gates are configurable: per-node, per-phase, leaves-only, or fully automatic. The default should be sensible but the user controls it.
+
+The intended review workflow is **batched**: the flow produces N documents, then pauses for human review of that batch. The reviewer reads and leaves feedback on some or all documents. Rejected documents and their downstream dependents are then regenerated as a sub-run incorporating the feedback. Once the sub-run completes, the flow resumes and produces the next batch of M documents. This produce-review-regenerate cycle repeats through the flow.
 
 ### A.6.3 Restart Semantics
 
