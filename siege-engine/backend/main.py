@@ -204,7 +204,8 @@ def _clean_slate_migration():
             if not artifacts_with_content:
                 logger.info(
                     "  Project %s (%s): no artifacts with content, skipping",
-                    project.name, pid,
+                    project.name,
+                    pid,
                 )
                 continue
 
@@ -248,12 +249,17 @@ def _clean_slate_migration():
             # 11. Create executions and emit events
             es = EventStore(db)
 
-            es.emit(pid, evt.RUN_CREATED, {
-                "run_id": run_id,
-                "run_number": 1,
-                "ai_loops": 1,
-                "stop_point": "end_of_phase",
-            }, run_id=run_id)
+            es.emit(
+                pid,
+                evt.RUN_CREATED,
+                {
+                    "run_id": run_id,
+                    "run_number": 1,
+                    "ai_loops": 1,
+                    "stop_point": "end_of_phase",
+                },
+                run_id=run_id,
+            )
 
             for art in sorted_artifacts:
                 type_val = art.artifact_type.value
@@ -283,23 +289,36 @@ def _clean_slate_migration():
                     "artifact_name": art.name,
                 }
 
-                es.emit(pid, evt.STAGE_STARTED, {
-                    **base_payload,
-                    "trigger": "clean_slate_migration",
-                }, run_id=run_id)
+                es.emit(
+                    pid,
+                    evt.STAGE_STARTED,
+                    {
+                        **base_payload,
+                        "trigger": "clean_slate_migration",
+                    },
+                    run_id=run_id,
+                )
 
                 es.emit(pid, evt.GENERATION_COMPLETED, base_payload, run_id=run_id)
 
                 es.emit(pid, evt.AWAITING_HUMAN_REVIEW, base_payload, run_id=run_id)
 
-            es.emit(pid, evt.RUN_COMPLETED, {
-                "run_id": run_id,
-                "status": "completed",
-            }, run_id=run_id)
+            es.emit(
+                pid,
+                evt.RUN_COMPLETED,
+                {
+                    "run_id": run_id,
+                    "status": "completed",
+                },
+                run_id=run_id,
+            )
 
             logger.info(
                 "  Project %s (%s): migrated %d artifacts, run_id=%s",
-                project.name, pid, len(sorted_artifacts), run_id,
+                project.name,
+                pid,
+                len(sorted_artifacts),
+                run_id,
             )
 
         db.commit()
@@ -363,7 +382,8 @@ def _reconcile_all_projects():
             total = sum(len(c) for c in results.values())
             logger.warning(
                 "Startup reconcile: %d corrections across %d projects",
-                total, len(results),
+                total,
+                len(results),
             )
         else:
             logger.info("Startup reconcile: all projects clean")

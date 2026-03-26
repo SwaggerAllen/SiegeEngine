@@ -5,9 +5,7 @@ retry_stage, and the cascade/invalidate helpers triggered by approvals
 and rejections.
 """
 
-import asyncio
 import logging
-import uuid
 from datetime import datetime
 
 from backend.models import (
@@ -23,8 +21,6 @@ from backend.models import (
     StopPoint,
 )
 from backend.pipeline import events as evt
-from backend.pipeline.nodes.ai_review import ai_review
-from backend.pipeline.nodes.generate import generate
 from backend.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -56,6 +52,7 @@ class ArtifactOpsMixin:
 
                         if artifact.file_path:
                             from backend.git_manager.service import git_manager
+
                             sha = git_manager.commit_artifact(
                                 execution.project_id,
                                 edited_content,
@@ -64,7 +61,8 @@ class ArtifactOpsMixin:
                             )
                             artifact.git_commit_sha = sha
                             self.events.emit(
-                                execution.project_id, evt.ARTIFACT_COMMITTED,
+                                execution.project_id,
+                                evt.ARTIFACT_COMMITTED,
                                 {
                                     "artifact_id": execution.artifact_id,
                                     "git_commit_sha": sha,
@@ -88,7 +86,8 @@ class ArtifactOpsMixin:
                             )
                         )
                         self.events.emit(
-                            execution.project_id, evt.COMMENT_ADDED,
+                            execution.project_id,
+                            evt.COMMENT_ADDED,
                             {
                                 "artifact_id": execution.artifact_id,
                                 "comment_type": "feedback",
@@ -100,7 +99,8 @@ class ArtifactOpsMixin:
                         )
 
             self._transition_execution(
-                execution, StageStatus.APPROVED,
+                execution,
+                StageStatus.APPROVED,
                 artifact_status=ArtifactStatus.APPROVED,
                 set_completed=True,
             )
@@ -166,7 +166,8 @@ class ArtifactOpsMixin:
                 execution_id,
             )
             self._transition_execution(
-                execution, StageStatus.REJECTED,
+                execution,
+                StageStatus.REJECTED,
                 artifact_status=ArtifactStatus.REJECTED,
             )
 
@@ -203,7 +204,8 @@ class ArtifactOpsMixin:
                     )
                 )
                 self.events.emit(
-                    execution.project_id, evt.COMMENT_ADDED,
+                    execution.project_id,
+                    evt.COMMENT_ADDED,
                     {
                         "artifact_id": execution.artifact_id,
                         "comment_type": "feedback",
@@ -276,6 +278,7 @@ class ArtifactOpsMixin:
 
                         if artifact.file_path:
                             from backend.git_manager.service import git_manager
+
                             sha = git_manager.commit_artifact(
                                 execution.project_id,
                                 edited_content,
@@ -284,7 +287,8 @@ class ArtifactOpsMixin:
                             )
                             artifact.git_commit_sha = sha
                             self.events.emit(
-                                execution.project_id, evt.ARTIFACT_COMMITTED,
+                                execution.project_id,
+                                evt.ARTIFACT_COMMITTED,
                                 {
                                     "artifact_id": execution.artifact_id,
                                     "git_commit_sha": sha,
@@ -308,7 +312,8 @@ class ArtifactOpsMixin:
                             )
                         )
                         self.events.emit(
-                            execution.project_id, evt.COMMENT_ADDED,
+                            execution.project_id,
+                            evt.COMMENT_ADDED,
                             {
                                 "artifact_id": execution.artifact_id,
                                 "comment_type": "feedback",
@@ -395,7 +400,8 @@ class ArtifactOpsMixin:
                     exc.component_key,
                 )
                 self._transition_execution(
-                    exc, StageStatus.REJECTED,
+                    exc,
+                    StageStatus.REJECTED,
                 )
                 if exc.artifact_id:
                     art = self.db.get(Artifact, exc.artifact_id)
@@ -456,7 +462,8 @@ class ArtifactOpsMixin:
         # Emit staleness_propagated event
         if stale_artifact_ids:
             self.events.emit(
-                project_id, evt.STALENESS_PROPAGATED,
+                project_id,
+                evt.STALENESS_PROPAGATED,
                 {"source_stage_order": approved_stage_order_index, "stale_ids": stale_artifact_ids},
             )
 
@@ -475,12 +482,14 @@ class ArtifactOpsMixin:
             self.db.query(StageExecution)
             .filter(
                 StageExecution.run_id == execution.run_id,
-                StageExecution.status.in_([
-                    StageStatus.RUNNING,
-                    StageStatus.AI_REVIEW,
-                    StageStatus.AWAITING_REVIEW,
-                    StageStatus.PENDING,
-                ]),
+                StageExecution.status.in_(
+                    [
+                        StageStatus.RUNNING,
+                        StageStatus.AI_REVIEW,
+                        StageStatus.AWAITING_REVIEW,
+                        StageStatus.PENDING,
+                    ]
+                ),
             )
             .count()
         )
@@ -506,7 +515,8 @@ class ArtifactOpsMixin:
         # (Same pattern as the _run_stage fix — prevents projection drift
         # where the DB has a completed run but the event log doesn't.)
         self.events.emit(
-            execution.project_id, evt.RUN_COMPLETED,
+            execution.project_id,
+            evt.RUN_COMPLETED,
             {"run_id": execution.run_id, "status": status_str},
             run_id=execution.run_id,
         )
@@ -553,7 +563,8 @@ class ArtifactOpsMixin:
         self.db.flush()
 
         self.events.emit(
-            project_id, evt.RUN_CREATED,
+            project_id,
+            evt.RUN_CREATED,
             {
                 "run_id": new_run.run_id,
                 "run_number": new_run.run_number,
@@ -565,7 +576,9 @@ class ArtifactOpsMixin:
 
         logger.info(
             "Created regeneration run #%d (run_id=%s) for project %s",
-            new_run.run_number, new_run.run_id, project_id,
+            new_run.run_number,
+            new_run.run_id,
+            project_id,
         )
         return new_run.run_id, new_run
 
@@ -614,6 +627,7 @@ class ArtifactOpsMixin:
 
                 if artifact.file_path:
                     from backend.git_manager.service import git_manager
+
                     sha = git_manager.commit_artifact(
                         project_id,
                         edited_content,
@@ -622,7 +636,8 @@ class ArtifactOpsMixin:
                     )
                     artifact.git_commit_sha = sha
                     self.events.emit(
-                        project_id, evt.ARTIFACT_COMMITTED,
+                        project_id,
+                        evt.ARTIFACT_COMMITTED,
                         {
                             "artifact_id": artifact_id,
                             "git_commit_sha": sha,
@@ -645,7 +660,8 @@ class ArtifactOpsMixin:
                     )
                 )
                 self.events.emit(
-                    project_id, evt.COMMENT_ADDED,
+                    project_id,
+                    evt.COMMENT_ADDED,
                     {
                         "artifact_id": artifact_id,
                         "comment_type": "feedback",
@@ -679,6 +695,7 @@ class ArtifactOpsMixin:
 
                 if artifact.file_path:
                     from backend.git_manager.service import git_manager
+
                     sha = git_manager.commit_artifact(
                         project_id,
                         edited_content,
@@ -687,7 +704,8 @@ class ArtifactOpsMixin:
                     )
                     artifact.git_commit_sha = sha
                     self.events.emit(
-                        project_id, evt.ARTIFACT_COMMITTED,
+                        project_id,
+                        evt.ARTIFACT_COMMITTED,
                         {
                             "artifact_id": artifact_id,
                             "git_commit_sha": sha,
@@ -710,7 +728,8 @@ class ArtifactOpsMixin:
                     )
                 )
                 self.events.emit(
-                    project_id, evt.COMMENT_ADDED,
+                    project_id,
+                    evt.COMMENT_ADDED,
                     {
                         "artifact_id": artifact_id,
                         "comment_type": "feedback",
@@ -722,7 +741,8 @@ class ArtifactOpsMixin:
 
             # Emit stale_resolved event
             self.events.emit(
-                project_id, evt.STALE_RESOLVED,
+                project_id,
+                evt.STALE_RESOLVED,
                 {
                     "artifact_id": artifact_id,
                     "action": "approved",
@@ -742,7 +762,8 @@ class ArtifactOpsMixin:
             )
             if execution and execution.status != StageStatus.APPROVED:
                 self._transition_execution(
-                    execution, StageStatus.APPROVED,
+                    execution,
+                    StageStatus.APPROVED,
                     set_completed=True,
                 )
 
@@ -820,9 +841,7 @@ class ArtifactOpsMixin:
             )
 
         source_order = source_stage.order_index
-        downstream_stage_keys = {
-            s.stage_key for s in config.stages if s.order_index > source_order
-        }
+        downstream_stage_keys = {s.stage_key for s in config.stages if s.order_index > source_order}
 
         if not downstream_stage_keys:
             logger.info("No downstream stages to regen for artifact %s", artifact_id)
@@ -870,7 +889,8 @@ class ArtifactOpsMixin:
 
         # Emit event
         self.events.emit(
-            project_id, evt.CASCADE_STARTED,
+            project_id,
+            evt.CASCADE_STARTED,
             {
                 "run_id": regen_run.run_id,
                 "source_artifact_id": artifact_id,
@@ -889,10 +909,15 @@ class ArtifactOpsMixin:
         )
 
         from backend.pipeline.queue import enqueue
-        enqueue(self.db, "start_pipeline", {
-            "project_id": project_id,
-            "pipeline_run_id": regen_run.id,
-        })
+
+        enqueue(
+            self.db,
+            "start_pipeline",
+            {
+                "project_id": project_id,
+                "pipeline_run_id": regen_run.id,
+            },
+        )
 
     def prune_artifact(self, project_id: str, artifact_id: str):
         """Remove an artifact and its associated records from the project.
@@ -962,7 +987,8 @@ class ArtifactOpsMixin:
 
         # Emit artifact_pruned event
         self.events.emit(
-            project_id, evt.ARTIFACT_PRUNED,
+            project_id,
+            evt.ARTIFACT_PRUNED,
             {
                 "artifact_id": artifact_id,
                 "stage_key": artifact.artifact_type.value,

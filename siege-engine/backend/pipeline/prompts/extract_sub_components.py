@@ -14,8 +14,13 @@ class ExtractSubComponentsPrompt(PromptTemplate):
     ):
         if prompt_config:
             return self._build_from_config(
-                input_artifacts, component_key, feedback, human_notes, prompt_config,
-                current_content=current_content, upstream_changes=upstream_changes
+                input_artifacts,
+                component_key,
+                feedback,
+                human_notes,
+                prompt_config,
+                current_content=current_content,
+                upstream_changes=upstream_changes,
             )
 
         component_arch = input_artifacts.get("component_architectures", "")
@@ -36,5 +41,9 @@ class ExtractSubComponentsPrompt(PromptTemplate):
             },
         ]
         return self._inject_feedback(
-            messages, feedback, human_notes, current_content, upstream_changes,
+            messages,
+            feedback,
+            human_notes,
+            current_content,
+            upstream_changes,
         )

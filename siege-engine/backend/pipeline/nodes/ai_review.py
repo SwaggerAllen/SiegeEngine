@@ -18,14 +18,14 @@ STAGE_REVIEW_GUIDANCE: dict[str, str] = {
         "Flag any of these anti-patterns:\n"
         "\n"
         "- **Premature solutionizing**: References to specific technologies, frameworks,\n"
-        "  databases, or architectural patterns. \"Use PostgreSQL\" is architecture, not a\n"
-        "  requirement. \"Persistent relational storage with ACID guarantees\" is a requirement.\n"
+        '  databases, or architectural patterns. "Use PostgreSQL" is architecture, not a\n'
+        '  requirement. "Persistent relational storage with ACID guarantees" is a requirement.\n'
         "\n"
         "- **Architecture leakage**: Component breakdowns, service boundaries, API designs,\n"
         "  or deployment topologies. The requirements should be satisfiable by multiple\n"
         "  possible architectures.\n"
         "\n"
-        "- **Vague requirements**: \"The system should be fast\" or \"handle many users.\"\n"
+        '- **Vague requirements**: "The system should be fast" or "handle many users."\n'
         "  Requirements need specificity: latency targets, throughput numbers, user counts.\n"
         "\n"
         "- **Missing requirements**: Check that functional, non-functional, data, integration,\n"

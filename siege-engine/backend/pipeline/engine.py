@@ -88,7 +88,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         logger.debug(
             "Transition exec %s: %s -> %s (artifact: %s)",
-            execution.id, old_status.value, new_status.value,
+            execution.id,
+            old_status.value,
+            new_status.value,
             artifact_status.value if artifact_status else "unchanged",
         )
 
@@ -171,15 +173,14 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         # Emit run_created event
         if pipeline_run:
             self.events.emit(
-                project_id, evt.RUN_CREATED,
+                project_id,
+                evt.RUN_CREATED,
                 {
                     "run_id": run_id,
                     "run_number": pipeline_run.run_number,
                     "ai_loops": pipeline_run.ai_loops,
                     "stop_point": (
-                        pipeline_run.stop_point.value
-                        if pipeline_run.stop_point
-                        else "end_of_phase"
+                        pipeline_run.stop_point.value if pipeline_run.stop_point else "end_of_phase"
                     ),
                     "start_stage_key": pipeline_run.start_stage_key,
                     "start_component_key": pipeline_run.start_component_key,
@@ -240,15 +241,14 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         # Emit run_created event for resumed run
         self.events.emit(
-            project_id, evt.RUN_CREATED,
+            project_id,
+            evt.RUN_CREATED,
             {
                 "run_id": new_run_id,
                 "run_number": pipeline_run.run_number,
                 "ai_loops": pipeline_run.ai_loops,
                 "stop_point": (
-                    pipeline_run.stop_point.value
-                    if pipeline_run.stop_point
-                    else "end_of_phase"
+                    pipeline_run.stop_point.value if pipeline_run.stop_point else "end_of_phase"
                 ),
                 "start_stage_key": pipeline_run.start_stage_key,
                 "start_component_key": pipeline_run.start_component_key,
@@ -342,9 +342,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         if not config:
             raise ValueError("Pipeline config not found")
 
-        stage_def = next(
-            (s for s in config.stages if s.stage_key == stage_key), None
-        )
+        stage_def = next((s for s in config.stages if s.stage_key == stage_key), None)
         if not stage_def:
             raise ValueError(f"Stage definition not found: {stage_key}")
 
@@ -422,9 +420,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             if not entity_keys:
                 all_entities = self._get_all_entities_for_stage(project_id, stage_def)
                 if not all_entities:
-                    raise ValueError(
-                        f"No entities found for fan-out stage {stage_key}"
-                    )
+                    raise ValueError(f"No entities found for fan-out stage {stage_key}")
                 raise ValueError(
                     f"No entities are ready for stage {stage_key}. "
                     f"{len(all_entities)} entities exist but are blocked on "
@@ -449,14 +445,13 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
             if execution.status == StageStatus.FAILED:
                 logger.error(
-                    "Stopping trigger: entity %s failed", entity_key,
+                    "Stopping trigger: entity %s failed",
+                    entity_key,
                 )
                 break
 
         if not execution_ids:
-            raise ValueError(
-                f"All entities for stage {stage_key} are already running"
-            )
+            raise ValueError(f"All entities for stage {stage_key} are already running")
 
         return execution_ids
 
@@ -481,10 +476,14 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             .filter_by(project_id=project_id)
             .filter(StageExecution.run_id != new_run_id)
             .filter(StageExecution.artifact_id.isnot(None))
-            .filter(StageExecution.status.in_([
-                StageStatus.AWAITING_REVIEW,
-                StageStatus.REJECTED,
-            ]))
+            .filter(
+                StageExecution.status.in_(
+                    [
+                        StageStatus.AWAITING_REVIEW,
+                        StageStatus.REJECTED,
+                    ]
+                )
+            )
             .join(Artifact, StageExecution.artifact_id == Artifact.id)
             .filter(Artifact.status == ArtifactStatus.APPROVED)
             .all()
@@ -493,10 +492,14 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             logger.warning(
                 "Reconciling status mismatch: execution %s (stage=%s, status=%s) "
                 "has approved artifact %s — setting execution to APPROVED",
-                ex.id, ex.stage_key, ex.status.value, ex.artifact_id,
+                ex.id,
+                ex.stage_key,
+                ex.status.value,
+                ex.artifact_id,
             )
             self._transition_execution(
-                ex, StageStatus.APPROVED,
+                ex,
+                StageStatus.APPROVED,
                 set_completed=not ex.completed_at,
             )
         if mismatched:
@@ -574,7 +577,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
             # Emit carried_over event
             self.events.emit(
-                project_id, evt.CARRIED_OVER,
+                project_id,
+                evt.CARRIED_OVER,
                 {
                     "execution_id": new_exec.id,
                     "stage_key": new_exec.stage_key,
@@ -632,9 +636,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 stage_def.stage_key,
                 exec_.artifact_id,
             )
-            await self._post_generation_hook(
-                project_id, stage_def, exec_.component_key, exec_
-            )
+            await self._post_generation_hook(project_id, stage_def, exec_.component_key, exec_)
             self.db.commit()
 
     def _should_pause(
@@ -674,6 +676,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
     def _get_start_order(self, pipeline_run: PipelineRun, project_id: str | None = None) -> int:
         """Get the order_index of the run's starting stage."""
         from backend.pipeline.readiness import _STAGE_KEY_TO_ORDER
+
         if pipeline_run.start_stage_key:
             return _STAGE_KEY_TO_ORDER.get(pipeline_run.start_stage_key, 0)
         # No explicit start — start from beginning
@@ -729,7 +732,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
             logger.info(
                 "[orchestrator] === Pass %d === run_id=%s start_stage=%s stop_point=%s",
-                _pass_num, run_id,
+                _pass_num,
+                run_id,
                 pipeline_run.start_stage_key if pipeline_run else None,
                 pipeline_run.stop_point.value if pipeline_run and pipeline_run.stop_point else None,
             )
@@ -749,13 +753,21 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 # run should stop after component_architectures).
                 should_pause = self._should_pause(stage_def, pipeline_run, project_id)
                 if should_pause:
-                    _start_order = self._get_start_order(pipeline_run, project_id) if pipeline_run else -1
-                    _phase_complete = self._starting_phase_complete(pipeline_run, project_id) if pipeline_run else False
+                    _start_order = (
+                        self._get_start_order(pipeline_run, project_id) if pipeline_run else -1
+                    )
+                    _phase_complete = (
+                        self._starting_phase_complete(pipeline_run, project_id)
+                        if pipeline_run
+                        else False
+                    )
                     logger.info(
                         "[orchestrator] Stage %s (order=%d) past stop point — "
                         "start_order=%d, starting_phase_complete=%s, effective_order=%d",
-                        stage_def.stage_key, stage_def.order_index,
-                        _start_order, _phase_complete,
+                        stage_def.stage_key,
+                        stage_def.order_index,
+                        _start_order,
+                        _phase_complete,
                         _start_order + (1 if _phase_complete else 0),
                     )
                     hit_pause_boundary = True
@@ -777,11 +789,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         stage_key=stage_def.stage_key,
                         run_id=run_id,
                     )
-                    .filter(
-                        StageExecution.status.in_(
-                            [StageStatus.RUNNING, StageStatus.AI_REVIEW]
-                        )
-                    )
+                    .filter(StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]))
                     .count()
                 )
                 if inflight_in_run > 0:
@@ -800,9 +808,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     .filter(
                         StageExecution.project_id == project_id,
                         StageExecution.stage_key == stage_def.stage_key,
-                        StageExecution.status.in_(
-                            [StageStatus.RUNNING, StageStatus.AI_REVIEW]
-                        ),
+                        StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]),
                     )
                     .count()
                 )
@@ -854,16 +860,15 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                             StageExecution.project_id == project_id,
                             StageExecution.stage_key == stage_def.stage_key,
                             StageExecution.component_key.is_(None),
-                            StageExecution.status.in_(
-                                [StageStatus.RUNNING, StageStatus.AI_REVIEW]
-                            ),
+                            StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]),
                         )
                         .first()
                     )
                     if already_running:
                         logger.info(
                             "Stage %s already running (execution %s), skipping",
-                            stage_def.stage_key, already_running.id,
+                            stage_def.stage_key,
+                            already_running.id,
                         )
                         continue
 
@@ -977,7 +982,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         if already_running:
                             logger.info(
                                 "Entity %s/%s already running (execution %s), skipping",
-                                stage_def.stage_key, entity_key, already_running.id,
+                                stage_def.stage_key,
+                                entity_key,
+                                already_running.id,
                             )
                             continue
 
@@ -1033,8 +1040,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             # --- End of stage scan ---
 
             logger.info(
-                "[orchestrator] Pass %d result: did_work=%s, has_inflight=%s, hit_pause=%s (stage=%s)",
-                _pass_num, did_work, has_inflight_work,
+                "[orchestrator] Pass %d result: did_work=%s, "
+                "has_inflight=%s, hit_pause=%s (stage=%s)",
+                _pass_num,
+                did_work,
+                has_inflight_work,
                 hit_pause_boundary,
                 pause_stage_def.stage_key if pause_stage_def else None,
             )
@@ -1050,7 +1060,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             if hit_pause_boundary:
                 # All work before the stop point is done — emit pause.
                 self.events.emit(
-                    project_id, evt.PIPELINE_PAUSED,
+                    project_id,
+                    evt.PIPELINE_PAUSED,
                     {"stage_key": pause_stage_def.stage_key, "run_id": run_id},
                     run_id=run_id,
                 )
@@ -1084,7 +1095,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
             # Emit event BEFORE commit so both are persisted atomically.
             self.events.emit(
-                project_id, evt.RUN_COMPLETED,
+                project_id,
+                evt.RUN_COMPLETED,
                 {"run_id": run_id, "status": "completed"},
                 run_id=run_id,
             )
@@ -1106,7 +1118,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
                 # Record git checkpoint in event trail
                 self.events.emit(
-                    project_id, evt.ARTIFACT_COMMITTED,
+                    project_id,
+                    evt.ARTIFACT_COMMITTED,
                     {
                         "git_commit_sha": git_commit_sha,
                         "run_id": run_id,
@@ -1187,7 +1200,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         if target_id:
             stuck = self.db.get(Artifact, target_id)
             if stuck and stuck.status in (
-                ArtifactStatus.GENERATING, ArtifactStatus.AI_REVIEWING,
+                ArtifactStatus.GENERATING,
+                ArtifactStatus.AI_REVIEWING,
             ):
                 self._mark_artifact_status(target_id, fallback_status)
 
@@ -1229,6 +1243,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         # Stream backend logs to connected WebSocket clients
         from backend.websocket.log_handler import WebSocketLogHandler
+
         log_streamer = WebSocketLogHandler(project_id)
         log_streamer.install()
 
@@ -1237,7 +1252,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         # the commit came first, creating a window where the DB had a RUNNING
         # execution with no corresponding event (projection drift).
         self.events.emit(
-            project_id, evt.STAGE_STARTED,
+            project_id,
+            evt.STAGE_STARTED,
             {
                 "execution_id": execution.id,
                 "stage_key": stage_def.stage_key,
@@ -1263,7 +1279,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         try:  # the finally below uninstalls log_streamer
             self.events.emit(
-                project_id, evt.GENERATION_PROGRESS,
+                project_id,
+                evt.GENERATION_PROGRESS,
                 {
                     "stage_key": stage_def.stage_key,
                     "component_key": component_key,
@@ -1297,19 +1314,23 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             gen_artifact = self.db.get(Artifact, artifact_id)
             if ctx.version_comment and gen_artifact:
                 from backend.models import ArtifactComment
-                self.db.add(ArtifactComment(
-                    artifact_id=artifact_id,
-                    project_id=project_id,
-                    author_id=None,
-                    content=f"{ctx.version_comment} to v{gen_artifact.version}",
-                    comment_type="system_event",
-                    artifact_version=gen_artifact.version,
-                ))
+
+                self.db.add(
+                    ArtifactComment(
+                        artifact_id=artifact_id,
+                        project_id=project_id,
+                        author_id=None,
+                        content=f"{ctx.version_comment} to v{gen_artifact.version}",
+                        comment_type="system_event",
+                        artifact_version=gen_artifact.version,
+                    )
+                )
 
             # Record artifact git commit in event trail
             if gen_artifact and gen_artifact.git_commit_sha:
                 self.events.emit(
-                    project_id, evt.ARTIFACT_COMMITTED,
+                    project_id,
+                    evt.ARTIFACT_COMMITTED,
                     {
                         "artifact_id": artifact_id,
                         "git_commit_sha": gen_artifact.git_commit_sha,
@@ -1324,7 +1345,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             # AI Review
             if stage_def.ai_review_enabled:
                 self.events.emit(
-                    project_id, evt.GENERATION_PROGRESS,
+                    project_id,
+                    evt.GENERATION_PROGRESS,
                     {
                         "stage_key": stage_def.stage_key,
                         "component_key": component_key,
@@ -1344,7 +1366,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 )
 
                 self._transition_execution(
-                    execution, StageStatus.AI_REVIEW,
+                    execution,
+                    StageStatus.AI_REVIEW,
                     artifact_status=None,
                 )
                 self.db.flush()
@@ -1365,7 +1388,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 if feedback and ai_loops > 1:
                     for loop_i in range(1, ai_loops):
                         self.events.emit(
-                            project_id, evt.GENERATION_PROGRESS,
+                            project_id,
+                            evt.GENERATION_PROGRESS,
                             {
                                 "stage_key": stage_def.stage_key,
                                 "component_key": component_key,
@@ -1414,7 +1438,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             # All generated artifacts go to AWAITING_REVIEW — only human
             # approval can move them to APPROVED.
             self._transition_execution(
-                execution, StageStatus.AWAITING_REVIEW,
+                execution,
+                StageStatus.AWAITING_REVIEW,
                 artifact_status=ArtifactStatus.AWAITING_REVIEW,
             )
 
@@ -1438,7 +1463,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             )
             self._recover_artifact_on_error(ctx)
             self._transition_execution(
-                execution, StageStatus.FAILED,
+                execution,
+                StageStatus.FAILED,
                 error_message="Cancelled by force-restart",
                 set_completed=True,
             )
@@ -1451,7 +1477,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             )
             self._recover_artifact_on_error(ctx)
             self._transition_execution(
-                execution, StageStatus.FAILED,
+                execution,
+                StageStatus.FAILED,
                 error_message=str(e),
                 set_completed=True,
             )
@@ -1481,7 +1508,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 await self._try_complete_run(execution)
             except Exception:
                 logger.exception(
-                    "Failed to complete run after stage %s", execution.stage_key,
+                    "Failed to complete run after stage %s",
+                    execution.stage_key,
                 )
 
             # For standalone executions (no PipelineRun, e.g. revision),
@@ -1545,7 +1573,10 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         return None
 
     def _gather_inputs(
-        self, project_id: str, stage_def: StageDefinition, component_key: str | None = None,
+        self,
+        project_id: str,
+        stage_def: StageDefinition,
+        component_key: str | None = None,
     ) -> dict[str, str]:
         """Gather input artifact contents for a stage.
 
@@ -1691,17 +1722,10 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         """Add input documents configured to inject into this stage."""
         from backend.models import InputDocument
 
-        docs = (
-            self.db.query(InputDocument)
-            .filter_by(project_id=project_id)
-            .all()
-        )
+        docs = self.db.query(InputDocument).filter_by(project_id=project_id).all()
         matching = [d for d in docs if stage_key in (d.inject_into_stages or [])]
         if matching:
-            doc_parts = [
-                f"### {d.name} ({d.doc_type})\n\n{d.content}"
-                for d in matching
-            ]
+            doc_parts = [f"### {d.name} ({d.doc_type})\n\n{d.content}" for d in matching]
             inputs["input_documents"] = "\n\n---\n\n".join(doc_parts)
         return inputs
 

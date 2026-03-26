@@ -57,13 +57,17 @@ async def resume_stage(
 ):
     user_id = _user.id
 
-    enqueue(db, "resume_stage", {
-        "execution_id": req.execution_id,
-        "action": req.action,
-        "notes": req.notes,
-        "edited_content": req.edited_content,
-        "user_id": user_id,
-    })
+    enqueue(
+        db,
+        "resume_stage",
+        {
+            "execution_id": req.execution_id,
+            "action": req.action,
+            "notes": req.notes,
+            "edited_content": req.edited_content,
+            "user_id": user_id,
+        },
+    )
     return {"status": "resumed"}
 
 
@@ -77,11 +81,15 @@ async def revise_artifact(
     """Revise an approved artifact with AI using human feedback."""
     user_id = _user.id
 
-    enqueue(db, "revise_artifact", {
-        "artifact_id": req.artifact_id,
-        "feedback": req.feedback,
-        "user_id": user_id,
-    })
+    enqueue(
+        db,
+        "revise_artifact",
+        {
+            "artifact_id": req.artifact_id,
+            "feedback": req.feedback,
+            "user_id": user_id,
+        },
+    )
     return {"status": "revision_started"}
 
 
@@ -95,13 +103,17 @@ async def resolve_stale(
     """Approve, reject, or save feedback on a stale artifact."""
     user_id = _user.id
 
-    enqueue(db, "resolve_stale", {
-        "artifact_id": req.artifact_id,
-        "action": req.action,
-        "notes": req.notes,
-        "edited_content": req.edited_content,
-        "user_id": user_id,
-    })
+    enqueue(
+        db,
+        "resolve_stale",
+        {
+            "artifact_id": req.artifact_id,
+            "action": req.action,
+            "notes": req.notes,
+            "edited_content": req.edited_content,
+            "user_id": user_id,
+        },
+    )
     return {"status": "resolving"}
 
 
@@ -113,9 +125,13 @@ async def regen_downstream(
     _user: User = Depends(_require_writer),
 ):
     """Start a scoped run to regenerate already-generated downstream nodes."""
-    enqueue(db, "regen_downstream", {
-        "artifact_id": req.artifact_id,
-    })
+    enqueue(
+        db,
+        "regen_downstream",
+        {
+            "artifact_id": req.artifact_id,
+        },
+    )
     return {"status": "regenerating"}
 
 
@@ -148,7 +164,8 @@ async def cancel_stage(
 
     engine = PipelineEngine(db)
     engine._transition_execution(
-        execution, StageStatus.FAILED,
+        execution,
+        StageStatus.FAILED,
         artifact_status=art_status,
         error_message="Cancelled by user",
         set_completed=True,
@@ -186,8 +203,12 @@ async def force_restart_stage(
         raise HTTPException(404, "Execution not found")
 
     restartable_statuses = {
-        "running", "ai_review", "failed", "rejected",
-        "awaiting_review", "approved",
+        "running",
+        "ai_review",
+        "failed",
+        "rejected",
+        "awaiting_review",
+        "approved",
     }
     if execution.status.value not in restartable_statuses:
         raise HTTPException(
@@ -206,7 +227,8 @@ async def force_restart_stage(
 
     engine = PipelineEngine(db)
     engine._transition_execution(
-        execution, StageStatus.FAILED,
+        execution,
+        StageStatus.FAILED,
         artifact_status=art_status,
         error_message="Force-restarted by user",
         set_completed=True,
@@ -250,9 +272,7 @@ async def trigger_stage(
     """Manually trigger a single stage.  Useful for recovering from stuck
     pipeline states where no execution exists to force-restart."""
     config = _get_config_or_404(db, project_id)
-    stage_def = next(
-        (s for s in config.stages if s.stage_key == req.stage_key), None
-    )
+    stage_def = next((s for s in config.stages if s.stage_key == req.stage_key), None)
     if not stage_def:
         raise HTTPException(404, f"Stage '{req.stage_key}' not found")
 

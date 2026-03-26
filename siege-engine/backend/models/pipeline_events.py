@@ -30,9 +30,7 @@ class PipelineSnapshot(Base):
     __tablename__ = "pipeline_snapshots"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    project_id: Mapped[str] = mapped_column(
-        ForeignKey("projects.id"), nullable=False, unique=True
-    )
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, unique=True)
     last_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     run_status: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     stage_statuses: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)

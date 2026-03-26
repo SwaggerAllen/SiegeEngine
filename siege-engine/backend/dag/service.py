@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 from backend.models import (
     Artifact,
     ArtifactDependency,
-    ArtifactStatus,
     ArtifactType,
     ComponentDefinition,
     PipelineConfig,
@@ -39,9 +38,7 @@ def _get_latest_run_executions(
 
     # Executions belonging to the latest run
     run_execs = (
-        db.query(StageExecution)
-        .filter_by(project_id=project_id, run_id=latest_run.run_id)
-        .all()
+        db.query(StageExecution).filter_by(project_id=project_id, run_id=latest_run.run_id).all()
     )
 
     # Also include executions that don't belong to this run but started
@@ -124,8 +121,10 @@ def propagate_staleness(db: Session, artifact_id: str, event_store=None) -> list
     # Emit staleness_propagated event FIRST (snapshot source of truth)
     if stale_ids and event_store:
         from backend.pipeline import events as evt
+
         event_store.emit(
-            artifact.project_id, evt.STALENESS_PROPAGATED,
+            artifact.project_id,
+            evt.STALENESS_PROPAGATED,
             {"source_artifact_id": artifact_id, "stale_ids": stale_ids},
         )
 
@@ -177,6 +176,7 @@ def get_regeneration_order(db: Session, artifact_ids: list[str]) -> list[list[st
 def get_stale_artifacts(db: Session, project_id: str) -> list[str]:
     """Return IDs of stale artifacts using the snapshot as source of truth."""
     from backend.pipeline.event_store import EventStore
+
     es = EventStore(db)
     snapshot = es.get_snapshot(project_id)
     stale_dict = getattr(snapshot, "artifact_stale", None) or {}
@@ -309,9 +309,7 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
-def _derive_stage_status_from_snapshot(
-    stage_key: str, stage_statuses: dict[str, str]
-) -> str:
+def _derive_stage_status_from_snapshot(stage_key: str, stage_statuses: dict[str, str]) -> str:
     """Derive aggregate status for a stage from snapshot stage_statuses.
 
     Handles both non-fan-out (exact match) and fan-out (prefix match) stages.
@@ -323,8 +321,7 @@ def _derive_stage_status_from_snapshot(
     # Fan-out: collect all entries that start with this stage_key
     prefix = f"{stage_key}/"
     component_statuses = [
-        status for key, status in stage_statuses.items()
-        if key.startswith(prefix)
+        status for key, status in stage_statuses.items() if key.startswith(prefix)
     ]
     if not component_statuses:
         return "pending"
@@ -429,7 +426,8 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
             # Derive composite key for stage status / execution lookup
             comp_key = (
                 f"{stage_def.stage_key}/{art.component_key}"
-                if art.component_key else stage_def.stage_key
+                if art.component_key
+                else stage_def.stage_key
             )
             stage_status = stage_statuses.get(comp_key)
             is_active = stage_status in ("running", "ai_review")
@@ -467,7 +465,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
             if snap_key == stage_def.stage_key:
                 comp_key_val = None
             elif snap_key.startswith(f"{stage_def.stage_key}/"):
-                comp_key_val = snap_key[len(stage_def.stage_key) + 1:]
+                comp_key_val = snap_key[len(stage_def.stage_key) + 1 :]
             else:
                 continue
 
@@ -601,9 +599,9 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                     edge_key = (src_node["id"], tgt_node["id"])
                     if edge_key not in existing_edge_keys:
                         existing_edge_keys.add(edge_key)
-                        is_animated = src_node["data"].get("is_active", False) or tgt_node["data"].get(
-                            "is_active", False
-                        )
+                        is_animated = src_node["data"].get("is_active", False) or tgt_node[
+                            "data"
+                        ].get("is_active", False)
                         edges.append(
                             {
                                 "id": f"dep_edge_{edge_idx}",

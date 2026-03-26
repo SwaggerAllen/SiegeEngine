@@ -276,7 +276,8 @@ class ComponentManagerMixin:
             if artifact and artifact.content:
                 logger.warning(
                     "Healing missing components for project %s from artifact %s",
-                    project_id, artifact.id,
+                    project_id,
+                    artifact.id,
                 )
                 self._store_components(project_id, artifact.content)
                 self.db.flush()
@@ -304,7 +305,8 @@ class ComponentManagerMixin:
                     if existing == 0:
                         logger.warning(
                             "Healing missing sub-components for parent=%s from artifact %s",
-                            sub_art.component_key, sub_art.id,
+                            sub_art.component_key,
+                            sub_art.id,
                         )
                         self._store_sub_components(
                             project_id, sub_art.component_key, sub_art.content

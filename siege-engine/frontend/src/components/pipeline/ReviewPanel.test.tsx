@@ -58,6 +58,7 @@ const baseArtifact: Artifact = {
   component_key: null,
   content: 'Some content',
   status: 'awaiting_review',
+  is_stale: false,
   version: 1,
   ai_review_feedback: null,
   human_review_notes: null,

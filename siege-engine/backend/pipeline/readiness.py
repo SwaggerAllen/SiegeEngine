@@ -102,7 +102,8 @@ class ReadinessMixin:
         if missing:
             logger.debug(
                 "[readiness] %s not fully generated: missing/non-generated: %s",
-                stage_def.stage_key, missing[:10],
+                stage_def.stage_key,
+                missing[:10],
             )
             return False
 
@@ -162,8 +163,7 @@ class ReadinessMixin:
             start_comp = pipeline_run.start_component_key
             if component_key:
                 # component_key matches or is a sub-component of start_comp
-                if not (component_key == start_comp
-                        or component_key.startswith(f"{start_comp}.")):
+                if not (component_key == start_comp or component_key.startswith(f"{start_comp}.")):
                     return False
             elif stage_def.fan_out_strategy != FanOutStrategy.NONE:
                 # Fan-out stage but no component_key yet — will be filtered
@@ -206,7 +206,10 @@ class ReadinessMixin:
         return []
 
     def _entity_already_generated(
-        self, project_id: str, stage_key: str, component_key: str | None,
+        self,
+        project_id: str,
+        stage_key: str,
+        component_key: str | None,
     ) -> bool:
         """Check if an entity already has generated content in the snapshot.
 
@@ -218,7 +221,10 @@ class ReadinessMixin:
         return (snapshot.stage_statuses or {}).get(key) in _GENERATED_STATUSES
 
     def _get_ready_entities(
-        self, project_id: str, stage_def: StageDefinition, run_id: str,
+        self,
+        project_id: str,
+        stage_def: StageDefinition,
+        run_id: str,
         pipeline_run: PipelineRun | None = None,
     ) -> list[str]:
         """Get entity keys that are ready to be processed for a fan-out stage."""
@@ -238,7 +244,8 @@ class ReadinessMixin:
                 if not self._is_in_run_scope(stage_def, key, pipeline_run):
                     logger.debug(
                         "[readiness] %s/%s: out of run scope (start_component=%s)",
-                        stage_def.stage_key, key,
+                        stage_def.stage_key,
+                        key,
                         pipeline_run.start_component_key if pipeline_run else None,
                     )
                     continue
@@ -247,7 +254,8 @@ class ReadinessMixin:
                 ):
                     logger.debug(
                         "[readiness] %s/%s: skipped (regen_only, not previously generated)",
-                        stage_def.stage_key, key,
+                        stage_def.stage_key,
+                        key,
                     )
                     continue
                 if self._is_component_ready(
@@ -257,7 +265,9 @@ class ReadinessMixin:
                 else:
                     logger.debug(
                         "[readiness] %s/%s: not ready (deps=%s)",
-                        stage_def.stage_key, key, comp.get("dependencies", []),
+                        stage_def.stage_key,
+                        key,
+                        comp.get("dependencies", []),
                     )
 
         elif fan_out == FanOutStrategy.SUB_COMPONENT:
@@ -314,7 +324,11 @@ class ReadinessMixin:
         if existing:
             logger.debug(
                 "[readiness] %s/%s not ready: existing exec %s (status=%s) in run %s",
-                stage_def.stage_key, comp_key, existing.id, existing.status.value, run_id,
+                stage_def.stage_key,
+                comp_key,
+                existing.id,
+                existing.status.value,
+                run_id,
             )
             return False
 
@@ -325,7 +339,9 @@ class ReadinessMixin:
             ):
                 logger.debug(
                     "[readiness] %s/%s not ready: dependency %s not generated",
-                    stage_def.stage_key, comp_key, dep_key,
+                    stage_def.stage_key,
+                    comp_key,
+                    dep_key,
                 )
                 return False
 
@@ -335,7 +351,9 @@ class ReadinessMixin:
                 if not self._has_generated_execution(project_id, prior_key, comp_key, run_id):
                     logger.debug(
                         "[readiness] %s/%s not ready: prior stage %s not generated",
-                        stage_def.stage_key, comp_key, prior_key,
+                        stage_def.stage_key,
+                        comp_key,
+                        prior_key,
                     )
                     return False
 

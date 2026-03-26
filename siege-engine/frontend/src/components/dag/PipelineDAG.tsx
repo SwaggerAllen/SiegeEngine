@@ -182,6 +182,7 @@ export interface SearchableNode {
   label: string;
   componentKey: string | null;
   status: string;
+  isStale?: boolean;
   stageKey: string;
   artifactType: string;
   hasArtifact: boolean;

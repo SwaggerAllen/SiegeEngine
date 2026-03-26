@@ -28,6 +28,7 @@ function makeArtifact(overrides: Partial<Artifact>): Artifact {
     component_key: 'comp_a',
     content: null,
     status: 'awaiting_review',
+    is_stale: false,
     version: 1,
     ai_review_feedback: null,
     human_review_notes: null,

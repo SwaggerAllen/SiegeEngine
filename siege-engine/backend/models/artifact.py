@@ -90,7 +90,9 @@ class ComponentDefinition(Base):
     __table_args__ = (
         Index(
             "uq_comp_def_project_key_parent",
-            "project_id", "key", text("COALESCE(parent_key, '')"),
+            "project_id",
+            "key",
+            text("COALESCE(parent_key, '')"),
             unique=True,
         ),
     )

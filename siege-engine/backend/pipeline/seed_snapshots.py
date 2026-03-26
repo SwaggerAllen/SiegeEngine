@@ -45,8 +45,7 @@ def seed_snapshot_for_project(db: Session, project_id: str) -> PipelineSnapshot:
         key = f"{ex.stage_key}/{ex.component_key}" if ex.component_key else ex.stage_key
         prev = latest.get(key)
         if prev is None or (
-            ex.started_at
-            and (not prev.started_at or ex.started_at > prev.started_at)
+            ex.started_at and (not prev.started_at or ex.started_at > prev.started_at)
         ):
             latest[key] = ex
     for key, ex in latest.items():
@@ -85,7 +84,10 @@ def seed_snapshot_for_project(db: Session, project_id: str) -> PipelineSnapshot:
     db.flush()
     logger.info(
         "Seeded snapshot for project %s: %d artifacts, %d stages, %d runs",
-        project_id, len(artifact_statuses), len(stage_statuses), len(run_status),
+        project_id,
+        len(artifact_statuses),
+        len(stage_statuses),
+        len(run_status),
     )
     return snapshot
 

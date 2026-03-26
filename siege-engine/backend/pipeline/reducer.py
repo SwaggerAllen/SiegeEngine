@@ -93,9 +93,14 @@ def apply_event(
 def _ensure_new_fields(snap: dict) -> None:
     """Backfill new snapshot fields for older snapshots."""
     for field in (
-        "artifact_versions", "stage_errors", "comment_counts",
-        "stage_triggers", "artifact_meta", "artifact_git_shas",
-        "cascade_parents", "execution_map",
+        "artifact_versions",
+        "stage_errors",
+        "comment_counts",
+        "stage_triggers",
+        "artifact_meta",
+        "artifact_git_shas",
+        "cascade_parents",
+        "execution_map",
     ):
         if field not in snap:
             snap[field] = {}
@@ -104,6 +109,7 @@ def _ensure_new_fields(snap: dict) -> None:
 # ---------------------------------------------------------------------------
 # Individual event handlers (mutate snap in-place, called from apply_event)
 # ---------------------------------------------------------------------------
+
 
 def _handle_run_created(snap: dict, p: dict) -> None:
     run_id = p["run_id"]
@@ -366,6 +372,7 @@ def _handle_artifact_committed(snap: dict, p: dict) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _stage_key(p: dict) -> str:
     """Build a composite key from stage_key + optional component_key."""

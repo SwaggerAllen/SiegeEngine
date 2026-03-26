@@ -131,8 +131,7 @@ class ForceRestartStrategy(StageExecutionStrategy):
         )
         if already_running:
             raise SkipExecution(
-                f"stage {execution.stage_key}: execution {already_running.id} "
-                f"is already running"
+                f"stage {execution.stage_key}: execution {already_running.id} is already running"
             )
 
         config = engine._get_config(project_id)
@@ -148,7 +147,8 @@ class ForceRestartStrategy(StageExecutionStrategy):
 
         # Ensure we have an active run.
         run_id, pipeline_run = engine._ensure_active_run(
-            project_id, execution.run_id,
+            project_id,
+            execution.run_id,
         )
 
         # Reset artifact to PENDING so regeneration starts clean.
@@ -156,14 +156,13 @@ class ForceRestartStrategy(StageExecutionStrategy):
             artifact = engine.db.get(Artifact, execution.artifact_id)
             if artifact and artifact.status != ArtifactStatus.PENDING:
                 engine._mark_artifact_status(
-                    execution.artifact_id, ArtifactStatus.PENDING,
+                    execution.artifact_id,
+                    ArtifactStatus.PENDING,
                 )
 
         # Gather feedback and current content for iterative improvement.
         human_notes = (
-            engine._get_feedback_notes(execution.artifact_id)
-            if execution.artifact_id
-            else None
+            engine._get_feedback_notes(execution.artifact_id) if execution.artifact_id else None
         )
         current_content = None
         if execution.artifact_id:
@@ -186,7 +185,9 @@ class ForceRestartStrategy(StageExecutionStrategy):
         engine.db.flush()
 
         input_artifacts = engine._gather_inputs(
-            project_id, stage_def, execution.component_key,
+            project_id,
+            stage_def,
+            execution.component_key,
         )
 
         return StageExecutionContext(
@@ -238,11 +239,7 @@ class ManualTriggerStrategy(StageExecutionStrategy):
                 component_key=self.component_key,
                 run_id=self.run_id,
             )
-            .filter(
-                StageExecution.status.in_(
-                    [StageStatus.RUNNING, StageStatus.AI_REVIEW]
-                )
-            )
+            .filter(StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]))
             .first()
         )
         if existing:
@@ -252,7 +249,9 @@ class ManualTriggerStrategy(StageExecutionStrategy):
             )
 
         input_artifacts = engine._gather_inputs(
-            self.project_id, self.stage_def, self.component_key,
+            self.project_id,
+            self.stage_def,
+            self.component_key,
         )
 
         # Gather feedback and current content from previous execution.
@@ -287,7 +286,9 @@ class ManualTriggerStrategy(StageExecutionStrategy):
 
         logger.info(
             "Manually triggered stage %s (component=%s) execution=%s",
-            stage_key, self.component_key, execution.id,
+            stage_key,
+            self.component_key,
+            execution.id,
         )
 
         return StageExecutionContext(
@@ -332,8 +333,7 @@ class RejectionRegenerateStrategy(StageExecutionStrategy):
         )
         if already_running:
             raise SkipExecution(
-                f"stage {execution.stage_key}: execution {already_running.id} "
-                f"is already running"
+                f"stage {execution.stage_key}: execution {already_running.id} is already running"
             )
 
         config = engine._get_config(project_id)
@@ -356,7 +356,8 @@ class RejectionRegenerateStrategy(StageExecutionStrategy):
 
         # Ensure we have an active run.
         run_id, pipeline_run = engine._ensure_active_run(
-            project_id, execution.run_id,
+            project_id,
+            execution.run_id,
         )
 
         # Create new execution.
@@ -376,18 +377,19 @@ class RejectionRegenerateStrategy(StageExecutionStrategy):
         # Mark artifact as GENERATING so the UI shows progress.
         if execution.artifact_id:
             engine._mark_artifact_status(
-                execution.artifact_id, ArtifactStatus.GENERATING,
+                execution.artifact_id,
+                ArtifactStatus.GENERATING,
             )
 
         input_artifacts = engine._gather_inputs(
-            project_id, stage_def, execution.component_key,
+            project_id,
+            stage_def,
+            execution.component_key,
         )
 
         # Gather feedback and current content.
         human_notes = (
-            engine._get_feedback_notes(execution.artifact_id)
-            if execution.artifact_id
-            else None
+            engine._get_feedback_notes(execution.artifact_id) if execution.artifact_id else None
         )
         current_content = None
         if execution.artifact_id:
@@ -442,8 +444,7 @@ class ArtifactRevisionStrategy(StageExecutionStrategy):
         )
         if already_running:
             raise SkipExecution(
-                f"artifact {self.artifact_id}: execution {already_running.id} "
-                f"is already running"
+                f"artifact {self.artifact_id}: execution {already_running.id} is already running"
             )
 
         original_artifact_status = artifact.status
@@ -454,8 +455,7 @@ class ArtifactRevisionStrategy(StageExecutionStrategy):
             raise ValueError("Pipeline config not found")
 
         stage_def = next(
-            (s for s in config.stages
-             if s.output_artifact_type == artifact.artifact_type.value),
+            (s for s in config.stages if s.output_artifact_type == artifact.artifact_type.value),
             None,
         )
         if not stage_def:
@@ -485,7 +485,8 @@ class ArtifactRevisionStrategy(StageExecutionStrategy):
 
         # Emit ARTIFACT_REVISED event.
         engine.events.emit(
-            project_id, evt.ARTIFACT_REVISED,
+            project_id,
+            evt.ARTIFACT_REVISED,
             {
                 "artifact_id": self.artifact_id,
                 "stage_key": stage_def.stage_key,
@@ -495,7 +496,9 @@ class ArtifactRevisionStrategy(StageExecutionStrategy):
         )
 
         input_artifacts = engine._gather_inputs(
-            project_id, stage_def, artifact.component_key,
+            project_id,
+            stage_def,
+            artifact.component_key,
         )
 
         # Standalone run (no PipelineRun object).

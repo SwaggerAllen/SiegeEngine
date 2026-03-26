@@ -98,10 +98,14 @@ async def start_pipeline(
 
     pipeline_run_id = pipeline_run.id
 
-    enqueue(db, "start_pipeline", {
-        "project_id": project_id,
-        "pipeline_run_id": pipeline_run_id,
-    })
+    enqueue(
+        db,
+        "start_pipeline",
+        {
+            "project_id": project_id,
+            "pipeline_run_id": pipeline_run_id,
+        },
+    )
 
     return {
         "status": "started",
@@ -166,11 +170,15 @@ async def resume_run(
     pipeline_run_id = pipeline_run.id
     prev_run_id = prev_run.run_id
 
-    enqueue(db, "resume_run", {
-        "project_id": project_id,
-        "pipeline_run_id": pipeline_run_id,
-        "prev_run_id": prev_run_id,
-    })
+    enqueue(
+        db,
+        "resume_run",
+        {
+            "project_id": project_id,
+            "pipeline_run_id": pipeline_run_id,
+            "prev_run_id": prev_run_id,
+        },
+    )
 
     return {
         "status": "resumed",
@@ -196,11 +204,7 @@ async def propagate_changes(
     _check_blocking_pr(project)
 
     # Count stale artifacts
-    stale_count = (
-        db.query(Artifact)
-        .filter_by(project_id=project_id, is_stale=True)
-        .count()
-    )
+    stale_count = db.query(Artifact).filter_by(project_id=project_id, is_stale=True).count()
     if stale_count == 0:
         raise HTTPException(400, "No stale artifacts to propagate")
 
@@ -219,11 +223,15 @@ async def propagate_changes(
     db.commit()
     db.refresh(pipeline_run)
 
-    enqueue(db, "resume_run", {
-        "project_id": project_id,
-        "pipeline_run_id": pipeline_run.id,
-        "prev_run_id": pipeline_run.run_id,
-    })
+    enqueue(
+        db,
+        "resume_run",
+        {
+            "project_id": project_id,
+            "pipeline_run_id": pipeline_run.id,
+            "prev_run_id": pipeline_run.run_id,
+        },
+    )
 
     return {
         "status": "propagating",
@@ -244,6 +252,7 @@ async def cancel_pipeline(
 
     from backend.pipeline import events as _evt
     from backend.pipeline.event_store import EventStore
+
     es = EventStore(db)
 
     # Find all active executions
@@ -251,10 +260,14 @@ async def cancel_pipeline(
         db.query(StageExecution)
         .filter_by(project_id=project_id)
         .filter(
-            StageExecution.status.in_([
-                StageStatus.RUNNING, StageStatus.PENDING,
-                StageStatus.AI_REVIEW, StageStatus.AWAITING_REVIEW,
-            ])
+            StageExecution.status.in_(
+                [
+                    StageStatus.RUNNING,
+                    StageStatus.PENDING,
+                    StageStatus.AI_REVIEW,
+                    StageStatus.AWAITING_REVIEW,
+                ]
+            )
         )
         .all()
     )
@@ -265,12 +278,9 @@ async def cancel_pipeline(
 
     # Cancel all queued jobs for this project (operational)
     from backend.models.job import Job
+
     all_exec_ids = {e.id for e in active_executions}
-    queued_jobs = (
-        db.query(Job)
-        .filter(Job.status.in_(["queued", "running"]))
-        .all()
-    )
+    queued_jobs = db.query(Job).filter(Job.status.in_(["queued", "running"])).all()
     for job in queued_jobs:
         payload = job.payload or {}
         if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
@@ -281,22 +291,32 @@ async def cancel_pipeline(
     # regenerating from scratch.
     for e in active_executions:
         if e.status == StageStatus.AWAITING_REVIEW and e.artifact_id:
-            es.emit(project_id, _evt.HUMAN_APPROVED, {
-                "execution_id": e.id,
-                "stage_key": e.stage_key,
-                "component_key": e.component_key,
-                "artifact_id": e.artifact_id,
-            }, run_id=e.run_id)
+            es.emit(
+                project_id,
+                _evt.HUMAN_APPROVED,
+                {
+                    "execution_id": e.id,
+                    "stage_key": e.stage_key,
+                    "component_key": e.component_key,
+                    "artifact_id": e.artifact_id,
+                },
+                run_id=e.run_id,
+            )
             e.status = StageStatus.APPROVED
             e.completed_at = e.completed_at or datetime.utcnow()
         else:
-            es.emit(project_id, _evt.STAGE_FAILED, {
-                "execution_id": e.id,
-                "stage_key": e.stage_key,
-                "component_key": e.component_key,
-                "artifact_id": e.artifact_id,
-                "error": "Cancelled by user",
-            }, run_id=e.run_id)
+            es.emit(
+                project_id,
+                _evt.STAGE_FAILED,
+                {
+                    "execution_id": e.id,
+                    "stage_key": e.stage_key,
+                    "component_key": e.component_key,
+                    "artifact_id": e.artifact_id,
+                    "error": "Cancelled by user",
+                },
+                run_id=e.run_id,
+            )
             e.status = StageStatus.FAILED
             e.error_message = "Cancelled by user"
 
@@ -318,10 +338,15 @@ async def cancel_pipeline(
         .all()
     )
     for r in active_runs:
-        es.emit(project_id, _evt.RUN_COMPLETED, {
-            "run_id": r.run_id,
-            "status": "cancelled",
-        }, run_id=r.run_id)
+        es.emit(
+            project_id,
+            _evt.RUN_COMPLETED,
+            {
+                "run_id": r.run_id,
+                "status": "cancelled",
+            },
+            run_id=r.run_id,
+        )
         # DB projections
         r.status = PipelineRunStatus.CANCELLED
         r.completed_at = r.completed_at or datetime.utcnow()
@@ -386,7 +411,7 @@ async def cancel_pipeline(
             )
         except Exception as e:
             error_detail = str(e)
-            if hasattr(e, 'response') and e.response is not None:
+            if hasattr(e, "response") and e.response is not None:
                 try:
                     error_detail = e.response.json().get("message", error_detail)
                 except Exception:
@@ -421,51 +446,51 @@ async def reset_all(
 
     from backend.pipeline import events as _evt
     from backend.pipeline.event_store import EventStore
+
     es = EventStore(db)
 
     # 1. Kill ALL running processes for this project's executions
-    all_project_execs = (
-        db.query(StageExecution)
-        .filter_by(project_id=project_id)
-        .all()
-    )
+    all_project_execs = db.query(StageExecution).filter_by(project_id=project_id).all()
     all_exec_ids = {e.id for e in all_project_execs}
     for e in all_project_execs:
         cancel_running_execution(e.id)
 
     # Cancel ALL queued/running jobs for this project (comprehensive)
     from backend.models.job import Job
-    active_jobs = (
-        db.query(Job)
-        .filter(Job.status.in_(["queued", "running"]))
-        .all()
-    )
+
+    active_jobs = db.query(Job).filter(Job.status.in_(["queued", "running"])).all()
     for job in active_jobs:
         payload = job.payload or {}
-        if (
-            payload.get("project_id") == project_id
-            or payload.get("execution_id") in all_exec_ids
-        ):
+        if payload.get("project_id") == project_id or payload.get("execution_id") in all_exec_ids:
             job.status = "cancelled"
 
     # Narrow to in-flight executions for event emission
     in_flight = [
-        e for e in all_project_execs
-        if e.status in (
-            StageStatus.RUNNING, StageStatus.PENDING,
-            StageStatus.AI_REVIEW, StageStatus.AWAITING_REVIEW,
+        e
+        for e in all_project_execs
+        if e.status
+        in (
+            StageStatus.RUNNING,
+            StageStatus.PENDING,
+            StageStatus.AI_REVIEW,
+            StageStatus.AWAITING_REVIEW,
         )
     ]
 
     # 2. Emit STAGE_FAILED for each in-flight execution
     for e in in_flight:
-        es.emit(project_id, _evt.STAGE_FAILED, {
-            "execution_id": e.id,
-            "stage_key": e.stage_key,
-            "component_key": e.component_key,
-            "artifact_id": e.artifact_id,
-            "error": "Reset by user",
-        }, run_id=e.run_id)
+        es.emit(
+            project_id,
+            _evt.STAGE_FAILED,
+            {
+                "execution_id": e.id,
+                "stage_key": e.stage_key,
+                "component_key": e.component_key,
+                "artifact_id": e.artifact_id,
+                "error": "Reset by user",
+            },
+            run_id=e.run_id,
+        )
         # DB projection
         e.status = StageStatus.FAILED
         e.error_message = "Reset by user"
@@ -479,10 +504,15 @@ async def reset_all(
         .all()
     )
     for r in active_runs:
-        es.emit(project_id, _evt.RUN_COMPLETED, {
-            "run_id": r.run_id,
-            "status": "cancelled",
-        }, run_id=r.run_id)
+        es.emit(
+            project_id,
+            _evt.RUN_COMPLETED,
+            {
+                "run_id": r.run_id,
+                "status": "cancelled",
+            },
+            run_id=r.run_id,
+        )
         # DB projection
         r.status = PipelineRunStatus.CANCELLED
         r.completed_at = r.completed_at or datetime.utcnow()
@@ -574,6 +604,7 @@ def get_status(
 
     # Include snapshot data for Phase 2 reads
     from backend.pipeline.event_store import EventStore
+
     es = EventStore(db)
     snapshot = es.get_snapshot(project_id)
 
@@ -711,11 +742,7 @@ def get_debug_state(
     ]
 
     # Artifacts
-    artifacts = (
-        db.query(Artifact)
-        .filter_by(project_id=project_id)
-        .all()
-    )
+    artifacts = db.query(Artifact).filter_by(project_id=project_id).all()
     artifact_data = [
         {
             "id": a.id,
@@ -752,23 +779,21 @@ def get_debug_state(
     ]
 
     # Active jobs
-    jobs = (
-        db.query(Job)
-        .filter(Job.status.in_(["queued", "running"]))
-        .all()
-    )
+    jobs = db.query(Job).filter(Job.status.in_(["queued", "running"])).all()
     # Filter to this project's jobs
     job_data = []
     for j in jobs:
         payload = j.payload or {}
         if payload.get("project_id") == project_id:
-            job_data.append({
-                "id": j.id,
-                "job_type": j.job_type,
-                "status": j.status,
-                "payload": payload,
-                "created_at": j.created_at.isoformat() if j.created_at else None,
-            })
+            job_data.append(
+                {
+                    "id": j.id,
+                    "job_type": j.job_type,
+                    "status": j.status,
+                    "payload": payload,
+                    "created_at": j.created_at.isoformat() if j.created_at else None,
+                }
+            )
 
     # Snapshot vs DB mismatches
     mismatches = []
@@ -777,13 +802,15 @@ def get_debug_state(
         snap_status = snap_artifact_statuses.get(a["id"])
         db_status = a["status"]
         if snap_status and snap_status != db_status:
-            mismatches.append({
-                "type": "artifact_status",
-                "id": a["id"],
-                "name": a["name"],
-                "snapshot": snap_status,
-                "db": db_status,
-            })
+            mismatches.append(
+                {
+                    "type": "artifact_status",
+                    "id": a["id"],
+                    "name": a["name"],
+                    "snapshot": snap_status,
+                    "db": db_status,
+                }
+            )
 
     snap_stage_statuses = snapshot_data["stage_statuses"]
     # Build a map of current execution status per stage key
@@ -798,12 +825,14 @@ def get_debug_state(
     for key, snap_status in snap_stage_statuses.items():
         db_status = exec_by_stage.get(key)
         if db_status and snap_status != db_status:
-            mismatches.append({
-                "type": "stage_status",
-                "key": key,
-                "snapshot": snap_status,
-                "db": db_status,
-            })
+            mismatches.append(
+                {
+                    "type": "stage_status",
+                    "key": key,
+                    "snapshot": snap_status,
+                    "db": db_status,
+                }
+            )
 
     return {
         "snapshot": snapshot_data,
@@ -831,23 +860,14 @@ def list_events(
 
     _get_project_or_404(db, project_id)
 
-    query = (
-        db.query(PipelineEvent)
-        .filter_by(project_id=project_id)
-    )
+    query = db.query(PipelineEvent).filter_by(project_id=project_id)
     if run_id:
         query = query.filter(PipelineEvent.run_id == run_id)
     if event_type:
         query = query.filter(PipelineEvent.event_type == event_type)
 
     total = query.count()
-    events = (
-        query
-        .order_by(PipelineEvent.sequence.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+    events = query.order_by(PipelineEvent.sequence.desc()).offset(offset).limit(limit).all()
 
     # Collect artifact IDs and run IDs from event payloads for name resolution
     artifact_ids: set[str] = set()
@@ -864,17 +884,15 @@ def list_events(
     artifact_names: dict[str, str] = {}
     if artifact_ids:
         from backend.models.artifact import Artifact
-        arts = (
-            db.query(Artifact.id, Artifact.name)
-            .filter(Artifact.id.in_(artifact_ids))
-            .all()
-        )
+
+        arts = db.query(Artifact.id, Artifact.name).filter(Artifact.id.in_(artifact_ids)).all()
         artifact_names = {a.id: a.name for a in arts}
 
     # Resolve run numbers
     run_numbers: dict[str, int] = {}
     if run_ids:
         from backend.models.pipeline import PipelineRun
+
         runs_q = (
             db.query(PipelineRun.run_id, PipelineRun.run_number)
             .filter(PipelineRun.run_id.in_(run_ids))
@@ -959,9 +977,7 @@ def revert_to_sequence(
 
     # Validate that the target sequence exists
     target_event = (
-        db.query(PipelineEvent)
-        .filter_by(project_id=project_id, sequence=sequence)
-        .first()
+        db.query(PipelineEvent).filter_by(project_id=project_id, sequence=sequence).first()
     )
     if not target_event:
         raise HTTPException(404, f"No event found at sequence {sequence}")
@@ -991,9 +1007,9 @@ def revert_to_sequence(
     for art in all_artifacts:
         if art.id not in valid_artifact_ids:
             # Artifact was created after the revert point — clean up references first
-            db.query(StageExecution).filter(
-                StageExecution.artifact_id == art.id
-            ).update({"artifact_id": None}, synchronize_session="fetch")
+            db.query(StageExecution).filter(StageExecution.artifact_id == art.id).update(
+                {"artifact_id": None}, synchronize_session="fetch"
+            )
             db.query(ArtifactDependency).filter(
                 (ArtifactDependency.upstream_artifact_id == art.id)
                 | (ArtifactDependency.downstream_artifact_id == art.id)
@@ -1036,7 +1052,9 @@ def revert_to_sequence(
                 except Exception:
                     logger.warning(
                         "Could not restore git content for artifact %s (%s)",
-                        art.id, art.file_path, exc_info=True,
+                        art.id,
+                        art.file_path,
+                        exc_info=True,
                     )
 
     # --- Clean up executions and runs created after the revert point ---
@@ -1216,6 +1234,7 @@ def reconcile_statuses(
     _get_project_or_404(db, project_id)
 
     from backend.pipeline.reconcile import reconcile_project
+
     corrections = reconcile_project(db, project_id)
 
     latest_run = (
@@ -1248,6 +1267,7 @@ def reconstruct_from_git(
     _get_project_or_404(db, project_id)
 
     from backend.cli.reconstruct import reconstruct_from_git as _reconstruct
+
     result = _reconstruct(db, project_id)
     return result
 
@@ -1438,6 +1458,7 @@ async def get_artifact_diff(
 
     # Parse version numbers from commit messages for accurate labels
     import re
+
     to_version = artifact.version
     from_version = artifact.version - 1
     for entry in history:

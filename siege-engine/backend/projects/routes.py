@@ -70,6 +70,7 @@ def get_project(
         raise HTTPException(404, "Project not found")
     # Read artifact statuses from snapshot (source of truth)
     from backend.pipeline.event_store import EventStore
+
     snapshot = EventStore(db).get_snapshot(project_id)
     artifact_statuses = snapshot.artifact_statuses or {}
     artifact_versions = snapshot.artifact_versions or {}
@@ -172,11 +173,13 @@ def update_artifact(
         artifact.git_commit_sha = sha
 
     # Emit event so the snapshot reflects the new version/SHA
-    from backend.pipeline.event_store import EventStore
     from backend.pipeline import events as evt
+    from backend.pipeline.event_store import EventStore
+
     event_store = EventStore(db)
     event_store.emit(
-        artifact.project_id, evt.ARTIFACT_COMMITTED,
+        artifact.project_id,
+        evt.ARTIFACT_COMMITTED,
         {
             "artifact_id": artifact_id,
             "git_commit_sha": artifact.git_commit_sha,
@@ -359,7 +362,7 @@ async def open_pr(
     except Exception as e:
         error_detail = str(e)
         # httpx errors include the response body
-        if hasattr(e, 'response') and e.response is not None:
+        if hasattr(e, "response") and e.response is not None:
             try:
                 error_detail = e.response.json().get("message", error_detail)
             except Exception:
@@ -409,6 +412,7 @@ def _artifact_to_dict(artifact: Artifact, db: Session | None = None) -> dict:
     git_sha = artifact.git_commit_sha
     if db:
         from backend.pipeline.event_store import EventStore
+
         snapshot = EventStore(db).get_snapshot(artifact.project_id)
         status = (snapshot.artifact_statuses or {}).get(artifact.id, status)
         version = (snapshot.artifact_versions or {}).get(artifact.id, version)

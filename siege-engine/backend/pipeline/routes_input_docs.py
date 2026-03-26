@@ -195,6 +195,7 @@ def _mark_root_stale(db: Session, project_id: str):
     )
     if sys_req:
         from backend.pipeline.event_store import EventStore
+
         stale_ids = propagate_staleness(db, sys_req.id, event_store=EventStore(db))
         logger.info(
             "Input doc change: marked %d artifacts stale (including system_requirements)",
