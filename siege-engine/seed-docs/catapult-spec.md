@@ -20,9 +20,11 @@ A **boulder** is a node in the document DAG that has its own sub-DAG of processi
 
 Leaf boulders are single-use boulders that produce implementation artifacts. A leaf boulder may be a child of a system, component, or subcomponent boulder. Every leaf boulder produces at minimum an implementation plan and a PR commit.
 
-### A.1.2 Folder Mapping
+### A.1.2 Repository and Folder Mapping
 
-Each leaf boulder corresponds to a folder in the project repository. This gives a direct, deterministic mapping between the document tree and the codebase: a leaf boulder's folder is its territory. This mapping must be explicitly enforced in prompts and generation.
+Each leaf boulder maps to a `{repository, folder}` pair. For v1, all boulders within a project target a single repository (monorepo assumption), but the mapping is structured to support multi-repo projects in the future without a data model change.
+
+Within a repository, each leaf boulder corresponds to a folder — the boulder's territory. This gives a direct, deterministic mapping between the document tree and the codebase. This mapping must be explicitly enforced in prompts and generation.
 
 ### A.1.3 Root Boulders
 
@@ -72,7 +74,13 @@ At fan-out nodes during the downward pass, the system identifies which children 
 
 ### A.2.5 Bug Fix Flow
 
-Input is a PR that fixes a bug (not the bug itself). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates as an upward propagation (Section A.2.4): walking from each touched leaf up to the project root, regenerating architecture documents at each level given the PR's changes. Parent nodes wait for all descendant propagations to complete before regenerating, so changes from multiple touched leaves are merged into a single coherent architecture update at each fan-out node. Unlike feature request and refactor flows, bug fix does not produce separate plan documents — the PR itself serves as the source of truth, and architectures are regenerated directly to reflect what the code change reveals.
+Input is a PR that fixes a bug (not the bug itself). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates as an upward propagation (Section A.2.4):
+
+1. At each boulder level during the upward pass, a **diagnosis node** produces a diagnosis document analyzing what the PR reveals about the gap between the documented architecture and reality — why the bug existed, what assumption was wrong, what edge case was missed
+2. An **architecture update node** takes the diagnosis and updates the architecture doc accordingly
+3. Parent nodes wait for all descendant diagnoses to complete before producing their own, so changes from multiple touched leaves are merged into a single coherent diagnosis at each fan-out node
+
+During the downward pass, fan-out routing identifies sibling subtrees impacted by the diagnosed changes. The diagnosis chain serves the same role as the plan chain in feature request/refactor flows — it gives reviewers an explicit, approvable interpretation of what the bug means for the system's design at each level.
 
 ## A.3 Phases
 
@@ -114,12 +122,11 @@ Within a phase or within a boulder template DAG, non-dependent nodes whose paren
 ### A.3.5 Context Assembly
 
 Input to a document node is assembled from:
-- All output documents from ancestor boulders (retrieved via semantic relevance, not concatenated verbatim)
-- All ancestor outputs within the same boulder template DAG (included directly)
 - The expanded input document (always included if not otherwise present)
 - Direct parent outputs are always included in full
+- Ancestor outputs within the same boulder template DAG and from ancestor boulders, included using a **budget-based approach**: include full parent documents in chronological order (nearest ancestors first) until the context budget for ancestors is exhausted. Remaining ancestors are retrieved via semantic relevance from the vector database. This means earlier/shallower nodes in the tree get richer direct context, which is acceptable and arguably desirable — system-level decisions benefit from full context, while leaf nodes work from more focused, relevant excerpts.
 
-Context assembly uses a **strategy pattern** — different flows and phases use different methods for gathering context. Architecture nodes need structural context (parent architecture, sibling summaries). Leaf plan nodes need the parent plan plus current code state. Fan-out routing nodes need summary-level understanding of all children. Upward propagation nodes need what changed below and what exists above.
+Context assembly uses a **strategy pattern** — different flows and phases use different methods for gathering and budgeting context. Architecture nodes need structural context (parent architecture, sibling summaries). Leaf plan nodes need the parent plan plus current code state. Fan-out routing nodes need summary-level understanding of all children. Upward propagation nodes need what changed below and what exists above.
 
 ## A.4 Boulder Templates
 
@@ -195,7 +202,7 @@ The system uses **pessimistic locking** at the node level. Only one flow run or 
 - **One commit per leaf node** — Each leaf boulder produces a single commit
 - **One PR per flow run** — All leaf commits from a flow run are composed into a single PR, ordered by dependency structure
 - **Sub-run commits** contribute to the parent flow's PR
-- Every project is assumed to be a **monorepo**. This is a load-bearing assumption — folder mapping, single PR per flow, and the Gitea sidecar model all depend on it.
+- Every project is assumed to be a **monorepo** for v1. The data model supports multi-repo via the `{repository, folder}` mapping (Section A.1.2), but v1 flow orchestration, PR composition, and Gitea sidecar integration assume a single repository per project.
 - The system is the sole code shipping mechanism for the project (aside from bug fix PRs which are the input, not the output).
 
 ## A.10 Document Versioning
@@ -280,9 +287,16 @@ Background job processing for work that doesn't fit Commanded's event-driven mod
 
 Vector embeddings stored in PostgreSQL via pgvector for semantic retrieval during context assembly. Document chunks are embedded and indexed so that deep nodes can retrieve relevant ancestor context by semantic similarity rather than consuming entire documents. The retrieval strategy varies by flow and phase (Section A.3.5).
 
-## B.6 Gitea (API-only sidecar)
+## B.6 Gitea (Sidecar)
 
-A Gitea instance runs as an API-only sidecar — no separate git UI, the application provides its own. Gitea handles the git hosting, branch management, PR mechanics, and merge conflict resolution behind an API. This offloads complex git edge cases (merge conflicts, branch composition, PR state management) to a purpose-built tool rather than reimplementing them. Combined with the one-run-at-a-time constraint and folder-per-leaf-boulder mapping, merge conflicts should be nearly eliminated.
+A Gitea instance runs as a sidecar handling git hosting, branch management, PR mechanics, and merge conflict resolution. Catapult provides its own primary UI but proxies or iframes Gitea's UI for merge conflict resolution and other git edge cases that benefit from a purpose-built interface, keeping the experience cohesive.
+
+Gitea's role in the system:
+- **Git hosting and PR management** — Branch creation, commit composition, PR lifecycle
+- **Merge conflict UI** — For the rare edge cases where conflicts arise despite folder-per-leaf and one-run-at-a-time constraints
+- **Webhook events** — Gitea emits granular webhooks for the full PR lifecycle: creation, comments, inline review comments, review submissions (approve/request changes), merges, and branch updates. Catapult subscribes to these webhooks to automate responses to PR activity (e.g., CI feedback triggers regeneration, human review comments on PRs feed back into the review workflow)
+- **Programmatic review feedback** — The AI posts review comments (including inline comments tied to file paths and line numbers) via Gitea's API, enabling code review to happen directly on the PR
+- **Webhook configuration** — Repo-level webhooks are configured per project; system-level webhooks handle cross-cutting concerns
 
 ## B.7 Phoenix / LiveView
 
