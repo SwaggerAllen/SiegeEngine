@@ -210,6 +210,7 @@ async def force_restart_stage(
         artifact_status=art_status,
         error_message="Force-restarted by user",
         set_completed=True,
+        trigger="force_restart",
     )
 
     db.commit()
