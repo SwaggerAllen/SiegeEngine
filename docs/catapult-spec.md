@@ -13,17 +13,20 @@ mirrors the decomposition of a system into components and subcomponents.
 system, component, or subcomponent. A boulder template defines which documents
 are produced and their dependency relationships within the boulder.
 
-**Boulder Tree**: The hierarchical nesting of boulders. The root is the system
-boulder, which fans out into component boulders, which fan out into
-subcomponent boulders, which terminate in leaf boulders.
+**Boulder Tree**: The hierarchical nesting of boulders. The tree has exactly
+three levels of branching: system, component, and subcomponent. Subcomponents
+are terminal -- they cannot fan out into further subcomponents. This two-layer
+branching limit (system→component, component→subcomponent) bounds tree depth
+and keeps context manageable.
 
 **Leaf Boulder**: A terminal, single-use boulder that produces at minimum a
-plan and a pull request. Leaf boulders may be children of system, component, or
+plan and a commit. Leaf boulders may be children of system, component, or
 subcomponent boulders depending on where the tree stops expanding.
 
 **Flow**: A parameterized pipeline execution that walks the boulder tree
 according to a specific strategy (scaffolding, upward propagation, refactor,
-feature request, or bug fix).
+feature request, or bug fix). A flow run produces one pull request containing
+commits from all of its leaf boulders.
 
 **Phase**: A tier in the boulder tree. Every flow walks through up to five
 phases: input expansion, system docs, component docs, subcomponent docs, and
@@ -43,7 +46,7 @@ system into new areas.
 - At each system and component node, produces an architecture document and a
   fan-out node.
 - At subcomponent nodes, produces an architecture document only (no further
-  fan-out).
+  fan-out -- subcomponents are terminal).
 - Fan-out nodes produce a document and structured output deciding whether each
   child needs further expansion. Children that do not need expansion get a leaf
   boulder generated for them instead.
@@ -70,8 +73,8 @@ changes to implementation.
 - Accepts an input document describing the desired refactor.
 - At each architecture node, generates a plan, then updates the architecture
   document.
-- Propagates downward to leaf nodes, where each leaf generates a PR using the
-  plan from its parent architecture node.
+- Propagates downward to leaf nodes, where each leaf generates a commit using
+  the plan from its parent architecture node.
 
 #### 2.4 Feature Request Flow
 
@@ -80,19 +83,24 @@ The feature request flow adds new capabilities to an existing system.
 - Accepts an input document describing the feature.
 - At each architecture node, generates a plan, then updates the architecture
   document.
-- Propagates downward to leaf nodes, where each leaf generates a PR using the
-  plan from its parent architecture node.
+- Propagates downward to leaf nodes, where each leaf generates a commit using
+  the plan from its parent architecture node.
 - May trigger fan-out at nodes that need new children to support the feature.
 
 #### 2.5 Bug Fix Flow
 
-The bug fix flow works in reverse compared to other flows -- it starts from
-code and updates documentation.
+The bug fix flow starts from a merged PR that fixes a bug and propagates
+documentation updates upward through the system.
 
 - Accepts a pull request (not a bug report) that fixes a bug.
-- Updates documentation as necessary to reflect the fix.
-- Propagation direction and strategy may differ from other flows since the
-  source of truth is the code change, not a requirements document.
+- Identifies all leaf boulders touched by the PR's changes.
+- From each touched leaf, initiates an upward propagation to the project root.
+- At each fan-out node encountered during upward traversal, synchronizes
+  changes across sibling branches -- ensuring that documentation at fan-out
+  points reflects the combined impact of the fix across all affected children.
+- Updates documentation at each visited node as necessary to reflect the fix.
+- The source of truth is the code change, not a requirements document. Each
+  visited node's documentation is reconciled against the actual diff.
 
 ### 3. Pipeline Algorithm
 
@@ -106,7 +114,7 @@ A flow run always begins with an input document and proceeds through phases:
    or updated according to the flow's boulder template for this phase.
 3. **Component Docs**: Each affected component boulder is visited.
 4. **Subcomponent Docs**: Each affected subcomponent boulder is visited.
-5. **Leaf Nodes**: Terminal boulders produce plans and PRs.
+5. **Leaf Nodes**: Terminal boulders produce plans and commits.
 
 At each phase, the flow applies its boulder template for that tier. The
 template is itself a DAG -- nodes within it execute in dependency order.
@@ -120,8 +128,10 @@ determines which children to visit.
 The system must support both:
 
 - **Downward propagation**: The default. Changes flow from parent to children.
-- **Upward propagation**: User-initiated. Navigates to the root, then
-  propagates downward through the full tree.
+- **Upward propagation**: User-initiated (or triggered by bug fix flows).
+  Navigates to the root, then propagates downward through the full tree. At
+  fan-out nodes during the downward pass, changes from multiple upward sources
+  are synchronized before continuing to children.
 
 #### 3.3 Parallel Execution
 
@@ -153,11 +163,13 @@ The input to any document node is the union of:
    internal DAG).
 3. The expanded input document, if not already included via (1) or (2).
 
-The system must have a strategy for managing input size. As documents accumulate
-through tree depth, the total input to deep nodes may exceed practical limits.
-The system should support summarization, selective inclusion, or other
-strategies to keep node inputs within usable bounds without losing critical
-context.
+The total context for deep nodes will exceed what can be passed directly to an
+LLM. The system must use retrieval-augmented generation (RAG) with a vector
+database to assemble node inputs. Documents are indexed as embeddings, and
+node input assembly retrieves the most relevant chunks from ancestor outputs
+rather than concatenating full documents. The expanded input document and
+direct parent outputs should always be included in full; more distant ancestors
+are retrieved by semantic relevance.
 
 ### 4. Boulder Templates
 
@@ -168,10 +180,22 @@ specifies:
 - The dependency relationships between those nodes (forming a DAG).
 - The prompts or prompt strategies used to generate each document.
 
-Boulder templates are themselves DAGs within the boulder tree. Changes to
-templates should be versioned. A flow run should use a consistent template
-version throughout its execution -- it should not pick up template changes
-mid-run.
+Boulder templates are themselves DAGs within the boulder tree.
+
+#### 4.1 Template Versioning and Scheduling
+
+Template changes are versioned and queued alongside flows. When a flow is
+scheduled, it captures the current template versions at that moment. The flow
+uses those pinned template versions throughout its entire execution, regardless
+of any template updates that occur after scheduling.
+
+This means:
+
+- Template updates never affect in-progress or already-queued flows.
+- The effect of a template change is predictable: it applies to the next flow
+  scheduled after the change.
+- The UI should clearly show the queue at project, boulder, and node levels,
+  including which template version each queued flow will use.
 
 ### 5. Fan-out and Termination
 
@@ -183,10 +207,14 @@ fan-out node:
   - Expand (create a child boulder at the next phase), or
   - Terminate (generate a leaf boulder instead).
 
-The system must enforce termination guarantees. Fan-out should not recurse
-unboundedly. The system should define a maximum tree depth or restrict fan-out
-to specific phases (e.g., subcomponent nodes cannot fan out further -- they
-only produce architectures or leaves).
+The tree has a hard depth limit of two branching layers:
+
+- System → Components (first fan-out)
+- Components → Subcomponents (second fan-out)
+- Subcomponents do not fan out. They either produce their documents directly
+  or generate leaf boulders.
+
+This guarantees termination without requiring runtime depth checks.
 
 ### 6. Human Review
 
@@ -197,10 +225,29 @@ pipeline. At minimum:
   before the flow proceeds into the boulder tree.
 - Users must be able to review and approve/reject documents at any boulder node
   before dependent nodes execute.
-- Users must be able to review leaf PRs before they are finalized.
+- Users must be able to review leaf commits and the overall PR before they are
+  finalized.
 
 The system should support configurable review policies: review everything,
 review only at phase boundaries, review only at leaves, or fully automatic.
+
+#### 6.1 Run Restart Semantics
+
+When a user rejects a document or requests changes, the system must provide
+clear semantics for restarting or retrying portions of a flow:
+
+- **Node-level restart**: Re-execute a single node with the same or modified
+  inputs. Downstream nodes that depended on the old output are invalidated.
+- **Phase-level restart**: Re-execute all nodes in a phase. Useful when a
+  fan-out decision was wrong and the user wants to restructure.
+- **Flow-level restart**: Restart the entire flow from input expansion or from
+  a specific phase. Previously completed work is discarded or archived.
+- **Partial retry**: Re-execute only the failed or rejected nodes within a
+  phase, keeping approved siblings intact.
+
+The system must clearly communicate what will be invalidated by each restart
+option. Invalidated nodes should be marked but their previous outputs preserved
+for reference (not deleted).
 
 ### 7. Document Versioning
 
@@ -209,56 +256,68 @@ Documents are edited by multiple flows over time. The system must:
 - Track the version history of every document.
 - Record which flow run and which node produced each version.
 - Support diffing between versions.
-- Handle the case where two flows want to edit the same document. The system
-  must either serialize access (lock the document for the duration of the
-  editing flow) or detect and surface conflicts for human resolution.
+- Serialize concurrent access using pessimistic locking (see Section 8).
 
 ### 8. Concurrency and Locking
 
-Multiple flows may target overlapping regions of the boulder tree. The system
-must define a concurrency model:
+The system uses **pessimistic locking** for concurrent access to boulder tree
+nodes. When a flow (or sub-run) needs to visit a node, it acquires a lock on
+that node before proceeding. The lock is held until the flow completes its
+work on that node.
 
-- Whether concurrent flows can visit the same boulder simultaneously.
-- How sub-runs interact with the parent run's active nodes.
-- What happens when a queued flow targets a node that is locked by another
-  flow.
+Specific rules:
 
-At minimum, the system must prevent two flows from editing the same document
-node at the same time. The strategy (optimistic locking with conflict
-detection, pessimistic locking with queuing, or node-level mutual exclusion)
-is an implementation decision, but the requirement is that concurrent edits
-do not silently clobber each other.
+- A flow must acquire a lock on a document node before reading or writing it.
+- If a node is already locked by another flow, the requesting flow queues
+  behind it. The system does not attempt concurrent edits or optimistic
+  conflict resolution.
+- Sub-runs acquire locks independently. If a sub-run needs a node locked by
+  its parent run, this is a deadlock -- the system must detect and surface
+  this to the user rather than silently hanging.
+- The UI should show lock status on nodes so users can see what is blocked
+  and why.
+- Lock granularity is at the document node level, not the boulder level. Two
+  flows can work on different nodes within the same boulder concurrently.
 
-### 9. Resumability
+### 9. Resumability and Recoverability
 
 If a flow run fails partway through (LLM error, timeout, infrastructure
 failure), the system must be able to resume the flow from the point of failure
 without re-executing successfully completed nodes.
 
-Completed nodes should be idempotent on re-run -- if a node is re-executed, it
-should produce the same result or the system should detect that it has already
-been completed and skip it.
+- Completed nodes are recorded in the event log. On resume, the system
+  replays the flow's event history to determine which nodes are done and
+  which remain.
+- Failed nodes can be retried individually without restarting the flow.
+- The system must release locks held by failed flows so they do not block
+  other work indefinitely. Lock release on failure should be automatic with
+  a configurable timeout.
+- The UI should clearly distinguish between flows that are running, paused
+  (awaiting review), failed (awaiting retry), and completed.
 
 ### 10. Git Integration
 
 The system must integrate with git for leaf node output:
 
-- Leaf boulders produce pull requests against the target repository.
-- The system must define a branching strategy: one branch per leaf, per flow
-  run, or per some other grouping.
-- PRs from the same flow run should be composable -- the system should support
-  merging multiple leaf outputs into a coherent set of changes.
+- Each leaf boulder produces one **commit** against the target repository.
+- Each flow run produces one **pull request** containing all commits from its
+  leaf boulders.
+- Commits within a PR are ordered to reflect the dependency structure of the
+  boulder tree (parent boulders' leaves commit before child boulders' leaves
+  where dependencies exist).
 - Bug fix flows accept an existing PR as input and must be able to read its
   diff and associated context.
+- Sub-runs contribute their commits to the parent flow's PR.
 
 ### 11. Observability
 
 Users must be able to:
 
 - See the current state of the boulder tree (which nodes exist, their status,
-  their documents).
+  their documents, their lock status).
 - See the progress of an active flow run (which phase, which nodes are
-  executing, which are queued, which are complete).
+  executing, which are queued, which are complete, which are blocked by locks).
+- See the flow and template queue at project, boulder, and node level.
 - See the history of flow runs and their outcomes.
 - Navigate from any document to the flow run and node that produced it.
 
@@ -310,10 +369,12 @@ Segregation (CQRS) and Event Sourcing. Provides:
 - **Aggregates** for modeling domain entities (flow runs, boulders, document
   nodes) with command validation and event emission.
 - **Process Managers** for orchestrating multi-step flows across aggregates
-  (e.g., walking the boulder tree, coordinating sub-runs).
+  (e.g., walking the boulder tree, coordinating sub-runs, managing lock
+  acquisition and queuing).
 - **Event Handlers** for building read-model projections and triggering
   side effects.
-- **Middleware** for cross-cutting concerns (audit logging, authorization).
+- **Middleware** for cross-cutting concerns (audit logging, authorization,
+  lock enforcement).
 
 All state changes flow through commands and events. The event log is the
 system's source of truth, satisfying the auditability requirement and enabling
@@ -329,14 +390,25 @@ full state reconstruction.
   by event handlers projecting from the event stream. Used for queries, UI,
   and API responses.
 - **General Storage**: User accounts, project metadata, boulder templates,
-  and other reference data.
+  template version history, and other reference data.
 
-### 4. Background Job Processing
+### 4. Vector Database
+
+A vector database (e.g., pgvector as a PostgreSQL extension, or a dedicated
+store) for RAG-based node input assembly:
+
+- Documents and document chunks are embedded and indexed as vectors.
+- Node input assembly queries the vector store to retrieve the most relevant
+  context from ancestor documents rather than passing full document contents.
+- Embeddings are updated when documents are generated or modified.
+
+### 5. Background Job Processing
 
 **Oban (with Oban Pro)** -- Postgres-backed job processing for work that
 doesn't belong in the event-sourced command flow:
 
 - **LLM Calls**: Queued as Oban jobs with retries, timeouts, and rate limiting.
+- **Embedding Generation**: Vector indexing of newly generated documents.
 - **PR Generation**: Git operations and GitHub API calls.
 - **Parallel Node Execution**: Oban's concurrency controls manage how many
   nodes execute simultaneously.
@@ -348,36 +420,37 @@ doesn't belong in the event-sourced command flow:
 Oban complements Commanded: Commanded handles state transitions and event flow,
 Oban handles the actual work execution with backpressure and retry semantics.
 
-### 5. Web Framework
+### 6. Web Framework
 
 **Phoenix / Phoenix LiveView** -- Web framework and real-time UI:
 
 - **LiveView**: Server-rendered interactive UI with WebSocket-based updates.
-  Boulder tree visualization, flow progress, and document editing update in
-  real time without client-side framework complexity.
-- **Phoenix Channels**: WebSocket pub/sub for broadcasting flow progress and
-  node status changes.
+  Boulder tree visualization, flow progress, queue views, and document editing
+  update in real time without client-side framework complexity.
+- **Phoenix Channels**: WebSocket pub/sub for broadcasting flow progress,
+  node status changes, and lock state updates.
 - **REST/JSON API**: For programmatic access and integrations.
 
-### 6. LLM Integration
+### 7. LLM Integration
 
 An Elixir client library for calling LLM APIs (Anthropic Claude). Wrapped
 behind an internal abstraction so the specific provider can change. LLM calls
 are dispatched as Oban jobs, not made inline during command processing.
 
-### 7. Git Integration
+### 8. Git Integration
 
-**Git CLI / GitHub API** -- For leaf node PR generation and bug fix PR
-ingestion. Operations run as Oban jobs. The system maintains working copies
-or uses the GitHub API directly for file operations.
+**Git CLI / GitHub API** -- For leaf node commit generation and bug fix PR
+ingestion. Operations run as Oban jobs. Each leaf boulder produces a commit;
+the flow run composes these into a single PR. The system maintains working
+copies or uses the GitHub API directly for file operations.
 
-### 8. Authentication and Authorization
+### 9. Authentication and Authorization
 
 **Standard Phoenix auth** -- User accounts, sessions, and role-based access
 control. Not event-sourced -- managed through conventional Ecto/Postgres
 patterns. Authorization middleware in Commanded gates command execution.
 
-### 9. Deployment
+### 10. Deployment
 
 **Fly.io** -- Application hosting with:
 
@@ -385,49 +458,67 @@ patterns. Authorization middleware in Commanded gates command execution.
 - Postgres managed database.
 - Machine suspend/resume for cost management during low-traffic periods.
 
-### 10. High-Level Data Flow
+### 11. High-Level Data Flow
 
 ```
 User Input
     |
     v
-[Input Command] --> Commanded Aggregate (FlowRun)
-    |                    |
-    | (event)            | (event: FlowStarted)
-    v                    v
-Oban Job:           Event Handler:
-Expand Input        Project to read model
+[StartFlow Command] --> FlowRun Aggregate
+    |                       |
+    | (event)               | (pins template versions,
+    v                       |  emits FlowScheduled)
+    |                       v
+    |                   Event Handler:
+    |                   Update queue projection
+    v
+Oban Job:
+Expand Input (LLM)
     |
     | (result)
     v
-[ExpandedInputReceived Command] --> FlowRun Aggregate
-    |                                    |
-    | (event)                            |
-    v                                    v
-Process Manager:                    Event Handler:
-BoulderTreeWalker                   Update UI projection
+[InputExpanded Command] --> FlowRun Aggregate
+    |                           |
+    | (event)                   | (emits InputExpanded,
+    v                           |  awaits review if configured)
+    |                           v
+    |                       Event Handler:
+    |                       Update UI projection
+    v
+Process Manager: BoulderTreeWalker
     |
-    | (determines next nodes)
+    | (acquires node lock)
+    | (determines next nodes from template DAG)
     v
 [GenerateDocument Command] --> Boulder Aggregate
     |                              |
-    | (event)                      | (event: GenerationRequested)
+    | (event)                      | (emits GenerationRequested)
     v                              v
 Oban Job:                     Event Handler:
-Call LLM                      Update node status
+Assemble context (RAG) →      Update node status,
+Call LLM →                    show lock holders
+Return result
     |
     | (result)
     v
 [DocumentGenerated Command] --> Boulder Aggregate
     |                               |
-    | (event)                       |
+    | (event)                       | (emits DocumentGenerated)
     v                               v
-Process Manager:               Event Handler:
-Check dependencies,            Project document to
-trigger next nodes             read model, notify UI
-or next phase
+Oban Job:                      Event Handler:
+Embed document chunks →        Project document to read model,
+Index in vector store          release node lock, notify UI
+    |
+    v
+Process Manager: BoulderTreeWalker
+    |
+    | (check boulder DAG: more nodes? next phase? fan-out?)
+    | (at leaf: generate commit via Oban job)
+    | (all leaves done: create PR via Oban job)
+    v
+[FlowCompleted Command] --> FlowRun Aggregate
 ```
 
 The cycle repeats -- process managers react to events and issue the next
-commands, Oban jobs handle the actual LLM/git work, event handlers keep
-projections current for the UI.
+commands, Oban jobs handle the actual LLM/git/embedding work, event handlers
+keep projections current for the UI and queue views.
