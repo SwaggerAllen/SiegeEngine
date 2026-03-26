@@ -19,9 +19,13 @@ class ArchitecturePrompt(PromptTemplate):
             )
 
         system_reqs = input_artifacts.get("system_requirements", "")
+        input_docs = input_artifacts.get("input_documents", "")
+        user_content = f"SYSTEM REQUIREMENTS:\n\n{system_reqs}"
+        if input_docs:
+            user_content += f"\n\n---\n\nADDITIONAL INPUT DOCUMENTS:\n\n{input_docs}"
         messages = [
             {"role": "system", "content": self.full_system_message},
-            {"role": "user", "content": f"SYSTEM REQUIREMENTS:\n\n{system_reqs}"},
+            {"role": "user", "content": user_content},
         ]
         return self._inject_feedback(
             messages, feedback, human_notes, current_content, upstream_changes,
