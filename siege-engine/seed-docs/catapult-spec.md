@@ -197,7 +197,16 @@ The system uses **pessimistic locking** at the node level. Only one flow run or 
 - All state changes are recorded as events, enabling replay and recovery
 - Locks are automatically released on failure with configurable timeout
 
-## A.9 Git Strategy
+## A.9 Document Storage Model
+
+Document content lives in two places with distinct roles:
+
+- **PostgreSQL** is the operational store for document content. All reads during flow execution, context assembly, and UI rendering come from the database. pgvector embeddings are indexed against DB content directly.
+- **Git/Gitea** receives committed snapshots at review boundaries — when a document reaches `awaiting_review` or `approved` status. Working drafts and AI review loops happen entirely in the database without git noise.
+
+This means git history reflects meaningful checkpoints (reviewable and approved states), not every intermediate generation attempt. The event log tracks all state transitions regardless of whether a git commit was produced.
+
+## A.10 Git Strategy
 
 - **One commit per leaf node** — Each leaf boulder produces a single commit
 - **One PR per flow run** — All leaf commits from a flow run are composed into a single PR, ordered by dependency structure
@@ -205,43 +214,43 @@ The system uses **pessimistic locking** at the node level. Only one flow run or 
 - Every project is assumed to be a **monorepo** for v1. The data model supports multi-repo via the `{repository, folder}` mapping (Section A.1.2), but v1 flow orchestration, PR composition, and Gitea sidecar integration assume a single repository per project.
 - The system is the sole code shipping mechanism for the project (aside from bug fix PRs which are the input, not the output).
 
-## A.10 Document Versioning
+## A.11 Document Versioning
 
 - All artifacts are versioned. Each generation or revision produces a new version.
 - Event sourcing provides a complete audit trail of every state change.
 - Users can revert to any previous version. Reversion appends new events (no destructive history changes).
 - Each completed run produces a git commit checkpoint.
 
-## A.11 Prompt System
+## A.12 Prompt System
 
 - Each processing node type has a built-in prompt template with: system message, output format instructions, context assembly template, and revision instructions.
 - Users can override any prompt field per stage per project.
 - Model and temperature are configurable at three levels: project default, per-phase default, and per-node override. Defaults propagate downward.
 
-## A.12 Credentials and Token Tracking
+## A.13 Credentials and Token Tracking
 
 - The service is **BYO LLM credentials** — customers supply their own API keys through the application, not environment variables. Credentials are stored per-user.
 - Token usage is tracked per node, per flow run, and per project. Users can see how many tokens each generation step consumed.
 - Cost projection is deferred to a future version, but the tracking infrastructure is in place from day one.
 
-## A.13 Real-Time Updates
+## A.14 Real-Time Updates
 
 - All connected clients receive live updates when artifacts are generated, statuses change, or flows progress.
 - DAG visualizations, status indicators, and artifact viewers update in real-time.
 
-## A.14 Auth and Multi-User Access
+## A.15 Auth and Multi-User Access
 
 - Role-based access control: admin (full control), member (run flows, review, configure), viewer (read-only, can comment).
 - Invite-based onboarding with time-limited tokens.
 - Per-user LLM credential storage.
 - Per-user git credential storage for push/PR operations.
 
-## A.15 Multi-Project Support
+## A.16 Multi-Project Support
 
 - Multiple independent projects, each with its own repository, document DAG, pipeline configuration, and event history.
 - One active flow run per project at a time; different projects run concurrently.
 
-## A.16 Bootstrap Flow
+## A.17 Bootstrap Flow
 
 A one-time flow for self-bootstrapping. The only supported use case is onboarding a codebase that already has all required documents in the correct hierarchy and whose folder structure mirrors the boulder mapping assumptions.
 
@@ -251,9 +260,61 @@ A one-time flow for self-bootstrapping. The only supported use case is onboardin
 - Destructive to existing project state; can only run once or on a fresh project
 - After bootstrap, the project can use any standard flow to iterate
 
-## A.17 AI Coding Assistant Integration
+## A.18 AI Coding Assistant Integration
 
 The coding portion of leaf boulder execution (plan creation and PR generation) is delegated to an AI coding assistant. The assistant has tools to read, navigate, and understand the current codebase directly — no separate code parsing or AST indexing is needed. The assistant works up implementation plans since it already has the tools to see the code in context. The document tree provides the "what needs to change" and the coding assistant handles the "how to change it" against the actual code.
+
+## A.19 Operational Invariants (Learned from Siege Engine v1)
+
+These requirements are derived from edge cases, bugs, and hard-won knowledge from Siege Engine's production use. They are non-negotiable for Catapult.
+
+### A.19.1 Dependency Satisfaction
+
+Dependencies are satisfied when a parent artifact has been **generated** (status in: `approved`, `awaiting_review`, `stale`), not only when approved. This allows downstream generation to proceed while upstream is still under human review. Without this, a single slow reviewer blocks the entire pipeline.
+
+### A.19.2 Fan-Out Always Pauses for Review
+
+Fan-out stages (which create or modify the boulder tree structure) must always pause for human review regardless of auto-approval settings. Structural changes — adding, removing, or reorganizing boulders — are too consequential to auto-approve. This is a hard override, not configurable.
+
+### A.19.3 Blocking PR
+
+If an outstanding PR exists for a project from a prior flow run, new flows cannot start. This prevents the document DAG from drifting out of sync with the codebase. The user must merge or close the existing PR before starting a new flow.
+
+### A.19.4 Prune as a Review Action
+
+Beyond approve and reject, users need a **prune** action: remove a downstream cascade that became irrelevant. For example, a fan-out produced a component that shouldn't exist. Reject would regenerate it; prune removes it and all its descendants from the document DAG, emitting appropriate events.
+
+### A.19.5 Cascading Readiness Re-Scan
+
+After completing any node, the orchestrator must re-scan all pending nodes for newly unblocked work — not just the completed node's immediate children. Generating component A's architecture might unblock component B (which depends on A via the dependency DAG), and B may have already been passed in a linear scan. The scan must loop until no more work is found in a single pass.
+
+### A.19.6 Centralized Run Completion
+
+Run completion (transitioning a run to terminal status) must happen through exactly one codepath. Siege Engine had bugs where run completion logic was scattered across multiple callers, causing zombie runs that stayed in RUNNING status indefinitely. The single completion point should be in a `finally`-equivalent block of the main execution loop.
+
+### A.19.7 Phase Boundary Checks Before Execution
+
+Stop-point checks (phase boundaries, user-configured pause points) must be evaluated **before** entering a stage's execution, not after. The check acts as a gate: stages past the stop point are never entered. Checking after execution means boundary-crossing stages run before the pause is detected.
+
+### A.19.8 Cross-Run Execution Deduplication
+
+Before creating a new execution for a node, check for existing RUNNING executions for the same node **across all runs**, not just the current run. Scoping this check to a single run allows duplicate executions when sub-runs or manual triggers overlap.
+
+### A.19.9 Execution Retry Creates New Records
+
+Each retry of a failed execution creates a new execution record with an incremented retry count, rather than mutating the existing record. This preserves the event history and audit trail. The old execution remains in its terminal state.
+
+### A.19.10 Reconciliation on Startup
+
+On server startup, the system must reconcile all projects: rebuild materialized state from events, detect and resolve orphaned executions (RUNNING with no active job → mark FAILED), complete zombie runs (RUNNING with no active executions → mark FAILED), and cancel stale queued jobs. This is a first-class recovery mechanism, not an afterthought.
+
+### A.19.11 LLM Output Parsing Resilience
+
+LLM output format is unreliable. All structured output extraction (component lists, dependency DAGs, code files, plans) must use multiple parsing strategies with fallbacks. Try strict parsing first, fall back to regex extraction, then to smaller-model re-extraction. Never fail a stage because the LLM returned valid content in an unexpected format.
+
+### A.19.12 LLM Concurrency Limits
+
+Parallel execution within phases (A.3.4) must respect a configurable concurrency limit for LLM calls. Siege Engine hardcoded this to 1 after higher values caused resource exhaustion and rate limiting cascades. The limit should be configurable per project but default to conservative values. Exponential backoff on rate limit errors (3 attempts, 1s base delay).
 
 ---
 
@@ -279,6 +340,8 @@ This gives us:
 
 Commanded's process managers coordinate multi-step workflows (flow runs, phase transitions, boulder execution). Aggregates enforce invariants (pessimistic locking, status transitions, template pinning).
 
+Critical constraint from Siege Engine: the event-sourced snapshot (materialized from events) is the **single source of truth** for all pipeline and document state. Database fields on model tables are read-only projections for query convenience. All status reads during flow execution must come from the snapshot, never from DB model fields. Siege Engine's most recurring bug class was reading stale status from DB projections instead of the authoritative snapshot.
+
 ## B.4 Oban
 
 Background job processing for work that doesn't fit Commanded's event-driven model: LLM API calls, git operations, CI polling, credential refresh, and other side-effectful operations that need retries, scheduling, and observability. Oban jobs are triggered by Commanded events and emit commands back into the event-sourced domain on completion.
@@ -289,11 +352,11 @@ Vector embeddings stored in PostgreSQL via pgvector for semantic retrieval durin
 
 ## B.6 Gitea (Sidecar)
 
-A Gitea instance runs as a sidecar handling git hosting, branch management, PR mechanics, and merge conflict resolution. Catapult provides its own primary UI but proxies or iframes Gitea's UI for merge conflict resolution and other git edge cases that benefit from a purpose-built interface, keeping the experience cohesive.
+A Gitea instance runs as a sidecar handling git hosting, branch management, PR mechanics, and merge conflict resolution. Catapult provides its own review UI via LiveView (Section B.7) — Gitea's web UI is not the primary user-facing interface. Gitea's UI is available as an escape hatch, proxied or iframed for merge conflict resolution and other git edge cases where a purpose-built git UI is needed.
 
 Gitea's role in the system:
-- **Git hosting and PR management** — Branch creation, commit composition, PR lifecycle
-- **Merge conflict UI** — For the rare edge cases where conflicts arise despite folder-per-leaf and one-run-at-a-time constraints
+- **Git backend** — Branch creation, commit composition, PR lifecycle, merge operations. This avoids reimplementing git operations in Elixir (where git libraries are immature) or shelling out to the git CLI (which has concurrency issues)
+- **Merge conflict UI** — For the rare edge cases where conflicts arise despite folder-per-leaf and one-run-at-a-time constraints. Available as a proxied escape hatch, not the primary workflow
 - **Webhook events** — Gitea emits granular webhooks for the full PR lifecycle: creation, comments, inline review comments, review submissions (approve/request changes), merges, and branch updates. Catapult subscribes to these webhooks to automate responses to PR activity (e.g., CI feedback triggers regeneration, human review comments on PRs feed back into the review workflow)
 - **Programmatic review feedback** — The AI posts review comments (including inline comments tied to file paths and line numbers) via Gitea's API, enabling code review to happen directly on the PR
 - **Webhook configuration** — Repo-level webhooks are configured per project; system-level webhooks handle cross-cutting concerns
