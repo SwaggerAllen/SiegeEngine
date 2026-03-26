@@ -2,7 +2,6 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StageNode } from './StageNode';
 import type { DAGNodeData } from '../../types/dag';
-import { TestQueryWrapper } from '../../test/queryWrapper';
 
 const mockSetEditPromptStageKey = vi.fn();
 
@@ -33,6 +32,7 @@ const baseData: DAGNodeData = {
   label: 'Architecture',
   artifact_type: 'system_architecture',
   status: 'pending',
+  is_stale: false,
   component_key: null,
   version: 0,
   stage_key: 'system_architecture',

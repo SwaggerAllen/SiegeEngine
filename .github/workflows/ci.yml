@@ -23,6 +23,22 @@ jobs:
       - run: npm ci
       - run: npm run lint
 
+  frontend-typecheck:
+    name: Frontend Typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: siege-engine/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: siege-engine/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+
   frontend-test:
     name: Frontend Tests
     runs-on: ubuntu-latest
@@ -53,6 +69,22 @@ jobs:
       - run: pip install ruff
       - run: ruff check backend/
       - run: ruff format --check backend/
+
+  backend-typecheck:
+    name: Backend Typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: siege-engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: mypy backend/
+    continue-on-error: true
 
   backend-test:
     name: Backend Tests
