@@ -26,7 +26,7 @@ Each leaf boulder corresponds to a folder in the project repository. This gives 
 
 ### A.1.3 Root Boulders
 
-At every fan-out level, there is a **root boulder** that owns files not belonging to any fanned-out child. At the system level this is the "system root component," at the component level this is the "component root subcomponent." These handle configuration files, Dockerfiles, shared utilities, and anything else that lives outside the fanned-out folders.
+At every fan-out level, there is a **root boulder** that owns files not belonging to any fanned-out child. At the system level this is the "system root component," at the component level this is the "component root subcomponent." The root boulder's intended purpose is build configuration, infrastructure files, and similar cross-cutting concerns, but its contents are not prescribed — different deployments and ecosystems will have different needs.
 
 ### A.1.4 Dual DAG Architecture
 
@@ -61,7 +61,7 @@ Always initiated by the user. Used when new requirements discovered at downstrea
 
 ### A.2.5 Bug Fix Flow
 
-Input is a PR that fixes a bug (not the bug itself). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates as an upward propagation: walking from each touched leaf up to the project root, updating documentation at each level to reflect what the code change reveals. At fan-out nodes where multiple sibling leaves propagate upward, the system synchronizes their changes into a coherent update to the parent architecture.
+Input is a PR that fixes a bug (not the bug itself). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates as an upward propagation: walking from each touched leaf up to the project root, updating documentation at each level to reflect what the code change reveals. Parent nodes wait for all descendant propagations to complete before updating, so changes from multiple touched leaves are merged into a single coherent update at each fan-out node rather than applied piecemeal.
 
 ## A.3 Phases
 
@@ -81,7 +81,7 @@ A flow run always starts with an input document, expands it into a requirements 
 
 By default, propagation of changes goes **downward**. At fan-out nodes, the system generates a routing document determining which child nodes to visit.
 
-**Upward propagation** goes up to the tree's first ancestor and then downward, with fan-out routing at each level. Upward propagation is always user-initiated and is specifically for ensuring changes found at downstream nodes make it through the rest of the system.
+**Upward propagation** goes up to the tree's first ancestor and then downward, with fan-out routing at each level. Upward propagation is always user-initiated and is specifically for ensuring changes found at downstream nodes make it through the rest of the system. During upward propagation, parent nodes wait for propagation from **all** descendants to complete before updating, so that inputs are merged and each parent regenerates only once per propagation run.
 
 ### A.3.3 Fan-Out
 
@@ -176,7 +176,8 @@ The system uses **pessimistic locking** at the node level. Only one flow run or 
 - **One commit per leaf node** — Each leaf boulder produces a single commit
 - **One PR per flow run** — All leaf commits from a flow run are composed into a single PR, ordered by dependency structure
 - **Sub-run commits** contribute to the parent flow's PR
-- The system is the sole code shipping mechanism for the project (aside from bug fix PRs which are the input, not the output). Every project is assumed to be a monorepo.
+- Every project is assumed to be a **monorepo**. This is a load-bearing assumption — folder mapping, single PR per flow, and the Gitea sidecar model all depend on it.
+- The system is the sole code shipping mechanism for the project (aside from bug fix PRs which are the input, not the output).
 
 ## A.10 Document Versioning
 
@@ -216,10 +217,13 @@ The system uses **pessimistic locking** at the node level. Only one flow run or 
 
 ## A.16 Bootstrap Flow
 
-- A one-time self-bootstrapping flow for onboarding existing codebases.
-- Takes as input: existing documents matching the scaffolding flow's output shape, plus an existing codebase.
-- Reconstructs the boulder hierarchy and dependency DAG from the provided documents, aligns codebase files to leaf boulders via folder mapping.
-- Destructive to existing project state; can only run once or on a fresh project.
+A one-time flow for self-bootstrapping. The only supported use case is onboarding a codebase that already has all required documents in the correct hierarchy and whose folder structure mirrors the boulder mapping assumptions.
+
+- Takes as input: a codebase with documents already matching the scaffolding flow's output shape (requirements, architectures, plans) organized in the expected hierarchy
+- Reconstructs the boulder hierarchy, dependency DAG, and document DAG from the existing documents and folder structure
+- Does **not** reconstruct event history or review records — those start fresh from the point of bootstrap
+- Destructive to existing project state; can only run once or on a fresh project
+- After bootstrap, the project can use any standard flow to iterate
 
 ## A.17 AI Coding Assistant Integration
 
