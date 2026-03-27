@@ -175,7 +175,7 @@ Some node types can be configured for auto-approval, skipping human review. This
 
 Each component and subcomponent boulder has an **owner** — the team member who is the default reviewer for everything in that subtree (architecture docs, plans, and code). System-level artifacts default to the project lead or admin.
 
-**Fan-out is the natural assignment point.** Fan-out stages already pause for human review (A.20.2). When the reviewer approves the decomposition into child boulders, they also assign ownership of each child. Ownership is part of the fan-out approval, not a separate step.
+**Fan-out is the natural assignment point.** Fan-out stages already pause for human review (A.22.2). When the reviewer approves the decomposition into child boulders, they also assign ownership of each child. Ownership is part of the fan-out approval, not a separate step.
 
 #### Review Type Routing
 
@@ -297,87 +297,139 @@ This means git history reflects meaningful checkpoints (reviewable and approved 
 - Per-user LLM credential storage.
 - Per-user git credential storage for push/PR operations.
 
-## A.16 Multi-Project Support
+## A.16 Multi-Tenancy
+
+The system supports both self-hosted (single-tenant) and managed (multi-tenant) deployments from the same codebase.
+
+### A.16.1 Tenant Isolation
+
+Each tenant is isolated at the database level via **Postgres schemas** — one schema per tenant. Each tenant's event store, snapshots, documents, credentials, and project data live in a separate schema. This provides:
+- Structural isolation without tenant_id columns on every table
+- Per-tenant backup and restore
+- Clean tenant export (schema dump) for customers migrating to self-hosted
+- Independent event stores, so reconciliation (A.22.11) runs per-tenant
+- Self-hosted deployments are simply single-tenant instances with one schema
+
+### A.16.2 Gitea Tenant Isolation
+
+Each tenant maps to a **Gitea organization**. Repositories live within the org, permissions scope to the org. For managed deployments, a shared Gitea instance with org-per-tenant is the default. Isolated Gitea instances are available as a premium option for enterprise tenants who require hard separation.
+
+### A.16.3 Per-Tenant Resource Limits
+
+Managed deployments enforce per-tenant limits to prevent noisy neighbors:
+- LLM call concurrency limit per tenant (via per-tenant Oban queues)
+- Git operation rate limiting
+- Storage quotas (document content, git repos, vector embeddings)
+- Limits are configurable per subscription tier
+
+### A.16.4 Tenant Provisioning
+
+Tenant lifecycle is automated: sign up → create Postgres schema → create Gitea org → configure webhooks → provision default boulder templates. Teardown follows a data retention policy with export-before-delete.
+
+## A.17 Billing
+
+Billing is an **optional, pluggable module** — disabled for self-hosted deployments, enabled for managed.
+
+### A.17.1 Payment Processing
+
+Payment integration is behind an adapter interface. The default implementation uses Stripe. The adapter handles:
+- Subscription management (tiers, upgrades, downgrades)
+- Usage-based billing components (token consumption, storage, projects)
+- Webhook handling for payment events (subscription changes, payment failures)
+- Free trial support
+
+The billing adapter is AGPL-compatible (Stripe client libraries are MIT). Self-hosted deployments disable the billing module entirely — no payment code runs.
+
+### A.17.2 Subscription Tiers
+
+Tiers map to resource limits (A.16.3):
+- **Free tier** — limited projects, limited LLM concurrency, limited storage. Enough to evaluate the system on a real project.
+- **Team tier** — higher limits, multiple team members, review workflow features
+- **Enterprise tier** — unlimited projects, isolated Gitea instance option, SSO/SAML, priority support, custom resource limits
+
+Token costs are pass-through (BYO credentials), so subscription tiers govern platform usage, not LLM spend.
+
+## A.18 Multi-Project Support
 
 - Multiple independent projects, each with its own repository, document DAG, pipeline configuration, and event history.
 - One active flow run per project at a time; different projects run concurrently.
 
-## A.17 Bootstrap Flow
+## A.19 Bootstrap Flow
 
 A one-time flow for self-bootstrapping. The only supported use case is onboarding a codebase that already has all required documents in the correct hierarchy and whose folder structure mirrors the boulder mapping assumptions.
 
 - Takes as input: a codebase with documents already matching the scaffolding flow's output shape (requirements, architectures, plans) organized in the expected hierarchy
 - Reconstructs the boulder hierarchy, dependency DAG, and document DAG from the existing documents and folder structure
-- Synthesizes baseline events for the bootstrapped state — a `ProjectBootstrapped` event (or equivalent) that establishes the initial snapshot from the imported documents and folder structure. This ensures reconciliation (A.20.11) can rebuild the snapshot from events without special-casing bootstrap. Review records start fresh from the point of bootstrap.
+- Synthesizes baseline events for the bootstrapped state — a `ProjectBootstrapped` event (or equivalent) that establishes the initial snapshot from the imported documents and folder structure. This ensures reconciliation (A.22.11) can rebuild the snapshot from events without special-casing bootstrap. Review records start fresh from the point of bootstrap.
 - Destructive to existing project state; can only run once or on a fresh project
 - After bootstrap, the project can use any standard flow to iterate
 
-## A.18 AI Coding Assistant Integration
+## A.20 AI Coding Assistant Integration
 
 The coding portion of leaf boulder execution (plan creation and PR generation) is delegated to an AI coding assistant. The assistant has tools to read, navigate, and understand the current codebase directly — no separate code parsing or AST indexing is needed. The assistant works up implementation plans since it already has the tools to see the code in context. The document tree provides the "what needs to change" and the coding assistant handles the "how to change it" against the actual code.
 
-## A.19 Adoption and Trust
+## A.21 Adoption and Trust
 
 These requirements address the concerns of teams evaluating Catapult — particularly midsize engineering organizations that need to justify the investment and manage the risk of adopting a new workflow.
 
-### A.19.1 Portability and No Lock-In
+### A.21.1 Portability and No Lock-In
 
 All project artifacts (documents, code, event history) are exportable at any time. Documents exist as markdown files in a git repository. Code is standard code in the same repository. If a team decides to stop using Catapult, they walk away with a fully functional codebase and a complete set of design documents — no proprietary formats, no data trapped in a database.
 
-### A.19.2 Graduated Autonomy
+### A.21.2 Graduated Autonomy
 
 The system supports a spectrum from fully supervised to fully autonomous. A team can start with every single node requiring human approval (treating Catapult as a "suggestion engine") and gradually increase auto-approval as trust builds. The spectrum is continuous — not a cliff between "manual" and "automatic." This is controlled via the auto-approval configuration (A.6.1) and review granularity settings (A.6.3).
 
-### A.19.3 Human Override
+### A.21.3 Human Override
 
 At any point in a flow, a human can stop the run, correct course, and resume. The system should never be in a state where the only way forward is "trust the AI." Specific overrides:
 - Pause any running flow immediately
 - Reject and provide feedback on any artifact
-- Prune entire subtrees that shouldn't exist (A.20.4)
-- Force restart stuck nodes (A.20.4)
+- Prune entire subtrees that shouldn't exist (A.22.4)
+- Force restart stuck nodes (A.22.4)
 - Manually kick off sub-runs to fix upstream issues (A.5)
 
-### A.19.4 Dry Run Mode
+### A.21.4 Dry Run Mode
 
 Run an entire flow without committing anything — preview what would be generated, what the document DAG structure would look like, and how many LLM calls it would make — without side effects. This lets teams evaluate Catapult on their actual project description before committing to a full run.
 
-### A.19.5 Diff-First Review
+### A.21.5 Diff-First Review
 
 The review UI defaults to **diff view**, not full document view. No reviewer should be presented with a 20,000-word document and asked "is this good?" They see what changed since the last version. Full document view is available but is not the default. This applies to both document review and code review UIs.
 
-### A.19.6 Provenance Chain
+### A.21.6 Provenance Chain
 
 Any document or piece of code is traceable back through its full generation chain: this code was generated from this plan, which was generated from this architecture doc, which was approved by Alice on March 3rd with these review comments. The provenance chain is surfaced in the UI — click any artifact to see its lineage. This is derived from the event log and document DAG edges.
 
-### A.19.7 Rollback
+### A.21.7 Rollback
 
 Reversion to any previous project state is a single action. The event-sourced model (A.11) makes this possible — rollback appends new events, never destroys history. This is the single most reassuring capability for risk-averse teams and should be prominently surfaced in the UI.
 
-### A.19.8 Self-Hosted Deployment
+### A.21.8 Self-Hosted Deployment
 
 The entire stack (Catapult, Gitea, PostgreSQL) runs on the customer's infrastructure. No data leaves their network. Combined with BYO LLM credentials (A.13), customers control every external dependency. This is essential for teams with security or compliance requirements.
 
-### A.19.9 Cost Visibility
+### A.21.9 Cost Visibility
 
 Token tracking with model identifiers (A.13) is surfaced in the UI at the flow run level: "This scaffolding run used X tokens across Y calls, estimated cost $Z" (once cost projection is implemented). Even before cost projection, raw token + model data is visible per node and per run so teams can understand and predict their API spend.
 
-## A.20 Operational Invariants (Learned from Siege Engine v1)
+## A.22 Operational Invariants (Learned from Siege Engine v1)
 
 These requirements are derived from edge cases, bugs, and hard-won knowledge from Siege Engine's production use. They are non-negotiable for Catapult.
 
-### A.20.1 Dependency Satisfaction
+### A.22.1 Dependency Satisfaction
 
 Dependencies are satisfied when a parent artifact has been **generated** (status in: `approved`, `awaiting_review`, `stale`), not only when approved. This allows downstream generation to proceed while upstream is still under human review. Without this, a single slow reviewer blocks the entire pipeline.
 
-### A.20.2 Fan-Out Always Pauses for Review
+### A.22.2 Fan-Out Always Pauses for Review
 
 Fan-out stages (which create or modify the boulder tree structure) must always pause for human review regardless of auto-approval settings. Structural changes — adding, removing, or reorganizing boulders — are too consequential to auto-approve. This is a hard override, not configurable.
 
-### A.20.3 Blocking PR
+### A.22.3 Blocking PR
 
 If an outstanding PR exists for a project from a prior flow run, new flows cannot start. This prevents the document DAG from drifting out of sync with the codebase. The user must merge or close the existing PR before starting a new flow. Sub-runs are exempt from this rule — they contribute to their parent flow's PR and exist precisely to handle mid-flow corrections.
 
-### A.20.4 Debugging and Administrative Tools
+### A.22.4 Debugging and Administrative Tools
 
 The system provides a set of administrative actions and debugging screens, separate from the normal review workflow.
 
@@ -385,7 +437,7 @@ The system provides a set of administrative actions and debugging screens, separ
 - **Prune** — Remove a node and its entire downstream cascade from the document DAG. For example, a fan-out produced a component that shouldn't exist. Unlike reject (which regenerates), prune deletes. Emits appropriate events for the removal.
 - **Force restart** — Force a stuck or failed node back to pending and re-execute, bypassing normal status transition rules
 - **Reset all** — Reset all nodes in the current run back to pending, clearing all generated state
-- **Force sync / repair** — Rebuild the materialized snapshot from the event log. Detects and resolves orphaned executions, zombie runs, and stale state (see A.20.11)
+- **Force sync / repair** — Rebuild the materialized snapshot from the event log. Detects and resolves orphaned executions, zombie runs, and stale state (see A.22.11)
 
 **Debugging screens** (per project):
 - **Snapshot viewer** — The current materialized snapshot in full, showing the authoritative state of all nodes, runs, and artifacts
@@ -393,39 +445,39 @@ The system provides a set of administrative actions and debugging screens, separ
 - **Frontend log** — Client-side log capturing UI errors, WebSocket connection state, and user actions
 - **Error panel** — Aggregated errors from both frontend and backend for the current project, with timestamps, stack traces, and source labels
 
-### A.20.5 Cascading Readiness Re-Scan
+### A.22.5 Cascading Readiness Re-Scan
 
 After completing any node, the orchestrator must re-scan all pending nodes for newly unblocked work — not just the completed node's immediate children. Generating component A's architecture might unblock component B (which depends on A via the dependency DAG), and B may have already been passed in a linear scan. The scan must loop until no more work is found in a single pass.
 
-### A.20.6 Centralized Run Completion
+### A.22.6 Centralized Run Completion
 
 Run completion (transitioning a run to terminal status) must happen through exactly one codepath. Siege Engine had bugs where run completion logic was scattered across multiple callers, causing zombie runs that stayed in RUNNING status indefinitely. The single completion point should be in a `finally`-equivalent block of the main execution loop.
 
-### A.20.7 Phase Boundary Checks Before Execution
+### A.22.7 Phase Boundary Checks Before Execution
 
 Stop-point checks (phase boundaries, user-configured pause points) must be evaluated **before** entering a stage's execution, not after. The check acts as a gate: stages past the stop point are never entered. Checking after execution means boundary-crossing stages run before the pause is detected.
 
-### A.20.8 Cross-Run Execution Deduplication
+### A.22.8 Cross-Run Execution Deduplication
 
 Before creating a new execution for a node, check for existing RUNNING executions for the same node **across all runs**, not just the current run. Scoping this check to a single run allows duplicate executions when sub-runs or manual triggers overlap.
 
-### A.20.9 Retries Are Sub-Runs
+### A.22.9 Retries Are Sub-Runs
 
 Failed executions are not retried in-place. A retry is a sub-run: it pauses the current run, creates a new run scoped to the failed node, executes, and returns control to the parent. This keeps the execution model uniform — there is no special "retry" concept, just the same sub-run machinery used everywhere else. The original failed execution remains in its terminal state in the event log.
 
-### A.20.10 Git-Before-DB Commit Ordering
+### A.22.10 Git-Before-DB Commit Ordering
 
 When an operation produces both a git commit and a database event, the git commit must happen **before** the database commit. If the database succeeds but git fails, the event log references a nonexistent commit — corrupted event history that is difficult to recover from. If git succeeds but the database fails, the result is an orphaned git commit that can be cleaned up trivially without data loss. Always order: git commit → DB commit.
 
-### A.20.11 Reconciliation on Startup
+### A.22.11 Reconciliation on Startup
 
 On server startup, the system must reconcile all projects: rebuild materialized state from events, detect and resolve orphaned executions (RUNNING with no active job → mark FAILED), complete zombie runs (RUNNING with no active executions → mark FAILED), and cancel stale queued jobs. This is a first-class recovery mechanism, not an afterthought.
 
-### A.20.12 LLM Output Parsing Resilience
+### A.22.12 LLM Output Parsing Resilience
 
 LLM output format is unreliable. All structured output extraction (component lists, dependency DAGs, code files, plans) must use multiple parsing strategies with fallbacks. Try strict parsing first, fall back to regex extraction, then to smaller-model re-extraction. Never fail a stage because the LLM returned valid content in an unexpected format.
 
-### A.20.13 LLM Concurrency Limits
+### A.22.13 LLM Concurrency Limits
 
 Parallel execution within phases (A.3.4) must respect a configurable concurrency limit for LLM calls. Siege Engine hardcoded this to 1 after higher values caused resource exhaustion and rate limiting cascades. The limit should be configurable per project but default to conservative values. Exponential backoff on rate limit errors (3 attempts, 1s base delay).
 
@@ -488,3 +540,17 @@ Leaf boulder code generation is delegated to AI coding assistants (e.g., Claude,
 - Token tracking per call with model identifier recorded alongside token counts, aggregated per node, flow run, and project. Model must be stored with tokens to enable future cost calculation.
 - Model and temperature configurable at project, phase, and node levels
 - Multiple LLM providers supported behind a common interface
+
+## B.10 Licensing Model
+
+Catapult uses a **dual-license model**:
+
+- **AGPL v3** for the public open-source release. Anyone can use, modify, and deploy Catapult freely. Modifications to the core must be published if the modified version is offered as a network service. This closes the SaaS loophole that plain GPL leaves open — cloud providers cannot run a modified Catapult as a managed service without contributing back.
+- **Commercial license** available for organizations whose legal or compliance requirements are incompatible with AGPL. The commercial license permits proprietary modifications, private deployment without source disclosure, and use of proprietary optional dependencies.
+
+**Architectural implications for dual licensing:**
+- The core system (pipeline engine, event sourcing, document DAG, review workflow, LiveView UI) is AGPL and must not depend on any proprietary libraries.
+- **Oban**: The core depends only on Oban core (Apache 2.0, AGPL-compatible). Oban Pro features (unique jobs, batch processing, web dashboard) are behind an optional module that is not required for core functionality. Commercial licensees may use Oban Pro at their discretion.
+- **Gitea sidecar**: Communicates over HTTP — a separate process, not a derivative work. No licensing conflict.
+- **Plugin/extension boundary**: Third-party tools communicating with Catapult over HTTP/API are not derivative works. Plugins loaded into the Elixir runtime are derivative works under AGPL. This boundary must be documented clearly.
+- **Contributor License Agreement (CLA)**: Required for contributions to the core repository, granting the project the right to distribute contributions under both AGPL and commercial licenses.
