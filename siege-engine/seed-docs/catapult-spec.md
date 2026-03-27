@@ -296,6 +296,40 @@ This means git history reflects meaningful checkpoints (reviewable and approved 
 - **SSO/SAML support** for enterprise identity providers. Teams should be able to use their existing identity system rather than managing separate Catapult credentials.
 - Per-user LLM credential storage.
 - Per-user git credential storage for push/PR operations.
+- **Session management**: configurable session timeout, concurrent session limits, admin-initiated forced logout.
+- **Auth audit log**: all authentication and authorization events are logged separately from the pipeline event store — login, logout, failed login attempts, permission changes, role changes, invite creation and redemption, credential updates. This log is append-only, tamper-evident, and queryable by admins.
+
+## A.15.1 Security and Compliance (SOC 2 Preparation)
+
+The system is designed from the start to support SOC 2 Type II certification. These requirements apply to both self-hosted and managed deployments, though managed deployments bear the audit burden.
+
+**Security (Trust Service Criteria CC6/CC7):**
+- All network communication is TLS-encrypted: client ↔ Catapult, Catapult ↔ Gitea, Catapult ↔ PostgreSQL. No plaintext connections, even internal.
+- Database encryption at rest — either Postgres TDE or volume-level encryption, configurable per deployment.
+- All user-provided credentials (LLM API keys, git tokens) are encrypted at rest using per-tenant keys, never stored in plaintext.
+- Input validation at all system boundaries: user-provided input, LLM output before it enters the pipeline, webhook payloads from Gitea, API request bodies. Reject malformed data at the boundary rather than propagating it.
+
+**Availability (A1):**
+- Health check endpoints for all services (Catapult, Gitea, PostgreSQL) — suitable for load balancer probes and uptime monitoring.
+- Backup and disaster recovery: automated database backups with configurable retention, point-in-time recovery capability, documented recovery procedures. For managed deployments, RPO and RTO targets are defined per subscription tier.
+- Graceful degradation: if Gitea is temporarily unavailable, the pipeline pauses git operations and resumes when connectivity is restored rather than failing runs.
+
+**Processing Integrity (PI1):**
+- Event sourcing provides a complete, immutable audit trail of all pipeline state changes.
+- Git-before-DB commit ordering (A.22.10) prevents corrupted references.
+- All LLM output is validated and parsed defensively (A.22.12) before entering the pipeline — malformed output is rejected, not propagated.
+- Idempotent operations: re-running a completed node produces a new version only if the output differs (A.8).
+
+**Confidentiality (C1):**
+- Schema-per-tenant isolation (A.16.1) ensures no cross-tenant data access.
+- Data classification: credentials and API keys are classified as sensitive and encrypted at rest. Document content and event data are classified as confidential and isolated per-tenant. User metadata (names, emails, roles) is classified as internal.
+- Data retention and deletion: configurable retention periods per tenant. Tenant offboarding includes complete data export followed by full deletion (schema drop, Gitea org removal, vector embeddings purged). Deletion is auditable — a record of *what* was deleted and *when* is retained without retaining the data itself.
+- For self-hosted deployments, BYO credentials means customer LLM traffic never transits Catapult's infrastructure — the customer's application calls the LLM provider directly.
+
+**Privacy:**
+- Minimal data collection: the system collects only what's necessary for operation (user identity for auth, credentials for integrations, document content for pipeline execution).
+- For managed deployments: privacy policy, GDPR-compliant data handling for EU customers (data residency options, right to access, right to deletion, data processing agreements).
+- LLM provider data handling is the customer's responsibility (BYO credentials), but the system should document what data is sent to LLM providers and provide configuration to control it.
 
 ## A.16 Multi-Tenancy
 
