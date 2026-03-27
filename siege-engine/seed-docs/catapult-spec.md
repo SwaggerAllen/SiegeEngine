@@ -387,6 +387,7 @@ Approved documents are committed to the run branch (system level), since documen
 - All artifacts are versioned. Each generation or revision produces a new version.
 - Event sourcing provides a complete audit trail of every state change.
 - Users can revert to any previous version. Reversion appends new events (no destructive history changes).
+- **Subtree revert** — Revert a node to version N, and the system automatically reverts each descendant to the version it was at immediately after the ancestor reached version N. This uses the event timeline to find the contemporaneous version of each child, so the user picks one point in the ancestor's history and the entire subtree snaps to its state at that moment. This avoids manually reverting descendants one by one and guessing which version corresponds to the ancestor's state.
 - Each completed run produces a git commit checkpoint.
 
 ## A.13 Prompt System
