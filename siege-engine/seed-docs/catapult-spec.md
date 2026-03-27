@@ -175,7 +175,7 @@ Some node types can be configured for auto-approval, skipping human review. This
 
 Each component and subcomponent boulder has an **owner** — the team member who is the default reviewer for everything in that subtree (architecture docs, plans, and code). System-level artifacts default to the project lead or admin.
 
-**Fan-out is the natural assignment point.** Fan-out stages already pause for human review (A.22.2). When the reviewer approves the decomposition into child boulders, they also assign ownership of each child. Ownership is part of the fan-out approval, not a separate step.
+**Fan-out is the natural assignment point.** Fan-out stages already pause for human review (A.23.2). When the reviewer approves the decomposition into child boulders, they also assign ownership of each child. Ownership is part of the fan-out approval, not a separate step.
 
 #### Review Type Routing
 
@@ -316,8 +316,8 @@ The system is designed from the start to support SOC 2 Type II certification. Th
 
 **Processing Integrity (PI1):**
 - Event sourcing provides a complete, immutable audit trail of all pipeline state changes.
-- Git-before-DB commit ordering (A.22.10) prevents corrupted references.
-- All LLM output is validated and parsed defensively (A.22.12) before entering the pipeline — malformed output is rejected, not propagated.
+- Git-before-DB commit ordering (A.23.10) prevents corrupted references.
+- All LLM output is validated and parsed defensively (A.23.12) before entering the pipeline — malformed output is rejected, not propagated.
 - Idempotent operations: re-running a completed node produces a new version only if the output differs (A.8).
 
 **Confidentiality (C1):**
@@ -341,7 +341,7 @@ Each tenant is isolated at the database level via **Postgres schemas** — one s
 - Structural isolation without tenant_id columns on every table
 - Per-tenant backup and restore
 - Clean tenant export (schema dump) for customers migrating to self-hosted
-- Independent event stores, so reconciliation (A.22.11) runs per-tenant
+- Independent event stores, so reconciliation (A.23.11) runs per-tenant
 - Self-hosted deployments are simply single-tenant instances with one schema
 
 ### A.16.2 Gitea Tenant Isolation
@@ -394,7 +394,7 @@ A one-time flow for self-bootstrapping. The only supported use case is onboardin
 
 - Takes as input: a codebase with documents already matching the scaffolding flow's output shape (requirements, architectures, plans) organized in the expected hierarchy
 - Reconstructs the boulder hierarchy, dependency DAG, and document DAG from the existing documents and folder structure
-- Synthesizes baseline events for the bootstrapped state — a `ProjectBootstrapped` event (or equivalent) that establishes the initial snapshot from the imported documents and folder structure. This ensures reconciliation (A.22.11) can rebuild the snapshot from events without special-casing bootstrap. Review records start fresh from the point of bootstrap.
+- Synthesizes baseline events for the bootstrapped state — a `ProjectBootstrapped` event (or equivalent) that establishes the initial snapshot from the imported documents and folder structure. This ensures reconciliation (A.23.11) can rebuild the snapshot from events without special-casing bootstrap. Review records start fresh from the point of bootstrap.
 - Destructive to existing project state; can only run once or on a fresh project
 - After bootstrap, the project can use any standard flow to iterate
 
@@ -402,68 +402,93 @@ A one-time flow for self-bootstrapping. The only supported use case is onboardin
 
 The coding portion of leaf boulder execution (plan creation and PR generation) is delegated to an AI coding assistant. The assistant has tools to read, navigate, and understand the current codebase directly — no separate code parsing or AST indexing is needed. The assistant works up implementation plans since it already has the tools to see the code in context. The document tree provides the "what needs to change" and the coding assistant handles the "how to change it" against the actual code.
 
-## A.21 Adoption and Trust
+## A.21 AI Chat Interface
+
+A conversational AI interface scoped per project, allowing users to ask questions about the codebase and its documentation.
+
+### A.21.1 Capabilities
+
+- **Document Q&A** — "Why does the authentication component use JWT instead of sessions?" The chat retrieves relevant architecture docs, plans, and review feedback via the pgvector semantic search layer (B.5) and answers with citations to specific documents and versions.
+- **Codebase Q&A** — "How does the payment webhook handler work?" The chat uses the AI coding assistant's tools (A.20) to read and navigate the actual code, combining what it finds with the document DAG context.
+- **Provenance queries** — "Who approved the database schema change and why?" The chat queries the event log and review history to trace decisions back through their full chain.
+- **Cross-cutting questions** — "Which components would be affected if we changed the user model?" The chat uses the dependency DAG and architecture docs to identify impact across boulders.
+
+### A.21.2 Context and Scoping
+
+The chat is scoped to a single project. It has access to:
+- All documents in the document DAG (current versions, with ability to reference historical versions)
+- The codebase via the AI coding assistant's repository access
+- The event log and review history
+- The pipeline snapshot (current state of all nodes, runs, artifacts)
+
+Context assembly for chat queries uses the same pgvector retrieval and budget-based approach as pipeline execution (A.3.5), but with a query-driven retrieval strategy rather than a node-type-driven one.
+
+### A.21.3 Conversation History
+
+Chat conversations are persisted per project, per user. Users can reference prior conversations. Conversations are not part of the event-sourced pipeline — they are a read-only interface over the project's state, stored separately.
+
+## A.22 Adoption and Trust
 
 These requirements address the concerns of teams evaluating Catapult — particularly midsize engineering organizations that need to justify the investment and manage the risk of adopting a new workflow.
 
-### A.21.1 Portability and No Lock-In
+### A.22.1 Portability and No Lock-In
 
 All project artifacts (documents, code, event history) are exportable at any time. Documents exist as markdown files in a git repository. Code is standard code in the same repository. If a team decides to stop using Catapult, they walk away with a fully functional codebase and a complete set of design documents — no proprietary formats, no data trapped in a database.
 
-### A.21.2 Graduated Autonomy
+### A.22.2 Graduated Autonomy
 
 The system supports a spectrum from fully supervised to fully autonomous. A team can start with every single node requiring human approval (treating Catapult as a "suggestion engine") and gradually increase auto-approval as trust builds. The spectrum is continuous — not a cliff between "manual" and "automatic." This is controlled via the auto-approval configuration (A.6.1) and review granularity settings (A.6.3).
 
-### A.21.3 Human Override
+### A.22.3 Human Override
 
 At any point in a flow, a human can stop the run, correct course, and resume. The system should never be in a state where the only way forward is "trust the AI." Specific overrides:
 - Pause any running flow immediately
 - Reject and provide feedback on any artifact
-- Prune entire subtrees that shouldn't exist (A.22.4)
-- Force restart stuck nodes (A.22.4)
+- Prune entire subtrees that shouldn't exist (A.23.4)
+- Force restart stuck nodes (A.23.4)
 - Manually kick off sub-runs to fix upstream issues (A.5)
 
-### A.21.4 Dry Run Mode
+### A.22.4 Dry Run Mode
 
 Run an entire flow without committing anything — preview what would be generated, what the document DAG structure would look like, and how many LLM calls it would make — without side effects. This lets teams evaluate Catapult on their actual project description before committing to a full run.
 
-### A.21.5 Diff-First Review
+### A.22.5 Diff-First Review
 
 The review UI defaults to **diff view**, not full document view. No reviewer should be presented with a 20,000-word document and asked "is this good?" They see what changed since the last version. Full document view is available but is not the default. This applies to both document review and code review UIs.
 
-### A.21.6 Provenance Chain
+### A.22.6 Provenance Chain
 
 Any document or piece of code is traceable back through its full generation chain: this code was generated from this plan, which was generated from this architecture doc, which was approved by Alice on March 3rd with these review comments. The provenance chain is surfaced in the UI — click any artifact to see its lineage. This is derived from the event log and document DAG edges.
 
-### A.21.7 Rollback
+### A.22.7 Rollback
 
 Reversion to any previous project state is a single action. The event-sourced model (A.11) makes this possible — rollback appends new events, never destroys history. This is the single most reassuring capability for risk-averse teams and should be prominently surfaced in the UI.
 
-### A.21.8 Self-Hosted Deployment
+### A.22.8 Self-Hosted Deployment
 
 The entire stack (Catapult, Gitea, PostgreSQL) runs on the customer's infrastructure. No data leaves their network. Combined with BYO LLM credentials (A.13), customers control every external dependency. This is essential for teams with security or compliance requirements.
 
-### A.21.9 Cost Visibility
+### A.22.9 Cost Visibility
 
 Token tracking with model identifiers (A.13) is surfaced in the UI at the flow run level: "This scaffolding run used X tokens across Y calls, estimated cost $Z" (once cost projection is implemented). Even before cost projection, raw token + model data is visible per node and per run so teams can understand and predict their API spend.
 
-## A.22 Operational Invariants (Learned from Siege Engine v1)
+## A.23 Operational Invariants (Learned from Siege Engine v1)
 
 These requirements are derived from edge cases, bugs, and hard-won knowledge from Siege Engine's production use. They are non-negotiable for Catapult.
 
-### A.22.1 Dependency Satisfaction
+### A.23.1 Dependency Satisfaction
 
 Dependencies are satisfied when a parent artifact has been **generated** (status in: `approved`, `awaiting_review`, `stale`), not only when approved. This allows downstream generation to proceed while upstream is still under human review. Without this, a single slow reviewer blocks the entire pipeline.
 
-### A.22.2 Fan-Out Always Pauses for Review
+### A.23.2 Fan-Out Always Pauses for Review
 
 Fan-out stages (which create or modify the boulder tree structure) must always pause for human review regardless of auto-approval settings. Structural changes — adding, removing, or reorganizing boulders — are too consequential to auto-approve. This is a hard override, not configurable.
 
-### A.22.3 Blocking PR
+### A.23.3 Blocking PR
 
 If an outstanding PR exists for a project from a prior flow run, new flows cannot start. This prevents the document DAG from drifting out of sync with the codebase. The user must merge or close the existing PR before starting a new flow. Sub-runs are exempt from this rule — they contribute to their parent flow's PR and exist precisely to handle mid-flow corrections.
 
-### A.22.4 Debugging and Administrative Tools
+### A.23.4 Debugging and Administrative Tools
 
 The system provides a set of administrative actions and debugging screens, separate from the normal review workflow.
 
@@ -471,7 +496,7 @@ The system provides a set of administrative actions and debugging screens, separ
 - **Prune** — Remove a node and its entire downstream cascade from the document DAG. For example, a fan-out produced a component that shouldn't exist. Unlike reject (which regenerates), prune deletes. Emits appropriate events for the removal.
 - **Force restart** — Force a stuck or failed node back to pending and re-execute, bypassing normal status transition rules
 - **Reset all** — Reset all nodes in the current run back to pending, clearing all generated state
-- **Force sync / repair** — Rebuild the materialized snapshot from the event log. Detects and resolves orphaned executions, zombie runs, and stale state (see A.22.11)
+- **Force sync / repair** — Rebuild the materialized snapshot from the event log. Detects and resolves orphaned executions, zombie runs, and stale state (see A.23.11)
 
 **Debugging screens** (per project):
 - **Snapshot viewer** — The current materialized snapshot in full, showing the authoritative state of all nodes, runs, and artifacts
@@ -479,39 +504,39 @@ The system provides a set of administrative actions and debugging screens, separ
 - **Frontend log** — Client-side log capturing UI errors, WebSocket connection state, and user actions
 - **Error panel** — Aggregated errors from both frontend and backend for the current project, with timestamps, stack traces, and source labels
 
-### A.22.5 Cascading Readiness Re-Scan
+### A.23.5 Cascading Readiness Re-Scan
 
 After completing any node, the orchestrator must re-scan all pending nodes for newly unblocked work — not just the completed node's immediate children. Generating component A's architecture might unblock component B (which depends on A via the dependency DAG), and B may have already been passed in a linear scan. The scan must loop until no more work is found in a single pass.
 
-### A.22.6 Centralized Run Completion
+### A.23.6 Centralized Run Completion
 
 Run completion (transitioning a run to terminal status) must happen through exactly one codepath. Siege Engine had bugs where run completion logic was scattered across multiple callers, causing zombie runs that stayed in RUNNING status indefinitely. The single completion point should be in a `finally`-equivalent block of the main execution loop.
 
-### A.22.7 Phase Boundary Checks Before Execution
+### A.23.7 Phase Boundary Checks Before Execution
 
 Stop-point checks (phase boundaries, user-configured pause points) must be evaluated **before** entering a stage's execution, not after. The check acts as a gate: stages past the stop point are never entered. Checking after execution means boundary-crossing stages run before the pause is detected.
 
-### A.22.8 Cross-Run Execution Deduplication
+### A.23.8 Cross-Run Execution Deduplication
 
 Before creating a new execution for a node, check for existing RUNNING executions for the same node **across all runs**, not just the current run. Scoping this check to a single run allows duplicate executions when sub-runs or manual triggers overlap.
 
-### A.22.9 Retries Are Sub-Runs
+### A.23.9 Retries Are Sub-Runs
 
 Failed executions are not retried in-place. A retry is a sub-run: it pauses the current run, creates a new run scoped to the failed node, executes, and returns control to the parent. This keeps the execution model uniform — there is no special "retry" concept, just the same sub-run machinery used everywhere else. The original failed execution remains in its terminal state in the event log.
 
-### A.22.10 Git-Before-DB Commit Ordering
+### A.23.10 Git-Before-DB Commit Ordering
 
 When an operation produces both a git commit and a database event, the git commit must happen **before** the database commit. If the database succeeds but git fails, the event log references a nonexistent commit — corrupted event history that is difficult to recover from. If git succeeds but the database fails, the result is an orphaned git commit that can be cleaned up trivially without data loss. Always order: git commit → DB commit.
 
-### A.22.11 Reconciliation on Startup
+### A.23.11 Reconciliation on Startup
 
 On server startup, the system must reconcile all projects: rebuild materialized state from events, detect and resolve orphaned executions (RUNNING with no active job → mark FAILED), complete zombie runs (RUNNING with no active executions → mark FAILED), and cancel stale queued jobs. This is a first-class recovery mechanism, not an afterthought.
 
-### A.22.12 LLM Output Parsing Resilience
+### A.23.12 LLM Output Parsing Resilience
 
 LLM output format is unreliable. All structured output extraction (component lists, dependency DAGs, code files, plans) must use multiple parsing strategies with fallbacks. Try strict parsing first, fall back to regex extraction, then to smaller-model re-extraction. Never fail a stage because the LLM returned valid content in an unexpected format.
 
-### A.22.13 LLM Concurrency Limits
+### A.23.13 LLM Concurrency Limits
 
 Parallel execution within phases (A.3.4) must respect a configurable concurrency limit for LLM calls. Siege Engine hardcoded this to 1 after higher values caused resource exhaustion and rate limiting cascades. The limit should be configurable per project but default to conservative values. Exponential backoff on rate limit errors (3 attempts, 1s base delay).
 
