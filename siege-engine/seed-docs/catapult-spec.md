@@ -1,5 +1,17 @@
 # Catapult — Specification
 
+## Vision
+
+Catapult is a **design memory** system. It is not just a documentation tool and not just a code generator — it is the machine that holds the *why* behind every architectural decision, the *shape* of every component boundary, and the *history* of every revision. When an AI generates code, it does so informed by the full context of human decisions that preceded it. When a human reviews output, they see exactly where it sits in the design hierarchy and what upstream thinking produced it.
+
+The core insight is that AI-generated code is only as good as the design thinking that guides it. A single massive prompt produces generic output. A structured tree of documents — requirements feeding architectures feeding plans feeding implementations — produces code that reflects genuine design intent. Catapult maintains this tree as a living artifact: versioned, reviewable, and always the authoritative source of truth for what the system is and why it was built that way.
+
+This makes Catapult a *plan-before-you-code* machine. The document DAG isn't scaffolding to be discarded after generation — it is the persistent design memory of the project. Changes flow through it: new features are routed to the right boulders, bug fixes propagate upward through the tree, refinements cascade through dependent nodes. The documents evolve with the codebase because they *are* the codebase's design substrate.
+
+For teams, this means onboarding becomes reading the tree. Architectural disputes become conversations anchored to specific nodes. Code review starts with design review. The system doesn't just generate — it remembers, and it holds teams accountable to their own design decisions.
+
+---
+
 Catapult is the industrial-strength successor to Siege Engine. It is an AI-powered document generation and code scaffolding system that takes a project description and produces a full tree of design documents and code through a structured, reviewable pipeline. The system uses two interconnected graph structures: a **pipeline DAG** that defines *what work to do* and a **document DAG** that represents *what has been produced*.
 
 This specification is divided into two parts: **A. Requirements** (what the system does) and **B. Architecture** (what technologies are used and how).

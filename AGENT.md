@@ -450,3 +450,70 @@ cd siege-engine/frontend && npm run dev   # localhost:5173, proxies to :8000
 ## Environment Variables
 
 All use `SIEGE_` prefix. Key ones: `SIEGE_ANTHROPIC_API_KEY`, `SIEGE_JWT_SECRET_KEY`. See `backend/config.py` for full list.
+
+---
+
+# Catapult — Next-Generation System
+
+Catapult is the industrial-strength successor to Siege Engine, currently being specified in this repository as a seed document for Siege Engine to scaffold. The spec is the primary deliverable of ongoing design work.
+
+## Spec Location
+
+- **File**: `siege-engine/seed-docs/catapult-spec.md`
+- **Branch**: `claude/review-catapult-spec-5m82u`
+- **Structure**: Part A (24 requirement sections) + Part B (11 architecture sections), ~800+ lines
+
+## Tech Stack (Catapult)
+
+- **Elixir/OTP** — BEAM VM, supervision trees, fault tolerance
+- **PostgreSQL** — primary data store
+- **Commanded** — CQRS/ES (commands → events → projections)
+- **Oban** — background jobs (LLM calls, git ops, CI polling)
+- **pgvector** — RAG/semantic retrieval for context assembly
+- **Gitea** — git sidecar (hosting, branches, PRs, webhooks)
+- **Phoenix/LiveView** — UI, real-time via Channels
+- **Licensing**: AGPL v3 + commercial dual license
+
+## Core Concepts
+
+- **Design Memory**: Catapult is a plan-before-you-code system. The document DAG is the persistent design memory of the project, not disposable scaffolding.
+- **Boulders**: Nodes in the document DAG (system → component → subcomponent). Each has a sub-DAG of processing steps (boulder template). Leaf boulders map to `{repo, folder}` pairs.
+- **Dual DAG**: Pipeline DAG (what work to do) + Document DAG (what has been produced). Pipeline drives generation; document records results.
+- **Sibling Dependencies**: Unified semantics — execution ordering + context inclusion + staleness propagation, all three coupled intentionally.
+- **7 Flow Types**: Scaffolding, Feature Request, Refactor, Upward Propagation, Bug Fix (Fix and Propagate / Propagate Existing Fix), Restructuring, Refinement.
+- **Flow Lobby**: Proposed flows queue for human prioritization. AI is read-only proposer. Cross-project view.
+- **Deferred Feedback**: Comment on any node at any time; pending feedback auto-included in next regeneration. Edit/delete after posting. Visibility counters with rollup.
+- **Template Bundles**: DAG configs + prompts distributed via git. Instance-level defaults. Curated to defend against prompt injection.
+- **AI Sandboxing**: Filesystem scoped to boulder territory, no network/credential access, resource limits.
+- **PR Granularity**: Configurable (system/component/subcomponent) with feature branch hierarchy mirroring document DAG.
+
+## Key Spec Sections (quick reference)
+
+| Section | Topic |
+|---------|-------|
+| A.1 | Core concepts (boulders, dual DAG, sibling deps) |
+| A.2 | 7 flow types |
+| A.3 | Pipeline mechanics (fan-out, context assembly, test lifecycle, CI) |
+| A.4 | Template system (boulder templates, bundles) |
+| A.5-A.6 | Review workflow (status chain, inline comments, deferred feedback) |
+| A.7 | Flow Lobby |
+| A.8-A.9 | Concurrency, resumability |
+| A.10-A.11 | Versioning, PRs, branch hierarchy |
+| A.12 | Subtree revert |
+| A.13 | Document format (all markdown) |
+| A.14-A.15 | Multi-tenancy, integrations (webhooks, external API) |
+| A.16-A.21 | Auth, projects, bootstrap, AI sandboxing |
+| A.22 | AI Chat (review UI integration, proactive, read-only proposer) |
+| A.23-A.24 | UX details, implementation constraints |
+| B.1-B.11 | Architecture (Elixir, PG, Commanded, Oban, pgvector, Gitea, Phoenix, AI assistants, LLM, observability, licensing) |
+
+## Design Decisions Not Yet in Spec
+
+- **Governance Model**: Workshopped PageRank-style vote weights for open source prioritization (proportional to votes received, starting at 0, capped with decay, direct democracy). User wants to think more before committing to spec.
+
+## Deployment
+
+- **Fly.io**: Siege Engine deploys to Fly.io (`siege-engine/fly.toml`), region `iad`
+- **CD**: `.github/workflows/deploy.yml` — deploys on push to main via `flyctl deploy --remote-only`
+- **CI**: `.github/workflows/ci.yml` — runs on PRs only (frontend lint/typecheck/test, backend lint/typecheck/test)
+- **Note**: CI and deploy are decoupled — merging to main triggers deploy regardless of CI status, allowing bypassing CI when needed
