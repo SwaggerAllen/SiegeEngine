@@ -151,6 +151,8 @@ Within each partition, the budget-based approach applies: include full documents
 
 This means shallower nodes get richer direct context (desirable — system-level decisions benefit from full context) while deeper nodes work from more focused, relevant excerpts.
 
+**Future: intelligent context selection.** Documents are intended to store the complete design decision history of the project — they should never be compacted or summarized destructively. For very large or long-lived projects where documents exceed context budgets even with partitioning, a future version will need a context building service that goes beyond vector search to select the most relevant portions of a document for a given prompt (e.g., structural analysis, recency weighting, decision-chain tracing). This is not needed for v1 but should be anticipated in the context assembly interface design.
+
 ### A.3.6 Test Case Lifecycle
 
 Test cases are a first-class artifact with a defined lifecycle through the leaf boulder pipeline:
@@ -196,12 +198,12 @@ Every document and commit produced by the system goes through review. The system
 
 **Document artifacts** follow the full review chain:
 1. **AI self-review** — The AI reviews its own output with structured feedback (quality score, recommendation, notes). If revision is recommended, the system automatically regenerates incorporating feedback, up to a configurable loop limit.
-2. **Human review** — After AI review, artifacts enter "awaiting review" status. Humans approve or reject with text feedback only (no inline edits). Rejection feedback is incorporated in a subsequent AI revision pass.
+2. **Human review** — After AI review, artifacts enter "awaiting review" status. Humans review with **inline comments** (tied to specific locations in the document) and **summary feedback** (overall assessment). Inline comments let reviewers point to exactly what needs to change ("this JWT assumption contradicts the session decision in A.3"); summary feedback captures cross-cutting concerns. Rejection feedback — both inline and summary — is incorporated in a subsequent AI revision pass. Inline suggestions (highlighted span + proposed replacement) can be applied deterministically by the AI without interpretation, reducing lossy round-trips.
 
 **Code artifacts** (leaf boulder PRs) follow a parallel path:
 1. **AI code review** — The AI reviews generated code via Gitea's PR review API, posting inline comments tied to file paths and line numbers.
 2. **CI loop** — CI results feed back into the generation loop. CI failure is not a bug fix — it means the system generated incorrect code and should retry with the error output as additional context. This is a first-class concept, not an edge case.
-3. **Human code review** — After AI review and CI pass, the PR enters "awaiting review" for human review via Catapult's code review UI.
+3. **Human code review** — After AI review and CI pass, the PR enters "awaiting review" for human review via Catapult's code review UI. Code review uses the same inline comments plus summary feedback model as document review.
 
 ### A.6.1 Auto-Approval
 
@@ -281,6 +283,7 @@ Proposed flows do not execute immediately. They enter a **lobby** where they can
 - The lobby displays pending flows with their description, estimated scope (which boulders would be affected), and the triggering context (chat conversation, proactive suggestion, etc.)
 - Users can reorder, approve, reject, or modify proposed flows in the lobby before they are queued for execution
 - The lobby respects the one-active-flow-per-project constraint (A.8) — approving a flow from the lobby queues it behind any currently running flow
+- A **cross-project lobby view** shows all pending flows across all projects the user has access to, so a tech lead can prioritize work across multiple projects from a single screen. The exact design of this view is TBD, but it must exist alongside the per-project lobby.
 
 ### A.7.2 AI as Read-Only Proposer
 
