@@ -1,5 +1,17 @@
 # Catapult — Specification
 
+## Vision
+
+Catapult is a **design memory** system. It is not just a documentation tool and not just a code generator — it is the machine that holds the *why* behind every architectural decision, the *shape* of every component boundary, and the *history* of every revision. When an AI generates code, it does so informed by the full context of human decisions that preceded it. When a human reviews output, they see exactly where it sits in the design hierarchy and what upstream thinking produced it.
+
+The core insight is that AI-generated code is only as good as the design thinking that guides it. A single massive prompt produces generic output. A structured tree of documents — requirements feeding architectures feeding plans feeding implementations — produces code that reflects genuine design intent. Catapult maintains this tree as a living artifact: versioned, reviewable, and always the authoritative source of truth for what the system is and why it was built that way.
+
+This makes Catapult a *plan-before-you-code* machine. The document DAG isn't scaffolding to be discarded after generation — it is the persistent design memory of the project. Changes flow through it: new features are routed to the right boulders, bug fixes propagate upward through the tree, refinements cascade through dependent nodes. The documents evolve with the codebase because they *are* the codebase's design substrate.
+
+For teams, this means onboarding becomes reading the tree. Architectural disputes become conversations anchored to specific nodes. Code review starts with design review. The system doesn't just generate — it remembers, and it holds teams accountable to their own design decisions.
+
+---
+
 Catapult is the industrial-strength successor to Siege Engine. It is an AI-powered document generation and code scaffolding system that takes a project description and produces a full tree of design documents and code through a structured, reviewable pipeline. The system uses two interconnected graph structures: a **pipeline DAG** that defines *what work to do* and a **document DAG** that represents *what has been produced*.
 
 This specification is divided into two parts: **A. Requirements** (what the system does) and **B. Architecture** (what technologies are used and how).
@@ -398,6 +410,10 @@ Approved documents are committed to the run branch (system level), since documen
 - Users can override any prompt field per stage per project.
 - Model and temperature are configurable at three levels: project default, per-phase default, and per-node override. Defaults propagate downward.
 
+### A.13.1 Document Format
+
+All documents are **markdown**. Structured data (component lists, dependency DAGs, routing decisions, test case specifications) is embedded within markdown using fenced code blocks (e.g., ```yaml, ```json) or YAML frontmatter. This means every document is human-readable as plain text, renderable in the review UI, and committable to git as a standard .md file — while still containing machine-parseable structured sections that the pipeline extracts during processing. The system parses known structured sections from otherwise free-form markdown; unrecognized structure is treated as prose.
+
 ## A.14 Credentials and Token Tracking
 
 - The service is **BYO LLM credentials** — customers supply their own API keys through the application, not environment variables. Credentials are stored per-user.
@@ -677,6 +693,8 @@ The system provides a set of administrative actions and debugging screens, separ
 - **Frontend log** — Client-side log capturing UI errors, WebSocket connection state, and user actions
 - **Error panel** — Aggregated errors from both frontend and backend for the current project, with timestamps, stack traces, and source labels
 
+**Error handling UX** (for all users, not just admins): When a node fails, the failure is surfaced inline in the DAG visualization and the review UI — not just a "failed" badge, but the reason: the raw LLM output that failed to parse, the CI error log, the Gitea error, the timeout details. Users need enough context to decide whether to retry, leave feedback, or escalate to an admin. Notifications for failures follow the same routing as review notifications (to the boulder owner).
+
 ### A.24.5 Cascading Readiness Re-Scan
 
 After completing any node, the orchestrator must re-scan all pending nodes for newly unblocked work — not just the completed node's immediate children. Generating component A's architecture might unblock component B (which depends on A via the dependency DAG), and B may have already been passed in a linear scan. The scan must loop until no more work is found in a single pass.
@@ -704,6 +722,8 @@ When an operation produces both a git commit and a database event, the git commi
 ### A.24.11 Reconciliation on Startup
 
 On server startup, the system must reconcile all projects: rebuild materialized state from events, detect and resolve orphaned executions (RUNNING with no active job → mark FAILED), complete zombie runs (RUNNING with no active executions → mark FAILED), and cancel stale queued jobs. This is a first-class recovery mechanism, not an afterthought.
+
+**Graceful shutdown**: On planned shutdown (deploys, upgrades), the system drains active work: stop accepting new node executions, let active LLM calls complete within a configurable grace period (default 10 minutes — AI coding assistant runs can take this long), then shut down. If a node doesn't finish within the grace period, it gets killed and reconciliation on the next startup marks it FAILED — the same path as a crash, retryable like any other failure. Draining is simple and predictable; checkpointing mid-LLM-call is not practical since partial responses are meaningless. With conservative concurrency defaults (A.24.13), drain typically waits on 1-3 active calls.
 
 ### A.24.12 LLM Output Parsing Resilience
 
@@ -773,7 +793,17 @@ Leaf boulder code generation is delegated to AI coding assistants (e.g., Claude,
 - Model and temperature configurable at project, phase, and node levels
 - Multiple LLM providers supported behind a common interface
 
-## B.10 Licensing Model
+## B.10 Observability
+
+System-level monitoring and observability for operating Catapult, especially in managed multi-tenant deployments:
+
+- **Metrics** — Prometheus-compatible metrics: request latency, LLM call success/failure rates, LLM call duration, queue depths (Oban), active flow runs per tenant, Gitea operation latency, database connection pool utilization, vector embedding query performance.
+- **Structured logging** — All log output is structured (JSON) with correlation IDs that trace a request through the full pipeline: Commanded command → event → Oban job → LLM call → Gitea operation → DB commit. This enables tracing a single node execution across all system components.
+- **Health checks** — Liveness and readiness endpoints for each service (Catapult, Gitea, PostgreSQL) suitable for orchestrator probes and uptime monitoring.
+
+Self-hosted deployments benefit from the same instrumentation but are not required to run a metrics stack.
+
+## B.11 Licensing Model
 
 Catapult uses a **dual-license model**:
 

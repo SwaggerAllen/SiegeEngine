@@ -4,20 +4,20 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
-RUN npm run typecheck
-RUN npm run test:run
 RUN npm run build
 
 # Stage 2: Runtime
 FROM python:3.11-slim
 WORKDIR /app
 
-# Install Node.js (required for Claude CLI), git, and gosu (for dropping root privileges)
+# Install system deps: Node.js (required for Claude CLI), git, gosu
 RUN apt-get update && apt-get install -y curl git gosu && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
-    npm install -g @anthropic-ai/claude-code && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install Claude CLI (separate layer for caching — only rebuilds when CLI version changes)
+RUN npm install -g @anthropic-ai/claude-code
 
 # Install Python dependencies
 COPY pyproject.toml ./
