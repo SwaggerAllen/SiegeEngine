@@ -169,13 +169,53 @@ Every document and commit produced by the system goes through review. The system
 
 Some node types can be configured for auto-approval, skipping human review. This is configurable per node type, per phase, or per project.
 
-### A.6.2 Review Cadence and Granularity
+### A.6.2 Review Assignment and Team Workflow
+
+#### Boulder Ownership
+
+Each component and subcomponent boulder has an **owner** — the team member who is the default reviewer for everything in that subtree (architecture docs, plans, and code). System-level artifacts default to the project lead or admin.
+
+**Fan-out is the natural assignment point.** Fan-out stages already pause for human review (A.19.2). When the reviewer approves the decomposition into child boulders, they also assign ownership of each child. Ownership is part of the fan-out approval, not a separate step.
+
+#### Review Type Routing
+
+Reviews route to the boulder owner by default, with optional additional reviewers by artifact type:
+
+- **Architecture docs** → boulder owner + optionally a designated architect role
+- **Plans** → boulder owner
+- **Fan-out decisions** → parent boulder owner (the person who owns the level above decides the decomposition)
+- **Code PRs** → boulder owner + optionally any team member with relevant domain expertise
+
+A second reviewer can be optionally required per artifact type via project configuration.
+
+#### Notifications
+
+Reviews are the pipeline's bottleneck. Notifications must be batched — "You have 4 architecture docs ready for review in the Authentication component" is one notification, not four. Channels: in-app (LiveView push) at minimum, with webhook support (Slack/Teams/email) configurable per user.
+
+Each user has a **review queue**: a unified view of all artifacts awaiting their review across all projects, with age and priority indicators.
+
+#### Review SLA and Escalation
+
+Configurable review timeout per project (e.g., 24 hours, 48 hours):
+
+1. After timeout: reminder notification to the assigned reviewer
+2. After second timeout: escalate to the parent boulder owner or project admin
+3. Optionally: auto-approve with a flag ("auto-approved due to timeout — flagged for post-hoc review"). Configurable, off by default.
+
+#### Delegation
+
+Owners can:
+- Reassign a specific review to another team member
+- Delegate their entire boulder to someone else (temporary or permanent)
+- Split ownership within their subtree (e.g., "I own this component but delegate the database subcomponent to Bob")
+
+### A.6.3 Review Cadence and Granularity
 
 Review gates are configurable: per-node, per-phase, leaves-only, or fully automatic. The default should be sensible but the user controls it.
 
 The intended review workflow is **batched**: the flow produces N documents, then pauses for human review of that batch. The reviewer reads and leaves feedback on some or all documents. Rejected documents and their downstream dependents are then regenerated as a sub-run incorporating the feedback. Once the sub-run completes, the flow resumes and produces the next batch of M documents. This produce-review-regenerate cycle repeats through the flow.
 
-### A.6.3 Restart Semantics
+### A.6.4 Restart Semantics
 
 Flow runs support four restart granularities:
 
@@ -186,7 +226,7 @@ Flow runs support four restart granularities:
 
 Each restart option clearly communicates what gets invalidated.
 
-### A.6.4 Status Chain
+### A.6.5 Status Chain
 
 pending → generating → ai_reviewing → awaiting_review → approved / rejected / stale
 
