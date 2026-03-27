@@ -488,3 +488,17 @@ Leaf boulder code generation is delegated to AI coding assistants (e.g., Claude,
 - Token tracking per call with model identifier recorded alongside token counts, aggregated per node, flow run, and project. Model must be stored with tokens to enable future cost calculation.
 - Model and temperature configurable at project, phase, and node levels
 - Multiple LLM providers supported behind a common interface
+
+## B.10 Licensing Model
+
+Catapult uses a **dual-license model**:
+
+- **AGPL v3** for the public open-source release. Anyone can use, modify, and deploy Catapult freely. Modifications to the core must be published if the modified version is offered as a network service. This closes the SaaS loophole that plain GPL leaves open — cloud providers cannot run a modified Catapult as a managed service without contributing back.
+- **Commercial license** available for organizations whose legal or compliance requirements are incompatible with AGPL. The commercial license permits proprietary modifications, private deployment without source disclosure, and use of proprietary optional dependencies.
+
+**Architectural implications for dual licensing:**
+- The core system (pipeline engine, event sourcing, document DAG, review workflow, LiveView UI) is AGPL and must not depend on any proprietary libraries.
+- **Oban**: The core depends only on Oban core (Apache 2.0, AGPL-compatible). Oban Pro features (unique jobs, batch processing, web dashboard) are behind an optional module that is not required for core functionality. Commercial licensees may use Oban Pro at their discretion.
+- **Gitea sidecar**: Communicates over HTTP — a separate process, not a derivative work. No licensing conflict.
+- **Plugin/extension boundary**: Third-party tools communicating with Catapult over HTTP/API are not derivative works. Plugins loaded into the Elixir runtime are derivative works under AGPL. This boundary must be documented clearly.
+- **Contributor License Agreement (CLA)**: Required for contributions to the core repository, granting the project the right to distribute contributions under both AGPL and commercial licenses.
