@@ -33,7 +33,7 @@ At every fan-out level, there is a **root boulder** that owns files not belongin
 ### A.1.4 Dual DAG Architecture
 
 - **Pipeline DAG**: A directed acyclic graph of processing stages defining the shape of the work — which AI generation steps run, in what order, and with what inputs. The pipeline DAG is a sequence of 5 phases, each containing a configurable boulder template (itself a DAG). When a phase fans out, the boulder template is instantiated once per boulder.
-- **Document DAG**: A directed acyclic graph of artifacts (documents and code) produced by the pipeline. Each node is a versioned document with status tracking. Edges represent parent-child relationships and cross-cutting dependency relationships between sibling boulders.
+- **Document DAG**: A directed acyclic graph of artifacts (documents and code) produced by the pipeline. Each node is a versioned document with status tracking. Edges represent parent-child relationships and cross-cutting dependency relationships between sibling boulders. Sibling dependency edges carry unified semantics — a dependency from boulder A to boulder B means all three of: (1) B must be generated before A (execution ordering), (2) A's context assembly includes B's output (context input), and (3) changes to B propagate staleness to A (change tracking). These three meanings are intentionally coupled — they must all hold for the design to work, because a dependency that orders execution but doesn't inform context or propagate staleness would create silent drift.
 - The pipeline DAG drives generation; the document DAG records results.
 
 ## A.2 Flows
@@ -87,6 +87,8 @@ Input is a bug report (description of the problem, not a fix). This flow is prim
 
 During the downward pass, fan-out routing identifies sibling subtrees impacted by the diagnosed changes. The diagnosis chain gives reviewers an explicit, approvable interpretation of what the bug means for the system's design at each level.
 
+If the AI fails to produce a working fix after exhausting retries, the bug report is pushed to a bug/issues queue for manual intervention. No documentation propagation occurs — at the point of failure, no docs have been built yet, so nothing is lost. The bug report and diagnosis are preserved in the queue so a human can fix it and then use A.2.5.2 to propagate the documentation changes.
+
 #### A.2.5.2 Propagate Existing Fix
 
 Input is a PR or commit that already contains changes (the code change exists, documentation needs to catch up). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates purely as documentation propagation — no code generation, only diagnosis and architecture updates at each level upward, then routing to affected siblings on the downward pass. This variant handles any code change made outside Catapult: hotfixes, automated dependency version bumps, CI configuration changes, manual edits — any case where the codebase has moved and the document tree needs to reflect reality.
@@ -117,7 +119,7 @@ The raw input document (user-provided) never changes. The **expanded input docum
 
 ### A.3.2 Propagation
 
-By default, propagation of changes goes **downward**. At fan-out nodes, the system generates a routing document determining which child nodes to visit.
+By default, propagation of changes goes **downward**. At fan-out nodes, the system generates a routing document determining which child nodes to visit. Reviewers can **amend routing decisions directly** — adding boulders the AI missed or removing boulders that don't need updates — before approving. When a reviewer amends the routing list, the routing document is regenerated to incorporate the amended list, so that the reasoning reflects the actual routing for future passes. This prevents the AI from repeating the same routing mistake on subsequent flows.
 
 **Upward propagation** is a two-pass algorithm (see Section A.2.4). During the upward pass, changes are collected bottom-up — parent nodes wait for **all** descendants to complete before updating, so inputs are merged and each parent regenerates only once. During the downward pass, fan-out routing identifies additional children impacted by the merged changes. Upward propagation is always user-initiated.
 
