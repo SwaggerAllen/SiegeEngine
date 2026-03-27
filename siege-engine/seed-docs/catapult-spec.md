@@ -192,6 +192,14 @@ When a flow run is scheduled, it pins to the boulder template versions that exis
 
 All nodes in boulder templates are visible to users. Users can see and understand the full processing pipeline. Users can modify boulder templates: adding, removing, or reordering nodes. This is possible because all node types are surfaced in the UI.
 
+### A.4.3 Template Bundles
+
+Templates are distributable as **bundles** — packages that combine boulder template DAGs with their prompt configurations into a single installable unit, distributed via git repositories. A bundle represents a complete set of prompts and DAG configurations for a particular tech stack, framework, or workflow style (e.g., "Elixir/Phoenix scaffolding," "React frontend feature request").
+
+**Instance-level defaults**: Each Catapult instance has a bundle library with instance-level default templates. New projects inherit from instance defaults, with per-project overrides. Self-hosted deployments configure their own defaults; managed deployments provide curated defaults per subscription tier.
+
+**Curation and security**: Template bundles are a prompt injection attack surface — a malicious bundle could embed instructions that exfiltrate document content, inject backdoors into generated code, or manipulate the review flow. Bundles must be curated: instance admins explicitly approve bundles before they're available to projects. The system should support bundle signing and provenance tracking so admins can verify the source and integrity of imported bundles.
+
 ## A.5 Sub-Runs
 
 Flow runs can spawn sub-runs. For example, a refactor sub-run during a scaffolding run, or an upward propagation sub-run during a refactor. Only one run or sub-run may be active at a time per project — sub-runs pause their parent run, execute, and then the parent resumes.
@@ -282,7 +290,13 @@ Each restart option clearly communicates what gets invalidated.
 
 ### A.6.5 Status Chain
 
+**Document artifacts:**
 pending → generating → ai_reviewing → awaiting_review → approved / rejected / stale
+
+**Code artifacts:**
+pending → generating → ai_reviewing → ci_validating → awaiting_review → approved / rejected / stale
+
+The `ci_validating` status is specific to code artifacts and represents the CI loop (A.3.7). Nodes cycle between `ci_validating` and `generating` on CI failure until the retry limit is reached. Projects without CI skip `ci_validating` entirely.
 
 Rejecting an artifact propagates staleness downstream.
 
@@ -340,10 +354,33 @@ This means git history reflects meaningful checkpoints (reviewable and approved 
 ## A.11 Git Strategy
 
 - **One commit per leaf node** — Each leaf boulder produces a single commit
-- **One PR per flow run** — All leaf commits from a flow run are composed into a single PR, ordered by dependency structure
-- **Sub-run commits** contribute to the parent flow's PR
+- **Sub-run commits** contribute to the parent flow's branch hierarchy
 - Every project is assumed to be a **monorepo** for v1. The data model supports multi-repo via the `{repository, folder}` mapping (Section A.1.2), but v1 flow orchestration, PR composition, and Gitea sidecar integration assume a single repository per project.
-- The system is the sole code shipping mechanism for the project (aside from bug fix PRs which are the input, not the output).
+- The system is the sole code shipping mechanism for the project (aside from external changes propagated via A.2.5.2).
+
+### A.11.1 PR Granularity
+
+PR granularity is configurable per project to one of three levels: **system**, **component**, or **subcomponent**.
+
+- **System level** (default) — One PR for the entire flow run. All leaf commits compose into a single PR against main.
+- **Component level** — One PR per component. Each component's leaf commits compose into a PR against the run branch.
+- **Subcomponent level** — One PR per subcomponent. Each subcomponent's leaf commits compose into a PR against the component branch.
+
+### A.11.2 Branch Hierarchy
+
+Flow runs use a **feature branch hierarchy** that mirrors the document DAG:
+
+```
+main
+  └── run-branch (flow run)
+       ├── component-a-branch
+       │    ├── subcomponent-a1-branch (leaf commits here)
+       │    └── subcomponent-a2-branch (leaf commits here)
+       └── component-b-branch
+            └── subcomponent-b1-branch (leaf commits here)
+```
+
+Approved documents are committed to the run branch (system level), since document review is complete before code generation begins. Code PRs are created at whichever level the project's PR granularity is configured to. Review flows upward through the branch hierarchy: subcomponent branches merge into component branches, component branches merge into the run branch, and the run branch merges into main. Catapult controls the review flow and communicates which branches are ready for review and in what order.
 
 ## A.12 Document Versioning
 
@@ -379,6 +416,10 @@ Catapult emits its own webhook events for external integrations. Configurable pe
 - Run completed with summary (boulders processed, artifacts generated, token usage)
 
 Webhook payloads include enough context for external systems to take action (Slack notifications, CI dashboard updates, project management tool integration) without needing to query Catapult's API. Webhook endpoints are configurable per project by admins.
+
+### A.15.2 External API
+
+Catapult exposes a programmatic API for external tooling. The API provides read access to all project state (document DAG, pipeline status, event log, artifact content, review status, lobby contents) and write access to flow operations (propose flows to the lobby, leave deferred feedback, trigger actions permitted by the caller's role). Authentication uses the same per-user credentials as the web UI. The API enables: custom dashboards, Slack/Teams bots, project management tool integrations (Jira, Linear), CI/CD pipeline queries, and third-party tooling built on top of Catapult's data model.
 
 ## A.16 Auth and Multi-User Access
 
@@ -493,6 +534,18 @@ A one-time flow for self-bootstrapping. The only supported use case is onboardin
 
 The coding portion of leaf boulder execution (plan creation and PR generation) is delegated to an AI coding assistant. The assistant has tools to read, navigate, and understand the current codebase directly — no separate code parsing or AST indexing is needed. The assistant works up implementation plans since it already has the tools to see the code in context. The document tree provides the "what needs to change" and the coding assistant handles the "how to change it" against the actual code.
 
+## A.21.1 AI Sandboxing
+
+All AI execution — coding assistants, document generation, template prompts — runs in a sandboxed environment. The sandbox enforces:
+
+- **Filesystem scoping** — Coding assistants can only access files within the boulder's folder territory (A.1.2). A leaf boulder for `src/auth/` cannot read or write files in `src/payments/`.
+- **No arbitrary network access** — AI execution can reach the configured LLM API endpoint and nothing else. No outbound HTTP to arbitrary URLs, no DNS resolution of external hosts.
+- **No credential access** — The sandbox cannot access stored credentials (LLM API keys, git tokens, user secrets). Credentials are injected by the orchestrator into the specific API calls that need them, never exposed to the AI's tool environment.
+- **Resource limits** — CPU, memory, and execution time are bounded per node execution. A runaway generation cannot consume unbounded resources.
+- **Template isolation** — Boulder template prompts can only access the context categories they are configured for (A.3.5). A template cannot override system-level safety prompts or modify its own execution parameters. This is the primary defense against prompt injection via malicious template bundles (A.4.3).
+
+Sandboxing is especially critical for managed multi-tenant deployments where untrusted LLM output executes on shared infrastructure.
+
 ## A.22 AI Chat Interface
 
 A conversational AI interface scoped per project, allowing users to ask questions about the codebase and its documentation. The chat operates in **read-only mode** with respect to the pipeline — it can analyze everything but cannot directly modify documents, start flows, or change pipeline state. When the chat identifies issues or opportunities, it proposes flows that go to the flow lobby (A.7) for human prioritization.
@@ -561,7 +614,7 @@ At any point in a flow, a human can stop the run, correct course, and resume. Th
 
 ### A.23.4 Dry Run Mode
 
-Run an entire flow without committing anything — preview what would be generated, what the document DAG structure would look like, and how many LLM calls it would make — without side effects. This lets teams evaluate Catapult on their actual project description before committing to a full run.
+Structural estimation of a flow without making LLM calls or committing anything. Given a flow type and input, the system computes: the DAG shape (which boulders would be visited, in what order), the number of LLM calls required, the estimated token budget based on configured fan-out breadth and document size defaults, and which nodes would be created or regenerated. No LLM calls are made — the estimation uses configured defaults for fan-out breadth and document sizes. This lets teams evaluate scope and cost before committing budget, and is also useful for testing template and configuration changes.
 
 ### A.23.5 Diff-First Review
 
@@ -597,7 +650,7 @@ Fan-out stages (which create or modify the boulder tree structure) must always p
 
 ### A.24.3 Blocking PR
 
-If an outstanding PR exists for a project from a prior flow run, new flows cannot start. This prevents the document DAG from drifting out of sync with the codebase. The user must merge or close the existing PR before starting a new flow. Sub-runs are exempt from this rule — they contribute to their parent flow's PR and exist precisely to handle mid-flow corrections.
+If any outstanding PRs exist for a project from a prior flow run, new flows cannot start. All PRs from the prior run (at whatever granularity level the project is configured to) must be merged or closed before a new flow begins. This prevents the document DAG from drifting out of sync with the codebase. Merge order follows the branch hierarchy — subcomponent branches into component branches, component branches into the run branch, run branch into main. Sub-runs are exempt from this rule — they contribute to their parent flow's branch hierarchy and exist precisely to handle mid-flow corrections.
 
 ### A.24.4 Debugging and Administrative Tools
 
