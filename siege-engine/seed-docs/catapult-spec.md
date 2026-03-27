@@ -248,7 +248,7 @@ Proposed flows do not execute immediately. They enter a **lobby** where they can
 ### A.7.1 Lobby Behavior
 
 - All AI-initiated flows (from proactive chat suggestions, ambient analysis, etc.) and chat-initiated flows go to the lobby, never straight to execution
-- User-initiated flows can optionally go to the lobby or execute immediately, configurable per project
+- User-initiated flows can be sent to the lobby or executed immediately, at the user's choice. The lobby is not just for AI proposals — humans use it to queue up work they want done but not right now.
 - The lobby displays pending flows with their description, estimated scope (which boulders would be affected), and the triggering context (chat conversation, proactive suggestion, etc.)
 - Users can reorder, approve, reject, or modify proposed flows in the lobby before they are queued for execution
 - The lobby respects the one-active-flow-per-project constraint (A.8) — approving a flow from the lobby queues it behind any currently running flow
