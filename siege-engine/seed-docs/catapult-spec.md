@@ -287,7 +287,7 @@ The system provides a set of administrative actions and debugging screens, separ
 **Administrative actions** (available to admins):
 - **Prune** — Remove a node and its entire downstream cascade from the document DAG. For example, a fan-out produced a component that shouldn't exist. Unlike reject (which regenerates), prune deletes. Emits appropriate events for the removal.
 - **Force restart** — Force a stuck or failed node back to pending and re-execute, bypassing normal status transition rules
-- **Retry all** — Re-execute all failed nodes in the current run
+- **Reset all** — Reset all nodes in the current run back to pending, clearing all generated state
 - **Force sync / repair** — Rebuild the materialized snapshot from the event log. Detects and resolves orphaned executions, zombie runs, and stale state (see A.19.11)
 
 **Debugging screens** (per project):
