@@ -33,7 +33,7 @@ At every fan-out level, there is a **root boulder** that owns files not belongin
 ### A.1.4 Dual DAG Architecture
 
 - **Pipeline DAG**: A directed acyclic graph of processing stages defining the shape of the work — which AI generation steps run, in what order, and with what inputs. The pipeline DAG is a sequence of 5 phases, each containing a configurable boulder template (itself a DAG). When a phase fans out, the boulder template is instantiated once per boulder.
-- **Document DAG**: A directed acyclic graph of artifacts (documents and code) produced by the pipeline. Each node is a versioned document with status tracking. Edges represent parent-child relationships and cross-cutting dependency relationships between sibling boulders.
+- **Document DAG**: A directed acyclic graph of artifacts (documents and code) produced by the pipeline. Each node is a versioned document with status tracking. Edges represent parent-child relationships and cross-cutting dependency relationships between sibling boulders. Sibling dependency edges carry unified semantics — a dependency from boulder A to boulder B means all three of: (1) B must be generated before A (execution ordering), (2) A's context assembly includes B's output (context input), and (3) changes to B propagate staleness to A (change tracking). These three meanings are intentionally coupled — they must all hold for the design to work, because a dependency that orders execution but doesn't inform context or propagate staleness would create silent drift.
 - The pipeline DAG drives generation; the document DAG records results.
 
 ## A.2 Flows
@@ -87,6 +87,8 @@ Input is a bug report (description of the problem, not a fix). This flow is prim
 
 During the downward pass, fan-out routing identifies sibling subtrees impacted by the diagnosed changes. The diagnosis chain gives reviewers an explicit, approvable interpretation of what the bug means for the system's design at each level.
 
+If the AI fails to produce a working fix after exhausting retries, the bug report is pushed to a bug/issues queue for manual intervention. No documentation propagation occurs — at the point of failure, no docs have been built yet, so nothing is lost. The bug report and diagnosis are preserved in the queue so a human can fix it and then use A.2.5.2 to propagate the documentation changes.
+
 #### A.2.5.2 Propagate Existing Fix
 
 Input is a PR or commit that already contains changes (the code change exists, documentation needs to catch up). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates purely as documentation propagation — no code generation, only diagnosis and architecture updates at each level upward, then routing to affected siblings on the downward pass. This variant handles any code change made outside Catapult: hotfixes, automated dependency version bumps, CI configuration changes, manual edits — any case where the codebase has moved and the document tree needs to reflect reality.
@@ -117,7 +119,7 @@ The raw input document (user-provided) never changes. The **expanded input docum
 
 ### A.3.2 Propagation
 
-By default, propagation of changes goes **downward**. At fan-out nodes, the system generates a routing document determining which child nodes to visit.
+By default, propagation of changes goes **downward**. At fan-out nodes, the system generates a routing document determining which child nodes to visit. Reviewers can **amend routing decisions directly** — adding boulders the AI missed or removing boulders that don't need updates — before approving. When a reviewer amends the routing list, the routing document is regenerated to incorporate the amended list, so that the reasoning reflects the actual routing for future passes. This prevents the AI from repeating the same routing mistake on subsequent flows.
 
 **Upward propagation** is a two-pass algorithm (see Section A.2.4). During the upward pass, changes are collected bottom-up — parent nodes wait for **all** descendants to complete before updating, so inputs are merged and each parent regenerates only once. During the downward pass, fan-out routing identifies additional children impacted by the merged changes. Upward propagation is always user-initiated.
 
@@ -148,6 +150,8 @@ Context assembly uses a **strategy pattern** — different flows, phases, and no
 Within each partition, the budget-based approach applies: include full documents nearest-first until the partition's budget is exhausted, then retrieve remaining context via semantic relevance from the vector database. The expanded input document and direct parent outputs are always included in full, drawn from the appropriate partition.
 
 This means shallower nodes get richer direct context (desirable — system-level decisions benefit from full context) while deeper nodes work from more focused, relevant excerpts.
+
+**Future: intelligent context selection.** Documents are intended to store the complete design decision history of the project — they should never be compacted or summarized destructively. For very large or long-lived projects where documents exceed context budgets even with partitioning, a future version will need a context building service that goes beyond vector search to select the most relevant portions of a document for a given prompt (e.g., structural analysis, recency weighting, decision-chain tracing). This is not needed for v1 but should be anticipated in the context assembly interface design.
 
 ### A.3.6 Test Case Lifecycle
 
@@ -194,12 +198,12 @@ Every document and commit produced by the system goes through review. The system
 
 **Document artifacts** follow the full review chain:
 1. **AI self-review** — The AI reviews its own output with structured feedback (quality score, recommendation, notes). If revision is recommended, the system automatically regenerates incorporating feedback, up to a configurable loop limit.
-2. **Human review** — After AI review, artifacts enter "awaiting review" status. Humans approve or reject with text feedback only (no inline edits). Rejection feedback is incorporated in a subsequent AI revision pass.
+2. **Human review** — After AI review, artifacts enter "awaiting review" status. Humans review with **inline comments** (tied to specific locations in the document) and **summary feedback** (overall assessment). Inline comments let reviewers anchor feedback to exactly where the problem is ("this JWT assumption contradicts the session decision in A.3"); summary feedback captures cross-cutting concerns. Rejection feedback — both inline and summary — is incorporated in a subsequent AI revision pass. Location-anchored feedback gives the AI much better signal about what to change than unstructured text alone.
 
 **Code artifacts** (leaf boulder PRs) follow a parallel path:
 1. **AI code review** — The AI reviews generated code via Gitea's PR review API, posting inline comments tied to file paths and line numbers.
 2. **CI loop** — CI results feed back into the generation loop. CI failure is not a bug fix — it means the system generated incorrect code and should retry with the error output as additional context. This is a first-class concept, not an edge case.
-3. **Human code review** — After AI review and CI pass, the PR enters "awaiting review" for human review via Catapult's code review UI.
+3. **Human code review** — After AI review and CI pass, the PR enters "awaiting review" for human review via Catapult's code review UI. Code review uses the same inline comments plus summary feedback model as document review.
 
 ### A.6.1 Auto-Approval
 
@@ -279,6 +283,7 @@ Proposed flows do not execute immediately. They enter a **lobby** where they can
 - The lobby displays pending flows with their description, estimated scope (which boulders would be affected), and the triggering context (chat conversation, proactive suggestion, etc.)
 - Users can reorder, approve, reject, or modify proposed flows in the lobby before they are queued for execution
 - The lobby respects the one-active-flow-per-project constraint (A.8) — approving a flow from the lobby queues it behind any currently running flow
+- A **cross-project lobby view** shows all pending flows across all projects the user has access to, so a tech lead can prioritize work across multiple projects from a single screen. The exact design of this view is TBD, but it must exist alongside the per-project lobby.
 
 ### A.7.2 AI as Read-Only Proposer
 
