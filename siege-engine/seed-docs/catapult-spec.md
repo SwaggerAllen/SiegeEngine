@@ -280,9 +280,21 @@ Fan-out stages (which create or modify the boulder tree structure) must always p
 
 If an outstanding PR exists for a project from a prior flow run, new flows cannot start. This prevents the document DAG from drifting out of sync with the codebase. The user must merge or close the existing PR before starting a new flow.
 
-### A.19.4 Prune as a Review Action
+### A.19.4 Debugging and Administrative Tools
 
-Beyond approve and reject, users need a **prune** action: remove a downstream cascade that became irrelevant. For example, a fan-out produced a component that shouldn't exist. Reject would regenerate it; prune removes it and all its descendants from the document DAG, emitting appropriate events.
+The system provides a set of administrative actions and debugging screens, separate from the normal review workflow.
+
+**Administrative actions** (available to admins):
+- **Prune** — Remove a node and its entire downstream cascade from the document DAG. For example, a fan-out produced a component that shouldn't exist. Unlike reject (which regenerates), prune deletes. Emits appropriate events for the removal.
+- **Force restart** — Force a stuck or failed node back to pending and re-execute, bypassing normal status transition rules
+- **Retry all** — Re-execute all failed nodes in the current run
+- **Force sync / repair** — Rebuild the materialized snapshot from the event log. Detects and resolves orphaned executions, zombie runs, and stale state (see A.19.11)
+
+**Debugging screens** (per project):
+- **Snapshot viewer** — The current materialized snapshot in full, showing the authoritative state of all nodes, runs, and artifacts
+- **Event log** — The last 100 events (filterable, pageable), showing what happened and in what order
+- **Frontend log** — Client-side log capturing UI errors, WebSocket connection state, and user actions
+- **Error panel** — Aggregated errors from both frontend and backend for the current project, with timestamps, stack traces, and source labels
 
 ### A.19.5 Cascading Readiness Re-Scan
 
