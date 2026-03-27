@@ -18,7 +18,7 @@ A **boulder** is a node in the document DAG that has its own sub-DAG of processi
 - **Component** — produced by system-level fan-out
 - **Subcomponent** — produced by component-level fan-out; terminal (subcomponents cannot fan out further, two layers of branching maximum)
 
-Leaf boulders are single-use boulders that produce implementation artifacts. A leaf boulder may be a child of a system, component, or subcomponent boulder. Every leaf boulder produces at minimum an implementation plan and a PR commit.
+Leaf boulders are single-use boulders that produce implementation artifacts. A leaf boulder may be a child of a system, component, or subcomponent boulder. Every leaf boulder produces at minimum test cases (generated as part of the planning prompt), an implementation plan, and a PR commit.
 
 ### A.1.2 Repository and Folder Mapping
 
@@ -47,7 +47,7 @@ The default flow. Generates all documents from scratch, walking the full documen
 - At system and component boulders: produces an architecture document and a fan-out node
 - At subcomponent boulders: produces an architecture document only (no further fan-out)
 - Fan-out nodes produce a document and structured output deciding whether to decompose into child boulders or generate a leaf boulder
-- Leaf boulders produce an implementation plan and a PR commit
+- Leaf boulders produce test cases (as part of the planning prompt), an implementation plan, and a PR commit
 
 ### A.2.2 Feature Request Flow
 
@@ -74,13 +74,22 @@ At fan-out nodes during the downward pass, the system identifies which children 
 
 ### A.2.5 Bug Fix Flow
 
-Input is a PR that fixes a bug (not the bug itself). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates as an upward propagation (Section A.2.4):
+There are two variants of the bug fix flow, both operating as upward propagation (Section A.2.4):
 
-1. At each boulder level during the upward pass, a **diagnosis node** produces a diagnosis document analyzing what the PR reveals about the gap between the documented architecture and reality — why the bug existed, what assumption was wrong, what edge case was missed
-2. An **architecture update node** takes the diagnosis and updates the architecture doc accordingly
-3. Parent nodes wait for all descendant diagnoses to complete before producing their own, so changes from multiple touched leaves are merged into a single coherent diagnosis at each fan-out node
+#### A.2.5.1 Fix and Propagate
 
-During the downward pass, fan-out routing identifies sibling subtrees impacted by the diagnosed changes. The diagnosis chain serves the same role as the plan chain in feature request/refactor flows — it gives reviewers an explicit, approvable interpretation of what the bug means for the system's design at each level.
+Input is a bug report (description of the problem, not a fix). The system identifies the affected leaf boulders, generates a fix at the leaf level (implementation plan + PR commit), then propagates the implications upward through the document tree:
+
+1. At the leaf level: a **diagnosis node** analyzes the bug, then plan and code generation produce the fix
+2. At each boulder level during the upward pass, a **diagnosis node** produces a diagnosis document analyzing what the fix reveals about the gap between the documented architecture and reality — why the bug existed, what assumption was wrong, what edge case was missed
+3. An **architecture update node** takes the diagnosis and updates the architecture doc accordingly
+4. Parent nodes wait for all descendant diagnoses to complete before producing their own, so changes from multiple touched leaves are merged into a single coherent diagnosis at each fan-out node
+
+During the downward pass, fan-out routing identifies sibling subtrees impacted by the diagnosed changes. The diagnosis chain gives reviewers an explicit, approvable interpretation of what the bug means for the system's design at each level.
+
+#### A.2.5.2 Propagate Existing Fix
+
+Input is a PR that already fixes the bug (the fix exists, documentation needs to catch up). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates purely as documentation propagation — no code generation, only diagnosis and architecture updates at each level upward, then routing to affected siblings on the downward pass. This variant is for when a developer has already shipped a fix (e.g., a hotfix) and the document tree needs to be updated to reflect reality.
 
 ## A.3 Phases
 
@@ -90,7 +99,7 @@ Every flow run walks the document DAG in five phases. Each phase has a boulder t
 2. **System Docs** — Produces or updates system-level architecture for the system boulder
 3. **Component Docs** — Instantiated once per component boulder; produces or updates component-level architecture
 4. **Subcomponent Docs** — Instantiated once per subcomponent boulder; produces or updates subcomponent-level architecture
-5. **Leaf Nodes** — Instantiated once per leaf boulder; produces implementation plans and PR commits
+5. **Leaf Nodes** — Instantiated once per leaf boulder; produces test cases (built into the planning prompt), implementation plans, and PR commits
 
 ### A.3.1 Phase Traversal
 
@@ -175,7 +184,7 @@ Some node types can be configured for auto-approval, skipping human review. This
 
 Each component and subcomponent boulder has an **owner** — the team member who is the default reviewer for everything in that subtree (architecture docs, plans, and code). System-level artifacts default to the project lead or admin.
 
-**Fan-out is the natural assignment point.** Fan-out stages already pause for human review (A.22.2). When the reviewer approves the decomposition into child boulders, they also assign ownership of each child. Ownership is part of the fan-out approval, not a separate step.
+**Fan-out is the natural assignment point.** Fan-out stages already pause for human review (A.24.2). When the reviewer approves the decomposition into child boulders, they also assign ownership of each child. Ownership is part of the fan-out approval, not a separate step.
 
 #### Review Type Routing
 
@@ -232,7 +241,32 @@ pending → generating → ai_reviewing → awaiting_review → approved / rejec
 
 Rejecting an artifact propagates staleness downstream.
 
-## A.7 Concurrency and Locking
+## A.7 Flow Lobby
+
+Proposed flows do not execute immediately. They enter a **lobby** where they can be reviewed, prioritized, and queued by the user before execution begins.
+
+### A.7.1 Lobby Behavior
+
+- All AI-initiated flows (from proactive chat suggestions, ambient analysis, etc.) and chat-initiated flows go to the lobby, never straight to execution
+- User-initiated flows can be sent to the lobby or executed immediately, at the user's choice. The lobby is not just for AI proposals — humans use it to queue up work they want done but not right now.
+- The lobby displays pending flows with their description, estimated scope (which boulders would be affected), and the triggering context (chat conversation, proactive suggestion, etc.)
+- Users can reorder, approve, reject, or modify proposed flows in the lobby before they are queued for execution
+- The lobby respects the one-active-flow-per-project constraint (A.8) — approving a flow from the lobby queues it behind any currently running flow
+
+### A.7.2 AI as Read-Only Proposer
+
+The AI chat interface and any ambient/proactive analysis operate in **read-only mode** with respect to the pipeline. They can:
+- Read all documents, code, events, and pipeline state
+- Propose new flows (which go to the lobby)
+- Surface issues, stale documents, or opportunities for improvement
+
+They cannot:
+- Directly start flows, modify documents, or change pipeline state
+- Bypass the lobby to execute changes
+
+This ensures humans remain in control of what work actually happens, while the AI can freely analyze and suggest.
+
+## A.8 Concurrency and Locking
 
 The system uses **pessimistic locking** at the node level. Only one flow run or sub-run may be active per project at a time. This dramatically simplifies the concurrency story:
 
@@ -241,14 +275,14 @@ The system uses **pessimistic locking** at the node level. Only one flow run or 
 - Lock acquisition follows the tree traversal order
 - Locks are released on node completion, failure, or configurable timeout
 
-## A.8 Resumability and Recoverability
+## A.9 Resumability and Recoverability
 
 - If a flow fails at any node, it can resume from the point of failure without re-running completed nodes
 - Completed nodes are idempotent on re-run (re-running a completed node produces a new version but does not invalidate its dependents unless the output differs)
 - All state changes are recorded as events, enabling replay and recovery
 - Locks are automatically released on failure with configurable timeout
 
-## A.9 Document Storage Model
+## A.10 Document Storage Model
 
 Document content lives in two places with distinct roles:
 
@@ -257,7 +291,7 @@ Document content lives in two places with distinct roles:
 
 This means git history reflects meaningful checkpoints (reviewable and approved states), not every intermediate generation attempt. The event log tracks all state transitions regardless of whether a git commit was produced.
 
-## A.10 Git Strategy
+## A.11 Git Strategy
 
 - **One commit per leaf node** — Each leaf boulder produces a single commit
 - **One PR per flow run** — All leaf commits from a flow run are composed into a single PR, ordered by dependency structure
@@ -265,56 +299,101 @@ This means git history reflects meaningful checkpoints (reviewable and approved 
 - Every project is assumed to be a **monorepo** for v1. The data model supports multi-repo via the `{repository, folder}` mapping (Section A.1.2), but v1 flow orchestration, PR composition, and Gitea sidecar integration assume a single repository per project.
 - The system is the sole code shipping mechanism for the project (aside from bug fix PRs which are the input, not the output).
 
-## A.11 Document Versioning
+## A.12 Document Versioning
 
 - All artifacts are versioned. Each generation or revision produces a new version.
 - Event sourcing provides a complete audit trail of every state change.
 - Users can revert to any previous version. Reversion appends new events (no destructive history changes).
 - Each completed run produces a git commit checkpoint.
 
-## A.12 Prompt System
+## A.13 Prompt System
 
 - Each processing node type has a built-in prompt template with: system message, output format instructions, context assembly template, and revision instructions.
 - Users can override any prompt field per stage per project.
 - Model and temperature are configurable at three levels: project default, per-phase default, and per-node override. Defaults propagate downward.
 
-## A.13 Credentials and Token Tracking
+## A.14 Credentials and Token Tracking
 
 - The service is **BYO LLM credentials** — customers supply their own API keys through the application, not environment variables. Credentials are stored per-user.
 - Token usage is tracked per node, per flow run, and per project. Users can see how many tokens each generation step consumed.
 - Cost projection is deferred to a future version, but the tracking infrastructure is in place from day one.
 
-## A.14 Real-Time Updates
+## A.15 Real-Time Updates
 
 - All connected clients receive live updates when artifacts are generated, statuses change, or flows progress.
 - DAG visualizations, status indicators, and artifact viewers update in real-time.
 
-## A.15 Auth and Multi-User Access
+### A.15.1 External Webhooks
+
+Catapult emits its own webhook events for external integrations. Configurable per project, these webhooks notify external systems of significant pipeline events:
+- Flow started, paused, completed, or failed
+- Artifact ready for review (human review needed)
+- Review SLA timeout exceeded
+- PR created or merged
+- Run completed with summary (boulders processed, artifacts generated, token usage)
+
+Webhook payloads include enough context for external systems to take action (Slack notifications, CI dashboard updates, project management tool integration) without needing to query Catapult's API. Webhook endpoints are configurable per project by admins.
+
+## A.16 Auth and Multi-User Access
 
 - Role-based access control: admin (full control), member (run flows, review, configure), viewer (read-only, can comment).
 - Invite-based onboarding with time-limited tokens.
 - **SSO/SAML support** for enterprise identity providers. Teams should be able to use their existing identity system rather than managing separate Catapult credentials.
 - Per-user LLM credential storage.
 - Per-user git credential storage for push/PR operations.
+- **Session management**: configurable session timeout, concurrent session limits, admin-initiated forced logout.
+- **Auth audit log**: all authentication and authorization events are logged separately from the pipeline event store — login, logout, failed login attempts, permission changes, role changes, invite creation and redemption, credential updates. This log is append-only, tamper-evident, and queryable by admins.
 
-## A.16 Multi-Tenancy
+## A.16.1 Security and Compliance (SOC 2 Preparation)
+
+The system is designed from the start to support SOC 2 Type II certification. These requirements apply to both self-hosted and managed deployments, though managed deployments bear the audit burden.
+
+**Security (Trust Service Criteria CC6/CC7):**
+- All network communication is TLS-encrypted: client ↔ Catapult, Catapult ↔ Gitea, Catapult ↔ PostgreSQL. No plaintext connections, even internal.
+- Database encryption at rest — either Postgres TDE or volume-level encryption, configurable per deployment.
+- All user-provided credentials (LLM API keys, git tokens) are encrypted at rest using per-tenant keys, never stored in plaintext.
+- Input validation at all system boundaries: user-provided input, LLM output before it enters the pipeline, webhook payloads from Gitea, API request bodies. Reject malformed data at the boundary rather than propagating it.
+
+**Availability (A1):**
+- Health check endpoints for all services (Catapult, Gitea, PostgreSQL) — suitable for load balancer probes and uptime monitoring.
+- Backup and disaster recovery: automated database backups with configurable retention, point-in-time recovery capability, documented recovery procedures. For managed deployments, RPO and RTO targets are defined per subscription tier.
+- Graceful degradation: if Gitea is temporarily unavailable, the pipeline pauses git operations and resumes when connectivity is restored rather than failing runs.
+
+**Processing Integrity (PI1):**
+- Event sourcing provides a complete, immutable audit trail of all pipeline state changes.
+- Git-before-DB commit ordering (A.24.10) prevents corrupted references.
+- All LLM output is validated and parsed defensively (A.24.12) before entering the pipeline — malformed output is rejected, not propagated.
+- Idempotent operations: re-running a completed node produces a new version only if the output differs (A.9).
+
+**Confidentiality (C1):**
+- Schema-per-tenant isolation (A.17.1) ensures no cross-tenant data access.
+- Data classification: credentials and API keys are classified as sensitive and encrypted at rest. Document content and event data are classified as confidential and isolated per-tenant. User metadata (names, emails, roles) is classified as internal.
+- Data retention and deletion: configurable retention periods per tenant. Tenant offboarding includes complete data export followed by full deletion (schema drop, Gitea org removal, vector embeddings purged). Deletion is auditable — a record of *what* was deleted and *when* is retained without retaining the data itself.
+- For self-hosted deployments, BYO credentials means customer LLM traffic never transits Catapult's infrastructure — the customer's application calls the LLM provider directly.
+
+**Privacy:**
+- Minimal data collection: the system collects only what's necessary for operation (user identity for auth, credentials for integrations, document content for pipeline execution).
+- For managed deployments: privacy policy, GDPR-compliant data handling for EU customers (data residency options, right to access, right to deletion, data processing agreements).
+- LLM provider data handling is the customer's responsibility (BYO credentials), but the system should document what data is sent to LLM providers and provide configuration to control it.
+
+## A.17 Multi-Tenancy
 
 The system supports both self-hosted (single-tenant) and managed (multi-tenant) deployments from the same codebase.
 
-### A.16.1 Tenant Isolation
+### A.17.1 Tenant Isolation
 
 Each tenant is isolated at the database level via **Postgres schemas** — one schema per tenant. Each tenant's event store, snapshots, documents, credentials, and project data live in a separate schema. This provides:
 - Structural isolation without tenant_id columns on every table
 - Per-tenant backup and restore
 - Clean tenant export (schema dump) for customers migrating to self-hosted
-- Independent event stores, so reconciliation (A.22.11) runs per-tenant
+- Independent event stores, so reconciliation (A.24.11) runs per-tenant
 - Self-hosted deployments are simply single-tenant instances with one schema
 
-### A.16.2 Gitea Tenant Isolation
+### A.17.2 Gitea Tenant Isolation
 
 Each tenant maps to a **Gitea organization**. Repositories live within the org, permissions scope to the org. For managed deployments, a shared Gitea instance with org-per-tenant is the default. Isolated Gitea instances are available as a premium option for enterprise tenants who require hard separation.
 
-### A.16.3 Per-Tenant Resource Limits
+### A.17.3 Per-Tenant Resource Limits
 
 Managed deployments enforce per-tenant limits to prevent noisy neighbors:
 - LLM call concurrency limit per tenant (via per-tenant Oban queues)
@@ -322,15 +401,15 @@ Managed deployments enforce per-tenant limits to prevent noisy neighbors:
 - Storage quotas (document content, git repos, vector embeddings)
 - Limits are configurable per subscription tier
 
-### A.16.4 Tenant Provisioning
+### A.17.4 Tenant Provisioning
 
 Tenant lifecycle is automated: sign up → create Postgres schema → create Gitea org → configure webhooks → provision default boulder templates. Teardown follows a data retention policy with export-before-delete.
 
-## A.17 Billing
+## A.18 Billing
 
 Billing is an **optional, pluggable module** — disabled for self-hosted deployments, enabled for managed.
 
-### A.17.1 Payment Processing
+### A.18.1 Payment Processing
 
 Payment integration is behind an adapter interface. The default implementation uses Stripe. The adapter handles:
 - Subscription management (tiers, upgrades, downgrades)
@@ -340,96 +419,141 @@ Payment integration is behind an adapter interface. The default implementation u
 
 The billing adapter is AGPL-compatible (Stripe client libraries are MIT). Self-hosted deployments disable the billing module entirely — no payment code runs.
 
-### A.17.2 Subscription Tiers
+### A.18.2 Subscription Tiers
 
-Tiers map to resource limits (A.16.3):
+Tiers map to resource limits (A.17.3):
 - **Free tier** — limited projects, limited LLM concurrency, limited storage. Enough to evaluate the system on a real project.
 - **Team tier** — higher limits, multiple team members, review workflow features
 - **Enterprise tier** — unlimited projects, isolated Gitea instance option, SSO/SAML, priority support, custom resource limits
 
 Token costs are pass-through (BYO credentials), so subscription tiers govern platform usage, not LLM spend.
 
-## A.18 Multi-Project Support
+## A.19 Multi-Project Support
 
 - Multiple independent projects, each with its own repository, document DAG, pipeline configuration, and event history.
 - One active flow run per project at a time; different projects run concurrently.
 
-## A.19 Bootstrap Flow
+## A.20 Bootstrap Flow
 
 A one-time flow for self-bootstrapping. The only supported use case is onboarding a codebase that already has all required documents in the correct hierarchy and whose folder structure mirrors the boulder mapping assumptions.
 
 - Takes as input: a codebase with documents already matching the scaffolding flow's output shape (requirements, architectures, plans) organized in the expected hierarchy
 - Reconstructs the boulder hierarchy, dependency DAG, and document DAG from the existing documents and folder structure
-- Synthesizes baseline events for the bootstrapped state — a `ProjectBootstrapped` event (or equivalent) that establishes the initial snapshot from the imported documents and folder structure. This ensures reconciliation (A.22.11) can rebuild the snapshot from events without special-casing bootstrap. Review records start fresh from the point of bootstrap.
+- Synthesizes baseline events for the bootstrapped state — a `ProjectBootstrapped` event (or equivalent) that establishes the initial snapshot from the imported documents and folder structure. This ensures reconciliation (A.24.11) can rebuild the snapshot from events without special-casing bootstrap. Review records start fresh from the point of bootstrap.
 - Destructive to existing project state; can only run once or on a fresh project
 - After bootstrap, the project can use any standard flow to iterate
 
-## A.20 AI Coding Assistant Integration
+## A.21 AI Coding Assistant Integration
 
 The coding portion of leaf boulder execution (plan creation and PR generation) is delegated to an AI coding assistant. The assistant has tools to read, navigate, and understand the current codebase directly — no separate code parsing or AST indexing is needed. The assistant works up implementation plans since it already has the tools to see the code in context. The document tree provides the "what needs to change" and the coding assistant handles the "how to change it" against the actual code.
 
-## A.21 Adoption and Trust
+## A.22 AI Chat Interface
+
+A conversational AI interface scoped per project, allowing users to ask questions about the codebase and its documentation. The chat operates in **read-only mode** with respect to the pipeline — it can analyze everything but cannot directly modify documents, start flows, or change pipeline state. When the chat identifies issues or opportunities, it proposes flows that go to the flow lobby (A.7) for human prioritization.
+
+### A.22.1 Capabilities
+
+- **Document Q&A** — "Why does the authentication component use JWT instead of sessions?" The chat retrieves relevant architecture docs, plans, and review feedback via the pgvector semantic search layer (B.5) and answers with citations to specific documents and versions.
+- **Codebase Q&A** — "How does the payment webhook handler work?" The chat uses the AI coding assistant's tools (A.21) to read and navigate the actual code, combining what it finds with the document DAG context.
+- **Provenance queries** — "Who approved the database schema change and why?" The chat queries the event log and review history to trace decisions back through their full chain.
+- **Cross-cutting questions** — "Which components would be affected if we changed the user model?" The chat uses the dependency DAG and architecture docs to identify impact across boulders.
+- **Flow proposals** — "This component's docs are out of date with the code." The chat can propose flows (feature requests, refactors, upward propagations) that are sent to the flow lobby (A.7) for human review and prioritization. The chat never directly initiates execution.
+
+### A.22.2 Review UI Integration
+
+The chat is context-aware of the user's current review state. When a user is reviewing an artifact (document or code), the chat:
+- Knows which artifact is currently being reviewed and can answer questions about it without the user having to describe it
+- Can explain why a particular design decision was made, trace the provenance of a code change, or compare the current version against previous versions
+- Can take review actions on behalf of the user — reject with feedback, approve, request specific changes — when explicitly asked. These are human review actions attributed to the user, not autonomous AI actions.
+- Eliminates the need to copy-paste documents into a separate chat context to ask questions about them
+
+### A.22.3 Proactive Chat
+
+The chat can proactively surface issues without being asked:
+- Documents that have drifted from the codebase (detected via periodic analysis)
+- Review SLA timeouts approaching or exceeded
+- Stale artifacts that haven't been regenerated after upstream changes
+- Cross-cutting inconsistencies between sibling boulder architectures
+
+Proactive notifications appear in the chat panel but do not interrupt the user's workflow. Any suggested actions go to the flow lobby (A.7), not direct execution.
+
+### A.22.4 Context and Scoping
+
+The chat is scoped to a single project. It has access to:
+- All documents in the document DAG (current versions, with ability to reference historical versions)
+- The codebase via the AI coding assistant's repository access
+- The event log and review history
+- The pipeline snapshot (current state of all nodes, runs, artifacts)
+- The user's current review context (which artifact they're viewing, their position in the review queue)
+
+Context assembly for chat queries uses the same pgvector retrieval and budget-based approach as pipeline execution (A.3.5), but with a query-driven retrieval strategy rather than a node-type-driven one.
+
+### A.22.5 Conversation History
+
+Chat conversations are persisted per project, per user. Users can reference prior conversations. Conversations are not part of the event-sourced pipeline — they are a read-only interface over the project's state, stored separately.
+
+## A.23 Adoption and Trust
 
 These requirements address the concerns of teams evaluating Catapult — particularly midsize engineering organizations that need to justify the investment and manage the risk of adopting a new workflow.
 
-### A.21.1 Portability and No Lock-In
+### A.23.1 Portability and No Lock-In
 
 All project artifacts (documents, code, event history) are exportable at any time. Documents exist as markdown files in a git repository. Code is standard code in the same repository. If a team decides to stop using Catapult, they walk away with a fully functional codebase and a complete set of design documents — no proprietary formats, no data trapped in a database.
 
-### A.21.2 Graduated Autonomy
+### A.23.2 Graduated Autonomy
 
 The system supports a spectrum from fully supervised to fully autonomous. A team can start with every single node requiring human approval (treating Catapult as a "suggestion engine") and gradually increase auto-approval as trust builds. The spectrum is continuous — not a cliff between "manual" and "automatic." This is controlled via the auto-approval configuration (A.6.1) and review granularity settings (A.6.3).
 
-### A.21.3 Human Override
+### A.23.3 Human Override
 
 At any point in a flow, a human can stop the run, correct course, and resume. The system should never be in a state where the only way forward is "trust the AI." Specific overrides:
 - Pause any running flow immediately
 - Reject and provide feedback on any artifact
-- Prune entire subtrees that shouldn't exist (A.22.4)
-- Force restart stuck nodes (A.22.4)
+- Prune entire subtrees that shouldn't exist (A.24.4)
+- Force restart stuck nodes (A.24.4)
 - Manually kick off sub-runs to fix upstream issues (A.5)
 
-### A.21.4 Dry Run Mode
+### A.23.4 Dry Run Mode
 
 Run an entire flow without committing anything — preview what would be generated, what the document DAG structure would look like, and how many LLM calls it would make — without side effects. This lets teams evaluate Catapult on their actual project description before committing to a full run.
 
-### A.21.5 Diff-First Review
+### A.23.5 Diff-First Review
 
 The review UI defaults to **diff view**, not full document view. No reviewer should be presented with a 20,000-word document and asked "is this good?" They see what changed since the last version. Full document view is available but is not the default. This applies to both document review and code review UIs.
 
-### A.21.6 Provenance Chain
+### A.23.6 Provenance Chain
 
 Any document or piece of code is traceable back through its full generation chain: this code was generated from this plan, which was generated from this architecture doc, which was approved by Alice on March 3rd with these review comments. The provenance chain is surfaced in the UI — click any artifact to see its lineage. This is derived from the event log and document DAG edges.
 
-### A.21.7 Rollback
+### A.23.7 Rollback
 
-Reversion to any previous project state is a single action. The event-sourced model (A.11) makes this possible — rollback appends new events, never destroys history. This is the single most reassuring capability for risk-averse teams and should be prominently surfaced in the UI.
+Reversion to any previous project state is a single action. The event-sourced model (A.12) makes this possible — rollback appends new events, never destroys history. This is the single most reassuring capability for risk-averse teams and should be prominently surfaced in the UI.
 
-### A.21.8 Self-Hosted Deployment
+### A.23.8 Self-Hosted Deployment
 
-The entire stack (Catapult, Gitea, PostgreSQL) runs on the customer's infrastructure. No data leaves their network. Combined with BYO LLM credentials (A.13), customers control every external dependency. This is essential for teams with security or compliance requirements.
+The entire stack (Catapult, Gitea, PostgreSQL) runs on the customer's infrastructure. No data leaves their network. Combined with BYO LLM credentials (A.14), customers control every external dependency. This is essential for teams with security or compliance requirements.
 
-### A.21.9 Cost Visibility
+### A.23.9 Cost Visibility
 
-Token tracking with model identifiers (A.13) is surfaced in the UI at the flow run level: "This scaffolding run used X tokens across Y calls, estimated cost $Z" (once cost projection is implemented). Even before cost projection, raw token + model data is visible per node and per run so teams can understand and predict their API spend.
+Token tracking with model identifiers (A.14) is surfaced in the UI at the flow run level: "This scaffolding run used X tokens across Y calls, estimated cost $Z" (once cost projection is implemented). Even before cost projection, raw token + model data is visible per node and per run so teams can understand and predict their API spend.
 
-## A.22 Operational Invariants (Learned from Siege Engine v1)
+## A.24 Operational Invariants (Learned from Siege Engine v1)
 
 These requirements are derived from edge cases, bugs, and hard-won knowledge from Siege Engine's production use. They are non-negotiable for Catapult.
 
-### A.22.1 Dependency Satisfaction
+### A.24.1 Dependency Satisfaction
 
 Dependencies are satisfied when a parent artifact has been **generated** (status in: `approved`, `awaiting_review`, `stale`), not only when approved. This allows downstream generation to proceed while upstream is still under human review. Without this, a single slow reviewer blocks the entire pipeline.
 
-### A.22.2 Fan-Out Always Pauses for Review
+### A.24.2 Fan-Out Always Pauses for Review
 
 Fan-out stages (which create or modify the boulder tree structure) must always pause for human review regardless of auto-approval settings. Structural changes — adding, removing, or reorganizing boulders — are too consequential to auto-approve. This is a hard override, not configurable.
 
-### A.22.3 Blocking PR
+### A.24.3 Blocking PR
 
 If an outstanding PR exists for a project from a prior flow run, new flows cannot start. This prevents the document DAG from drifting out of sync with the codebase. The user must merge or close the existing PR before starting a new flow. Sub-runs are exempt from this rule — they contribute to their parent flow's PR and exist precisely to handle mid-flow corrections.
 
-### A.22.4 Debugging and Administrative Tools
+### A.24.4 Debugging and Administrative Tools
 
 The system provides a set of administrative actions and debugging screens, separate from the normal review workflow.
 
@@ -437,7 +561,7 @@ The system provides a set of administrative actions and debugging screens, separ
 - **Prune** — Remove a node and its entire downstream cascade from the document DAG. For example, a fan-out produced a component that shouldn't exist. Unlike reject (which regenerates), prune deletes. Emits appropriate events for the removal.
 - **Force restart** — Force a stuck or failed node back to pending and re-execute, bypassing normal status transition rules
 - **Reset all** — Reset all nodes in the current run back to pending, clearing all generated state
-- **Force sync / repair** — Rebuild the materialized snapshot from the event log. Detects and resolves orphaned executions, zombie runs, and stale state (see A.22.11)
+- **Force sync / repair** — Rebuild the materialized snapshot from the event log. Detects and resolves orphaned executions, zombie runs, and stale state (see A.24.11)
 
 **Debugging screens** (per project):
 - **Snapshot viewer** — The current materialized snapshot in full, showing the authoritative state of all nodes, runs, and artifacts
@@ -445,39 +569,39 @@ The system provides a set of administrative actions and debugging screens, separ
 - **Frontend log** — Client-side log capturing UI errors, WebSocket connection state, and user actions
 - **Error panel** — Aggregated errors from both frontend and backend for the current project, with timestamps, stack traces, and source labels
 
-### A.22.5 Cascading Readiness Re-Scan
+### A.24.5 Cascading Readiness Re-Scan
 
 After completing any node, the orchestrator must re-scan all pending nodes for newly unblocked work — not just the completed node's immediate children. Generating component A's architecture might unblock component B (which depends on A via the dependency DAG), and B may have already been passed in a linear scan. The scan must loop until no more work is found in a single pass.
 
-### A.22.6 Centralized Run Completion
+### A.24.6 Centralized Run Completion
 
 Run completion (transitioning a run to terminal status) must happen through exactly one codepath. Siege Engine had bugs where run completion logic was scattered across multiple callers, causing zombie runs that stayed in RUNNING status indefinitely. The single completion point should be in a `finally`-equivalent block of the main execution loop.
 
-### A.22.7 Phase Boundary Checks Before Execution
+### A.24.7 Phase Boundary Checks Before Execution
 
 Stop-point checks (phase boundaries, user-configured pause points) must be evaluated **before** entering a stage's execution, not after. The check acts as a gate: stages past the stop point are never entered. Checking after execution means boundary-crossing stages run before the pause is detected.
 
-### A.22.8 Cross-Run Execution Deduplication
+### A.24.8 Cross-Run Execution Deduplication
 
 Before creating a new execution for a node, check for existing RUNNING executions for the same node **across all runs**, not just the current run. Scoping this check to a single run allows duplicate executions when sub-runs or manual triggers overlap.
 
-### A.22.9 Retries Are Sub-Runs
+### A.24.9 Retries Are Sub-Runs
 
 Failed executions are not retried in-place. A retry is a sub-run: it pauses the current run, creates a new run scoped to the failed node, executes, and returns control to the parent. This keeps the execution model uniform — there is no special "retry" concept, just the same sub-run machinery used everywhere else. The original failed execution remains in its terminal state in the event log.
 
-### A.22.10 Git-Before-DB Commit Ordering
+### A.24.10 Git-Before-DB Commit Ordering
 
 When an operation produces both a git commit and a database event, the git commit must happen **before** the database commit. If the database succeeds but git fails, the event log references a nonexistent commit — corrupted event history that is difficult to recover from. If git succeeds but the database fails, the result is an orphaned git commit that can be cleaned up trivially without data loss. Always order: git commit → DB commit.
 
-### A.22.11 Reconciliation on Startup
+### A.24.11 Reconciliation on Startup
 
 On server startup, the system must reconcile all projects: rebuild materialized state from events, detect and resolve orphaned executions (RUNNING with no active job → mark FAILED), complete zombie runs (RUNNING with no active executions → mark FAILED), and cancel stale queued jobs. This is a first-class recovery mechanism, not an afterthought.
 
-### A.22.12 LLM Output Parsing Resilience
+### A.24.12 LLM Output Parsing Resilience
 
 LLM output format is unreliable. All structured output extraction (component lists, dependency DAGs, code files, plans) must use multiple parsing strategies with fallbacks. Try strict parsing first, fall back to regex extraction, then to smaller-model re-extraction. Never fail a stage because the LLM returned valid content in an unexpected format.
 
-### A.22.13 LLM Concurrency Limits
+### A.24.13 LLM Concurrency Limits
 
 Parallel execution within phases (A.3.4) must respect a configurable concurrency limit for LLM calls. Siege Engine hardcoded this to 1 after higher values caused resource exhaustion and rate limiting cascades. The limit should be configurable per project but default to conservative values. Exponential backoff on rate limit errors (3 attempts, 1s base delay).
 
