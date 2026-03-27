@@ -620,6 +620,12 @@ Structural estimation of a flow without making LLM calls or committing anything.
 
 The review UI defaults to **diff view**, not full document view. No reviewer should be presented with a 20,000-word document and asked "is this good?" They see what changed since the last version. Full document view is available but is not the default. This applies to both document review and code review UIs.
 
+The diff view supports multiple baselines:
+
+- **Diff since last version** — The default. Shows what changed in the most recent generation/revision.
+- **Diff since last view** — Accumulated changes since the current user last viewed this artifact. If a reviewer misses two review cycles, they see the total change across both, not just the latest. Per-user view tracking makes this possible.
+- **Diff since event** — Changes since a specific event (a particular approval, a flow run completion, a point-in-time). The user selects the baseline from the event log or version history. This is essential for catching up after an absence or auditing what changed during a specific flow.
+
 ### A.23.6 Provenance Chain
 
 Any document or piece of code is traceable back through its full generation chain: this code was generated from this plan, which was generated from this architecture doc, which was approved by Alice on March 3rd with these review comments. The provenance chain is surfaced in the UI — click any artifact to see its lineage. This is derived from the event log and document DAG edges.
