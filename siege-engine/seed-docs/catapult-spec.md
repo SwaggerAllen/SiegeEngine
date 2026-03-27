@@ -38,7 +38,7 @@ At every fan-out level, there is a **root boulder** that owns files not belongin
 
 ## A.2 Flows
 
-The system supports five flow types. Only one flow run (or sub-run) may be active per project at a time.
+The system supports six flow types. Only one flow run (or sub-run) may be active per project at a time.
 
 ### A.2.1 Scaffolding Flow
 
@@ -78,7 +78,7 @@ There are two variants of the bug fix flow, both operating as upward propagation
 
 #### A.2.5.1 Fix and Propagate
 
-Input is a bug report (description of the problem, not a fix). The system identifies the affected leaf boulders, generates a fix at the leaf level (implementation plan + PR commit), then propagates the implications upward through the document tree:
+Input is a bug report (description of the problem, not a fix). This flow is primarily intended for bugs the AI notices on its own (via proactive chat analysis, A.22.3), so triage is straightforward — the AI coding assistant (A.21) identifies the affected leaf boulders by analyzing the bug against the codebase, then generates a fix at the leaf level and propagates the implications upward through the document tree:
 
 1. At the leaf level: a **diagnosis node** analyzes the bug, then plan and code generation produce the fix
 2. At each boulder level during the upward pass, a **diagnosis node** produces a diagnosis document analyzing what the fix reveals about the gap between the documented architecture and reality — why the bug existed, what assumption was wrong, what edge case was missed
@@ -89,7 +89,13 @@ During the downward pass, fan-out routing identifies sibling subtrees impacted b
 
 #### A.2.5.2 Propagate Existing Fix
 
-Input is a PR that already fixes the bug (the fix exists, documentation needs to catch up). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates purely as documentation propagation — no code generation, only diagnosis and architecture updates at each level upward, then routing to affected siblings on the downward pass. This variant is for when a developer has already shipped a fix (e.g., a hotfix) and the document tree needs to be updated to reflect reality.
+Input is a PR or commit that already contains changes (the code change exists, documentation needs to catch up). The system maps changed files back to leaf boulders via the folder mapping (Section A.1.2). From the identified leaf boulders, the flow operates purely as documentation propagation — no code generation, only diagnosis and architecture updates at each level upward, then routing to affected siblings on the downward pass. This variant handles any code change made outside Catapult: hotfixes, automated dependency version bumps, CI configuration changes, manual edits — any case where the codebase has moved and the document tree needs to reflect reality.
+
+### A.2.6 Restructuring Flow
+
+A specialized flow for structural changes to the boulder tree that go beyond adding/removing individual boulders at a fan-out step: extracting a subcomponent out of one component into another, splitting a component into multiple components, or merging multiple boulders into one. These operations involve moving code between folder territories and rewriting architecture docs at multiple levels simultaneously.
+
+Input is a restructuring objective (e.g., "extract the AuthZ subcomponent from Auth into its own top-level component"). The flow operates as an upward propagation from the affected boulders, but with the additional ability to modify the boulder tree structure at fan-out nodes during the downward pass — creating, removing, and reparenting boulders as needed. All structural modifications pause for mandatory human review. The resulting PR includes the code moves alongside the document updates.
 
 ## A.3 Phases
 
@@ -124,6 +130,8 @@ Fan-out nodes are conditional — the AI decides whether decomposition is needed
 
 Fan-out is bounded: subcomponents are the terminal level. The maximum document tree depth is system → component → subcomponent → leaf.
 
+Fan-out is not a one-time operation. In subsequent flows (feature requests, refactors), fan-out steps can **add or remove** boulders from the existing structure. Adding a component to handle a new feature or removing a subcomponent that's been consolidated are both valid fan-out outcomes. All fan-out modifications pause for mandatory human review (A.24.2).
+
 ### A.3.4 Parallel Execution Within Phases
 
 Within a phase or within a boulder template DAG, non-dependent nodes whose parent nodes have completed generation can execute in parallel. Independent sibling boulders (no dependency edges between them) can also be processed in parallel.
@@ -140,6 +148,25 @@ Context assembly uses a **strategy pattern** — different flows, phases, and no
 Within each partition, the budget-based approach applies: include full documents nearest-first until the partition's budget is exhausted, then retrieve remaining context via semantic relevance from the vector database. The expanded input document and direct parent outputs are always included in full, drawn from the appropriate partition.
 
 This means shallower nodes get richer direct context (desirable — system-level decisions benefit from full context) while deeper nodes work from more focused, relevant excerpts.
+
+### A.3.6 Test Case Lifecycle
+
+Test cases are a first-class artifact with a defined lifecycle through the leaf boulder pipeline:
+
+1. **Generation** — Test cases are produced as part of the planning prompt, before code generation begins. The planning step takes the parent plan and the current code state, and produces both an implementation plan and a set of test cases that define the expected behavior.
+2. **Plan artifact** — Test cases are included in the plan document as explicit acceptance criteria. Reviewers can approve or reject the test cases independently of the implementation plan.
+3. **Code generation** — The code generation step receives both the implementation plan and the test cases. It produces implementation code and test files. The test cases from the plan serve as the specification for what the test files must cover.
+4. **AI code review** — The AI code review step checks generated code against the plan's test cases as a concrete checklist: are all specified behaviors tested? Do the tests match the acceptance criteria?
+5. **CI validation** — Generated test files are expected to pass in CI as part of the CI loop (A.6.0). CI failure feeds back into the generation loop for retry.
+
+### A.3.7 CI Integration
+
+CI is an external system that validates generated code. The integration model:
+
+- **Configuration** — CI is configured on the target repository as part of the root boulder's responsibility (A.1.3). Catapult does not manage CI configuration directly — the root boulder's code generation sets up CI pipelines as it would any other infrastructure file.
+- **Status monitoring** — Catapult monitors PR check status via Gitea webhooks. When CI completes (pass or fail), Gitea emits a webhook that Catapult processes.
+- **Failure retry** — CI failure triggers a regeneration cycle: the error output is included as additional context in the next code generation attempt. The number of CI retry cycles is configurable per project, with a default limit. After exhausting retries, the node is marked failed.
+- **Optional** — Projects without CI configured skip the CI loop entirely. The flow proceeds directly from AI code review to human review.
 
 ## A.4 Boulder Templates
 
