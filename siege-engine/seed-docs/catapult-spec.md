@@ -121,12 +121,16 @@ Within a phase or within a boulder template DAG, non-dependent nodes whose paren
 
 ### A.3.5 Context Assembly
 
-Input to a document node is assembled from:
-- The expanded input document (always included if not otherwise present)
-- Direct parent outputs are always included in full
-- Ancestor outputs within the same boulder template DAG and from ancestor boulders, included using a **budget-based approach**: include full parent documents in chronological order (nearest ancestors first) until the context budget for ancestors is exhausted. Remaining ancestors are retrieved via semantic relevance from the vector database. This means earlier/shallower nodes in the tree get richer direct context, which is acceptable and arguably desirable — system-level decisions benefit from full context, while leaf nodes work from more focused, relevant excerpts.
+Context assembly uses a **strategy pattern** — different flows, phases, and node types use different methods for gathering context. The context budget is **partitioned by category**, not applied as a single linear queue. Each strategy defines its own budget partitions based on what that node type needs:
 
-Context assembly uses a **strategy pattern** — different flows and phases use different methods for gathering and budgeting context. Architecture nodes need structural context (parent architecture, sibling summaries). Leaf plan nodes need the parent plan plus current code state. Fan-out routing nodes need summary-level understanding of all children. Upward propagation nodes need what changed below and what exists above.
+- **Architecture nodes** — budget weighted toward structural context: parent architecture (always in full), sibling summaries, expanded input doc. Smaller allocation for semantic retrieval of distant ancestors.
+- **Leaf plan nodes** — budget weighted toward the parent plan (always in full) plus current code state. Smaller allocation for ancestor architectures.
+- **Fan-out routing nodes** — budget weighted toward summary-level understanding of all children. Parent architecture in full. Minimal distant ancestor context.
+- **Upward propagation nodes** — budget split between what changed below (child outputs) and what exists above (parent architecture).
+
+Within each partition, the budget-based approach applies: include full documents nearest-first until the partition's budget is exhausted, then retrieve remaining context via semantic relevance from the vector database. The expanded input document and direct parent outputs are always included in full, drawn from the appropriate partition.
+
+This means shallower nodes get richer direct context (desirable — system-level decisions benefit from full context) while deeper nodes work from more focused, relevant excerpts.
 
 ## A.4 Boulder Templates
 
@@ -148,11 +152,18 @@ When a sub-run completes, the parent run resumes and sees the current state of a
 
 ## A.6 Review and Approval
 
-Every document and commit produced by the system goes through review:
+Every document and commit produced by the system goes through review. The system provides two review UIs — one for **documents** (markdown rendering, version diffs, feedback panel) and one for **code** (diff view, inline comments, CI status) — but both follow the same underlying status model and workflow.
 
+### A.6.0 Review Paths
+
+**Document artifacts** follow the full review chain:
 1. **AI self-review** — The AI reviews its own output with structured feedback (quality score, recommendation, notes). If revision is recommended, the system automatically regenerates incorporating feedback, up to a configurable loop limit.
 2. **Human review** — After AI review, artifacts enter "awaiting review" status. Humans approve or reject with text feedback only (no inline edits). Rejection feedback is incorporated in a subsequent AI revision pass.
-3. **CI loop** — For code commits, CI results feed back into the generation loop. CI failure is not a bug fix — it means the system generated incorrect code and should retry with the error output as additional context. This is a first-class concept.
+
+**Code artifacts** (leaf boulder PRs) follow a parallel path:
+1. **AI code review** — The AI reviews generated code via Gitea's PR review API, posting inline comments tied to file paths and line numbers.
+2. **CI loop** — CI results feed back into the generation loop. CI failure is not a bug fix — it means the system generated incorrect code and should retry with the error output as additional context. This is a first-class concept, not an edge case.
+3. **Human code review** — After AI review and CI pass, the PR enters "awaiting review" for human review via Catapult's code review UI.
 
 ### A.6.1 Auto-Approval
 
@@ -256,7 +267,7 @@ A one-time flow for self-bootstrapping. The only supported use case is onboardin
 
 - Takes as input: a codebase with documents already matching the scaffolding flow's output shape (requirements, architectures, plans) organized in the expected hierarchy
 - Reconstructs the boulder hierarchy, dependency DAG, and document DAG from the existing documents and folder structure
-- Does **not** reconstruct event history or review records — those start fresh from the point of bootstrap
+- Synthesizes baseline events for the bootstrapped state — a `ProjectBootstrapped` event (or equivalent) that establishes the initial snapshot from the imported documents and folder structure. This ensures reconciliation (A.19.11) can rebuild the snapshot from events without special-casing bootstrap. Review records start fresh from the point of bootstrap.
 - Destructive to existing project state; can only run once or on a fresh project
 - After bootstrap, the project can use any standard flow to iterate
 
@@ -278,7 +289,7 @@ Fan-out stages (which create or modify the boulder tree structure) must always p
 
 ### A.19.3 Blocking PR
 
-If an outstanding PR exists for a project from a prior flow run, new flows cannot start. This prevents the document DAG from drifting out of sync with the codebase. The user must merge or close the existing PR before starting a new flow.
+If an outstanding PR exists for a project from a prior flow run, new flows cannot start. This prevents the document DAG from drifting out of sync with the codebase. The user must merge or close the existing PR before starting a new flow. Sub-runs are exempt from this rule — they contribute to their parent flow's PR and exist precisely to handle mid-flow corrections.
 
 ### A.19.4 Debugging and Administrative Tools
 
@@ -388,6 +399,6 @@ Leaf boulder code generation is delegated to AI coding assistants (e.g., Claude,
 ## B.9 LLM Integration
 
 - BYO credentials — customers supply their own API keys, stored encrypted per-user in the database
-- Token tracking per call, aggregated per node, flow run, and project
+- Token tracking per call with model identifier recorded alongside token counts, aggregated per node, flow run, and project. Model must be stored with tokens to enable future cost calculation.
 - Model and temperature configurable at project, phase, and node levels
 - Multiple LLM providers supported behind a common interface
