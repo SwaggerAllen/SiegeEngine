@@ -1,0 +1,19 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to Fly.io
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: siege-engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-action/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
