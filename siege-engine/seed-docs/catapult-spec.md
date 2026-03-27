@@ -398,6 +398,10 @@ Approved documents are committed to the run branch (system level), since documen
 - Users can override any prompt field per stage per project.
 - Model and temperature are configurable at three levels: project default, per-phase default, and per-node override. Defaults propagate downward.
 
+### A.13.1 Document Format
+
+All documents are **markdown**. Structured data (component lists, dependency DAGs, routing decisions, test case specifications) is embedded within markdown using fenced code blocks (e.g., ```yaml, ```json) or YAML frontmatter. This means every document is human-readable as plain text, renderable in the review UI, and committable to git as a standard .md file — while still containing machine-parseable structured sections that the pipeline extracts during processing. The system parses known structured sections from otherwise free-form markdown; unrecognized structure is treated as prose.
+
 ## A.14 Credentials and Token Tracking
 
 - The service is **BYO LLM credentials** — customers supply their own API keys through the application, not environment variables. Credentials are stored per-user.
@@ -677,6 +681,8 @@ The system provides a set of administrative actions and debugging screens, separ
 - **Frontend log** — Client-side log capturing UI errors, WebSocket connection state, and user actions
 - **Error panel** — Aggregated errors from both frontend and backend for the current project, with timestamps, stack traces, and source labels
 
+**Error handling UX** (for all users, not just admins): When a node fails, the failure is surfaced inline in the DAG visualization and the review UI — not just a "failed" badge, but the reason: the raw LLM output that failed to parse, the CI error log, the Gitea error, the timeout details. Users need enough context to decide whether to retry, leave feedback, or escalate to an admin. Notifications for failures follow the same routing as review notifications (to the boulder owner).
+
 ### A.24.5 Cascading Readiness Re-Scan
 
 After completing any node, the orchestrator must re-scan all pending nodes for newly unblocked work — not just the completed node's immediate children. Generating component A's architecture might unblock component B (which depends on A via the dependency DAG), and B may have already been passed in a linear scan. The scan must loop until no more work is found in a single pass.
@@ -704,6 +710,8 @@ When an operation produces both a git commit and a database event, the git commi
 ### A.24.11 Reconciliation on Startup
 
 On server startup, the system must reconcile all projects: rebuild materialized state from events, detect and resolve orphaned executions (RUNNING with no active job → mark FAILED), complete zombie runs (RUNNING with no active executions → mark FAILED), and cancel stale queued jobs. This is a first-class recovery mechanism, not an afterthought.
+
+**Graceful shutdown**: On planned shutdown (deploys, upgrades), the system should checkpoint in-progress node executions and allow active LLM calls to complete within a configurable grace period rather than killing them immediately. OTP's supervision tree and process trapping make this natural in Elixir. Reconciliation on the subsequent startup handles anything that didn't complete cleanly. The system must be safe to deploy at any time without draining active flow runs — the combination of graceful shutdown and startup reconciliation ensures no work is lost.
 
 ### A.24.12 LLM Output Parsing Resilience
 
@@ -773,7 +781,17 @@ Leaf boulder code generation is delegated to AI coding assistants (e.g., Claude,
 - Model and temperature configurable at project, phase, and node levels
 - Multiple LLM providers supported behind a common interface
 
-## B.10 Licensing Model
+## B.10 Observability
+
+System-level monitoring and observability for operating Catapult, especially in managed multi-tenant deployments:
+
+- **Metrics** — Prometheus-compatible metrics: request latency, LLM call success/failure rates, LLM call duration, queue depths (Oban), active flow runs per tenant, Gitea operation latency, database connection pool utilization, vector embedding query performance.
+- **Structured logging** — All log output is structured (JSON) with correlation IDs that trace a request through the full pipeline: Commanded command → event → Oban job → LLM call → Gitea operation → DB commit. This enables tracing a single node execution across all system components.
+- **Health checks** — Liveness and readiness endpoints for each service (Catapult, Gitea, PostgreSQL) suitable for orchestrator probes and uptime monitoring.
+
+Self-hosted deployments benefit from the same instrumentation but are not required to run a metrics stack.
+
+## B.11 Licensing Model
 
 Catapult uses a **dual-license model**:
 
