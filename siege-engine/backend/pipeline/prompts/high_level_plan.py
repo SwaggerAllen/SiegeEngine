@@ -16,11 +16,11 @@ class HighLevelPlanPrompt(PromptTemplate):
             )
 
         system_arch = input_artifacts.get("system_architecture", "")
-        system_reqs = input_artifacts.get("system_requirements", "")
+        input_docs = input_artifacts.get("input_documents", "")
 
         context_parts = []
-        if system_reqs:
-            context_parts.append(f"SYSTEM REQUIREMENTS:\n\n{system_reqs}")
+        if input_docs:
+            context_parts.append(f"INPUT DOCUMENTS:\n\n{input_docs}")
         if system_arch:
             context_parts.append(f"SYSTEM ARCHITECTURE:\n\n{system_arch}")
 
