@@ -1,11 +1,23 @@
 DEFAULT_STAGES = [
     # ── Phase 1: Project-Level Documents (no fan-out) ──
     {
+        "stage_key": "feature_expansion",
+        "display_name": "Feature Expansion",
+        "order_index": 0,
+        "output_artifact_type": "feature_expansion",
+        "input_stage_keys": [],
+        "fan_out_strategy": "none",
+        "prompt_template_key": "feature_expansion",
+        "model_override": "claude-opus-4-20250514",
+        "ai_review_enabled": True,
+        "human_review_enabled": True,
+    },
+    {
         "stage_key": "system_architecture",
         "display_name": "System Architecture",
-        "order_index": 0,
+        "order_index": 1,
         "output_artifact_type": "system_architecture",
-        "input_stage_keys": [],
+        "input_stage_keys": ["feature_expansion"],
         "fan_out_strategy": "none",
         "prompt_template_key": "architecture",
         "model_override": "claude-opus-4-20250514",
@@ -16,9 +28,9 @@ DEFAULT_STAGES = [
     {
         "stage_key": "extract_components",
         "display_name": "Component Extraction",
-        "order_index": 1,
+        "order_index": 2,
         "output_artifact_type": "component_map",
-        "input_stage_keys": ["system_architecture"],
+        "input_stage_keys": ["feature_expansion", "system_architecture"],
         "fan_out_strategy": "none",
         "prompt_template_key": "extract_components",
         "model_override": "claude-opus-4-20250514",
@@ -29,7 +41,7 @@ DEFAULT_STAGES = [
     {
         "stage_key": "component_architectures",
         "display_name": "Component Architectures",
-        "order_index": 2,
+        "order_index": 3,
         "output_artifact_type": "component_architecture",
         "input_stage_keys": ["extract_components", "system_architecture"],
         "fan_out_strategy": "component",
@@ -42,7 +54,7 @@ DEFAULT_STAGES = [
     {
         "stage_key": "extract_sub_components",
         "display_name": "Sub-Component Extraction",
-        "order_index": 3,
+        "order_index": 4,
         "output_artifact_type": "sub_component_map",
         "input_stage_keys": ["component_architectures"],
         "fan_out_strategy": "component",
@@ -57,7 +69,7 @@ DEFAULT_STAGES = [
     {
         "stage_key": "component_plans",
         "display_name": "Component Plans",
-        "order_index": 4,
+        "order_index": 5,
         "output_artifact_type": "component_plan",
         "input_stage_keys": [
             "component_architectures",
@@ -72,7 +84,7 @@ DEFAULT_STAGES = [
     {
         "stage_key": "sub_component_architectures",
         "display_name": "Sub-Component Architectures",
-        "order_index": 5,
+        "order_index": 6,
         "output_artifact_type": "sub_component_architecture",
         "input_stage_keys": [
             "extract_sub_components",
@@ -87,7 +99,7 @@ DEFAULT_STAGES = [
     {
         "stage_key": "sub_component_plans",
         "display_name": "Sub-Component Plans",
-        "order_index": 6,
+        "order_index": 7,
         "output_artifact_type": "sub_component_plan",
         "input_stage_keys": ["sub_component_architectures", "component_architectures"],
         "fan_out_strategy": "sub_component",
@@ -100,7 +112,7 @@ DEFAULT_STAGES = [
     {
         "stage_key": "code_generation",
         "display_name": "Code Generation",
-        "order_index": 7,
+        "order_index": 8,
         "output_artifact_type": "code",
         "input_stage_keys": [
             "component_plans",
@@ -116,7 +128,7 @@ DEFAULT_STAGES = [
     {
         "stage_key": "code_review",
         "display_name": "Code Review & Fix",
-        "order_index": 8,
+        "order_index": 9,
         "output_artifact_type": "code_review",
         "input_stage_keys": [
             "code_generation",

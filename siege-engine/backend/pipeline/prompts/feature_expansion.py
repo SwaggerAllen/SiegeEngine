@@ -1,7 +1,7 @@
 from backend.pipeline.prompts.base import PromptTemplate
 
 
-class ExtractComponentsPrompt(PromptTemplate):
+class FeatureExpansionPrompt(PromptTemplate):
     def build(
         self,
         input_artifacts,
@@ -23,25 +23,14 @@ class ExtractComponentsPrompt(PromptTemplate):
                 upstream_changes=upstream_changes,
             )
 
-        feature_expansion = input_artifacts.get("feature_expansion", "")
-        system_arch = input_artifacts.get("system_architecture", "")
+        project_doc = input_artifacts.get("project_doc", "")
         input_docs = input_artifacts.get("input_documents", "")
-
-        context_parts = []
-        if feature_expansion:
-            context_parts.append(f"FEATURE EXPANSION:\n\n{feature_expansion}")
-        if system_arch:
-            context_parts.append(f"SYSTEM ARCHITECTURE:\n\n{system_arch}")
+        user_content = f"PROJECT DOCUMENT:\n\n{project_doc}"
         if input_docs:
-            context_parts.append(f"INPUT DOCUMENTS:\n\n{input_docs}")
-
+            user_content += f"\n\n---\n\nINPUT DOCUMENTS:\n\n{input_docs}"
         messages = [
             {"role": "system", "content": self.full_system_message},
-            {
-                "role": "user",
-                "content": "\n\n---\n\n".join(context_parts)
-                + "\n\nIdentify the components and their inter-dependencies.",
-            },
+            {"role": "user", "content": user_content},
         ]
         return self._inject_feedback(
             messages,

@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Reverse mapping: artifact type → stage key that produces it.
 _ARTIFACT_TYPE_TO_STAGE_KEY: dict[ArtifactType, str] = {
+    ArtifactType.FEATURE_EXPANSION: "feature_expansion",
     ArtifactType.SYSTEM_REQUIREMENTS: "system_requirements",
     ArtifactType.SYSTEM_ARCHITECTURE: "system_architecture",
     ArtifactType.COMPONENT_ARCHITECTURE: "component_architectures",
@@ -55,15 +56,16 @@ SUB_COMPONENT_STAGE_ORDER = [
 
 # Stage order mapping for scope filtering.
 _STAGE_KEY_TO_ORDER: dict[str, int] = {
-    "system_architecture": 0,
-    "extract_components": 1,
-    "component_architectures": 2,
-    "extract_sub_components": 3,
-    "component_plans": 4,
-    "sub_component_architectures": 5,
-    "sub_component_plans": 6,
-    "code_generation": 7,
-    "code_review": 8,
+    "feature_expansion": 0,
+    "system_architecture": 1,
+    "extract_components": 2,
+    "component_architectures": 3,
+    "extract_sub_components": 4,
+    "component_plans": 5,
+    "sub_component_architectures": 6,
+    "sub_component_plans": 7,
+    "code_generation": 8,
+    "code_review": 9,
 }
 
 
