@@ -23,12 +23,12 @@ class ComponentArchPrompt(PromptTemplate):
                 upstream_changes=upstream_changes,
             )
 
+        feature_expansion = input_artifacts.get("feature_expansion", "")
         system_arch = input_artifacts.get("system_architecture", "")
-        input_docs = input_artifacts.get("input_documents", "")
 
         context_parts = []
-        if input_docs:
-            context_parts.append(f"INPUT DOCUMENTS:\n\n{input_docs}")
+        if feature_expansion:
+            context_parts.append(f"FEATURE EXPANSION:\n\n{feature_expansion}")
         if system_arch:
             context_parts.append(f"SYSTEM ARCHITECTURE:\n\n{system_arch}")
         dep_archs = input_artifacts.get("dependency_architectures", "")

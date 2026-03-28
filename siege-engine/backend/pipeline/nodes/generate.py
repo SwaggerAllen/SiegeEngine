@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Map stage output types to artifact types
 ARTIFACT_TYPE_MAP = {
+    "feature_expansion": ArtifactType.FEATURE_EXPANSION,
     "system_requirements": ArtifactType.SYSTEM_REQUIREMENTS,
     "system_architecture": ArtifactType.SYSTEM_ARCHITECTURE,
     "component_architecture": ArtifactType.COMPONENT_ARCHITECTURE,
@@ -36,6 +37,7 @@ ARTIFACT_TYPE_MAP = {
 
 # Map artifact types to git file paths
 FILE_PATH_MAP = {
+    "feature_expansion": "features/feature_expansion.md",
     "system_requirements": "requirements/system_requirements.md",
     "system_architecture": "architecture/system_architecture.md",
     "component_architecture": "architecture/components/{component_key}.md",
@@ -366,6 +368,7 @@ def extract_components(content: str) -> list[dict]:
 
 def _stage_key_to_type(stage_key: str) -> str:
     mapping = {
+        "feature_expansion": "feature_expansion",
         "system_requirements": "system_requirements",
         "system_architecture": "system_architecture",
         "component_architectures": "component_architecture",

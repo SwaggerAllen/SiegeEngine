@@ -1604,7 +1604,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             if project_doc:
                 inputs["project_doc"] = project_doc.content or ""
             # Include input documents for the first stage
-            inputs = self._inject_input_documents(project_id, "system_architecture", inputs)
+            inputs = self._inject_input_documents(project_id, "feature_expansion", inputs)
             return inputs
 
         # Determine if this is a sub-component entity
@@ -1774,6 +1774,7 @@ def _status_to_event_type(status: StageStatus) -> str | None:
 
 def _stage_key_to_artifact_type(stage_key: str) -> ArtifactType:
     mapping = {
+        "feature_expansion": ArtifactType.FEATURE_EXPANSION,
         "system_requirements": ArtifactType.SYSTEM_REQUIREMENTS,
         "component_requirements": ArtifactType.COMPONENT_REQUIREMENTS,
         "system_architecture": ArtifactType.SYSTEM_ARCHITECTURE,

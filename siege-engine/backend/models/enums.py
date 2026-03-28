@@ -15,6 +15,7 @@ class ArtifactStatus(str, enum.Enum):
 
 class ArtifactType(str, enum.Enum):
     PROJECT_DOC = "project_doc"
+    FEATURE_EXPANSION = "feature_expansion"
     SYSTEM_REQUIREMENTS = "system_requirements"
     SYSTEM_ARCHITECTURE = "system_architecture"
     HIGH_LEVEL_PLAN = "high_level_plan"

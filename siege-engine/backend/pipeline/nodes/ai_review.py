@@ -11,6 +11,29 @@ logger = logging.getLogger(__name__)
 # Stage-specific review guidance injected into the system message.
 # Keyed by stage_key from the StageDefinition.
 STAGE_REVIEW_GUIDANCE: dict[str, str] = {
+    "feature_expansion": (
+        "## Feature Expansion Review Focus\n"
+        "\n"
+        "This document should enumerate EVERY feature the system needs — both explicit\n"
+        "and implied. Flag any of these issues:\n"
+        "\n"
+        "- **Missing cross-cutting features**: Features that span multiple components\n"
+        "  (file uploads, notifications, search, caching) are commonly missed. Check that\n"
+        "  the expansion surfaces these and describes which system boundaries they cross.\n"
+        "\n"
+        "- **Missing operational features**: Health checks, admin tools, monitoring,\n"
+        "  backup/restore, configuration management. A production system needs these.\n"
+        "\n"
+        "- **Missing implicit features**: Pagination, data validation, error responses,\n"
+        "  rate limiting, accessibility. These are rarely in specifications but always needed.\n"
+        "\n"
+        "- **Premature solutionizing**: The feature expansion should describe WHAT is needed,\n"
+        "  not HOW to build it. Architecture decisions belong to the next stage.\n"
+        "\n"
+        "- **Insufficient detail on cross-component features**: For features that touch\n"
+        "  multiple components, the expansion should explain what each component contributes.\n"
+        "  Vague cross-cutting features create architectural blind spots."
+    ),
     "system_requirements": (
         "## Requirements-Specific Review Focus\n"
         "\n"

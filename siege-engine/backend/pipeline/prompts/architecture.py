@@ -23,11 +23,11 @@ class ArchitecturePrompt(PromptTemplate):
                 upstream_changes=upstream_changes,
             )
 
-        project_doc = input_artifacts.get("project_doc", "")
+        feature_expansion = input_artifacts.get("feature_expansion", "")
         input_docs = input_artifacts.get("input_documents", "")
-        user_content = f"PROJECT DOCUMENT:\n\n{project_doc}"
+        user_content = f"FEATURE EXPANSION:\n\n{feature_expansion}"
         if input_docs:
-            user_content += f"\n\n---\n\nINPUT DOCUMENTS:\n\n{input_docs}"
+            user_content += f"\n\n---\n\nPROJECT SPECIFICATION:\n\n{input_docs}"
         messages = [
             {"role": "system", "content": self.full_system_message},
             {"role": "user", "content": user_content},
