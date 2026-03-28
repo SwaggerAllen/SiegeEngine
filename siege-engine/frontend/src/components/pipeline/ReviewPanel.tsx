@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useIsRunning, usePipelineRuns } from '../../hooks/queries/usePipelineQueries';
 import { useStartPipeline, useResumeRun, useRegenDownstream } from '../../hooks/mutations/usePipelineMutations';
 import { useReviewState } from '../../hooks/useReviewState';
@@ -14,6 +14,24 @@ const STOP_POINT_OPTIONS = [
 ];
 
 const STOP_POINT_REGEN = { value: 'regen_downstream', label: 'Regen downstream only' };
+
+function useElapsedTime(startedAt: string | null | undefined) {
+  const [elapsed, setElapsed] = useState('');
+  useEffect(() => {
+    if (!startedAt) { setElapsed(''); return; }
+    const start = new Date(startedAt).getTime();
+    const tick = () => {
+      const secs = Math.floor((Date.now() - start) / 1000);
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      setElapsed(m > 0 ? `${m}m ${s.toString().padStart(2, '0')}s` : `${s}s`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  return elapsed;
+}
 
 // ---------------------------------------------------------------------------
 // RunFromNodeControls — inline run launcher shown inside the node panel
@@ -199,6 +217,7 @@ interface ReviewPanelProps {
 
 export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }: ReviewPanelProps) {
   const s = useReviewState(projectId, artifact, execution);
+  const elapsed = useElapsedTime(execution?.started_at);
 
   const runControls = (
     <RunFromNodeControls
@@ -350,7 +369,7 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
           <span className="px-2 py-1 rounded bg-blue-600 text-white animate-pulse">
             {execution.status === 'ai_review' ? 'AI Reviewing' : 'Generating'}
           </span>
-          <span className="text-xs text-gray-400">This artifact is being generated...</span>
+          {elapsed && <span className="text-xs text-gray-400 font-mono">{elapsed}</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
