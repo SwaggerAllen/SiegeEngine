@@ -26,7 +26,7 @@ class InputDocCreate(BaseModel):
     name: str
     content: str
     doc_type: str = "reference"
-    inject_into_stages: list[str] = ["feature_expansion", "system_architecture", "extract_components", "component_architectures"]
+    inject_into_stages: list[str] = ["feature_expansion"]
 
 
 class InputDocUpdate(BaseModel):

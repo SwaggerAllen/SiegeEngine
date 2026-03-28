@@ -25,15 +25,12 @@ class ExtractComponentsPrompt(PromptTemplate):
 
         feature_expansion = input_artifacts.get("feature_expansion", "")
         system_arch = input_artifacts.get("system_architecture", "")
-        input_docs = input_artifacts.get("input_documents", "")
 
         context_parts = []
         if feature_expansion:
             context_parts.append(f"FEATURE EXPANSION:\n\n{feature_expansion}")
         if system_arch:
             context_parts.append(f"SYSTEM ARCHITECTURE:\n\n{system_arch}")
-        if input_docs:
-            context_parts.append(f"INPUT DOCUMENTS:\n\n{input_docs}")
 
         messages = [
             {"role": "system", "content": self.full_system_message},
