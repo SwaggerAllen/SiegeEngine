@@ -43,7 +43,7 @@ DEFAULT_STAGES = [
         "display_name": "Component Architectures",
         "order_index": 3,
         "output_artifact_type": "component_architecture",
-        "input_stage_keys": ["extract_components", "system_architecture"],
+        "input_stage_keys": ["extract_components", "feature_expansion", "system_architecture"],
         "fan_out_strategy": "component",
         "prompt_template_key": "component_arch",
         "model_override": "claude-opus-4-20250514",
