@@ -200,14 +200,14 @@ interface ReviewPanelProps {
 export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }: ReviewPanelProps) {
   const s = useReviewState(projectId, artifact, execution);
 
-  const runControls = !s.isInputDoc ? (
+  const runControls = (
     <RunFromNodeControls
       projectId={projectId}
-      stageKey={s.artifactStageKey}
-      componentKey={artifact.component_key}
-      artifactId={artifact.id}
+      stageKey={s.isInputDoc ? null : s.artifactStageKey}
+      componentKey={s.isInputDoc ? null : artifact.component_key}
+      artifactId={s.isInputDoc ? undefined : artifact.id}
     />
-  ) : null;
+  );
 
   // ── Restartable (failed / rejected / stuck) ──────────────────────────────
   if (!s.isViewer && s.isRestartable && !s.isAwaitingReview && !s.isGenerating) {
