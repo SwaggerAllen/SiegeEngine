@@ -35,6 +35,9 @@ jobs:
             docker run -d \
               --name siege-engine \
               --restart=unless-stopped \
+              --log-driver json-file \
+              --log-opt max-size=50m \
+              --log-opt max-file=5 \
               -p 80:8000 \
               -p 443:8000 \
               -v siege_data:/data \

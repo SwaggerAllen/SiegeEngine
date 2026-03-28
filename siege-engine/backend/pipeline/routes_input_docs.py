@@ -26,7 +26,7 @@ class InputDocCreate(BaseModel):
     name: str
     content: str
     doc_type: str = "reference"
-    inject_into_stages: list[str] = ["system_requirements", "system_architecture"]
+    inject_into_stages: list[str] = ["system_architecture", "extract_components", "component_architectures"]
 
 
 class InputDocUpdate(BaseModel):
@@ -181,23 +181,23 @@ async def delete_input_doc(
 
 
 def _mark_root_stale(db: Session, project_id: str):
-    """Mark system_requirements artifact as stale to trigger propagation."""
+    """Mark system_architecture artifact as stale to trigger propagation."""
     from backend.dag.service import propagate_staleness
 
-    sys_req = (
+    sys_arch = (
         db.query(Artifact)
         .filter_by(
             project_id=project_id,
-            artifact_type="system_requirements",
+            artifact_type="system_architecture",
             status=ArtifactStatus.APPROVED,
         )
         .first()
     )
-    if sys_req:
+    if sys_arch:
         from backend.pipeline.event_store import EventStore
 
-        stale_ids = propagate_staleness(db, sys_req.id, event_store=EventStore(db))
+        stale_ids = propagate_staleness(db, sys_arch.id, event_store=EventStore(db))
         logger.info(
-            "Input doc change: marked %d artifacts stale (including system_requirements)",
+            "Input doc change: marked %d artifacts stale (including system_architecture)",
             len(stale_ids) + 1,
         )

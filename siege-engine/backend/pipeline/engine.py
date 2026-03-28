@@ -1604,7 +1604,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             if project_doc:
                 inputs["project_doc"] = project_doc.content or ""
             # Include input documents for the first stage
-            inputs = self._inject_input_documents(project_id, "system_requirements", inputs)
+            inputs = self._inject_input_documents(project_id, "system_architecture", inputs)
             return inputs
 
         # Determine if this is a sub-component entity

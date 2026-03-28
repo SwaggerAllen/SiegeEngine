@@ -20,7 +20,7 @@ class InputDocument(Base):
         String(50), default="reference"
     )  # reference | requirements | constraints
     inject_into_stages: Mapped[list] = mapped_column(
-        JSON, default=lambda: ["system_requirements"]
+        JSON, default=lambda: ["system_architecture", "extract_components", "component_architectures"]
     )  # which stages receive this doc directly
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
