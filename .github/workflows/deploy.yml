@@ -41,6 +41,7 @@ jobs:
               -p 80:8000 \
               -p 443:8000 \
               -v siege_data:/data \
+              -v claude_config:/home/claude/.claude \
               -e SIEGE_ANTHROPIC_API_KEY=${{ secrets.SIEGE_ANTHROPIC_API_KEY }} \
               -e SIEGE_JWT_SECRET_KEY=${{ secrets.SIEGE_JWT_SECRET_KEY }} \
               -e SIEGE_CORS_ORIGINS='["https://${{ secrets.DROPLET_IP }}"]' \
