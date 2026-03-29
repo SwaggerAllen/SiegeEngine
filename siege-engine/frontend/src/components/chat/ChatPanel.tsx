@@ -150,6 +150,8 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
           return;
         }
 
+        console.log('[Chat WS] Received:', data.type, data);
+
         switch (data.type) {
           case 'history': {
             const historyMsgs: ChatMessage[] = (data.messages || []).map(
@@ -171,6 +173,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
           case 'response_generating': {
             // A response is still being generated from a previous connection.
             // Show thinking indicator and poll for the completed response.
+            console.log('[Chat WS] Response still generating from previous connection');
             setIsStreaming(true);
             setMessages((prev) => {
               const last = prev[prev.length - 1];
