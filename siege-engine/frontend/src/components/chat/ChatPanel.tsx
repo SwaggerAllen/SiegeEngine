@@ -89,7 +89,6 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
 
     let ws: WebSocket | null = null;
     let retryDelay = 1000;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let mounted = true;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
