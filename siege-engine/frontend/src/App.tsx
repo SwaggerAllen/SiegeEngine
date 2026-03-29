@@ -1,7 +1,7 @@
 import { useEffect, useRef, Suspense, lazy, type ComponentType } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
-import { ErrorBoundary } from './components/ErrorBoundary';
+import { ErrorBoundary, PanelErrorBoundary } from './components/ErrorBoundary';
 import { debugLog } from './lib/debugLog';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectListPage } from './pages/ProjectListPage';
@@ -59,7 +59,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function LazyTab({ children }: { children: React.ReactNode }) {
-  return <Suspense fallback={<TabSkeleton />}>{children}</Suspense>;
+  return (
+    <PanelErrorBoundary fallbackLabel="Tab failed to load">
+      <Suspense fallback={<TabSkeleton />}>{children}</Suspense>
+    </PanelErrorBoundary>
+  );
 }
 
 export default function App() {
