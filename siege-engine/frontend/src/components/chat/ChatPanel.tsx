@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getChatArtifacts, type ChatArtifact } from '../../api/chat';
-import { debugLog } from '../../lib/debugLog';
-
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
+import { chatManager, useChatStore } from '../../store/chatStore';
 
 interface ChatPanelProps {
   projectId: string;
@@ -37,21 +32,20 @@ function groupArtifacts(artifacts: ChatArtifact[]) {
 }
 
 export function ChatPanel({ projectId }: ChatPanelProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const { messages, isStreaming, connected, pinnedIds, restoredCount } = useChatStore();
+
   const [input, setInput] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [pinnedIds, setPinnedIds] = useState<string[]>([]);
   const [showPinDropdown, setShowPinDropdown] = useState(false);
   const [artifacts, setArtifacts] = useState<ChatArtifact[]>([]);
-  const [restoredCount, setRestoredCount] = useState(0);
-  const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const streamingContentRef = useRef('');
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const connectRef = useRef<() => void>(() => {});
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Connect to project (idempotent — no-op if already connected)
+  useEffect(() => {
+    chatManager.connectToProject(projectId);
+  }, [projectId]);
+
+  // Scroll to bottom on new messages
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
@@ -78,245 +72,10 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
     getChatArtifacts(projectId).then(setArtifacts).catch(console.error);
   }, [showPinDropdown, projectId]);
 
-  // Connect WebSocket with auto-reconnect
-  useEffect(() => {
-    debugLog('ChatWS', `useEffect fired, projectId=${projectId}`);
-    const token = localStorage.getItem('siege_engine_token');
-    if (!token || !projectId) {
-      debugLog('ChatWS', `Bailing: token=${!!token}, projectId=${projectId}`);
-      return;
-    }
-
-    let ws: WebSocket | null = null;
-    let retryDelay = 1000;
-    let mounted = true;
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const url = `${protocol}//${host}/api/chat/${projectId}?token=${token}`;
-
-    function connect() {
-      if (!mounted) return;
-      debugLog('ChatWS', `Connecting to ${url.replace(/token=.*/, 'token=***')}`);
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
-      }
-
-      ws = new WebSocket(url);
-
-      ws.onopen = () => {
-        debugLog('ChatWS', 'Connected');
-        setConnected(true);
-        retryDelay = 1000;
-      };
-
-      ws.onclose = (e) => {
-        setConnected(false);
-        wsRef.current = null;
-
-        // If we were streaming, mark it as interrupted
-        setIsStreaming((prev) => {
-          if (prev) {
-            setMessages((msgs) => {
-              const updated = [...msgs];
-              const last = updated[updated.length - 1];
-              if (last && last.role === 'assistant' && !last.content) {
-                updated[updated.length - 1] = {
-                  ...last,
-                  content: '(connection lost — response may still be generating on the server)',
-                };
-              }
-              return updated;
-            });
-          }
-          return false;
-        });
-
-        if (!mounted || e.code === 1000) return;
-
-        const timer = setTimeout(() => {
-          retryDelay = Math.min(retryDelay * 2, 30000);
-          connect();
-        }, retryDelay);
-        retryTimerRef.current = timer;
-      };
-
-      ws.onerror = () => {
-        debugLog('ChatWS', 'Connection error');
-      };
-
-      ws.onmessage = (event) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let data: any;
-        try {
-          data = JSON.parse(event.data);
-        } catch {
-          debugLog('ChatWS', `Failed to parse: ${event.data}`);
-          return;
-        }
-
-        debugLog('ChatWS', `Recv: ${data.type}`);
-
-        switch (data.type) {
-          case 'history': {
-            const historyMsgs: ChatMessage[] = (data.messages || []).map(
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (m: any) => ({ role: m.role, content: m.content })
-            );
-            if (historyMsgs.length > 0) {
-              setMessages(historyMsgs);
-              setRestoredCount(historyMsgs.length);
-              setTimeout(() => setRestoredCount(0), 3000);
-            }
-            break;
-          }
-
-          case 'pins_updated':
-            setPinnedIds(data.pinned || []);
-            break;
-
-          case 'response_generating': {
-            // A response is still being generated from a previous connection.
-            // Show thinking indicator and poll for the completed response.
-            debugLog('ChatWS', 'Response still generating from previous connection');
-            setIsStreaming(true);
-            setMessages((prev) => {
-              const last = prev[prev.length - 1];
-              if (last && last.role === 'assistant' && !last.content) return prev;
-              return [...prev, { role: 'assistant', content: '' }];
-            });
-            // Poll every 2s until generation completes
-            const pollId = setInterval(() => {
-              if (wsRef.current?.readyState === WebSocket.OPEN) {
-                wsRef.current.send(JSON.stringify({ type: 'check_generating' }));
-              } else {
-                clearInterval(pollId);
-              }
-            }, 2000);
-            // Store poll ID so generation_complete can clear it
-            (wsRef.current as unknown as { _pollId?: ReturnType<typeof setInterval> })._pollId = pollId;
-            break;
-          }
-
-          case 'generation_complete': {
-            // Generation finished — update messages from fresh history
-            setIsStreaming(false);
-            const ws = wsRef.current as unknown as { _pollId?: ReturnType<typeof setInterval> };
-            if (ws?._pollId) {
-              clearInterval(ws._pollId);
-              ws._pollId = undefined;
-            }
-            const freshMsgs: ChatMessage[] = (data.messages || []).map(
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (m: any) => ({ role: m.role, content: m.content })
-            );
-            if (freshMsgs.length > 0) {
-              setMessages(freshMsgs);
-            }
-            break;
-          }
-
-          case 'response_start':
-            setIsStreaming(true);
-            streamingContentRef.current = '';
-            setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
-            break;
-
-          case 'response_chunk':
-            streamingContentRef.current += data.text;
-            setMessages((prev) => {
-              const updated = [...prev];
-              const last = updated[updated.length - 1];
-              if (last && last.role === 'assistant') {
-                updated[updated.length - 1] = {
-                  ...last,
-                  content: streamingContentRef.current,
-                };
-              }
-              return updated;
-            });
-            break;
-
-          case 'response_end':
-            setIsStreaming(false);
-            if (data.full_text) {
-              setMessages((prev) => {
-                const updated = [...prev];
-                const last = updated[updated.length - 1];
-                if (last && last.role === 'assistant') {
-                  updated[updated.length - 1] = {
-                    ...last,
-                    content: data.full_text,
-                  };
-                }
-                return updated;
-              });
-            }
-            break;
-
-          case 'session_reset':
-            setMessages([]);
-            setPinnedIds([]);
-            break;
-
-          case 'error':
-            setIsStreaming(false);
-            setMessages((prev) => [
-              ...prev,
-              { role: 'assistant', content: `Error: ${data.message}` },
-            ]);
-            break;
-        }
-      };
-
-      wsRef.current = ws;
-    }
-
-    connectRef.current = connect;
-    connect();
-
-    return () => {
-      mounted = false;
-      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
-      if (ws) {
-        ws.onclose = null;
-        ws.close();
-      }
-    };
-  }, [projectId]);
-
-  const handleReconnect = () => {
-    if (retryTimerRef.current) {
-      clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = null;
-    }
-    connectRef.current();
-  };
-
   const handleSend = () => {
-    if (!input.trim() || !wsRef.current || isStreaming) return;
-
-    const message = input.trim();
-    setMessages((prev) => [...prev, { role: 'user', content: message }]);
-    wsRef.current.send(JSON.stringify({ type: 'message', content: message }));
+    if (!input.trim() || isStreaming) return;
+    chatManager.sendMessage(input.trim());
     setInput('');
-  };
-
-  const handleReset = () => {
-    if (!wsRef.current || isStreaming) return;
-    wsRef.current.send(JSON.stringify({ type: 'reset' }));
-  };
-
-  const handlePin = (artifactId: string) => {
-    if (!wsRef.current) return;
-    wsRef.current.send(JSON.stringify({ type: 'pin', artifact_id: artifactId }));
-    setShowPinDropdown(false);
-  };
-
-  const handleUnpin = (artifactId: string) => {
-    if (!wsRef.current) return;
-    wsRef.current.send(JSON.stringify({ type: 'unpin', artifact_id: artifactId }));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -345,7 +104,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
           />
           {!connected && (
             <button
-              onClick={handleReconnect}
+              onClick={() => chatManager.reconnect()}
               className="text-xs text-red-400 hover:text-red-300 underline"
             >
               Reconnect
@@ -358,7 +117,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
           )}
         </div>
         <button
-          onClick={handleReset}
+          onClick={() => chatManager.resetSession()}
           disabled={isStreaming}
           className="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
         >
@@ -377,7 +136,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
               >
                 {art.component_key ? `${art.component_key}` : art.name}
                 <button
-                  onClick={() => handleUnpin(art.id)}
+                  onClick={() => chatManager.unpin(art.id)}
                   className="hover:text-blue-100 ml-0.5"
                   title="Unpin"
                 >
@@ -450,7 +209,10 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
                       {items.map((art) => (
                         <button
                           key={art.id}
-                          onClick={() => handlePin(art.id)}
+                          onClick={() => {
+                            chatManager.pin(art.id);
+                            setShowPinDropdown(false);
+                          }}
                           className="w-full text-left px-3 py-1.5 text-sm text-gray-200 hover:bg-gray-700 truncate"
                         >
                           {art.component_key
