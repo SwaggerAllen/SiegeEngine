@@ -1,6 +1,7 @@
 """Domain-split models package. Re-exports everything for backward compatibility."""
 
 from backend.database import Base
+from backend.models.chat import ChatMessage
 from backend.models.artifact import (
     Artifact,
     ArtifactComment,
@@ -31,6 +32,8 @@ from backend.models.project import Project
 
 __all__ = [
     "Base",
+    # Chat
+    "ChatMessage",
     # Enums
     "ArtifactStatus",
     "ArtifactType",

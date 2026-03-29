@@ -1,11 +1,12 @@
-"""Chat WebSocket endpoint for interactive Claude CLI sessions."""
+"""Chat WebSocket endpoint and REST routes for interactive Claude CLI sessions."""
 
 import json
 import logging
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from jose import JWTError
 
+from backend.auth.routes import get_current_user
 from backend.auth.service import decode_token
 from backend.chat.service import chat_service
 from backend.database import SessionLocal
@@ -15,6 +16,18 @@ from backend.models import Project
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ──── REST endpoints ────
+
+
+@router.get("/{project_id}/artifacts")
+async def get_chat_artifacts(project_id: str, user=Depends(get_current_user)):
+    """List artifacts available for pinning in chat context."""
+    return chat_service.get_available_artifacts(project_id)
+
+
+# ──── WebSocket endpoint ────
 
 
 @router.websocket("/{project_id}")
@@ -46,6 +59,20 @@ async def chat_websocket(
 
     session = chat_service.get_or_create_session(project_id, working_dir)
 
+    # Send persisted history on connect
+    history = chat_service.get_session_messages(project_id, session.session_id)
+    await websocket.send_json({
+        "type": "history",
+        "messages": history,
+        "session_id": session.session_id,
+    })
+
+    # Send current pin state
+    await websocket.send_json({
+        "type": "pins_updated",
+        "pinned": session.pinned_artifact_ids,
+    })
+
     try:
         while True:
             data = await websocket.receive_text()
@@ -54,15 +81,42 @@ async def chat_websocket(
             except json.JSONDecodeError:
                 msg = {"type": "message", "content": data}
 
-            if msg.get("type") == "reset":
-                chat_service.reset_session(project_id)
-                session = chat_service.get_or_create_session(project_id, working_dir)
-                await websocket.send_json({"type": "session_reset"})
+            msg_type = msg.get("type")
+
+            if msg_type == "reset":
+                session = chat_service.reset_session(project_id, working_dir)
+                await websocket.send_json({
+                    "type": "session_reset",
+                    "session_id": session.session_id,
+                })
+                continue
+
+            if msg_type == "pin":
+                artifact_id = msg.get("artifact_id")
+                if artifact_id and artifact_id not in session.pinned_artifact_ids:
+                    session.pinned_artifact_ids.append(artifact_id)
+                await websocket.send_json({
+                    "type": "pins_updated",
+                    "pinned": session.pinned_artifact_ids,
+                })
+                continue
+
+            if msg_type == "unpin":
+                artifact_id = msg.get("artifact_id")
+                if artifact_id and artifact_id in session.pinned_artifact_ids:
+                    session.pinned_artifact_ids.remove(artifact_id)
+                await websocket.send_json({
+                    "type": "pins_updated",
+                    "pinned": session.pinned_artifact_ids,
+                })
                 continue
 
             content = msg.get("content", "")
             if not content:
                 continue
+
+            # Persist user message
+            session.persist_message("user", content)
 
             # Stream response back
             await websocket.send_json({"type": "response_start"})
@@ -104,6 +158,10 @@ async def chat_websocket(
                             "text": line,
                         }
                     )
+
+            # Persist assistant response
+            if full_response:
+                session.persist_message("assistant", full_response)
 
             await websocket.send_json(
                 {
