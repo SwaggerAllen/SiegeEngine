@@ -75,7 +75,10 @@ async def chat_websocket(
 
     # If a response is still generating from a previous connection, tell the client
     if session.is_generating:
+        logger.info("Chat session %s still generating, notifying client", session.session_id)
         await websocket.send_json({"type": "response_generating"})
+    else:
+        logger.info("Chat session %s idle on connect", session.session_id)
 
     try:
         while True:
