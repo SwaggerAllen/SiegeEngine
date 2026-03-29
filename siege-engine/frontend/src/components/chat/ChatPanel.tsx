@@ -164,6 +164,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               (m: any) => ({ role: m.role, content: m.content })
             );
+            debugLog('ChatWS', `History: ${historyMsgs.length} msgs, roles=[${historyMsgs.map(m => m.role).join(',')}]`);
             if (historyMsgs.length > 0) {
               setMessages(historyMsgs);
               setRestoredCount(historyMsgs.length);
@@ -239,6 +240,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
             break;
 
           case 'response_end':
+            debugLog('ChatWS', `response_end full_text=${data.full_text ? data.full_text.length + ' chars' : 'empty'}`);
             setIsStreaming(false);
             if (data.full_text) {
               setMessages((prev) => {
