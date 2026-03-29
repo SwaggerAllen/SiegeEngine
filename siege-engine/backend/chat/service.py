@@ -27,6 +27,7 @@ class ChatSession:
         self.message_count = 0
         self.pinned_artifact_ids: list[str] = []
         self._needs_reinject = False
+        self.is_generating = False
 
     # All default tools except file-writing ones (Edit, Write, NotebookEdit).
     CHAT_TOOLS = "Bash,Read,Glob,Grep,WebFetch,WebSearch,Agent,TodoWrite"

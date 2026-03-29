@@ -168,6 +168,46 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
             setPinnedIds(data.pinned || []);
             break;
 
+          case 'response_generating': {
+            // A response is still being generated from a previous connection.
+            // Show thinking indicator and poll for the completed response.
+            setIsStreaming(true);
+            setMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.role === 'assistant' && !last.content) return prev;
+              return [...prev, { role: 'assistant', content: '' }];
+            });
+            // Poll every 2s until generation completes
+            const pollId = setInterval(() => {
+              if (wsRef.current?.readyState === WebSocket.OPEN) {
+                wsRef.current.send(JSON.stringify({ type: 'check_generating' }));
+              } else {
+                clearInterval(pollId);
+              }
+            }, 2000);
+            // Store poll ID so generation_complete can clear it
+            (wsRef.current as unknown as { _pollId?: ReturnType<typeof setInterval> })._pollId = pollId;
+            break;
+          }
+
+          case 'generation_complete': {
+            // Generation finished — update messages from fresh history
+            setIsStreaming(false);
+            const ws = wsRef.current as unknown as { _pollId?: ReturnType<typeof setInterval> };
+            if (ws?._pollId) {
+              clearInterval(ws._pollId);
+              ws._pollId = undefined;
+            }
+            const freshMsgs: ChatMessage[] = (data.messages || []).map(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (m: any) => ({ role: m.role, content: m.content })
+            );
+            if (freshMsgs.length > 0) {
+              setMessages(freshMsgs);
+            }
+            break;
+          }
+
           case 'response_start':
             setIsStreaming(true);
             streamingContentRef.current = '';
