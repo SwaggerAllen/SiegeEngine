@@ -6,17 +6,21 @@ from backend.config import settings
 
 logger = logging.getLogger(__name__)
 
-_semaphore: asyncio.Semaphore | None = None
+_pipeline_semaphore: asyncio.Semaphore | None = None
+_chat_semaphore: asyncio.Semaphore | None = None
 _semaphore_loop: asyncio.AbstractEventLoop | None = None
 
 
-def _get_semaphore() -> asyncio.Semaphore:
-    global _semaphore, _semaphore_loop
+def _get_semaphore(kind: str = "pipeline") -> asyncio.Semaphore:
+    global _pipeline_semaphore, _chat_semaphore, _semaphore_loop
     loop = asyncio.get_running_loop()
-    if _semaphore is None or _semaphore_loop is not loop:
-        _semaphore = asyncio.Semaphore(settings.max_concurrent_llm_calls)
+    if _semaphore_loop is not loop:
+        _pipeline_semaphore = asyncio.Semaphore(settings.max_concurrent_llm_calls)
+        _chat_semaphore = asyncio.Semaphore(settings.max_concurrent_chat_calls)
         _semaphore_loop = loop
-    return _semaphore
+    if kind == "chat":
+        return _chat_semaphore
+    return _pipeline_semaphore
 
 
 class CLIManager:
@@ -174,8 +178,31 @@ class CLIManager:
     ):
         """
         Run claude CLI and yield streaming JSON output lines.
-        Used for the chat interface.
+        Used for the chat interface. Gated by a separate chat semaphore
+        so chat and pipeline never block each other.
         """
+        sem = _get_semaphore("chat")
+        await sem.acquire()
+        try:
+            async for line in self._stream_cli(
+                prompt, system_prompt, working_dir, model,
+                session_id, resume, tools,
+            ):
+                yield line
+        finally:
+            sem.release()
+
+    async def _stream_cli(
+        self,
+        prompt: str,
+        system_prompt: str | None,
+        working_dir: str | None,
+        model: str | None,
+        session_id: str | None,
+        resume: bool,
+        tools: str | None,
+    ):
+        """Inner generator that actually runs the CLI subprocess."""
         args = ["claude"]
 
         if resume and session_id:

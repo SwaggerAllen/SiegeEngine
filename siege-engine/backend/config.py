@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # Rate Limiting
     max_concurrent_llm_calls: int = 1
+    max_concurrent_chat_calls: int = 1
     llm_retry_max_attempts: int = 3
     llm_retry_base_delay: float = 1.0
 
