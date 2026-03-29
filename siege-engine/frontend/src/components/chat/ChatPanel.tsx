@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getChatArtifacts, type ChatArtifact } from '../../api/chat';
+import { debugLog } from '../../lib/debugLog';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -136,8 +137,8 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
         retryTimerRef.current = timer;
       };
 
-      ws.onerror = (e) => {
-        console.error('[Chat WS] Error', e);
+      ws.onerror = () => {
+        debugLog('ChatWS', 'Connection error');
       };
 
       ws.onmessage = (event) => {
@@ -146,11 +147,11 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
         try {
           data = JSON.parse(event.data);
         } catch {
-          console.error('[Chat WS] Failed to parse message:', event.data);
+          debugLog('ChatWS', `Failed to parse: ${event.data}`);
           return;
         }
 
-        console.log('[Chat WS] Received:', data.type, data);
+        debugLog('ChatWS', `Recv: ${data.type}`);
 
         switch (data.type) {
           case 'history': {
@@ -173,7 +174,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
           case 'response_generating': {
             // A response is still being generated from a previous connection.
             // Show thinking indicator and poll for the completed response.
-            console.log('[Chat WS] Response still generating from previous connection');
+            debugLog('ChatWS', 'Response still generating from previous connection');
             setIsStreaming(true);
             setMessages((prev) => {
               const last = prev[prev.length - 1];
