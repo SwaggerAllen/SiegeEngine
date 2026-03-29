@@ -48,6 +48,8 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamingContentRef = useRef('');
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const connectRef = useRef<() => void>(() => {});
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -75,113 +77,173 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
     getChatArtifacts(projectId).then(setArtifacts).catch(console.error);
   }, [showPinDropdown, projectId]);
 
-  // Connect WebSocket
+  // Connect WebSocket with auto-reconnect
   useEffect(() => {
     const token = localStorage.getItem('siege_engine_token');
     if (!token || !projectId) return;
+
+    let ws: WebSocket | null = null;
+    let retryDelay = 1000;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let mounted = true;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const url = `${protocol}//${host}/api/chat/${projectId}?token=${token}`;
 
-    const ws = new WebSocket(url);
-
-    ws.onopen = () => {
-      setConnected(true);
-    };
-
-    ws.onclose = () => {
-      setConnected(false);
-    };
-
-    ws.onerror = (e) => {
-      console.error('[Chat WS] Error', e);
-    };
-
-    ws.onmessage = (event) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let data: any;
-      try {
-        data = JSON.parse(event.data);
-      } catch {
-        console.error('[Chat WS] Failed to parse message:', event.data);
-        return;
+    function connect() {
+      if (!mounted) return;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
       }
 
-      switch (data.type) {
-        case 'history': {
-          const historyMsgs: ChatMessage[] = (data.messages || []).map(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (m: any) => ({ role: m.role, content: m.content })
-          );
-          if (historyMsgs.length > 0) {
-            setMessages(historyMsgs);
-            setRestoredCount(historyMsgs.length);
-            setTimeout(() => setRestoredCount(0), 3000);
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        setConnected(true);
+        retryDelay = 1000;
+      };
+
+      ws.onclose = (e) => {
+        setConnected(false);
+        wsRef.current = null;
+
+        // If we were streaming, mark it as interrupted
+        setIsStreaming((prev) => {
+          if (prev) {
+            setMessages((msgs) => {
+              const updated = [...msgs];
+              const last = updated[updated.length - 1];
+              if (last && last.role === 'assistant' && !last.content) {
+                updated[updated.length - 1] = {
+                  ...last,
+                  content: '(connection lost — response may still be generating on the server)',
+                };
+              }
+              return updated;
+            });
           }
-          break;
+          return false;
+        });
+
+        if (!mounted || e.code === 1000) return;
+
+        const timer = setTimeout(() => {
+          retryDelay = Math.min(retryDelay * 2, 30000);
+          connect();
+        }, retryDelay);
+        retryTimerRef.current = timer;
+      };
+
+      ws.onerror = (e) => {
+        console.error('[Chat WS] Error', e);
+      };
+
+      ws.onmessage = (event) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let data: any;
+        try {
+          data = JSON.parse(event.data);
+        } catch {
+          console.error('[Chat WS] Failed to parse message:', event.data);
+          return;
         }
 
-        case 'pins_updated':
-          setPinnedIds(data.pinned || []);
-          break;
-
-        case 'response_start':
-          setIsStreaming(true);
-          streamingContentRef.current = '';
-          setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
-          break;
-
-        case 'response_chunk':
-          streamingContentRef.current += data.text;
-          setMessages((prev) => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last && last.role === 'assistant') {
-              updated[updated.length - 1] = {
-                ...last,
-                content: streamingContentRef.current,
-              };
+        switch (data.type) {
+          case 'history': {
+            const historyMsgs: ChatMessage[] = (data.messages || []).map(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (m: any) => ({ role: m.role, content: m.content })
+            );
+            if (historyMsgs.length > 0) {
+              setMessages(historyMsgs);
+              setRestoredCount(historyMsgs.length);
+              setTimeout(() => setRestoredCount(0), 3000);
             }
-            return updated;
-          });
-          break;
+            break;
+          }
 
-        case 'response_end':
-          setIsStreaming(false);
-          if (data.full_text) {
+          case 'pins_updated':
+            setPinnedIds(data.pinned || []);
+            break;
+
+          case 'response_start':
+            setIsStreaming(true);
+            streamingContentRef.current = '';
+            setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
+            break;
+
+          case 'response_chunk':
+            streamingContentRef.current += data.text;
             setMessages((prev) => {
               const updated = [...prev];
               const last = updated[updated.length - 1];
               if (last && last.role === 'assistant') {
                 updated[updated.length - 1] = {
                   ...last,
-                  content: data.full_text,
+                  content: streamingContentRef.current,
                 };
               }
               return updated;
             });
-          }
-          break;
+            break;
 
-        case 'session_reset':
-          setMessages([]);
-          setPinnedIds([]);
-          break;
+          case 'response_end':
+            setIsStreaming(false);
+            if (data.full_text) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === 'assistant') {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    content: data.full_text,
+                  };
+                }
+                return updated;
+              });
+            }
+            break;
 
-        case 'error':
-          setIsStreaming(false);
-          setMessages((prev) => [
-            ...prev,
-            { role: 'assistant', content: `Error: ${data.message}` },
-          ]);
-          break;
+          case 'session_reset':
+            setMessages([]);
+            setPinnedIds([]);
+            break;
+
+          case 'error':
+            setIsStreaming(false);
+            setMessages((prev) => [
+              ...prev,
+              { role: 'assistant', content: `Error: ${data.message}` },
+            ]);
+            break;
+        }
+      };
+
+      wsRef.current = ws;
+    }
+
+    connectRef.current = connect;
+    connect();
+
+    return () => {
+      mounted = false;
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
       }
     };
-
-    wsRef.current = ws;
-    return () => ws.close();
   }, [projectId]);
+
+  const handleReconnect = () => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    connectRef.current();
+  };
 
   const handleSend = () => {
     if (!input.trim() || !wsRef.current || isStreaming) return;
@@ -232,6 +294,14 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
               connected ? 'bg-green-400' : 'bg-red-400'
             }`}
           />
+          {!connected && (
+            <button
+              onClick={handleReconnect}
+              className="text-xs text-red-400 hover:text-red-300 underline"
+            >
+              Reconnect
+            </button>
+          )}
           {restoredCount > 0 && (
             <span className="text-xs text-gray-400 animate-pulse">
               Restored {restoredCount} messages

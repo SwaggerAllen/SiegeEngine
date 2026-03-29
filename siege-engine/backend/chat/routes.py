@@ -122,53 +122,50 @@ async def chat_websocket(
             await websocket.send_json({"type": "response_start"})
 
             full_response = ""
+            ws_disconnected = False
             async for line in session.send_message(content):
                 # Parse stream-json format from CLI
+                text_chunk = ""
                 try:
                     chunk = json.loads(line)
-                    # stream-json emits assistant/content/text blocks
                     if chunk.get("type") == "assistant":
                         for block in chunk.get("content", []):
                             if block.get("type") == "text":
-                                text = block.get("text", "")
-                                full_response += text
-                                await websocket.send_json(
-                                    {
-                                        "type": "response_chunk",
-                                        "text": text,
-                                    }
-                                )
+                                text_chunk = block.get("text", "")
                     elif chunk.get("type") == "result":
-                        # Final result message
                         result_text = chunk.get("result", "")
                         if result_text and not full_response:
-                            full_response = result_text
-                            await websocket.send_json(
-                                {
-                                    "type": "response_chunk",
-                                    "text": result_text,
-                                }
-                            )
+                            text_chunk = result_text
                 except json.JSONDecodeError:
-                    # Raw text fallback
-                    full_response += line
-                    await websocket.send_json(
-                        {
-                            "type": "response_chunk",
-                            "text": line,
-                        }
-                    )
+                    text_chunk = line
 
-            # Persist assistant response
+                if text_chunk:
+                    full_response += text_chunk
+                    if not ws_disconnected:
+                        try:
+                            await websocket.send_json(
+                                {"type": "response_chunk", "text": text_chunk}
+                            )
+                        except Exception:
+                            ws_disconnected = True
+                            logger.info(
+                                "Chat WS disconnected mid-stream for project %s, "
+                                "continuing CLI to persist response",
+                                project_id,
+                            )
+
+            # Always persist the response, even if WS disconnected
             if full_response:
                 session.persist_message("assistant", full_response)
 
-            await websocket.send_json(
-                {
-                    "type": "response_end",
-                    "full_text": full_response,
-                }
-            )
+            if not ws_disconnected:
+                await websocket.send_json(
+                    {"type": "response_end", "full_text": full_response}
+                )
+
+            if ws_disconnected:
+                # Exit the message loop — WS is dead
+                break
 
     except WebSocketDisconnect:
         logger.info("Chat WebSocket disconnected for project %s", project_id)
