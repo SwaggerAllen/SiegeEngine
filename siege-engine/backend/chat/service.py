@@ -242,7 +242,7 @@ class ChatSession:
                     chunk = json.loads(line)
                     chunk_type = chunk.get("type")
                     if line_num <= 10:
-                        logger.debug(
+                        logger.info(
                             "Chat line %d type=%s keys=%s",
                             line_num, chunk_type, list(chunk.keys()),
                         )
@@ -255,7 +255,7 @@ class ChatSession:
                         if result_text and not full_response:
                             text_chunk = result_text
                 except json.JSONDecodeError:
-                    logger.debug("Chat non-JSON line %d: %s", line_num, line[:200])
+                    logger.info("Chat non-JSON line %d: %s", line_num, line[:200])
                     text_chunk = line
 
                 if text_chunk:

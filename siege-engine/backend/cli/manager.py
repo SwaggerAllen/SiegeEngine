@@ -213,7 +213,7 @@ class CLIManager:
                 if decoded:
                     line_count += 1
                     if line_count <= 5:
-                        logger.debug("Chat CLI stdout line %d: %s", line_count, decoded[:300])
+                        logger.info("Chat CLI stdout line %d: %s", line_count, decoded[:300])
                     yield decoded
         finally:
             if proc.returncode is None:
