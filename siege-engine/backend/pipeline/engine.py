@@ -46,7 +46,31 @@ from backend.pipeline.stage_execution import (
 )
 from backend.websocket.manager import ws_manager
 
+from backend.git_manager.service import git_manager as _git_manager
+
 logger = logging.getLogger(__name__)
+
+
+def _commit_review_to_git(project_id: str, artifact: "Artifact", feedback: dict):
+    """Write AI review feedback as a markdown file in the project's git repo."""
+    if not artifact.file_path or not feedback.get("document"):
+        return
+    review_path = f"reviews/{artifact.file_path}"
+    quality = feedback.get("overall_quality", "?")
+    recommendation = feedback.get("recommendation", "?")
+    content = (
+        f"---\nquality: {quality}\nrecommendation: {recommendation}\n---\n\n"
+        f"{feedback['document']}"
+    )
+    try:
+        _git_manager.commit_artifact(
+            project_id,
+            content,
+            review_path,
+            f"AI review for {artifact.name} (quality: {quality}/10, {recommendation})",
+        )
+    except Exception:
+        logger.exception("Failed to commit AI review to git for %s", artifact.name)
 
 # Extraction stages that define downstream branching structure —
 # always pause for human review regardless of execution mode.
@@ -1382,6 +1406,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 if artifact:
                     artifact.ai_review_feedback = feedback
                     artifact.status = ArtifactStatus.AI_REVIEWING
+                    _commit_review_to_git(project_id, artifact, feedback)
 
                 # Self-improvement loops: refine with AI feedback
                 ai_loops = pipeline_run.ai_loops if pipeline_run else 1
@@ -1434,6 +1459,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         artifact = self.db.get(Artifact, artifact_id)
                         if artifact:
                             artifact.ai_review_feedback = feedback
+                            _commit_review_to_git(project_id, artifact, feedback)
 
             # All generated artifacts go to AWAITING_REVIEW — only human
             # approval can move them to APPROVED.

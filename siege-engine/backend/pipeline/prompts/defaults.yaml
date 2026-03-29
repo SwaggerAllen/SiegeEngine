@@ -238,10 +238,10 @@ prompts:
       shared utilities, base classes) that the component's modules build upon. The
       component_skeleton is architected like any other dependency within the component.
 
-      You may also identify a top-level "application_skeleton" component with no
-      dependencies if there are project-wide scaffolding files (root config, shared
-      types, cross-cutting utilities) that don't belong to any specific component. If
-      included, other components should depend on it.
+      You MUST also identify a top-level "application_skeleton" component with no
+      dependencies for project-wide scaffolding (root config, shared types,
+      cross-cutting utilities) that don't belong to any specific component. All
+      other components should depend on it.
 
       The dependency graph you produce determines BUILD ORDER: components with no
       dependencies are built first, and dependents are built after their dependencies
