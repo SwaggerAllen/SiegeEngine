@@ -10,6 +10,7 @@ import { ProjectDashboardLayout } from './pages/ProjectDashboardLayout';
 import { GitHubCallbackPage } from './pages/GitHubCallbackPage';
 import { DocumentsTab } from './components/tabs/DocumentsTab';
 import { PipelineTab } from './components/tabs/PipelineTab';
+import ChatTab from './components/tabs/ChatTab';
 import { TabSkeleton } from './components/DashboardSkeleton';
 
 /**
@@ -30,7 +31,6 @@ function lazyRetry<T extends ComponentType<unknown>>(
 // Lazy-loaded tabs (infrequently accessed)
 const PromptsTab = lazyRetry(() => import('./components/tabs/PromptsTab'));
 const InputDocsTab = lazyRetry(() => import('./components/tabs/InputDocsTab'));
-const ChatTab = lazyRetry(() => import('./components/tabs/ChatTab'));
 const SettingsTab = lazyRetry(() => import('./components/tabs/SettingsTab'));
 const HistoryTab = lazyRetry(() => import('./components/tabs/HistoryTab'));
 const LogsTab = lazyRetry(() => import('./components/tabs/LogsTab'));
@@ -113,7 +113,7 @@ export default function App() {
           <Route path="pipeline" element={<PipelineTab />} />
           <Route path="prompts" element={<LazyTab><PromptsTab /></LazyTab>} />
           <Route path="input-docs" element={<LazyTab><InputDocsTab /></LazyTab>} />
-          <Route path="chat" element={<LazyTab><ChatTab /></LazyTab>} />
+          <Route path="chat" element={<ChatTab />} />
           <Route path="settings" element={<LazyTab><SettingsTab /></LazyTab>} />
           <Route path="history" element={<LazyTab><HistoryTab /></LazyTab>} />
           <Route path="logs" element={<LazyTab><LogsTab /></LazyTab>} />
