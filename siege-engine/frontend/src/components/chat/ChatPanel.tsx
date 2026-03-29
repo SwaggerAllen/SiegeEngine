@@ -80,8 +80,12 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
 
   // Connect WebSocket with auto-reconnect
   useEffect(() => {
+    debugLog('ChatWS', `useEffect fired, projectId=${projectId}`);
     const token = localStorage.getItem('siege_engine_token');
-    if (!token || !projectId) return;
+    if (!token || !projectId) {
+      debugLog('ChatWS', `Bailing: token=${!!token}, projectId=${projectId}`);
+      return;
+    }
 
     let ws: WebSocket | null = null;
     let retryDelay = 1000;
@@ -94,6 +98,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
 
     function connect() {
       if (!mounted) return;
+      debugLog('ChatWS', `Connecting to ${url.replace(/token=.*/, 'token=***')}`);
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
@@ -102,6 +107,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
       ws = new WebSocket(url);
 
       ws.onopen = () => {
+        debugLog('ChatWS', 'Connected');
         setConnected(true);
         retryDelay = 1000;
       };
