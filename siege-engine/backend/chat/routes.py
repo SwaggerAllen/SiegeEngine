@@ -119,10 +119,13 @@ async def chat_websocket(
             session.persist_message("user", content)
 
             # Stream response back
-            await websocket.send_json({"type": "response_start"})
-
             full_response = ""
             ws_disconnected = False
+            try:
+                await websocket.send_json({"type": "response_start"})
+            except Exception:
+                ws_disconnected = True
+
             async for line in session.send_message(content):
                 # Parse stream-json format from CLI
                 text_chunk = ""
