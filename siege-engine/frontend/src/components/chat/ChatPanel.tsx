@@ -48,6 +48,8 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamingContentRef = useRef('');
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const connectRef = useRef<() => void>(() => {});
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -91,6 +93,10 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
 
     function connect() {
       if (!mounted) return;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
 
       ws = new WebSocket(url);
 
@@ -123,10 +129,11 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
 
         if (!mounted || e.code === 1000) return;
 
-        retryTimer = setTimeout(() => {
+        const timer = setTimeout(() => {
           retryDelay = Math.min(retryDelay * 2, 30000);
           connect();
         }, retryDelay);
+        retryTimerRef.current = timer;
       };
 
       ws.onerror = (e) => {
@@ -217,17 +224,26 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
       wsRef.current = ws;
     }
 
+    connectRef.current = connect;
     connect();
 
     return () => {
       mounted = false;
-      if (retryTimer) clearTimeout(retryTimer);
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
       if (ws) {
         ws.onclose = null;
         ws.close();
       }
     };
   }, [projectId]);
+
+  const handleReconnect = () => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    connectRef.current();
+  };
 
   const handleSend = () => {
     if (!input.trim() || !wsRef.current || isStreaming) return;
@@ -278,6 +294,14 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
               connected ? 'bg-green-400' : 'bg-red-400'
             }`}
           />
+          {!connected && (
+            <button
+              onClick={handleReconnect}
+              className="text-xs text-red-400 hover:text-red-300 underline"
+            >
+              Reconnect
+            </button>
+          )}
           {restoredCount > 0 && (
             <span className="text-xs text-gray-400 animate-pulse">
               Restored {restoredCount} messages
