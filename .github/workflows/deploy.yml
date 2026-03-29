@@ -29,7 +29,7 @@ jobs:
           command_timeout: 20m
           script: |
             cd /tmp/siege-deploy/siege-engine
-            docker build -t siege-engine:latest .
+            docker build --build-arg COMMIT_HASH=$(git rev-parse --short HEAD) -t siege-engine:latest .
             docker stop siege-engine || true
             docker rm siege-engine || true
             docker run -d \

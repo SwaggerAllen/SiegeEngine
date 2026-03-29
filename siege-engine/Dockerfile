@@ -1,9 +1,11 @@
 # Stage 1: Build frontend
 FROM node:20-alpine AS frontend-build
+ARG COMMIT_HASH=unknown
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
+ENV VITE_COMMIT_HASH=$COMMIT_HASH
 RUN npm run build
 
 # Stage 2: Runtime
