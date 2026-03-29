@@ -73,6 +73,10 @@ async def chat_websocket(
         "pinned": session.pinned_artifact_ids,
     })
 
+    # If a response is still generating from a previous connection, tell the client
+    if session.is_generating:
+        await websocket.send_json({"type": "response_generating"})
+
     try:
         while True:
             data = await websocket.receive_text()
@@ -82,6 +86,18 @@ async def chat_websocket(
                 msg = {"type": "message", "content": data}
 
             msg_type = msg.get("type")
+
+            if msg_type == "check_generating":
+                # Client polling for generation completion after reconnect
+                if not session.is_generating:
+                    history = chat_service.get_session_messages(
+                        project_id, session.session_id
+                    )
+                    await websocket.send_json({
+                        "type": "generation_complete",
+                        "messages": history,
+                    })
+                continue
 
             if msg_type == "reset":
                 session = chat_service.reset_session(project_id, working_dir)
@@ -119,10 +135,14 @@ async def chat_websocket(
             session.persist_message("user", content)
 
             # Stream response back
-            await websocket.send_json({"type": "response_start"})
-
             full_response = ""
             ws_disconnected = False
+            session.is_generating = True
+            try:
+                await websocket.send_json({"type": "response_start"})
+            except Exception:
+                ws_disconnected = True
+
             async for line in session.send_message(content):
                 # Parse stream-json format from CLI
                 text_chunk = ""
@@ -155,6 +175,7 @@ async def chat_websocket(
                             )
 
             # Always persist the response, even if WS disconnected
+            session.is_generating = False
             if full_response:
                 session.persist_message("assistant", full_response)
 
