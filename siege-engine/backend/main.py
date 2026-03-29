@@ -516,5 +516,9 @@ if spa_path.exists():
         file_path = spa_path / full_path
         if full_path and file_path.is_file():
             return FileResponse(file_path)
-        # Fall back to index.html for all SPA routes
-        return FileResponse(spa_path / "index.html")
+        # Fall back to index.html for all SPA routes.
+        # Must not be cached so browsers always get the latest chunk URLs after deploys.
+        return FileResponse(
+            spa_path / "index.html",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
