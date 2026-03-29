@@ -88,6 +88,8 @@ async def chat_websocket(
         if session.is_generating:
             logger.info("Chat session %s still generating, notifying client", session.session_id)
             await websocket.send_json({"type": "response_generating"})
+        else:
+            logger.info("Chat session %s idle on connect (is_generating=False)", session.session_id)
 
         # Run two concurrent tasks:
         # 1. Relay events from session → WS

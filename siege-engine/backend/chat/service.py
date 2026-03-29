@@ -227,6 +227,7 @@ class ChatSession:
                     db.close()
 
             manager = CLIManager()
+            line_num = 0
             async for line in manager.generate_streaming(
                 prompt=actual_message,
                 working_dir=self.working_dir,
@@ -235,18 +236,26 @@ class ChatSession:
                 tools=self.CHAT_TOOLS,
                 system_prompt=system_prompt,
             ):
+                line_num += 1
                 text_chunk = ""
                 try:
                     chunk = json.loads(line)
-                    if chunk.get("type") == "assistant":
+                    chunk_type = chunk.get("type")
+                    if line_num <= 10:
+                        logger.debug(
+                            "Chat line %d type=%s keys=%s",
+                            line_num, chunk_type, list(chunk.keys()),
+                        )
+                    if chunk_type == "assistant":
                         for block in chunk.get("content", []):
                             if block.get("type") == "text":
                                 text_chunk = block.get("text", "")
-                    elif chunk.get("type") == "result":
+                    elif chunk_type == "result":
                         result_text = chunk.get("result", "")
                         if result_text and not full_response:
                             text_chunk = result_text
                 except json.JSONDecodeError:
+                    logger.debug("Chat non-JSON line %d: %s", line_num, line[:200])
                     text_chunk = line
 
                 if text_chunk:
@@ -255,6 +264,11 @@ class ChatSession:
                         EventType.RESPONSE_CHUNK,
                         {"text": text_chunk},
                     ))
+
+            logger.info(
+                "Chat generation done: %d lines processed, %d chars response",
+                line_num, len(full_response),
+            )
 
         except Exception as e:
             logger.exception("Chat generation error for project %s: %s",

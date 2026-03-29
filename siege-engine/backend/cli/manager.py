@@ -206,15 +206,28 @@ class CLIManager:
             env=env,
         )
 
+        line_count = 0
         try:
             async for line in proc.stdout:
                 decoded = line.decode("utf-8", errors="replace").strip()
                 if decoded:
+                    line_count += 1
+                    if line_count <= 5:
+                        logger.debug("Chat CLI stdout line %d: %s", line_count, decoded[:300])
                     yield decoded
         finally:
             if proc.returncode is None:
                 proc.kill()
-                await proc.wait()
+            await proc.wait()
+
+            # Log stderr for debugging
+            if proc.stderr:
+                stderr_data = await proc.stderr.read()
+                stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
+                if stderr_text:
+                    logger.warning("Chat CLI stderr (rc=%s): %s", proc.returncode, stderr_text[:2000])
+
+            logger.info("Chat CLI streaming done: %d lines yielded, rc=%s", line_count, proc.returncode)
 
 
 cli_manager = CLIManager()
