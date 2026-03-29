@@ -75,112 +75,158 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
     getChatArtifacts(projectId).then(setArtifacts).catch(console.error);
   }, [showPinDropdown, projectId]);
 
-  // Connect WebSocket
+  // Connect WebSocket with auto-reconnect
   useEffect(() => {
     const token = localStorage.getItem('siege_engine_token');
     if (!token || !projectId) return;
+
+    let ws: WebSocket | null = null;
+    let retryDelay = 1000;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let mounted = true;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const url = `${protocol}//${host}/api/chat/${projectId}?token=${token}`;
 
-    const ws = new WebSocket(url);
+    function connect() {
+      if (!mounted) return;
 
-    ws.onopen = () => {
-      setConnected(true);
-    };
+      ws = new WebSocket(url);
 
-    ws.onclose = () => {
-      setConnected(false);
-    };
+      ws.onopen = () => {
+        setConnected(true);
+        retryDelay = 1000;
+      };
 
-    ws.onerror = (e) => {
-      console.error('[Chat WS] Error', e);
-    };
+      ws.onclose = (e) => {
+        setConnected(false);
+        wsRef.current = null;
 
-    ws.onmessage = (event) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let data: any;
-      try {
-        data = JSON.parse(event.data);
-      } catch {
-        console.error('[Chat WS] Failed to parse message:', event.data);
-        return;
-      }
-
-      switch (data.type) {
-        case 'history': {
-          const historyMsgs: ChatMessage[] = (data.messages || []).map(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (m: any) => ({ role: m.role, content: m.content })
-          );
-          if (historyMsgs.length > 0) {
-            setMessages(historyMsgs);
-            setRestoredCount(historyMsgs.length);
-            setTimeout(() => setRestoredCount(0), 3000);
+        // If we were streaming, mark it as interrupted
+        setIsStreaming((prev) => {
+          if (prev) {
+            setMessages((msgs) => {
+              const updated = [...msgs];
+              const last = updated[updated.length - 1];
+              if (last && last.role === 'assistant' && !last.content) {
+                updated[updated.length - 1] = {
+                  ...last,
+                  content: '(connection lost — response may still be generating on the server)',
+                };
+              }
+              return updated;
+            });
           }
-          break;
+          return false;
+        });
+
+        if (!mounted || e.code === 1000) return;
+
+        retryTimer = setTimeout(() => {
+          retryDelay = Math.min(retryDelay * 2, 30000);
+          connect();
+        }, retryDelay);
+      };
+
+      ws.onerror = (e) => {
+        console.error('[Chat WS] Error', e);
+      };
+
+      ws.onmessage = (event) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let data: any;
+        try {
+          data = JSON.parse(event.data);
+        } catch {
+          console.error('[Chat WS] Failed to parse message:', event.data);
+          return;
         }
 
-        case 'pins_updated':
-          setPinnedIds(data.pinned || []);
-          break;
-
-        case 'response_start':
-          setIsStreaming(true);
-          streamingContentRef.current = '';
-          setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
-          break;
-
-        case 'response_chunk':
-          streamingContentRef.current += data.text;
-          setMessages((prev) => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last && last.role === 'assistant') {
-              updated[updated.length - 1] = {
-                ...last,
-                content: streamingContentRef.current,
-              };
+        switch (data.type) {
+          case 'history': {
+            const historyMsgs: ChatMessage[] = (data.messages || []).map(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (m: any) => ({ role: m.role, content: m.content })
+            );
+            if (historyMsgs.length > 0) {
+              setMessages(historyMsgs);
+              setRestoredCount(historyMsgs.length);
+              setTimeout(() => setRestoredCount(0), 3000);
             }
-            return updated;
-          });
-          break;
+            break;
+          }
 
-        case 'response_end':
-          setIsStreaming(false);
-          if (data.full_text) {
+          case 'pins_updated':
+            setPinnedIds(data.pinned || []);
+            break;
+
+          case 'response_start':
+            setIsStreaming(true);
+            streamingContentRef.current = '';
+            setMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
+            break;
+
+          case 'response_chunk':
+            streamingContentRef.current += data.text;
             setMessages((prev) => {
               const updated = [...prev];
               const last = updated[updated.length - 1];
               if (last && last.role === 'assistant') {
                 updated[updated.length - 1] = {
                   ...last,
-                  content: data.full_text,
+                  content: streamingContentRef.current,
                 };
               }
               return updated;
             });
-          }
-          break;
+            break;
 
-        case 'session_reset':
-          setMessages([]);
-          setPinnedIds([]);
-          break;
+          case 'response_end':
+            setIsStreaming(false);
+            if (data.full_text) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === 'assistant') {
+                  updated[updated.length - 1] = {
+                    ...last,
+                    content: data.full_text,
+                  };
+                }
+                return updated;
+              });
+            }
+            break;
 
-        case 'error':
-          setIsStreaming(false);
-          setMessages((prev) => [
-            ...prev,
-            { role: 'assistant', content: `Error: ${data.message}` },
-          ]);
-          break;
+          case 'session_reset':
+            setMessages([]);
+            setPinnedIds([]);
+            break;
+
+          case 'error':
+            setIsStreaming(false);
+            setMessages((prev) => [
+              ...prev,
+              { role: 'assistant', content: `Error: ${data.message}` },
+            ]);
+            break;
+        }
+      };
+
+      wsRef.current = ws;
+    }
+
+    connect();
+
+    return () => {
+      mounted = false;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
       }
     };
-
-    wsRef.current = ws;
-    return () => ws.close();
   }, [projectId]);
 
   const handleSend = () => {
