@@ -181,7 +181,7 @@ class CLIManager:
         if resume and session_id:
             args.extend(["--resume", session_id])
 
-        args.extend(["-p", prompt, "--output-format", "stream-json"])
+        args.extend(["-p", prompt, "--output-format", "stream-json", "--verbose"])
 
         if system_prompt:
             args.extend(["--system-prompt", system_prompt])
