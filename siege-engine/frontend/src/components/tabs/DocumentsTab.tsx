@@ -76,33 +76,39 @@ export function DocumentsTab() {
   );
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Main area: DAG, markdown view, or editor */}
-      <div className="flex-1 overflow-hidden">
-        {selectedArtifact && viewMode === 'review' ? (
+    <div className="flex-1 relative overflow-hidden">
+      {/* Main area: DAG fills the whole container; editors overlay when active */}
+      {selectedArtifact && viewMode === 'review' ? (
+        <div className="absolute inset-0">
           <PanelErrorBoundary fallbackLabel="Viewer error">
             <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} viewOnly={true} />
           </PanelErrorBoundary>
-        ) : selectedArtifact && viewMode === 'edit' ? (
+        </div>
+      ) : selectedArtifact && viewMode === 'edit' ? (
+        <div className="absolute inset-0">
           <PanelErrorBoundary fallbackLabel="Editor error">
             <ArtifactEditor key={selectedArtifact.id} artifact={selectedArtifact} projectId={projectId!} viewOnly={false} />
           </PanelErrorBoundary>
-        ) : selectedArtifact && viewMode === 'prompt' ? (
+        </div>
+      ) : selectedArtifact && viewMode === 'prompt' ? (
+        <div className="absolute inset-0">
           <PanelErrorBoundary fallbackLabel="Prompt preview error">
             <ArtifactPromptDebugView projectId={projectId!} artifactId={selectedArtifact.id} />
           </PanelErrorBoundary>
-        ) : dagHidden ? (
-          <div className="h-full flex items-center justify-center text-yellow-400 text-xs">
-            [DEBUG: DAG hidden]
-          </div>
-        ) : (
+        </div>
+      ) : dagHidden ? (
+        <div className="absolute inset-0 flex items-center justify-center text-yellow-400 text-xs">
+          [DEBUG: DAG hidden]
+        </div>
+      ) : (
+        <div className="absolute inset-0">
           <PanelErrorBoundary fallbackLabel="DAG render error">
             <PipelineDAG projectId={projectId!} variant="documents" />
           </PanelErrorBoundary>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Bottom action pane */}
+      {/* Bottom action pane — overlays on top of DAG, never changes DAG dimensions */}
       <BottomPane handle={paneHandle} open={paneOpen} onOpenChange={setPaneOpen}>
         {selectedArtifact ? (
           <div className="p-3">

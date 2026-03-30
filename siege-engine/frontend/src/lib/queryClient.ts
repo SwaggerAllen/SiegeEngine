@@ -1,6 +1,6 @@
 import { QueryClient, type Mutation, type Query } from '@tanstack/react-query';
 import { useErrorLogStore } from '../store/errorLogStore';
-import { debugError, recordTQEvent } from './debugLog';
+import { debugError } from './debugLog';
 
 function handleQueryError(error: Error, query: Query) {
   const key = query.queryKey.join('.');
@@ -51,17 +51,21 @@ queryClient.removeQueries = (...args) => {
   return _origRemove(...args);
 };
 
-// Record all cache mutations to localStorage so they survive tab navigation
-queryClient.getQueryCache().subscribe((event) => {
-  if (!event?.query) return;
-  const q = event.query;
-  recordTQEvent({
-    ts: new Date().toISOString().slice(11, 23),
-    type: event.type,
-    key: JSON.stringify(q.queryKey),
-    status: q.state.status,
-    fetchStatus: q.state.fetchStatus,
-    dataUpdatedAt: q.state.dataUpdatedAt,
-    observers: q.getObserversCount(),
-  });
-});
+// TQ cache event logging disabled — the per-event overhead (JSON.stringify,
+// object allocation, buffer growth) adds significant main-thread pressure
+// during pipeline runs with frequent WS-triggered invalidations.
+// Re-enable for debugging by uncommenting below.
+//
+// queryClient.getQueryCache().subscribe((event) => {
+//   if (!event?.query) return;
+//   const q = event.query;
+//   recordTQEvent({
+//     ts: new Date().toISOString().slice(11, 23),
+//     type: event.type,
+//     key: JSON.stringify(q.queryKey),
+//     status: q.state.status,
+//     fetchStatus: q.state.fetchStatus,
+//     dataUpdatedAt: q.state.dataUpdatedAt,
+//     observers: q.getObserversCount(),
+//   });
+// });
