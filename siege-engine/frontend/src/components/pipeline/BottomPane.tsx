@@ -13,7 +13,7 @@ interface BottomPaneProps {
  */
 export function BottomPane({ handle, open, onOpenChange, children }: BottomPaneProps) {
   return (
-    <div className="shrink-0 border-t border-gray-700 bg-gray-900">
+    <div className="absolute bottom-0 left-0 right-0 z-10 border-t border-gray-700 bg-gray-900">
       <div
         className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none min-h-[57px]"
         onClick={() => onOpenChange(!open)}
@@ -29,7 +29,7 @@ export function BottomPane({ handle, open, onOpenChange, children }: BottomPaneP
         </svg>
       </div>
       {open && (
-        <div className="border-t border-gray-700/50 overflow-y-auto" style={{ height: '40vh', contain: 'layout style' }}>
+        <div className="border-t border-gray-700/50 overflow-y-auto" style={{ maxHeight: '45vh' }}>
           {children}
         </div>
       )}
