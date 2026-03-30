@@ -29,7 +29,7 @@ export function BottomPane({ handle, open, onOpenChange, children }: BottomPaneP
         </svg>
       </div>
       {open && (
-        <div className="border-t border-gray-700/50 overflow-y-auto" style={{ maxHeight: '45vh', contain: 'layout' }}>
+        <div className="border-t border-gray-700/50 overflow-y-auto" style={{ height: '40vh', contain: 'layout style' }}>
           {children}
         </div>
       )}
