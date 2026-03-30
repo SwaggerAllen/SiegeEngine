@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from jose import JWTError
@@ -36,6 +36,13 @@ from backend.websocket.manager import ws_manager
 logger = logging.getLogger(__name__)
 
 pipeline_router = APIRouter()
+
+
+def _utc_iso(dt: datetime | None) -> str | None:
+    """Serialize a naive-UTC datetime with a Z suffix so JS parses it as UTC."""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc).isoformat()
 
 
 def _get_project_or_404(db: Session, project_id: str) -> Project:
@@ -632,8 +639,8 @@ def get_status(
                 "component_key": e.component_key,
                 "status": _snap_status(e),
                 "artifact_id": e.artifact_id,
-                "started_at": e.started_at.isoformat() if e.started_at else None,
-                "completed_at": e.completed_at.isoformat() if e.completed_at else None,
+                "started_at": _utc_iso(e.started_at),
+                "completed_at": _utc_iso(e.completed_at),
                 "error_message": e.error_message,
                 "run_id": e.run_id,
             }
@@ -710,8 +717,8 @@ def get_debug_state(
             "propagation_run": r.propagation_run,
             "start_stage_key": r.start_stage_key,
             "start_component_key": r.start_component_key,
-            "started_at": r.started_at.isoformat() if r.started_at else None,
-            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "started_at": _utc_iso(r.started_at),
+            "completed_at": _utc_iso(r.completed_at),
         }
         for r in runs
     ]
@@ -735,8 +742,8 @@ def get_debug_state(
             "run_id": e.run_id,
             "error_message": e.error_message,
             "retry_count": e.retry_count,
-            "started_at": e.started_at.isoformat() if e.started_at else None,
-            "completed_at": e.completed_at.isoformat() if e.completed_at else None,
+            "started_at": _utc_iso(e.started_at),
+            "completed_at": _utc_iso(e.completed_at),
         }
         for e in executions
     ]
@@ -773,7 +780,7 @@ def get_debug_state(
             "event_type": ev.event_type,
             "run_id": ev.run_id,
             "payload": ev.payload,
-            "created_at": ev.created_at.isoformat() if ev.created_at else None,
+            "created_at": _utc_iso(ev.created_at),
         }
         for ev in reversed(events)  # chronological order
     ]
@@ -791,7 +798,7 @@ def get_debug_state(
                     "job_type": j.job_type,
                     "status": j.status,
                     "payload": payload,
-                    "created_at": j.created_at.isoformat() if j.created_at else None,
+                    "created_at": _utc_iso(j.created_at),
                 }
             )
 
@@ -908,7 +915,7 @@ def list_events(
                 "event_type": e.event_type,
                 "payload": e.payload,
                 "run_id": e.run_id,
-                "created_at": e.created_at.isoformat() if e.created_at else None,
+                "created_at": _utc_iso(e.created_at),
             }
             for e in events
         ],
@@ -1184,8 +1191,8 @@ def list_runs(
             "start_stage_key": r.start_stage_key,
             "start_component_key": r.start_component_key,
             "git_commit_sha": r.git_commit_sha,
-            "started_at": r.started_at.isoformat() if r.started_at else None,
-            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "started_at": _utc_iso(r.started_at),
+            "completed_at": _utc_iso(r.completed_at),
         }
         for r in runs
     ]
