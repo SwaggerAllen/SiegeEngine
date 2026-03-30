@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 
 from backend.config import settings
 
@@ -134,15 +135,43 @@ class CLIManager:
         if execution_id:
             self._running_procs[execution_id] = proc
 
+        t0 = time.monotonic()
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=prompt.encode("utf-8")),
-                timeout=timeout,
+            # Write prompt to stdin, then close it so the CLI can start
+            proc.stdin.write(prompt.encode("utf-8"))
+            await proc.stdin.drain()
+            proc.stdin.close()
+
+            # Wait for process to EXIT (not for pipes to close — child
+            # processes may hold pipes open long after the CLI exits).
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise TimeoutError(f"Claude CLI timed out after {timeout}s")
+
+            t_exit = time.monotonic() - t0
+            logger.info(
+                "CLI process exited in %.1fs (rc=%s), reading pipes...",
+                t_exit,
+                proc.returncode,
             )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise TimeoutError(f"Claude CLI timed out after {timeout}s")
+
+            # Process exited — read remaining pipe data with a short timeout
+            # (child processes may still hold pipes open briefly).
+            try:
+                stdout = await asyncio.wait_for(proc.stdout.read(), timeout=10)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "CLI stdout read timed out after process exit (child procs holding pipe?)"
+                )
+                stdout = b""
+            try:
+                stderr = await asyncio.wait_for(proc.stderr.read(), timeout=5)
+            except asyncio.TimeoutError:
+                stderr = b""
+
         except asyncio.CancelledError:
             proc.kill()
             await proc.wait()
@@ -151,6 +180,7 @@ class CLIManager:
             if execution_id:
                 self._running_procs.pop(execution_id, None)
 
+        t_total = time.monotonic() - t0
         output = stdout.decode("utf-8", errors="replace")
         err_output = stderr.decode("utf-8", errors="replace")
 
@@ -163,7 +193,12 @@ class CLIManager:
         if err_output:
             logger.debug("CLI stderr: %s", err_output[:500])
 
-        logger.info("CLI invoke complete: %d chars output", len(output))
+        logger.info(
+            "CLI invoke complete: %d chars in %.1fs (exit at %.1fs)",
+            len(output),
+            t_total,
+            t_exit,
+        )
         return output
 
     async def generate_streaming(
@@ -185,8 +220,13 @@ class CLIManager:
         await sem.acquire()
         try:
             async for line in self._stream_cli(
-                prompt, system_prompt, working_dir, model,
-                session_id, resume, tools,
+                prompt,
+                system_prompt,
+                working_dir,
+                model,
+                session_id,
+                resume,
+                tools,
             ):
                 yield line
         finally:
@@ -252,9 +292,13 @@ class CLIManager:
                 stderr_data = await proc.stderr.read()
                 stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
                 if stderr_text:
-                    logger.warning("Chat CLI stderr (rc=%s): %s", proc.returncode, stderr_text[:2000])
+                    logger.warning(
+                        "Chat CLI stderr (rc=%s): %s", proc.returncode, stderr_text[:2000]
+                    )
 
-            logger.info("Chat CLI streaming done: %d lines yielded, rc=%s", line_count, proc.returncode)
+            logger.info(
+                "Chat CLI streaming done: %d lines yielded, rc=%s", line_count, proc.returncode
+            )
 
 
 cli_manager = CLIManager()

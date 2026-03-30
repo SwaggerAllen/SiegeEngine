@@ -29,7 +29,8 @@ function useElapsedTime(executionId: string | null | undefined, startedAt: strin
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [executionId]);  // Only restart timer when execution actually changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on executionId only to prevent timer resets on refetch
+  }, [executionId]);
   return elapsed;
 }
 

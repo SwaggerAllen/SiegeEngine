@@ -106,15 +106,16 @@ describe('ReviewPanel', () => {
     expect(screen.getByText('🗑 Prune')).toBeInTheDocument();
   });
 
-  it('renders no action buttons for input doc artifacts', () => {
+  it('renders no action buttons for input doc artifacts except Start Run', () => {
     const inputArtifact = { ...baseArtifact, artifact_type: 'project_doc' };
     render(
       <ReviewPanel projectId="proj-1" artifact={inputArtifact} execution={undefined} />,
       { wrapper: TestQueryWrapper }
     );
     expect(screen.queryByText('🗑 Prune Node')).not.toBeInTheDocument();
-    expect(screen.queryByText('Start Run')).not.toBeInTheDocument();
     expect(screen.queryByText('Regen Downstream')).not.toBeInTheDocument();
+    // Start Run is intentionally available on input doc nodes
+    expect(screen.getByText('Start Run')).toBeInTheDocument();
   });
 
   it('renders Approve and Reject buttons in actions mode when awaiting_review', () => {

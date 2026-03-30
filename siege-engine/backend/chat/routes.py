@@ -15,7 +15,7 @@ from jose import JWTError
 
 from backend.auth.routes import get_current_user
 from backend.auth.service import decode_token
-from backend.chat.service import ChatEvent, ChatSession, EventType, chat_service
+from backend.chat.service import ChatEvent, ChatSession, chat_service
 from backend.database import SessionLocal
 from backend.git_manager.service import git_manager
 from backend.models import Project
@@ -72,17 +72,21 @@ async def chat_websocket(
     try:
         # Send persisted history
         history = chat_service.get_session_messages(project_id, session.session_id)
-        await websocket.send_json({
-            "type": "history",
-            "messages": history,
-            "session_id": session.session_id,
-        })
+        await websocket.send_json(
+            {
+                "type": "history",
+                "messages": history,
+                "session_id": session.session_id,
+            }
+        )
 
         # Send current pin state
-        await websocket.send_json({
-            "type": "pins_updated",
-            "pinned": session.pinned_artifact_ids,
-        })
+        await websocket.send_json(
+            {
+                "type": "pins_updated",
+                "pinned": session.pinned_artifact_ids,
+            }
+        )
 
         # If generation is in progress, tell the client
         if session.is_generating:
@@ -135,13 +139,13 @@ async def _handle_commands(
 
         if msg_type == "check_generating":
             if not session.is_generating:
-                history = chat_service.get_session_messages(
-                    project_id, session.session_id
+                history = chat_service.get_session_messages(project_id, session.session_id)
+                await websocket.send_json(
+                    {
+                        "type": "generation_complete",
+                        "messages": history,
+                    }
                 )
-                await websocket.send_json({
-                    "type": "generation_complete",
-                    "messages": history,
-                })
             continue
 
         if msg_type == "reset":

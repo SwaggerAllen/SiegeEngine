@@ -14,6 +14,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
@@ -86,15 +87,23 @@ class ChatSession:
         sub_id = str(uuid.uuid4())[:8]
         queue: asyncio.Queue[ChatEvent] = asyncio.Queue()
         self._subscribers[sub_id] = queue
-        logger.debug("Subscriber %s added to session %s (%d total)",
-                      sub_id, self.session_id, len(self._subscribers))
+        logger.debug(
+            "Subscriber %s added to session %s (%d total)",
+            sub_id,
+            self.session_id,
+            len(self._subscribers),
+        )
         return sub_id, queue
 
     def unsubscribe(self, sub_id: str):
         """Remove a subscriber."""
         self._subscribers.pop(sub_id, None)
-        logger.debug("Subscriber %s removed from session %s (%d remaining)",
-                      sub_id, self.session_id, len(self._subscribers))
+        logger.debug(
+            "Subscriber %s removed from session %s (%d remaining)",
+            sub_id,
+            self.session_id,
+            len(self._subscribers),
+        )
 
     def _broadcast(self, event: ChatEvent):
         """Push event to all subscriber queues (non-blocking)."""
@@ -109,11 +118,7 @@ class ChatSession:
     def _build_system_prompt(self, db: Session) -> str:
         parts = [self.CHAT_SYSTEM_PROMPT]
 
-        snapshot = (
-            db.query(PipelineSnapshot)
-            .filter_by(project_id=self.project_id)
-            .first()
-        )
+        snapshot = db.query(PipelineSnapshot).filter_by(project_id=self.project_id).first()
         if snapshot and snapshot.stage_statuses:
             lines = ["", "Pipeline Status:"]
             for stage_key, status in snapshot.stage_statuses.items():
@@ -125,11 +130,7 @@ class ChatSession:
             parts.append("\n".join(lines))
 
         if self.pinned_artifact_ids:
-            pinned = (
-                db.query(Artifact)
-                .filter(Artifact.id.in_(self.pinned_artifact_ids))
-                .all()
-            )
+            pinned = db.query(Artifact).filter(Artifact.id.in_(self.pinned_artifact_ids)).all()
             if pinned:
                 parts.append("\n\nPinned Documents:")
                 for art in pinned:
@@ -201,9 +202,7 @@ class ChatSession:
         self._broadcast(ChatEvent(EventType.RESPONSE_START))
 
         self.is_generating = True
-        self._generation_task = asyncio.create_task(
-            self._run_generation(message)
-        )
+        self._generation_task = asyncio.create_task(self._run_generation(message))
 
     async def _run_generation(self, message: str):
         """Background task: stream CLI output, broadcast chunks, persist result."""
@@ -244,7 +243,9 @@ class ChatSession:
                     if line_num <= 10:
                         logger.info(
                             "Chat line %d type=%s keys=%s",
-                            line_num, chunk_type, list(chunk.keys()),
+                            line_num,
+                            chunk_type,
+                            list(chunk.keys()),
                         )
                     if chunk_type == "assistant":
                         for block in chunk.get("content", []):
@@ -260,51 +261,61 @@ class ChatSession:
 
                 if text_chunk:
                     full_response += text_chunk
-                    self._broadcast(ChatEvent(
-                        EventType.RESPONSE_CHUNK,
-                        {"text": text_chunk},
-                    ))
+                    self._broadcast(
+                        ChatEvent(
+                            EventType.RESPONSE_CHUNK,
+                            {"text": text_chunk},
+                        )
+                    )
 
             logger.info(
                 "Chat generation done: %d lines processed, %d chars response",
-                line_num, len(full_response),
+                line_num,
+                len(full_response),
             )
 
         except Exception as e:
-            logger.exception("Chat generation error for project %s: %s",
-                             self.project_id, e)
-            self._broadcast(ChatEvent(
-                EventType.ERROR,
-                {"message": str(e)},
-            ))
+            logger.exception("Chat generation error for project %s: %s", self.project_id, e)
+            self._broadcast(
+                ChatEvent(
+                    EventType.ERROR,
+                    {"message": str(e)},
+                )
+            )
         finally:
             if full_response:
                 self.persist_message("assistant", full_response)
             # Set flag AFTER persisting so poll can't see is_generating=False
             # before the response is in the DB.
             self.is_generating = False
-            self._broadcast(ChatEvent(
-                EventType.RESPONSE_END,
-                {"full_text": full_response},
-            ))
+            self._broadcast(
+                ChatEvent(
+                    EventType.RESPONSE_END,
+                    {"full_text": full_response},
+                )
+            )
 
     # ── Pin management ──────────────────────────────────────────────────
 
     def pin(self, artifact_id: str):
         if artifact_id not in self.pinned_artifact_ids:
             self.pinned_artifact_ids.append(artifact_id)
-        self._broadcast(ChatEvent(
-            EventType.PINS_UPDATED,
-            {"pinned": self.pinned_artifact_ids},
-        ))
+        self._broadcast(
+            ChatEvent(
+                EventType.PINS_UPDATED,
+                {"pinned": self.pinned_artifact_ids},
+            )
+        )
 
     def unpin(self, artifact_id: str):
         if artifact_id in self.pinned_artifact_ids:
             self.pinned_artifact_ids.remove(artifact_id)
-        self._broadcast(ChatEvent(
-            EventType.PINS_UPDATED,
-            {"pinned": self.pinned_artifact_ids},
-        ))
+        self._broadcast(
+            ChatEvent(
+                EventType.PINS_UPDATED,
+                {"pinned": self.pinned_artifact_ids},
+            )
+        )
 
 
 # ── ChatService: manages sessions per project ──────────────────────────────
@@ -314,9 +325,7 @@ class ChatService:
     def __init__(self):
         self._sessions: dict[str, ChatSession] = {}
 
-    def get_or_create_session(
-        self, project_id: str, working_dir: str
-    ) -> ChatSession:
+    def get_or_create_session(self, project_id: str, working_dir: str) -> ChatSession:
         if project_id not in self._sessions:
             db = SessionLocal()
             try:
@@ -349,7 +358,9 @@ class ChatService:
                 self._sessions[project_id] = session
                 logger.info(
                     "Created chat session %s for project %s (reinject=%s)",
-                    session_id, project_id, session._needs_reinject,
+                    session_id,
+                    project_id,
+                    session._needs_reinject,
                 )
             finally:
                 db.close()

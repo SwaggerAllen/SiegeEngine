@@ -148,7 +148,6 @@ export function useWebSocket(projectId: string | undefined) {
     };
 
     wsRef.current = ws;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   useEffect(() => {

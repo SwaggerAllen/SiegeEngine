@@ -32,17 +32,31 @@ export function findSelectedExecution(
 ): StageExecution | undefined {
   const isInputDoc = artifact.artifact_type === 'project_doc';
   return (
+    // 1. Awaiting review for this artifact (needs user action)
     executions.find((e) => e.artifact_id === artifact.id && e.status === 'awaiting_review') ??
-    executions.find((e) => e.artifact_id === artifact.id) ??
+    // 2. Active generation for this component (running/pending — show live timer)
     (!isInputDoc
       ? executions.find(
           (e) =>
             !e.artifact_id &&
             e.component_key === (artifact.component_key ?? null) &&
-            ['running', 'ai_review', 'failed', 'awaiting_review'].includes(e.status) &&
+            ['running', 'ai_review', 'pending'].includes(e.status) &&
+            ['generating', 'ai_reviewing', 'pending'].includes(artifact.status),
+        )
+      : undefined) ??
+    // 3. Historical execution that produced this artifact
+    executions.find((e) => e.artifact_id === artifact.id) ??
+    // 4. Failed execution for this component
+    (!isInputDoc
+      ? executions.find(
+          (e) =>
+            !e.artifact_id &&
+            e.component_key === (artifact.component_key ?? null) &&
+            ['failed', 'awaiting_review'].includes(e.status) &&
             ['generating', 'ai_reviewing', 'pending', 'awaiting_review'].includes(artifact.status),
         )
       : undefined) ??
+    // 5. Awaiting review by component key
     (!isInputDoc
       ? executions.find(
           (e) =>
