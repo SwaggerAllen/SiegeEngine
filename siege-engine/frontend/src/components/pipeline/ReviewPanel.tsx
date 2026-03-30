@@ -15,7 +15,7 @@ const STOP_POINT_OPTIONS = [
 
 const STOP_POINT_REGEN = { value: 'regen_downstream', label: 'Regen downstream only' };
 
-function useElapsedTime(startedAt: string | null | undefined) {
+function useElapsedTime(executionId: string | null | undefined, startedAt: string | null | undefined) {
   const [elapsed, setElapsed] = useState('');
   useEffect(() => {
     if (!startedAt) { setElapsed(''); return; }
@@ -29,7 +29,7 @@ function useElapsedTime(startedAt: string | null | undefined) {
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [startedAt]);
+  }, [executionId]);  // Only restart timer when execution actually changes
   return elapsed;
 }
 
@@ -217,7 +217,7 @@ interface ReviewPanelProps {
 
 export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }: ReviewPanelProps) {
   const s = useReviewState(projectId, artifact, execution);
-  const elapsed = useElapsedTime(execution?.started_at);
+  const elapsed = useElapsedTime(execution?.id, execution?.started_at);
 
   const runControls = (
     <RunFromNodeControls
