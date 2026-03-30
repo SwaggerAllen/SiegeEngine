@@ -23,6 +23,7 @@ class Artifact(Base):
         Enum(ArtifactStatus), default=ArtifactStatus.PENDING
     )
     git_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    prev_git_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
     ai_review_feedback: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     human_review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)

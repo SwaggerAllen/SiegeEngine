@@ -145,6 +145,7 @@ async def save_feedback(
 
     # Optionally update artifact content
     if req.edited_content is not None:
+        artifact.prev_git_commit_sha = artifact.git_commit_sha
         artifact.content = req.edited_content
         artifact.version += 1
 

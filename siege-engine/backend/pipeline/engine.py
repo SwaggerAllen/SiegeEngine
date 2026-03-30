@@ -1322,6 +1322,14 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 },
             )
 
+            # Snapshot the current git SHA before generation so the diff
+            # endpoint can compare against the pre-cycle version (not an
+            # intermediate self-improvement commit).
+            if execution.artifact_id:
+                _pre_gen = self.db.get(Artifact, execution.artifact_id)
+                if _pre_gen and _pre_gen.git_commit_sha:
+                    _pre_gen.prev_git_commit_sha = _pre_gen.git_commit_sha
+
             content, artifact_id = await generate(
                 stage_def,
                 input_artifacts,

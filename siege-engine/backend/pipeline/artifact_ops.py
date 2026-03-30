@@ -47,6 +47,7 @@ class ArtifactOpsMixin:
                 artifact = self.db.get(Artifact, execution.artifact_id)
                 if artifact:
                     if edited_content:
+                        artifact.prev_git_commit_sha = artifact.git_commit_sha
                         artifact.content = edited_content
                         artifact.version += 1
 
@@ -273,6 +274,7 @@ class ArtifactOpsMixin:
                 artifact = self.db.get(Artifact, execution.artifact_id)
                 if artifact:
                     if edited_content:
+                        artifact.prev_git_commit_sha = artifact.git_commit_sha
                         artifact.content = edited_content
                         artifact.version += 1
 
@@ -622,6 +624,7 @@ class ArtifactOpsMixin:
 
         if action == "save_feedback":
             if edited_content:
+                artifact.prev_git_commit_sha = artifact.git_commit_sha
                 artifact.content = edited_content
                 artifact.version += 1
 
@@ -690,6 +693,7 @@ class ArtifactOpsMixin:
 
         if action == "approved":
             if edited_content:
+                artifact.prev_git_commit_sha = artifact.git_commit_sha
                 artifact.content = edited_content
                 artifact.version += 1
 

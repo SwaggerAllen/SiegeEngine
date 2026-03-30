@@ -1448,15 +1448,25 @@ async def get_artifact_diff(
     if len(history) < 2:
         raise HTTPException(400, "No previous version to diff against")
 
-    # Use the artifact's known commit SHA as current, find its predecessor
     current_sha = artifact.git_commit_sha
     previous_sha = None
-    for i, entry in enumerate(history):
-        if entry["sha"] == current_sha and i + 1 < len(history):
-            previous_sha = history[i + 1]["sha"]
-            break
 
-    # Fallback: if artifact SHA not found in history, use latest two
+    # Prefer prev_git_commit_sha — it points to the version before the
+    # current generation cycle, skipping intermediate self-improvement
+    # commits that would otherwise pollute the diff.
+    if artifact.prev_git_commit_sha:
+        # Verify it still exists in the history
+        if any(e["sha"] == artifact.prev_git_commit_sha for e in history):
+            previous_sha = artifact.prev_git_commit_sha
+
+    # Fall back to walking git history for the immediate predecessor
+    if not previous_sha:
+        for i, entry in enumerate(history):
+            if entry["sha"] == current_sha and i + 1 < len(history):
+                previous_sha = history[i + 1]["sha"]
+                break
+
+    # Last resort: use the two most recent commits
     if not previous_sha:
         current_sha = history[0]["sha"]
         previous_sha = history[1]["sha"]
