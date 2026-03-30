@@ -1,5 +1,5 @@
 import { useParams } from 'react-router-dom';
-import { DebugStatePanel } from '../pipeline/DebugStatePanel';
+// import { DebugStatePanel } from '../pipeline/DebugStatePanel';
 import { PanelErrorBoundary } from '../ErrorBoundary';
 
 export default function DebugTab() {
@@ -7,7 +7,10 @@ export default function DebugTab() {
   return (
     <div className="flex-1 overflow-hidden">
       <PanelErrorBoundary fallbackLabel="Debug panel error">
-        <DebugStatePanel projectId={projectId!} />
+        <div className="p-4 text-gray-400 text-sm">
+          Debug panel temporarily disabled for crash investigation.
+          Project: {projectId}
+        </div>
       </PanelErrorBoundary>
     </div>
   );

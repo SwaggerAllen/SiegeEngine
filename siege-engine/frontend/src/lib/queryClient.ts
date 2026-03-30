@@ -24,7 +24,7 @@ export const queryClient = new QueryClient({
       staleTime: 30_000,
       retry: 1,
       throwOnError: false,
-      refetchOnWindowFocus: 'always',
+      refetchOnWindowFocus: true,
     },
     mutations: {
       onError: handleMutationError as never,
