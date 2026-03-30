@@ -1430,10 +1430,16 @@ async def reparse_fanout(
 async def get_artifact_diff(
     project_id: str,
     artifact_id: str,
+    version_sha: str | None = None,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    """Get a unified diff between the current and previous version of an artifact."""
+    """Get a unified diff between the current version and a previous version.
+
+    If version_sha is provided, diffs against that specific commit.
+    Otherwise, diffs against the previous version (using prev_git_commit_sha
+    when available to skip self-improvement intermediates).
+    """
     from backend.git_manager.service import git_manager
 
     artifact = db.get(Artifact, artifact_id)
@@ -1451,10 +1457,17 @@ async def get_artifact_diff(
     current_sha = artifact.git_commit_sha
     previous_sha = None
 
+    # If a specific version SHA was requested, use it directly
+    if version_sha:
+        if any(e["sha"] == version_sha for e in history):
+            previous_sha = version_sha
+        else:
+            raise HTTPException(400, "Specified version not found in history")
+
     # Prefer prev_git_commit_sha — it points to the version before the
     # current generation cycle, skipping intermediate self-improvement
     # commits that would otherwise pollute the diff.
-    if artifact.prev_git_commit_sha:
+    if not previous_sha and artifact.prev_git_commit_sha:
         # Verify it still exists in the history
         if any(e["sha"] == artifact.prev_git_commit_sha for e in history):
             previous_sha = artifact.prev_git_commit_sha

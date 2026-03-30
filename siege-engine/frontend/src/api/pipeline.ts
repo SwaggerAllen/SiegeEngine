@@ -218,8 +218,9 @@ export interface ArtifactDiff {
   to_sha: string;
 }
 
-export async function getArtifactDiff(projectId: string, artifactId: string): Promise<ArtifactDiff> {
-  const { data } = await api.get(`/pipeline/${projectId}/artifacts/${artifactId}/diff`);
+export async function getArtifactDiff(projectId: string, artifactId: string, versionSha?: string): Promise<ArtifactDiff> {
+  const params = versionSha ? { version_sha: versionSha } : undefined;
+  const { data } = await api.get(`/pipeline/${projectId}/artifacts/${artifactId}/diff`, { params });
   return data;
 }
 
