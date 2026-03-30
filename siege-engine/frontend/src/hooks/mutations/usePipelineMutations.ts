@@ -11,6 +11,7 @@ export function useStartPipeline(projectId: string) {
       pipelineApi.startPipeline(projectId, options),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: pipelineKeys.runs(projectId) });
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
     },
   });
 }
@@ -23,6 +24,7 @@ export function useResumeRun(projectId: string) {
       pipelineApi.resumeRun(projectId, options),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: pipelineKeys.runs(projectId) });
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
     },
   });
 }
@@ -74,10 +76,15 @@ export function useResolveStale(projectId: string) {
 }
 
 export function useRegenDownstream(projectId: string) {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationKey: ['pipeline', projectId, 'regenDownstream'],
     mutationFn: (artifactId: string) =>
       pipelineApi.regenDownstream(projectId, artifactId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.runs(projectId) });
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
+    },
   });
 }
 
