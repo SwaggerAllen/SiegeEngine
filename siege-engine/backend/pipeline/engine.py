@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from backend.git_manager.service import git_manager as _git_manager
 from backend.models import (
     Artifact,
     ArtifactComment,
@@ -46,8 +47,6 @@ from backend.pipeline.stage_execution import (
 )
 from backend.websocket.manager import ws_manager
 
-from backend.git_manager.service import git_manager as _git_manager
-
 logger = logging.getLogger(__name__)
 
 
@@ -59,8 +58,7 @@ def _commit_review_to_git(project_id: str, artifact: "Artifact", feedback: dict)
     quality = feedback.get("overall_quality", "?")
     recommendation = feedback.get("recommendation", "?")
     content = (
-        f"---\nquality: {quality}\nrecommendation: {recommendation}\n---\n\n"
-        f"{feedback['document']}"
+        f"---\nquality: {quality}\nrecommendation: {recommendation}\n---\n\n{feedback['document']}"
     )
     try:
         _git_manager.commit_artifact(
@@ -71,6 +69,7 @@ def _commit_review_to_git(project_id: str, artifact: "Artifact", feedback: dict)
         )
     except Exception:
         logger.exception("Failed to commit AI review to git for %s", artifact.name)
+
 
 # Extraction stages that define downstream branching structure —
 # always pause for human review regardless of execution mode.

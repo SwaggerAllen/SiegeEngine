@@ -27,8 +27,7 @@ class ComponentPlanPrompt(PromptTemplate):
         component_map = input_artifacts.get("extract_components", "")
         dep_archs = input_artifacts.get("dependency_architectures", "")
         context = (
-            f"COMPONENT MAP:\n\n{component_map}\n\n"
-            f"COMPONENT ARCHITECTURE:\n\n{component_arch}"
+            f"COMPONENT MAP:\n\n{component_map}\n\nCOMPONENT ARCHITECTURE:\n\n{component_arch}"
         )
         if dep_archs:
             context += f"\n\nDEPENDENCY COMPONENT ARCHITECTURES:\n\n{dep_archs}"

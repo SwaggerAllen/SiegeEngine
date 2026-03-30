@@ -20,6 +20,4 @@ class ChatMessage(Base):
     pinned_artifacts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    __table_args__ = (
-        Index("ix_chat_messages_project_session", "project_id", "session_id"),
-    )
+    __table_args__ = (Index("ix_chat_messages_project_session", "project_id", "session_id"),)

@@ -185,8 +185,13 @@ class CLIManager:
         await sem.acquire()
         try:
             async for line in self._stream_cli(
-                prompt, system_prompt, working_dir, model,
-                session_id, resume, tools,
+                prompt,
+                system_prompt,
+                working_dir,
+                model,
+                session_id,
+                resume,
+                tools,
             ):
                 yield line
         finally:
@@ -252,9 +257,13 @@ class CLIManager:
                 stderr_data = await proc.stderr.read()
                 stderr_text = stderr_data.decode("utf-8", errors="replace").strip()
                 if stderr_text:
-                    logger.warning("Chat CLI stderr (rc=%s): %s", proc.returncode, stderr_text[:2000])
+                    logger.warning(
+                        "Chat CLI stderr (rc=%s): %s", proc.returncode, stderr_text[:2000]
+                    )
 
-            logger.info("Chat CLI streaming done: %d lines yielded, rc=%s", line_count, proc.returncode)
+            logger.info(
+                "Chat CLI streaming done: %d lines yielded, rc=%s", line_count, proc.returncode
+            )
 
 
 cli_manager = CLIManager()

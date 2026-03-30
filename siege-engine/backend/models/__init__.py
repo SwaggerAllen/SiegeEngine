@@ -1,7 +1,6 @@
 """Domain-split models package. Re-exports everything for backward compatibility."""
 
 from backend.database import Base
-from backend.models.chat import ChatMessage
 from backend.models.artifact import (
     Artifact,
     ArtifactComment,
@@ -9,6 +8,7 @@ from backend.models.artifact import (
     ComponentDefinition,
 )
 from backend.models.auth import GitHubCredential, InviteLink, User
+from backend.models.chat import ChatMessage
 from backend.models.enums import (
     ArtifactStatus,
     ArtifactType,
