@@ -21,7 +21,7 @@ function useElapsedTime(startedAt: string | null | undefined) {
     if (!startedAt) { setElapsed(''); return; }
     const start = new Date(startedAt).getTime();
     const tick = () => {
-      const secs = Math.floor((Date.now() - start) / 1000);
+      const secs = Math.max(0, Math.floor((Date.now() - start) / 1000));
       const m = Math.floor(secs / 60);
       const s = secs % 60;
       setElapsed(m > 0 ? `${m}m ${s.toString().padStart(2, '0')}s` : `${s}s`);
