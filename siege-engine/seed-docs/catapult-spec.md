@@ -565,9 +565,9 @@ All AI execution — coding assistants, document generation, template prompts �
 
 Sandboxing is especially critical for managed multi-tenant deployments where untrusted LLM output executes on shared infrastructure.
 
-## A.22 AI Chat Interface
+## A.22 AI Chat Interface — David
 
-A conversational AI interface scoped per project, allowing users to ask questions about the codebase and its documentation. The chat operates in **read-only mode** with respect to the pipeline — it can analyze everything but cannot directly modify documents, start flows, or change pipeline state. When the chat identifies issues or opportunities, it proposes flows that go to the flow lobby (A.7) for human prioritization.
+A conversational AI assistant named **David** (as in David and Goliath — a small, well-aimed tool that helps small teams take on massive projects), scoped per project. David can answer questions about the codebase and its documentation, but operates in **read-only mode** with respect to the pipeline — it can analyze everything but cannot directly modify documents, start flows, or change pipeline state. When David identifies issues or opportunities, it proposes flows that go to the flow lobby (A.7) for human prioritization. In collaborative discussions (A.22.6), team members invoke David via **@david**.
 
 ### A.22.1 Capabilities
 
@@ -620,7 +620,7 @@ The chat system supports two conversation modes: **private AI chat** (per-user, 
 
 - **Team-visible** — All project members with access to the artifact can read and participate in the discussion. Messages are attributed to their author.
 - **Artifact-scoped** — Each discussion is anchored to a specific artifact version. The AI has full context of that artifact without the user needing to describe it (same as A.22.2 review integration).
-- **AI @-mention** — Team members can @-mention the AI in a discussion thread. The AI responds using the same context assembly pipeline as private chat, but its response is visible to all participants. This enables collaborative interrogation of design decisions — "Why did the AI choose this approach?" gets a cited answer everyone can see.
+- **AI @-mention** — Team members can @-mention the AI as **@david** in a discussion thread. The name alludes to David and Goliath — the AI is the small, scrappy assistant that helps small teams take on projects far beyond their apparent weight class. David responds using the same context assembly pipeline as private chat, but its response is visible to all participants. This enables collaborative interrogation of design decisions — "Hey @david, why did you choose this approach?" gets a cited answer everyone can see.
 - **Review action integration** — Discussion threads can culminate in review actions (approve, reject with feedback, request changes). These actions feed back into the review workflow (A.6) as human review decisions attributed to the acting user, not autonomous AI actions.
 - **Persistence** — Discussions are persisted alongside the artifact's review history. Unlike private chat, discussions are part of the artifact's provenance trail — future reviewers and the AI itself can reference prior discussion threads to understand why decisions were made.
 
