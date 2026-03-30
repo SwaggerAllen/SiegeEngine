@@ -70,8 +70,17 @@ async def chat_websocket(
     sub_id, event_queue = session.subscribe()
 
     try:
-        # Send persisted history
+        # Send persisted history (include partial response if mid-generation)
         history = chat_service.get_session_messages(project_id, session.session_id)
+        if session.is_generating and session._partial_response:
+            history.append(
+                {
+                    "role": "assistant",
+                    "content": session._partial_response,
+                    "pinned_artifacts": None,
+                    "created_at": None,
+                }
+            )
         await websocket.send_json(
             {
                 "type": "history",

@@ -86,6 +86,7 @@ class ChatSession:
         self.pinned_artifact_ids: list[str] = []
         self._needs_reinject = False
         self.is_generating = False
+        self._partial_response = ""
         self._generation_task: asyncio.Task | None = None
 
         # Subscriber queues: each connected WS gets its own queue
@@ -218,6 +219,7 @@ class ChatSession:
     async def _run_generation(self, message: str):
         """Background task: stream CLI output, broadcast chunks, persist result."""
         full_response = ""
+        self._partial_response = ""
         try:
             self.message_count += 1
             resume = self.message_count > 1
@@ -272,6 +274,7 @@ class ChatSession:
 
                 if text_chunk:
                     full_response += text_chunk
+                    self._partial_response = full_response
                     self._broadcast(
                         ChatEvent(
                             EventType.RESPONSE_CHUNK,
@@ -298,6 +301,7 @@ class ChatSession:
                 self.persist_message("assistant", full_response)
             # Set flag AFTER persisting so poll can't see is_generating=False
             # before the response is in the DB.
+            self._partial_response = ""
             self.is_generating = False
             self._broadcast(
                 ChatEvent(

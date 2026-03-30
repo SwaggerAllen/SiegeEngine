@@ -237,13 +237,16 @@ class ChatManager {
       case 'response_generating':
         debugLog('ChatWS', 'Generation in progress from previous connection');
         this.setState({ isStreaming: true });
-        // Add thinking placeholder if not already there
+        // Seed streamingContent from partial response included in history
         {
-          const msgs = [...this._state.messages];
+          const msgs = this._state.messages;
           const last = msgs[msgs.length - 1];
-          if (!last || last.role !== 'assistant' || last.content) {
-            msgs.push({ role: 'assistant', content: '' });
-            this.setState({ messages: msgs });
+          if (last?.role === 'assistant' && last.content) {
+            this.streamingContent = last.content;
+          } else if (!last || last.role !== 'assistant') {
+            this.setState({
+              messages: [...msgs, { role: 'assistant', content: '' }],
+            });
           }
         }
         this.startPolling();
