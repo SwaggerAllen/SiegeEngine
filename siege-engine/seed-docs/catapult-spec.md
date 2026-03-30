@@ -610,6 +610,24 @@ Context assembly for chat queries uses the same pgvector retrieval and budget-ba
 
 Chat conversations are persisted per project, per user. Users can reference prior conversations. Conversations are not part of the event-sourced pipeline — they are a read-only interface over the project's state, stored separately.
 
+### A.22.6 Collaborative Discussions
+
+The chat system supports two conversation modes: **private AI chat** (per-user, per-project) and **collaborative discussions** (per-artifact, team-visible). Both modes share the same underlying infrastructure — LLM context assembly, streaming, pgvector retrieval, and conversation persistence — but differ in scope and visibility.
+
+**Private chat** is the default mode described in A.22.1–A.22.5: a single user conversing with the AI about the project, visible only to that user.
+
+**Collaborative discussions** are threaded conversations attached to a specific artifact (document or code PR) during the review workflow. Key properties:
+
+- **Team-visible** — All project members with access to the artifact can read and participate in the discussion. Messages are attributed to their author.
+- **Artifact-scoped** — Each discussion is anchored to a specific artifact version. The AI has full context of that artifact without the user needing to describe it (same as A.22.2 review integration).
+- **AI @-mention** — Team members can @-mention the AI in a discussion thread. The AI responds using the same context assembly pipeline as private chat, but its response is visible to all participants. This enables collaborative interrogation of design decisions — "Why did the AI choose this approach?" gets a cited answer everyone can see.
+- **Review action integration** — Discussion threads can culminate in review actions (approve, reject with feedback, request changes). These actions feed back into the review workflow (A.6) as human review decisions attributed to the acting user, not autonomous AI actions.
+- **Persistence** — Discussions are persisted alongside the artifact's review history. Unlike private chat, discussions are part of the artifact's provenance trail — future reviewers and the AI itself can reference prior discussion threads to understand why decisions were made.
+
+**Ownership boundary**: The chat system owns all conversation logic, context assembly, AI interaction, and message persistence for both modes. The review workflow (A.6) owns review state transitions (pending → approved/rejected), SLA tracking, and review queue management. The web UI renders both the review panel and the discussion panel, routing conversation operations to the chat system.
+
+This design avoids duplicating conversation infrastructure across components. Adding a new conversation mode (e.g., boulder-scoped team discussions outside of review, or cross-project threads) requires only a new scope/visibility configuration in the chat system, not a new conversation engine.
+
 ## A.23 Adoption and Trust
 
 These requirements address the concerns of teams evaluating Catapult — particularly midsize engineering organizations that need to justify the investment and manage the risk of adopting a new workflow.
