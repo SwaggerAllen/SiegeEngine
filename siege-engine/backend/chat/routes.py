@@ -79,7 +79,7 @@ async def chat_websocket(
 
     try:
         # Send persisted history (include partial response if mid-generation)
-        history = chat_service.get_session_messages(project_id, session.session_id)
+        history = chat_service.get_conversation_messages(project_id, session.conversation_id)
         if session.is_generating and session._partial_response:
             history.append(
                 {
@@ -93,7 +93,7 @@ async def chat_websocket(
             {
                 "type": "history",
                 "messages": history,
-                "session_id": session.session_id,
+                "conversation_id": session.conversation_id,
             }
         )
 
@@ -107,10 +107,10 @@ async def chat_websocket(
 
         # If generation is in progress, tell the client
         if session.is_generating:
-            logger.info("Chat session %s still generating, notifying client", session.session_id)
+            logger.info("Chat session %s still generating, notifying client", session.conversation_id)
             await websocket.send_json({"type": "response_generating"})
         else:
-            logger.info("Chat session %s idle on connect (is_generating=False)", session.session_id)
+            logger.info("Chat session %s idle on connect (is_generating=False)", session.conversation_id)
 
         # Run two concurrent tasks:
         # 1. Relay events from session → WS
@@ -167,7 +167,7 @@ async def _handle_commands(
 
         if msg_type == "check_generating":
             if not session.is_generating:
-                history = chat_service.get_session_messages(project_id, session.session_id)
+                history = chat_service.get_conversation_messages(project_id, session.conversation_id)
                 await websocket.send_json(
                     {
                         "type": "generation_complete",
