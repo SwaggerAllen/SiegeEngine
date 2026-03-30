@@ -314,6 +314,7 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
           <div className="pt-4 border-t border-gray-700">
             {!showRunConfig ? (
               <button
+                type="button"
                 onClick={() => setShowRunConfig(true)}
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded flex items-center gap-1.5"
               >
@@ -368,6 +369,7 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
 
                 <div className="flex items-center gap-2">
                   <button
+                    type="button"
                     onClick={async () => {
                       setStartingRun(true);
                       try {
@@ -396,6 +398,7 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
                     {startingRun ? 'Starting...' : runMode === 'resume' ? 'Resume' : 'Start'}
                   </button>
                   <button
+                    type="button"
                     onClick={() => setShowRunConfig(false)}
                     className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded"
                   >

@@ -101,6 +101,7 @@ function RunFromNodeControls({
     <div className="border-t border-gray-700 pt-2 mt-2">
       {!expanded ? (
         <button
+          type="button"
           onClick={() => setExpanded(true)}
           className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded min-h-[44px] md:min-h-0 flex items-center gap-1"
         >
@@ -166,6 +167,7 @@ function RunFromNodeControls({
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={handleStart}
               disabled={starting}
               className={`px-3 py-1.5 text-white text-xs rounded disabled:opacity-50 min-h-[44px] md:min-h-0 ${
@@ -185,6 +187,7 @@ function RunFromNodeControls({
                     : 'Start'}
             </button>
             <button
+              type="button"
               onClick={() => setExpanded(false)}
               className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded min-h-[44px] md:min-h-0"
             >

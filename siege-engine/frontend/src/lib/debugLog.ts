@@ -85,14 +85,32 @@ export interface TQLogEntry {
   observers: number;
 }
 
-export function recordTQEvent(entry: TQLogEntry) {
+// Batch TQ events in memory and flush to localStorage periodically.
+// Writing on every single cache event (100+ per second during bursts)
+// causes JSON.parse → push → JSON.stringify → setItem thrashing that
+// can freeze the main thread and crash the tab.
+let _tqBuffer: TQLogEntry[] = [];
+let _tqFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const TQ_FLUSH_INTERVAL_MS = 2000;
+
+function _flushTQBuffer() {
+  _tqFlushTimer = null;
+  if (_tqBuffer.length === 0) return;
   try {
     const raw = localStorage.getItem(TQ_LOG_KEY);
     const entries: TQLogEntry[] = raw ? JSON.parse(raw) : [];
-    entries.push(entry);
+    entries.push(..._tqBuffer);
     localStorage.setItem(TQ_LOG_KEY, JSON.stringify(entries.slice(-TQ_MAX_ENTRIES)));
   } catch {
     // localStorage full or unavailable
+  }
+  _tqBuffer = [];
+}
+
+export function recordTQEvent(entry: TQLogEntry) {
+  _tqBuffer.push(entry);
+  if (!_tqFlushTimer) {
+    _tqFlushTimer = setTimeout(_flushTQBuffer, TQ_FLUSH_INTERVAL_MS);
   }
 }
 

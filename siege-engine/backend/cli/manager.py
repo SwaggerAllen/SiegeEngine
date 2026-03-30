@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import tempfile
 import time
 
 from backend.config import settings
@@ -95,8 +96,16 @@ class CLIManager:
     ) -> str:
         args = ["claude", "-p", "--output-format", "text"]
 
+        # Write system prompt to a temp file to avoid ARG_MAX limits
+        # (pinned artifacts can make the system prompt very large).
+        sp_file = None
         if system_prompt:
-            args.extend(["--system-prompt", system_prompt])
+            sp_file = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False
+            )
+            sp_file.write(system_prompt)
+            sp_file.close()
+            args.extend(["--system-prompt-file", sp_file.name])
         if model:
             args.extend(["--model", model])
         if tools is not None:
@@ -179,6 +188,11 @@ class CLIManager:
         finally:
             if execution_id:
                 self._running_procs.pop(execution_id, None)
+            if sp_file:
+                try:
+                    os.unlink(sp_file.name)
+                except OSError:
+                    pass
 
         t_total = time.monotonic() - t0
         output = stdout.decode("utf-8", errors="replace")
@@ -248,10 +262,19 @@ class CLIManager:
         if resume and session_id:
             args.extend(["--resume", session_id])
 
-        args.extend(["-p", prompt, "--output-format", "stream-json", "--verbose"])
+        # Pass prompt via stdin (not as a CLI arg) to avoid E2BIG when
+        # the conversation history or pinned documents make it large.
+        args.extend(["-p", "-", "--output-format", "stream-json", "--verbose"])
 
+        # Write system prompt to a temp file to avoid ARG_MAX limits.
+        sp_file = None
         if system_prompt:
-            args.extend(["--system-prompt", system_prompt])
+            sp_file = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False
+            )
+            sp_file.write(system_prompt)
+            sp_file.close()
+            args.extend(["--system-prompt-file", sp_file.name])
         if model:
             args.extend(["--model", model])
         if tools is not None:
@@ -267,11 +290,17 @@ class CLIManager:
 
         proc = await asyncio.create_subprocess_exec(
             *args,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=working_dir,
             env=env,
         )
+
+        # Feed prompt via stdin so it's not constrained by ARG_MAX
+        proc.stdin.write(prompt.encode("utf-8"))
+        await proc.stdin.drain()
+        proc.stdin.close()
 
         line_count = 0
         try:
@@ -295,6 +324,12 @@ class CLIManager:
                     logger.warning(
                         "Chat CLI stderr (rc=%s): %s", proc.returncode, stderr_text[:2000]
                     )
+
+            if sp_file:
+                try:
+                    os.unlink(sp_file.name)
+                except OSError:
+                    pass
 
             logger.info(
                 "Chat CLI streaming done: %d lines yielded, rc=%s", line_count, proc.returncode

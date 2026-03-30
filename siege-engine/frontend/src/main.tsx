@@ -23,6 +23,13 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 window.addEventListener('error', (event) => {
+  // ResizeObserver loop errors are benign — they fire when layout changes
+  // can't be delivered in a single animation frame.  Suppressing them
+  // prevents the browser from treating them as fatal crashes.
+  if (event.message?.includes?.('ResizeObserver loop')) {
+    event.stopImmediatePropagation();
+    return;
+  }
   console.error('[Global Error]', event.error || event.message);
   debugError('window.error', event.error || event.message);
   useErrorLogStore.getState().pushError('window.onerror', event.error || event.message);
