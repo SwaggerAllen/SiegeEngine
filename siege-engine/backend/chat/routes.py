@@ -15,7 +15,7 @@ from jose import JWTError
 
 from backend.auth.routes import get_current_user
 from backend.auth.service import decode_token
-from backend.chat.service import ChatEvent, ChatSession, chat_service
+from backend.chat.service import ChatEvent, ChatSession, EventType, chat_service
 from backend.database import SessionLocal
 from backend.git_manager.service import git_manager
 from backend.models import Project
@@ -69,6 +69,14 @@ async def chat_websocket(
     # Subscribe to session's event bus
     sub_id, event_queue = session.subscribe()
 
+    # Shared mutable state so the relay and command handler stay in sync
+    # after session resets (which swap the session + queue).
+    shared: dict = {
+        "session": session,
+        "sub_id": sub_id,
+        "queue": event_queue,
+    }
+
     try:
         # Send persisted history (include partial response if mid-generation)
         history = chat_service.get_session_messages(project_id, session.session_id)
@@ -108,8 +116,8 @@ async def chat_websocket(
         # 1. Relay events from session → WS
         # 2. Receive commands from WS → session
         await asyncio.gather(
-            _relay_events(websocket, event_queue),
-            _handle_commands(websocket, session, project_id),
+            _relay_events(websocket, shared),
+            _handle_commands(websocket, shared, project_id),
         )
 
     except WebSocketDisconnect:
@@ -121,19 +129,29 @@ async def chat_websocket(
         except Exception:
             pass
     finally:
-        session.unsubscribe(sub_id)
+        shared["session"].unsubscribe(shared["sub_id"])
 
 
-async def _relay_events(websocket: WebSocket, queue: asyncio.Queue[ChatEvent]):
-    """Forward session events to the WebSocket client."""
+async def _relay_events(websocket: WebSocket, shared: dict):
+    """Forward session events to the WebSocket client.
+
+    Uses ``shared['queue']`` so that a session reset (which swaps the queue)
+    is picked up automatically on the next iteration.
+    """
     while True:
-        event = await queue.get()
+        current_queue = shared["queue"]
+        event = await current_queue.get()
+        # After a session reset the queue reference is swapped.  If we just
+        # woke up from an *old* queue, discard the stale event — the reset
+        # handler already pushed SESSION_RESET into the new queue for us.
+        if current_queue is not shared["queue"]:
+            continue
         await websocket.send_json(event.to_json())
 
 
 async def _handle_commands(
     websocket: WebSocket,
-    session: ChatSession,
+    shared: dict,
     project_id: str,
 ):
     """Receive commands from the WS client and forward to the session."""
@@ -145,6 +163,7 @@ async def _handle_commands(
             msg = {"type": "message", "content": raw}
 
         msg_type = msg.get("type")
+        session: ChatSession = shared["session"]
 
         if msg_type == "check_generating":
             if not session.is_generating:
@@ -158,8 +177,28 @@ async def _handle_commands(
             continue
 
         if msg_type == "reset":
-            # reset_session broadcasts SESSION_RESET on old session's event bus
-            session = chat_service.reset_session(project_id, session.working_dir)
+            old_session = shared["session"]
+            old_sub_id = shared["sub_id"]
+            old_queue = shared["queue"]
+
+            # reset_session broadcasts SESSION_RESET on the old session's bus
+            # (our old subscriber still receives it).
+            new_session = chat_service.reset_session(project_id, old_session.working_dir)
+
+            # Unsubscribe from old session *after* the broadcast above
+            old_session.unsubscribe(old_sub_id)
+
+            # Subscribe to the new session so future events reach the relay
+            new_sub_id, new_queue = new_session.subscribe()
+            shared["session"] = new_session
+            shared["sub_id"] = new_sub_id
+            shared["queue"] = new_queue
+
+            # Queue SESSION_RESET on the new queue so the relay sends it
+            new_queue.put_nowait(ChatEvent(EventType.SESSION_RESET))
+
+            # Unblock the relay if it's stuck on the old queue
+            old_queue.put_nowait(ChatEvent(EventType.SESSION_RESET))
             continue
 
         if msg_type == "pin":

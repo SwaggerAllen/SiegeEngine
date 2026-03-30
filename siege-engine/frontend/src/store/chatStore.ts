@@ -39,6 +39,8 @@ class ChatManager {
   private streamingContent = '';
   private restoredCountTimer: ReturnType<typeof setTimeout> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  /** True while we're polling for a generation that started before we connected. */
+  private awaitingGenerationComplete = false;
 
   // Observable state
   private _state: ChatState = {
@@ -236,6 +238,7 @@ class ChatManager {
 
       case 'response_generating':
         debugLog('ChatWS', 'Generation in progress from previous connection');
+        this.awaitingGenerationComplete = true;
         this.setState({ isStreaming: true });
         // Seed streamingContent from partial response included in history
         {
@@ -254,14 +257,22 @@ class ChatManager {
 
       case 'generation_complete': {
         this.clearPollTimer();
+        // Ignore stale poll responses that arrive after response_end already
+        // resolved the generation — they would overwrite newer messages.
+        if (!this.awaitingGenerationComplete) {
+          debugLog('ChatWS', 'Ignoring stale generation_complete');
+          break;
+        }
+        this.awaitingGenerationComplete = false;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const msgs: ChatMessage[] = (data.messages || []).map((m: any) => ({
           role: m.role,
           content: m.content,
         }));
-        this.setState({ isStreaming: false });
         if (msgs.length > 0) {
-          this.setState({ messages: msgs });
+          this.setState({ messages: msgs, isStreaming: false });
+        } else {
+          this.setState({ isStreaming: false });
         }
         break;
       }
@@ -286,11 +297,12 @@ class ChatManager {
         }
         break;
 
-      case 'response_end':
+      case 'response_end': {
         debugLog('ChatWS', `response_end ${data.full_text ? data.full_text.length + ' chars' : 'empty'}`);
         this.clearPollTimer();
+        this.awaitingGenerationComplete = false;
+        const msgs = [...this._state.messages];
         if (data.full_text) {
-          const msgs = [...this._state.messages];
           const last = msgs[msgs.length - 1];
           if (last?.role === 'assistant') {
             msgs[msgs.length - 1] = { ...last, content: data.full_text };
@@ -298,10 +310,16 @@ class ChatManager {
             // generation_complete may have replaced messages; re-append
             msgs.push({ role: 'assistant', content: data.full_text });
           }
-          this.setState({ messages: msgs });
+        } else {
+          // Empty response — remove the placeholder assistant message
+          const last = msgs[msgs.length - 1];
+          if (last?.role === 'assistant' && !last.content) {
+            msgs.pop();
+          }
         }
-        this.setState({ isStreaming: false });
+        this.setState({ messages: msgs, isStreaming: false });
         break;
+      }
 
       case 'session_reset':
         this.setState({ messages: [], pinnedIds: [] });
