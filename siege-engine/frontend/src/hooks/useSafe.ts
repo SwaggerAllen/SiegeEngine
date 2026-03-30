@@ -22,7 +22,6 @@ export function useSafeEffect(
   const labelRef = useRef(label);
   labelRef.current = label;
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     try {
       return effect();
@@ -43,7 +42,6 @@ export function useSafeMemo<T>(
   fallback: T,
   deps: DependencyList,
 ): T {
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(() => {
     try {
       return factory();
@@ -66,7 +64,6 @@ export function useSafeCallback<T extends (...args: never[]) => unknown>(
   callback: T,
   deps: DependencyList,
 ): T {
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   return useCallback((...args: Parameters<T>) => {
     try {
       const result = callback(...args);
