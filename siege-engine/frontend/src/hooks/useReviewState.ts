@@ -10,7 +10,7 @@ import {
   usePruneArtifact,
   useCancelStage,
 } from './mutations/usePipelineMutations';
-import { listComments } from '../api/comments';
+import { listComments, saveFeedback } from '../api/comments';
 import { reparseFanout } from '../api/pipeline';
 import { useLocalDraft } from './useLocalDraft';
 import type { Artifact } from '../types/project';
@@ -129,8 +129,26 @@ export function useReviewState(
   const canPrune = !isViewer && !isInputDoc && !isGenerating;
   const canReparse = !isViewer && isFanout && !isGenerating;
 
+  // Save feedback uses a dedicated endpoint that works regardless of
+  // artifact status or execution state — no pipeline job queue involved.
+  const handleSaveFeedback = async () => {
+    if (!notes.trim()) return;
+    setSubmitting(true);
+    try {
+      await saveFeedback(projectId, artifact.id, notes);
+      setFeedbackSaved(true);
+      setFeedbackCount((c) => c + 1);
+      clearNotes();
+    } catch (err) {
+      console.error('Save feedback failed:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // Define handleStaleAction first — handleAction delegates to it for input docs.
   const handleStaleAction = async (action: string) => {
+    if (action === 'save_feedback') return handleSaveFeedback();
     setSubmitting(true);
     try {
       await resolveStaleM.mutateAsync({
@@ -138,21 +156,18 @@ export function useReviewState(
         action,
         notes: notes || undefined,
       });
-      if (action === 'save_feedback') {
-        setFeedbackSaved(true);
-        setFeedbackCount((c) => c + 1);
-        clearNotes();
-      } else {
-        clearNotes();
-        setFeedbackSaved(false);
-        queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
-      }
+      clearNotes();
+      setFeedbackSaved(false);
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
+    } catch (err) {
+      console.error('Stale action failed:', err);
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleAction = async (action: string) => {
+    if (action === 'save_feedback') return handleSaveFeedback();
     if (!execution) {
       if (isInputDoc) await handleStaleAction(action);
       return;
@@ -164,15 +179,11 @@ export function useReviewState(
         action,
         notes: notes || undefined,
       });
-      if (action === 'save_feedback') {
-        setFeedbackSaved(true);
-        setFeedbackCount((c) => c + 1);
-        clearNotes();
-      } else {
-        clearNotes();
-        setFeedbackSaved(false);
-        queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
-      }
+      clearNotes();
+      setFeedbackSaved(false);
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
+    } catch (err) {
+      console.error('Resume stage failed:', err);
     } finally {
       setSubmitting(false);
     }

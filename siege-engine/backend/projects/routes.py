@@ -157,6 +157,7 @@ def update_artifact(
     if not artifact:
         raise HTTPException(404, "Artifact not found")
 
+    artifact.prev_git_commit_sha = artifact.git_commit_sha
     artifact.content = req.content
     artifact.version += 1
     if req.clear_ai_review:
@@ -213,8 +214,14 @@ def get_artifact_diff(
     if len(history) < 2:
         return {"diff": "", "message": "No previous version to diff against"}
 
-    old_sha = history[1]["sha"]
     new_sha = history[0]["sha"]
+    # Use prev_git_commit_sha if available to skip self-improvement commits
+    old_sha = None
+    if artifact.prev_git_commit_sha:
+        if any(e["sha"] == artifact.prev_git_commit_sha for e in history):
+            old_sha = artifact.prev_git_commit_sha
+    if not old_sha:
+        old_sha = history[1]["sha"]
     diff = git_manager.get_diff(artifact.project_id, old_sha, new_sha, artifact.file_path)
     return {"diff": diff, "old_sha": old_sha, "new_sha": new_sha}
 

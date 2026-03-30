@@ -78,8 +78,8 @@ class ChatSession:
         "grep, cat, head, tail, wc, etc."
     )
 
-    def __init__(self, session_id: str, working_dir: str, project_id: str):
-        self.session_id = session_id
+    def __init__(self, conversation_id: str, working_dir: str, project_id: str):
+        self.conversation_id = conversation_id
         self.working_dir = working_dir
         self.project_id = project_id
         self.message_count = 0
@@ -100,9 +100,9 @@ class ChatSession:
         queue: asyncio.Queue[ChatEvent] = asyncio.Queue()
         self._subscribers[sub_id] = queue
         logger.debug(
-            "Subscriber %s added to session %s (%d total)",
+            "Subscriber %s added to conversation %s (%d total)",
             sub_id,
-            self.session_id,
+            self.conversation_id,
             len(self._subscribers),
         )
         return sub_id, queue
@@ -111,9 +111,9 @@ class ChatSession:
         """Remove a subscriber."""
         self._subscribers.pop(sub_id, None)
         logger.debug(
-            "Subscriber %s removed from session %s (%d remaining)",
+            "Subscriber %s removed from conversation %s (%d remaining)",
             sub_id,
-            self.session_id,
+            self.conversation_id,
             len(self._subscribers),
         )
 
@@ -163,7 +163,7 @@ class ChatSession:
     def _build_reinject_prefix(self, db: Session) -> str:
         messages = (
             db.query(ChatMessage)
-            .filter_by(project_id=self.project_id, session_id=self.session_id)
+            .filter_by(project_id=self.project_id, conversation_id=self.conversation_id)
             .order_by(ChatMessage.created_at)
             .all()
         )
@@ -193,7 +193,7 @@ class ChatSession:
             msg = ChatMessage(
                 id=str(uuid.uuid4()),
                 project_id=self.project_id,
-                session_id=self.session_id,
+                conversation_id=self.conversation_id,
                 role=role,
                 content=content,
                 pinned_artifacts=self.pinned_artifact_ids if self.pinned_artifact_ids else None,
@@ -243,7 +243,7 @@ class ChatSession:
             async for line in manager.generate_streaming(
                 prompt=actual_message,
                 working_dir=self.working_dir,
-                session_id=self.session_id,
+                session_id=self.conversation_id,
                 resume=resume,
                 tools=self.CHAT_TOOLS,
                 system_prompt=system_prompt,
@@ -351,14 +351,14 @@ class ChatService:
                     .first()
                 )
                 if last_msg:
-                    session_id = last_msg.session_id
-                    session = ChatSession(session_id, working_dir, project_id)
+                    conversation_id = last_msg.conversation_id
+                    session = ChatSession(conversation_id, working_dir, project_id)
                     session._needs_reinject = True
                     last_pinned = (
                         db.query(ChatMessage)
                         .filter(
                             ChatMessage.project_id == project_id,
-                            ChatMessage.session_id == session_id,
+                            ChatMessage.conversation_id == conversation_id,
                             ChatMessage.pinned_artifacts.isnot(None),
                         )
                         .order_by(desc(ChatMessage.created_at))
@@ -367,13 +367,13 @@ class ChatService:
                     if last_pinned and last_pinned.pinned_artifacts:
                         session.pinned_artifact_ids = list(last_pinned.pinned_artifacts)
                 else:
-                    session_id = str(uuid.uuid4())
-                    session = ChatSession(session_id, working_dir, project_id)
+                    conversation_id = str(uuid.uuid4())
+                    session = ChatSession(conversation_id, working_dir, project_id)
 
                 self._sessions[project_id] = session
                 logger.info(
-                    "Created chat session %s for project %s (reinject=%s)",
-                    session_id,
+                    "Created chat session for conversation %s project %s (reinject=%s)",
+                    conversation_id,
                     project_id,
                     session._needs_reinject,
                 )
@@ -381,12 +381,12 @@ class ChatService:
                 db.close()
         return self._sessions[project_id]
 
-    def get_session_messages(self, project_id: str, session_id: str) -> list[dict]:
+    def get_conversation_messages(self, project_id: str, conversation_id: str) -> list[dict]:
         db = SessionLocal()
         try:
             messages = (
                 db.query(ChatMessage)
-                .filter_by(project_id=project_id, session_id=session_id)
+                .filter_by(project_id=project_id, conversation_id=conversation_id)
                 .order_by(ChatMessage.created_at)
                 .all()
             )
@@ -429,7 +429,7 @@ class ChatService:
     def close_session(self, project_id: str):
         session = self._sessions.pop(project_id, None)
         if session:
-            logger.info("Closed chat session %s", session.session_id)
+            logger.info("Closed chat session for conversation %s", session.conversation_id)
 
     def reset_session(self, project_id: str, working_dir: str) -> ChatSession:
         old = self._sessions.get(project_id)
@@ -437,10 +437,10 @@ class ChatService:
             # Notify any subscribers on the old session so relay tasks can clean up
             old._broadcast(ChatEvent(EventType.SESSION_RESET))
         self.close_session(project_id)
-        session_id = str(uuid.uuid4())
-        session = ChatSession(session_id, working_dir, project_id)
+        conversation_id = str(uuid.uuid4())
+        session = ChatSession(conversation_id, working_dir, project_id)
         self._sessions[project_id] = session
-        logger.info("Reset chat session to %s for project %s", session_id, project_id)
+        logger.info("Reset chat to conversation %s for project %s", conversation_id, project_id)
         return session
 
 
