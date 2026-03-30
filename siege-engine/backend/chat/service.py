@@ -278,9 +278,11 @@ class ChatSession:
                 {"message": str(e)},
             ))
         finally:
-            self.is_generating = False
             if full_response:
                 self.persist_message("assistant", full_response)
+            # Set flag AFTER persisting so poll can't see is_generating=False
+            # before the response is in the DB.
+            self.is_generating = False
             self._broadcast(ChatEvent(
                 EventType.RESPONSE_END,
                 {"full_text": full_response},
