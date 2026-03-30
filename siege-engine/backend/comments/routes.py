@@ -20,6 +20,11 @@ class CreateCommentRequest(BaseModel):
     parent_id: str | None = None
 
 
+class SaveFeedbackRequest(BaseModel):
+    content: str
+    edited_content: str | None = None
+
+
 class UpdateCommentRequest(BaseModel):
     content: str
 
@@ -112,6 +117,75 @@ def create_comment(
         )
     except RuntimeError:
         pass  # No event loop running (e.g. in tests)
+
+    return _comment_to_dict(comment, db)
+
+
+@router.post("/{project_id}/artifacts/{artifact_id}/feedback")
+async def save_feedback(
+    project_id: str,
+    artifact_id: str,
+    req: SaveFeedbackRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Save review feedback on any artifact, regardless of status.
+
+    Creates a feedback comment and optionally updates artifact content.
+    Unlike the pipeline resume_stage/resolve_stale actions, this endpoint
+    does not require a specific artifact status or execution — it's a
+    pure comment + optional edit operation.
+    """
+    if not req.content.strip():
+        raise HTTPException(400, "Feedback content cannot be empty")
+
+    artifact = db.query(Artifact).filter_by(id=artifact_id, project_id=project_id).first()
+    if not artifact:
+        raise HTTPException(404, "Artifact not found")
+
+    # Optionally update artifact content
+    if req.edited_content is not None:
+        artifact.content = req.edited_content
+        artifact.version += 1
+
+        if artifact.file_path:
+            from backend.git_manager.service import git_manager
+
+            sha = git_manager.commit_artifact(
+                project_id,
+                req.edited_content,
+                artifact.file_path,
+                f"Edit {artifact.name or artifact.file_path} v{artifact.version}",
+            )
+            artifact.git_commit_sha = sha
+
+    comment = ArtifactComment(
+        artifact_id=artifact_id,
+        project_id=project_id,
+        author_id=user.id,
+        content=req.content.strip(),
+        comment_type="feedback",
+        artifact_version=artifact.version,
+    )
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+
+    await ws_manager.broadcast(
+        project_id,
+        {
+            "type": "feedback_saved",
+            "artifact_id": artifact_id,
+        },
+    )
+    await ws_manager.broadcast(
+        project_id,
+        {
+            "type": "comment_added",
+            "artifact_id": artifact_id,
+            "comment_id": comment.id,
+        },
+    )
 
     return _comment_to_dict(comment, db)
 

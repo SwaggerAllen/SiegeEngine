@@ -611,15 +611,12 @@ class ArtifactOpsMixin:
         artifact = self.db.get(Artifact, artifact_id)
         if not artifact:
             raise ValueError("Artifact not found")
-        # save_feedback is allowed on any artifact status (including approved)
-        # since it only adds comments / edits without changing workflow state.
-        if action != "save_feedback":
-            allowed = (ArtifactStatus.AWAITING_REVIEW, ArtifactStatus.REJECTED)
-            if not artifact.is_stale and artifact.status not in allowed:
-                raise ValueError(
-                    f"Artifact is not stale, awaiting_review, or rejected"
-                    f" (status={artifact.status.value}, is_stale={artifact.is_stale})"
-                )
+        allowed = (ArtifactStatus.AWAITING_REVIEW, ArtifactStatus.REJECTED)
+        if not artifact.is_stale and artifact.status not in allowed:
+            raise ValueError(
+                f"Artifact is not stale, awaiting_review, or rejected"
+                f" (status={artifact.status.value}, is_stale={artifact.is_stale})"
+            )
 
         project_id = artifact.project_id
 

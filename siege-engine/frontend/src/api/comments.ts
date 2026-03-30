@@ -41,6 +41,19 @@ export async function updateComment(
   return CommentSchema.parse(data);
 }
 
+export async function saveFeedback(
+  projectId: string,
+  artifactId: string,
+  content: string,
+  editedContent?: string,
+): Promise<Comment> {
+  const { data } = await api.post(
+    `/comments/${projectId}/artifacts/${artifactId}/feedback`,
+    { content, edited_content: editedContent ?? null },
+  );
+  return CommentSchema.parse(data);
+}
+
 export async function deleteComment(
   projectId: string,
   artifactId: string,
