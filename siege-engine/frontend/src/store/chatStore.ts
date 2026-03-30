@@ -285,13 +285,17 @@ class ChatManager {
 
       case 'response_end':
         debugLog('ChatWS', `response_end ${data.full_text ? data.full_text.length + ' chars' : 'empty'}`);
+        this.clearPollTimer();
         if (data.full_text) {
           const msgs = [...this._state.messages];
           const last = msgs[msgs.length - 1];
           if (last?.role === 'assistant') {
             msgs[msgs.length - 1] = { ...last, content: data.full_text };
-            this.setState({ messages: msgs });
+          } else {
+            // generation_complete may have replaced messages; re-append
+            msgs.push({ role: 'assistant', content: data.full_text });
           }
+          this.setState({ messages: msgs });
         }
         this.setState({ isStreaming: false });
         break;
