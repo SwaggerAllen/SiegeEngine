@@ -5,6 +5,8 @@ interface DiffViewProps {
   projectId: string;
   artifactId: string;
   artifactVersion: number;
+  /** When set, diff the current version against this specific commit SHA. */
+  compareToSha?: string | null;
 }
 
 function parseDiff(diff: string) {
@@ -18,13 +20,13 @@ function parseDiff(diff: string) {
   });
 }
 
-export default function DiffView({ projectId, artifactId, artifactVersion }: DiffViewProps) {
+export default function DiffView({ projectId, artifactId, artifactVersion, compareToSha }: DiffViewProps) {
   const [diff, setDiff] = useState<ArtifactDiff | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (artifactVersion <= 1) {
+    if (artifactVersion <= 1 && !compareToSha) {
       setLoading(false);
       setError('No previous version to compare against.');
       return;
@@ -32,11 +34,11 @@ export default function DiffView({ projectId, artifactId, artifactVersion }: Dif
 
     setLoading(true);
     setError(null);
-    getArtifactDiff(projectId, artifactId)
+    getArtifactDiff(projectId, artifactId, compareToSha || undefined)
       .then(setDiff)
       .catch((e) => setError(e?.response?.data?.detail || 'Failed to load diff'))
       .finally(() => setLoading(false));
-  }, [projectId, artifactId, artifactVersion]);
+  }, [projectId, artifactId, artifactVersion, compareToSha]);
 
   if (loading) {
     return <div className="p-4 text-gray-400">Loading diff...</div>;

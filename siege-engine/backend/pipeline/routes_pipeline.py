@@ -1430,10 +1430,19 @@ async def reparse_fanout(
 async def get_artifact_diff(
     project_id: str,
     artifact_id: str,
+    version_sha: str | None = None,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    """Get a unified diff between the current and previous version of an artifact."""
+    """Get a unified diff showing what changed in a specific version.
+
+    If version_sha is provided, diffs that version against its immediate
+    predecessor (showing what changed *into* that version).
+    Otherwise, diffs the current version against the previous one (using
+    prev_git_commit_sha when available to skip self-improvement intermediates).
+    """
+    import re
+
     from backend.git_manager.service import git_manager
 
     artifact = db.get(Artifact, artifact_id)
@@ -1443,47 +1452,63 @@ async def get_artifact_diff(
     if not artifact.file_path or not artifact.git_commit_sha:
         raise HTTPException(400, "Artifact has no version history")
 
-    # Get the file history to find the previous version
     history = git_manager.get_file_history(project_id, artifact.file_path)
     if len(history) < 2:
         raise HTTPException(400, "No previous version to diff against")
 
-    current_sha = artifact.git_commit_sha
-    previous_sha = None
-
-    # Prefer prev_git_commit_sha — it points to the version before the
-    # current generation cycle, skipping intermediate self-improvement
-    # commits that would otherwise pollute the diff.
-    if artifact.prev_git_commit_sha:
-        # Verify it still exists in the history
-        if any(e["sha"] == artifact.prev_git_commit_sha for e in history):
-            previous_sha = artifact.prev_git_commit_sha
-
-    # Fall back to walking git history for the immediate predecessor
-    if not previous_sha:
+    # When a specific version is selected, diff it against its predecessor
+    # (showing what changed into that version).
+    if version_sha:
+        current_sha = None
+        previous_sha = None
         for i, entry in enumerate(history):
-            if entry["sha"] == current_sha and i + 1 < len(history):
-                previous_sha = history[i + 1]["sha"]
+            if entry["sha"] == version_sha:
+                current_sha = version_sha
+                if i + 1 < len(history):
+                    previous_sha = history[i + 1]["sha"]
                 break
+        if not current_sha:
+            raise HTTPException(400, "Specified version not found in history")
+        if not previous_sha:
+            raise HTTPException(400, "No previous version to diff against for this version")
+    else:
+        # Default: diff the current artifact version
+        current_sha = artifact.git_commit_sha
+        previous_sha = None
 
-    # Last resort: use the two most recent commits
-    if not previous_sha:
-        current_sha = history[0]["sha"]
-        previous_sha = history[1]["sha"]
+        # Prefer prev_git_commit_sha — it points to the version before the
+        # current generation cycle, skipping intermediate self-improvement
+        # commits that would otherwise pollute the diff.
+        if artifact.prev_git_commit_sha:
+            if any(e["sha"] == artifact.prev_git_commit_sha for e in history):
+                previous_sha = artifact.prev_git_commit_sha
+
+        # Fall back to walking git history for the immediate predecessor
+        if not previous_sha:
+            for i, entry in enumerate(history):
+                if entry["sha"] == current_sha and i + 1 < len(history):
+                    previous_sha = history[i + 1]["sha"]
+                    break
+
+        # Last resort: use the two most recent commits
+        if not previous_sha:
+            current_sha = history[0]["sha"]
+            previous_sha = history[1]["sha"]
 
     diff_text = git_manager.get_diff(project_id, previous_sha, current_sha, artifact.file_path)
 
     # Parse version numbers from commit messages for accurate labels
-    import re
-
     to_version = artifact.version
     from_version = artifact.version - 1
     for entry in history:
+        if entry["sha"] == current_sha:
+            m = re.search(r"v(\d+)", entry["message"])
+            if m:
+                to_version = int(m.group(1))
         if entry["sha"] == previous_sha:
             m = re.search(r"v(\d+)", entry["message"])
             if m:
                 from_version = int(m.group(1))
-            break
 
     return {
         "diff": diff_text,

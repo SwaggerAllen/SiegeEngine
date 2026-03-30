@@ -501,7 +501,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
           </div>
         </div>
       ) : activeTab === 'diff' ? (
-        <DiffView projectId={projectId} artifactId={artifact.id} artifactVersion={artifact.version} />
+        <DiffView projectId={projectId} artifactId={artifact.id} artifactVersion={artifact.version} compareToSha={viewingSha} />
       ) : activeTab === 'prompt' ? (
         /* Prompt Preview tab */
         <div ref={contentRef} className="flex-1 overflow-auto p-3 space-y-3">
