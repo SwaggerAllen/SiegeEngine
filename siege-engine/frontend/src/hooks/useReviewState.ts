@@ -147,6 +147,8 @@ export function useReviewState(
         setFeedbackSaved(false);
         queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
       }
+    } catch (err) {
+      console.error('Stale action failed:', err);
     } finally {
       setSubmitting(false);
     }
@@ -154,7 +156,11 @@ export function useReviewState(
 
   const handleAction = async (action: string) => {
     if (!execution) {
-      if (isInputDoc) await handleStaleAction(action);
+      // Input docs and approved/stale artifacts may lack a matched execution —
+      // fall through to the stale handler which operates on the artifact directly.
+      if (isInputDoc || artifact.status === 'approved' || artifact.status === 'rejected') {
+        await handleStaleAction(action);
+      }
       return;
     }
     setSubmitting(true);
@@ -173,6 +179,8 @@ export function useReviewState(
         setFeedbackSaved(false);
         queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
       }
+    } catch (err) {
+      console.error('Resume stage failed:', err);
     } finally {
       setSubmitting(false);
     }
