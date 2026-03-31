@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # Claude CLI
     cli_timeout_document: int = 1200  # 20 min for document stages
     cli_timeout_code: int = 1800  # 30 min for code gen/review
-    cli_timeout_summary: int = 300  # 5 min for summary generation
+    cli_timeout_summary: int = 900  # 15 min for summary generation
     cli_max_turns_code: int = 25  # Unused directly — CLI manages turns via budget
     cli_max_budget_code: float = 5.0  # Max USD per code gen/review invocation
 
