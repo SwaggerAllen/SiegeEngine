@@ -176,48 +176,19 @@ async def pipeline_action(
             return prompt_preview(project_id, req, db, user)
 
         case "retry_summary":
-            import asyncio
-
             from backend.models import Artifact
-            from backend.pipeline.websocket import ws_manager
+            from backend.pipeline.queue import enqueue
 
             artifact = db.get(Artifact, action.artifact_id)
             if not artifact:
                 return {"status": "error", "detail": "Artifact not found"}
 
-            # Run summary generation in a background task so the HTTP
-            # response returns immediately. Broadcast websocket events
-            # so the SummaryPanel can track progress.
-            async def _run_summary_bg(_project_id: str, _artifact_id: str):
-                from backend.database import SessionLocal
-                from backend.pipeline.summarize import generate_summary
+            job_id = enqueue(db, "generate_summary", {
+                "project_id": project_id,
+                "artifact_id": action.artifact_id,
+            })
 
-                await ws_manager.broadcast(_project_id, {
-                    "type": "summary_started",
-                    "artifact_id": _artifact_id,
-                })
-
-                bg_db = SessionLocal()
-                try:
-                    summary = await generate_summary(_artifact_id, bg_db)
-                    bg_db.commit()
-                    await ws_manager.broadcast(_project_id, {
-                        "type": "summary_completed" if summary else "summary_failed",
-                        "artifact_id": _artifact_id,
-                    })
-                except Exception:
-                    logger.warning("Background summary generation failed for %s", _artifact_id, exc_info=True)
-                    bg_db.rollback()
-                    await ws_manager.broadcast(_project_id, {
-                        "type": "summary_failed",
-                        "artifact_id": _artifact_id,
-                    })
-                finally:
-                    bg_db.close()
-
-            asyncio.create_task(_run_summary_bg(project_id, action.artifact_id))
-
-            return {"status": "ok", "started": True}
+            return {"status": "ok", "job_id": job_id}
 
         # ── Admin / recovery ──
         case "reconcile":
