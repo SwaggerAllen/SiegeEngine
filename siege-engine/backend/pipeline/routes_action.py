@@ -183,10 +183,14 @@ async def pipeline_action(
             if not artifact:
                 return {"status": "error", "detail": "Artifact not found"}
 
-            job_id = enqueue(db, "generate_summary", {
-                "project_id": project_id,
-                "artifact_id": action.artifact_id,
-            })
+            job_id = enqueue(
+                db,
+                "generate_summary",
+                {
+                    "project_id": project_id,
+                    "artifact_id": action.artifact_id,
+                },
+            )
 
             return {"status": "ok", "job_id": job_id}
 

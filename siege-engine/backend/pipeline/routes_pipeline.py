@@ -1359,14 +1359,18 @@ def prompt_preview(
 
     # Tier 1: dependency architectures — swap if over budget
     messages = build_prompt_messages(
-        stage_def, budgeted, artifact.component_key,
+        stage_def,
+        budgeted,
+        artifact.component_key,
         human_notes=effective_notes,
     )["messages"]
     total_chars = _estimate_prompt_chars(messages)
 
     if total_chars > CONTEXT_BUDGET_CHARS and "dependency_architectures" in budgeted:
         dep_summary, _ = _build_dependency_summary_content(
-            db, project_id, artifact.component_key,
+            db,
+            project_id,
+            artifact.component_key,
         )
         if dep_summary:
             budgeted["dependency_architectures"] = dep_summary

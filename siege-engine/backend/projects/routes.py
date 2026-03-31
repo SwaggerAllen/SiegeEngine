@@ -4,8 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-logger = logging.getLogger(__name__)
-
 from backend.auth.routes import _require_writer, get_current_user
 from backend.dag.service import propagate_staleness
 from backend.database import get_db
@@ -463,7 +461,11 @@ def _artifact_to_dict(artifact: Artifact, db: Session | None = None) -> dict:
                 if failed_row and failed_row[0]:
                     summary_error = failed_row[0]
         except Exception:
-            logger.warning("Failed to query summary job status for artifact %s", artifact.id, exc_info=True)
+            logging.getLogger(__name__).warning(
+                "Failed to query summary job status for %s",
+                artifact.id,
+                exc_info=True,
+            )
 
     return {
         "id": artifact.id,
