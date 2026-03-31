@@ -184,7 +184,7 @@ export async function triggerStage(
   });
 }
 
-export async function retrySummary(projectId: string, artifactId: string): Promise<{ status: string; summary_length: number }> {
+export async function retrySummary(projectId: string, artifactId: string): Promise<{ status: string; started?: boolean }> {
   return pipelineAction(projectId, { type: 'retry_summary', artifact_id: artifactId });
 }
 
