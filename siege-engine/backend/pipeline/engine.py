@@ -325,6 +325,22 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             self.db.add(new_exec)
             review_carried += 1
 
+            # Emit carried_over event so the snapshot reflects awaiting_review status
+            self.events.emit(
+                project_id,
+                evt.CARRIED_OVER,
+                {
+                    "execution_id": new_exec.id,
+                    "stage_key": new_exec.stage_key,
+                    "component_key": new_exec.component_key,
+                    "artifact_id": new_exec.artifact_id,
+                    "status": "awaiting_review",
+                    "from_run_id": prev_exec.run_id,
+                    "to_run_id": new_run_id,
+                },
+                run_id=new_run_id,
+            )
+
         self.db.commit()
         logger.info(
             "Carried over %d approved + %d in-review executions into run %s",
