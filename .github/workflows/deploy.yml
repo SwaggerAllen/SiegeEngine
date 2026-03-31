@@ -28,8 +28,11 @@ jobs:
           key: ${{ secrets.DROPLET_SSH_KEY }}
           command_timeout: 20m
           script: |
+            set -e
             cd /tmp/siege-deploy/siege-engine
-            docker build --build-arg COMMIT_HASH=$(git rev-parse --short HEAD) -t siege-engine:latest .
+            echo "=== Deploy: building commit $(git rev-parse --short HEAD) ==="
+            echo "=== Files check: $(head -1 backend/pipeline/summarize.py) ==="
+            docker build --no-cache --build-arg COMMIT_HASH=$(git rev-parse --short HEAD) -t siege-engine:latest .
             docker stop siege-engine || true
             docker rm siege-engine || true
             docker run -d \

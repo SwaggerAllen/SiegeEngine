@@ -467,12 +467,14 @@ def _migrate_feedback_to_comments():
         db.close()
 
 
+COMMIT_HASH = os.environ.get("COMMIT_HASH", "dev")
+
 app = FastAPI(title="SiegeEngine", version="0.1.0", lifespan=lifespan)
 
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    return {"status": "ok", "commit": COMMIT_HASH}
 
 
 app.add_middleware(
