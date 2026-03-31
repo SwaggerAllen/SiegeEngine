@@ -336,7 +336,7 @@ async def _handle_generate_summary(payload: dict) -> None:
     """Handle a generate_summary job."""
     from backend.models import Artifact
     from backend.pipeline.summarize import generate_summary
-    from backend.pipeline.websocket import ws_manager
+    from backend.websocket.manager import ws_manager
 
     project_id = payload["project_id"]
     artifact_id = payload["artifact_id"]
