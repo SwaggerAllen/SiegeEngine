@@ -334,6 +334,7 @@ async def _handle_trigger_stage(payload: dict) -> None:
 
 async def _handle_generate_summary(payload: dict) -> None:
     """Handle a generate_summary job."""
+    from backend.models import Artifact
     from backend.pipeline.summarize import generate_summary
     from backend.pipeline.websocket import ws_manager
 
@@ -347,19 +348,18 @@ async def _handle_generate_summary(payload: dict) -> None:
 
     db = SessionLocal()
     try:
-        summary = await generate_summary(artifact_id, db, raise_on_error=True)
+        artifact = db.get(Artifact, artifact_id)
+        if not artifact or not artifact.content:
+            raise RuntimeError(f"Artifact {artifact_id} not found or has no content")
+
+        summary = await generate_summary(artifact.content)
+        artifact.summary = summary
         db.commit()
-        if summary:
-            await ws_manager.broadcast(project_id, {
-                "type": "summary_completed",
-                "artifact_id": artifact_id,
-            })
-        else:
-            await ws_manager.broadcast(project_id, {
-                "type": "summary_failed",
-                "artifact_id": artifact_id,
-            })
-            raise RuntimeError(f"Summary generation returned empty for artifact {artifact_id}")
+
+        await ws_manager.broadcast(project_id, {
+            "type": "summary_completed",
+            "artifact_id": artifact_id,
+        })
     except Exception:
         db.rollback()
         await ws_manager.broadcast(project_id, {

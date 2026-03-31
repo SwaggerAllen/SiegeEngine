@@ -1437,7 +1437,11 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             try:
                 from backend.pipeline.summarize import generate_summary
 
-                await generate_summary(artifact_id, self.db)
+                artifact = self.db.get(Artifact, artifact_id)
+                if artifact and artifact.content:
+                    summary = await generate_summary(artifact.content)
+                    artifact.summary = summary
+                    self.db.flush()
             except Exception:
                 logger.warning(
                     "Summary generation failed for artifact %s, continuing",

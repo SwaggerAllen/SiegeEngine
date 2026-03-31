@@ -7,11 +7,8 @@ within context budget limits.
 
 import logging
 
-from sqlalchemy.orm import Session
-
 from backend.cli.manager import cli_manager
 from backend.config import settings
-from backend.models import Artifact
 
 logger = logging.getLogger(__name__)
 
@@ -46,43 +43,29 @@ implementation details not relevant to the consuming stage.
 Keep the summary under 20% of the original document length."""
 
 
-async def generate_summary(
-    artifact_id: str, db: Session, *, raise_on_error: bool = False
-) -> str | None:
-    """Generate and store a summary for the given artifact.
+async def generate_summary(content: str) -> str:
+    """Generate a summary for the given content.
 
-    Uses the pipeline semaphore via cli_manager.generate() to honor
-    concurrency limits. Returns the summary text, or None on failure.
-
-    When *raise_on_error* is True, exceptions propagate to the caller
-    (useful for the job queue where the worker captures the error).
+    Pure function: content in, summary string out.
+    Raises RuntimeError on CLI failure or empty output.
+    Raises TimeoutError on CLI timeout.
+    Callers are responsible for persisting the result.
     """
-    artifact = db.get(Artifact, artifact_id)
-    if not artifact or not artifact.content:
-        return None
-
-    try:
-        summary = await cli_manager.generate(
-            prompt=artifact.content,
-            system_prompt=SUMMARY_SYSTEM_PROMPT,
-            model=None,  # use default
-            tools="",  # no tools needed
-            timeout=settings.cli_timeout_summary,
-        )
-        artifact.summary = summary
-        db.flush()
-        logger.info(
-            "Summary generated for artifact %s: %d chars -> %d chars",
-            artifact_id,
-            len(artifact.content),
-            len(summary),
-        )
-        return summary
-    except Exception:
-        logger.warning("Summary generation failed for artifact %s", artifact_id, exc_info=True)
-        if raise_on_error:
-            raise
-        return None
+    summary = await cli_manager.generate(
+        prompt=content,
+        system_prompt=SUMMARY_SYSTEM_PROMPT,
+        model=None,
+        tools="",
+        timeout=settings.cli_timeout_summary,
+    )
+    if not summary.strip():
+        raise RuntimeError("Summary generation returned empty output")
+    logger.info(
+        "Summary generated: %d chars -> %d chars",
+        len(content),
+        len(summary),
+    )
+    return summary
 
 
 async def generate_hotpath_summary(
