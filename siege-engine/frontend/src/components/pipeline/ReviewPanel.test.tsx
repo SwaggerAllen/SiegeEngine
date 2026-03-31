@@ -48,6 +48,7 @@ vi.mock('../../store/authStore', () => ({
 
 vi.mock('../../api/comments', () => ({
   listComments: vi.fn().mockResolvedValue([]),
+  saveFeedback: vi.fn().mockResolvedValue({}),
 }));
 
 const baseArtifact: Artifact = {
@@ -204,9 +205,9 @@ describe('ReviewPanel', () => {
     });
   });
 
-  it('calls resumeStage with "save_feedback" when Save Feedback is clicked', async () => {
+  it('calls saveFeedback API when Save Feedback is clicked', async () => {
     const user = userEvent.setup();
-    mockResumeStage.mockResolvedValue(undefined);
+    const { saveFeedback } = await import('../../api/comments');
 
     render(
       <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} mode="feedback" />,
@@ -217,17 +218,13 @@ describe('ReviewPanel', () => {
     await user.type(textarea, 'Some feedback');
     await user.click(screen.getByText('Save Feedback'));
 
-    expect(mockResumeStage).toHaveBeenCalledWith({
-      executionId: 'exec-1',
-      action: 'save_feedback',
-      notes: 'Some feedback',
-      editedContent: undefined,
+    await waitFor(() => {
+      expect(saveFeedback).toHaveBeenCalledWith('proj-1', 'art-1', 'Some feedback');
     });
   });
 
   it('shows "Feedback Saved" after save_feedback action', async () => {
     const user = userEvent.setup();
-    mockResumeStage.mockResolvedValue(undefined);
 
     render(
       <ReviewPanel projectId="proj-1" artifact={baseArtifact} execution={awaitingExecution} mode="feedback" />,

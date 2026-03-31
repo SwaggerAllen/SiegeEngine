@@ -107,10 +107,16 @@ async def chat_websocket(
 
         # If generation is in progress, tell the client
         if session.is_generating:
-            logger.info("Chat session %s still generating, notifying client", session.conversation_id)
+            logger.info(
+                "Chat session %s still generating, notifying client",
+                session.conversation_id,
+            )
             await websocket.send_json({"type": "response_generating"})
         else:
-            logger.info("Chat session %s idle on connect (is_generating=False)", session.conversation_id)
+            logger.info(
+                "Chat session %s idle on connect (is_generating=False)",
+                session.conversation_id,
+            )
 
         # Run two concurrent tasks:
         # 1. Relay events from session → WS
@@ -167,7 +173,9 @@ async def _handle_commands(
 
         if msg_type == "check_generating":
             if not session.is_generating:
-                history = chat_service.get_conversation_messages(project_id, session.conversation_id)
+                history = chat_service.get_conversation_messages(
+                    project_id, session.conversation_id
+                )
                 await websocket.send_json(
                     {
                         "type": "generation_complete",

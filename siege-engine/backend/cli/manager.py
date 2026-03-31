@@ -100,9 +100,7 @@ class CLIManager:
         # (pinned artifacts can make the system prompt very large).
         sp_file = None
         if system_prompt:
-            sp_file = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".txt", delete=False
-            )
+            sp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
             sp_file.write(system_prompt)
             sp_file.close()
             args.extend(["--system-prompt-file", sp_file.name])
@@ -269,9 +267,7 @@ class CLIManager:
         # Write system prompt to a temp file to avoid ARG_MAX limits.
         sp_file = None
         if system_prompt:
-            sp_file = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".txt", delete=False
-            )
+            sp_file = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
             sp_file.write(system_prompt)
             sp_file.close()
             args.extend(["--system-prompt-file", sp_file.name])
