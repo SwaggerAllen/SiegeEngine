@@ -62,16 +62,7 @@ async def lifespan(app: FastAPI):
 
     worker_task = asyncio.create_task(worker_loop())
 
-    # One-time backfill: generate summaries for existing artifacts that lack one
-    summary_task = asyncio.create_task(_backfill_summaries())
-
     yield
-
-    summary_task.cancel()
-    try:
-        await summary_task
-    except asyncio.CancelledError:
-        pass
 
     # Stop the job queue worker
     shutdown_worker()
@@ -472,78 +463,6 @@ def _migrate_feedback_to_comments():
     except Exception as e:
         logger.error("Feedback migration failed: %s", e)
         db.rollback()
-    finally:
-        db.close()
-
-
-async def _backfill_summaries():
-    """One-time background task: generate summaries for all artifacts that have content but no summary.
-
-    Uses a marker file to ensure it only runs once. Processes artifacts one at
-    a time through the pipeline semaphore via generate_summary().
-    """
-    db_url = settings.database_url
-    if db_url.startswith("sqlite:///"):
-        db_dir = Path(
-            db_url.replace("sqlite:////", "/", 1)
-            if db_url.startswith("sqlite:////")
-            else db_url.replace("sqlite:///", "", 1)
-        ).parent
-    else:
-        db_dir = Path("data")
-
-    marker = db_dir / ".summary_backfill_v1"
-    if marker.exists():
-        return
-
-    from backend.models import Artifact
-    from backend.pipeline.summarize import generate_summary
-
-    db = SessionLocal()
-    try:
-        artifact_ids = [
-            row[0]
-            for row in db.query(Artifact.id)
-            .filter(Artifact.content.isnot(None))
-            .filter(Artifact.content != "")
-            .filter(Artifact.summary.is_(None))
-            .all()
-        ]
-
-        if not artifact_ids:
-            logger.info("Summary backfill: no artifacts need summaries")
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text("applied")
-            return
-
-        logger.info("Summary backfill: generating summaries for %d artifacts", len(artifact_ids))
-        succeeded = 0
-        failed = 0
-
-        for artifact_id in artifact_ids:
-            try:
-                result = await generate_summary(artifact_id, db)
-                if result:
-                    db.commit()
-                    succeeded += 1
-                else:
-                    failed += 1
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.warning("Summary backfill failed for artifact %s", artifact_id, exc_info=True)
-                db.rollback()
-                failed += 1
-
-        logger.info("Summary backfill complete: %d succeeded, %d failed", succeeded, failed)
-        if failed == 0:
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text("applied")
-    except asyncio.CancelledError:
-        logger.info("Summary backfill cancelled (shutdown)")
-        raise
-    except Exception:
-        logger.error("Summary backfill error", exc_info=True)
     finally:
         db.close()
 
