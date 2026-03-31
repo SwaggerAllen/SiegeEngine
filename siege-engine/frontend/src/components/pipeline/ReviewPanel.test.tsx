@@ -58,6 +58,7 @@ const baseArtifact: Artifact = {
   name: 'System Requirements',
   component_key: null,
   content: 'Some content',
+  summary_generating: false,
   status: 'awaiting_review',
   is_stale: false,
   version: 1,
