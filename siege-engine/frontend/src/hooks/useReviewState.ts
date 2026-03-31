@@ -123,7 +123,7 @@ export function useReviewState(
   const isBeingRegenerated =
     isStale && execution != null && REGENERATING_STATUSES.has(execution.status);
   const isInputDoc = artifact.artifact_type === 'project_doc';
-  const isGenerating = artifact.status === 'generating' || artifact.status === 'ai_reviewing';
+  const isGenerating = artifact.status === 'generating' || artifact.status === 'ai_reviewing' || artifact.status === 'summarizing';
   const isFanout =
     artifact.artifact_type === 'component_map' || artifact.artifact_type === 'sub_component_map';
   const canPrune = !isViewer && !isInputDoc && !isGenerating;

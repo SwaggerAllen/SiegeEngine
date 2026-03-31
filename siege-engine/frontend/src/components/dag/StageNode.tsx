@@ -10,6 +10,7 @@ const STATUS_COLORS: Record<string, string> = {
   running: 'bg-blue-900 border-blue-400 animate-pulse',
   generating: 'bg-blue-900 border-blue-400 animate-pulse',
   ai_reviewing: 'bg-purple-900 border-purple-400 animate-pulse',
+  summarizing: 'bg-teal-900 border-teal-400 animate-pulse',
   awaiting_review: 'bg-yellow-900 border-yellow-400',
   approved: 'bg-green-900 border-green-400',
   rejected: 'bg-red-900 border-red-400',
@@ -21,6 +22,7 @@ const STATUS_LABELS: Record<string, string> = {
   running: 'Running...',
   generating: 'Generating...',
   ai_reviewing: 'AI Reviewing...',
+  summarizing: 'Summarizing...',
   awaiting_review: 'Awaiting Review',
   approved: 'Approved',
   rejected: 'Rejected',
@@ -33,7 +35,7 @@ function formatModelName(model: string): string {
   return match ? match[1] : model;
 }
 
-const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
+const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing', 'summarizing']);
 const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export const StageNode = memo(function StageNode({ id, data }: { id: string; data: DAGNodeData & { projectId?: string } }) {

@@ -61,7 +61,7 @@ async def generate_summary(artifact_id: str, db: Session) -> str | None:
             prompt=artifact.content,
             system_prompt=SUMMARY_SYSTEM_PROMPT,
             model=None,  # use default
-            tools='""',  # no tools needed
+            tools="",  # no tools needed
             timeout=settings.cli_timeout_summary,
         )
         artifact.summary = summary
@@ -103,7 +103,7 @@ async def generate_hotpath_summary(
             prompt=prompt,
             system_prompt=HOTPATH_SYSTEM_PROMPT,
             model=None,
-            tools='""',
+            tools="",  # no tools needed
             timeout=settings.cli_timeout_summary,
         )
         logger.info(

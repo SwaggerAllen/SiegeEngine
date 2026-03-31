@@ -258,7 +258,7 @@ def get_dag_visualization_data(db: Session, project_id: str) -> dict:
         # Fan-out stages may have multiple entries (stage_key/component_key),
         # so we aggregate: if any component is running, the stage is running, etc.
         status = _derive_stage_status_from_snapshot(stage_def.stage_key, stage_statuses)
-        is_active = status in ("running", "ai_review", "ai_reviewing")
+        is_active = status in ("running", "ai_review", "ai_reviewing", "summarizing")
 
         node_id = f"stage_{stage_def.stage_key}"
         nodes.append(
@@ -331,6 +331,8 @@ def _derive_stage_status_from_snapshot(stage_key: str, stage_statuses: dict[str,
         return "running"
     if any(s == "ai_review" for s in component_statuses):
         return "ai_review"
+    if any(s == "summarizing" for s in component_statuses):
+        return "summarizing"
     if any(s == "failed" for s in component_statuses):
         return "failed"
     if any(s == "rejected" for s in component_statuses):
@@ -430,7 +432,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                 else stage_def.stage_key
             )
             stage_status = stage_statuses.get(comp_key)
-            is_active = stage_status in ("running", "ai_review")
+            is_active = stage_status in ("running", "ai_review", "summarizing")
             exec_entry = execution_map.get(comp_key, {})
             execution_id = exec_entry.get("execution_id")
 
@@ -469,7 +471,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
             else:
                 continue
 
-            if snap_status not in ("running", "ai_review", "failed"):
+            if snap_status not in ("running", "ai_review", "summarizing", "failed"):
                 continue
             if comp_key_val in art_comp_keys:
                 continue
@@ -487,6 +489,9 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                 is_placeholder_active = False
             elif snap_status == "ai_review":
                 display_status = "ai_reviewing"
+                is_placeholder_active = True
+            elif snap_status == "summarizing":
+                display_status = "summarizing"
                 is_placeholder_active = True
             else:
                 display_status = "generating"

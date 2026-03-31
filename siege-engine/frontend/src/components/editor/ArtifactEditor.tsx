@@ -538,6 +538,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
 function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
   const [generating, setGenerating] = useState(false);
   const [summary, setSummary] = useState<string | null>(artifact.summary ?? null);
+  const [error, setError] = useState<string | null>(null);
 
   // Sync with artifact prop changes
   useEffect(() => {
@@ -546,13 +547,18 @@ function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: 
 
   const handleGenerate = async () => {
     setGenerating(true);
+    setError(null);
     try {
-      await retrySummary(projectId, artifact.id);
-      // Re-fetch artifact to get updated summary
-      const { data } = await (await import('../../api/client')).default.get(`/projects/artifacts/${artifact.id}`);
-      setSummary(data.summary ?? null);
-    } catch {
-      // ignore — user can retry
+      const result = await retrySummary(projectId, artifact.id);
+      if (result.summary_length === 0) {
+        setError('Summary generation returned empty result. Check server logs for details.');
+      } else {
+        // Re-fetch artifact to get updated summary
+        const { data } = await (await import('../../api/client')).default.get(`/projects/artifacts/${artifact.id}`);
+        setSummary(data.summary ?? null);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Summary generation failed');
     } finally {
       setGenerating(false);
     }
@@ -562,6 +568,7 @@ function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: 
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-sm text-gray-400">No summary available for this artifact.</p>
+        {error && <p className="text-sm text-red-400">{error}</p>}
         <button
           onClick={handleGenerate}
           disabled={generating}
