@@ -197,7 +197,7 @@ export function CommentsPanel({ projectId, artifactId, compact }: CommentsPanelP
   return (
     <div className={`flex flex-col ${compact ? '' : 'flex-1'} overflow-hidden`}>
       {/* Comment list */}
-      <div className={`overflow-auto ${compact ? 'max-h-48' : 'flex-1'} px-3 py-2 space-y-1`}>
+      <div className={`overflow-auto ${compact ? 'max-h-48' : 'flex-1 pb-64'} px-3 py-2 space-y-1`}>
         {topLevel.length === 0 && (
           <p className="text-gray-500 text-xs text-center py-4">No comments yet</p>
         )}
