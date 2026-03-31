@@ -128,6 +128,9 @@ export const WSEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('comment_deleted'), artifact_id: z.string(), comment_id: z.string() }),
   z.object({ type: z.literal('artifact_pruned'), artifact_id: z.string() }),
   z.object({ type: z.literal('cascade_completed'), run_id: z.string().optional() }),
+  z.object({ type: z.literal('summary_started'), artifact_id: z.string() }),
+  z.object({ type: z.literal('summary_completed'), artifact_id: z.string() }),
+  z.object({ type: z.literal('summary_failed'), artifact_id: z.string() }),
   z.object({ type: z.literal('log_entry'), timestamp: z.string(), level: z.string(), logger: z.string(), message: z.string() }),
 ]);
 

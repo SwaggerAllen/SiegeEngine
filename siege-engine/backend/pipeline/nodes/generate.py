@@ -149,8 +149,7 @@ def _build_fanout_summary_content(
         return None
 
     return "\n\n---\n\n".join(
-        f"### {a.component_key or a.name}\n\n{a.summary}"
-        for a in artifacts_with_content
+        f"### {a.component_key or a.name}\n\n{a.summary}" for a in artifacts_with_content
     )
 
 
@@ -177,7 +176,10 @@ def _build_dependency_summary_content(
             .first()
         )
         art_type = ArtifactType.SUB_COMPONENT_ARCHITECTURE
-        key_fn = lambda dk: f"{parent_key}.{dk}"
+
+        def key_fn(dk: str) -> str:
+            return f"{parent_key}.{dk}"
+
     else:
         comp_def = (
             db.query(ComponentDefinition)
@@ -185,7 +187,9 @@ def _build_dependency_summary_content(
             .first()
         )
         art_type = ArtifactType.COMPONENT_ARCHITECTURE
-        key_fn = lambda dk: dk
+
+        def key_fn(dk: str) -> str:
+            return dk
 
     if not comp_def or not comp_def.dependencies:
         return None, []
@@ -211,9 +215,7 @@ def _build_dependency_summary_content(
         parts.append(f"### {full_key}\n\n{text}")
 
     if parts:
-        return "\n\n---\n\n".join(parts), [
-            (k, len(a.content)) for k, a in dep_artifacts
-        ]
+        return "\n\n---\n\n".join(parts), [(k, len(a.content)) for k, a in dep_artifacts]
     return None, []
 
 
@@ -249,7 +251,9 @@ async def apply_context_budget(
 
     # Check budget after tier 2
     messages = build_prompt_messages(
-        stage_def, result, component_key,
+        stage_def,
+        result,
+        component_key,
         human_notes=human_notes,
         current_content=current_content,
         upstream_changes=upstream_changes,
@@ -268,7 +272,9 @@ async def apply_context_budget(
 
             # Re-check budget
             messages = build_prompt_messages(
-                stage_def, result, component_key,
+                stage_def,
+                result,
+                component_key,
                 human_notes=human_notes,
                 current_content=current_content,
                 upstream_changes=upstream_changes,
@@ -305,7 +311,9 @@ async def apply_context_budget(
                 result[key] = source_art.summary
                 summarized_keys.append(key)
                 messages = build_prompt_messages(
-                    stage_def, result, component_key,
+                    stage_def,
+                    result,
+                    component_key,
                     human_notes=human_notes,
                     current_content=current_content,
                     upstream_changes=upstream_changes,
@@ -328,7 +336,9 @@ async def apply_context_budget(
             summarized_keys.append(key)
 
             messages = build_prompt_messages(
-                stage_def, result, component_key,
+                stage_def,
+                result,
+                component_key,
                 human_notes=human_notes,
                 current_content=current_content,
                 upstream_changes=upstream_changes,

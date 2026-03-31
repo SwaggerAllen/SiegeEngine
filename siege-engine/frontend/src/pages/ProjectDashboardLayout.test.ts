@@ -27,6 +27,7 @@ function makeArtifact(overrides: Partial<Artifact>): Artifact {
     name: 'My Artifact',
     component_key: 'comp_a',
     content: null,
+    summary_generating: false,
     status: 'awaiting_review',
     is_stale: false,
     version: 1,

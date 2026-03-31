@@ -341,10 +341,13 @@ async def _handle_generate_summary(payload: dict) -> None:
     project_id = payload["project_id"]
     artifact_id = payload["artifact_id"]
 
-    await ws_manager.broadcast(project_id, {
-        "type": "summary_started",
-        "artifact_id": artifact_id,
-    })
+    await ws_manager.broadcast(
+        project_id,
+        {
+            "type": "summary_started",
+            "artifact_id": artifact_id,
+        },
+    )
 
     db = SessionLocal()
     try:
@@ -356,16 +359,22 @@ async def _handle_generate_summary(payload: dict) -> None:
         artifact.summary = summary
         db.commit()
 
-        await ws_manager.broadcast(project_id, {
-            "type": "summary_completed",
-            "artifact_id": artifact_id,
-        })
+        await ws_manager.broadcast(
+            project_id,
+            {
+                "type": "summary_completed",
+                "artifact_id": artifact_id,
+            },
+        )
     except Exception:
         db.rollback()
-        await ws_manager.broadcast(project_id, {
-            "type": "summary_failed",
-            "artifact_id": artifact_id,
-        })
+        await ws_manager.broadcast(
+            project_id,
+            {
+                "type": "summary_failed",
+                "artifact_id": artifact_id,
+            },
+        )
         raise
     finally:
         db.close()
