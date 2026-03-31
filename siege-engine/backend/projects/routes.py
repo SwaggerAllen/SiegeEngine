@@ -1,6 +1,10 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from backend.auth.routes import _require_writer, get_current_user
 from backend.dag.service import propagate_staleness
@@ -431,32 +435,35 @@ def _artifact_to_dict(artifact: Artifact, db: Session | None = None) -> dict:
     if db:
         from sqlalchemy import text as sa_text
 
-        summary_generating = (
-            db.execute(
-                sa_text(
-                    "SELECT 1 FROM jobs WHERE job_type = 'generate_summary'"
-                    " AND status IN ('queued', 'running')"
-                    " AND json_extract(payload, '$.artifact_id') = :aid"
-                    " LIMIT 1"
-                ),
-                {"aid": artifact.id},
-            ).first()
-            is not None
-        )
+        try:
+            summary_generating = (
+                db.execute(
+                    sa_text(
+                        "SELECT 1 FROM jobs WHERE job_type = 'generate_summary'"
+                        " AND status IN ('queued', 'running')"
+                        " AND json_extract(payload, '$.artifact_id') = :aid"
+                        " LIMIT 1"
+                    ),
+                    {"aid": artifact.id},
+                ).first()
+                is not None
+            )
 
-        # If not generating and no summary, check for a recent failure
-        if not summary_generating and not artifact.summary:
-            failed_row = db.execute(
-                sa_text(
-                    "SELECT error_message FROM jobs WHERE job_type = 'generate_summary'"
-                    " AND status = 'failed'"
-                    " AND json_extract(payload, '$.artifact_id') = :aid"
-                    " ORDER BY completed_at DESC LIMIT 1"
-                ),
-                {"aid": artifact.id},
-            ).first()
-            if failed_row and failed_row[0]:
-                summary_error = failed_row[0]
+            # If not generating and no summary, check for a recent failure
+            if not summary_generating and not artifact.summary:
+                failed_row = db.execute(
+                    sa_text(
+                        "SELECT error_message FROM jobs WHERE job_type = 'generate_summary'"
+                        " AND status = 'failed'"
+                        " AND json_extract(payload, '$.artifact_id') = :aid"
+                        " ORDER BY completed_at DESC LIMIT 1"
+                    ),
+                    {"aid": artifact.id},
+                ).first()
+                if failed_row and failed_row[0]:
+                    summary_error = failed_row[0]
+        except Exception:
+            logger.warning("Failed to query summary job status for artifact %s", artifact.id, exc_info=True)
 
     return {
         "id": artifact.id,
