@@ -530,6 +530,9 @@ export function PromptPreviewPanel({ preview }: { preview: PromptPreview }) {
     assistant: 'text-green-400 bg-green-950/30 border-green-700/40',
   };
 
+  const totalChars = preview.messages.reduce((sum, msg) => sum + msg.content.length, 0);
+  const estimatedTokens = Math.ceil(totalChars / 4);
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -539,6 +542,11 @@ export function PromptPreviewPanel({ preview }: { preview: PromptPreview }) {
         <span className="text-xs text-gray-500">
           {preview.model} &middot; temp {preview.temperature}
         </span>
+      </div>
+      <div className="flex items-center gap-3 text-xs text-gray-400">
+        <span>{totalChars.toLocaleString()} chars</span>
+        <span>&middot;</span>
+        <span>~{estimatedTokens.toLocaleString()} tokens (est.)</span>
       </div>
       {preview.messages.map((msg, i) => (
         <div
