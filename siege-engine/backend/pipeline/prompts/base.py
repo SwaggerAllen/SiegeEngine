@@ -1,4 +1,3 @@
-import json
 from abc import ABC, abstractmethod
 
 
@@ -27,7 +26,6 @@ class PromptTemplate(ABC):
         self,
         input_artifacts: dict[str, str],
         component_key: str | None = None,
-        feedback: dict | None = None,
         human_notes: str | None = None,
         prompt_config: dict | None = None,
         current_content: str | None = None,
@@ -38,7 +36,6 @@ class PromptTemplate(ABC):
         self,
         input_artifacts: dict[str, str],
         component_key: str | None,
-        feedback: dict | None,
         human_notes: str | None,
         prompt_config: dict,
         current_content: str | None = None,
@@ -66,7 +63,7 @@ class PromptTemplate(ABC):
             {"role": "user", "content": user_content},
         ]
 
-        if feedback or human_notes or current_content or upstream_changes:
+        if human_notes or current_content or upstream_changes:
             revision = (
                 prompt_config.get("revision_instructions") or self.default_revision_instructions
             )
@@ -81,8 +78,6 @@ class PromptTemplate(ABC):
                     "\n\nThe following upstream documents have changed:\n\n"
                     f"UPSTREAM CHANGES:\n\n{upstream_changes}"
                 )
-            if feedback:
-                revision += f"\n\nAI Review Feedback: {json.dumps(feedback)}"
             if human_notes:
                 revision += f"\n\nHuman Reviewer Notes: {human_notes}"
             messages.append({"role": "user", "content": revision})
@@ -92,12 +87,11 @@ class PromptTemplate(ABC):
     def _inject_feedback(
         self,
         messages: list[dict],
-        feedback: dict | None,
         human_notes: str | None,
         current_content: str | None = None,
         upstream_changes: str | None = None,
     ) -> list[dict]:
-        if not (feedback or human_notes or current_content or upstream_changes):
+        if not (human_notes or current_content or upstream_changes):
             return messages
 
         revision_parts = ["REVISION REQUESTED."]
@@ -116,8 +110,6 @@ class PromptTemplate(ABC):
                 "Update your document to reflect these upstream changes."
             )
 
-        if feedback:
-            revision_parts.append(f"AI Review Feedback: {json.dumps(feedback)}")
         if human_notes:
             revision_parts.append(f"Human Reviewer Notes: {human_notes}")
 

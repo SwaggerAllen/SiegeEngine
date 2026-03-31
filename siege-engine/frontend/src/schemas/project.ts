@@ -44,6 +44,7 @@ export const ArtifactSchema = z.object({
   name: z.string(),
   component_key: z.string().nullable(),
   content: z.string().nullable(),
+  summary: z.string().nullable().optional(),
   status: ArtifactStatusSchema,
   is_stale: z.boolean().optional().default(false),
   version: z.number(),

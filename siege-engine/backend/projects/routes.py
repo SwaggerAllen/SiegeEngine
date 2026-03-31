@@ -432,6 +432,7 @@ def _artifact_to_dict(artifact: Artifact, db: Session | None = None) -> dict:
         "name": artifact.name,
         "component_key": artifact.component_key,
         "content": artifact.content,
+        "summary": artifact.summary,
         "status": status,
         "version": version,
         "ai_review_feedback": artifact.ai_review_feedback,

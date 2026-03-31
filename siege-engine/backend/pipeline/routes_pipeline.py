@@ -759,6 +759,7 @@ def get_debug_state(
             "status": a.status.value,
             "version": a.version,
             "content_length": len(a.content) if a.content else 0,
+            "has_summary": a.summary is not None,
             "file_path": a.file_path,
             "git_commit_sha": a.git_commit_sha,
         }
@@ -1303,7 +1304,14 @@ def prompt_preview(
 ):
     """Return the full interpolated prompt that would be sent to the LLM."""
     from backend.models import Artifact
-    from backend.pipeline.nodes.generate import build_prompt_messages
+    from backend.pipeline.nodes.generate import (
+        CONTEXT_BUDGET_CHARS,
+        _build_dependency_summary_content,
+        _build_fanout_summary_content,
+        _estimate_prompt_chars,
+        _FANOUT_STAGE_KEYS,
+        build_prompt_messages,
+    )
 
     artifact = db.get(Artifact, req.artifact_id)
     if not artifact:
@@ -1337,13 +1345,40 @@ def prompt_preview(
     else:
         effective_notes = feedback_notes
 
+    # Apply budget swaps (sync-only: tiers 1 and 2, no hot-path)
+    budgeted = dict(input_artifacts)
+    summarized_keys: list[str] = []
+
+    # Tier 2: fan-out aggregated inputs always use summaries
+    for stage_key in stage_def.input_stage_keys:
+        if stage_key in _FANOUT_STAGE_KEYS and stage_key in budgeted:
+            summary_content = _build_fanout_summary_content(db, project_id, stage_key)
+            if summary_content:
+                budgeted[stage_key] = summary_content
+                summarized_keys.append(stage_key)
+
+    # Tier 1: dependency architectures — swap if over budget
+    messages = build_prompt_messages(
+        stage_def, budgeted, artifact.component_key,
+        human_notes=effective_notes,
+    )["messages"]
+    total_chars = _estimate_prompt_chars(messages)
+
+    if total_chars > CONTEXT_BUDGET_CHARS and "dependency_architectures" in budgeted:
+        dep_summary, _ = _build_dependency_summary_content(
+            db, project_id, artifact.component_key,
+        )
+        if dep_summary:
+            budgeted["dependency_architectures"] = dep_summary
+            summarized_keys.append("dependency_architectures")
+
     result = build_prompt_messages(
         stage_def,
-        input_artifacts,
+        budgeted,
         artifact.component_key,
-        feedback=artifact.ai_review_feedback if hasattr(artifact, "ai_review_feedback") else None,
         human_notes=effective_notes,
     )
+    result["summarized_inputs"] = summarized_keys
 
     return result
 

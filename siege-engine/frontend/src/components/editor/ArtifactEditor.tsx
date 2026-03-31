@@ -5,7 +5,7 @@ import { useReviseArtifact } from '../../hooks/mutations/usePipelineMutations';
 import { useUpdateArtifact } from '../../hooks/mutations/useProjectMutations';
 import { formatDateTime } from '../../utils/dateFormat';
 import { getArtifactHistory, getArtifactVersion } from '../../api/projects';
-import { getPromptPreview } from '../../api/pipeline';
+import { getPromptPreview, retrySummary } from '../../api/pipeline';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
 import type { ArtifactVersion } from '../../api/projects';
 import type { PromptPreview } from '../../api/pipeline';
@@ -17,7 +17,7 @@ import DiffView from './DiffView';
 
 const REVISABLE_STATUSES = new Set(['approved']);
 
-type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dependencies';
+type EditorTab = 'document' | 'diff' | 'feedback' | 'comments' | 'prompt' | 'dependencies' | 'summary';
 
 export function ArtifactEditor({ artifact, projectId, compactMobile = false, viewOnly = false }: { artifact: Artifact; projectId: string; compactMobile?: boolean; viewOnly?: boolean }) {
   const updateArtifactMutation = useUpdateArtifact(projectId);
@@ -349,6 +349,16 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
             Dependencies
           </button>
         )}
+        <button
+          onClick={() => setActiveTab('summary')}
+          className={`py-1.5 text-xs border-b-2 min-h-[44px] md:min-h-0 ${
+            activeTab === 'summary'
+              ? 'border-teal-500 text-white'
+              : 'border-transparent text-gray-400 hover:text-white'
+          }`}
+        >
+          Summary
+        </button>
         {!isViewer && (
           <button
             onClick={() => setActiveTab('prompt')}
@@ -427,7 +437,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
       )}
 
       {/* Search bar — available for document, feedback, and prompt tabs */}
-      {(activeTab === 'document' || activeTab === 'feedback' || activeTab === 'prompt') && (
+      {(activeTab === 'document' || activeTab === 'feedback' || activeTab === 'prompt' || activeTab === 'summary') && (
         <ContentSearchBar containerRef={contentRef} contentKey={`${artifact.id}:${activeTab}:${editing}`} />
       )}
 
@@ -513,12 +523,70 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
             <div className="text-sm text-gray-400">No prompt preview available.</div>
           )}
         </div>
+      ) : activeTab === 'summary' ? (
+        <SummaryPanel artifact={artifact} projectId={projectId} />
       ) : activeTab === 'dependencies' ? (
         <ComponentDependencyList projectId={projectId} refreshKey={artifact.version} />
       ) : (
         /* Comments tab */
         <CommentsPanel projectId={projectId} artifactId={artifact.id} />
       )}
+    </div>
+  );
+}
+
+function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
+  const [generating, setGenerating] = useState(false);
+  const [summary, setSummary] = useState<string | null>(artifact.summary ?? null);
+
+  // Sync with artifact prop changes
+  useEffect(() => {
+    setSummary(artifact.summary ?? null);
+  }, [artifact.summary]);
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    try {
+      await retrySummary(projectId, artifact.id);
+      // Re-fetch artifact to get updated summary
+      const { data } = await (await import('../../api/client')).default.get(`/projects/artifacts/${artifact.id}`);
+      setSummary(data.summary ?? null);
+    } catch {
+      // ignore — user can retry
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  if (!summary) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
+        <p className="text-sm text-gray-400">No summary available for this artifact.</p>
+        <button
+          onClick={handleGenerate}
+          disabled={generating}
+          className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs rounded disabled:opacity-50"
+        >
+          {generating ? 'Generating...' : 'Generate Summary'}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-auto pb-64">
+      <div className="prose prose-invert prose-sm max-w-none p-3">
+        <Markdown>{summary}</Markdown>
+      </div>
+      <div className="px-3 pt-2">
+        <button
+          onClick={handleGenerate}
+          disabled={generating}
+          className="px-2 py-1 text-xs text-gray-400 hover:text-white border border-gray-600 hover:border-gray-500 rounded disabled:opacity-50"
+        >
+          {generating ? 'Regenerating...' : 'Regenerate Summary'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -548,6 +616,18 @@ export function PromptPreviewPanel({ preview }: { preview: PromptPreview }) {
         <span>&middot;</span>
         <span>~{estimatedTokens.toLocaleString()} tokens (est.)</span>
       </div>
+      {preview.summarized_inputs && preview.summarized_inputs.length > 0 && (
+        <div className="rounded border border-teal-700/40 bg-teal-950/30 p-2">
+          <div className="text-xs font-semibold text-teal-400 uppercase mb-1 opacity-70">
+            Summarized Inputs
+          </div>
+          <ul className="text-xs text-teal-300 space-y-0.5">
+            {preview.summarized_inputs.map((input, i) => (
+              <li key={i}>{input}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {preview.messages.map((msg, i) => (
         <div
           key={i}

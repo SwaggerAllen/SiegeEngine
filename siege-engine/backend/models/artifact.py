@@ -19,6 +19,7 @@ class Artifact(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     component_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[ArtifactStatus] = mapped_column(
         Enum(ArtifactStatus), default=ArtifactStatus.PENDING
     )

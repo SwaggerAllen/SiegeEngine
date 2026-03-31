@@ -1415,58 +1415,18 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     artifact.status = ArtifactStatus.AI_REVIEWING
                     _commit_review_to_git(project_id, artifact, feedback)
 
-                # Self-improvement loops: refine with AI feedback
-                ai_loops = pipeline_run.ai_loops if pipeline_run else 1
-                if feedback and ai_loops > 1:
-                    for loop_i in range(1, ai_loops):
-                        self.events.emit(
-                            project_id,
-                            evt.GENERATION_PROGRESS,
-                            {
-                                "stage_key": stage_def.stage_key,
-                                "component_key": component_key,
-                                "step": "self_improvement",
-                                "loop": loop_i + 1,
-                                "total_loops": ai_loops,
-                            },
-                            run_id=execution.run_id,
-                        )
-                        await ws_manager.broadcast(
-                            project_id,
-                            {
-                                "type": "stage_progress",
-                                "stage_key": stage_def.stage_key,
-                                "component_key": component_key,
-                                "step": "self_improvement",
-                                "message": (
-                                    f"Self-improvement loop {loop_i + 1}/{ai_loops}"
-                                    f" for {stage_def.display_name}..."
-                                ),
-                            },
-                        )
+            # Generate a summary for the artifact (non-blocking on failure).
+            # Uses the pipeline semaphore via cli_manager so it runs serial
+            # with other pipeline work.
+            try:
+                from backend.pipeline.summarize import generate_summary
 
-                        content, artifact_id = await generate(
-                            stage_def,
-                            input_artifacts,
-                            component_key,
-                            self.db,
-                            feedback=feedback,
-                            human_notes=human_notes,
-                            execution_id=execution.id,
-                        )
-                        execution.artifact_id = artifact_id
-
-                        # Re-review
-                        feedback = await ai_review(
-                            stage_def,
-                            content,
-                            input_artifacts,
-                            review_prompt_overrides=stage_def.pipeline_config.review_prompt_overrides,
-                        )
-                        artifact = self.db.get(Artifact, artifact_id)
-                        if artifact:
-                            artifact.ai_review_feedback = feedback
-                            _commit_review_to_git(project_id, artifact, feedback)
+                await generate_summary(artifact_id, self.db)
+            except Exception:
+                logger.warning(
+                    "Summary generation failed for artifact %s, continuing",
+                    artifact_id,
+                )
 
             # All generated artifacts go to AWAITING_REVIEW — only human
             # approval can move them to APPROVED.

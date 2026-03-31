@@ -6,7 +6,6 @@ class SubComponentArchPrompt(PromptTemplate):
         self,
         input_artifacts,
         component_key=None,
-        feedback=None,
         human_notes=None,
         prompt_config=None,
         current_content=None,
@@ -16,7 +15,6 @@ class SubComponentArchPrompt(PromptTemplate):
             return self._build_from_config(
                 input_artifacts,
                 component_key,
-                feedback,
                 human_notes,
                 prompt_config,
                 current_content=current_content,
@@ -46,7 +44,6 @@ class SubComponentArchPrompt(PromptTemplate):
         ]
         return self._inject_feedback(
             messages,
-            feedback,
             human_notes,
             current_content,
             upstream_changes,
