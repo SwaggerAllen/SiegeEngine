@@ -347,19 +347,26 @@ async def _handle_generate_summary(payload: dict) -> None:
 
     db = SessionLocal()
     try:
-        summary = await generate_summary(artifact_id, db)
+        summary = await generate_summary(artifact_id, db, raise_on_error=True)
         db.commit()
-        await ws_manager.broadcast(project_id, {
-            "type": "summary_completed" if summary else "summary_failed",
-            "artifact_id": artifact_id,
-        })
+        if summary:
+            await ws_manager.broadcast(project_id, {
+                "type": "summary_completed",
+                "artifact_id": artifact_id,
+            })
+        else:
+            await ws_manager.broadcast(project_id, {
+                "type": "summary_failed",
+                "artifact_id": artifact_id,
+            })
+            raise RuntimeError(f"Summary generation returned empty for artifact {artifact_id}")
     except Exception:
-        logger.warning("Summary generation failed for %s", artifact_id, exc_info=True)
         db.rollback()
         await ws_manager.broadcast(project_id, {
             "type": "summary_failed",
             "artifact_id": artifact_id,
         })
+        raise
     finally:
         db.close()
 
