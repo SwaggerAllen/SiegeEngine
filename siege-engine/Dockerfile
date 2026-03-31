@@ -45,6 +45,8 @@ RUN mkdir -p /data/repos && chown -R claude:claude /data
 RUN chown -R claude:claude /app
 
 # Default environment variables
+ARG COMMIT_HASH=unknown
+ENV COMMIT_HASH=$COMMIT_HASH
 ENV SIEGE_DATABASE_URL=sqlite:////data/siege_engine.db
 ENV SIEGE_GIT_REPOS_BASE_PATH=/data/repos
 
