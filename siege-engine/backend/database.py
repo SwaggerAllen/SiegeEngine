@@ -102,6 +102,9 @@ def _add_missing_columns():
     # Track the git SHA before the latest generation for accurate diffs
     _ensure_column(inspector, "artifacts", "prev_git_commit_sha", "VARCHAR(40)")
 
+    # Pre-computed summary for context budget management
+    _ensure_column(inspector, "artifacts", "summary", "TEXT")
+
     # Extended snapshot columns (added in d4e5f6a7b8c9 migration)
     for col in (
         "artifact_versions",
