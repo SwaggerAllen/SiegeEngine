@@ -536,28 +536,32 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
 }
 
 function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
-  const [generating, setGenerating] = useState(false);
+  const serverGenerating = artifact.summary_generating ?? false;
+  const serverError = artifact.summary_error ?? null;
+  const [localGenerating, setLocalGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const summary = artifact.summary ?? null;
+  const generating = serverGenerating || localGenerating;
+  const displayError = error || serverError;
 
-  // When the artifact prop updates with a new summary, clear generating state
+  // When the server reports generation is done, clear local state
   useEffect(() => {
-    if (artifact.summary && generating) {
-      setGenerating(false);
+    if (!serverGenerating && localGenerating) {
+      setLocalGenerating(false);
     }
-  }, [artifact.summary, generating]);
+  }, [serverGenerating, localGenerating]);
 
   const handleGenerate = async () => {
-    setGenerating(true);
+    setLocalGenerating(true);
     setError(null);
     try {
       await retrySummary(projectId, artifact.id);
-      // The action fires a background task and returns immediately.
+      // The action fires a background job and returns immediately.
       // Websocket summary_completed event triggers artifact refetch,
       // which updates artifact.summary and clears generating state.
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Summary generation failed');
-      setGenerating(false);
+      setLocalGenerating(false);
     }
   };
 
@@ -575,7 +579,7 @@ function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: 
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-sm text-gray-400">No summary available for this artifact.</p>
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {displayError && <p className="text-sm text-red-400">{displayError}</p>}
         <button
           onClick={handleGenerate}
           className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs rounded"
