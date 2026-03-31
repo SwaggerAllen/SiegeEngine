@@ -21,9 +21,6 @@ const DAG_REFRESH_EVENTS = new Set([
   'pipeline_paused',
   'staleness_propagated',
   'artifact_pruned',
-  'summary_started',
-  'summary_completed',
-  'summary_failed',
 ]);
 
 export function useWebSocket(projectId: string | undefined) {

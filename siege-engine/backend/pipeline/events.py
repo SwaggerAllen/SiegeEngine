@@ -29,11 +29,6 @@ CASCADE_STARTED = "cascade_started"
 CASCADE_COMPLETED = "cascade_completed"
 CARRIED_OVER = "carried_over"
 
-# Summary lifecycle
-SUMMARY_STARTED = "summary_started"
-SUMMARY_COMPLETED = "summary_completed"
-SUMMARY_FAILED = "summary_failed"
-
 # Comments & feedback
 COMMENT_ADDED = "comment_added"
 
@@ -71,9 +66,6 @@ ALL_EVENT_TYPES = frozenset(
         CASCADE_STARTED,
         CASCADE_COMPLETED,
         CARRIED_OVER,
-        SUMMARY_STARTED,
-        SUMMARY_COMPLETED,
-        SUMMARY_FAILED,
         COMMENT_ADDED,
         GENERATION_PROGRESS,
         PIPELINE_PAUSED,

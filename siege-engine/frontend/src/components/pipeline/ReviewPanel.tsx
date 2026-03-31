@@ -370,8 +370,8 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
     return (
       <div className="space-y-3">
         <div className="flex items-center gap-2 text-sm">
-          <span className={`px-2 py-1 rounded text-white animate-pulse ${artifact.status === 'summarizing' ? 'bg-teal-600' : 'bg-blue-600'}`}>
-            {artifact.status === 'summarizing' ? 'Summarizing' : execution.status === 'ai_review' ? 'AI Reviewing' : 'Generating'}
+          <span className="px-2 py-1 rounded bg-blue-600 text-white animate-pulse">
+            {execution.status === 'ai_review' ? 'AI Reviewing' : 'Generating'}
           </span>
           {elapsed && <span className="text-xs text-gray-400 font-mono">{elapsed}</span>}
         </div>

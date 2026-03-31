@@ -1434,53 +1434,15 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
             # Generate a summary for the artifact (non-blocking on failure).
             # Uses the pipeline semaphore via cli_manager so it runs serial
             # with other pipeline work.
-            self.events.emit(
-                project_id,
-                evt.SUMMARY_STARTED,
-                {
-                    "execution_id": execution.id,
-                    "stage_key": stage_def.stage_key,
-                    "component_key": component_key,
-                    "artifact_id": artifact_id,
-                },
-                run_id=execution.run_id,
-            )
-            self.db.commit()
-
-            await ws_manager.broadcast(
-                project_id,
-                {
-                    "type": "summary_started",
-                    "stage_key": stage_def.stage_key,
-                    "component_key": component_key,
-                    "artifact_id": artifact_id,
-                },
-            )
-
             try:
                 from backend.pipeline.summarize import generate_summary
 
-                result = await generate_summary(artifact_id, self.db)
-                summary_event = evt.SUMMARY_COMPLETED if result else evt.SUMMARY_FAILED
+                await generate_summary(artifact_id, self.db)
             except Exception:
                 logger.warning(
                     "Summary generation failed for artifact %s, continuing",
                     artifact_id,
                 )
-                summary_event = evt.SUMMARY_FAILED
-
-            self.events.emit(
-                project_id,
-                summary_event,
-                {
-                    "execution_id": execution.id,
-                    "stage_key": stage_def.stage_key,
-                    "component_key": component_key,
-                    "artifact_id": artifact_id,
-                    "restore_status": "awaiting_review",
-                },
-                run_id=execution.run_id,
-            )
 
             # All generated artifacts go to AWAITING_REVIEW — only human
             # approval can move them to APPROVED.

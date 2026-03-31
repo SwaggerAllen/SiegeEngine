@@ -7,7 +7,6 @@ class ArtifactStatus(str, enum.Enum):
     PENDING = "pending"
     GENERATING = "generating"
     AI_REVIEWING = "ai_reviewing"
-    SUMMARIZING = "summarizing"
     AWAITING_REVIEW = "awaiting_review"
     APPROVED = "approved"
     REJECTED = "rejected"

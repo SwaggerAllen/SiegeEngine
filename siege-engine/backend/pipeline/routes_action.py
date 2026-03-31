@@ -179,96 +179,43 @@ async def pipeline_action(
             import asyncio
 
             from backend.models import Artifact
-            from backend.pipeline import events as evt
-            from backend.pipeline.event_store import EventStore
             from backend.pipeline.websocket import ws_manager
 
             artifact = db.get(Artifact, action.artifact_id)
             if not artifact:
                 return {"status": "error", "detail": "Artifact not found"}
 
-            # Find the execution for event context
-            from backend.models import StageExecution
-            execution = (
-                db.query(StageExecution)
-                .filter_by(artifact_id=action.artifact_id)
-                .order_by(StageExecution.completed_at.desc())
-                .first()
-            )
-
-            event_store = EventStore(db)
-
-            # Capture current snapshot status so we can restore after summarizing
-            snapshot = event_store.get_snapshot(project_id)
-            current_artifact_status = (snapshot.artifact_statuses or {}).get(
-                action.artifact_id, artifact.status.value
-            )
-
-            event_params = {
-                "execution_id": execution.id if execution else None,
-                "stage_key": execution.stage_key if execution else None,
-                "component_key": execution.component_key if execution else None,
-                "artifact_id": action.artifact_id,
-            }
-            run_id = execution.run_id if execution else None
-
-            # Emit SUMMARY_STARTED and commit so the status is visible immediately
-            event_store.emit(project_id, evt.SUMMARY_STARTED, event_params, run_id=run_id)
-            db.commit()
-
-            await ws_manager.broadcast(project_id, {
-                "type": "summary_started",
-                "artifact_id": action.artifact_id,
-                "stage_key": event_params["stage_key"],
-                "component_key": event_params["component_key"],
-            })
-
-            # Run the actual summary generation in a background task so the
-            # HTTP response returns immediately and the UI shows "summarizing".
-            async def _run_summary_bg(
-                _project_id: str,
-                _artifact_id: str,
-                _event_params: dict,
-                _run_id: str | None,
-                _restore_status: str,
-            ):
+            # Run summary generation in a background task so the HTTP
+            # response returns immediately. Broadcast websocket events
+            # so the SummaryPanel can track progress.
+            async def _run_summary_bg(_project_id: str, _artifact_id: str):
                 from backend.database import SessionLocal
                 from backend.pipeline.summarize import generate_summary
+
+                await ws_manager.broadcast(_project_id, {
+                    "type": "summary_started",
+                    "artifact_id": _artifact_id,
+                })
 
                 bg_db = SessionLocal()
                 try:
                     summary = await generate_summary(_artifact_id, bg_db)
-                    summary_event = evt.SUMMARY_COMPLETED if summary else evt.SUMMARY_FAILED
-                except Exception:
-                    logger.warning("Background summary generation failed for %s", _artifact_id, exc_info=True)
-                    summary = None
-                    summary_event = evt.SUMMARY_FAILED
-
-                try:
-                    bg_store = EventStore(bg_db)
-                    completion_params = {**_event_params, "restore_status": _restore_status}
-                    bg_store.emit(_project_id, summary_event, completion_params, run_id=_run_id)
                     bg_db.commit()
-
                     await ws_manager.broadcast(_project_id, {
                         "type": "summary_completed" if summary else "summary_failed",
                         "artifact_id": _artifact_id,
-                        "stage_key": _event_params.get("stage_key"),
-                        "component_key": _event_params.get("component_key"),
                     })
                 except Exception:
-                    logger.error("Failed to emit summary completion event", exc_info=True)
+                    logger.warning("Background summary generation failed for %s", _artifact_id, exc_info=True)
                     bg_db.rollback()
+                    await ws_manager.broadcast(_project_id, {
+                        "type": "summary_failed",
+                        "artifact_id": _artifact_id,
+                    })
                 finally:
                     bg_db.close()
 
-            asyncio.create_task(_run_summary_bg(
-                project_id,
-                action.artifact_id,
-                event_params,
-                run_id,
-                current_artifact_status,
-            ))
+            asyncio.create_task(_run_summary_bg(project_id, action.artifact_id))
 
             return {"status": "ok", "started": True}
 
