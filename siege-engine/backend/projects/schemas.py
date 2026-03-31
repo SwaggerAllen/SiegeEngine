@@ -39,11 +39,14 @@ class ArtifactResponse(BaseModel):
     name: str
     component_key: str | None
     content: str | None
+    summary: str | None = None
+    summary_generating: bool = False
     status: str
     version: int
     ai_review_feedback: dict | None
     human_review_notes: str | None
     file_path: str | None
+    git_commit_sha: str | None = None
     language: str | None
     is_stale: bool = False
     created_at: str

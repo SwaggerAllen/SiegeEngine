@@ -425,6 +425,24 @@ def _artifact_to_dict(artifact: Artifact, db: Session | None = None) -> dict:
         version = (snapshot.artifact_versions or {}).get(artifact.id, version)
         git_sha = (snapshot.artifact_git_shas or {}).get(artifact.id, git_sha)
 
+    # Check if a summary generation job is active for this artifact
+    summary_generating = False
+    if db:
+        from sqlalchemy import text as sa_text
+
+        summary_generating = (
+            db.execute(
+                sa_text(
+                    "SELECT 1 FROM jobs WHERE job_type = 'generate_summary'"
+                    " AND status IN ('queued', 'running')"
+                    " AND json_extract(payload, '$.artifact_id') = :aid"
+                    " LIMIT 1"
+                ),
+                {"aid": artifact.id},
+            ).first()
+            is not None
+        )
+
     return {
         "id": artifact.id,
         "project_id": artifact.project_id,
@@ -433,6 +451,7 @@ def _artifact_to_dict(artifact: Artifact, db: Session | None = None) -> dict:
         "component_key": artifact.component_key,
         "content": artifact.content,
         "summary": artifact.summary,
+        "summary_generating": summary_generating,
         "status": status,
         "version": version,
         "ai_review_feedback": artifact.ai_review_feedback,

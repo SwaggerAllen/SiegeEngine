@@ -536,28 +536,30 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
 }
 
 function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
-  const [generating, setGenerating] = useState(false);
+  const serverGenerating = artifact.summary_generating ?? false;
+  const [localGenerating, setLocalGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const summary = artifact.summary ?? null;
+  const generating = serverGenerating || localGenerating;
 
-  // When the artifact prop updates with a new summary, clear generating state
+  // When the server reports generation is done, clear local state
   useEffect(() => {
-    if (artifact.summary && generating) {
-      setGenerating(false);
+    if (!serverGenerating && localGenerating) {
+      setLocalGenerating(false);
     }
-  }, [artifact.summary, generating]);
+  }, [serverGenerating, localGenerating]);
 
   const handleGenerate = async () => {
-    setGenerating(true);
+    setLocalGenerating(true);
     setError(null);
     try {
       await retrySummary(projectId, artifact.id);
-      // The action fires a background task and returns immediately.
+      // The action fires a background job and returns immediately.
       // Websocket summary_completed event triggers artifact refetch,
       // which updates artifact.summary and clears generating state.
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Summary generation failed');
-      setGenerating(false);
+      setLocalGenerating(false);
     }
   };
 
