@@ -21,6 +21,9 @@ const DAG_REFRESH_EVENTS = new Set([
   'pipeline_paused',
   'staleness_propagated',
   'artifact_pruned',
+  'summary_started',
+  'summary_completed',
+  'summary_failed',
 ]);
 
 export function useWebSocket(projectId: string | undefined) {
@@ -141,6 +144,16 @@ export function useWebSocket(projectId: string | undefined) {
         (data.type === 'comment_added' ||
           data.type === 'comment_updated' ||
           data.type === 'comment_deleted') &&
+        data.artifact_id
+      ) {
+        qc.invalidateQueries({ queryKey: projectKeys.artifact(data.artifact_id) });
+      }
+
+      // Refresh artifact on summary events
+      if (
+        (data.type === 'summary_started' ||
+          data.type === 'summary_completed' ||
+          data.type === 'summary_failed') &&
         data.artifact_id
       ) {
         qc.invalidateQueries({ queryKey: projectKeys.artifact(data.artifact_id) });
