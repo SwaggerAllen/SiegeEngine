@@ -46,11 +46,16 @@ implementation details not relevant to the consuming stage.
 Keep the summary under 20% of the original document length."""
 
 
-async def generate_summary(artifact_id: str, db: Session) -> str | None:
+async def generate_summary(
+    artifact_id: str, db: Session, *, raise_on_error: bool = False
+) -> str | None:
     """Generate and store a summary for the given artifact.
 
     Uses the pipeline semaphore via cli_manager.generate() to honor
     concurrency limits. Returns the summary text, or None on failure.
+
+    When *raise_on_error* is True, exceptions propagate to the caller
+    (useful for the job queue where the worker captures the error).
     """
     artifact = db.get(Artifact, artifact_id)
     if not artifact or not artifact.content:
@@ -75,6 +80,8 @@ async def generate_summary(artifact_id: str, db: Session) -> str | None:
         return summary
     except Exception:
         logger.warning("Summary generation failed for artifact %s", artifact_id, exc_info=True)
+        if raise_on_error:
+            raise
         return None
 
 
