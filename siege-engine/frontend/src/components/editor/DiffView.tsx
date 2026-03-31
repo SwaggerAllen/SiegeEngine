@@ -60,7 +60,7 @@ export default function DiffView({ projectId, artifactId, artifactVersion, compa
         v{diff.from_version} → v{diff.to_version}
       </div>
       <div className="flex-1 overflow-auto">
-        <div className="text-sm font-mono p-4 leading-relaxed whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
+        <div className="text-sm font-mono p-4 pb-64 leading-relaxed whitespace-pre-wrap break-words" style={{ overflowWrap: 'anywhere' }}>
           {parsed.map(({ line, type, key }) => (
             <div
               key={key}

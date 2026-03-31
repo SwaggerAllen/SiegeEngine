@@ -48,7 +48,7 @@ export function ComponentDependencyList({ projectId, refreshKey }: { projectId: 
   }
 
   return (
-    <div className="flex-1 overflow-auto p-3 space-y-1">
+    <div className="flex-1 overflow-auto p-3 pb-64 space-y-1">
       {hasAnyChanges && (
         <div className="flex items-center gap-2 px-1 pb-2 text-xs text-gray-500">
           <span>Showing changes vs. previous extraction</span>

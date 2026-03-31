@@ -183,7 +183,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
     }
   };
 
-  const proseClasses = `flex-1 p-3 md:p-4 overflow-auto prose prose-invert prose-sm max-w-none
+  const proseClasses = `flex-1 p-3 md:p-4 pb-64 overflow-auto prose prose-invert prose-sm max-w-none
     prose-headings:text-gray-100
     prose-h2:text-lg prose-h2:font-bold prose-h2:mt-8 prose-h2:mb-3 prose-h2:border-b prose-h2:border-gray-700 prose-h2:pb-2
     prose-h3:text-base prose-h3:font-semibold prose-h3:mt-6 prose-h3:mb-2
@@ -452,7 +452,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
         </div>
       ) : activeTab === 'feedback' ? (
         /* AI Feedback tab: summary + full document */
-        <div ref={contentRef} className="flex-1 overflow-auto">
+        <div ref={contentRef} className="flex-1 overflow-auto pb-64">
           {/* AI Review summary */}
           {reviewFeedback && (
             <div className="mx-3 mt-3 bg-gray-800 p-3 rounded text-sm">
@@ -504,7 +504,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
         <DiffView projectId={projectId} artifactId={artifact.id} artifactVersion={artifact.version} compareToSha={viewingSha} />
       ) : activeTab === 'prompt' ? (
         /* Prompt Preview tab */
-        <div ref={contentRef} className="flex-1 overflow-auto p-3 space-y-3">
+        <div ref={contentRef} className="flex-1 overflow-auto p-3 pb-64 space-y-3">
           {loadingPrompt ? (
             <div className="text-sm text-gray-400">Loading prompt preview...</div>
           ) : promptPreview ? (
