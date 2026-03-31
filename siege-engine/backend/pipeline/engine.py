@@ -1477,6 +1477,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     "stage_key": stage_def.stage_key,
                     "component_key": component_key,
                     "artifact_id": artifact_id,
+                    "restore_status": "awaiting_review",
                 },
                 run_id=execution.run_id,
             )
