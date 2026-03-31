@@ -176,10 +176,61 @@ async def pipeline_action(
             return prompt_preview(project_id, req, db, user)
 
         case "retry_summary":
+            from backend.models import Artifact
+            from backend.pipeline import events as evt
+            from backend.pipeline.event_store import EventStore
             from backend.pipeline.summarize import generate_summary
+            from backend.pipeline.websocket import ws_manager
 
-            summary = await generate_summary(action.artifact_id, db)
+            artifact = db.get(Artifact, action.artifact_id)
+            if not artifact:
+                return {"status": "error", "detail": "Artifact not found"}
+
+            # Find the execution for event context
+            from backend.models import StageExecution
+            execution = (
+                db.query(StageExecution)
+                .filter_by(artifact_id=action.artifact_id)
+                .order_by(StageExecution.completed_at.desc())
+                .first()
+            )
+
+            event_store = EventStore(db)
+            event_params = {
+                "execution_id": execution.id if execution else None,
+                "stage_key": execution.stage_key if execution else None,
+                "component_key": execution.component_key if execution else None,
+                "artifact_id": action.artifact_id,
+            }
+            run_id = execution.run_id if execution else None
+
+            event_store.emit(project_id, evt.SUMMARY_STARTED, event_params, run_id=run_id)
             db.commit()
+
+            await ws_manager.broadcast(project_id, {
+                "type": "summary_started",
+                "artifact_id": action.artifact_id,
+                "stage_key": event_params["stage_key"],
+                "component_key": event_params["component_key"],
+            })
+
+            try:
+                summary = await generate_summary(action.artifact_id, db)
+                summary_event = evt.SUMMARY_COMPLETED if summary else evt.SUMMARY_FAILED
+            except Exception:
+                summary = None
+                summary_event = evt.SUMMARY_FAILED
+
+            event_store.emit(project_id, summary_event, event_params, run_id=run_id)
+            db.commit()
+
+            await ws_manager.broadcast(project_id, {
+                "type": "summary_completed" if summary else "summary_failed",
+                "artifact_id": action.artifact_id,
+                "stage_key": event_params["stage_key"],
+                "component_key": event_params["component_key"],
+            })
+
             return {
                 "status": "ok",
                 "summary_length": len(summary) if summary else 0,
