@@ -175,6 +175,16 @@ async def pipeline_action(
             )
             return prompt_preview(project_id, req, db, user)
 
+        case "retry_summary":
+            from backend.pipeline.summarize import generate_summary
+
+            summary = await generate_summary(action.artifact_id, db)
+            db.commit()
+            return {
+                "status": "ok",
+                "summary_length": len(summary) if summary else 0,
+            }
+
         # ── Admin / recovery ──
         case "reconcile":
             from backend.pipeline.routes_pipeline import reconcile_statuses

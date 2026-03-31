@@ -167,6 +167,11 @@ class PromptPreviewAction(BaseModel):
     human_notes: str | None = None
 
 
+class RetrySummaryAction(BaseModel):
+    type: Literal["retry_summary"] = "retry_summary"
+    artifact_id: str
+
+
 class ReconcileAction(BaseModel):
     type: Literal["reconcile"] = "reconcile"
 
@@ -207,6 +212,7 @@ PipelineAction = Annotated[
         ReparseAction,
         RegenerateAction,
         PromptPreviewAction,
+        RetrySummaryAction,
         ReconcileAction,
         ReconstructAction,
         RevertAction,

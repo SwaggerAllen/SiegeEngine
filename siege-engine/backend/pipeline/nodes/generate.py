@@ -55,7 +55,6 @@ def build_prompt_messages(
     stage_def: StageDefinition,
     input_artifacts: dict[str, str],
     component_key: str | None,
-    feedback: dict | None = None,
     human_notes: str | None = None,
     current_content: str | None = None,
     upstream_changes: str | None = None,
@@ -85,7 +84,6 @@ def build_prompt_messages(
     messages = prompt.build(
         input_artifacts=input_artifacts,
         component_key=component_key,
-        feedback=feedback,
         human_notes=human_notes,
         prompt_config=prompt_config_dict,
         current_content=current_content,
@@ -106,12 +104,256 @@ def build_prompt_messages(
     }
 
 
+# Stage keys whose outputs come from fan-out (multiple artifacts per type)
+_FANOUT_STAGE_KEYS = {
+    "component_architectures",
+    "extract_sub_components",
+    "component_plans",
+    "sub_component_architectures",
+    "sub_component_plans",
+    "code_generation",
+    "code_review",
+}
+
+# 90% of Claude Code's 200k token context window
+CONTEXT_BUDGET_CHARS = 180_000 * 4  # ~720k chars ≈ 180k tokens
+
+
+def _estimate_prompt_chars(messages: list[dict]) -> int:
+    """Estimate total character count across all prompt messages."""
+    return sum(len(m.get("content", "")) for m in messages)
+
+
+def _build_fanout_summary_content(
+    db: Session,
+    project_id: str,
+    stage_key: str,
+) -> str | None:
+    """Build aggregated content from fan-out artifact summaries.
+
+    Returns the combined summary text if all artifacts have summaries,
+    or None if any are missing.
+    """
+    artifact_type = _stage_key_to_type(stage_key)
+    at = ARTIFACT_TYPE_MAP.get(artifact_type)
+    if not at:
+        return None
+
+    artifacts = db.query(Artifact).filter_by(project_id=project_id, artifact_type=at).all()
+    artifacts_with_content = [a for a in artifacts if a.content]
+    if not artifacts_with_content:
+        return None
+
+    # Check all have summaries
+    if any(a.summary is None for a in artifacts_with_content):
+        return None
+
+    return "\n\n---\n\n".join(
+        f"### {a.component_key or a.name}\n\n{a.summary}"
+        for a in artifacts_with_content
+    )
+
+
+def _build_dependency_summary_content(
+    db: Session,
+    project_id: str,
+    component_key: str | None,
+) -> tuple[str | None, list[tuple[str, int]]]:
+    """Build dependency architectures using summaries where available.
+
+    Returns (summarized_content_or_None, [(dep_key, content_len), ...])
+    sorted by content length descending for budget swap ordering.
+    """
+    if not component_key:
+        return None, []
+
+    parent_key = component_key.split(".")[0] if "." in component_key else None
+
+    if parent_key:
+        sc_key = component_key.split(".")[-1]
+        comp_def = (
+            db.query(ComponentDefinition)
+            .filter_by(project_id=project_id, key=sc_key, parent_key=parent_key)
+            .first()
+        )
+        art_type = ArtifactType.SUB_COMPONENT_ARCHITECTURE
+        key_fn = lambda dk: f"{parent_key}.{dk}"
+    else:
+        comp_def = (
+            db.query(ComponentDefinition)
+            .filter_by(project_id=project_id, key=component_key, parent_key=None)
+            .first()
+        )
+        art_type = ArtifactType.COMPONENT_ARCHITECTURE
+        key_fn = lambda dk: dk
+
+    if not comp_def or not comp_def.dependencies:
+        return None, []
+
+    # Collect dep artifacts sorted by content size descending
+    dep_artifacts = []
+    for dep_key in comp_def.dependencies:
+        full_key = key_fn(dep_key)
+        dep_art = (
+            db.query(Artifact)
+            .filter_by(project_id=project_id, artifact_type=art_type, component_key=full_key)
+            .first()
+        )
+        if dep_art and dep_art.content:
+            dep_artifacts.append((full_key, dep_art))
+
+    dep_artifacts.sort(key=lambda x: len(x[1].content), reverse=True)
+
+    # Try building with summaries for largest first
+    parts = []
+    for full_key, dep_art in dep_artifacts:
+        text = dep_art.summary if dep_art.summary else dep_art.content
+        parts.append(f"### {full_key}\n\n{text}")
+
+    if parts:
+        return "\n\n---\n\n".join(parts), [
+            (k, len(a.content)) for k, a in dep_artifacts
+        ]
+    return None, []
+
+
+async def apply_context_budget(
+    input_artifacts: dict[str, str],
+    stage_def: StageDefinition,
+    component_key: str | None,
+    db: Session,
+    human_notes: str | None = None,
+    current_content: str | None = None,
+    upstream_changes: str | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """Apply context budget to input artifacts, swapping summaries as needed.
+
+    Returns (final_input_artifacts, list_of_summarized_input_keys).
+
+    Three tiers of summarization:
+    1. Fan-out aggregated inputs ALWAYS use summaries (when available)
+    2. Dependency architectures swap to summaries biggest-first if over budget
+    3. Direct inputs get hot-path summarized if still over budget
+    """
+    project_id = stage_def.pipeline_config.project_id
+    result = dict(input_artifacts)
+    summarized_keys: list[str] = []
+
+    # --- Tier 2: Fan-out aggregated inputs always use summaries ---
+    for stage_key in stage_def.input_stage_keys:
+        if stage_key in _FANOUT_STAGE_KEYS and stage_key in result:
+            summary_content = _build_fanout_summary_content(db, project_id, stage_key)
+            if summary_content:
+                result[stage_key] = summary_content
+                summarized_keys.append(stage_key)
+
+    # Check budget after tier 2
+    messages = build_prompt_messages(
+        stage_def, result, component_key,
+        human_notes=human_notes,
+        current_content=current_content,
+        upstream_changes=upstream_changes,
+    )["messages"]
+    total_chars = _estimate_prompt_chars(messages)
+
+    if total_chars <= CONTEXT_BUDGET_CHARS:
+        return result, summarized_keys
+
+    # --- Tier 1: Dependency architectures — swap biggest-first to summaries ---
+    if "dependency_architectures" in result and component_key:
+        dep_summary, _ = _build_dependency_summary_content(db, project_id, component_key)
+        if dep_summary:
+            result["dependency_architectures"] = dep_summary
+            summarized_keys.append("dependency_architectures")
+
+            # Re-check budget
+            messages = build_prompt_messages(
+                stage_def, result, component_key,
+                human_notes=human_notes,
+                current_content=current_content,
+                upstream_changes=upstream_changes,
+            )["messages"]
+            total_chars = _estimate_prompt_chars(messages)
+
+            if total_chars <= CONTEXT_BUDGET_CHARS:
+                return result, summarized_keys
+
+    # --- Tier 3: Hot-path summarization of direct inputs ---
+    from backend.pipeline.summarize import generate_hotpath_summary
+
+    # Sort direct inputs by size descending (exclude already-summarized keys)
+    direct_keys = sorted(
+        [k for k in result if k not in summarized_keys and k != "input_documents"],
+        key=lambda k: len(result[k]),
+        reverse=True,
+    )
+
+    for key in direct_keys:
+        if total_chars <= CONTEXT_BUDGET_CHARS:
+            break
+
+        # Check if the source artifact already has a summary we can use
+        artifact_type_str = _stage_key_to_type(key)
+        at = ARTIFACT_TYPE_MAP.get(artifact_type_str)
+        if at:
+            source_art = (
+                db.query(Artifact)
+                .filter_by(project_id=project_id, artifact_type=at, component_key=component_key)
+                .first()
+            )
+            if source_art and source_art.summary:
+                result[key] = source_art.summary
+                summarized_keys.append(key)
+                messages = build_prompt_messages(
+                    stage_def, result, component_key,
+                    human_notes=human_notes,
+                    current_content=current_content,
+                    upstream_changes=upstream_changes,
+                )["messages"]
+                total_chars = _estimate_prompt_chars(messages)
+                continue
+
+        # Generate hot-path summary on demand
+        summary = await generate_hotpath_summary(
+            result[key],
+            stage_def.output_artifact_type,
+            component_key,
+        )
+        if summary:
+            # Save to source artifact for reuse
+            if at and source_art:
+                source_art.summary = summary
+                db.flush()
+            result[key] = summary
+            summarized_keys.append(key)
+
+            messages = build_prompt_messages(
+                stage_def, result, component_key,
+                human_notes=human_notes,
+                current_content=current_content,
+                upstream_changes=upstream_changes,
+            )["messages"]
+            total_chars = _estimate_prompt_chars(messages)
+
+    # If still over budget after all tiers, truncate the largest remaining input
+    if total_chars > CONTEXT_BUDGET_CHARS:
+        largest_key = max(result, key=lambda k: len(result[k]))
+        overage = total_chars - CONTEXT_BUDGET_CHARS
+        result[largest_key] = result[largest_key][: len(result[largest_key]) - overage]
+        logger.warning(
+            "Context budget exceeded after all tiers, truncated %s by %d chars",
+            largest_key,
+            overage,
+        )
+
+    return result, summarized_keys
+
+
 async def generate(
     stage_def: StageDefinition,
     input_artifacts: dict[str, str],
     component_key: str | None,
     db: Session,
-    feedback: dict | None = None,
     human_notes: str | None = None,
     current_content: str | None = None,
     upstream_changes: str | None = None,
@@ -128,11 +370,23 @@ async def generate(
         bool(current_content or upstream_changes),
     )
 
+    # Apply context budget — swap summaries for large inputs as needed
+    budgeted_artifacts, summarized_keys = await apply_context_budget(
+        input_artifacts,
+        stage_def,
+        component_key,
+        db,
+        human_notes=human_notes,
+        current_content=current_content,
+        upstream_changes=upstream_changes,
+    )
+    if summarized_keys:
+        logger.info("Context budget: summarized inputs %s", summarized_keys)
+
     result = build_prompt_messages(
         stage_def,
-        input_artifacts,
+        budgeted_artifacts,
         component_key,
-        feedback=feedback,
         human_notes=human_notes,
         current_content=current_content,
         upstream_changes=upstream_changes,
@@ -210,6 +464,7 @@ async def generate(
         existing.status = ArtifactStatus.GENERATING
         existing.version += 1
         existing.ai_review_feedback = None
+        existing.summary = None
         artifact = existing
     else:
         artifact = Artifact(

@@ -184,6 +184,10 @@ export async function triggerStage(
   });
 }
 
+export async function retrySummary(projectId: string, artifactId: string) {
+  return pipelineAction(projectId, { type: 'retry_summary', artifact_id: artifactId });
+}
+
 export async function pruneArtifact(projectId: string, artifactId: string) {
   return pipelineAction(projectId, { type: 'prune', artifact_id: artifactId });
 }
@@ -260,6 +264,7 @@ export interface PromptPreview {
   messages: PromptPreviewMessage[];
   model: string;
   temperature: number;
+  summarized_inputs?: string[];
 }
 
 export async function getPromptPreview(

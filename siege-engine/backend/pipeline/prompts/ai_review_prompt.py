@@ -6,7 +6,6 @@ class AIReviewPrompt(PromptTemplate):
         self,
         input_artifacts,
         component_key=None,
-        feedback=None,
         human_notes=None,
         prompt_config=None,
         current_content=None,

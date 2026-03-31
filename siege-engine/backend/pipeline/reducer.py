@@ -292,9 +292,10 @@ def _handle_cascade_completed(snap: dict, p: dict) -> None:
 
 def _handle_carried_over(snap: dict, p: dict) -> None:
     key = _exec_to_stage_key(snap, p)
-    snap["stage_statuses"][key] = "approved"
+    status = p.get("status", "approved")
+    snap["stage_statuses"][key] = status
     if p.get("artifact_id"):
-        snap["artifact_statuses"][p["artifact_id"]] = "approved"
+        snap["artifact_statuses"][p["artifact_id"]] = status
 
 
 def _handle_artifact_pruned(snap: dict, p: dict) -> None:

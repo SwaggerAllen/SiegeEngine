@@ -6,13 +6,12 @@ class HighLevelPlanPrompt(PromptTemplate):
         self,
         input_artifacts,
         component_key=None,
-        feedback=None,
         human_notes=None,
         prompt_config=None,
     ):
         if prompt_config:
             return self._build_from_config(
-                input_artifacts, component_key, feedback, human_notes, prompt_config
+                input_artifacts, component_key, human_notes, prompt_config
             )
 
         system_arch = input_artifacts.get("system_architecture", "")
@@ -32,4 +31,4 @@ class HighLevelPlanPrompt(PromptTemplate):
                 + "\n\nProduce a high-level delivery plan.",
             },
         ]
-        return self._inject_feedback(messages, feedback, human_notes)
+        return self._inject_feedback(messages, human_notes)
