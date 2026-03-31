@@ -537,10 +537,12 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
 
 function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: string }) {
   const serverGenerating = artifact.summary_generating ?? false;
+  const serverError = artifact.summary_error ?? null;
   const [localGenerating, setLocalGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const summary = artifact.summary ?? null;
   const generating = serverGenerating || localGenerating;
+  const displayError = error || serverError;
 
   // When the server reports generation is done, clear local state
   useEffect(() => {
@@ -577,7 +579,7 @@ function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: 
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-sm text-gray-400">No summary available for this artifact.</p>
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {displayError && <p className="text-sm text-red-400">{displayError}</p>}
         <button
           onClick={handleGenerate}
           className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs rounded"

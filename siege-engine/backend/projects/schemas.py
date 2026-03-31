@@ -41,6 +41,7 @@ class ArtifactResponse(BaseModel):
     content: str | None
     summary: str | None = None
     summary_generating: bool = False
+    summary_error: str | None = None
     status: str
     version: int
     ai_review_feedback: dict | None
