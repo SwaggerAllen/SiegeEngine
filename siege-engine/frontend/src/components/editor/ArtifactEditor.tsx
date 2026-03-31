@@ -539,7 +539,13 @@ function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: 
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const summary = artifact.summary ?? null;
-  const isSummarizing = artifact.status === 'summarizing';
+
+  // When the artifact prop updates with a new summary, clear generating state
+  useEffect(() => {
+    if (artifact.summary && generating) {
+      setGenerating(false);
+    }
+  }, [artifact.summary, generating]);
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -547,44 +553,35 @@ function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: 
     try {
       await retrySummary(projectId, artifact.id);
       // The action fires a background task and returns immediately.
-      // Websocket events will trigger artifact/DAG refetches automatically.
+      // Websocket summary_completed event triggers artifact refetch,
+      // which updates artifact.summary and clears generating state.
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Summary generation failed');
       setGenerating(false);
     }
   };
 
-  // Clear local generating state when artifact status updates (websocket-driven)
-  useEffect(() => {
-    if (!isSummarizing && generating) {
-      setGenerating(false);
-    }
-  }, [isSummarizing, generating]);
+  if (generating) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
+        <span className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded animate-pulse">
+          Generating summary...
+        </span>
+      </div>
+    );
+  }
 
-  const isActive = generating || isSummarizing;
-
-  if (!summary && !isActive) {
+  if (!summary) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-sm text-gray-400">No summary available for this artifact.</p>
         {error && <p className="text-sm text-red-400">{error}</p>}
         <button
           onClick={handleGenerate}
-          disabled={isActive}
-          className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs rounded disabled:opacity-50"
+          className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs rounded"
         >
           Generate Summary
         </button>
-      </div>
-    );
-  }
-
-  if (isActive) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
-        <span className="px-3 py-1.5 bg-teal-600 text-white text-sm rounded animate-pulse">
-          Summarizing...
-        </span>
       </div>
     );
   }
@@ -597,8 +594,7 @@ function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: 
       <div className="px-3 pt-2">
         <button
           onClick={handleGenerate}
-          disabled={isActive}
-          className="px-2 py-1 text-xs text-gray-400 hover:text-white border border-gray-600 hover:border-gray-500 rounded disabled:opacity-50"
+          className="px-2 py-1 text-xs text-gray-400 hover:text-white border border-gray-600 hover:border-gray-500 rounded"
         >
           Regenerate Summary
         </button>

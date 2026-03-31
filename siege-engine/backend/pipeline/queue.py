@@ -332,6 +332,38 @@ async def _handle_trigger_stage(payload: dict) -> None:
         db.close()
 
 
+async def _handle_generate_summary(payload: dict) -> None:
+    """Handle a generate_summary job."""
+    from backend.pipeline.summarize import generate_summary
+    from backend.pipeline.websocket import ws_manager
+
+    project_id = payload["project_id"]
+    artifact_id = payload["artifact_id"]
+
+    await ws_manager.broadcast(project_id, {
+        "type": "summary_started",
+        "artifact_id": artifact_id,
+    })
+
+    db = SessionLocal()
+    try:
+        summary = await generate_summary(artifact_id, db)
+        db.commit()
+        await ws_manager.broadcast(project_id, {
+            "type": "summary_completed" if summary else "summary_failed",
+            "artifact_id": artifact_id,
+        })
+    except Exception:
+        logger.warning("Summary generation failed for %s", artifact_id, exc_info=True)
+        db.rollback()
+        await ws_manager.broadcast(project_id, {
+            "type": "summary_failed",
+            "artifact_id": artifact_id,
+        })
+    finally:
+        db.close()
+
+
 _JOB_HANDLERS = {
     "start_pipeline": _handle_start_pipeline,
     "resume_run": _handle_resume_run,
@@ -341,6 +373,7 @@ _JOB_HANDLERS = {
     "regen_downstream": _handle_regen_downstream,
     "retry_stage": _handle_retry_stage,
     "trigger_stage": _handle_trigger_stage,
+    "generate_summary": _handle_generate_summary,
 }
 
 

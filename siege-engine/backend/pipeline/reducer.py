@@ -38,9 +38,6 @@ from backend.pipeline.events import (
     STAGE_STARTED,
     STALE_RESOLVED,
     STALENESS_PROPAGATED,
-    SUMMARY_COMPLETED,
-    SUMMARY_FAILED,
-    SUMMARY_STARTED,
 )
 
 
@@ -186,31 +183,6 @@ def _handle_ai_review_started(snap: dict, p: dict) -> None:
 def _handle_ai_review_completed(snap: dict, p: dict) -> None:
     # After AI review, status depends on whether it passed
     pass  # The next event (awaiting_human_review or stage_failed) sets the status
-
-
-def _handle_summary_started(snap: dict, p: dict) -> None:
-    if p.get("artifact_id"):
-        snap["artifact_statuses"][p["artifact_id"]] = "summarizing"
-    key = _exec_to_stage_key(snap, p)
-    snap["stage_statuses"][key] = "summarizing"
-
-
-def _handle_summary_completed(snap: dict, p: dict) -> None:
-    # Restore status to what it was before summarization started
-    restore = p.get("restore_status", "awaiting_review")
-    if p.get("artifact_id"):
-        snap["artifact_statuses"][p["artifact_id"]] = restore
-    key = _exec_to_stage_key(snap, p)
-    snap["stage_statuses"][key] = restore
-
-
-def _handle_summary_failed(snap: dict, p: dict) -> None:
-    # Restore status even on failure — summary is non-blocking
-    restore = p.get("restore_status", "awaiting_review")
-    if p.get("artifact_id"):
-        snap["artifact_statuses"][p["artifact_id"]] = restore
-    key = _exec_to_stage_key(snap, p)
-    snap["stage_statuses"][key] = restore
 
 
 def _handle_awaiting_human_review(snap: dict, p: dict) -> None:
@@ -443,9 +415,6 @@ _HANDLERS: dict[str, Any] = {
     GENERATION_COMPLETED: _handle_generation_completed,
     AI_REVIEW_STARTED: _handle_ai_review_started,
     AI_REVIEW_COMPLETED: _handle_ai_review_completed,
-    SUMMARY_STARTED: _handle_summary_started,
-    SUMMARY_COMPLETED: _handle_summary_completed,
-    SUMMARY_FAILED: _handle_summary_failed,
     AWAITING_HUMAN_REVIEW: _handle_awaiting_human_review,
     HUMAN_APPROVED: _handle_human_approved,
     HUMAN_REJECTED: _handle_human_rejected,
