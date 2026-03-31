@@ -1305,11 +1305,11 @@ def prompt_preview(
     """Return the full interpolated prompt that would be sent to the LLM."""
     from backend.models import Artifact
     from backend.pipeline.nodes.generate import (
+        _FANOUT_STAGE_KEYS,
         CONTEXT_BUDGET_CHARS,
         _build_dependency_summary_content,
         _build_fanout_summary_content,
         _estimate_prompt_chars,
-        _FANOUT_STAGE_KEYS,
         build_prompt_messages,
     )
 

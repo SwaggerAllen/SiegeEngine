@@ -176,7 +176,10 @@ def _build_dependency_summary_content(
             .first()
         )
         art_type = ArtifactType.SUB_COMPONENT_ARCHITECTURE
-        key_fn = lambda dk: f"{parent_key}.{dk}"
+
+        def key_fn(dk: str) -> str:
+            return f"{parent_key}.{dk}"
+
     else:
         comp_def = (
             db.query(ComponentDefinition)
@@ -184,7 +187,9 @@ def _build_dependency_summary_content(
             .first()
         )
         art_type = ArtifactType.COMPONENT_ARCHITECTURE
-        key_fn = lambda dk: dk
+
+        def key_fn(dk: str) -> str:
+            return dk
 
     if not comp_def or not comp_def.dependencies:
         return None, []

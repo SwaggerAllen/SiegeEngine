@@ -1268,7 +1268,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
         run_id = ctx.run_id
         human_notes = ctx.human_notes
         current_content = ctx.current_content
-        pipeline_run = ctx.pipeline_run
         trigger = ctx.trigger
 
         logger.info(
