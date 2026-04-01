@@ -322,6 +322,11 @@ class ComponentManagerMixin:
         Works on approved extract_components or extract_sub_components artifacts.
         Re-runs the same parsing logic used during post-generation to reconcile
         ComponentDefinition rows with the artifact's current text content.
+
+        Also emits ARTIFACT_PRUNED events for any removed components so the
+        event-sourced snapshot stays in sync (clears stale stage statuses,
+        execution map entries, etc.).
+
         Returns a summary of what changed.
         """
         artifact = self.db.get(Artifact, artifact_id)
@@ -343,8 +348,21 @@ class ComponentManagerMixin:
                 .filter(ComponentDefinition.parent_key.is_(None))
                 .all()
             }
+
+            # Capture orphan artifacts BEFORE _store_components deletes them,
+            # so we can emit pruning events for each one.
+            new_keys = {c["key"] for c in parse_components_from_content(artifact.content)}
+            removed_keys = before_keys - new_keys
+            orphan_info = self._collect_orphan_info(
+                project_id, removed_keys, fan_out_stage_keys=["component_architectures"]
+            )
+
             self._store_components(project_id, artifact.content)
             self.db.commit()
+
+            # Emit pruning events so the snapshot drops stale entries.
+            self._emit_orphan_pruning_events(project_id, orphan_info)
+
             after_keys = {
                 d.key
                 for d in self.db.query(ComponentDefinition)
@@ -388,6 +406,75 @@ class ComponentManagerMixin:
             "removed": sorted(removed),
             "total": len(after_keys),
         }
+
+    def _collect_orphan_info(
+        self,
+        project_id: str,
+        removed_keys: set[str],
+        fan_out_stage_keys: list[str],
+    ) -> list[dict]:
+        """Collect artifact/stage info for components about to be removed.
+
+        Must be called BEFORE _store_components deletes the DB records.
+        Returns a list of dicts with artifact_id, stage_key, component_key
+        for each orphaned entry that needs a pruning event.
+        """
+        orphans: list[dict] = []
+        for comp_key in removed_keys:
+            # Find artifacts that will be deleted
+            arts = (
+                self.db.query(Artifact)
+                .filter_by(project_id=project_id, component_key=comp_key)
+                .all()
+            )
+            for art in arts:
+                for stage_key in fan_out_stage_keys:
+                    orphans.append(
+                        {
+                            "artifact_id": art.id,
+                            "stage_key": stage_key,
+                            "component_key": comp_key,
+                        }
+                    )
+            # Even if no artifact exists, we still need to prune the stage
+            # entry from the snapshot (e.g., failed executions with no artifact).
+            if not arts:
+                for stage_key in fan_out_stage_keys:
+                    orphans.append(
+                        {
+                            "artifact_id": f"__orphan__{comp_key}",
+                            "stage_key": stage_key,
+                            "component_key": comp_key,
+                        }
+                    )
+        return orphans
+
+    def _emit_orphan_pruning_events(self, project_id: str, orphan_info: list[dict]) -> None:
+        """Emit ARTIFACT_PRUNED events for orphaned component entries.
+
+        This cleans up the event-sourced snapshot so it no longer contains
+        stale stage statuses, execution map entries, errors, or triggers
+        for removed component keys.
+        """
+        from backend.pipeline import events as evt
+
+        for info in orphan_info:
+            self.events.emit(
+                project_id,
+                evt.ARTIFACT_PRUNED,
+                {
+                    "artifact_id": info["artifact_id"],
+                    "stage_key": info["stage_key"],
+                    "component_key": info["component_key"],
+                },
+            )
+        if orphan_info:
+            self.db.commit()
+            logger.info(
+                "Emitted %d ARTIFACT_PRUNED events for orphaned components in project %s",
+                len(orphan_info),
+                project_id,
+            )
 
     async def _post_generation_hook(
         self,

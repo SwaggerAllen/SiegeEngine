@@ -306,11 +306,13 @@ def _handle_artifact_pruned(snap: dict, p: dict) -> None:
     snap["artifact_git_shas"].pop(artifact_id, None)
     snap["comment_counts"].pop(artifact_id, None)
     snap.setdefault("artifact_stale", {}).pop(artifact_id, None)
-    # Remove stage status and execution_map entry if provided
+    # Remove stage status, execution_map, errors, and triggers if provided
     if p.get("stage_key"):
         key = _stage_key(p)
         snap["stage_statuses"].pop(key, None)
         snap["execution_map"].pop(key, None)
+        snap["stage_errors"].pop(key, None)
+        snap["stage_triggers"].pop(key, None)
 
 
 def _handle_pipeline_reset(snap: dict, p: dict) -> None:
