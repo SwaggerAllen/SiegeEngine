@@ -7,6 +7,7 @@ import { RESTARTABLE_STATUSES } from '../../types/pipeline';
 
 const STATUS_COLORS: Record<string, string> = {
   pending: 'bg-gray-700 border-gray-500',
+  conditional: 'bg-gray-800 border-gray-600 border-dashed',
   running: 'bg-blue-900 border-blue-400 animate-pulse',
   generating: 'bg-blue-900 border-blue-400 animate-pulse',
   ai_reviewing: 'bg-purple-900 border-purple-400 animate-pulse',
@@ -18,6 +19,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
+  conditional: 'Conditional',
   running: 'Running...',
   generating: 'Generating...',
   ai_reviewing: 'AI Reviewing...',
