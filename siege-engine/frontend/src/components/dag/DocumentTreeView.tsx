@@ -652,7 +652,7 @@ export function DocumentTreeView({
       </div>
 
       {/* Tree */}
-      <div className="flex-1 overflow-y-auto py-1">
+      <div className="flex-1 overflow-y-auto py-1 pb-64">
         {tree.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-500 text-sm">
             No documents yet
