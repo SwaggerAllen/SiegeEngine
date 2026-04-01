@@ -20,6 +20,8 @@ from backend.projects.schemas import (
     ProjectUpdate,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -167,13 +169,17 @@ def update_artifact(
 
     # Commit to git
     if artifact.file_path:
-        sha = git_manager.commit_artifact(
-            artifact.project_id,
-            req.content,
-            artifact.file_path,
-            f"Manual edit: {artifact.name} v{artifact.version}",
-        )
-        artifact.git_commit_sha = sha
+        try:
+            sha = git_manager.commit_artifact(
+                artifact.project_id,
+                req.content,
+                artifact.file_path,
+                f"Manual edit: {artifact.name} v{artifact.version}",
+            )
+            artifact.git_commit_sha = sha
+        except Exception:
+            logger.exception("Git commit failed for artifact %s", artifact_id)
+            raise HTTPException(500, "Failed to commit artifact to git")
 
     # Emit event so the snapshot reflects the new version/SHA
     from backend.pipeline import events as evt

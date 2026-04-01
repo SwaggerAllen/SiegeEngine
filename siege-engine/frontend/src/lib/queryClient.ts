@@ -8,7 +8,7 @@ function handleQueryError(error: Error, query: Query) {
   useErrorLogStore.getState().pushError(`query.${key}`, error);
 }
 
-function handleMutationError(
+function handleMutationCacheError(
   error: Error,
   _variables: unknown,
   _context: unknown,
@@ -26,14 +26,17 @@ export const queryClient = new QueryClient({
       throwOnError: false,
       refetchOnWindowFocus: true,
     },
-    mutations: {
-      onError: handleMutationError as never,
-    },
   },
 });
 
 // Wire up global query error handler
 queryClient.getQueryCache().config.onError = handleQueryError as never;
+
+// Wire up global mutation error handler via the MutationCache,
+// which provides the mutation object as the 4th argument.
+// (defaultOptions.mutations.onError only receives (error, variables, context)
+// and does NOT include the mutation — accessing mutation.options there crashes.)
+queryClient.getMutationCache().config.onError = handleMutationCacheError as never;
 
 // Patch the low-level queryCache.clear() so we catch ALL cache nukes,
 // whether called via queryClient.clear() or queryClient.getQueryCache().clear().
