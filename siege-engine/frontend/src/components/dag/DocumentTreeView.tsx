@@ -55,13 +55,16 @@ const SUB_COMPONENT_DOC_ORDER: Record<string, number> = {
 const STATUS_DOTS: Record<string, string> = {
   approved: 'bg-green-500',
   awaiting_review: 'bg-yellow-500',
-  generating: 'bg-blue-500',
-  running: 'bg-blue-500',
-  ai_reviewing: 'bg-purple-500',
+  generating: 'bg-blue-500 animate-pulse',
+  running: 'bg-blue-500 animate-pulse',
+  ai_reviewing: 'bg-purple-500 animate-pulse',
   rejected: 'bg-red-500',
   failed: 'bg-red-700',
   pending: 'bg-gray-500',
+  conditional: 'bg-gray-600',
 };
+
+const ACTIVE_STATUSES = new Set(['running', 'generating', 'ai_reviewing']);
 
 interface TreeNode {
   type: 'document' | 'folder';
@@ -439,6 +442,16 @@ function DocumentRow({
         <span className="w-4 shrink-0" /> {/* spacer to align with folder arrows */}
         <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOTS[searchNode.status] ?? 'bg-gray-500'}`} />
         <span className="truncate">{node.label}</span>
+        {ACTIVE_STATUSES.has(searchNode.status) && (
+          <span className="px-1 py-0.5 text-[10px] bg-blue-600 text-white rounded shrink-0">
+            {searchNode.status === 'ai_reviewing' ? 'reviewing' : 'generating'}
+          </span>
+        )}
+        {searchNode.isStale && (
+          <span className="px-1 py-0.5 text-[10px] bg-orange-600 text-white rounded shrink-0" title="Upstream inputs have changed">
+            stale
+          </span>
+        )}
         {searchNode.componentKey && (
           <span className="text-gray-600 text-xs ml-auto truncate max-w-[80px]">{searchNode.componentKey}</span>
         )}
