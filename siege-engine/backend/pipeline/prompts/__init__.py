@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from backend.pipeline.prompts.ai_review_prompt import AIReviewPrompt
 from backend.pipeline.prompts.architecture import ArchitecturePrompt

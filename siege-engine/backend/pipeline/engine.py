@@ -662,12 +662,12 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
             # Check if definitions already exist
             if stage_def.stage_key == "extract_components":
-                existing = self._get_components(project_id)
-                if existing:
+                existing_components = self._get_components(project_id)
+                if existing_components:
                     continue
             elif stage_def.stage_key == "extract_sub_components":
-                existing = self._get_sub_component_defs(project_id)
-                if existing:
+                existing_sub = self._get_sub_component_defs(project_id)
+                if existing_sub:
                     continue
 
             logger.info(
@@ -1096,7 +1096,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 continue
 
             # No new work was done.  Decide whether to pause or complete.
-            if hit_pause_boundary:
+            if hit_pause_boundary and pause_stage_def is not None:
                 # All work before the stop point is done — emit pause.
                 self.events.emit(
                     project_id,

@@ -1343,7 +1343,7 @@ def prompt_preview(
         else:
             effective_notes = req.human_notes
     else:
-        effective_notes = feedback_notes
+        effective_notes = feedback_notes or ""
 
     # Apply budget swaps (sync-only: tiers 1 and 2, no hot-path)
     budgeted = dict(input_artifacts)

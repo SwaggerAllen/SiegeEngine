@@ -8,6 +8,8 @@ class HighLevelPlanPrompt(PromptTemplate):
         component_key=None,
         human_notes=None,
         prompt_config=None,
+        current_content=None,
+        upstream_changes=None,
     ):
         if prompt_config:
             return self._build_from_config(

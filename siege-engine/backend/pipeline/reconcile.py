@@ -15,6 +15,9 @@ from sqlalchemy.orm import Session
 from backend.models import (
     Artifact,
     ArtifactStatus,
+    ComponentDefinition,
+    FanOutStrategy,
+    PipelineConfig,
     PipelineRun,
     PipelineRunStatus,
     Project,
@@ -287,6 +290,15 @@ def reconcile_project(db: Session, project_id: str) -> list[dict]:
                 )
 
     # ══════════════════════════════════════════════════════════════════════
+    # Phase 2b: Prune orphaned fan-out snapshot entries
+    # ══════════════════════════════════════════════════════════════════════
+    # When component keys change (e.g., extract_components is re-run with
+    # different keys), the snapshot retains stale stage statuses for the
+    # old keys.  Find and prune any snapshot stage entries that reference
+    # component keys not present in the ComponentDefinition table.
+    corrections.extend(_prune_orphan_fanout_entries(db, es, project_id))
+
+    # ══════════════════════════════════════════════════════════════════════
     # Phase 3: Sync DB projections from final snapshot state
     # ══════════════════════════════════════════════════════════════════════
     # Re-read the snapshot after all event emissions so we sync against
@@ -363,6 +375,122 @@ def reconcile_project(db: Session, project_id: str) -> list[dict]:
                 execution.completed_at = datetime.utcnow()
 
     db.commit()
+    return corrections
+
+
+def _prune_orphan_fanout_entries(
+    db: Session,
+    es: EventStore,
+    project_id: str,
+) -> list[dict]:
+    """Prune snapshot stage entries for component keys that no longer exist.
+
+    When a component key is renamed or removed from the extract_components
+    output (e.g., 'identity_and_tenancy' → 'identity_tenancy'), the snapshot
+    retains stale entries under the old key.  This function detects those
+    orphans and emits ARTIFACT_PRUNED events to clean up the snapshot.
+    """
+    corrections: list[dict] = []
+
+    config = db.query(PipelineConfig).filter_by(project_id=project_id).first()
+    if not config:
+        return corrections
+
+    # Build the set of valid component keys from the DB.
+    all_defs = db.query(ComponentDefinition).filter_by(project_id=project_id).all()
+    top_level_keys = {d.key for d in all_defs if d.parent_key is None}
+    sub_comp_keys = {f"{d.parent_key}.{d.key}" for d in all_defs if d.parent_key is not None}
+
+    # Map fan-out strategy to the set of valid entity keys.
+    valid_keys_by_strategy = {
+        FanOutStrategy.COMPONENT: top_level_keys,
+        FanOutStrategy.SUB_COMPONENT: sub_comp_keys,
+        FanOutStrategy.LEAF: top_level_keys | sub_comp_keys,
+    }
+
+    # Identify fan-out stages from the pipeline config.
+    fanout_stages = [s for s in config.stages if s.fan_out_strategy != FanOutStrategy.NONE]
+    if not fanout_stages:
+        return corrections
+
+    snapshot = es.get_snapshot(project_id)
+    stage_statuses = snapshot.stage_statuses or {}
+    exec_map = snapshot.execution_map or {}
+
+    for stage_def in fanout_stages:
+        stage_key = stage_def.stage_key
+        valid_keys = valid_keys_by_strategy.get(stage_def.fan_out_strategy, set())
+        prefix = f"{stage_key}/"
+
+        # Find snapshot entries for this stage that reference unknown keys.
+        for full_key in list(stage_statuses.keys()):
+            if not full_key.startswith(prefix):
+                continue
+            entity_key = full_key[len(prefix) :]
+            if entity_key in valid_keys:
+                continue
+
+            # This entity key is orphaned — emit a pruning event.
+            # Try to find the artifact ID from the execution map.
+            entry = exec_map.get(full_key, {})
+            artifact_id = entry.get("artifact_id") or f"__orphan__{entity_key}"
+
+            corrections.append(
+                {
+                    "type": "orphan_fanout_entry",
+                    "stage_key": full_key,
+                    "component_key": entity_key,
+                    "artifact_id": artifact_id,
+                }
+            )
+            es.emit(
+                project_id,
+                evt.ARTIFACT_PRUNED,
+                {
+                    "artifact_id": artifact_id,
+                    "stage_key": stage_key,
+                    "component_key": entity_key,
+                },
+            )
+
+    # Also prune orphaned artifacts from the DB that have component keys
+    # not in any valid set.
+    all_valid = top_level_keys | sub_comp_keys
+    if all_valid:
+        orphan_artifacts = (
+            db.query(Artifact)
+            .filter(
+                Artifact.project_id == project_id,
+                Artifact.component_key.isnot(None),
+                Artifact.component_key.notin_(all_valid),
+            )
+            .all()
+        )
+        for art in orphan_artifacts:
+            corrections.append(
+                {
+                    "type": "orphan_artifact",
+                    "id": art.id,
+                    "component_key": art.component_key,
+                    "name": art.name,
+                }
+            )
+            # Emit pruning event (without stage_key — artifact-only cleanup).
+            es.emit(
+                project_id,
+                evt.ARTIFACT_PRUNED,
+                {"artifact_id": art.id},
+            )
+            db.delete(art)
+
+    if corrections:
+        db.commit()
+        logger.info(
+            "Pruned %d orphan fanout entries for project %s",
+            len(corrections),
+            project_id,
+        )
+
     return corrections
 
 
