@@ -47,6 +47,14 @@ export function HeaderDrawer({ projectId, visibleTabs, onClose }: HeaderDrawerPr
   const [showPRDialog, setShowPRDialog] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [repairResult, setRepairResult] = useState<string | null>(null);
+  const [serverCommit, setServerCommit] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/healthz')
+      .then((r) => r.json())
+      .then((d) => setServerCommit(d.commit ?? null))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!repairResult) return;
@@ -92,7 +100,14 @@ export function HeaderDrawer({ projectId, visibleTabs, onClose }: HeaderDrawerPr
       <div className="fixed inset-x-0 top-0 z-50 bg-gray-900 shadow-2xl flex flex-col overflow-y-auto max-h-[90vh]">
         {/* Drawer header row */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 shrink-0">
-          <span className="text-sm font-semibold text-white">Menu</span>
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-semibold text-white">Menu</span>
+            <span className="text-xs text-gray-500 font-mono" title={serverCommit || 'Commit hash'}>
+              {serverCommit
+                ? serverCommit.length > 8 ? serverCommit.slice(0, 8) : serverCommit
+                : '...'}
+            </span>
+          </div>
           <button
             onClick={onClose}
             className="p-1 text-gray-400 hover:text-white"
