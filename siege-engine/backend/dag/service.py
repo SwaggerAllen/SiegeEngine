@@ -9,6 +9,7 @@ from backend.models import (
     ArtifactDependency,
     ArtifactType,
     ComponentDefinition,
+    FanOutStrategy,
     PipelineConfig,
     PipelineRun,
     StageDefinition,
@@ -513,6 +514,50 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                 }
             )
             node_ids.append(placeholder_id)
+
+        # Pending placeholders for fan-out components that exist in
+        # ComponentDefinition but have no artifact or snapshot entry yet
+        # (e.g. after a component key rename like identity_and_tenancy →
+        # identity_tenancy where the old key was pruned but the new key
+        # has never been executed).
+        if stage_def.fan_out_strategy == FanOutStrategy.COMPONENT:
+            represented_comp_keys = art_comp_keys | {
+                snap_key[len(stage_def.stage_key) + 1 :]
+                for snap_key in stage_statuses
+                if snap_key.startswith(f"{stage_def.stage_key}/")
+            }
+            all_comp_keys = {
+                cd.key
+                for cd in db.query(ComponentDefinition)
+                .filter_by(project_id=project_id)
+                .filter(ComponentDefinition.parent_key.is_(None))
+                .all()
+            }
+            for comp_key in sorted(all_comp_keys - represented_comp_keys):
+                pending_id = f"pending_{stage_def.stage_key}_{comp_key}"
+                label = f"{stage_def.display_name} - {comp_key}"
+                nodes.append(
+                    {
+                        "id": pending_id,
+                        "type": "stageNode",
+                        "data": {
+                            "label": label,
+                            "artifact_type": stage_def.output_artifact_type,
+                            "status": "pending",
+                            "is_stale": False,
+                            "component_key": comp_key,
+                            "version": 0,
+                            "stage_key": stage_def.stage_key,
+                            "is_active": False,
+                            "has_artifact": False,
+                            "prompt_info": _build_prompt_info(stage_def),
+                            "execution_id": None,
+                            "execution_status": None,
+                        },
+                        "position": {"x": 0, "y": 0},
+                    }
+                )
+                node_ids.append(pending_id)
 
         if node_ids:
             stage_to_node_ids[stage_def.stage_key] = node_ids
