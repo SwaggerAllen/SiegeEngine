@@ -134,7 +134,7 @@ function WorkflowDAGInner({ projectId }: { projectId: string }) {
 
 function DocumentsDAGInner({ projectId }: { projectId: string }) {
   const query = useDocumentsDAGData(projectId);
-  const [viewMode, setViewMode] = useState<'dag' | 'tree'>('dag');
+  const [viewMode, setViewMode] = useState<'dag' | 'tree'>('tree');
 
   const searchableNodes = useMemo<SearchableNode[]>(() => {
     if (!query.data) return [];
@@ -143,6 +143,7 @@ function DocumentsDAGInner({ projectId }: { projectId: string }) {
       label: n.data.label,
       componentKey: n.data.component_key,
       status: n.data.status,
+      isStale: !!(n.data as Record<string, unknown>).is_stale,
       stageKey: n.data.stage_key,
       artifactType: n.data.artifact_type,
       hasArtifact: n.data.has_artifact,
