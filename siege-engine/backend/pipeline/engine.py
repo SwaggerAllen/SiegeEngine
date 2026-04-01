@@ -1388,6 +1388,12 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     run_id=execution.run_id,
                 )
 
+            # Commit after generation to release the SQLite write lock.
+            # Without this, the lock acquired by generate()'s db.flush()
+            # is held through AI review + summarization (minutes), blocking
+            # all other write requests (e.g. saving feedback).
+            self.db.commit()
+
             # AI Review
             if stage_def.ai_review_enabled:
                 self.events.emit(
@@ -1416,7 +1422,8 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     StageStatus.AI_REVIEW,
                     artifact_status=None,
                 )
-                self.db.flush()
+                # Commit before the long AI review call to release the write lock.
+                self.db.commit()
 
                 feedback = await ai_review(
                     stage_def,
@@ -1429,6 +1436,9 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     artifact.ai_review_feedback = feedback
                     artifact.status = ArtifactStatus.AI_REVIEWING
                     _commit_review_to_git(project_id, artifact, feedback)
+
+                # Release write lock between AI review and summarization.
+                self.db.commit()
 
             # Generate a summary for the artifact (non-blocking on failure).
             # Uses the pipeline semaphore via cli_manager so it runs serial
