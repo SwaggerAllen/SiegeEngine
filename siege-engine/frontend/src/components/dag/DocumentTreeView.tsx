@@ -367,6 +367,18 @@ function DepList({
 }
 
 // ---------------------------------------------------------------------------
+// Folder helpers
+// ---------------------------------------------------------------------------
+
+/** Check if any descendant document in a folder has an active (generating) status. */
+function hasActiveDescendant(node: TreeNode): boolean {
+  if (node.type === 'document') {
+    return node.node ? ACTIVE_STATUSES.has(node.node.status) : false;
+  }
+  return (node.children ?? []).some(hasActiveDescendant);
+}
+
+// ---------------------------------------------------------------------------
 // Folder row
 // ---------------------------------------------------------------------------
 
@@ -381,6 +393,7 @@ function FolderRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const active = hasActiveDescendant(node);
   return (
     <button
       onClick={onToggle}
@@ -396,6 +409,9 @@ function FolderRow({
         {expanded ? '📂' : '📁'}
       </span>
       <span className="text-gray-200 truncate">{node.label}</span>
+      {active && (
+        <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shrink-0" title="Generating" />
+      )}
       {node.children && (
         <span className="text-gray-600 text-xs ml-auto shrink-0">{node.children.length}</span>
       )}
