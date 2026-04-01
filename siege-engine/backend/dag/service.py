@@ -515,8 +515,8 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
             )
             node_ids.append(placeholder_id)
 
-        # Pending placeholders for fan-out components that exist in
-        # ComponentDefinition but have no artifact or snapshot entry yet
+        # Pending/conditional placeholders for fan-out components that exist
+        # in ComponentDefinition but have no artifact or snapshot entry yet
         # (e.g. after a component key rename like identity_and_tenancy →
         # identity_tenancy where the old key was pruned but the new key
         # has never been executed).
@@ -533,7 +533,38 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                 .filter(ComponentDefinition.parent_key.is_(None))
                 .all()
             }
+            # Cache sub-component parents so we can skip component_plans
+            # for components that have sub-components (plans happen at the
+            # sub-component level instead).
+            _parents_with_subs: set[str] | None = None
             for comp_key in sorted(all_comp_keys - represented_comp_keys):
+                # component_plans only runs for components WITHOUT
+                # sub-components.  Skip if this component already has subs.
+                if stage_def.stage_key == "component_plans":
+                    if _parents_with_subs is None:
+                        _parents_with_subs = {
+                            cd.parent_key
+                            for cd in db.query(ComponentDefinition)
+                            .filter_by(project_id=project_id)
+                            .filter(ComponentDefinition.parent_key.isnot(None))
+                            .all()
+                        }
+                    if comp_key in _parents_with_subs:
+                        continue
+
+                # Determine if all fan-out input stages are approved for
+                # this component.  Non-fan-out inputs use the bare key;
+                # fan-out inputs use "{stage_key}/{comp_key}".
+                inputs_ready = True
+                for input_key in stage_def.input_stage_keys or []:
+                    input_status = stage_statuses.get(
+                        f"{input_key}/{comp_key}"
+                    ) or stage_statuses.get(input_key)
+                    if input_status != "approved":
+                        inputs_ready = False
+                        break
+
+                status = "pending" if inputs_ready else "conditional"
                 pending_id = f"pending_{stage_def.stage_key}_{comp_key}"
                 label = f"{stage_def.display_name} - {comp_key}"
                 nodes.append(
@@ -543,7 +574,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                         "data": {
                             "label": label,
                             "artifact_type": stage_def.output_artifact_type,
-                            "status": "pending",
+                            "status": status,
                             "is_stale": False,
                             "component_key": comp_key,
                             "version": 0,
