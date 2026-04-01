@@ -438,7 +438,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
 
       {/* Search bar — available for document, feedback, and prompt tabs */}
       {(activeTab === 'document' || activeTab === 'feedback' || activeTab === 'prompt' || activeTab === 'summary') && (
-        <ContentSearchBar containerRef={contentRef} contentKey={`${artifact.id}:${activeTab}:${editing}`} />
+        <ContentSearchBar containerRef={contentRef} contentKey={`${artifact.id}:${activeTab}:${editing}`} copyContent={activeTab === 'document' ? artifact.content : null} />
       )}
 
       {/* Content area */}

@@ -81,11 +81,14 @@ interface ContentSearchBarProps {
   containerRef: RefObject<HTMLElement | null>;
   /** Optional: re-run highlights when content changes (e.g. artifact.id) */
   contentKey?: string;
+  /** Optional: raw text content for the copy-to-clipboard button */
+  copyContent?: string | null;
 }
 
-export function ContentSearchBar({ containerRef, contentKey }: ContentSearchBarProps) {
+export function ContentSearchBar({ containerRef, contentKey, copyContent }: ContentSearchBarProps) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [currentIdx, setCurrentIdx] = useState(0);
   const marksRef = useRef<HTMLElement[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -166,9 +169,47 @@ export function ContentSearchBar({ containerRef, contentKey }: ContentSearchBarP
     marksRef.current = [];
   };
 
+  const handleCopy = useCallback(async () => {
+    if (!copyContent) return;
+    try {
+      await navigator.clipboard.writeText(copyContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for non-HTTPS contexts
+      const ta = document.createElement('textarea');
+      ta.value = copyContent;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [copyContent]);
+
   if (!open) {
     return (
       <div className="flex justify-end px-3 py-1 border-b border-gray-700">
+        {copyContent && (
+          <button
+            onClick={handleCopy}
+            className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded"
+            title={copied ? 'Copied!' : 'Copy document to clipboard'}
+          >
+            {copied ? (
+              <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+            )}
+          </button>
+        )}
         <button
           onClick={handleOpen}
           className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 rounded"
