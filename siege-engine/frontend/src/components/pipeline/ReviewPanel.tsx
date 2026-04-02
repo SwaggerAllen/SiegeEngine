@@ -234,8 +234,27 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
 
   // ── Restartable (failed / rejected / stuck) ──────────────────────────────
   if (!s.isViewer && s.isRestartable && !s.isAwaitingReview && !s.isGenerating) {
-    // Feedback mode: nothing actionable here (no feedback textarea for error recovery)
-    if (mode === 'feedback') return null;
+    if (mode === 'feedback') {
+      return (
+        <div className="space-y-3">
+          <FeedbackSection
+            notes={s.notes}
+            onNotesChange={(v) => { s.setNotes(v); }}
+            feedbackCount={s.feedbackCount}
+            placeholder="Add feedback before restarting..."
+          />
+          <div className="flex items-center gap-2 pt-1 border-t border-gray-700">
+            <button
+              onClick={() => s.handleAction('save_feedback')}
+              disabled={s.submitting || !s.notes.trim()}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              {s.feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
+            </button>
+          </div>
+        </div>
+      );
+    }
 
     const statusLabel =
       execution!.status === 'failed'
