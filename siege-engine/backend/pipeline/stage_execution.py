@@ -423,17 +423,10 @@ class ArtifactRevisionStrategy(StageExecutionStrategy):
     restored to its pre-revision status (typically APPROVED).
     """
 
-    def __init__(
-        self,
-        artifact_id: str,
-        feedback: str,
-        user_id: str | None = None,
-        fresh: bool = False,
-    ):
+    def __init__(self, artifact_id: str, feedback: str, user_id: str | None = None):
         self.artifact_id = artifact_id
         self.feedback = feedback
         self.user_id = user_id
-        self.fresh = fresh
 
     async def prepare(self, engine: PipelineEngine) -> StageExecutionContext:
         artifact = engine.db.get(Artifact, self.artifact_id)
@@ -523,10 +516,7 @@ class ArtifactRevisionStrategy(StageExecutionStrategy):
         engine.db.add(execution)
         engine.db.flush()
 
-        # When fresh=True (rejection with no specific feedback), omit previous
-        # content so the LLM generates from scratch using current inputs rather
-        # than conservatively preserving the old output.
-        current_content = None if self.fresh else (artifact.content if artifact.content else None)
+        current_content = artifact.content if artifact.content else None
 
         return StageExecutionContext(
             project_id=project_id,
