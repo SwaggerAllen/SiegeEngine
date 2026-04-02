@@ -808,8 +808,13 @@ class ArtifactOpsMixin:
             return
 
         if action == "rejected":
-            feedback = notes.strip() if notes and notes.strip() else "Regenerate this artifact."
-            await self.revise_artifact(artifact_id, feedback, user_id=user_id)
+            feedback = notes.strip() if notes and notes.strip() else None
+            await self.revise_artifact(
+                artifact_id,
+                feedback or "Regenerate this artifact.",
+                user_id=user_id,
+                fresh=feedback is None,
+            )
             return
 
         raise ValueError(f"Unknown action: {action}")
@@ -1008,14 +1013,25 @@ class ArtifactOpsMixin:
             project_id,
         )
 
-    async def revise_artifact(self, artifact_id: str, feedback: str, user_id: str | None = None):
-        """Revise an approved/stale artifact via ArtifactRevisionStrategy."""
+    async def revise_artifact(
+        self,
+        artifact_id: str,
+        feedback: str,
+        user_id: str | None = None,
+        fresh: bool = False,
+    ):
+        """Revise an approved/stale artifact via ArtifactRevisionStrategy.
+
+        If *fresh* is True, omit the previous content from the prompt so the
+        LLM generates from scratch using current inputs rather than doing a
+        conservative revision of the old output.
+        """
         from backend.pipeline.stage_execution import (
             ArtifactRevisionStrategy,
             SkipExecution,
         )
 
-        strategy = ArtifactRevisionStrategy(artifact_id, feedback, user_id)
+        strategy = ArtifactRevisionStrategy(artifact_id, feedback, user_id, fresh=fresh)
         try:
             await self.execute_strategy(strategy)
         except SkipExecution as e:
