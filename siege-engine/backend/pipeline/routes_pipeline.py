@@ -1518,9 +1518,11 @@ async def get_artifact_diff(
         # Prefer prev_git_commit_sha — it points to the version before the
         # current generation cycle, skipping intermediate self-improvement
         # commits that would otherwise pollute the diff.
+        # Don't validate against file history: if a regeneration produced
+        # identical content, the commit won't appear in iter_commits(paths=...)
+        # but is still a valid diff base.
         if artifact.prev_git_commit_sha:
-            if any(e["sha"] == artifact.prev_git_commit_sha for e in history):
-                previous_sha = artifact.prev_git_commit_sha
+            previous_sha = artifact.prev_git_commit_sha
 
         # Fall back to walking git history for the immediate predecessor
         if not previous_sha:

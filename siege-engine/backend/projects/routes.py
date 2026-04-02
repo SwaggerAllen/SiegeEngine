@@ -223,11 +223,12 @@ def get_artifact_diff(
         return {"diff": "", "message": "No previous version to diff against"}
 
     new_sha = history[0]["sha"]
-    # Use prev_git_commit_sha if available to skip self-improvement commits
+    # Use prev_git_commit_sha if available to skip self-improvement commits.
+    # Don't validate against file history — empty commits (unchanged content)
+    # won't appear in iter_commits(paths=...) but are still valid diff bases.
     old_sha = None
     if artifact.prev_git_commit_sha:
-        if any(e["sha"] == artifact.prev_git_commit_sha for e in history):
-            old_sha = artifact.prev_git_commit_sha
+        old_sha = artifact.prev_git_commit_sha
     if not old_sha:
         old_sha = history[1]["sha"]
     diff = git_manager.get_diff(artifact.project_id, old_sha, new_sha, artifact.file_path)

@@ -31,6 +31,16 @@ class GitManager:
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         abs_path.write_text(content, encoding="utf-8")
         repo.index.add([file_path])
+
+        # If the file content is unchanged, skip the commit and return
+        # the SHA of the most recent commit that touched this file.
+        # Empty commits break file-based history lookups (iter_commits
+        # skips them) which causes stale diffs.
+        if not repo.index.diff("HEAD", paths=[file_path]):
+            commits = list(repo.iter_commits(paths=file_path, max_count=1))
+            if commits:
+                return commits[0].hexsha
+
         commit = repo.index.commit(message or f"Update {file_path}")
         return commit.hexsha
 
