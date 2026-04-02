@@ -155,6 +155,12 @@ async def cancel_stage(
             f"current status: {execution.status.value}",
         )
 
+    # Kill the CLI subprocess and cancel the asyncio task so the process
+    # doesn't keep running after we mark the execution as failed.
+    from backend.pipeline.queue import cancel_running_execution
+
+    cancel_running_execution(execution_id)
+
     # Determine safe artifact status: unstick GENERATING/AI_REVIEWING → PENDING
     art_status = None
     if execution.artifact_id:
@@ -179,6 +185,7 @@ async def cancel_stage(
             "type": "stage_failed",
             "stage_key": execution.stage_key,
             "component_key": execution.component_key,
+            "artifact_id": execution.artifact_id,
             "error": "Cancelled by user",
         },
     )
