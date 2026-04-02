@@ -1503,6 +1503,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     "type": "stage_failed",
                     "stage_key": stage_def.stage_key,
                     "component_key": component_key,
+                    "artifact_id": execution.artifact_id,
                     "error": str(e),
                 },
             )

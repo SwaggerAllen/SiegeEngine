@@ -115,6 +115,7 @@ class ArtifactOpsMixin:
                     "component_key": execution.component_key,
                     "status": action,
                     "execution_id": execution_id,
+                    "artifact_id": execution.artifact_id,
                 },
             )
             if notes and notes.strip() and execution.artifact_id:
