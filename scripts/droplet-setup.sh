@@ -4,9 +4,9 @@
 
 set -euo pipefail
 
-echo "=== Installing Docker and Docker Compose ==="
+echo "=== Installing Docker ==="
 apt-get update
-apt-get install -y docker.io docker-compose-plugin
+apt-get install -y docker.io
 systemctl enable docker
 systemctl start docker
 
