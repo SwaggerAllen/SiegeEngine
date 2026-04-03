@@ -46,7 +46,7 @@ jobs:
               -v claude_config:/home/claude/.claude \
               -e SIEGE_ANTHROPIC_API_KEY=${{ secrets.SIEGE_ANTHROPIC_API_KEY }} \
               -e SIEGE_JWT_SECRET_KEY=${{ secrets.SIEGE_JWT_SECRET_KEY }} \
-              -e SIEGE_CORS_ORIGINS='["https://${{ secrets.SIEGE_DOMAIN }}"]' \
+              -e SIEGE_CORS_ORIGINS='["https://${{ secrets.DROPLET_IP }}","https://siege.strutco.io"]' \
               -e SIEGE_DATABASE_URL=sqlite:////data/siege_engine.db \
               -e SIEGE_GIT_REPOS_BASE_PATH=/data/repos \
               siege-engine:latest
