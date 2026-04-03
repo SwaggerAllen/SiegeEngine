@@ -407,9 +407,10 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
     );
   }
 
-  // ── Approved (non-viewer, non-input doc) ──────────────────────────────────
+  // ── Approved or Rejected (non-viewer, non-input doc) ───────────────────────
   const isApproved = artifact.status === 'approved' && execution?.status === 'approved';
-  if (!s.isViewer && !s.isAwaitingReview && isApproved && !s.isInputDoc) {
+  const isRejected = artifact.status === 'rejected' || execution?.status === 'rejected';
+  if (!s.isViewer && !s.isAwaitingReview && (isApproved || isRejected) && !s.isInputDoc) {
     if (mode === 'feedback') {
       return (
         <div className="space-y-3">
@@ -417,8 +418,8 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
             notes={s.notes}
             onNotesChange={(v) => { s.setNotes(v); }}
             feedbackCount={s.feedbackCount}
-            label="Request Changes (optional)"
-            placeholder="Add feedback to request changes..."
+            label={isRejected ? 'Feedback for regeneration (optional)' : 'Request Changes (optional)'}
+            placeholder={isRejected ? 'Add feedback for regeneration...' : 'Add feedback to request changes...'}
           />
           <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-gray-700">
             <button
@@ -428,13 +429,23 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
             >
               {s.feedbackSaved ? 'Feedback Saved' : 'Save Feedback'}
             </button>
-            <button
-              onClick={() => s.handleAction('rejected')}
-              disabled={s.submitting}
-              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-            >
-              Reject
-            </button>
+            {isRejected ? (
+              <button
+                onClick={() => s.handleAction('approved')}
+                disabled={s.submitting}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+              >
+                Approve
+              </button>
+            ) : (
+              <button
+                onClick={() => s.handleAction('rejected')}
+                disabled={s.submitting}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+              >
+                Reject
+              </button>
+            )}
           </div>
         </div>
       );
@@ -443,14 +454,29 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
     // actions mode
     return (
       <div className="space-y-3">
+        {isRejected && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="px-2 py-1 rounded bg-red-900 text-red-300">Rejected</span>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <button
-            onClick={() => s.handleAction('rejected')}
-            disabled={s.submitting}
-            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
-          >
-            {s.submitting ? 'Rejecting...' : 'Reject'}
-          </button>
+          {isRejected ? (
+            <button
+              onClick={() => s.handleAction('approved')}
+              disabled={s.submitting}
+              className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              {s.submitting ? 'Approving...' : 'Approve'}
+            </button>
+          ) : (
+            <button
+              onClick={() => s.handleAction('rejected')}
+              disabled={s.submitting}
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+            >
+              {s.submitting ? 'Rejecting...' : 'Reject'}
+            </button>
+          )}
           <button
             onClick={s.handleRestart}
             disabled={s.restarting}
