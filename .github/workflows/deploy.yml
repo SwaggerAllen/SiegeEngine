@@ -33,23 +33,22 @@ jobs:
             echo "=== Deploy: building commit $(git rev-parse --short HEAD) ==="
             echo "=== Files check: $(head -1 backend/pipeline/summarize.py) ==="
             docker build --build-arg COMMIT_HASH=$(git rev-parse --short HEAD) -t siege-engine:latest .
-            docker stop siege-engine || true
-            docker rm siege-engine || true
-            docker run -d \
-              --name siege-engine \
-              --restart=unless-stopped \
-              --log-driver json-file \
-              --log-opt max-size=50m \
-              --log-opt max-file=5 \
-              -p 80:8000 \
-              -p 443:8000 \
-              -v siege_data:/data \
-              -v claude_config:/home/claude/.claude \
-              -e SIEGE_ANTHROPIC_API_KEY=${{ secrets.SIEGE_ANTHROPIC_API_KEY }} \
-              -e SIEGE_JWT_SECRET_KEY=${{ secrets.SIEGE_JWT_SECRET_KEY }} \
-              -e SIEGE_CORS_ORIGINS='["https://${{ secrets.DROPLET_IP }}"]' \
-              -e SIEGE_DATABASE_URL=sqlite:////data/siege_engine.db \
-              -e SIEGE_GIT_REPOS_BASE_PATH=/data/repos \
-              siege-engine:latest
+
+            # Write .env for docker-compose
+            printf '%s\n' \
+              "SIEGE_ANTHROPIC_API_KEY=${{ secrets.SIEGE_ANTHROPIC_API_KEY }}" \
+              "SIEGE_JWT_SECRET_KEY=${{ secrets.SIEGE_JWT_SECRET_KEY }}" \
+              "SIEGE_DOMAIN=${{ secrets.SIEGE_DOMAIN }}" \
+              'SIEGE_CORS_ORIGINS=["https://${{ secrets.SIEGE_DOMAIN }}"]' \
+              > .env
+
+            # Stop old standalone container if it exists (migration from pre-compose setup)
+            docker stop siege-engine 2>/dev/null || true
+            docker rm siege-engine 2>/dev/null || true
+
+            # Deploy with docker-compose
+            docker compose down || true
+            docker compose up -d
+
             docker image prune -f
             rm -rf /tmp/siege-deploy

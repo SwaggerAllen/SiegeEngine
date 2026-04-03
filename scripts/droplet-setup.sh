@@ -4,9 +4,9 @@
 
 set -euo pipefail
 
-echo "=== Installing Docker ==="
+echo "=== Installing Docker and Docker Compose ==="
 apt-get update
-apt-get install -y docker.io
+apt-get install -y docker.io docker-compose-plugin
 systemctl enable docker
 systemctl start docker
 
@@ -29,7 +29,8 @@ ufw --force enable
 
 echo "=== Done ==="
 echo "Droplet is ready. Add these GitHub secrets:"
-echo "  DROPLET_IP          - this server's IP"
-echo "  DROPLET_SSH_KEY     - private key matching /home/deploy/.ssh/authorized_keys"
+echo "  DROPLET_IP               - this server's IP"
+echo "  DROPLET_SSH_KEY          - private key matching /home/deploy/.ssh/authorized_keys"
 echo "  SIEGE_ANTHROPIC_API_KEY  - your Anthropic API key"
 echo "  SIEGE_JWT_SECRET_KEY     - JWT secret for auth"
+echo "  SIEGE_DOMAIN             - your domain (e.g. siege.example.com) — Caddy auto-provisions HTTPS certs"

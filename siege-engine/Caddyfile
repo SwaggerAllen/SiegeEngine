@@ -1,0 +1,10 @@
+{$SIEGE_DOMAIN:localhost} {
+	reverse_proxy app:8000
+
+	# WebSocket support (Caddy handles this automatically, but explicit for clarity)
+	@websocket {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @websocket app:8000
+}
