@@ -141,6 +141,7 @@ describe('DocumentTreeView', () => {
   beforeEach(() => {
     mockSelectArtifact.mockReset();
     mockSelectedArtifactId.mockReturnValue(null);
+    localStorage.clear();
   });
 
   it('renders system-level docs at root level', () => {
@@ -159,39 +160,33 @@ describe('DocumentTreeView', () => {
   it('expands Components folder to show component folders', async () => {
     render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    // Components folder starts expanded by default
-    expect(screen.getByText('auth')).toBeInTheDocument();
+    // Components folder starts expanded by default; auth auto-expands due to generating child
+    const authFolderBtn = screen.getAllByText('auth').find(
+      (el) => el.closest('button')?.querySelector('.text-yellow-500\\/80'),
+    );
+    expect(authFolderBtn).toBeInTheDocument();
     expect(screen.getByText('api')).toBeInTheDocument();
   });
 
   it('expands a component folder to show its docs', async () => {
-    const user = userEvent.setup();
     render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    // Click the auth component folder to expand
-    await user.click(screen.getByText('auth'));
-
+    // auth auto-expands on mount because it contains a generating sub-component
     expect(screen.getByText('Auth Requirements')).toBeInTheDocument();
     expect(screen.getByText('Auth Architecture')).toBeInTheDocument();
   });
 
   it('shows Sub-components folder inside a component', async () => {
-    const user = userEvent.setup();
     render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    // Expand auth component
-    await user.click(screen.getByText('auth'));
-
+    // auth auto-expands on mount
     expect(screen.getByText('Sub-components')).toBeInTheDocument();
   });
 
   it('shows sub_component_map fanout node inside a component folder', async () => {
-    const user = userEvent.setup();
     render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    // Expand auth component
-    await user.click(screen.getByText('auth'));
-
+    // auth auto-expands on mount
     expect(screen.getByText('Auth Sub-Component Map')).toBeInTheDocument();
   });
 
@@ -202,23 +197,16 @@ describe('DocumentTreeView', () => {
   });
 
   it('expands Sub-components folder to show sub-component folders', async () => {
-    const user = userEvent.setup();
     render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    await user.click(screen.getByText('auth'));
-    await user.click(screen.getByText('Sub-components'));
-
+    // All auto-expanded due to generating child in auth.login
     expect(screen.getByText('login')).toBeInTheDocument();
   });
 
   it('shows sub-component docs when sub-component folder is expanded', async () => {
-    const user = userEvent.setup();
     render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    await user.click(screen.getByText('auth'));
-    await user.click(screen.getByText('Sub-components'));
-    await user.click(screen.getByText('login'));
-
+    // All auto-expanded due to generating child in auth.login
     expect(screen.getByText('Auth Login Requirements')).toBeInTheDocument();
     expect(screen.getByText('Auth Login Architecture')).toBeInTheDocument();
   });
@@ -236,7 +224,7 @@ describe('DocumentTreeView', () => {
     const user = userEvent.setup();
     render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    await user.click(screen.getByText('auth'));
+    // auth auto-expanded, Auth Requirements already visible
     await user.click(screen.getByText('Auth Requirements'));
 
     expect(mockSelectArtifact).toHaveBeenCalledWith('art-5');
@@ -246,13 +234,16 @@ describe('DocumentTreeView', () => {
     const user = userEvent.setup();
     render(<DocumentTreeView nodes={sampleNodes} edges={sampleEdges} />);
 
-    expect(screen.getByText('auth')).toBeInTheDocument();
+    // Auth docs visible because auth auto-expanded
+    expect(screen.getByText('Auth Requirements')).toBeInTheDocument();
 
+    // Collapse Components folder
     await user.click(screen.getByText('Components'));
-    expect(screen.queryByText('auth')).not.toBeInTheDocument();
+    expect(screen.queryByText('Auth Requirements')).not.toBeInTheDocument();
 
+    // Re-expand
     await user.click(screen.getByText('Components'));
-    expect(screen.getByText('auth')).toBeInTheDocument();
+    expect(screen.getByText('Auth Requirements')).toBeInTheDocument();
   });
 
   it('shows "No documents yet" when nodes array is empty', () => {
