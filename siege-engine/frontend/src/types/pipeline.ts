@@ -14,5 +14,5 @@ export type {
 
 /** Execution statuses that allow a force-restart action. */
 export const RESTARTABLE_STATUSES: ReadonlySet<string> = new Set<string>([
-  'running', 'ai_review', 'failed', 'rejected',
+  'running', 'ai_review', 'failed',
 ]);
