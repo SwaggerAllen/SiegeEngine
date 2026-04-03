@@ -539,6 +539,58 @@ function TreeBranch({
 }
 
 // ---------------------------------------------------------------------------
+// localStorage persistence for expanded folders
+// ---------------------------------------------------------------------------
+
+const EXPANDED_KEYS_STORAGE_KEY = 'siege-tree-expanded-keys';
+
+function loadExpandedKeys(): Set<string> {
+  try {
+    const stored = localStorage.getItem(EXPANDED_KEYS_STORAGE_KEY);
+    if (stored) {
+      const arr = JSON.parse(stored);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch { /* ignore corrupt data */ }
+  // Default: components root expanded
+  return new Set(['components-root']);
+}
+
+function saveExpandedKeys(keys: Set<string>) {
+  try {
+    localStorage.setItem(EXPANDED_KEYS_STORAGE_KEY, JSON.stringify([...keys]));
+  } catch { /* ignore quota errors */ }
+}
+
+// ---------------------------------------------------------------------------
+// Collect folder keys that contain actively generating nodes
+// ---------------------------------------------------------------------------
+
+function getActiveAncestorKeys(tree: TreeNode[]): Set<string> {
+  const keys = new Set<string>();
+
+  function walk(nodes: TreeNode[]): boolean {
+    let hasActive = false;
+    for (const node of nodes) {
+      if (node.type === 'document') {
+        if (node.node && ACTIVE_STATUSES.has(node.node.status)) {
+          hasActive = true;
+        }
+      } else if (node.children) {
+        if (walk(node.children)) {
+          keys.add(node.key);
+          hasActive = true;
+        }
+      }
+    }
+    return hasActive;
+  }
+
+  walk(tree);
+  return keys;
+}
+
+// ---------------------------------------------------------------------------
 // Public component
 // ---------------------------------------------------------------------------
 
@@ -584,12 +636,38 @@ export function DocumentTreeView({
     return countDocs(displayTree);
   }, [displayTree, searchQuery]);
 
-  // Start with top-level folders expanded
-  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => {
-    const initial = new Set<string>();
-    initial.add('components-root');
-    return initial;
-  });
+  // Load persisted expanded keys from localStorage
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(loadExpandedKeys);
+
+  // Persist to localStorage whenever expandedKeys changes
+  useEffect(() => {
+    saveExpandedKeys(expandedKeys);
+  }, [expandedKeys]);
+
+  // Auto-expand folders containing actively generating nodes
+  const activeAncestorKeys = useMemo(() => getActiveAncestorKeys(tree), [tree]);
+
+  // Track which keys we've already auto-expanded so we don't fight the user
+  const prevAutoExpanded = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    // Find newly-active folders that weren't active on the previous render
+    const newKeys = new Set<string>();
+    for (const key of activeAncestorKeys) {
+      if (!prevAutoExpanded.current.has(key)) {
+        newKeys.add(key);
+      }
+    }
+    prevAutoExpanded.current = activeAncestorKeys;
+
+    if (newKeys.size > 0) {
+      setExpandedKeys((prev) => {
+        const next = new Set(prev);
+        for (const key of newKeys) next.add(key);
+        return next;
+      });
+    }
+  }, [activeAncestorKeys]);
 
   // When searching, force-expand ancestor folders of matches.
   // When not searching, use manual expandedKeys.
