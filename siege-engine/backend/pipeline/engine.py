@@ -1750,9 +1750,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         if text:
                             parent_dep_parts.append(f"### {dep_key}\n\n{text}")
                 if parent_dep_parts:
-                    inputs["parent_dependency_summaries"] = (
-                        "\n\n---\n\n".join(parent_dep_parts)
-                    )
+                    inputs["parent_dependency_summaries"] = "\n\n---\n\n".join(parent_dep_parts)
 
         # Inject input documents for stages that opt in
         inputs = self._inject_input_documents(project_id, stage_def.stage_key, inputs)

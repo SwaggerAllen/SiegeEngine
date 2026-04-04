@@ -23,9 +23,7 @@ class SubComponentPlanPrompt(PromptTemplate):
             context_parts.append(f"DEPENDENCY SUB-COMPONENT ARCHITECTURES:\n\n{dep_archs}")
         parent_dep_summaries = input_artifacts.get("parent_dependency_summaries", "")
         if parent_dep_summaries:
-            context_parts.append(
-                f"PARENT DEPENDENCY CONTRACT SUMMARIES:\n\n{parent_dep_summaries}"
-            )
+            context_parts.append(f"PARENT DEPENDENCY CONTRACT SUMMARIES:\n\n{parent_dep_summaries}")
 
         messages = [
             {"role": "system", "content": self.full_system_message},
