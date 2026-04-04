@@ -1,12 +1,20 @@
 """Project model."""
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
+
+if TYPE_CHECKING:
+    from backend.models.artifact import Artifact, ComponentDefinition
+    from backend.models.input_document import InputDocument
+    from backend.models.pipeline import PipelineConfig, PipelineRun, StageExecution
 
 
 class Project(Base):

@@ -18,7 +18,7 @@ class StructuredExtractor:
         self._model_name = model
 
     def _get_model(self) -> ChatAnthropic:
-        return ChatAnthropic(model=self._model_name, max_tokens=2000, temperature=0)
+        return ChatAnthropic(model=self._model_name, max_tokens=2000, temperature=0)  # type: ignore[call-arg]
 
     async def extract_components(self, architecture_doc: str) -> list[dict]:
         """Extract component list from an architecture document.

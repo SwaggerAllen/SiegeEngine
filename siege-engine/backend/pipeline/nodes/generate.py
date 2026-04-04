@@ -190,7 +190,7 @@ def _build_dependency_summary_content(
         if dep_art and dep_art.content:
             dep_artifacts.append((full_key, dep_art))
 
-    dep_artifacts.sort(key=lambda x: len(x[1].content), reverse=True)
+    dep_artifacts.sort(key=lambda x: len(x[1].content or ""), reverse=True)
 
     # Try building with summaries for largest first
     parts = []
@@ -199,7 +199,7 @@ def _build_dependency_summary_content(
         parts.append(f"### {full_key}\n\n{text}")
 
     if parts:
-        return "\n\n---\n\n".join(parts), [(k, len(a.content)) for k, a in dep_artifacts]
+        return "\n\n---\n\n".join(parts), [(k, len(a.content or "")) for k, a in dep_artifacts]
     return None, []
 
 

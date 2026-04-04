@@ -418,14 +418,14 @@ def _migrate_feedback_to_comments():
                 "  Artifact %s (v%d): human_review_notes is %d chars",
                 artifact.id,
                 artifact.version,
-                len(raw),
+                len(raw or ""),
             )
 
             # Split accumulated notes by --- dividers.
             # Handle variations: \n\n---\n\n, \r\n\r\n---\r\n\r\n, \n---\n, etc.
             entries = [
                 e.strip()
-                for e in re.split(r"\r?\n\r?\n---\r?\n\r?\n|\r?\n---\r?\n", raw)
+                for e in re.split(r"\r?\n\r?\n---\r?\n\r?\n|\r?\n---\r?\n", raw or "")
                 if e.strip()
             ]
             logger.info(

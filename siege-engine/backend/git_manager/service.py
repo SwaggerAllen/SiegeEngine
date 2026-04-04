@@ -58,7 +58,14 @@ class GitManager:
             diffs = old.diff(new, paths=[file_path], create_patch=True)
         else:
             diffs = old.diff(new, create_patch=True)
-        return "\n".join(d.diff.decode("utf-8") for d in diffs)
+        parts: list[str] = []
+        for d in diffs:
+            raw = d.diff
+            if isinstance(raw, bytes):
+                parts.append(raw.decode("utf-8"))
+            elif isinstance(raw, str):
+                parts.append(raw)
+        return "\n".join(parts)
 
     def get_file_history(self, project_id: str, file_path: str) -> list[dict]:
         repo = self._get_repo(project_id)
@@ -119,7 +126,7 @@ class GitManager:
         repo = self._get_repo(project_id)
         # Unmerged entries indicate conflicts
         unmerged = repo.index.unmerged_blobs()
-        return list(unmerged.keys())
+        return [str(k) for k in unmerged.keys()]  # type: ignore[arg-type]
 
     def resolve_conflict(self, project_id: str, file_path: str, content: str):
         repo = self._get_repo(project_id)

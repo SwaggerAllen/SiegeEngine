@@ -64,7 +64,7 @@ def reconcile_project(db: Session, project_id: str) -> list[dict]:
                     StageStatus.AI_REVIEW,
                 ]
             ),
-            StageExecution.id.notin_(tracked_exec_ids) if tracked_exec_ids else True,
+            StageExecution.id.notin_(tracked_exec_ids) if tracked_exec_ids else True,  # type: ignore[arg-type]
         )
         .all()
     )

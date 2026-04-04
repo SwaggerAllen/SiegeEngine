@@ -12,7 +12,10 @@ Execution-existence checks still use the StageExecution table since
 the snapshot is project-level and doesn't distinguish by run_id.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from backend.models import (
     ArtifactType,
@@ -22,6 +25,12 @@ from backend.models import (
     StageExecution,
     StageStatus,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from backend.models import ComponentDefinition
+    from backend.pipeline.event_store import EventStore
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +80,15 @@ _STAGE_KEY_TO_ORDER: dict[str, int] = {
 
 class ReadinessMixin:
     """Mixin that provides stage/entity readiness checks."""
+
+    # Provided by PipelineEngine (host class)
+    db: Session
+    events: EventStore
+
+    def _get_components(self, project_id: str) -> list[dict]: ...  # type: ignore[empty-body]
+    def _get_sub_component_defs(self, project_id: str) -> list[ComponentDefinition]: ...  # type: ignore[empty-body]
+    def _get_leaf_keys(self, project_id: str) -> list[str]: ...  # type: ignore[empty-body]
+    def _heal_missing_entities(self, project_id: str, stage_def: StageDefinition) -> bool: ...  # type: ignore[empty-body]
 
     def _stage_fully_generated(
         self, project_id: str, stage_def: StageDefinition, run_id: str
@@ -274,7 +292,10 @@ class ReadinessMixin:
         elif fan_out == FanOutStrategy.SUB_COMPONENT:
             sub_comps = self._get_sub_component_defs(project_id)
             for sc in sub_comps:
-                full_key = f"{sc.parent_key}.{sc.key}"
+                parent_key = sc.parent_key
+                if not parent_key:
+                    continue
+                full_key = f"{parent_key}.{sc.key}"
                 if not self._is_in_run_scope(stage_def, full_key, pipeline_run):
                     continue
                 if regen_only and not self._entity_already_generated(
@@ -282,9 +303,9 @@ class ReadinessMixin:
                 ):
                     continue
                 deps = sc.dependencies or []
-                full_deps = [f"{sc.parent_key}.{d}" for d in deps]
+                full_deps = [f"{parent_key}.{d}" for d in deps]
                 if self._is_sub_component_ready(
-                    project_id, full_key, sc.parent_key, stage_def, run_id, full_deps
+                    project_id, full_key, parent_key, stage_def, run_id, full_deps
                 ):
                     ready.append(full_key)
 
