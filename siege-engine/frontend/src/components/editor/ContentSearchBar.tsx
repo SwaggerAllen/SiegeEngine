@@ -191,8 +191,17 @@ export function ContentSearchBar({ containerRef, contentKey, copyContent }: Cont
   }, [copyContent]);
 
   if (!open) {
+    const wordCount = copyContent ? copyContent.trim().split(/\s+/).filter(Boolean).length : 0;
+    const charCount = copyContent ? copyContent.length : 0;
+
     return (
-      <div className="flex justify-end px-3 py-1 border-b border-gray-700">
+      <div className="flex justify-between items-center px-3 py-1 border-b border-gray-700">
+        {copyContent ? (
+          <span className="text-xs text-gray-500 font-mono">
+            {wordCount.toLocaleString()} words &middot; {charCount.toLocaleString()} chars
+          </span>
+        ) : <span />}
+        <div className="flex">
         {copyContent && (
           <button
             onClick={handleCopy}
@@ -219,6 +228,7 @@ export function ContentSearchBar({ containerRef, contentKey, copyContent }: Cont
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
         </button>
+        </div>
       </div>
     );
   }
