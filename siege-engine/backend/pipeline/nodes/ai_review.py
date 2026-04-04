@@ -232,7 +232,6 @@ async def ai_review(
     stage_def: StageDefinition,
     generated_content: str,
     input_artifacts: dict[str, str],
-    review_prompt_overrides: dict | None = None,
 ) -> dict:
     """
     Run AI review on generated content via CLI.
@@ -248,22 +247,9 @@ async def ai_review(
         "stage_name": stage_def.display_name,
     }
 
-    # Use overrides if provided (from PipelineConfig.review_prompt_overrides)
-    prompt_config_dict = None
-    if review_prompt_overrides:
-        prompt_config_dict = {
-            "system_message": review_prompt_overrides.get("system_message"),
-            "output_format_instructions": review_prompt_overrides.get("output_format_instructions"),
-            "context_template": review_prompt_overrides.get("context_template"),
-        }
+    messages = prompt.build(input_artifacts=review_inputs)
 
-    messages = prompt.build(
-        input_artifacts=review_inputs,
-        prompt_config=prompt_config_dict,
-    )
-
-    # Model selection: from overrides, fall back to defaults
-    model_name = (review_prompt_overrides or {}).get("model") or "claude-sonnet-4-20250514"
+    model_name = "claude-sonnet-4-20250514"
 
     # Extract system and user messages for CLI
     system_msg = next((m["content"] for m in messages if m["role"] == "system"), None)

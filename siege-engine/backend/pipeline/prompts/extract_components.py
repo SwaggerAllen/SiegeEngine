@@ -7,20 +7,9 @@ class ExtractComponentsPrompt(PromptTemplate):
         input_artifacts,
         component_key=None,
         human_notes=None,
-        prompt_config=None,
         current_content=None,
         upstream_changes=None,
     ):
-        if prompt_config:
-            return self._build_from_config(
-                input_artifacts,
-                component_key,
-                human_notes,
-                prompt_config,
-                current_content=current_content,
-                upstream_changes=upstream_changes,
-            )
-
         feature_expansion = input_artifacts.get("feature_expansion", "")
         system_arch = input_artifacts.get("system_architecture", "")
 

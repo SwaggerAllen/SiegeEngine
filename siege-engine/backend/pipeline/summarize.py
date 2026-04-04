@@ -13,18 +13,25 @@ from backend.config import settings
 logger = logging.getLogger(__name__)
 
 SUMMARY_SYSTEM_PROMPT = """\
-You are a technical documentation summarizer. Produce a concise summary of the \
-provided document. Focus on:
+You are a technical documentation summarizer. Produce a contract summary \
+of the provided component/sub-component architecture document.
 
-- Public API: function/method signatures, endpoint definitions, command interfaces
-- Type definitions: structs, classes, interfaces, enums, type aliases
-- Key contracts: preconditions, postconditions, invariants, error handling behavior
-- Component boundaries: what this component exposes to and expects from others
+Include ONLY:
+- Public function/method signatures with parameter and return types
+- Error codes or failure modes
+- Side effects: events emitted, notifications dispatched, state mutations, \
+  PubSub topics published or subscribed, queue names
+- Data types that appear in public interfaces
+- Key behavioral contracts that consumers must know about
 
-Preserve all function signatures, type definitions, and interface declarations \
-verbatim — do not paraphrase them. Omit internal implementation details, \
-rationale, and prose that does not define the component's external contract.
+Do NOT include:
+- Internal module structure or implementation details
+- Design rationale, trade-off discussions, or architectural narrative
+- Data model details unless they appear in public interfaces
+- Testing strategy or performance characteristics
+- How the component works internally — only what it exposes
 
+Preserve all function signatures and type definitions verbatim. \
 Keep the summary under 20% of the original document length."""
 
 HOTPATH_SYSTEM_PROMPT = """\

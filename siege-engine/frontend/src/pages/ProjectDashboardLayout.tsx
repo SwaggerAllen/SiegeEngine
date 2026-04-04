@@ -1,6 +1,5 @@
 import { useState, useMemo, useEffect, Suspense, memo } from 'react';
-import { useSafeEffect } from '../hooks/useSafe';
-import { useParams, useSearchParams, useNavigate, useLocation, Link, Outlet, Navigate } from 'react-router-dom';
+import { useParams, useSearchParams, useLocation, Link, Outlet, Navigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useDAGStore } from '../store/dagStore';
 import { usePipelineUIStore } from '../store/pipelineUIStore';
@@ -68,12 +67,11 @@ export function findSelectedExecution(
   );
 }
 
-type Tab = 'documents' | 'pipeline' | 'prompts' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug';
+type Tab = 'documents' | 'pipeline' | 'input-docs' | 'chat' | 'settings' | 'history' | 'logs' | 'debug';
 
 const tabLabels: Record<Tab, string> = {
   documents: 'Documents',
   pipeline: 'Pipeline',
-  prompts: 'Prompts',
   'input-docs': 'Input Docs',
   chat: 'Chat',
   settings: 'Settings',
@@ -109,11 +107,7 @@ export function ProjectDashboardLayout() {
 // ---------------------------------------------------------------------------
 
 function DashboardLayout({ projectId }: { projectId: string }) {
-  const navigate = useNavigate();
   const location = useLocation();
-
-  const editPromptStageKey = useDAGStore((s) => s.editPromptStageKey);
-  const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
 
   // Auth: only role check for visibleTabs
   const user = useAuthStore((s) => s.user);
@@ -131,14 +125,6 @@ function DashboardLayout({ projectId }: { projectId: string }) {
     return () => { useDAGStore.getState().clearSelection(); };
   }, [projectId]);
 
-  // Edit-prompt redirect: DAG node "Edit" → navigate to prompts tab
-  useSafeEffect('edit-prompt-redirect', () => {
-    if (editPromptStageKey) {
-      navigate('prompts', { state: { initialStageKey: editPromptStageKey } });
-      setEditPromptStageKey(null);
-    }
-  }, [editPromptStageKey, setEditPromptStageKey, navigate]);
-
   const pathSegments = location.pathname.split('/');
   const activeTab = (pathSegments[pathSegments.length - 1] || 'documents') as Tab;
 
@@ -147,7 +133,7 @@ function DashboardLayout({ projectId }: { projectId: string }) {
     () =>
       isViewer
         ? ['documents', 'pipeline', 'chat']
-        : ['documents', 'pipeline', 'prompts', 'input-docs', 'chat', 'settings', 'history'],
+        : ['documents', 'pipeline', 'input-docs', 'chat', 'settings', 'history'],
     [isViewer],
   );
 

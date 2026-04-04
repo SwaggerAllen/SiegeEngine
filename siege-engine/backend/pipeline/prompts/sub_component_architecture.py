@@ -7,20 +7,9 @@ class SubComponentArchPrompt(PromptTemplate):
         input_artifacts,
         component_key=None,
         human_notes=None,
-        prompt_config=None,
         current_content=None,
         upstream_changes=None,
     ):
-        if prompt_config:
-            return self._build_from_config(
-                input_artifacts,
-                component_key,
-                human_notes,
-                prompt_config,
-                current_content=current_content,
-                upstream_changes=upstream_changes,
-            )
-
         component_arch = input_artifacts.get("component_architectures", "")
         sub_component_map = input_artifacts.get("extract_sub_components", "")
 
@@ -32,6 +21,11 @@ class SubComponentArchPrompt(PromptTemplate):
         dep_archs = input_artifacts.get("dependency_architectures", "")
         if dep_archs:
             context_parts.append(f"DEPENDENCY SUB-COMPONENT ARCHITECTURES:\n\n{dep_archs}")
+        parent_dep_summaries = input_artifacts.get("parent_dependency_summaries", "")
+        if parent_dep_summaries:
+            context_parts.append(
+                f"PARENT DEPENDENCY CONTRACT SUMMARIES:\n\n{parent_dep_summaries}"
+            )
 
         messages = [
             {"role": "system", "content": self.full_system_message},

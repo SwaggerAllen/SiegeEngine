@@ -1,9 +1,6 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { StageNode } from './StageNode';
 import type { DAGNodeData } from '../../types/dag';
-
-const mockSetEditPromptStageKey = vi.fn();
 
 // Stub @xyflow/react to avoid ReactFlow context dependency
 vi.mock('@xyflow/react', () => ({
@@ -14,7 +11,6 @@ vi.mock('@xyflow/react', () => ({
 vi.mock('../../store/dagStore', () => ({
   useDAGStore: vi.fn((selector: (s: Record<string, unknown>) => unknown) =>
     selector({
-      setEditPromptStageKey: mockSetEditPromptStageKey,
       selectedArtifactId: null,
       selectedStageKey: null,
     })
@@ -42,9 +38,7 @@ const baseData: DAGNodeData = {
 };
 
 describe('StageNode', () => {
-  beforeEach(() => {
-    mockSetEditPromptStageKey.mockReset();
-  });
+  beforeEach(() => {});
 
   it('renders the node label', () => {
     render(<StageNode id="test-node" data={baseData} />);
@@ -128,7 +122,6 @@ describe('StageNode', () => {
       />
     );
     expect(screen.getByText('sonnet-4')).toBeInTheDocument();
-    expect(screen.getByText('Edit')).toBeInTheDocument();
   });
 
   it('renders "default model" when prompt_info.model is null', () => {
@@ -146,44 +139,6 @@ describe('StageNode', () => {
       />
     );
     expect(screen.getByText('default model')).toBeInTheDocument();
-  });
-
-  it('shows custom config indicator when has_custom_config is true', () => {
-    render(
-      <StageNode id="test-node"
-        data={{
-          ...baseData,
-          prompt_info: {
-            stage_key: 'system_architecture',
-            model: 'claude-opus-4-20250514',
-            has_custom_config: true,
-            template_key: 'architecture',
-          },
-        }}
-      />
-    );
-    expect(screen.getByText('✎')).toBeInTheDocument();
-  });
-
-  it('calls setEditPromptStageKey when Edit button is clicked', async () => {
-    const user = userEvent.setup();
-    render(
-      <StageNode id="test-node"
-        data={{
-          ...baseData,
-          prompt_info: {
-            stage_key: 'system_architecture',
-            model: 'claude-sonnet-4-20250514',
-            has_custom_config: false,
-            template_key: 'architecture',
-          },
-        }}
-      />
-    );
-
-    await user.click(screen.getByText('Edit'));
-
-    expect(mockSetEditPromptStageKey).toHaveBeenCalledWith('system_architecture');
   });
 
   it('renders handles for ReactFlow connections', () => {

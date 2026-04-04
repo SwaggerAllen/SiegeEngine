@@ -27,62 +27,9 @@ class PromptTemplate(ABC):
         input_artifacts: dict[str, str],
         component_key: str | None = None,
         human_notes: str | None = None,
-        prompt_config: dict | None = None,
         current_content: str | None = None,
         upstream_changes: str | None = None,
     ) -> list[dict]: ...
-
-    def _build_from_config(
-        self,
-        input_artifacts: dict[str, str],
-        component_key: str | None,
-        human_notes: str | None,
-        prompt_config: dict,
-        current_content: str | None = None,
-        upstream_changes: str | None = None,
-    ) -> list[dict]:
-        """Build messages from a PromptConfig (DB-stored configuration)."""
-        system_msg = prompt_config.get("system_message") or self.default_system_message
-        output_fmt = prompt_config.get("output_format_instructions") or self.default_output_format
-        ctx_template = prompt_config.get("context_template") or self.default_context_template
-
-        if output_fmt:
-            system_msg = f"{system_msg}\n\n{output_fmt}"
-
-        # Always append formatting guidance
-        system_msg = f"{system_msg}\n\n{self.formatting_guidance}"
-
-        # Build the context from template
-        artifacts_text = "\n\n".join(f"### {k}\n{v}" for k, v in input_artifacts.items())
-        user_content = ctx_template.replace("{input_artifacts}", artifacts_text)
-        if component_key:
-            user_content = user_content.replace("{component_key}", component_key)
-
-        messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_content},
-        ]
-
-        if human_notes or current_content or upstream_changes:
-            revision = (
-                prompt_config.get("revision_instructions") or self.default_revision_instructions
-            )
-            if current_content:
-                revision += (
-                    "\n\nHere is your previous output. Revise it to address the issues below. "
-                    "Keep unchanged sections intact — only modify what needs to change.\n\n"
-                    f"CURRENT DOCUMENT:\n\n{current_content}"
-                )
-            if upstream_changes:
-                revision += (
-                    "\n\nThe following upstream documents have changed:\n\n"
-                    f"UPSTREAM CHANGES:\n\n{upstream_changes}"
-                )
-            if human_notes:
-                revision += f"\n\nHuman Reviewer Notes: {human_notes}"
-            messages.append({"role": "user", "content": revision})
-
-        return messages
 
     def _inject_feedback(
         self,

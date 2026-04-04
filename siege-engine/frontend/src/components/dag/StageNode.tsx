@@ -40,7 +40,6 @@ const CANCELABLE_EXEC_STATUSES = new Set(['running', 'ai_review', 'pending']);
 
 export const StageNode = memo(function StageNode({ id, data }: { id: string; data: DAGNodeData & { projectId?: string } }) {
   const projectId = data.projectId;
-  const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
   const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
   const selectedStageKey = useDAGStore((s) => s.selectedStageKey);
   const isSelected =
@@ -81,13 +80,6 @@ export const StageNode = memo(function StageNode({ id, data }: { id: string; dat
     && data.execution_status
     && CANCELABLE_EXEC_STATUSES.has(data.execution_status)
   );
-
-  const handleEditPrompt = (e: React.MouseEvent) => {
-    e.stopPropagation(); // don't trigger node click (artifact select)
-    if (pi) {
-      setEditPromptStageKey(pi.stage_key);
-    }
-  };
 
   const handleRestart = async (e: React.MouseEvent) => {
     e.stopPropagation(); // don't trigger node click
@@ -179,17 +171,7 @@ export const StageNode = memo(function StageNode({ id, data }: { id: string; dat
             <span className="flex items-center gap-1">
               <span className="text-gray-500">⚙</span>
               {pi.model ? formatModelName(pi.model) : 'default model'}
-              {pi.has_custom_config && (
-                <span className="text-blue-400" title="Custom prompt config">✎</span>
-              )}
             </span>
-            <button
-              onClick={handleEditPrompt}
-              className="text-gray-500 hover:text-blue-400 transition-colors"
-              title="Edit prompt config"
-            >
-              Edit
-            </button>
           </div>
         </>
       )}

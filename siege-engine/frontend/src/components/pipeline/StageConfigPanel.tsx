@@ -4,7 +4,7 @@ import { updateStageConfig, resetStageConfig, reconcilePipeline } from '../../ap
 import { usePipelineConfigData, useIsRunning, usePipelineRuns, pipelineKeys } from '../../hooks/queries/usePipelineQueries';
 import { useTriggerStage, useStartPipeline, useResumeRun } from '../../hooks/mutations/usePipelineMutations';
 import { dagKeys } from '../../hooks/queries/useDAGQueries';
-import { useDAGStore } from '../../store/dagStore';
+
 import type { PipelineStartOptions } from '../../types/pipeline';
 
 const STOP_POINT_OPTIONS = [
@@ -28,8 +28,6 @@ interface StageConfigPanelProps {
 export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps) {
   const queryClient = useQueryClient();
   const config = usePipelineConfigData(projectId);
-  const setEditPromptStageKey = useDAGStore((s) => s.setEditPromptStageKey);
-
   const stageDef = config?.stages.find((s) => s.stage_key === stageKey);
 
   const [form, setForm] = useState<{
@@ -112,10 +110,6 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
     } finally {
       setResetting(false);
     }
-  };
-
-  const handleEditPrompt = () => {
-    setEditPromptStageKey(stageKey);
   };
 
   const handleTrigger = async () => {
@@ -265,12 +259,6 @@ export function StageConfigPanel({ projectId, stageKey }: StageConfigPanelProps)
             className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded disabled:opacity-50"
           >
             {resetting ? 'Resetting...' : 'Use Defaults'}
-          </button>
-          <button
-            onClick={handleEditPrompt}
-            className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded"
-          >
-            Edit Prompt
           </button>
           <button
             onClick={handleTrigger}
