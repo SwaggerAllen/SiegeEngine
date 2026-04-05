@@ -7,6 +7,18 @@ import { ActionButtonsBar } from './ActionButtonsBar';
 import type { Artifact } from '../../types/project';
 import type { StageExecution, PipelineStartOptions } from '../../types/pipeline';
 
+// Document artifact types eligible for consolidation (not code, maps, or input docs).
+const CONSOLIDATABLE_TYPES = new Set([
+  'feature_expansion',
+  'system_requirements',
+  'system_architecture',
+  'component_architecture',
+  'component_plan',
+  'sub_component_architecture',
+  'sub_component_plan',
+  'high_level_plan',
+]);
+
 const STOP_POINT_OPTIONS = [
   { value: 'end_of_phase', label: 'End of phase' },
   { value: 'before_code', label: 'Before code generation' },
@@ -255,7 +267,9 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
   const lastDuration = useLastDuration(executions, execution?.id, artifact.id);
   const consolidateMutation = useConsolidateArtifact(projectId);
 
-  const consolidateButton = !s.isInputDoc && artifact.id && (
+  const canConsolidate = !s.isInputDoc && CONSOLIDATABLE_TYPES.has(artifact.artifact_type);
+
+  const consolidateButton = canConsolidate && (
     <button
       onClick={() => consolidateMutation.mutate(artifact.id)}
       disabled={consolidateMutation.isPending}
@@ -403,7 +417,6 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
           >
             {s.restarting ? 'Regenerating...' : 'Regenerate'}
           </button>
-          {consolidateButton}
           <ActionButtonsBar
             canPrune={s.canPrune}
             canReparse={s.canReparse}
