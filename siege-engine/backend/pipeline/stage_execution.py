@@ -71,6 +71,10 @@ class StageExecutionContext:
     # after successful generation, e.g. "Artifact regenerated".
     version_comment: str | None = None
 
+    # If set, overrides stage_def.prompt_template_key for this execution.
+    # Used by ConsolidateStrategy to swap in the consolidation prompt.
+    prompt_template_override: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Strategy ABC
@@ -532,6 +536,113 @@ class ArtifactRevisionStrategy(StageExecutionStrategy):
             error_artifact_status=original_artifact_status or ArtifactStatus.APPROVED,
             original_artifact_id=self.artifact_id,
             version_comment="Artifact revised",
+        )
+
+
+class ConsolidateStrategy(StageExecutionStrategy):
+    """Prepare a stage execution triggered by document consolidation.
+
+    Consolidation re-runs the artifact through a dedicated editing prompt
+    that reduces redundancy while preserving all design decisions and
+    rationale.  Creates a standalone execution (no PipelineRun) so it
+    doesn't interfere with pipeline flow.  On failure, the artifact is
+    restored to its pre-consolidation status.
+    """
+
+    def __init__(self, artifact_id: str):
+        self.artifact_id = artifact_id
+
+    async def prepare(self, engine: PipelineEngine) -> StageExecutionContext:
+        artifact = engine.db.get(Artifact, self.artifact_id)
+        if not artifact:
+            raise ValueError("Artifact not found")
+
+        if not artifact.content:
+            raise ValueError("Cannot consolidate: artifact has no content")
+
+        # Guard: skip if there's already a RUNNING execution for this artifact.
+        already_running = (
+            engine.db.query(StageExecution)
+            .filter(
+                StageExecution.artifact_id == self.artifact_id,
+                StageExecution.status.in_([StageStatus.RUNNING, StageStatus.AI_REVIEW]),
+            )
+            .first()
+        )
+        if already_running:
+            raise SkipExecution(
+                f"artifact {self.artifact_id}: execution {already_running.id} is already running"
+            )
+
+        original_artifact_status = artifact.status
+        project_id = artifact.project_id
+
+        config = engine._get_config(project_id)
+        if not config:
+            raise ValueError("Pipeline config not found")
+
+        stage_def = next(
+            (s for s in config.stages if s.output_artifact_type == artifact.artifact_type.value),
+            None,
+        )
+        if not stage_def:
+            raise ValueError(
+                f"No stage definition for artifact type: {artifact.artifact_type.value}"
+            )
+
+        # Mark artifact as GENERATING.
+        engine._mark_artifact_status(self.artifact_id, ArtifactStatus.GENERATING)
+        engine.db.flush()
+
+        # Emit event for consolidation.
+        engine.events.emit(
+            project_id,
+            evt.ARTIFACT_REVISED,
+            {
+                "artifact_id": self.artifact_id,
+                "stage_key": stage_def.stage_key,
+                "component_key": artifact.component_key,
+                "feedback": "Document consolidation requested",
+                "trigger": "consolidate",
+            },
+        )
+
+        input_artifacts = engine._gather_inputs(
+            project_id,
+            stage_def,
+            artifact.component_key,
+        )
+
+        # Standalone run (no PipelineRun object).
+        run_id = str(uuid.uuid4())
+
+        execution = StageExecution(
+            project_id=project_id,
+            stage_key=stage_def.stage_key,
+            component_key=artifact.component_key,
+            status=StageStatus.RUNNING,
+            started_at=datetime.utcnow(),
+            run_id=run_id,
+            artifact_id=self.artifact_id,
+        )
+        engine.db.add(execution)
+        engine.db.flush()
+
+        return StageExecutionContext(
+            project_id=project_id,
+            stage_def=stage_def,
+            config=config,
+            execution=execution,
+            run_id=run_id,
+            pipeline_run=None,  # Standalone, no PipelineRun
+            input_artifacts=input_artifacts,
+            trigger="consolidate",
+            human_notes=None,
+            current_content=artifact.content,
+            error_artifact_status=original_artifact_status or ArtifactStatus.APPROVED,
+            original_artifact_id=self.artifact_id,
+            version_comment="Artifact consolidated",
+            prompt_template_override="consolidate",
         )
 
 

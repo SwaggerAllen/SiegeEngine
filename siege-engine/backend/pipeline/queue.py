@@ -332,6 +332,18 @@ async def _handle_trigger_stage(payload: dict) -> None:
         db.close()
 
 
+async def _handle_consolidate_artifact(payload: dict) -> None:
+    """Handle a consolidate_artifact job."""
+    from backend.pipeline.engine import PipelineEngine
+
+    db = SessionLocal()
+    try:
+        engine = PipelineEngine(db)
+        await engine.consolidate_artifact(payload["artifact_id"])
+    finally:
+        db.close()
+
+
 async def _handle_generate_summary(payload: dict) -> None:
     """Handle a generate_summary job."""
     from backend.models import Artifact
@@ -389,6 +401,7 @@ _JOB_HANDLERS = {
     "regen_downstream": _handle_regen_downstream,
     "retry_stage": _handle_retry_stage,
     "trigger_stage": _handle_trigger_stage,
+    "consolidate_artifact": _handle_consolidate_artifact,
     "generate_summary": _handle_generate_summary,
 }
 

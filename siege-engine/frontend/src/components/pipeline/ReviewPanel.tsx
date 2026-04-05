@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useIsRunning, usePipelineRuns } from '../../hooks/queries/usePipelineQueries';
-import { useStartPipeline, useResumeRun, useRegenDownstream } from '../../hooks/mutations/usePipelineMutations';
+import { useStartPipeline, useResumeRun, useRegenDownstream, useConsolidateArtifact } from '../../hooks/mutations/usePipelineMutations';
 import { useReviewState } from '../../hooks/useReviewState';
 import { FeedbackSection } from './FeedbackSection';
 import { ActionButtonsBar } from './ActionButtonsBar';
@@ -253,6 +253,17 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
   const s = useReviewState(projectId, artifact, execution);
   const elapsed = useElapsedTime(execution?.id, execution?.started_at);
   const lastDuration = useLastDuration(executions, execution?.id, artifact.id);
+  const consolidateMutation = useConsolidateArtifact(projectId);
+
+  const consolidateButton = !s.isInputDoc && artifact.id && (
+    <button
+      onClick={() => consolidateMutation.mutate(artifact.id)}
+      disabled={consolidateMutation.isPending}
+      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded disabled:opacity-50 min-h-[44px] md:min-h-0"
+    >
+      {consolidateMutation.isPending ? 'Consolidating...' : 'Consolidate'}
+    </button>
+  );
 
   const runControls = (
     <RunFromNodeControls
@@ -392,6 +403,7 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
           >
             {s.restarting ? 'Regenerating...' : 'Regenerate'}
           </button>
+          {consolidateButton}
           <ActionButtonsBar
             canPrune={s.canPrune}
             canReparse={s.canReparse}
@@ -516,6 +528,7 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
           >
             {s.restarting ? 'Regenerating...' : 'Regenerate'}
           </button>
+          {consolidateButton}
           <ActionButtonsBar
             canPrune={s.canPrune}
             canReparse={s.canReparse}
@@ -610,6 +623,7 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
         >
           {s.restarting ? 'Regenerating...' : 'Regenerate'}
         </button>
+        {consolidateButton}
         <ActionButtonsBar
           canPrune={s.canPrune}
           canReparse={s.canReparse}

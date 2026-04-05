@@ -58,15 +58,17 @@ def build_prompt_messages(
     human_notes: str | None = None,
     current_content: str | None = None,
     upstream_changes: str | None = None,
+    prompt_template_override: str | None = None,
 ) -> dict:
     """
     Dry-run prompt build. Returns {messages, model, temperature}.
 
     Used by both generate() and the prompt-preview endpoint.
     """
-    prompt_class = PROMPT_REGISTRY.get(stage_def.prompt_template_key)
+    effective_key = prompt_template_override or stage_def.prompt_template_key
+    prompt_class = PROMPT_REGISTRY.get(effective_key)
     if not prompt_class:
-        raise ValueError(f"Unknown prompt template: {stage_def.prompt_template_key}")
+        raise ValueError(f"Unknown prompt template: {effective_key}")
 
     prompt = prompt_class()
 
@@ -211,6 +213,7 @@ async def apply_context_budget(
     human_notes: str | None = None,
     current_content: str | None = None,
     upstream_changes: str | None = None,
+    prompt_template_override: str | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     """Apply context budget to input artifacts, swapping summaries as needed.
 
@@ -241,6 +244,7 @@ async def apply_context_budget(
         human_notes=human_notes,
         current_content=current_content,
         upstream_changes=upstream_changes,
+        prompt_template_override=prompt_template_override,
     )["messages"]
     total_chars = _estimate_prompt_chars(messages)
 
@@ -262,6 +266,7 @@ async def apply_context_budget(
                 human_notes=human_notes,
                 current_content=current_content,
                 upstream_changes=upstream_changes,
+                prompt_template_override=prompt_template_override,
             )["messages"]
             total_chars = _estimate_prompt_chars(messages)
 
@@ -301,6 +306,7 @@ async def apply_context_budget(
                     human_notes=human_notes,
                     current_content=current_content,
                     upstream_changes=upstream_changes,
+                    prompt_template_override=prompt_template_override,
                 )["messages"]
                 total_chars = _estimate_prompt_chars(messages)
                 continue
@@ -326,6 +332,7 @@ async def apply_context_budget(
                 human_notes=human_notes,
                 current_content=current_content,
                 upstream_changes=upstream_changes,
+                prompt_template_override=prompt_template_override,
             )["messages"]
             total_chars = _estimate_prompt_chars(messages)
 
@@ -352,6 +359,7 @@ async def generate(
     current_content: str | None = None,
     upstream_changes: str | None = None,
     execution_id: str | None = None,
+    prompt_template_override: str | None = None,
 ) -> tuple[str, str]:
     """
     Run AI generation for a stage. Returns (content, artifact_id).
@@ -373,6 +381,7 @@ async def generate(
         human_notes=human_notes,
         current_content=current_content,
         upstream_changes=upstream_changes,
+        prompt_template_override=prompt_template_override,
     )
     if summarized_keys:
         logger.info("Context budget: summarized inputs %s", summarized_keys)
@@ -384,6 +393,7 @@ async def generate(
         human_notes=human_notes,
         current_content=current_content,
         upstream_changes=upstream_changes,
+        prompt_template_override=prompt_template_override,
     )
     messages = result["messages"]
     model_name = result["model"]

@@ -136,6 +136,18 @@ export function useDismissBlockingPR(projectId: string) {
   });
 }
 
+export function useConsolidateArtifact(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['pipeline', projectId, 'consolidateArtifact'],
+    mutationFn: (artifactId: string) =>
+      pipelineApi.consolidateArtifact(projectId, artifactId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
+    },
+  });
+}
+
 export function useCancelStage(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
