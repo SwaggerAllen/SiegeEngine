@@ -136,6 +136,11 @@ export function useWebSocket(projectId: string | undefined) {
         }
       }
 
+      // Refresh artifact when generation progress fires (after DB commit)
+      if (data.type === 'stage_progress' && data.artifact_id) {
+        qc.invalidateQueries({ queryKey: projectKeys.artifact(data.artifact_id) });
+      }
+
       // Refresh artifact on comment events
       if (
         (data.type === 'comment_added' ||

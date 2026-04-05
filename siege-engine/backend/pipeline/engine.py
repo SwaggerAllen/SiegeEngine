@@ -1332,6 +1332,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     "type": "stage_progress",
                     "stage_key": stage_def.stage_key,
                     "component_key": component_key,
+                    "artifact_id": execution.artifact_id,
                     "step": "generating",
                     "message": f"Generating {stage_def.display_name}...",
                 },

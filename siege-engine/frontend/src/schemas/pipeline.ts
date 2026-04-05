@@ -114,7 +114,7 @@ export const PipelineEventPageSchema = z.object({
 
 export const WSEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('stage_started'), stage_key: z.string(), component_key: z.string().optional() }),
-  z.object({ type: z.literal('stage_progress'), stage_key: z.string(), step: z.string(), component_key: z.string().optional(), message: z.string() }),
+  z.object({ type: z.literal('stage_progress'), stage_key: z.string(), step: z.string(), component_key: z.string().optional(), artifact_id: z.string().optional(), message: z.string() }),
   z.object({ type: z.literal('stage_awaiting_review'), stage_key: z.string(), component_key: z.string().optional(), artifact_id: z.string() }),
   z.object({ type: z.literal('stage_completed'), stage_key: z.string(), component_key: z.string().optional(), artifact_id: z.string().optional(), status: z.string().optional() }),
   z.object({ type: z.literal('stage_failed'), stage_key: z.string(), component_key: z.string().optional(), error: z.string(), artifact_id: z.string().optional(), artifact_status: z.string().optional() }),

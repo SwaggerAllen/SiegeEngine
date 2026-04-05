@@ -55,6 +55,8 @@ const TRIGGER_LABELS: Record<string, string> = {
   force_restart: 'Force Restart',
   rejection_regenerate: 'Rejection Regenerate',
   revision: 'Revision',
+  consolidate: 'Consolidate',
+  manual_trigger: 'Manual Trigger',
 };
 
 function formatPayload(
