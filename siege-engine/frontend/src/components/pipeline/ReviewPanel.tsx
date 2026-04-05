@@ -417,6 +417,7 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
           >
             {s.restarting ? 'Regenerating...' : 'Regenerate'}
           </button>
+          {consolidateButton}
           <ActionButtonsBar
             canPrune={s.canPrune}
             canReparse={s.canReparse}
