@@ -2,19 +2,11 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DAGSearchBar } from './PipelineDAG';
 import type { SearchableNode } from './PipelineDAG';
+import { createRef } from 'react';
+import type cytoscape from 'cytoscape';
 
 const mockSelectArtifact = vi.fn();
 const mockSelectStage = vi.fn();
-const mockSetCenter = vi.fn();
-const mockGetNode = vi.fn(() => ({ position: { x: 0, y: 0 }, width: 220, height: 100 }));
-
-// Stub @xyflow/react
-vi.mock('@xyflow/react', () => ({
-  useReactFlow: () => ({
-    setCenter: mockSetCenter,
-    getNode: mockGetNode,
-  }),
-}));
 
 vi.mock('../../store/dagStore', () => ({
   useDAGStore: vi.fn((selector: (s: Record<string, unknown>) => unknown) =>
@@ -64,23 +56,31 @@ const sampleNodes: SearchableNode[] = [
   },
 ];
 
+// Create a mock cyRef that mimics cytoscape.Core enough for search
+function makeMockCyRef() {
+  const ref = createRef<cytoscape.Core>() as React.MutableRefObject<cytoscape.Core | null>;
+  const mockNode = { length: 1 };
+  ref.current = {
+    getElementById: vi.fn(() => mockNode),
+    animate: vi.fn(),
+  } as unknown as cytoscape.Core;
+  return ref;
+}
+
 describe('DAGSearchBar', () => {
   beforeEach(() => {
     mockSelectArtifact.mockReset();
     mockSelectStage.mockReset();
-    mockSetCenter.mockReset();
-    mockGetNode.mockReset();
-    mockGetNode.mockReturnValue({ position: { x: 0, y: 0 }, width: 220, height: 100 });
   });
 
   it('renders with "Search nodes..." placeholder', () => {
-    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" cyRef={makeMockCyRef()} />);
     expect(screen.getByPlaceholderText('Search nodes...')).toBeInTheDocument();
   });
 
   it('filters nodes by label', async () => {
     const user = userEvent.setup();
-    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" cyRef={makeMockCyRef()} />);
 
     await user.type(screen.getByPlaceholderText('Search nodes...'), 'Architecture');
 
@@ -90,7 +90,7 @@ describe('DAGSearchBar', () => {
 
   it('filters nodes by componentKey', async () => {
     const user = userEvent.setup();
-    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" cyRef={makeMockCyRef()} />);
 
     await user.type(screen.getByPlaceholderText('Search nodes...'), 'auth-module');
 
@@ -102,7 +102,7 @@ describe('DAGSearchBar', () => {
 
   it('filters nodes by status', async () => {
     const user = userEvent.setup();
-    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" cyRef={makeMockCyRef()} />);
 
     await user.type(screen.getByPlaceholderText('Search nodes...'), 'running');
 
@@ -112,7 +112,7 @@ describe('DAGSearchBar', () => {
 
   it('filters nodes by stageKey (with underscores replaced by spaces)', async () => {
     const user = userEvent.setup();
-    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" cyRef={makeMockCyRef()} />);
 
     await user.type(screen.getByPlaceholderText('Search nodes...'), 'code generation');
 
@@ -122,7 +122,7 @@ describe('DAGSearchBar', () => {
 
   it('shows "No matches" when no nodes match the query', async () => {
     const user = userEvent.setup();
-    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" cyRef={makeMockCyRef()} />);
 
     await user.type(screen.getByPlaceholderText('Search nodes...'), 'nonexistent');
 
@@ -131,7 +131,7 @@ describe('DAGSearchBar', () => {
 
   it('calls selectStage when a node is clicked in pipeline variant', async () => {
     const user = userEvent.setup();
-    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" cyRef={makeMockCyRef()} />);
 
     await user.type(screen.getByPlaceholderText('Search nodes...'), 'Architecture');
     await user.click(screen.getByText('Architecture'));
@@ -141,7 +141,7 @@ describe('DAGSearchBar', () => {
 
   it('calls selectArtifact when a node with artifact is clicked in documents variant', async () => {
     const user = userEvent.setup();
-    render(<DAGSearchBar nodes={sampleNodes} variant="documents" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="documents" cyRef={makeMockCyRef()} />);
 
     await user.type(screen.getByPlaceholderText('Search nodes...'), 'System Requirements');
     await user.click(screen.getByText('System Requirements'));
@@ -151,7 +151,7 @@ describe('DAGSearchBar', () => {
 
   it('clears search when clear button is clicked', async () => {
     const user = userEvent.setup();
-    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" cyRef={makeMockCyRef()} />);
 
     const input = screen.getByPlaceholderText('Search nodes...');
     await user.type(input, 'Architecture');
@@ -168,7 +168,7 @@ describe('DAGSearchBar', () => {
 
   it('navigates results with arrow keys and selects with Enter', async () => {
     const user = userEvent.setup();
-    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" cyRef={makeMockCyRef()} />);
 
     await user.type(screen.getByPlaceholderText('Search nodes...'), 'auth-module');
 
@@ -181,7 +181,7 @@ describe('DAGSearchBar', () => {
 
   it('closes dropdown on Escape', async () => {
     const user = userEvent.setup();
-    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" />);
+    render(<DAGSearchBar nodes={sampleNodes} variant="pipeline" cyRef={makeMockCyRef()} />);
 
     await user.type(screen.getByPlaceholderText('Search nodes...'), 'Architecture');
     expect(screen.getByText('Architecture')).toBeInTheDocument();
