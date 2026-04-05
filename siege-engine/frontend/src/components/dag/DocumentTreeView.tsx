@@ -524,7 +524,7 @@ function TreeBranch({
             depth={depth}
             selected={treeNode.node?.id === selectedArtifactId}
             onClick={() => {
-              if (treeNode.node?.hasArtifact) {
+              if (treeNode.node) {
                 onSelectArtifact(treeNode.node.id);
               }
             }}
@@ -606,6 +606,7 @@ export function DocumentTreeView({
   projectId?: string;
 }) {
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
+  const selectStage = useDAGStore((s) => s.selectStage);
   const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -696,9 +697,14 @@ export function DocumentTreeView({
 
   const onSelectArtifact = useCallback(
     (id: string) => {
-      selectArtifact(id);
+      const node = nodeMap.get(id);
+      if (node?.hasArtifact) {
+        selectArtifact(id);
+      } else if (node) {
+        selectStage(node.stageKey);
+      }
     },
-    [selectArtifact],
+    [selectArtifact, selectStage, nodeMap],
   );
 
   // Keyboard shortcut: focus search on Ctrl/Cmd+F when tree is visible
