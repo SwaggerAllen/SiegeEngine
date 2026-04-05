@@ -7,9 +7,9 @@ from backend.pipeline.prompts.architecture import ArchitecturePrompt
 from backend.pipeline.prompts.base import PromptTemplate
 from backend.pipeline.prompts.code_review import CodeReviewPrompt
 from backend.pipeline.prompts.codegen import CodeGenPrompt
-from backend.pipeline.prompts.consolidate import ConsolidatePromptTemplate
 from backend.pipeline.prompts.component_arch import ComponentArchPrompt
 from backend.pipeline.prompts.component_plan import ComponentPlanPrompt
+from backend.pipeline.prompts.consolidate import ConsolidatePromptTemplate
 from backend.pipeline.prompts.extract_components import ExtractComponentsPrompt
 from backend.pipeline.prompts.extract_sub_components import ExtractSubComponentsPrompt
 from backend.pipeline.prompts.feature_expansion import FeatureExpansionPrompt
