@@ -184,6 +184,10 @@ export async function triggerStage(
   });
 }
 
+export async function consolidateArtifact(projectId: string, artifactId: string) {
+  return pipelineAction(projectId, { type: 'consolidate', artifact_id: artifactId });
+}
+
 export async function retrySummary(projectId: string, artifactId: string): Promise<{ status: string; started?: boolean }> {
   return pipelineAction(projectId, { type: 'retry_summary', artifact_id: artifactId });
 }

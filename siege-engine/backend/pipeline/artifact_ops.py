@@ -1055,6 +1055,19 @@ class ArtifactOpsMixin:
             project_id,
         )
 
+    async def consolidate_artifact(self, artifact_id: str):
+        """Consolidate an artifact to reduce redundancy via ConsolidateStrategy."""
+        from backend.pipeline.stage_execution import (
+            ConsolidateStrategy,
+            SkipExecution,
+        )
+
+        strategy = ConsolidateStrategy(artifact_id)
+        try:
+            await self.execute_strategy(strategy)
+        except SkipExecution as e:
+            logger.warning("Skipping consolidation: %s", e)
+
     async def revise_artifact(self, artifact_id: str, feedback: str, user_id: str | None = None):
         """Revise an approved/stale artifact via ArtifactRevisionStrategy."""
         from backend.pipeline.stage_execution import (

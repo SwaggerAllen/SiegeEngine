@@ -1353,6 +1353,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                 human_notes=human_notes,
                 current_content=current_content,
                 execution_id=execution.id,
+                prompt_template_override=ctx.prompt_template_override,
             )
             execution.artifact_id = artifact_id
 

@@ -175,6 +175,16 @@ async def pipeline_action(
             )
             return prompt_preview(project_id, preview_req, db, user)
 
+        case "consolidate":
+            from backend.pipeline.queue import enqueue
+
+            enqueue(
+                db,
+                "consolidate_artifact",
+                {"artifact_id": action.artifact_id},
+            )
+            return {"status": "consolidation_started"}
+
         case "retry_summary":
             from backend.models import Artifact
             from backend.pipeline.queue import enqueue
