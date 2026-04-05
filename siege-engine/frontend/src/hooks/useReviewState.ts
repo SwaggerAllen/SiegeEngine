@@ -223,15 +223,15 @@ export function useReviewState(
     setReparseResult(null);
     try {
       const result = await reparseFanout(projectId, artifact.id);
-      const msg =
-        result.added.length > 0
-          ? `Restored ${result.added.length}: ${result.added.join(', ')}`
-          : 'No missing entities found';
+      const parts: string[] = [];
+      if (result.added.length > 0) parts.push(`Added ${result.added.length}: ${result.added.join(', ')}`);
+      if (result.removed.length > 0) parts.push(`Removed ${result.removed.length}: ${result.removed.join(', ')}`);
+      if (result.updated.length > 0) parts.push(`Updated ${result.updated.length}: ${result.updated.join(', ')}`);
+      const msg = parts.length > 0 ? parts.join('. ') : 'No changes detected';
       setReparseResult(msg);
-      if (result.added.length > 0 || result.removed.length > 0) {
-        queryClient.invalidateQueries({ queryKey: dagKeys.workflow(projectId) });
-        queryClient.invalidateQueries({ queryKey: dagKeys.documents(projectId) });
-      }
+      // Always invalidate — even dependency-only updates affect the DAG edges
+      queryClient.invalidateQueries({ queryKey: dagKeys.workflow(projectId) });
+      queryClient.invalidateQueries({ queryKey: dagKeys.documents(projectId) });
     } catch (err) {
       console.error('Reparse failed:', err);
       setReparseResult('Reparse failed');

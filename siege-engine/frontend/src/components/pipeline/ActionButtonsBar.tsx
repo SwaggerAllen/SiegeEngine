@@ -43,11 +43,11 @@ export function ActionButtonsBar({
       {reparseResult && (
         <span
           className={`text-xs ${
-            reparseResult.startsWith('Restored')
-              ? 'text-green-400'
-              : reparseResult === 'No missing entities found'
-                ? 'text-gray-400'
-                : 'text-red-400'
+            reparseResult === 'No changes detected'
+              ? 'text-gray-400'
+              : reparseResult === 'Reparse failed'
+                ? 'text-red-400'
+                : 'text-green-400'
           }`}
         >
           {reparseResult}

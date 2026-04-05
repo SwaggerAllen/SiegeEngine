@@ -199,6 +199,7 @@ export async function pruneArtifact(projectId: string, artifactId: string) {
 export async function reparseFanout(projectId: string, artifactId: string): Promise<{
   added: string[];
   removed: string[];
+  updated: string[];
   total: number;
 }> {
   return pipelineAction(projectId, { type: 'reparse', artifact_id: artifactId });
