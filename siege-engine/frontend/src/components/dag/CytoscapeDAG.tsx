@@ -19,27 +19,24 @@ elk(cytoscape);
 // in the same horizontal band; ELK's partitioning keeps them there.
 const ARTIFACT_LAYER: Record<string, number> = {
   project_doc: 0,
-  system_requirements: 1,
+  feature_expansion: 1,
   system_architecture: 2,
-  high_level_plan: 3,
-  component_map: 4,
-  component_requirements: 5,
-  component_architecture: 6,
-  component_plan: 7,
-  sub_component_map: 8,
-  sub_component_requirements: 9,
-  sub_component_architecture: 10,
-  sub_component_plan: 11,
-  code: 12,
-  code_review: 13,
+  component_map: 3,
+  component_architecture: 4,
+  sub_component_map: 5,
+  component_plan: 6,
+  sub_component_architecture: 7,
+  sub_component_plan: 8,
+  code: 9,
+  code_review: 10,
 };
 
 // ── Status → color mapping ──────────────────────────────────────────────
 const STATUS_BG: Record<string, string> = {
   pending: '#374151',
   conditional: '#1f2937',
-  running: '#1e3a5f',
-  generating: '#1e3a5f',
+  running: '#1e4976',
+  generating: '#1e4976',
   ai_reviewing: '#3b1f6e',
   awaiting_review: '#713f12',
   approved: '#14532d',
@@ -131,7 +128,11 @@ export function DAGSearchBar({
       if (variant === 'pipeline') {
         selectStage(node.stageKey);
       } else {
-        if (node.hasArtifact) selectArtifact(node.id);
+        if (node.hasArtifact) {
+          selectArtifact(node.id);
+        } else {
+          selectStage(node.stageKey);
+        }
       }
       // Pan to the selected node in Cytoscape
       const cy = cyRef.current;
@@ -608,6 +609,10 @@ function CytoscapeCanvas({ projectId, variant, query, onTreeView }: CytoscapeCan
         } else {
           if (node.data('hasArtifact')) {
             selectArtifact(node.id());
+          } else {
+            // Pending/conditional nodes: open the stage panel so the user
+            // can trigger the first generation via "Run Stage".
+            selectStage(node.data('stageKey') ?? null);
           }
         }
       });
