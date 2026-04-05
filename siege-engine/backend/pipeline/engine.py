@@ -82,7 +82,7 @@ _STAGE_TO_PLAN_TYPE = {
 }
 
 
-class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
+class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
     def __init__(self, db: Session):
         self.db = db
         self.events = EventStore(db)
