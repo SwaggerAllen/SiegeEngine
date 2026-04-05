@@ -35,8 +35,8 @@ const ARTIFACT_LAYER: Record<string, number> = {
 const STATUS_BG: Record<string, string> = {
   pending: '#374151',
   conditional: '#1f2937',
-  running: '#1e3a5f',
-  generating: '#1e3a5f',
+  running: '#1e4976',
+  generating: '#1e4976',
   ai_reviewing: '#3b1f6e',
   awaiting_review: '#713f12',
   approved: '#14532d',
