@@ -77,9 +77,6 @@ class ConsolidatePromptTemplate(PromptTemplate):
             {"role": "system", "content": self.default_system_message},
             {
                 "role": "user",
-                "content": (
-                    "Here is the document to consolidate:\n\n"
-                    f"{current_content}"
-                ),
+                "content": (f"Here is the document to consolidate:\n\n{current_content}"),
             },
         ]

@@ -471,8 +471,7 @@ class ComponentManagerMixin:
         removed = before_keys - after_keys
         # Count components whose dependencies changed
         updated = {
-            k for k in (before_keys & after_keys)
-            if before_deps.get(k, []) != after_deps.get(k, [])
+            k for k in (before_keys & after_keys) if before_deps.get(k, []) != after_deps.get(k, [])
         }
         logger.info(
             "Reparsed fanout artifact %s: added=%s removed=%s updated=%s",
