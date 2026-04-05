@@ -415,45 +415,53 @@ class ComponentManagerMixin:
 
         before_keys: set[str] = set()
         after_keys: set[str] = set()
+        # Snapshot dependency state before re-parse to detect updates
+        before_deps: dict[str, list[str]] = {}
 
         if artifact.artifact_type == ArtifactType.COMPONENT_MAP:
-            before_keys = {
-                d.key
-                for d in self.db.query(ComponentDefinition)
+            old_defs = (
+                self.db.query(ComponentDefinition)
                 .filter_by(project_id=project_id)
                 .filter(ComponentDefinition.parent_key.is_(None))
                 .all()
-            }
+            )
+            before_keys = {d.key for d in old_defs}
+            before_deps = {d.key: sorted(d.dependencies or []) for d in old_defs}
 
             # _store_components handles orphan cleanup + pruning events internally.
             self._store_components(project_id, artifact.content)
             self.db.commit()
 
-            after_keys = {
-                d.key
-                for d in self.db.query(ComponentDefinition)
+            new_defs = (
+                self.db.query(ComponentDefinition)
                 .filter_by(project_id=project_id)
                 .filter(ComponentDefinition.parent_key.is_(None))
                 .all()
-            }
+            )
+            after_keys = {d.key for d in new_defs}
+            after_deps = {d.key: sorted(d.dependencies or []) for d in new_defs}
         elif artifact.artifact_type == ArtifactType.SUB_COMPONENT_MAP:
             parent_key = artifact.component_key
             if not parent_key:
                 raise ValueError("Sub-component map artifact has no component_key")
-            before_keys = {
-                d.key
-                for d in self.db.query(ComponentDefinition)
+            old_defs = (
+                self.db.query(ComponentDefinition)
                 .filter_by(project_id=project_id, parent_key=parent_key)
                 .all()
-            }
+            )
+            before_keys = {d.key for d in old_defs}
+            before_deps = {d.key: sorted(d.dependencies or []) for d in old_defs}
+
             self._store_sub_components(project_id, parent_key, artifact.content)
             self.db.commit()
-            after_keys = {
-                d.key
-                for d in self.db.query(ComponentDefinition)
+
+            new_defs = (
+                self.db.query(ComponentDefinition)
                 .filter_by(project_id=project_id, parent_key=parent_key)
                 .all()
-            }
+            )
+            after_keys = {d.key for d in new_defs}
+            after_deps = {d.key: sorted(d.dependencies or []) for d in new_defs}
         else:
             raise ValueError(
                 f"Artifact type {artifact.artifact_type.value} is not a fanout artifact"
@@ -461,15 +469,22 @@ class ComponentManagerMixin:
 
         added = after_keys - before_keys
         removed = before_keys - after_keys
+        # Count components whose dependencies changed
+        updated = {
+            k for k in (before_keys & after_keys)
+            if before_deps.get(k, []) != after_deps.get(k, [])
+        }
         logger.info(
-            "Reparsed fanout artifact %s: added=%s removed=%s",
+            "Reparsed fanout artifact %s: added=%s removed=%s updated=%s",
             artifact_id,
             added,
             removed,
+            updated,
         )
         return {
             "added": sorted(added),
             "removed": sorted(removed),
+            "updated": sorted(updated),
             "total": len(after_keys),
         }
 
