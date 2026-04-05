@@ -1422,7 +1422,6 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                     stage_def,
                     content,
                     input_artifacts,
-                    review_prompt_overrides=stage_def.pipeline_config.review_prompt_overrides,
                 )
                 artifact = self.db.get(Artifact, artifact_id)
                 if artifact:
@@ -1672,7 +1671,7 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
 
         # Inject dependency component/sub-component architectures
         if component_key and not parent_key:
-            # Top-level component — get dependency architectures
+            # Top-level component — get dependency architectures (prefer summary)
             comp_def = (
                 self.db.query(ComponentDefinition)
                 .filter_by(project_id=project_id, key=component_key, parent_key=None)
@@ -1690,13 +1689,15 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         )
                         .first()
                     )
-                    if dep_art and dep_art.content:
-                        dep_parts.append(f"### {dep_key}\n\n{dep_art.content}")
+                    if dep_art:
+                        text = dep_art.summary or dep_art.content
+                        if text:
+                            dep_parts.append(f"### {dep_key}\n\n{text}")
                 if dep_parts:
                     inputs["dependency_architectures"] = "\n\n---\n\n".join(dep_parts)
 
         elif component_key and parent_key:
-            # Sub-component — get sibling dependency architectures
+            # Sub-component — get sibling dependency architectures (prefer summary)
             sc_def = (
                 self.db.query(ComponentDefinition)
                 .filter_by(
@@ -1719,10 +1720,37 @@ class PipelineEngine(ArtifactOpsMixin, ComponentManagerMixin, ReadinessMixin):
                         )
                         .first()
                     )
-                    if dep_art and dep_art.content:
-                        dep_parts.append(f"### {full_dep_key}\n\n{dep_art.content}")
+                    if dep_art:
+                        text = dep_art.summary or dep_art.content
+                        if text:
+                            dep_parts.append(f"### {full_dep_key}\n\n{text}")
                 if dep_parts:
                     inputs["dependency_architectures"] = "\n\n---\n\n".join(dep_parts)
+
+            # Inject parent component's sibling dependency contract summaries
+            parent_comp_def = (
+                self.db.query(ComponentDefinition)
+                .filter_by(project_id=project_id, key=parent_key, parent_key=None)
+                .first()
+            )
+            if parent_comp_def and parent_comp_def.dependencies:
+                parent_dep_parts = []
+                for dep_key in parent_comp_def.dependencies:
+                    dep_art = (
+                        self.db.query(Artifact)
+                        .filter_by(
+                            project_id=project_id,
+                            artifact_type=ArtifactType.COMPONENT_ARCHITECTURE,
+                            component_key=dep_key,
+                        )
+                        .first()
+                    )
+                    if dep_art:
+                        text = dep_art.summary or dep_art.content
+                        if text:
+                            parent_dep_parts.append(f"### {dep_key}\n\n{text}")
+                if parent_dep_parts:
+                    inputs["parent_dependency_summaries"] = "\n\n---\n\n".join(parent_dep_parts)
 
         # Inject input documents for stages that opt in
         inputs = self._inject_input_documents(project_id, stage_def.stage_key, inputs)

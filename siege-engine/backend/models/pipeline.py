@@ -1,7 +1,10 @@
 """Pipeline models: PipelineConfig, PipelineRun, StageDefinition, StageExecution, PromptConfig."""
 
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -14,6 +17,9 @@ from backend.models.enums import (
     StageStatus,
     StopPoint,
 )
+
+if TYPE_CHECKING:
+    from backend.models.project import Project
 
 
 class PipelineConfig(Base):

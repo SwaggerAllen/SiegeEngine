@@ -446,7 +446,7 @@ async def worker_loop(poll_interval: float = 5.0) -> None:
 
         # Tag the task with execution_id so cancel_running_execution can match it
         exec_id = payload.get("execution_id")
-        handler_task._execution_id = exec_id
+        handler_task._execution_id = exec_id  # type: ignore[attr-defined]
 
         _current_task = handler_task
         _current_job_id = job_id

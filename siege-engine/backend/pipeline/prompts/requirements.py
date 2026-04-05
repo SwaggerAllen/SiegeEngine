@@ -7,20 +7,9 @@ class SystemRequirementsPrompt(PromptTemplate):
         input_artifacts,
         component_key=None,
         human_notes=None,
-        prompt_config=None,
         current_content=None,
         upstream_changes=None,
     ):
-        if prompt_config:
-            return self._build_from_config(
-                input_artifacts,
-                component_key,
-                human_notes,
-                prompt_config,
-                current_content=current_content,
-                upstream_changes=upstream_changes,
-            )
-
         project_doc = input_artifacts.get("project_doc", "")
         input_docs = input_artifacts.get("input_documents", "")
         user_content = f"PROJECT DOCUMENT:\n\n{project_doc}"

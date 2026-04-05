@@ -159,7 +159,7 @@ function DocumentsDAGInner({ projectId }: { projectId: string }) {
   if (viewMode === 'tree') {
     return (
       <div className="h-full relative">
-        <DocumentTreeView nodes={searchableNodes} edges={query.data?.edges ?? []} />
+        <DocumentTreeView nodes={searchableNodes} edges={query.data?.edges ?? []} projectId={projectId} />
         <button
           onClick={() => setViewMode('dag')}
           className="absolute top-2 right-2 z-10 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"

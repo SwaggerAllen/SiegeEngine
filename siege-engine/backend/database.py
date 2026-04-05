@@ -60,6 +60,7 @@ def init_db():
             # Existing database — stamp at the initial migration (which matches
             # the pre-Alembic schema), then upgrade to apply new migrations
             initial_rev = script.get_base()
+            assert initial_rev is not None, "No base revision found in Alembic scripts"
             logger.info("Stamping existing database at initial revision %s", initial_rev)
             command.stamp(alembic_cfg, initial_rev)
             logger.info("Upgrading to head to apply new migrations")

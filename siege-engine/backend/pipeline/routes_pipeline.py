@@ -806,6 +806,7 @@ def get_debug_state(
     # Snapshot vs DB mismatches
     mismatches = []
     snap_artifact_statuses = snapshot_data["artifact_statuses"]
+    assert isinstance(snap_artifact_statuses, dict)
     for a in artifact_data:
         snap_status = snap_artifact_statuses.get(a["id"])
         db_status = a["status"]
@@ -821,15 +822,16 @@ def get_debug_state(
             )
 
     snap_stage_statuses = snapshot_data["stage_statuses"]
+    assert isinstance(snap_stage_statuses, dict)
     # Build a map of current execution status per stage key
     exec_by_stage: dict[str, str] = {}
     for e in exec_data:
-        key = e["stage_key"]
+        key = str(e["stage_key"])
         if e["component_key"]:
             key += f":{e['component_key']}"
         # Keep the most recent (first in list since sorted desc)
         if key not in exec_by_stage:
-            exec_by_stage[key] = e["status"]
+            exec_by_stage[key] = str(e["status"])
     for key, snap_status in snap_stage_statuses.items():
         db_status = exec_by_stage.get(key)
         if db_status and snap_status != db_status:

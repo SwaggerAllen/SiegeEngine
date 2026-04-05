@@ -548,6 +548,7 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                             .filter_by(project_id=project_id)
                             .filter(ComponentDefinition.parent_key.isnot(None))
                             .all()
+                            if cd.parent_key is not None
                         }
                     if comp_key in _parents_with_subs:
                         continue

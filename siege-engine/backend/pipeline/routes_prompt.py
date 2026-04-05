@@ -248,13 +248,13 @@ def update_prompt_config(
     if not pc:
         # Create new PromptConfig from defaults
         prompt_class = PROMPT_REGISTRY.get(stage_def.prompt_template_key)
-        tmpl = prompt_class() if prompt_class else None
+        tmpl2 = prompt_class() if prompt_class else None
         pc = PromptConfig(
             stage_definition_id=stage_def.id,
-            system_message=tmpl.default_system_message if tmpl else "",
-            output_format_instructions=tmpl.default_output_format if tmpl else "",
-            context_template=tmpl.default_context_template if tmpl else "",
-            revision_instructions=tmpl.default_revision_instructions if tmpl else "",
+            system_message=tmpl2.default_system_message if tmpl2 else "",
+            output_format_instructions=tmpl2.default_output_format if tmpl2 else "",
+            context_template=tmpl2.default_context_template if tmpl2 else "",
+            revision_instructions=tmpl2.default_revision_instructions if tmpl2 else "",
         )
         db.add(pc)
 

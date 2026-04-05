@@ -117,6 +117,7 @@ export function DocumentsTab() {
                 projectId={projectId!}
                 artifact={selectedArtifact}
                 execution={selectedExecution}
+                executions={executions}
                 mode={viewMode === 'review' ? 'feedback' : 'actions'}
               />
             </PanelErrorBoundary>

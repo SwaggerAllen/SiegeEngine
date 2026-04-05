@@ -7,20 +7,9 @@ class CodeReviewPrompt(PromptTemplate):
         input_artifacts,
         component_key=None,
         human_notes=None,
-        prompt_config=None,
         current_content=None,
         upstream_changes=None,
     ):
-        if prompt_config:
-            return self._build_from_config(
-                input_artifacts,
-                component_key,
-                human_notes,
-                prompt_config,
-                current_content=current_content,
-                upstream_changes=upstream_changes,
-            )
-
         component_plan = input_artifacts.get("component_plans", "")
         component_arch = input_artifacts.get("component_architectures", "")
         code_content = input_artifacts.get("code_generation", "")

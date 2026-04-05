@@ -29,7 +29,8 @@ ufw --force enable
 
 echo "=== Done ==="
 echo "Droplet is ready. Add these GitHub secrets:"
-echo "  DROPLET_IP          - this server's IP"
-echo "  DROPLET_SSH_KEY     - private key matching /home/deploy/.ssh/authorized_keys"
+echo "  DROPLET_IP               - this server's IP"
+echo "  DROPLET_SSH_KEY          - private key matching /home/deploy/.ssh/authorized_keys"
 echo "  SIEGE_ANTHROPIC_API_KEY  - your Anthropic API key"
 echo "  SIEGE_JWT_SECRET_KEY     - JWT secret for auth"
+echo "  SIEGE_DOMAIN             - your domain (e.g. siege.example.com) — Caddy auto-provisions HTTPS certs"

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useIsRunning, usePipelineRuns } from '../../hooks/queries/usePipelineQueries';
 import { useStartPipeline, useResumeRun, useRegenDownstream } from '../../hooks/mutations/usePipelineMutations';
 import { useReviewState } from '../../hooks/useReviewState';
@@ -15,16 +15,20 @@ const STOP_POINT_OPTIONS = [
 
 const STOP_POINT_REGEN = { value: 'regen_downstream', label: 'Regen downstream only' };
 
+function formatDurationMs(ms: number): string {
+  const secs = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return m > 0 ? `${m}m ${s.toString().padStart(2, '0')}s` : `${s}s`;
+}
+
 function useElapsedTime(executionId: string | null | undefined, startedAt: string | null | undefined) {
   const [elapsed, setElapsed] = useState('');
   useEffect(() => {
     if (!startedAt) { setElapsed(''); return; }
     const start = new Date(startedAt).getTime();
     const tick = () => {
-      const secs = Math.max(0, Math.floor((Date.now() - start) / 1000));
-      const m = Math.floor(secs / 60);
-      const s = secs % 60;
-      setElapsed(m > 0 ? `${m}m ${s.toString().padStart(2, '0')}s` : `${s}s`);
+      setElapsed(formatDurationMs(Date.now() - start));
     };
     tick();
     const id = setInterval(tick, 1000);
@@ -32,6 +36,30 @@ function useElapsedTime(executionId: string | null | undefined, startedAt: strin
   // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on executionId only to prevent timer resets on refetch
   }, [executionId]);
   return elapsed;
+}
+
+/**
+ * Find the most recent completed execution for the same artifact, excluding
+ * the current one.  Returns a formatted duration string or null.
+ */
+function useLastDuration(
+  executions: StageExecution[],
+  currentExecutionId: string | undefined,
+  artifactId: string,
+): string | null {
+  return useMemo(() => {
+    const prev = executions.find(
+      (e) =>
+        e.id !== currentExecutionId &&
+        e.artifact_id === artifactId &&
+        e.started_at &&
+        e.completed_at,
+    );
+    if (!prev) return null;
+    const ms = new Date(prev.completed_at!).getTime() - new Date(prev.started_at!).getTime();
+    if (ms <= 0) return null;
+    return formatDurationMs(ms);
+  }, [executions, currentExecutionId, artifactId]);
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +236,8 @@ interface ReviewPanelProps {
   projectId: string;
   artifact: Artifact;
   execution: StageExecution | undefined;
+  /** All executions for the project — used to compute last generation duration. */
+  executions?: StageExecution[];
   /**
    * 'actions' (default) — show status badges and action buttons (approve/reject/restart/cancel).
    *   Rendered in the bottom pane when the DAG is visible.
@@ -219,9 +249,10 @@ interface ReviewPanelProps {
   compactMobile?: boolean;
 }
 
-export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }: ReviewPanelProps) {
+export function ReviewPanel({ projectId, artifact, execution, executions = [], mode = 'actions' }: ReviewPanelProps) {
   const s = useReviewState(projectId, artifact, execution);
   const elapsed = useElapsedTime(execution?.id, execution?.started_at);
+  const lastDuration = useLastDuration(executions, execution?.id, artifact.id);
 
   const runControls = (
     <RunFromNodeControls
@@ -393,6 +424,7 @@ export function ReviewPanel({ projectId, artifact, execution, mode = 'actions' }
             {execution.status === 'ai_review' ? 'AI Reviewing' : 'Generating'}
           </span>
           {elapsed && <span className="text-xs text-gray-400 font-mono">{elapsed}</span>}
+          {lastDuration && <span className="text-xs text-gray-600 font-mono" title="Last generation took this long">last: {lastDuration}</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button

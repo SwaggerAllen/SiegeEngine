@@ -542,11 +542,13 @@ function TreeBranch({
 // localStorage persistence for expanded folders
 // ---------------------------------------------------------------------------
 
-const EXPANDED_KEYS_STORAGE_KEY = 'siege-tree-expanded-keys';
+function storageKey(projectId: string): string {
+  return `siege-tree-expanded-keys:${projectId}`;
+}
 
-function loadExpandedKeys(): Set<string> {
+function loadExpandedKeys(projectId: string): Set<string> {
   try {
-    const stored = localStorage.getItem(EXPANDED_KEYS_STORAGE_KEY);
+    const stored = localStorage.getItem(storageKey(projectId));
     if (stored) {
       const arr = JSON.parse(stored);
       if (Array.isArray(arr)) return new Set(arr);
@@ -556,9 +558,9 @@ function loadExpandedKeys(): Set<string> {
   return new Set(['components-root']);
 }
 
-function saveExpandedKeys(keys: Set<string>) {
+function saveExpandedKeys(projectId: string, keys: Set<string>) {
   try {
-    localStorage.setItem(EXPANDED_KEYS_STORAGE_KEY, JSON.stringify([...keys]));
+    localStorage.setItem(storageKey(projectId), JSON.stringify([...keys]));
   } catch { /* ignore quota errors */ }
 }
 
@@ -597,9 +599,11 @@ function getActiveAncestorKeys(tree: TreeNode[]): Set<string> {
 export function DocumentTreeView({
   nodes,
   edges = [],
+  projectId = '',
 }: {
   nodes: SearchableNode[];
   edges?: DAGEdge[];
+  projectId?: string;
 }) {
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
@@ -636,13 +640,18 @@ export function DocumentTreeView({
     return countDocs(displayTree);
   }, [displayTree, searchQuery]);
 
-  // Load persisted expanded keys from localStorage
-  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(loadExpandedKeys);
+  // Load persisted expanded keys from localStorage, keyed by project
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => loadExpandedKeys(projectId));
+
+  // Re-load when project changes
+  useEffect(() => {
+    setExpandedKeys(loadExpandedKeys(projectId));
+  }, [projectId]);
 
   // Persist to localStorage whenever expandedKeys changes
   useEffect(() => {
-    saveExpandedKeys(expandedKeys);
-  }, [expandedKeys]);
+    saveExpandedKeys(projectId, expandedKeys);
+  }, [projectId, expandedKeys]);
 
   // Auto-expand folders containing actively generating nodes
   const activeAncestorKeys = useMemo(() => getActiveAncestorKeys(tree), [tree]);

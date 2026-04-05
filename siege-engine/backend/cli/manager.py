@@ -21,7 +21,9 @@ def _get_semaphore(kind: str = "pipeline") -> asyncio.Semaphore:
         _chat_semaphore = asyncio.Semaphore(settings.max_concurrent_chat_calls)
         _semaphore_loop = loop
     if kind == "chat":
+        assert _chat_semaphore is not None
         return _chat_semaphore
+    assert _pipeline_semaphore is not None
     return _pipeline_semaphore
 
 
@@ -141,6 +143,10 @@ class CLIManager:
 
         if execution_id:
             self._running_procs[execution_id] = proc
+
+        assert proc.stdin is not None
+        assert proc.stdout is not None
+        assert proc.stderr is not None
 
         t0 = time.monotonic()
         try:
@@ -292,6 +298,9 @@ class CLIManager:
             cwd=working_dir,
             env=env,
         )
+
+        assert proc.stdin is not None
+        assert proc.stdout is not None
 
         # Feed prompt via stdin so it's not constrained by ARG_MAX
         proc.stdin.write(prompt.encode("utf-8"))

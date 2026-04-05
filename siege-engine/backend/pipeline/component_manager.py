@@ -4,7 +4,10 @@ Handles storing, updating, and retrieving component and sub-component
 definitions extracted during pipeline execution.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from backend.models import (
     Artifact,
@@ -23,11 +26,20 @@ from backend.pipeline.nodes.extract_components import (
     validate_dependency_dag,
 )
 
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from backend.pipeline.event_store import EventStore
+
 logger = logging.getLogger(__name__)
 
 
 class ComponentManagerMixin:
     """Mixin that manages component and sub-component definitions."""
+
+    # Provided by PipelineEngine (host class)
+    db: Session
+    events: EventStore
 
     def _get_components(self, project_id: str) -> list[dict]:
         """Get top-level components from ComponentDefinition table."""

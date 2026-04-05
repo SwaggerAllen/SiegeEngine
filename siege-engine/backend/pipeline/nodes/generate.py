@@ -70,32 +70,16 @@ def build_prompt_messages(
 
     prompt = prompt_class()
 
-    # Load prompt config from DB if it exists
-    pc = stage_def.prompt_config
-    prompt_config_dict = None
-    if pc:
-        prompt_config_dict = {
-            "system_message": pc.system_message,
-            "output_format_instructions": pc.output_format_instructions,
-            "context_template": pc.context_template,
-            "revision_instructions": pc.revision_instructions,
-        }
-
     messages = prompt.build(
         input_artifacts=input_artifacts,
         component_key=component_key,
         human_notes=human_notes,
-        prompt_config=prompt_config_dict,
         current_content=current_content,
         upstream_changes=upstream_changes,
     )
 
-    # Model selection: prompt config > stage def > default
-    model_name = (
-        (pc.model if pc and pc.model else None)
-        or stage_def.model_override
-        or "claude-sonnet-4-20250514"
-    )
+    # Model selection: stage def > default
+    model_name = stage_def.model_override or "claude-sonnet-4-20250514"
 
     return {
         "messages": messages,
@@ -206,7 +190,7 @@ def _build_dependency_summary_content(
         if dep_art and dep_art.content:
             dep_artifacts.append((full_key, dep_art))
 
-    dep_artifacts.sort(key=lambda x: len(x[1].content), reverse=True)
+    dep_artifacts.sort(key=lambda x: len(x[1].content or ""), reverse=True)
 
     # Try building with summaries for largest first
     parts = []
@@ -215,7 +199,7 @@ def _build_dependency_summary_content(
         parts.append(f"### {full_key}\n\n{text}")
 
     if parts:
-        return "\n\n---\n\n".join(parts), [(k, len(a.content)) for k, a in dep_artifacts]
+        return "\n\n---\n\n".join(parts), [(k, len(a.content or "")) for k, a in dep_artifacts]
     return None, []
 
 

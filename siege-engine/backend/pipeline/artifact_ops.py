@@ -5,8 +5,11 @@ retry_stage, and the cascade/invalidate helpers triggered by approvals
 and rejections.
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from backend.models import (
     Artifact,
@@ -23,11 +26,53 @@ from backend.models import (
 from backend.pipeline import events as evt
 from backend.websocket.manager import ws_manager
 
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from backend.pipeline.event_store import EventStore
+    from backend.pipeline.stage_execution import StageExecutionStrategy
+
 logger = logging.getLogger(__name__)
 
 
 class ArtifactOpsMixin:
     """Mixin that handles artifact lifecycle operations."""
+
+    # Provided by PipelineEngine (host class)
+    db: Session
+    events: EventStore
+
+    def _get_config(self, project_id: str) -> PipelineConfig | None: ...  # type: ignore[empty-body]
+    def _transition_execution(
+        self,
+        execution: StageExecution,
+        new_status: StageStatus,
+        *,
+        artifact_status: ArtifactStatus | None = None,
+        error_message: str | None = None,
+        set_completed: bool = False,
+        trigger: str | None = None,
+    ) -> None: ...
+    def _mark_artifact_status(self, artifact_id: str, new_status: ArtifactStatus) -> None: ...
+    def _carry_over_approved(self, project_id: str, new_run_id: str) -> int: ...  # type: ignore[empty-body]
+    async def _find_and_execute_next(
+        self,
+        project_id: str,
+        run_id: str,
+        config: PipelineConfig,
+        pipeline_run: PipelineRun | None = None,
+    ) -> Any: ...
+    async def execute_strategy(self, strategy: StageExecutionStrategy) -> StageExecution: ...  # type: ignore[empty-body]
+    def _lookup_pipeline_run(self, run_id: str) -> PipelineRun | None: ...  # type: ignore[empty-body]
+    def _store_components(self, project_id: str, content: str) -> Any: ...
+    def _store_sub_components(self, project_id: str, parent_key: str, content: str) -> Any: ...
+    async def _post_generation_hook(
+        self,
+        project_id: str,
+        stage_def: Any,
+        component_key: str | None,
+        execution: Any,
+    ) -> Any: ...
 
     async def resume_stage(
         self,
@@ -775,9 +820,11 @@ class ArtifactOpsMixin:
             self.db.commit()
 
             if artifact.artifact_type.value == "component_map":
+                assert artifact.content is not None
                 self._store_components(project_id, artifact.content)
                 self.db.commit()
             elif artifact.artifact_type.value == "sub_component_map" and artifact.component_key:
+                assert artifact.content is not None
                 self._store_sub_components(project_id, artifact.component_key, artifact.content)
                 self.db.commit()
 

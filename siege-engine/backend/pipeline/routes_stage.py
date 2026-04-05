@@ -342,11 +342,11 @@ def reset_stage_config(
     if not defaults:
         raise HTTPException(404, f"No defaults found for stage '{stage_key}'")
 
-    stage_def.display_name = defaults["display_name"]
-    stage_def.model_override = defaults.get("model_override")
-    stage_def.temperature_override = defaults.get("temperature_override")
-    stage_def.ai_review_enabled = defaults.get("ai_review_enabled", True)
-    stage_def.human_review_enabled = defaults.get("human_review_enabled", True)
+    setattr(stage_def, "display_name", defaults["display_name"])
+    setattr(stage_def, "model_override", defaults.get("model_override"))
+    setattr(stage_def, "temperature_override", defaults.get("temperature_override"))
+    setattr(stage_def, "ai_review_enabled", defaults.get("ai_review_enabled", True))
+    setattr(stage_def, "human_review_enabled", defaults.get("human_review_enabled", True))
 
     db.commit()
     db.refresh(stage_def)

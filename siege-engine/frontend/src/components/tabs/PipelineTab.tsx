@@ -97,6 +97,7 @@ export function PipelineTab() {
             projectId={projectId!}
             artifact={selectedArtifact}
             execution={selectedExecution}
+            executions={executions}
             mode={viewMode === 'review' ? 'feedback' : 'actions'}
           />
         </PanelErrorBoundary>

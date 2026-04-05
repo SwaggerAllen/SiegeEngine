@@ -29,7 +29,6 @@ function lazyRetry<T extends ComponentType<unknown>>(
 }
 
 // Lazy-loaded tabs (infrequently accessed)
-const PromptsTab = lazyRetry(() => import('./components/tabs/PromptsTab'));
 const InputDocsTab = lazyRetry(() => import('./components/tabs/InputDocsTab'));
 const SettingsTab = lazyRetry(() => import('./components/tabs/SettingsTab'));
 const HistoryTab = lazyRetry(() => import('./components/tabs/HistoryTab'));
@@ -111,7 +110,6 @@ export default function App() {
           <Route index element={<Navigate to="documents" replace />} />
           <Route path="documents" element={<DocumentsTab />} />
           <Route path="pipeline" element={<PipelineTab />} />
-          <Route path="prompts" element={<LazyTab><PromptsTab /></LazyTab>} />
           <Route path="input-docs" element={<LazyTab><InputDocsTab /></LazyTab>} />
           <Route path="chat" element={<ChatTab />} />
           <Route path="settings" element={<LazyTab><SettingsTab /></LazyTab>} />

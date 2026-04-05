@@ -50,13 +50,13 @@ async def pipeline_action(
             from backend.pipeline.routes_pipeline import resume_run
             from backend.pipeline.schemas import ResumeRunRequest
 
-            req = ResumeRunRequest(
+            resume_run_req = ResumeRunRequest(
                 ai_loops=action.ai_loops,
                 stop_point=action.stop_point,
                 start_stage_key=action.start_stage_key,
                 start_component_key=action.start_component_key,
             )
-            return await resume_run(project_id, req, db, user)
+            return await resume_run(project_id, resume_run_req, db, user)
 
         case "propagate":
             from backend.pipeline.routes_pipeline import propagate_changes
@@ -67,13 +67,13 @@ async def pipeline_action(
             from backend.pipeline.routes_pipeline import cancel_pipeline
             from backend.pipeline.schemas import CancelRequest
 
-            req = CancelRequest(
+            cancel_req = CancelRequest(
                 open_pr=action.open_pr,
                 pr_title=action.pr_title,
                 pr_body=action.pr_body,
                 base_branch=action.base_branch,
             )
-            return await cancel_pipeline(project_id, req, db, user)
+            return await cancel_pipeline(project_id, cancel_req, db, user)
 
         case "reset_all":
             from backend.pipeline.routes_pipeline import reset_all
@@ -85,42 +85,42 @@ async def pipeline_action(
             from backend.pipeline.routes_stage import resume_stage
             from backend.pipeline.schemas import ResumeRequest
 
-            req = ResumeRequest(
+            resume_req = ResumeRequest(
                 execution_id=action.execution_id,
                 action=action.action,
                 notes=action.notes,
                 edited_content=action.edited_content,
             )
-            return await resume_stage(project_id, req, db, user)
+            return await resume_stage(project_id, resume_req, db, user)
 
         case "revise":
             from backend.pipeline.routes_stage import revise_artifact
             from backend.pipeline.schemas import ReviseRequest
 
-            req = ReviseRequest(
+            revise_req = ReviseRequest(
                 artifact_id=action.artifact_id,
                 feedback=action.feedback,
             )
-            return await revise_artifact(project_id, req, db, user)
+            return await revise_artifact(project_id, revise_req, db, user)
 
         case "resolve_stale":
             from backend.pipeline.routes_stage import resolve_stale
             from backend.pipeline.schemas import ResolveStaleRequest
 
-            req = ResolveStaleRequest(
+            resolve_req = ResolveStaleRequest(
                 artifact_id=action.artifact_id,
                 action=action.action,
                 notes=action.notes,
                 edited_content=action.edited_content,
             )
-            return await resolve_stale(project_id, req, db, user)
+            return await resolve_stale(project_id, resolve_req, db, user)
 
         case "regen_downstream":
             from backend.pipeline.routes_stage import regen_downstream
             from backend.pipeline.schemas import RegenDownstreamRequest
 
-            req = RegenDownstreamRequest(artifact_id=action.artifact_id)
-            return await regen_downstream(project_id, req, db, user)
+            regen_ds_req = RegenDownstreamRequest(artifact_id=action.artifact_id)
+            return await regen_downstream(project_id, regen_ds_req, db, user)
 
         case "cancel_stage":
             from backend.pipeline.routes_stage import cancel_stage
@@ -136,11 +136,11 @@ async def pipeline_action(
             from backend.pipeline.routes_stage import trigger_stage
             from backend.pipeline.schemas import TriggerStageRequest
 
-            req = TriggerStageRequest(
+            trig_req = TriggerStageRequest(
                 stage_key=action.stage_key,
                 component_key=action.component_key,
             )
-            return await trigger_stage(project_id, req, db, user)
+            return await trigger_stage(project_id, trig_req, db, user)
 
         case "retry":
             from backend.pipeline.routes_pipeline import retry_stage
@@ -162,18 +162,18 @@ async def pipeline_action(
             from backend.pipeline.routes_pipeline import regenerate
             from backend.pipeline.schemas import RegenerateRequest
 
-            req = RegenerateRequest(artifact_ids=action.artifact_ids)
-            return await regenerate(project_id, req, db, user)
+            regenerate_req = RegenerateRequest(artifact_ids=action.artifact_ids)
+            return await regenerate(project_id, regenerate_req, db, user)
 
         case "prompt_preview":
             from backend.pipeline.routes_pipeline import prompt_preview
             from backend.pipeline.schemas import PromptPreviewRequest
 
-            req = PromptPreviewRequest(
+            preview_req = PromptPreviewRequest(
                 artifact_id=action.artifact_id,
                 human_notes=action.human_notes,
             )
-            return prompt_preview(project_id, req, db, user)
+            return prompt_preview(project_id, preview_req, db, user)
 
         case "retry_summary":
             from backend.models import Artifact
