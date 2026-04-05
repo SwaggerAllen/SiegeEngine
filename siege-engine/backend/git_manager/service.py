@@ -1,5 +1,7 @@
 import json
 import logging
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 from git import Repo
@@ -12,6 +14,21 @@ logger = logging.getLogger(__name__)
 class GitManager:
     def __init__(self, base_path: str | None = None):
         self.base_path = Path(base_path or settings.git_repos_base_path)
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_lock = threading.Lock()
+
+    @contextmanager
+    def _repo_lock(self, project_id: str):
+        """Acquire a per-project lock to serialize git operations."""
+        with self._locks_lock:
+            if project_id not in self._locks:
+                self._locks[project_id] = threading.Lock()
+            lock = self._locks[project_id]
+        lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
 
     def init_repo(self, project_id: str) -> str:
         repo_path = self.base_path / project_id
@@ -26,23 +43,31 @@ class GitManager:
         file_path: str,
         message: str | None = None,
     ) -> str:
-        repo = self._get_repo(project_id)
-        abs_path = Path(repo.working_dir) / file_path
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
-        abs_path.write_text(content, encoding="utf-8")
-        repo.index.add([file_path])
+        with self._repo_lock(project_id):
+            repo = self._get_repo(project_id)
 
-        # If the file content is unchanged, skip the commit and return
-        # the SHA of the most recent commit that touched this file.
-        # Empty commits break file-based history lookups (iter_commits
-        # skips them) which causes stale diffs.
-        if not repo.index.diff("HEAD", paths=[file_path]):
-            commits = list(repo.iter_commits(paths=file_path, max_count=1))
-            if commits:
-                return commits[0].hexsha
+            # Remove stale index.lock left by a crashed process
+            lock_file = Path(repo.git_dir) / "index.lock"
+            if lock_file.exists():
+                logger.warning("Removing stale index.lock for project %s", project_id)
+                lock_file.unlink()
 
-        commit = repo.index.commit(message or f"Update {file_path}")
-        return commit.hexsha
+            abs_path = Path(repo.working_dir) / file_path
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+            abs_path.write_text(content, encoding="utf-8")
+            repo.index.add([file_path])
+
+            # If the file content is unchanged, skip the commit and return
+            # the SHA of the most recent commit that touched this file.
+            # Empty commits break file-based history lookups (iter_commits
+            # skips them) which causes stale diffs.
+            if not repo.index.diff("HEAD", paths=[file_path]):
+                commits = list(repo.iter_commits(paths=file_path, max_count=1))
+                if commits:
+                    return commits[0].hexsha
+
+            commit = repo.index.commit(message or f"Update {file_path}")
+            return commit.hexsha
 
     def get_diff(
         self,
@@ -151,19 +176,20 @@ class GitManager:
         plus any remaining uncommitted changes.  The resulting commit SHA
         represents the complete repo state at the end of the run.
         """
-        repo = self._get_repo(project_id)
-        manifest_path = Path(repo.working_dir) / "siege-state.json"
-        manifest_path.write_text(json.dumps(siege_state, indent=2), encoding="utf-8")
-        # Stage everything — manifest + any stragglers
-        repo.git.add(A=True)
-        commit = repo.index.commit(message)
-        logger.info(
-            "Checkpoint commit %s for project %s: %s",
-            commit.hexsha[:8],
-            project_id,
-            message,
-        )
-        return commit.hexsha
+        with self._repo_lock(project_id):
+            repo = self._get_repo(project_id)
+            manifest_path = Path(repo.working_dir) / "siege-state.json"
+            manifest_path.write_text(json.dumps(siege_state, indent=2), encoding="utf-8")
+            # Stage everything — manifest + any stragglers
+            repo.git.add(A=True)
+            commit = repo.index.commit(message)
+            logger.info(
+                "Checkpoint commit %s for project %s: %s",
+                commit.hexsha[:8],
+                project_id,
+                message,
+            )
+            return commit.hexsha
 
     def get_file_at_commit(self, project_id: str, file_path: str, commit_sha: str) -> str:
         """Read a file from a specific commit (wrapper around get_file_at_version)."""
