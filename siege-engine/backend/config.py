@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     llm_retry_base_delay: float = 1.0
 
     # Claude CLI
-    cli_timeout_document: int = 1800  # 30 min for document stages
+    cli_timeout_document: int = 2100  # 35 min for document stages
     cli_timeout_code: int = 1800  # 30 min for code gen/review
     cli_timeout_summary: int = 900  # 15 min for summary generation
     cli_max_turns_code: int = 25  # Unused directly — CLI manages turns via budget
