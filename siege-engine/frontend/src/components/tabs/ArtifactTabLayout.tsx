@@ -5,9 +5,11 @@ import { usePipelineUIStore } from '../../store/pipelineUIStore';
 import { useArtifact } from '../../hooks/queries/useProjectQueries';
 import { useExecutions } from '../../hooks/queries/usePipelineQueries';
 import { findSelectedExecution } from '../../pages/ProjectDashboardLayout';
+import { FRONTEND_ARTIFACT_TYPES } from '../../types/dag';
 import { PipelineDAG } from '../dag/PipelineDAG';
 import { ArtifactEditor } from '../editor/ArtifactEditor';
 import { ArtifactPromptDebugView } from '../editor/ArtifactPromptDebugView';
+import { CrossDagParentsBar } from '../pipeline/CrossDagParentsBar';
 import { ReviewPanel } from '../pipeline/ReviewPanel';
 import { StageConfigPanel } from '../pipeline/StageConfigPanel';
 import { BottomPane, ArtifactStatusBadge } from '../pipeline/BottomPane';
@@ -107,18 +109,25 @@ export function ArtifactTabLayout({
 
   // Build pane content
   let paneContent;
+  const isFrontendArtifact = selectedArtifact && FRONTEND_ARTIFACT_TYPES.has(selectedArtifact.artifact_type);
+
   if (selectedArtifact) {
     paneContent = (
-      <div className="p-3">
-        <PanelErrorBoundary fallbackLabel="Review panel error">
-          <ReviewPanel
-            projectId={projectId!}
-            artifact={selectedArtifact}
-            execution={selectedExecution}
-            executions={executions}
-            mode={viewMode === 'review' ? 'feedback' : 'actions'}
-          />
-        </PanelErrorBoundary>
+      <div>
+        {isFrontendArtifact && selectedArtifact.component_key && (
+          <CrossDagParentsBar projectId={projectId!} componentKey={selectedArtifact.component_key} />
+        )}
+        <div className="p-3">
+          <PanelErrorBoundary fallbackLabel="Review panel error">
+            <ReviewPanel
+              projectId={projectId!}
+              artifact={selectedArtifact}
+              execution={selectedExecution}
+              executions={executions}
+              mode={viewMode === 'review' ? 'feedback' : 'actions'}
+            />
+          </PanelErrorBoundary>
+        </div>
       </div>
     );
   } else if (selectedStageKey) {

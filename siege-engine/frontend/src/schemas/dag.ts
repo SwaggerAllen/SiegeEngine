@@ -51,3 +51,15 @@ export const MAP_ARTIFACT_TYPES = new Set([
   'frontend_component_map',
   'frontend_sub_component_map',
 ]);
+
+/** Artifact types that belong to the frontend DAG. */
+export const FRONTEND_ARTIFACT_TYPES = new Set([
+  'frontend_component_map',
+  'frontend_component_architecture',
+  'frontend_component_plan',
+  'frontend_sub_component_map',
+  'frontend_sub_component_architecture',
+  'frontend_sub_component_plan',
+  'frontend_code',
+  'frontend_code_review',
+]);

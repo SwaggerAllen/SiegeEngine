@@ -28,6 +28,7 @@ const SYSTEM_ORDER: Record<string, number> = {
   system_architecture: 2,
   high_level_plan: 3,
   component_map: 4,
+  frontend_component_map: 5,
 };
 
 // Artifact types that belong directly to a component

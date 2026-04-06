@@ -24,7 +24,9 @@ class ExtractComponentsPrompt(PromptTemplate):
             {
                 "role": "user",
                 "content": "\n\n---\n\n".join(context_parts)
-                + "\n\nIdentify the components and their inter-dependencies.",
+                + "\n\nIdentify both the domain (backend) components and frontend "
+                "(UI/route family) components, their intra-DAG dependencies, "
+                "and the frontend-to-domain parent relationships.",
             },
         ]
         return self._inject_feedback(
