@@ -1453,6 +1453,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                 execution,
                 StageStatus.AWAITING_REVIEW,
                 artifact_status=ArtifactStatus.AWAITING_REVIEW,
+                set_completed=True,
             )
 
             self.db.commit()
