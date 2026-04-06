@@ -1,7 +1,7 @@
 from backend.pipeline.prompts.base import PromptTemplate
 
 
-class ExtractComponentsPrompt(PromptTemplate):
+class FEExtractSubComponentsPrompt(PromptTemplate):
     def build(
         self,
         input_artifacts,
@@ -10,23 +10,22 @@ class ExtractComponentsPrompt(PromptTemplate):
         current_content=None,
         upstream_changes=None,
     ):
-        feature_expansion = input_artifacts.get("feature_expansion", "")
-        system_arch = input_artifacts.get("system_architecture", "")
+        component_arch = input_artifacts.get("fe_component_architectures", "")
 
         context_parts = []
-        if feature_expansion:
-            context_parts.append(f"FEATURE EXPANSION:\n\n{feature_expansion}")
-        if system_arch:
-            context_parts.append(f"SYSTEM ARCHITECTURE:\n\n{system_arch}")
+        if component_arch:
+            context_parts.append(f"FRONTEND COMPONENT ARCHITECTURE:\n\n{component_arch}")
+        domain_parents = input_artifacts.get("domain_parent_architectures", "")
+        if domain_parents:
+            context_parts.append(f"DOMAIN PARENT ARCHITECTURES:\n\n{domain_parents}")
 
         messages = [
             {"role": "system", "content": self.full_system_message},
             {
                 "role": "user",
                 "content": "\n\n---\n\n".join(context_parts)
-                + "\n\nIdentify both the domain (backend) components and frontend "
-                "(UI/route family) components, their intra-DAG dependencies, "
-                "and the frontend-to-domain parent relationships.",
+                + f"\n\nFRONTEND COMPONENT: {component_key}\n\n"
+                "Evaluate whether this frontend component needs sub-component decomposition.",
             },
         ]
         return self._inject_feedback(

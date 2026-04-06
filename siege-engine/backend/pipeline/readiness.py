@@ -47,6 +47,15 @@ _ARTIFACT_TYPE_TO_STAGE_KEY: dict[ArtifactType, str] = {
     ArtifactType.SUB_COMPONENT_PLAN: "sub_component_plans",
     ArtifactType.CODE: "code_generation",
     ArtifactType.CODE_REVIEW: "code_review",
+    # Frontend DAG
+    ArtifactType.FRONTEND_COMPONENT_ARCHITECTURE: "fe_component_architectures",
+    ArtifactType.FRONTEND_COMPONENT_PLAN: "fe_component_plans",
+    ArtifactType.FRONTEND_COMPONENT_MAP: "extract_components",  # shared extraction stage
+    ArtifactType.FRONTEND_SUB_COMPONENT_MAP: "fe_extract_sub_components",
+    ArtifactType.FRONTEND_SUB_COMPONENT_ARCHITECTURE: "fe_sub_component_architectures",
+    ArtifactType.FRONTEND_SUB_COMPONENT_PLAN: "fe_sub_component_plans",
+    ArtifactType.FRONTEND_CODE: "fe_code_generation",
+    ArtifactType.FRONTEND_CODE_REVIEW: "fe_code_review",
 }
 
 # Statuses that indicate an artifact has been generated (has content).
@@ -63,6 +72,17 @@ SUB_COMPONENT_STAGE_ORDER = [
     "sub_component_plans",
 ]
 
+# Frontend DAG equivalents
+FE_COMPONENT_STAGE_ORDER = [
+    "fe_component_architectures",
+    "fe_extract_sub_components",
+    "fe_component_plans",
+]
+FE_SUB_COMPONENT_STAGE_ORDER = [
+    "fe_sub_component_architectures",
+    "fe_sub_component_plans",
+]
+
 # Stage order mapping for scope filtering.
 _STAGE_KEY_TO_ORDER: dict[str, int] = {
     "feature_expansion": 0,
@@ -75,6 +95,14 @@ _STAGE_KEY_TO_ORDER: dict[str, int] = {
     "sub_component_plans": 7,
     "code_generation": 8,
     "code_review": 9,
+    # Frontend DAG (10-16)
+    "fe_component_architectures": 10,
+    "fe_extract_sub_components": 11,
+    "fe_component_plans": 12,
+    "fe_sub_component_architectures": 13,
+    "fe_sub_component_plans": 14,
+    "fe_code_generation": 15,
+    "fe_code_review": 16,
 }
 
 
@@ -85,10 +113,18 @@ class ReadinessMixin:
     db: Session
     events: EventStore
 
-    def _get_components(self, project_id: str) -> list[dict]: ...  # type: ignore[empty-body]
-    def _get_sub_component_defs(self, project_id: str) -> list[ComponentDefinition]: ...  # type: ignore[empty-body]
-    def _get_leaf_keys(self, project_id: str) -> list[str]: ...  # type: ignore[empty-body]
-    def _heal_missing_entities(self, project_id: str, stage_def: StageDefinition) -> bool: ...  # type: ignore[empty-body]
+    def _get_components(  # type: ignore[empty-body]
+        self, project_id: str, dag_type: str = "domain"
+    ) -> list[dict]: ...
+    def _get_sub_component_defs(  # type: ignore[empty-body]
+        self, project_id: str, dag_type: str = "domain"
+    ) -> list[ComponentDefinition]: ...
+    def _get_leaf_keys(  # type: ignore[empty-body]
+        self, project_id: str, dag_type: str = "domain"
+    ) -> list[str]: ...
+    def _heal_missing_entities(  # type: ignore[empty-body]
+        self, project_id: str, stage_def: StageDefinition
+    ) -> bool: ...
 
     def _stage_fully_generated(
         self, project_id: str, stage_def: StageDefinition, run_id: str
@@ -208,19 +244,25 @@ class ReadinessMixin:
     def _collect_entities(self, project_id: str, stage_def: StageDefinition) -> list[str]:
         """Raw entity collection without self-healing."""
         fan_out = stage_def.fan_out_strategy
+        is_frontend = stage_def.stage_key.startswith("fe_")
+        dag_type = "frontend" if is_frontend else "domain"
+        leaf_plan_key = "fe_component_plans" if is_frontend else "component_plans"
 
         if fan_out == FanOutStrategy.COMPONENT:
-            comps = self._get_components(project_id)
-            if stage_def.stage_key == "component_plans":
-                parent_keys = {d.parent_key for d in self._get_sub_component_defs(project_id)}
+            comps = self._get_components(project_id, dag_type=dag_type)
+            if stage_def.stage_key == leaf_plan_key:
+                parent_keys = {
+                    d.parent_key
+                    for d in self._get_sub_component_defs(project_id, dag_type=dag_type)
+                }
                 comps = [c for c in comps if c["key"] not in parent_keys]
             return [c["key"] for c in comps]
 
         elif fan_out == FanOutStrategy.SUB_COMPONENT:
-            return [sc.key for sc in self._get_sub_component_defs(project_id)]
+            return [sc.key for sc in self._get_sub_component_defs(project_id, dag_type=dag_type)]
 
         elif fan_out == FanOutStrategy.LEAF:
-            return self._get_leaf_keys(project_id)
+            return self._get_leaf_keys(project_id, dag_type=dag_type)
 
         return []
 
@@ -248,14 +290,20 @@ class ReadinessMixin:
     ) -> list[str]:
         """Get entity keys that are ready to be processed for a fan-out stage."""
         fan_out = stage_def.fan_out_strategy
+        is_frontend = stage_def.stage_key.startswith("fe_")
+        dag_type = "frontend" if is_frontend else "domain"
         regen_only = pipeline_run.regen_generated_only if pipeline_run else False
+        leaf_plan_key = "fe_component_plans" if is_frontend else "component_plans"
         ready = []
 
         if fan_out == FanOutStrategy.COMPONENT:
-            comps = self._get_components(project_id)
+            comps = self._get_components(project_id, dag_type=dag_type)
 
-            if stage_def.stage_key == "component_plans":
-                parent_keys = {d.parent_key for d in self._get_sub_component_defs(project_id)}
+            if stage_def.stage_key == leaf_plan_key:
+                parent_keys = {
+                    d.parent_key
+                    for d in self._get_sub_component_defs(project_id, dag_type=dag_type)
+                }
                 comps = [c for c in comps if c["key"] not in parent_keys]
 
             for comp in comps:
@@ -278,7 +326,12 @@ class ReadinessMixin:
                     )
                     continue
                 if self._is_component_ready(
-                    project_id, key, stage_def, run_id, comp.get("dependencies", [])
+                    project_id,
+                    key,
+                    stage_def,
+                    run_id,
+                    comp.get("dependencies", []),
+                    domain_parents=comp.get("domain_parents", []) if is_frontend else [],
                 ):
                     ready.append(key)
                 else:
@@ -290,7 +343,7 @@ class ReadinessMixin:
                     )
 
         elif fan_out == FanOutStrategy.SUB_COMPONENT:
-            sub_comps = self._get_sub_component_defs(project_id)
+            sub_comps = self._get_sub_component_defs(project_id, dag_type=dag_type)
             for sc in sub_comps:
                 parent_key = sc.parent_key
                 if not parent_key:
@@ -310,7 +363,7 @@ class ReadinessMixin:
                     ready.append(full_key)
 
         elif fan_out == FanOutStrategy.LEAF:
-            leaves = self._get_leaf_keys(project_id)
+            leaves = self._get_leaf_keys(project_id, dag_type=dag_type)
             for leaf_key in leaves:
                 if not self._is_in_run_scope(stage_def, leaf_key, pipeline_run):
                     continue
@@ -330,8 +383,10 @@ class ReadinessMixin:
         stage_def: StageDefinition,
         run_id: str,
         dependencies: list[str],
+        domain_parents: list[str] | None = None,
     ) -> bool:
         """Check if a component is ready for a given stage."""
+        is_frontend = stage_def.stage_key.startswith("fe_")
         existing = (
             self.db.query(StageExecution)
             .filter_by(
@@ -354,11 +409,14 @@ class ReadinessMixin:
             )
             return False
 
-        # Dependencies satisfied when parent has been *generated* (not just approved)
+        # Intra-DAG sibling dependencies
+        dep_arch_type = (
+            ArtifactType.FRONTEND_COMPONENT_ARCHITECTURE
+            if is_frontend
+            else ArtifactType.COMPONENT_ARCHITECTURE
+        )
         for dep_key in dependencies:
-            if not self._has_generated_artifact(
-                project_id, ArtifactType.COMPONENT_ARCHITECTURE, dep_key
-            ):
+            if not self._has_generated_artifact(project_id, dep_arch_type, dep_key):
                 logger.debug(
                     "[readiness] %s/%s not ready: dependency %s not generated",
                     stage_def.stage_key,
@@ -367,9 +425,25 @@ class ReadinessMixin:
                 )
                 return False
 
-        if stage_def.stage_key in COMPONENT_STAGE_ORDER:
-            current_idx = COMPONENT_STAGE_ORDER.index(stage_def.stage_key)
-            for prior_key in COMPONENT_STAGE_ORDER[:current_idx]:
+        # Cross-DAG: frontend components need domain parent architectures
+        if is_frontend and domain_parents:
+            for parent_key in domain_parents:
+                if not self._has_generated_artifact(
+                    project_id, ArtifactType.COMPONENT_ARCHITECTURE, parent_key
+                ):
+                    logger.debug(
+                        "[readiness] %s/%s not ready: domain parent %s architecture not generated",
+                        stage_def.stage_key,
+                        comp_key,
+                        parent_key,
+                    )
+                    return False
+
+        # Prior stages within the same DAG's component order
+        stage_order = FE_COMPONENT_STAGE_ORDER if is_frontend else COMPONENT_STAGE_ORDER
+        if stage_def.stage_key in stage_order:
+            current_idx = stage_order.index(stage_def.stage_key)
+            for prior_key in stage_order[:current_idx]:
                 if not self._has_generated_execution(project_id, prior_key, comp_key, run_id):
                     logger.debug(
                         "[readiness] %s/%s not ready: prior stage %s not generated",
@@ -391,6 +465,7 @@ class ReadinessMixin:
         full_deps: list[str],
     ) -> bool:
         """Check if a sub-component is ready for a given stage."""
+        is_frontend = stage_def.stage_key.startswith("fe_")
         existing = (
             self.db.query(StageExecution)
             .filter_by(
@@ -405,22 +480,24 @@ class ReadinessMixin:
         if existing:
             return False
 
-        # Dependencies satisfied when parent has been *generated*
+        dep_arch_type = (
+            ArtifactType.FRONTEND_SUB_COMPONENT_ARCHITECTURE
+            if is_frontend
+            else ArtifactType.SUB_COMPONENT_ARCHITECTURE
+        )
         for dep_key in full_deps:
-            if not self._has_generated_artifact(
-                project_id, ArtifactType.SUB_COMPONENT_ARCHITECTURE, dep_key
-            ):
+            if not self._has_generated_artifact(project_id, dep_arch_type, dep_key):
                 return False
 
-        if stage_def.stage_key in SUB_COMPONENT_STAGE_ORDER:
-            current_idx = SUB_COMPONENT_STAGE_ORDER.index(stage_def.stage_key)
-            for prior_key in SUB_COMPONENT_STAGE_ORDER[:current_idx]:
+        stage_order = FE_SUB_COMPONENT_STAGE_ORDER if is_frontend else SUB_COMPONENT_STAGE_ORDER
+        if stage_def.stage_key in stage_order:
+            current_idx = stage_order.index(stage_def.stage_key)
+            for prior_key in stage_order[:current_idx]:
                 if not self._has_generated_execution(project_id, prior_key, full_key, run_id):
                     return False
 
-        if not self._has_generated_execution(
-            project_id, "extract_sub_components", parent_key, run_id
-        ):
+        extract_stage = "fe_extract_sub_components" if is_frontend else "extract_sub_components"
+        if not self._has_generated_execution(project_id, extract_stage, parent_key, run_id):
             return False
 
         return True
@@ -429,6 +506,7 @@ class ReadinessMixin:
         self, project_id: str, leaf_key: str, stage_def: StageDefinition, run_id: str
     ) -> bool:
         """Check if a leaf entity is ready for code generation/review."""
+        is_frontend = stage_def.stage_key.startswith("fe_")
         existing = (
             self.db.query(StageExecution)
             .filter_by(
@@ -444,16 +522,24 @@ class ReadinessMixin:
             return False
 
         if "." in leaf_key:
-            if not self._has_generated_artifact(
-                project_id, ArtifactType.SUB_COMPONENT_PLAN, leaf_key
-            ):
+            plan_type = (
+                ArtifactType.FRONTEND_SUB_COMPONENT_PLAN
+                if is_frontend
+                else ArtifactType.SUB_COMPONENT_PLAN
+            )
+            if not self._has_generated_artifact(project_id, plan_type, leaf_key):
                 return False
         else:
-            if not self._has_generated_artifact(project_id, ArtifactType.COMPONENT_PLAN, leaf_key):
+            plan_type = (
+                ArtifactType.FRONTEND_COMPONENT_PLAN if is_frontend else ArtifactType.COMPONENT_PLAN
+            )
+            if not self._has_generated_artifact(project_id, plan_type, leaf_key):
                 return False
 
-        if stage_def.stage_key == "code_review":
-            if not self._has_generated_execution(project_id, "code_generation", leaf_key, run_id):
+        codegen_stage = "fe_code_generation" if is_frontend else "code_generation"
+        code_review_stage = "fe_code_review" if is_frontend else "code_review"
+        if stage_def.stage_key == code_review_stage:
+            if not self._has_generated_execution(project_id, codegen_stage, leaf_key, run_id):
                 return False
 
         return True

@@ -1,7 +1,7 @@
 from backend.pipeline.prompts.base import PromptTemplate
 
 
-class ExtractComponentsPrompt(PromptTemplate):
+class FEComponentArchPrompt(PromptTemplate):
     def build(
         self,
         input_artifacts,
@@ -18,15 +18,20 @@ class ExtractComponentsPrompt(PromptTemplate):
             context_parts.append(f"FEATURE EXPANSION:\n\n{feature_expansion}")
         if system_arch:
             context_parts.append(f"SYSTEM ARCHITECTURE:\n\n{system_arch}")
+        domain_parents = input_artifacts.get("domain_parent_architectures", "")
+        if domain_parents:
+            context_parts.append(f"DOMAIN PARENT ARCHITECTURES:\n\n{domain_parents}")
+        dep_archs = input_artifacts.get("dependency_architectures", "")
+        if dep_archs:
+            context_parts.append(f"DEPENDENCY COMPONENT ARCHITECTURES:\n\n{dep_archs}")
 
         messages = [
             {"role": "system", "content": self.full_system_message},
             {
                 "role": "user",
                 "content": "\n\n---\n\n".join(context_parts)
-                + "\n\nIdentify both the domain (backend) components and frontend "
-                "(UI/route family) components, their intra-DAG dependencies, "
-                "and the frontend-to-domain parent relationships.",
+                + f"\n\nFRONTEND COMPONENT TO DESIGN: {component_key}\n\n"
+                "Produce a detailed architecture for this frontend component.",
             },
         ]
         return self._inject_feedback(

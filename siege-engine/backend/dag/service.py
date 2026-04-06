@@ -356,13 +356,37 @@ def _find_artifact_node(nodes: list[dict], artifact_type: str, component_key: st
     return None
 
 
-def get_documents_dag(db: Session, project_id: str) -> dict:
+_SHARED_STAGE_KEYS = {"feature_expansion", "system_architecture", "extract_components"}
+_DOMAIN_STAGE_KEYS = _SHARED_STAGE_KEYS | {
+    "component_architectures",
+    "extract_sub_components",
+    "component_plans",
+    "sub_component_architectures",
+    "sub_component_plans",
+    "code_generation",
+    "code_review",
+}
+_FRONTEND_STAGE_KEYS = _SHARED_STAGE_KEYS | {
+    "fe_component_architectures",
+    "fe_extract_sub_components",
+    "fe_component_plans",
+    "fe_sub_component_architectures",
+    "fe_sub_component_plans",
+    "fe_code_generation",
+    "fe_code_review",
+}
+
+
+def get_documents_dag(db: Session, project_id: str, dag_type: str = "domain") -> dict:
     """Build documents DAG showing artifact lineage.
 
     Reads status from snapshot (source of truth). Structural data (artifact names,
     types, component_keys) comes from DB or snapshot.artifact_meta.
     Only shows documents that actually exist — the project document as root,
     then generated artifacts. Stages with no artifacts yet are omitted entirely.
+
+    Args:
+        dag_type: "domain" or "frontend" — filters to show only the relevant DAG.
     """
     from backend.pipeline.event_store import EventStore
 
@@ -370,7 +394,11 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
     if not config:
         return {"nodes": [], "edges": []}
 
-    stages = sorted(config.stages, key=lambda s: s.order_index)
+    allowed_stage_keys = _FRONTEND_STAGE_KEYS if dag_type == "frontend" else _DOMAIN_STAGE_KEYS
+    stages = sorted(
+        [s for s in config.stages if s.stage_key in allowed_stage_keys],
+        key=lambda s: s.order_index,
+    )
     snapshot = EventStore(db).get_snapshot(project_id)
     artifact_statuses = snapshot.artifact_statuses or {}
     artifact_versions = snapshot.artifact_versions or {}
@@ -526,10 +554,15 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
                 for snap_key in stage_statuses
                 if snap_key.startswith(f"{stage_def.stage_key}/")
             }
+            # Filter components by the appropriate dag_type for this stage
+            comp_dag_type = "frontend" if stage_def.stage_key.startswith("fe_") else "domain"
+            # Shared stages (extract_components) show all domain components
+            if stage_def.stage_key in _SHARED_STAGE_KEYS:
+                comp_dag_type = "domain"
             all_comp_keys = {
                 cd.key
                 for cd in db.query(ComponentDefinition)
-                .filter_by(project_id=project_id)
+                .filter_by(project_id=project_id, dag_type=comp_dag_type)
                 .filter(ComponentDefinition.parent_key.is_(None))
                 .all()
             }
@@ -537,15 +570,16 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
             # for components that have sub-components (plans happen at the
             # sub-component level instead).
             _parents_with_subs: set[str] | None = None
+            leaf_plan_keys = {"component_plans", "fe_component_plans"}
             for comp_key in sorted(all_comp_keys - represented_comp_keys):
                 # component_plans only runs for components WITHOUT
                 # sub-components.  Skip if this component already has subs.
-                if stage_def.stage_key == "component_plans":
+                if stage_def.stage_key in leaf_plan_keys:
                     if _parents_with_subs is None:
                         _parents_with_subs = {
                             cd.parent_key
                             for cd in db.query(ComponentDefinition)
-                            .filter_by(project_id=project_id)
+                            .filter_by(project_id=project_id, dag_type=comp_dag_type)
                             .filter(ComponentDefinition.parent_key.isnot(None))
                             .all()
                             if cd.parent_key is not None
@@ -639,25 +673,47 @@ def get_documents_dag(db: Session, project_id: str) -> dict:
     # Add cross-component dependency edges from ComponentDefinition.
     # Draw edges at every artifact tier so the dependency relationship is
     # visible as soon as both components have at least one artifact.
-    _COMPONENT_DEP_PAIRS = [
-        (ArtifactType.COMPONENT_REQUIREMENTS.value, ArtifactType.COMPONENT_REQUIREMENTS.value),
-        (ArtifactType.COMPONENT_ARCHITECTURE.value, ArtifactType.COMPONENT_REQUIREMENTS.value),
-        (ArtifactType.COMPONENT_ARCHITECTURE.value, ArtifactType.COMPONENT_ARCHITECTURE.value),
-        (ArtifactType.COMPONENT_ARCHITECTURE.value, ArtifactType.COMPONENT_PLAN.value),
-        (ArtifactType.COMPONENT_PLAN.value, ArtifactType.COMPONENT_PLAN.value),
-    ]
-    _SC_REQ = ArtifactType.SUB_COMPONENT_REQUIREMENTS.value
-    _SC_ARCH = ArtifactType.SUB_COMPONENT_ARCHITECTURE.value
-    _SC_PLAN = ArtifactType.SUB_COMPONENT_PLAN.value
-    _SUB_COMPONENT_DEP_PAIRS = [
-        (_SC_REQ, _SC_REQ),
-        (_SC_ARCH, _SC_REQ),
-        (_SC_ARCH, _SC_ARCH),
-        (_SC_ARCH, _SC_PLAN),
-        (_SC_PLAN, _SC_PLAN),
-    ]
+    if dag_type == "frontend":
+        _FE_ARCH = ArtifactType.FRONTEND_COMPONENT_ARCHITECTURE.value
+        _FE_PLAN = ArtifactType.FRONTEND_COMPONENT_PLAN.value
+        _COMPONENT_DEP_PAIRS = [
+            (_FE_ARCH, _FE_ARCH),
+            (_FE_ARCH, _FE_PLAN),
+            (_FE_PLAN, _FE_PLAN),
+        ]
+        _FE_SC_ARCH = ArtifactType.FRONTEND_SUB_COMPONENT_ARCHITECTURE.value
+        _FE_SC_PLAN = ArtifactType.FRONTEND_SUB_COMPONENT_PLAN.value
+        _SUB_COMPONENT_DEP_PAIRS = [
+            (_FE_SC_ARCH, _FE_SC_ARCH),
+            (_FE_SC_ARCH, _FE_SC_PLAN),
+            (_FE_SC_PLAN, _FE_SC_PLAN),
+        ]
+    else:
+        _COMPONENT_DEP_PAIRS = [
+            (ArtifactType.COMPONENT_REQUIREMENTS.value, ArtifactType.COMPONENT_REQUIREMENTS.value),
+            (ArtifactType.COMPONENT_ARCHITECTURE.value, ArtifactType.COMPONENT_REQUIREMENTS.value),
+            (ArtifactType.COMPONENT_ARCHITECTURE.value, ArtifactType.COMPONENT_ARCHITECTURE.value),
+            (ArtifactType.COMPONENT_ARCHITECTURE.value, ArtifactType.COMPONENT_PLAN.value),
+            (ArtifactType.COMPONENT_PLAN.value, ArtifactType.COMPONENT_PLAN.value),
+        ]
+        _SC_REQ = ArtifactType.SUB_COMPONENT_REQUIREMENTS.value
+        _SC_ARCH = ArtifactType.SUB_COMPONENT_ARCHITECTURE.value
+        _SC_PLAN = ArtifactType.SUB_COMPONENT_PLAN.value
+        _SUB_COMPONENT_DEP_PAIRS = [
+            (_SC_REQ, _SC_REQ),
+            (_SC_ARCH, _SC_REQ),
+            (_SC_ARCH, _SC_ARCH),
+            (_SC_ARCH, _SC_PLAN),
+            (_SC_PLAN, _SC_PLAN),
+        ]
     existing_edge_keys = {(e["source"], e["target"]) for e in edges}
-    comp_defs = db.query(ComponentDefinition).filter_by(project_id=project_id).all()
+    # Only show dependency edges for components in the current dag_type
+    dep_dag_types = ["frontend"] if dag_type == "frontend" else ["domain"]
+    comp_defs = [
+        cd
+        for cd in db.query(ComponentDefinition).filter_by(project_id=project_id).all()
+        if cd.dag_type in dep_dag_types
+    ]
     for comp_def in comp_defs:
         for dep_key in comp_def.dependencies or []:
             if comp_def.parent_key:

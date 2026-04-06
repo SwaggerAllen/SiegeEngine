@@ -5,30 +5,23 @@ import re
 logger = logging.getLogger(__name__)
 
 
-def parse_components_from_content(content: str) -> list[dict]:
-    """Parse components from a ```components tagged code block or raw JSON."""
+def _parse_json_from_content(content: str) -> dict | list | None:
+    """Extract the first JSON object or array from content (tagged block or raw)."""
     # Try ```components block first
     pattern = r"```components\s*\n(.*?)```"
     match = re.search(pattern, content, re.DOTALL)
     if match:
         try:
-            data = json.loads(match.group(1))
-            # Handle both formats: raw list or {"components": [...]}
-            if isinstance(data, dict) and "components" in data:
-                return data["components"]
-            if isinstance(data, list):
-                return data
+            return json.loads(match.group(1))
         except json.JSONDecodeError:
             pass
 
-    # Fallback: find JSON object with "components" key
-    pattern = r'\{[\s\S]*?"components"[\s\S]*?\}'
+    # Fallback: find JSON object
+    pattern = r'\{[\s\S]*?"(?:components|domain_components)"[\s\S]*?\}'
     match = re.search(pattern, content)
     if match:
         try:
-            data = json.loads(match.group(0))
-            if isinstance(data, dict) and "components" in data:
-                return data["components"]
+            return json.loads(match.group(0))
         except json.JSONDecodeError:
             pass
 
@@ -41,7 +34,41 @@ def parse_components_from_content(content: str) -> list[dict]:
         except json.JSONDecodeError:
             pass
 
-    return []
+    return None
+
+
+def parse_dual_components_from_content(content: str) -> dict:
+    """Parse components in dual format: {"domain": [...], "frontend": [...]}.
+
+    Supports both old format (flat list / {"components": [...]}) and new dual
+    format ({"domain_components": [...], "frontend_components": [...]}).
+    """
+    data = _parse_json_from_content(content)
+    if data is None:
+        return {"domain": [], "frontend": []}
+
+    # New dual format
+    if isinstance(data, dict) and "domain_components" in data:
+        return {
+            "domain": data.get("domain_components", []),
+            "frontend": data.get("frontend_components", []),
+        }
+
+    # Old format — treat everything as domain
+    if isinstance(data, dict) and "components" in data:
+        return {"domain": data["components"], "frontend": []}
+    if isinstance(data, list):
+        return {"domain": data, "frontend": []}
+
+    return {"domain": [], "frontend": []}
+
+
+def parse_components_from_content(content: str) -> list[dict]:
+    """Parse components from a ```components tagged code block or raw JSON.
+
+    Backward-compatible: returns only domain components.
+    """
+    return parse_dual_components_from_content(content)["domain"]
 
 
 def parse_sub_components_from_content(content: str) -> dict:

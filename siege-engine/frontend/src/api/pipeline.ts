@@ -316,10 +316,10 @@ export async function getDAG(projectId: string): Promise<DAGResponse> {
   }
 }
 
-export async function getDocumentsDAG(projectId: string): Promise<DAGResponse> {
-  debugLog('api.getDocsDAG', `fetching ${projectId}`);
+export async function getDocumentsDAG(projectId: string, dagType: string = 'domain'): Promise<DAGResponse> {
+  debugLog('api.getDocsDAG', `fetching ${projectId} (dagType=${dagType})`);
   try {
-    const { data } = await api.get(`/dag/${projectId}/documents`);
+    const { data } = await api.get(`/dag/${projectId}/documents`, { params: { dag_type: dagType } });
     const result = DAGResponseSchema.safeParse(data);
     if (!result.success) {
       debugLog('api.getDocsDAG', `schema fail: ${JSON.stringify(result.error.issues).slice(0, 200)}`);
@@ -331,6 +331,22 @@ export async function getDocumentsDAG(projectId: string): Promise<DAGResponse> {
     debugError('api.getDocsDAG', err);
     throw err;
   }
+}
+
+export interface CrossDagParent {
+  key: string;
+  architecture_status: string;
+}
+
+export interface CrossDagEntry {
+  frontend_component: string;
+  frontend_component_name: string;
+  domain_parents: CrossDagParent[];
+}
+
+export async function getCrossDagStatus(projectId: string): Promise<CrossDagEntry[]> {
+  const { data } = await api.get(`/dag/${projectId}/cross-dag-status`);
+  return data;
 }
 
 export async function getStaleArtifacts(projectId: string) {
