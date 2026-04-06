@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { getComponents, type ComponentInfo } from '../../api/pipeline';
+import { useState } from 'react';
+import { useComponents } from '../../hooks/queries/useDAGQueries';
 
 const CHANGE_BADGES: Record<string, { label: string; className: string }> = {
   new: { label: 'New', className: 'bg-green-900/50 text-green-300 border-green-600/40' },
@@ -7,24 +7,9 @@ const CHANGE_BADGES: Record<string, { label: string; className: string }> = {
   removed: { label: 'Removed', className: 'bg-red-900/50 text-red-300 border-red-600/40' },
 };
 
-export function ComponentDependencyList({ projectId, refreshKey, parentKey }: { projectId: string; refreshKey?: number; parentKey?: string | null }) {
-  const [components, setComponents] = useState<ComponentInfo[]>([]);
-  const [loading, setLoading] = useState(true);
+export function ComponentDependencyList({ projectId, parentKey }: { projectId: string; parentKey?: string | null }) {
+  const { data: components = [], isLoading } = useComponents(projectId, parentKey);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    getComponents(projectId, parentKey)
-      .then((data) => {
-        if (!cancelled) setComponents(data);
-      })
-      .catch(console.error)
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [projectId, refreshKey, parentKey]);
 
   const toggle = (key: string) => {
     setExpanded((prev) => {
@@ -39,7 +24,7 @@ export function ComponentDependencyList({ projectId, refreshKey, parentKey }: { 
   const keyToName = new Map(components.map((c) => [c.key, c.name]));
   const hasAnyChanges = components.some((c) => c.change);
 
-  if (loading) {
+  if (isLoading) {
     return <div className="p-4 text-sm text-gray-400">Loading components...</div>;
   }
 

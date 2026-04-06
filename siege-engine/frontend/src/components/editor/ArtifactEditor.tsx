@@ -10,6 +10,7 @@ import { useLocalDraft } from '../../hooks/useLocalDraft';
 import type { ArtifactVersion } from '../../api/projects';
 import type { PromptPreview } from '../../api/pipeline';
 import type { Artifact } from '../../types/project';
+import { MAP_ARTIFACT_TYPES } from '../../schemas/dag';
 import { CommentsPanel } from '../comments/CommentsPanel';
 import { ComponentDependencyList } from './ComponentDependencyList';
 import { ContentSearchBar } from './ContentSearchBar';
@@ -55,7 +56,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
   const canRevise = !isViewer && REVISABLE_STATUSES.has(artifact.status);
   const reviewFeedback = artifact.ai_review_feedback as ReviewFeedback | null;
   const isViewingHistory = viewingSha !== null;
-  const isComponentMap = artifact.artifact_type === 'component_map' || artifact.artifact_type === 'sub_component_map';
+  const isComponentMap = MAP_ARTIFACT_TYPES.has(artifact.artifact_type);
 
   // Reset tab when artifact changes and feedback is gone
   useEffect(() => {
@@ -526,7 +527,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
       ) : activeTab === 'summary' ? (
         <SummaryPanel artifact={artifact} projectId={projectId} />
       ) : activeTab === 'dependencies' ? (
-        <ComponentDependencyList projectId={projectId} refreshKey={artifact.version} parentKey={artifact.artifact_type === 'sub_component_map' ? artifact.component_key : null} />
+        <ComponentDependencyList projectId={projectId} parentKey={artifact.artifact_type === 'sub_component_map' ? artifact.component_key : null} />
       ) : (
         /* Comments tab */
         <CommentsPanel projectId={projectId} artifactId={artifact.id} />
