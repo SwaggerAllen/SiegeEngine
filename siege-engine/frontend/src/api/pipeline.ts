@@ -360,11 +360,17 @@ export interface ComponentInfo {
   description: string | null;
   dependencies: string[];
   dependents: string[];
+  domain_parents: string[];
   change: 'new' | 'existing' | 'removed' | null;
 }
 
-export async function getComponents(projectId: string, parentKey?: string | null): Promise<ComponentInfo[]> {
-  const params = parentKey ? { parent_key: parentKey } : {};
+export async function getComponents(
+  projectId: string,
+  parentKey?: string | null,
+  dagType: string = 'domain',
+): Promise<ComponentInfo[]> {
+  const params: Record<string, string> = { dag_type: dagType };
+  if (parentKey) params.parent_key = parentKey;
   const { data } = await api.get(`/dag/${projectId}/components`, { params });
   return data;
 }
