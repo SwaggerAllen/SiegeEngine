@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from backend.auth.routes import get_current_user
@@ -43,6 +45,7 @@ def get_documents_dag(
 @router.get("/{project_id}/components")
 def get_components(
     project_id: str,
+    parent_key: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
@@ -50,21 +53,29 @@ def get_components(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    # Always load existing DB records
-    comp_defs = (
-        db.query(ComponentDefinition)
-        .filter_by(project_id=project_id)
-        .filter(ComponentDefinition.parent_key.is_(None))
-        .all()
-    )
+    # Determine whether we're listing top-level components or sub-components
+    if parent_key:
+        artifact_type = ArtifactType.SUB_COMPONENT_MAP
+        comp_defs = (
+            db.query(ComponentDefinition)
+            .filter_by(project_id=project_id, parent_key=parent_key)
+            .all()
+        )
+    else:
+        artifact_type = ArtifactType.COMPONENT_MAP
+        comp_defs = (
+            db.query(ComponentDefinition)
+            .filter_by(project_id=project_id)
+            .filter(ComponentDefinition.parent_key.is_(None))
+            .all()
+        )
     existing_by_key = {c.key: c for c in comp_defs}
 
-    # Try to parse the latest component_map artifact for pending/review content
-    artifact = (
-        db.query(Artifact)
-        .filter_by(project_id=project_id, artifact_type=ArtifactType.COMPONENT_MAP)
-        .first()
-    )
+    # Try to parse the latest component/sub-component map artifact
+    q = db.query(Artifact).filter_by(project_id=project_id, artifact_type=artifact_type)
+    if parent_key:
+        q = q.filter_by(component_key=parent_key)
+    artifact = q.first()
 
     # Read status from snapshot (source of truth)
     from backend.pipeline.event_store import EventStore

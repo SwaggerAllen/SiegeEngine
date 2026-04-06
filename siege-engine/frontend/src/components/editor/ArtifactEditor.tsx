@@ -526,7 +526,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
       ) : activeTab === 'summary' ? (
         <SummaryPanel artifact={artifact} projectId={projectId} />
       ) : activeTab === 'dependencies' ? (
-        <ComponentDependencyList projectId={projectId} refreshKey={artifact.version} />
+        <ComponentDependencyList projectId={projectId} refreshKey={artifact.version} parentKey={artifact.artifact_type === 'sub_component_map' ? artifact.component_key : null} />
       ) : (
         /* Comments tab */
         <CommentsPanel projectId={projectId} artifactId={artifact.id} />

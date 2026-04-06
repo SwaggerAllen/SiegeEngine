@@ -347,8 +347,9 @@ export interface ComponentInfo {
   change: 'new' | 'existing' | 'removed' | null;
 }
 
-export async function getComponents(projectId: string): Promise<ComponentInfo[]> {
-  const { data } = await api.get(`/dag/${projectId}/components`);
+export async function getComponents(projectId: string, parentKey?: string | null): Promise<ComponentInfo[]> {
+  const params = parentKey ? { parent_key: parentKey } : {};
+  const { data } = await api.get(`/dag/${projectId}/components`, { params });
   return data;
 }
 
