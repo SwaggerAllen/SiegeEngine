@@ -73,12 +73,14 @@ def _commit_review_to_git(project_id: str, artifact: "Artifact", feedback: dict)
 
 # Extraction stages that define downstream branching structure —
 # always pause for human review regardless of execution mode.
-BRANCHING_STAGES = {"extract_components", "extract_sub_components"}
+BRANCHING_STAGES = {"extract_components", "extract_sub_components", "fe_extract_sub_components"}
 
 # Map stage keys to the artifact type they produce (for readiness checks)
 _STAGE_TO_PLAN_TYPE = {
     "component_plans": ArtifactType.COMPONENT_PLAN,
     "sub_component_plans": ArtifactType.SUB_COMPONENT_PLAN,
+    "fe_component_plans": ArtifactType.FRONTEND_COMPONENT_PLAN,
+    "fe_sub_component_plans": ArtifactType.FRONTEND_SUB_COMPONENT_PLAN,
 }
 
 
@@ -1671,13 +1673,50 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                     )
                     inputs[stage_key] = combined
 
+        # Inject domain parent architectures for frontend stages
+        is_frontend_stage = stage_def.stage_key.startswith("fe_")
+        if is_frontend_stage and component_key:
+            # Resolve the top-level component key (for sub-components, use parent)
+            fe_comp_key = parent_key or component_key
+            fe_comp_def = (
+                self.db.query(ComponentDefinition)
+                .filter_by(
+                    project_id=project_id, key=fe_comp_key, parent_key=None, dag_type="frontend"
+                )
+                .first()
+            )
+            if fe_comp_def and fe_comp_def.domain_parents:
+                dp_parts = []
+                for dp_key in fe_comp_def.domain_parents:
+                    dp_art = (
+                        self.db.query(Artifact)
+                        .filter_by(
+                            project_id=project_id,
+                            artifact_type=ArtifactType.COMPONENT_ARCHITECTURE,
+                            component_key=dp_key,
+                        )
+                        .first()
+                    )
+                    if dp_art and dp_art.content:
+                        dp_parts.append(f"### {dp_key}\n\n{dp_art.content}")
+                if dp_parts:
+                    inputs["domain_parent_architectures"] = "\n\n---\n\n".join(dp_parts)
+
         # Inject dependency component/sub-component architectures
         if component_key and not parent_key:
             # Top-level component — get dependency architectures (prefer summary)
+            dag_type = "frontend" if is_frontend_stage else "domain"
             comp_def = (
                 self.db.query(ComponentDefinition)
-                .filter_by(project_id=project_id, key=component_key, parent_key=None)
+                .filter_by(
+                    project_id=project_id, key=component_key, parent_key=None, dag_type=dag_type
+                )
                 .first()
+            )
+            comp_arch_type = (
+                ArtifactType.FRONTEND_COMPONENT_ARCHITECTURE
+                if is_frontend_stage
+                else ArtifactType.COMPONENT_ARCHITECTURE
             )
             if comp_def and comp_def.dependencies:
                 dep_parts = []
@@ -1686,7 +1725,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                         self.db.query(Artifact)
                         .filter_by(
                             project_id=project_id,
-                            artifact_type=ArtifactType.COMPONENT_ARCHITECTURE,
+                            artifact_type=comp_arch_type,
                             component_key=dep_key,
                         )
                         .first()
@@ -1700,14 +1739,21 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
 
         elif component_key and parent_key:
             # Sub-component — get sibling dependency architectures (prefer summary)
+            sc_dag_type = "frontend" if is_frontend_stage else "domain"
             sc_def = (
                 self.db.query(ComponentDefinition)
                 .filter_by(
                     project_id=project_id,
                     key=component_key.split(".")[-1],
                     parent_key=parent_key,
+                    dag_type=sc_dag_type,
                 )
                 .first()
+            )
+            sub_arch_type = (
+                ArtifactType.FRONTEND_SUB_COMPONENT_ARCHITECTURE
+                if is_frontend_stage
+                else ArtifactType.SUB_COMPONENT_ARCHITECTURE
             )
             if sc_def and sc_def.dependencies:
                 dep_parts = []
@@ -1717,7 +1763,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                         self.db.query(Artifact)
                         .filter_by(
                             project_id=project_id,
-                            artifact_type=ArtifactType.SUB_COMPONENT_ARCHITECTURE,
+                            artifact_type=sub_arch_type,
                             component_key=full_dep_key,
                         )
                         .first()
@@ -1730,9 +1776,16 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                     inputs["dependency_architectures"] = "\n\n---\n\n".join(dep_parts)
 
             # Inject parent component's sibling dependency contract summaries
+            parent_comp_arch_type = (
+                ArtifactType.FRONTEND_COMPONENT_ARCHITECTURE
+                if is_frontend_stage
+                else ArtifactType.COMPONENT_ARCHITECTURE
+            )
             parent_comp_def = (
                 self.db.query(ComponentDefinition)
-                .filter_by(project_id=project_id, key=parent_key, parent_key=None)
+                .filter_by(
+                    project_id=project_id, key=parent_key, parent_key=None, dag_type=sc_dag_type
+                )
                 .first()
             )
             if parent_comp_def and parent_comp_def.dependencies:
@@ -1742,7 +1795,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                         self.db.query(Artifact)
                         .filter_by(
                             project_id=project_id,
-                            artifact_type=ArtifactType.COMPONENT_ARCHITECTURE,
+                            artifact_type=parent_comp_arch_type,
                             component_key=dep_key,
                         )
                         .first()
@@ -1787,10 +1840,15 @@ _COMPONENT_STAGES = {
     "component_architectures",
     "component_plans",
     "extract_sub_components",
+    "fe_component_architectures",
+    "fe_component_plans",
+    "fe_extract_sub_components",
 }
 _SUB_COMPONENT_STAGES = {
     "sub_component_architectures",
     "sub_component_plans",
+    "fe_sub_component_architectures",
+    "fe_sub_component_plans",
 }
 
 
@@ -1830,5 +1888,13 @@ def _stage_key_to_artifact_type(stage_key: str) -> ArtifactType:
         "sub_component_plans": ArtifactType.SUB_COMPONENT_PLAN,
         "code_generation": ArtifactType.CODE,
         "code_review": ArtifactType.CODE_REVIEW,
+        # Frontend DAG
+        "fe_component_architectures": ArtifactType.FRONTEND_COMPONENT_ARCHITECTURE,
+        "fe_component_plans": ArtifactType.FRONTEND_COMPONENT_PLAN,
+        "fe_extract_sub_components": ArtifactType.FRONTEND_SUB_COMPONENT_MAP,
+        "fe_sub_component_architectures": ArtifactType.FRONTEND_SUB_COMPONENT_ARCHITECTURE,
+        "fe_sub_component_plans": ArtifactType.FRONTEND_SUB_COMPONENT_PLAN,
+        "fe_code_generation": ArtifactType.FRONTEND_CODE,
+        "fe_code_review": ArtifactType.FRONTEND_CODE_REVIEW,
     }
     return mapping.get(stage_key, ArtifactType.CODE)

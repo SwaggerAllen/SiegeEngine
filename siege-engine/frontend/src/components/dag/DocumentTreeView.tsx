@@ -18,6 +18,7 @@ const SYSTEM_ARTIFACT_TYPES = new Set([
   'system_architecture',
   'high_level_plan',
   'component_map',
+  'frontend_component_map',
 ]);
 
 // Order for system-level docs
@@ -35,6 +36,10 @@ const COMPONENT_ARTIFACT_TYPES = new Set([
   'component_architecture',
   'component_plan',
   'sub_component_map',
+  // Frontend DAG
+  'frontend_component_architecture',
+  'frontend_component_plan',
+  'frontend_sub_component_map',
 ]);
 
 const COMPONENT_DOC_ORDER: Record<string, number> = {
@@ -42,6 +47,10 @@ const COMPONENT_DOC_ORDER: Record<string, number> = {
   component_architecture: 1,
   component_plan: 2,
   sub_component_map: 3,
+  // Frontend DAG (same ordering within component)
+  frontend_component_architecture: 1,
+  frontend_component_plan: 2,
+  frontend_sub_component_map: 3,
 };
 
 const SUB_COMPONENT_DOC_ORDER: Record<string, number> = {
@@ -50,6 +59,11 @@ const SUB_COMPONENT_DOC_ORDER: Record<string, number> = {
   sub_component_plan: 2,
   code: 3,
   code_review: 4,
+  // Frontend DAG
+  frontend_sub_component_architecture: 1,
+  frontend_sub_component_plan: 2,
+  frontend_code: 3,
+  frontend_code_review: 4,
 };
 
 const STATUS_DOTS: Record<string, string> = {
@@ -600,10 +614,12 @@ export function DocumentTreeView({
   nodes,
   edges = [],
   projectId = '',
+  headerExtra,
 }: {
   nodes: SearchableNode[];
   edges?: DAGEdge[];
   projectId?: string;
+  headerExtra?: React.ReactNode;
 }) {
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
   const selectStage = useDAGStore((s) => s.selectStage);
@@ -724,8 +740,11 @@ export function DocumentTreeView({
 
   return (
     <div className="h-full flex flex-col bg-gray-900 overflow-hidden">
-      {/* Search bar */}
+      {/* DAG type toggle + Search bar */}
       <div className="px-2 pt-2 pb-1 border-b border-gray-800">
+        {headerExtra && <div className="mb-2">{headerExtra}</div>}
+      </div>
+      <div className="px-2 pt-1 pb-1 border-b border-gray-800">
         <div className="relative">
           <input
             ref={inputRef}

@@ -33,6 +33,15 @@ ARTIFACT_TYPE_MAP = {
     "sub_component_plan": ArtifactType.SUB_COMPONENT_PLAN,
     "code": ArtifactType.CODE,
     "code_review": ArtifactType.CODE_REVIEW,
+    # Frontend DAG artifact types
+    "frontend_component_map": ArtifactType.FRONTEND_COMPONENT_MAP,
+    "frontend_component_architecture": ArtifactType.FRONTEND_COMPONENT_ARCHITECTURE,
+    "frontend_component_plan": ArtifactType.FRONTEND_COMPONENT_PLAN,
+    "frontend_sub_component_map": ArtifactType.FRONTEND_SUB_COMPONENT_MAP,
+    "frontend_sub_component_architecture": ArtifactType.FRONTEND_SUB_COMPONENT_ARCHITECTURE,
+    "frontend_sub_component_plan": ArtifactType.FRONTEND_SUB_COMPONENT_PLAN,
+    "frontend_code": ArtifactType.FRONTEND_CODE,
+    "frontend_code_review": ArtifactType.FRONTEND_CODE_REVIEW,
 }
 
 # Map artifact types to git file paths
@@ -48,6 +57,17 @@ FILE_PATH_MAP = {
     "sub_component_plan": "plans/sub_components/{component_key}.md",
     "code": "code/{component_key}/generated_code.md",
     "code_review": "code/{component_key}/code_review.md",
+    # Frontend DAG file paths
+    "frontend_component_map": "frontend/components/component_map.md",
+    "frontend_component_architecture": "frontend/architecture/components/{component_key}.md",
+    "frontend_component_plan": "frontend/plans/components/{component_key}.md",
+    "frontend_sub_component_map": "frontend/components/{component_key}/sub_component_map.md",
+    "frontend_sub_component_architecture": (
+        "frontend/architecture/sub_components/{component_key}.md"
+    ),
+    "frontend_sub_component_plan": "frontend/plans/sub_components/{component_key}.md",
+    "frontend_code": "frontend/code/{component_key}/generated_code.md",
+    "frontend_code_review": "frontend/code/{component_key}/code_review.md",
 }
 
 

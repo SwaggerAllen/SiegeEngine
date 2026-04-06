@@ -31,6 +31,15 @@ const ARTIFACT_PHASE: Record<string, number> = {
   sub_component_plan: 8,
   code: 9,
   code_review: 10,
+  // Frontend DAG phases (re-numbered from 3 onward when viewing frontend)
+  frontend_component_map: 3,
+  frontend_component_architecture: 4,
+  frontend_sub_component_map: 5,
+  frontend_component_plan: 6,
+  frontend_sub_component_architecture: 7,
+  frontend_sub_component_plan: 8,
+  frontend_code: 9,
+  frontend_code_review: 10,
 };
 
 // ── Status → color mapping ──────────────────────────────────────────────
@@ -514,7 +523,8 @@ function WorkflowDAGInner({ projectId }: { projectId: string }) {
 }
 
 function DocumentsDAGInner({ projectId }: { projectId: string }) {
-  const query = useDocumentsDAGData(projectId);
+  const [dagType, setDagType] = useState<'domain' | 'frontend'>('domain');
+  const query = useDocumentsDAGData(projectId, dagType);
   const [viewMode, setViewMode] = useState<'dag' | 'tree'>('tree');
 
   const searchableNodes = useMemo<SearchableNode[]>(() => {
@@ -537,10 +547,35 @@ function DocumentsDAGInner({ projectId }: { projectId: string }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const dagToggle = (
+    <div className="flex bg-gray-800 rounded border border-gray-600 overflow-hidden">
+      <button
+        onClick={() => setDagType('domain')}
+        className={`px-3 py-1 text-xs font-medium transition-colors ${
+          dagType === 'domain'
+            ? 'bg-blue-600 text-white'
+            : 'text-gray-400 hover:text-white hover:bg-gray-700'
+        }`}
+      >
+        Backend
+      </button>
+      <button
+        onClick={() => setDagType('frontend')}
+        className={`px-3 py-1 text-xs font-medium transition-colors ${
+          dagType === 'frontend'
+            ? 'bg-blue-600 text-white'
+            : 'text-gray-400 hover:text-white hover:bg-gray-700'
+        }`}
+      >
+        Frontend
+      </button>
+    </div>
+  );
+
   if (viewMode === 'tree') {
     return (
       <div className="h-full relative">
-        <DocumentTreeView nodes={searchableNodes} edges={query.data?.edges ?? []} projectId={projectId} />
+        <DocumentTreeView nodes={searchableNodes} edges={query.data?.edges ?? []} projectId={projectId} headerExtra={dagToggle} />
         <button
           onClick={() => setViewMode('dag')}
           className="absolute top-2 right-2 z-10 px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white text-xs rounded border border-gray-600"
@@ -552,7 +587,7 @@ function DocumentsDAGInner({ projectId }: { projectId: string }) {
     );
   }
 
-  return <CytoscapeCanvas projectId={projectId} variant="documents" query={query} onTreeView={() => setViewMode('tree')} />;
+  return <CytoscapeCanvas projectId={projectId} variant="documents" query={query} onTreeView={() => setViewMode('tree')} headerExtra={dagToggle} />;
 }
 
 // ── Canvas ──────────────────────────────────────────────────────────────
@@ -561,9 +596,10 @@ interface CytoscapeCanvasProps {
   variant: 'pipeline' | 'documents';
   query: UseQueryResult<DAGResponse>;
   onTreeView?: () => void;
+  headerExtra?: React.ReactNode;
 }
 
-function CytoscapeCanvas({ projectId, variant, query, onTreeView }: CytoscapeCanvasProps) {
+function CytoscapeCanvas({ projectId, variant, query, onTreeView, headerExtra }: CytoscapeCanvasProps) {
   const { data: dagData, isLoading, isError, error } = query;
   const cyRef = useRef<cytoscape.Core | null>(null);
   const selectArtifact = useDAGStore((s) => s.selectArtifact);
@@ -699,6 +735,9 @@ function CytoscapeCanvas({ projectId, variant, query, onTreeView }: CytoscapeCan
         <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 z-20">
           <span className="text-gray-400 text-sm">Computing layout...</span>
         </div>
+      )}
+      {headerExtra && (
+        <div className="absolute top-2 left-2 z-10">{headerExtra}</div>
       )}
       <DAGSearchBar nodes={searchableNodes} variant={variant} cyRef={cyRef} />
       <div className="absolute top-2 right-2 z-10 flex flex-col gap-1">

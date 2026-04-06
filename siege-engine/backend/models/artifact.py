@@ -97,10 +97,11 @@ class ComponentDefinition(Base):
     __tablename__ = "component_definitions"
     __table_args__ = (
         Index(
-            "uq_comp_def_project_key_parent",
+            "uq_comp_def_project_key_parent_dag",
             "project_id",
             "key",
             text("COALESCE(parent_key, '')"),
+            "dag_type",
             unique=True,
         ),
     )
@@ -112,6 +113,10 @@ class ComponentDefinition(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     dependencies: Mapped[list | None] = mapped_column(JSON, default=list)
+    dag_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="domain", server_default="domain"
+    )
+    domain_parents: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     project: Mapped["Project"] = relationship(back_populates="component_definitions")

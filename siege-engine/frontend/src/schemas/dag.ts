@@ -20,6 +20,8 @@ export const DAGNodeDataSchema = z.object({
   prompt_info: PromptInfoSchema.nullable().optional(),
   execution_id: z.string().nullable().optional(),
   execution_status: z.string().nullable().optional(),
+  domain_parents: z.array(z.string()).nullable().optional(),
+  dag_type: z.string().optional(),
 });
 
 export const DAGResponseSchema = z.object({
@@ -43,4 +45,9 @@ export type DAGNodeData = z.infer<typeof DAGNodeDataSchema>;
 export type DAGResponse = z.infer<typeof DAGResponseSchema>;
 
 /** Artifact types that represent component/sub-component fan-out maps. */
-export const MAP_ARTIFACT_TYPES = new Set(['component_map', 'sub_component_map']);
+export const MAP_ARTIFACT_TYPES = new Set([
+  'component_map',
+  'sub_component_map',
+  'frontend_component_map',
+  'frontend_sub_component_map',
+]);

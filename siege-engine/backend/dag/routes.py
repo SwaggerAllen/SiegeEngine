@@ -30,14 +30,17 @@ def get_dag(
 @router.get("/{project_id}/documents")
 def get_documents_dag(
     project_id: str,
+    dag_type: str = Query("domain"),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
+    if dag_type not in ("domain", "frontend"):
+        raise HTTPException(400, "dag_type must be 'domain' or 'frontend'")
     try:
-        return dag_service.get_documents_dag(db, project_id)
+        return dag_service.get_documents_dag(db, project_id, dag_type=dag_type)
     except ValueError as exc:
         raise HTTPException(500, str(exc)) from exc
 
@@ -167,6 +170,52 @@ def get_components(
         }
         for c in components
     ]
+
+
+@router.get("/{project_id}/cross-dag-status")
+def get_cross_dag_status(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return cross-DAG relationships for frontend/domain components."""
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    from backend.pipeline.event_store import EventStore
+
+    snapshot = EventStore(db).get_snapshot(project_id)
+    stage_statuses = snapshot.stage_statuses or {}
+
+    fe_comps = (
+        db.query(ComponentDefinition)
+        .filter_by(project_id=project_id, dag_type="frontend")
+        .filter(ComponentDefinition.parent_key.is_(None))
+        .all()
+    )
+
+    result = []
+    for fc in fe_comps:
+        parents = []
+        for dp_key in fc.domain_parents or []:
+            # Get the domain parent's architecture status
+            status_key = f"component_architectures/{dp_key}"
+            parents.append(
+                {
+                    "key": dp_key,
+                    "architecture_status": stage_statuses.get(status_key, "pending"),
+                }
+            )
+        result.append(
+            {
+                "frontend_component": fc.key,
+                "frontend_component_name": fc.name,
+                "domain_parents": parents,
+            }
+        )
+
+    return result
 
 
 @router.get("/{project_id}/stale")

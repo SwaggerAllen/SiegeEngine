@@ -29,6 +29,15 @@ class ArtifactType(str, enum.Enum):
     SUB_COMPONENT_PLAN = "sub_component_plan"
     CODE = "code"
     CODE_REVIEW = "code_review"
+    # Frontend DAG artifact types
+    FRONTEND_COMPONENT_MAP = "frontend_component_map"
+    FRONTEND_COMPONENT_ARCHITECTURE = "frontend_component_architecture"
+    FRONTEND_COMPONENT_PLAN = "frontend_component_plan"
+    FRONTEND_SUB_COMPONENT_MAP = "frontend_sub_component_map"
+    FRONTEND_SUB_COMPONENT_ARCHITECTURE = "frontend_sub_component_architecture"
+    FRONTEND_SUB_COMPONENT_PLAN = "frontend_sub_component_plan"
+    FRONTEND_CODE = "frontend_code"
+    FRONTEND_CODE_REVIEW = "frontend_code_review"
 
 
 class ExecutionMode(str, enum.Enum):

@@ -12,6 +12,13 @@ from backend.pipeline.prompts.component_plan import ComponentPlanPrompt
 from backend.pipeline.prompts.consolidate import ConsolidatePromptTemplate
 from backend.pipeline.prompts.extract_components import ExtractComponentsPrompt
 from backend.pipeline.prompts.extract_sub_components import ExtractSubComponentsPrompt
+from backend.pipeline.prompts.fe_code_review import FECodeReviewPrompt
+from backend.pipeline.prompts.fe_codegen import FECodeGenPrompt
+from backend.pipeline.prompts.fe_component_arch import FEComponentArchPrompt
+from backend.pipeline.prompts.fe_component_plan import FEComponentPlanPrompt
+from backend.pipeline.prompts.fe_extract_sub_components import FEExtractSubComponentsPrompt
+from backend.pipeline.prompts.fe_sub_component_arch import FESubComponentArchPrompt
+from backend.pipeline.prompts.fe_sub_component_plan import FESubComponentPlanPrompt
 from backend.pipeline.prompts.feature_expansion import FeatureExpansionPrompt
 from backend.pipeline.prompts.requirements import SystemRequirementsPrompt
 from backend.pipeline.prompts.sub_component_architecture import SubComponentArchPrompt
@@ -31,6 +38,14 @@ PROMPT_REGISTRY: dict[str, type[PromptTemplate]] = {
     "code_review": CodeReviewPrompt,
     "ai_review": AIReviewPrompt,
     "consolidate": ConsolidatePromptTemplate,
+    # Frontend DAG prompts
+    "fe_component_arch": FEComponentArchPrompt,
+    "fe_component_plan": FEComponentPlanPrompt,
+    "fe_extract_sub_components": FEExtractSubComponentsPrompt,
+    "fe_sub_component_arch": FESubComponentArchPrompt,
+    "fe_sub_component_plan": FESubComponentPlanPrompt,
+    "fe_codegen": FECodeGenPrompt,
+    "fe_code_review": FECodeReviewPrompt,
 }
 
 # ── Load prompt defaults from YAML ───────────────────────────────────────────
