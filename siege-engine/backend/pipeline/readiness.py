@@ -114,9 +114,7 @@ class ReadinessMixin:
     events: EventStore
 
     def _get_components(self, project_id: str, dag_type: str = "domain") -> list[dict]: ...  # type: ignore[empty-body]
-    def _get_sub_component_defs(
-        self, project_id: str, dag_type: str = "domain"
-    ) -> list[ComponentDefinition]: ...  # type: ignore[empty-body]
+    def _get_sub_component_defs(self, project_id: str, dag_type: str = "domain") -> list[ComponentDefinition]: ...  # type: ignore[empty-body]  # noqa: E501
     def _get_leaf_keys(self, project_id: str, dag_type: str = "domain") -> list[str]: ...  # type: ignore[empty-body]
     def _heal_missing_entities(self, project_id: str, stage_def: StageDefinition) -> bool: ...  # type: ignore[empty-body]
 
