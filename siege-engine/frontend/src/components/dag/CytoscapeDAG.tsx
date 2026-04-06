@@ -14,10 +14,12 @@ import type { UseQueryResult } from '@tanstack/react-query';
 // Register cytoscape-elk layout
 elk(cytoscape);
 
-// ── Layer assignment ────────────────────────────────────────────────────
-// Maps artifact_type to a layer index. All nodes sharing a layer appear
-// in the same horizontal band; ELK's partitioning keeps them there.
-const ARTIFACT_LAYER: Record<string, number> = {
+// ── Phase assignment ───────────────────────────────────────────────────
+// Maps artifact_type to a logical phase. Nodes in the same phase share a
+// visual band. The actual ELK partition values are computed dynamically so
+// that each phase starts at an offset past the previous phase's node count,
+// preventing ELK from visually mixing adjacent phases.
+const ARTIFACT_PHASE: Record<string, number> = {
   project_doc: 0,
   feature_expansion: 1,
   system_architecture: 2,
@@ -383,13 +385,31 @@ function buildStylesheet() {
 function buildElements(dagData: DAGResponse): cytoscape.ElementDefinition[] {
   const elements: cytoscape.ElementDefinition[] = [];
 
-  // Build a lookup of node id → layer for intra-layer edge detection
+  // Count nodes per phase so we can space partitions apart
+  const phaseCounts = new Map<number, number>();
+  for (const n of dagData.nodes) {
+    const phase = ARTIFACT_PHASE[n.data.artifact_type] ?? 99;
+    phaseCounts.set(phase, (phaseCounts.get(phase) ?? 0) + 1);
+  }
+
+  // Compute partition offset for each phase: each phase starts after the
+  // previous phase's node count + 1 gap, so ELK never merges adjacent phases.
+  const sortedPhases = [...new Set(dagData.nodes.map((n) => ARTIFACT_PHASE[n.data.artifact_type] ?? 99))].sort((a, b) => a - b);
+  const phasePartition = new Map<number, number>();
+  let offset = 0;
+  for (const phase of sortedPhases) {
+    phasePartition.set(phase, offset);
+    offset += (phaseCounts.get(phase) ?? 1) + 1;
+  }
+
+  // Build a lookup of node id → phase for intra-layer edge detection
   const nodeLayerMap = new Map<string, number>();
 
   for (const n of dagData.nodes) {
     const artifactType = n.data.artifact_type;
-    const layer = ARTIFACT_LAYER[artifactType] ?? 99;
-    nodeLayerMap.set(n.id, layer);
+    const phase = ARTIFACT_PHASE[artifactType] ?? 99;
+    const layer = phasePartition.get(phase) ?? 0;
+    nodeLayerMap.set(n.id, phase);
 
     const isBranching = MAP_ARTIFACT_TYPES.has(artifactType);
     const isInputDoc = artifactType === 'project_doc';
