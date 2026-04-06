@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import type { DAGNodeData } from '../../types/dag';
+import { MAP_ARTIFACT_TYPES } from '../../types/dag';
 import { useDAGStore } from '../../store/dagStore';
 import { useForceRestartStage, useCancelStage } from '../../hooks/mutations/usePipelineMutations';
 import { RESTARTABLE_STATUSES } from '../../types/pipeline';
@@ -51,7 +52,7 @@ export const StageNode = memo(function StageNode({ id, data }: { id: string; dat
   const [cancelling, setCancelling] = useState(false);
 
   const isInputDoc = data.artifact_type === 'project_doc';
-  const isBranchingNode = data.artifact_type === 'component_map' || data.artifact_type === 'sub_component_map';
+  const isBranchingNode = MAP_ARTIFACT_TYPES.has(data.artifact_type);
   const isPlaceholder = !data.has_artifact && data.is_active;
   const isStale = !!(data as Record<string, unknown>).is_stale;
   const baseColorClass = isInputDoc

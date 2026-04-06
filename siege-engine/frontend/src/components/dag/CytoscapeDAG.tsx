@@ -8,7 +8,7 @@ import { useDAGStore } from '../../store/dagStore';
 import { useDAGData, useDocumentsDAGData } from '../../hooks/queries/useDAGQueries';
 import { DocumentTreeView } from './DocumentTreeView';
 import { debugLog } from '../../lib/debugLog';
-import type { DAGResponse } from '../../types/dag';
+import { MAP_ARTIFACT_TYPES, type DAGResponse } from '../../types/dag';
 import type { UseQueryResult } from '@tanstack/react-query';
 
 // Register cytoscape-elk layout
@@ -391,7 +391,7 @@ function buildElements(dagData: DAGResponse): cytoscape.ElementDefinition[] {
     const layer = ARTIFACT_LAYER[artifactType] ?? 99;
     nodeLayerMap.set(n.id, layer);
 
-    const isBranching = artifactType === 'component_map' || artifactType === 'sub_component_map';
+    const isBranching = MAP_ARTIFACT_TYPES.has(artifactType);
     const isInputDoc = artifactType === 'project_doc';
     const isPlaceholder = !n.data.has_artifact && n.data.is_active;
     const componentKey = n.data.component_key;
