@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   listInputDocs,
   createInputDoc,
@@ -47,7 +47,7 @@ export default function InputDocsPanel({ projectId }: InputDocsPanelProps) {
   const [isNew, setIsNew] = useState(false);
   const [, setDirty] = useState(false);
 
-  const fetchAll = async () => {
+  const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
       const docs = await listInputDocs(projectId);
@@ -64,11 +64,11 @@ export default function InputDocsPanel({ projectId }: InputDocsPanelProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId, currentProject?.artifacts]);
 
   useEffect(() => {
     fetchAll();
-  }, [projectId, currentProject?.id]);
+  }, [fetchAll]);
 
   const openItem = (item: ViewItem) => {
     setSelected(item);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findSelectedExecution } from './ProjectDashboardLayout';
+import { findSelectedExecution } from '../lib/findSelectedExecution';
 import type { StageExecution } from '../schemas/pipeline';
 import type { Artifact } from '../schemas/project';
 

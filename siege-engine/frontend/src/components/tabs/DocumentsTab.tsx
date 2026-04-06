@@ -4,7 +4,7 @@ import { useDAGStore } from '../../store/dagStore';
 import { usePipelineUIStore } from '../../store/pipelineUIStore';
 import { useArtifact } from '../../hooks/queries/useProjectQueries';
 import { useExecutions } from '../../hooks/queries/usePipelineQueries';
-import { findSelectedExecution } from '../../pages/ProjectDashboardLayout';
+import { findSelectedExecution } from '../../lib/findSelectedExecution';
 import { PipelineDAG } from '../dag/PipelineDAG';
 import { ArtifactEditor } from '../editor/ArtifactEditor';
 import { ArtifactPromptDebugView } from '../editor/ArtifactPromptDebugView';
