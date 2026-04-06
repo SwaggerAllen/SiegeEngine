@@ -7,7 +7,10 @@ from backend.auth.routes import get_current_user
 from backend.dag import service as dag_service
 from backend.database import get_db
 from backend.models import Artifact, ArtifactType, ComponentDefinition, Project, User
-from backend.pipeline.nodes.extract_components import parse_components_from_content
+from backend.pipeline.nodes.extract_components import (
+    parse_components_from_content,
+    parse_dual_components_from_content,
+)
 
 router = APIRouter()
 
@@ -49,6 +52,7 @@ def get_documents_dag(
 def get_components(
     project_id: str,
     parent_key: Optional[str] = Query(None),
+    dag_type: str = Query("domain"),
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
@@ -56,19 +60,30 @@ def get_components(
     if not project:
         raise HTTPException(404, "Project not found")
 
+    is_frontend = dag_type == "frontend"
+
     # Determine whether we're listing top-level components or sub-components
     if parent_key:
-        artifact_type = ArtifactType.SUB_COMPONENT_MAP
+        artifact_type = (
+            ArtifactType.FRONTEND_SUB_COMPONENT_MAP
+            if is_frontend
+            else ArtifactType.SUB_COMPONENT_MAP
+        )
         comp_defs = (
             db.query(ComponentDefinition)
-            .filter_by(project_id=project_id, parent_key=parent_key)
+            .filter_by(
+                project_id=project_id,
+                parent_key=parent_key,
+                dag_type=dag_type,
+            )
             .all()
         )
     else:
+        # Top-level component_map is the shared extraction artifact
         artifact_type = ArtifactType.COMPONENT_MAP
         comp_defs = (
             db.query(ComponentDefinition)
-            .filter_by(project_id=project_id)
+            .filter_by(project_id=project_id, dag_type=dag_type)
             .filter(ComponentDefinition.parent_key.is_(None))
             .all()
         )
@@ -92,18 +107,18 @@ def get_components(
     )
 
     if artifact and artifact.content:
-        parsed = parse_components_from_content(artifact.content)
+        if is_frontend and not parent_key:
+            parsed = parse_dual_components_from_content(artifact.content)["frontend"]
+        else:
+            parsed = parse_components_from_content(artifact.content)
     else:
         parsed = []
 
     if is_reviewing and existing_by_key:
-        # Merge: show new components from artifact + existing DB components
-        # so reviewer can see the full picture and spot duplicates
         parsed_keys = {c["key"] for c in parsed}
         existing_keys = set(existing_by_key.keys())
 
         components = []
-        # Components in the new extraction
         for c in parsed:
             components.append(
                 {
@@ -111,10 +126,10 @@ def get_components(
                     "name": c.get("name", c["key"]),
                     "description": c.get("description"),
                     "dependencies": c.get("dependencies") or [],
+                    "domain_parents": c.get("domain_parents") or [],
                     "change": "existing" if c["key"] in existing_keys else "new",
                 }
             )
-        # Components in the old set that are NOT in the new extraction
         for key, cd in existing_by_key.items():
             if key not in parsed_keys:
                 components.append(
@@ -123,29 +138,30 @@ def get_components(
                         "name": cd.name,
                         "description": cd.description,
                         "dependencies": cd.dependencies or [],
+                        "domain_parents": cd.domain_parents or [],
                         "change": "removed",
                     }
                 )
     elif existing_by_key:
-        # Not reviewing — just show DB records
         components = [
             {
                 "key": c.key,
                 "name": c.name,
                 "description": c.description,
                 "dependencies": c.dependencies or [],
+                "domain_parents": c.domain_parents or [],
                 "change": None,
             }
             for c in comp_defs
         ]
     elif parsed:
-        # First extraction, no existing DB records
         components = [
             {
                 "key": c["key"],
                 "name": c.get("name", c["key"]),
                 "description": c.get("description"),
                 "dependencies": c.get("dependencies") or [],
+                "domain_parents": c.get("domain_parents") or [],
                 "change": "new",
             }
             for c in parsed
@@ -153,7 +169,6 @@ def get_components(
     else:
         return []
 
-    # Build dependents map (reverse of dependencies) across all components
     dependents: dict[str, list[str]] = {}
     for comp in components:
         for dep_key in comp.get("dependencies") or []:
@@ -166,6 +181,7 @@ def get_components(
             "description": c.get("description"),
             "dependencies": c.get("dependencies") or [],
             "dependents": dependents.get(c["key"], []),
+            "domain_parents": c.get("domain_parents") or [],
             "change": c.get("change"),
         }
         for c in components
@@ -199,7 +215,6 @@ def get_cross_dag_status(
     for fc in fe_comps:
         parents = []
         for dp_key in fc.domain_parents or []:
-            # Get the domain parent's architecture status
             status_key = f"component_architectures/{dp_key}"
             parents.append(
                 {

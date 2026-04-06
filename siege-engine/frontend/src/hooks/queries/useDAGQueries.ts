@@ -6,8 +6,8 @@ export const dagKeys = {
   workflow: (projectId: string) => [...dagKeys.all(projectId), 'workflow'] as const,
   documents: (projectId: string, dagType: string = 'domain') =>
     [...dagKeys.all(projectId), 'documents', dagType] as const,
-  components: (projectId: string, parentKey?: string | null) =>
-    [...dagKeys.all(projectId), 'components', parentKey ?? null] as const,
+  components: (projectId: string, parentKey?: string | null, dagType: string = 'domain') =>
+    [...dagKeys.all(projectId), 'components', parentKey ?? null, dagType] as const,
   crossDagStatus: (projectId: string) =>
     [...dagKeys.all(projectId), 'cross-dag-status'] as const,
 };
@@ -28,10 +28,10 @@ export function useDocumentsDAGData(projectId: string, dagType: string = 'domain
   });
 }
 
-export function useComponents(projectId: string, parentKey?: string | null) {
+export function useComponents(projectId: string, parentKey?: string | null, dagType: string = 'domain') {
   return useQuery({
-    queryKey: dagKeys.components(projectId, parentKey),
-    queryFn: () => pipelineApi.getComponents(projectId, parentKey),
+    queryKey: dagKeys.components(projectId, parentKey, dagType),
+    queryFn: () => pipelineApi.getComponents(projectId, parentKey, dagType),
     enabled: !!projectId,
   });
 }
