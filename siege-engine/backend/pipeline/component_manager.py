@@ -314,8 +314,42 @@ class ComponentManagerMixin:
 
         Uses the same orphan-cleanup pattern as domain components but targets
         frontend-specific fan-out stages.
+
+        Auto-classifies cross-DAG dependencies: any key in a frontend component's
+        ``dependencies`` that matches a domain component key is moved to
+        ``domain_parents`` instead.  This lets the LLM freely list domain keys
+        in ``dependencies`` without requiring strict separation.
         """
         from backend.pipeline import events as evt
+
+        # Build set of domain component keys to detect cross-DAG deps
+        domain_keys = {
+            d.key
+            for d in self.db.query(ComponentDefinition)
+            .filter_by(project_id=project_id, dag_type="domain")
+            .filter(ComponentDefinition.parent_key.is_(None))
+            .all()
+        }
+
+        fe_keys = {c["key"] for c in components}
+
+        # Auto-split: move domain refs from dependencies → domain_parents
+        for comp in components:
+            raw_deps = comp.get("dependencies") or []
+            explicit_parents = comp.get("domain_parents") or []
+            intra_deps = []
+            cross_parents = list(explicit_parents)
+            for dep in raw_deps:
+                if dep in fe_keys:
+                    intra_deps.append(dep)
+                elif dep in domain_keys:
+                    if dep not in cross_parents:
+                        cross_parents.append(dep)
+                else:
+                    # Unknown key — keep as dependency; validator will flag it
+                    intra_deps.append(dep)
+            comp["dependencies"] = intra_deps
+            comp["domain_parents"] = cross_parents
 
         errors = validate_dependency_dag(components)
         if errors:

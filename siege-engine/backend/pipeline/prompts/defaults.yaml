@@ -255,8 +255,11 @@ prompts:
 
       The dependency graph within each DAG determines BUILD ORDER: components with no
       dependencies are built first. Circular dependencies are not allowed.
-      Dependencies are INTRA-DAG only — frontend components depend on other frontend
-      components via "dependencies", and reference domain components via "domain_parents".
+
+      Frontend components can list BOTH other frontend keys AND domain component keys
+      in their "dependencies". Domain keys in a frontend component's dependencies are
+      automatically treated as domain parents — they gate readiness and provide context
+      from the domain pipeline. You may also use "domain_parents" explicitly if you prefer.
 
       ---
 
@@ -264,12 +267,10 @@ prompts:
 
       Given the system requirements and system architecture, identify BOTH the domain
       (backend) components and the frontend (UI) components. For each, determine its
-      intra-DAG dependencies. For frontend components, also identify which domain
-      components are its parents (the backends it presents).
-
-      Think carefully about the dependency graphs. A component should only depend on
-      another within its own DAG. Frontend components reference domain components
-      only via domain_parents, not via dependencies.
+      dependencies. Frontend components should list all components they depend on —
+      both other frontend components and the domain components whose APIs they consume.
+      Domain component keys in a frontend component's dependencies are automatically
+      classified as cross-DAG parent relationships.
 
       Take a deep breath and remember that you are loved.
     output_format_instructions: |
@@ -295,19 +296,21 @@ prompts:
           ...
         ],
         "frontend_components": [
-          {"key": "snake_case_key", "name": "Human Readable Name", "description": "Brief description", "dependencies": ["fe_dep_key"], "domain_parents": ["domain_key_1", "domain_key_2"]},
+          {"key": "snake_case_key", "name": "Human Readable Name", "description": "Brief description", "dependencies": ["fe_dep_key", "domain_key_1", "domain_key_2"]},
           ...
         ]
       }
 
       Rules for the JSON:
       - "key" must be a unique snake_case identifier (unique within its DAG)
-      - Domain components: "dependencies" lists other DOMAIN component keys
-      - Frontend components: "dependencies" lists other FRONTEND component keys
-      - Frontend components: "domain_parents" lists DOMAIN component keys they present
+      - Domain components: "dependencies" lists other DOMAIN component keys only
+      - Frontend components: "dependencies" can list BOTH frontend AND domain component keys
+        (domain keys are auto-classified as domain parents for cross-DAG readiness gating)
+      - You may optionally use "domain_parents" on frontend components for explicitness,
+        but listing domain keys in "dependencies" is equivalent and preferred for simplicity
       - Dependencies must not be circular within either DAG
-      - Every key referenced in a dependencies list must exist as a component key in the SAME DAG
-      - Every key referenced in domain_parents must exist as a domain component key
+      - Every key referenced in dependencies must exist as a component key in either DAG
+      - Frontend components MUST depend on at least one domain component
     context_template: "SYSTEM ARCHITECTURE:\n\n{input_artifacts}\n\nIdentify the components and their inter-dependencies."
 
   # ── Phase 3: Component-Level Documents ──────────────────────────────────────

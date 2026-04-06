@@ -108,7 +108,26 @@ def get_components(
 
     if artifact and artifact.content:
         if is_frontend and not parent_key:
-            parsed = parse_dual_components_from_content(artifact.content)["frontend"]
+            dual = parse_dual_components_from_content(artifact.content)
+            parsed = dual["frontend"]
+            # Auto-split: move domain keys from dependencies → domain_parents
+            domain_keys = {c["key"] for c in dual["domain"]}
+            fe_keys = {c["key"] for c in parsed}
+            for comp in parsed:
+                raw_deps = comp.get("dependencies") or []
+                explicit_parents = comp.get("domain_parents") or []
+                intra_deps = []
+                cross_parents = list(explicit_parents)
+                for dep in raw_deps:
+                    if dep in fe_keys:
+                        intra_deps.append(dep)
+                    elif dep in domain_keys:
+                        if dep not in cross_parents:
+                            cross_parents.append(dep)
+                    else:
+                        intra_deps.append(dep)
+                comp["dependencies"] = intra_deps
+                comp["domain_parents"] = cross_parents
         else:
             parsed = parse_components_from_content(artifact.content)
     else:
