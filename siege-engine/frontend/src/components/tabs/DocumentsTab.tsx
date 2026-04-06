@@ -9,12 +9,14 @@ import { PipelineDAG } from '../dag/PipelineDAG';
 import { ArtifactEditor } from '../editor/ArtifactEditor';
 import { ArtifactPromptDebugView } from '../editor/ArtifactPromptDebugView';
 import { ReviewPanel } from '../pipeline/ReviewPanel';
+import { StageConfigPanel } from '../pipeline/StageConfigPanel';
 import { BottomPane, ArtifactStatusBadge } from '../pipeline/BottomPane';
 import { PanelErrorBoundary } from '../ErrorBoundary';
 
 export function DocumentsTab() {
   const { id: projectId } = useParams<{ id: string }>();
   const dagHidden = usePipelineUIStore((s) => s.dagHidden);
+  const selectedStageKey = useDAGStore((s) => s.selectedStageKey);
   const selectedArtifactId = useDAGStore((s) => s.selectedArtifactId);
   const { data: selectedArtifact = null } = useArtifact(selectedArtifactId);
   const executions = useExecutions(projectId!);
@@ -31,11 +33,14 @@ export function DocumentsTab() {
   useEffect(() => {
     if (selectedArtifact) {
       setPaneOpen(true);
+    } else if (selectedStageKey) {
+      setPaneOpen(true);
+      setViewMode('dag');
     } else {
       setPaneOpen(false);
       setViewMode('dag');
     }
-  }, [selectedArtifact?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedArtifact?.id, selectedStageKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const btnClass = (active: boolean) =>
     `px-2 py-0.5 text-xs rounded shrink-0 ${
@@ -68,6 +73,11 @@ export function DocumentsTab() {
               ) : null}
             </>
           )}
+        </>
+      ) : selectedStageKey ? (
+        <>
+          <span className="text-xs font-mono text-gray-300 truncate min-w-0 flex-1">{selectedStageKey}</span>
+          <span className="text-xs text-gray-500 shrink-0">Stage config</span>
         </>
       ) : (
         <span className="text-gray-500 text-xs flex-1">Select a node to review</span>
@@ -122,6 +132,10 @@ export function DocumentsTab() {
               />
             </PanelErrorBoundary>
           </div>
+        ) : selectedStageKey ? (
+          <PanelErrorBoundary fallbackLabel="Stage config error">
+            <StageConfigPanel projectId={projectId!} stageKey={selectedStageKey} />
+          </PanelErrorBoundary>
         ) : (
           <div className="p-4 text-gray-500 text-sm">Select a node to see review options.</div>
         )}
