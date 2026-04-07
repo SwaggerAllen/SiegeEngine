@@ -455,7 +455,7 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
   }
 
   // ── Approved or Rejected (non-viewer, non-input doc) ───────────────────────
-  const isApproved = artifact.status === 'approved' && execution?.status === 'approved';
+  const isApproved = artifact.status === 'approved' && (execution?.status === 'approved' || !execution);
   const isRejected = artifact.status === 'rejected' || execution?.status === 'rejected';
   if (!s.isViewer && !s.isAwaitingReview && (isApproved || isRejected) && !s.isInputDoc) {
     if (mode === 'feedback') {
