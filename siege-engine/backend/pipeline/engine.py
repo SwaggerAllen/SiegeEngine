@@ -951,12 +951,26 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                     # Execute single stage
                     input_artifacts = self._gather_inputs(project_id, stage_def)
                     rejected_notes = self._get_rejected_notes(project_id, stage_def)
+
+                    # Link to existing artifact so stage_started event
+                    # updates artifact_statuses in the snapshot.
+                    existing_artifact = (
+                        self.db.query(Artifact)
+                        .filter(
+                            Artifact.project_id == project_id,
+                            Artifact.artifact_type == stage_def.output_artifact_type,
+                            Artifact.component_key.is_(None),
+                        )
+                        .first()
+                    )
+
                     execution = StageExecution(
                         project_id=project_id,
                         stage_key=stage_def.stage_key,
                         status=StageStatus.RUNNING,
                         started_at=datetime.utcnow(),
                         run_id=run_id,
+                        artifact_id=existing_artifact.id if existing_artifact else None,
                     )
                     self.db.add(execution)
                     self.db.flush()
@@ -1066,6 +1080,20 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
 
                         input_artifacts = self._gather_inputs(project_id, stage_def, entity_key)
                         rejected_notes = self._get_rejected_notes(project_id, stage_def, entity_key)
+
+                        # Look up existing artifact for this stage/component
+                        # so the execution links to it (and the reducer can
+                        # update artifact_statuses to "generating").
+                        existing_artifact = (
+                            self.db.query(Artifact)
+                            .filter(
+                                Artifact.project_id == project_id,
+                                Artifact.artifact_type == stage_def.output_artifact_type,
+                                Artifact.component_key == entity_key,
+                            )
+                            .first()
+                        )
+
                         execution = StageExecution(
                             project_id=project_id,
                             stage_key=stage_def.stage_key,
@@ -1073,6 +1101,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                             status=StageStatus.RUNNING,
                             started_at=datetime.utcnow(),
                             run_id=run_id,
+                            artifact_id=existing_artifact.id if existing_artifact else None,
                         )
                         self.db.add(execution)
                         self.db.flush()
