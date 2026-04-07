@@ -97,7 +97,7 @@ describe('ReviewPanel', () => {
       <ReviewPanel projectId="proj-1" artifact={approvedArtifact} execution={undefined} />,
       { wrapper: TestQueryWrapper }
     );
-    expect(screen.getByText('🗑 Prune Node')).toBeInTheDocument();
+    expect(screen.getByText('🗑 Prune')).toBeInTheDocument();
   });
 
   it('renders prune button when execution.status is approved and artifact is approved', () => {
