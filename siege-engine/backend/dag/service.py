@@ -58,18 +58,21 @@ def _get_latest_run_executions(
 
 
 def _check_acyclic(edges: list[dict]) -> None:
-    """Raise ValueError if the edge list contains a directed cycle.
+    """Warn if the edge list contains a directed cycle.
 
     Uses stdlib graphlib.TopologicalSorter which raises CycleError for cycles.
+    Cycles in the visualization DAG are non-fatal — they don't affect pipeline
+    execution — so we log a warning rather than raising.
     """
+    import logging
+
     ts: _graphlib.TopologicalSorter[str] = _graphlib.TopologicalSorter()
     for e in edges:
         ts.add(e["target"], e["source"])
     try:
-        # prepare() detects cycles immediately without full iteration
         ts.prepare()
     except _graphlib.CycleError as exc:
-        raise ValueError(f"Cycle detected in DAG: {exc}") from exc
+        logging.getLogger(__name__).warning("Cycle detected in DAG visualization edges: %s", exc)
 
 
 def build_dependency_graph(db: Session, project_id: str) -> dict[str, list[str]]:
