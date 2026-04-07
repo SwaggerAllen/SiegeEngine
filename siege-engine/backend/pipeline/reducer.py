@@ -319,8 +319,17 @@ def _handle_pipeline_reset(snap: dict, p: dict) -> None:
     # Put all artifacts into awaiting_review, clear running state
     for aid in snap["artifact_statuses"]:
         snap["artifact_statuses"][aid] = "awaiting_review"
+    # Reset stage statuses: only set to awaiting_review if the stage has
+    # a real artifact backing it; otherwise reset to pending so the engine
+    # will re-generate it (handles failed executions with no artifact).
+    artifact_ids_in_snapshot = set(snap["artifact_statuses"].keys())
     for key in snap["stage_statuses"]:
-        snap["stage_statuses"][key] = "awaiting_review"
+        exec_entry = snap["execution_map"].get(key, {})
+        art_id = exec_entry.get("artifact_id")
+        if art_id and art_id in artifact_ids_in_snapshot:
+            snap["stage_statuses"][key] = "awaiting_review"
+        else:
+            snap["stage_statuses"][key] = "pending"
     # Cancel any runs still marked as running
     for run_id, status in snap["run_status"].items():
         if status == "running":
