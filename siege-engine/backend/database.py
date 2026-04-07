@@ -225,13 +225,21 @@ def _migrate_stage_order():
                             "order_index": stage_data["order_index"],
                             "output_artifact_type": stage_data["output_artifact_type"],
                             "input_stage_keys": json.dumps(stage_data["input_stage_keys"]),
-                            "fan_out_strategy": stage_data["fan_out_strategy"],
+                            "fan_out_strategy": stage_data["fan_out_strategy"].upper(),
                             "prompt_template_key": stage_data.get("prompt_template_key"),
                             "model_override": stage_data.get("model_override"),
                             "ai_review_enabled": stage_data.get("ai_review_enabled", True),
                             "human_review_enabled": stage_data.get("human_review_enabled", True),
                         },
                     )
+
+        # 1c. Fix any fan_out_strategy values that were inserted lowercase
+        conn.execute(
+            text(
+                "UPDATE stage_definitions SET fan_out_strategy = UPPER(fan_out_strategy) "
+                "WHERE fan_out_strategy != UPPER(fan_out_strategy)"
+            )
+        )
 
         # 2. Clean up artifacts/executions for removed stages
         for removed_type in (
