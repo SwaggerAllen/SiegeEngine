@@ -130,9 +130,7 @@ class ComponentManagerMixin:
         # (before domain components exist in the DB).
         if frontend_components:
             parsed_domain_keys = {c["key"] for c in components}
-            self._store_frontend_components(
-                project_id, frontend_components, parsed_domain_keys
-            )
+            self._store_frontend_components(project_id, frontend_components, parsed_domain_keys)
 
         if not components:
             return
