@@ -7,6 +7,7 @@ import {
   useResumeStage,
   useResolveStale,
   useForceRestartStage,
+  useTriggerStage,
   usePruneArtifact,
   usePruneDescendants,
   useCancelStage,
@@ -66,6 +67,7 @@ export function useReviewState(
   const resumeStageMutation = useResumeStage(projectId);
   const resolveStaleM = useResolveStale(projectId);
   const forceRestartMutation = useForceRestartStage(projectId);
+  const triggerStageMutation = useTriggerStage(projectId);
   const pruneArtifactMutation = usePruneArtifact(projectId);
   const cancelStageMutation = useCancelStage(projectId);
   const config = usePipelineConfigData(projectId);
@@ -177,7 +179,7 @@ export function useReviewState(
   const handleAction = async (action: string) => {
     if (action === 'save_feedback') return handleSaveFeedback();
     if (!execution) {
-      if (isInputDoc) await handleStaleAction(action);
+      await handleStaleAction(action);
       return;
     }
     setSubmitting(true);
@@ -198,10 +200,16 @@ export function useReviewState(
   };
 
   const handleRestart = async () => {
-    if (!execution) return;
     setRestarting(true);
     try {
-      await forceRestartMutation.mutateAsync(execution.id);
+      if (execution) {
+        await forceRestartMutation.mutateAsync(execution.id);
+      } else if (artifactStageKey) {
+        await triggerStageMutation.mutateAsync({
+          stageKey: artifactStageKey,
+          componentKey: artifact.component_key ?? undefined,
+        });
+      }
     } catch (err) {
       console.error('Force restart failed:', err);
     } finally {

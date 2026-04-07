@@ -28,6 +28,7 @@ vi.mock('../../hooks/mutations/usePipelineMutations', () => ({
   useResumeStage: () => ({ mutateAsync: mockResumeStage, mutate: mockResumeStage }),
   useResolveStale: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
   useForceRestartStage: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
+  useTriggerStage: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
   usePruneArtifact: () => ({ mutateAsync: mockPruneArtifact, mutate: mockPruneArtifact }),
   usePruneDescendants: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
   useCancelStage: () => ({ mutateAsync: vi.fn(), mutate: vi.fn() }),
