@@ -1,11 +1,12 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useProjects } from '../hooks/queries/useProjectQueries';
-import { useDeleteProject } from '../hooks/mutations/useProjectMutations';
+import { useDeleteProject, useCloneProject } from '../hooks/mutations/useProjectMutations';
 import { useAuthStore } from '../store/authStore';
 
 export function ProjectListPage() {
   const { data: projects, isLoading } = useProjects();
   const deleteProjectMutation = useDeleteProject();
+  const cloneProjectMutation = useCloneProject();
   const { logout, user } = useAuthStore();
   const navigate = useNavigate();
 
@@ -61,15 +62,27 @@ export function ProjectListPage() {
                 </p>
                 <div className="flex items-center justify-between text-xs text-gray-500">
                   <span>{project.artifact_count} artifacts</span>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm('Delete this project?')) deleteProjectMutation.mutate(project.id);
-                    }}
-                    className="text-red-400 hover:text-red-300"
-                  >
-                    Delete
-                  </button>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cloneProjectMutation.mutate({ id: project.id });
+                      }}
+                      disabled={cloneProjectMutation.isPending}
+                      className="text-blue-400 hover:text-blue-300 disabled:opacity-50"
+                    >
+                      {cloneProjectMutation.isPending ? 'Cloning...' : 'Clone'}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm('Delete this project?')) deleteProjectMutation.mutate(project.id);
+                      }}
+                      className="text-red-400 hover:text-red-300"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

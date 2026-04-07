@@ -557,11 +557,14 @@ def _fix_phantom_stage_statuses(
 
     # Build a cache of which (artifact_type, component_key) pairs exist
     existing_artifacts: set[tuple[str, str | None]] = set()
-    all_arts = db.query(Artifact.artifact_type, Artifact.component_key).filter_by(
-        project_id=project_id
-    ).all()
+    all_arts = (
+        db.query(Artifact.artifact_type, Artifact.component_key)
+        .filter_by(project_id=project_id)
+        .all()
+    )
     for art_type, comp_key in all_arts:
-        existing_artifacts.add((art_type.value if hasattr(art_type, "value") else art_type, comp_key))
+        val = art_type.value if hasattr(art_type, "value") else art_type
+        existing_artifacts.add((val, comp_key))
 
     for full_key, status in list(stage_statuses.items()):
         if status != "awaiting_review":

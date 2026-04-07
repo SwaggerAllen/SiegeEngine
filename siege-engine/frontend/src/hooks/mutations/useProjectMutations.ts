@@ -26,6 +26,18 @@ export function useDeleteProject() {
   });
 }
 
+export function useCloneProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['projects', 'clone'],
+    mutationFn: (params: { id: string; newName?: string }) =>
+      projectApi.cloneProject(params.id, params.newName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+    },
+  });
+}
+
 export function useUpdateArtifact(projectId?: string) {
   const queryClient = useQueryClient();
   return useMutation({

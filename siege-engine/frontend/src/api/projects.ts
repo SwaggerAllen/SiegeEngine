@@ -42,6 +42,11 @@ export async function deleteProject(id: string): Promise<void> {
   await api.delete(`/projects/${id}`);
 }
 
+export async function cloneProject(id: string, newName?: string): Promise<Project> {
+  const { data } = await api.post(`/projects/${id}/clone`, { new_name: newName ?? null });
+  return ProjectSchema.parse(data);
+}
+
 export async function getArtifact(artifactId: string): Promise<Artifact> {
   const { data } = await api.get(`/projects/artifacts/${artifactId}`);
   return ArtifactSchema.parse(data);
