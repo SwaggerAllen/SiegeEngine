@@ -188,6 +188,63 @@ def _migrate_stage_order():
                     {"order_index": target_order, "input_keys": target_inputs, "id": sid},
                 )
 
+        # 1b. Add new stages that don't exist yet for each pipeline config
+        config_rows = conn.execute(
+            text(
+                "SELECT pipeline_config_id, stage_key FROM stage_definitions"
+            )
+        ).fetchall()
+        configs_stages: dict[str, set[str]] = {}
+        for config_id, skey in config_rows:
+            configs_stages.setdefault(config_id, set()).add(skey)
+
+        all_config_ids = conn.execute(
+            text("SELECT id FROM pipeline_configs")
+        ).fetchall()
+
+        import uuid as _uuid
+
+        for (config_id,) in all_config_ids:
+            existing = configs_stages.get(config_id, set())
+            for stage_data in DEFAULT_STAGES:
+                skey = stage_data["stage_key"]
+                if skey not in existing:
+                    conn.execute(
+                        text(
+                            "INSERT INTO stage_definitions "
+                            "(id, pipeline_config_id, stage_key, display_name, "
+                            "order_index, output_artifact_type, input_stage_keys, "
+                            "fan_out_strategy, prompt_template_key, "
+                            "model_override, ai_review_enabled, human_review_enabled) "
+                            "VALUES (:id, :config_id, :stage_key, :display_name, "
+                            ":order_index, :output_artifact_type, :input_stage_keys, "
+                            ":fan_out_strategy, :prompt_template_key, "
+                            ":model_override, :ai_review_enabled, :human_review_enabled)"
+                        ),
+                        {
+                            "id": str(_uuid.uuid4()),
+                            "config_id": config_id,
+                            "stage_key": skey,
+                            "display_name": stage_data["display_name"],
+                            "order_index": stage_data["order_index"],
+                            "output_artifact_type": stage_data["output_artifact_type"],
+                            "input_stage_keys": json.dumps(
+                                stage_data["input_stage_keys"]
+                            ),
+                            "fan_out_strategy": stage_data["fan_out_strategy"],
+                            "prompt_template_key": stage_data.get(
+                                "prompt_template_key"
+                            ),
+                            "model_override": stage_data.get("model_override"),
+                            "ai_review_enabled": stage_data.get(
+                                "ai_review_enabled", True
+                            ),
+                            "human_review_enabled": stage_data.get(
+                                "human_review_enabled", True
+                            ),
+                        },
+                    )
+
         # 2. Clean up artifacts/executions for removed stages
         for removed_type in (
             "high_level_plan",
