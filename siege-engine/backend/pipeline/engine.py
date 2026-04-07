@@ -662,11 +662,24 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
             if not exec_ or not exec_.artifact_id:
                 continue
 
-            # Check if definitions already exist
+            # Check if definitions already exist.
+            # For extract_components, check both domain AND frontend — the
+            # dual parser may produce frontend components that haven't been
+            # stored yet (e.g. after adding frontend DAG support to an
+            # existing project).
             if stage_def.stage_key == "extract_components":
-                existing_components = self._get_components(project_id)
-                if existing_components:
-                    continue
+                existing_domain = self._get_components(project_id, dag_type="domain")
+                if not existing_domain:
+                    pass  # need to re-populate
+                else:
+                    # Domain exists — check if frontend is also populated
+                    # (or if the artifact even has frontend components)
+                    existing_frontend = self._get_components(project_id, dag_type="frontend")
+                    if existing_frontend:
+                        continue
+                    # Domain exists but frontend doesn't — re-run to pick up
+                    # any frontend components.  _store_components is
+                    # idempotent for domain components that already exist.
             elif stage_def.stage_key == "extract_sub_components":
                 existing_sub = self._get_sub_component_defs(project_id)
                 if existing_sub:
