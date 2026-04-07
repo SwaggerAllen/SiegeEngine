@@ -190,17 +190,13 @@ def _migrate_stage_order():
 
         # 1b. Add new stages that don't exist yet for each pipeline config
         config_rows = conn.execute(
-            text(
-                "SELECT pipeline_config_id, stage_key FROM stage_definitions"
-            )
+            text("SELECT pipeline_config_id, stage_key FROM stage_definitions")
         ).fetchall()
         configs_stages: dict[str, set[str]] = {}
         for config_id, skey in config_rows:
             configs_stages.setdefault(config_id, set()).add(skey)
 
-        all_config_ids = conn.execute(
-            text("SELECT id FROM pipeline_configs")
-        ).fetchall()
+        all_config_ids = conn.execute(text("SELECT id FROM pipeline_configs")).fetchall()
 
         import uuid as _uuid
 
@@ -228,20 +224,12 @@ def _migrate_stage_order():
                             "display_name": stage_data["display_name"],
                             "order_index": stage_data["order_index"],
                             "output_artifact_type": stage_data["output_artifact_type"],
-                            "input_stage_keys": json.dumps(
-                                stage_data["input_stage_keys"]
-                            ),
+                            "input_stage_keys": json.dumps(stage_data["input_stage_keys"]),
                             "fan_out_strategy": stage_data["fan_out_strategy"],
-                            "prompt_template_key": stage_data.get(
-                                "prompt_template_key"
-                            ),
+                            "prompt_template_key": stage_data.get("prompt_template_key"),
                             "model_override": stage_data.get("model_override"),
-                            "ai_review_enabled": stage_data.get(
-                                "ai_review_enabled", True
-                            ),
-                            "human_review_enabled": stage_data.get(
-                                "human_review_enabled", True
-                            ),
+                            "ai_review_enabled": stage_data.get("ai_review_enabled", True),
+                            "human_review_enabled": stage_data.get("human_review_enabled", True),
                         },
                     )
 
