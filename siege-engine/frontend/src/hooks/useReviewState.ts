@@ -8,6 +8,7 @@ import {
   useResolveStale,
   useForceRestartStage,
   usePruneArtifact,
+  usePruneDescendants,
   useCancelStage,
 } from './mutations/usePipelineMutations';
 import { listComments, saveFeedback } from '../api/comments';
@@ -43,6 +44,8 @@ export interface ReviewStateResult {
   isGenerating: boolean;
   canPrune: boolean;
   canReparse: boolean;
+  canPruneDescendants: boolean;
+  pruningDescendants: boolean;
   artifactStageKey: string | null;
   // Handlers
   handleAction: (action: string) => Promise<void>;
@@ -51,6 +54,7 @@ export interface ReviewStateResult {
   handlePrune: () => Promise<void>;
   handleReparse: () => Promise<void>;
   handleCancel: () => Promise<void>;
+  handlePruneDescendants: () => Promise<void>;
 }
 
 export function useReviewState(
@@ -78,8 +82,10 @@ export function useReviewState(
   const [restarting, setRestarting] = useState(false);
   const [pruning, setPruning] = useState(false);
   const [reparsing, setReparsing] = useState(false);
+  const [pruningDescendants, setPruningDescendants] = useState(false);
   const [reparseResult, setReparseResult] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const pruneDescendantsMutation = usePruneDescendants(projectId);
 
   const fetchedMissingExecRef = useRef<string | null>(null);
   // Use the execution id (primitive) rather than the execution object to avoid
@@ -125,9 +131,11 @@ export function useReviewState(
   const isInputDoc = artifact.artifact_type === 'project_doc';
   const isGenerating = artifact.status === 'generating' || artifact.status === 'ai_reviewing';
   const isFanout =
-    artifact.artifact_type === 'component_map' || artifact.artifact_type === 'sub_component_map';
+    artifact.artifact_type === 'component_map' || artifact.artifact_type === 'sub_component_map' ||
+    artifact.artifact_type === 'frontend_component_map' || artifact.artifact_type === 'frontend_sub_component_map';
   const canPrune = !isViewer && !isInputDoc && !isGenerating;
   const canReparse = !isViewer && isFanout && !isGenerating;
+  const canPruneDescendants = !isViewer && isFanout && !isGenerating;
 
   // Save feedback uses a dedicated endpoint that works regardless of
   // artifact status or execution state — no pipeline job queue involved.
@@ -240,6 +248,26 @@ export function useReviewState(
     }
   };
 
+  const handlePruneDescendants = async () => {
+    if (!artifactStageKey) return;
+    if (
+      !window.confirm(
+        'Are you sure? This will permanently delete ALL artifacts and executions for stages downstream of this one.',
+      )
+    )
+      return;
+    setPruningDescendants(true);
+    try {
+      await pruneDescendantsMutation.mutateAsync(artifactStageKey);
+      queryClient.invalidateQueries({ queryKey: dagKeys.workflow(projectId) });
+      queryClient.invalidateQueries({ queryKey: dagKeys.documents(projectId) });
+    } catch (err) {
+      console.error('Prune descendants failed:', err);
+    } finally {
+      setPruningDescendants(false);
+    }
+  };
+
   const handleCancel = async () => {
     if (!execution) return;
     setCancelling(true);
@@ -272,6 +300,8 @@ export function useReviewState(
     isGenerating,
     canPrune,
     canReparse,
+    canPruneDescendants,
+    pruningDescendants,
     artifactStageKey,
     handleAction,
     handleStaleAction,
@@ -279,5 +309,6 @@ export function useReviewState(
     handlePrune,
     handleReparse,
     handleCancel,
+    handlePruneDescendants,
   };
 }

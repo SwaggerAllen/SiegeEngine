@@ -151,6 +151,11 @@ class PruneAction(BaseModel):
     artifact_id: str
 
 
+class PruneDescendantsAction(BaseModel):
+    type: Literal["prune_descendants"] = "prune_descendants"
+    stage_key: str
+
+
 class ReparseAction(BaseModel):
     type: Literal["reparse"] = "reparse"
     artifact_id: str
@@ -214,6 +219,7 @@ PipelineAction = Annotated[
         TriggerStageAction,
         RetryAction,
         PruneAction,
+        PruneDescendantsAction,
         ReparseAction,
         RegenerateAction,
         PromptPreviewAction,

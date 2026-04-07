@@ -407,11 +407,14 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
           <ActionButtonsBar
             canPrune={s.canPrune}
             canReparse={s.canReparse}
+            canPruneDescendants={s.canPruneDescendants}
             pruning={s.pruning}
             reparsing={s.reparsing}
+            pruningDescendants={s.pruningDescendants}
             reparseResult={s.reparseResult}
             onPrune={s.handlePrune}
             onReparse={s.handleReparse}
+            onPruneDescendants={s.handlePruneDescendants}
           />
         </div>
         {runControls}
@@ -532,11 +535,14 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
           <ActionButtonsBar
             canPrune={s.canPrune}
             canReparse={s.canReparse}
+            canPruneDescendants={s.canPruneDescendants}
             pruning={s.pruning}
             reparsing={s.reparsing}
+            pruningDescendants={s.pruningDescendants}
             reparseResult={s.reparseResult}
             onPrune={s.handlePrune}
             onReparse={s.handleReparse}
+            onPruneDescendants={s.handlePruneDescendants}
           />
         </div>
         <RunFromNodeControls
@@ -556,16 +562,19 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
 
     return (
       <div className="space-y-2">
-        {(s.canPrune || s.canReparse) && (
+        {(s.canPrune || s.canReparse || s.canPruneDescendants) && (
           <div className="pt-2 border-t border-gray-700 flex flex-wrap items-center gap-2">
             <ActionButtonsBar
               canPrune={s.canPrune}
               canReparse={s.canReparse}
+              canPruneDescendants={s.canPruneDescendants}
               pruning={s.pruning}
               reparsing={s.reparsing}
+              pruningDescendants={s.pruningDescendants}
               reparseResult={s.reparseResult}
               onPrune={s.handlePrune}
               onReparse={s.handleReparse}
+              onPruneDescendants={s.handlePruneDescendants}
               pruneLabel={execution ? '🗑 Prune' : '🗑 Prune Node'}
             />
           </div>

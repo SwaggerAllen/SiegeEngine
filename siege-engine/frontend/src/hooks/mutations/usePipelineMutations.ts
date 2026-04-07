@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as pipelineApi from '../../api/pipeline';
 import { pipelineKeys } from '../queries/usePipelineQueries';
+import { dagKeys } from '../queries/useDAGQueries';
 import type { PipelineStartOptions } from '../../types/pipeline';
 
 export function useStartPipeline(projectId: string) {
@@ -204,6 +205,19 @@ export function usePruneArtifact(projectId: string) {
       pipelineApi.pruneArtifact(projectId, artifactId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
+    },
+  });
+}
+
+export function usePruneDescendants(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['pipeline', projectId, 'pruneDescendants'],
+    mutationFn: (stageKey: string) =>
+      pipelineApi.pruneDescendants(projectId, stageKey),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: pipelineKeys.status(projectId) });
+      queryClient.invalidateQueries({ queryKey: dagKeys.all(projectId) });
     },
   });
 }

@@ -1441,6 +1441,33 @@ async def prune_artifact(
     return {"status": "pruned", "artifact_id": artifact_id}
 
 
+@pipeline_router.post("/{project_id}/stages/{stage_key}/prune-descendants")
+async def prune_descendants(
+    project_id: str,
+    stage_key: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Prune all artifacts and executions downstream of a given stage."""
+    _get_project_or_404(db, project_id)
+
+    engine = PipelineEngine(db)
+    try:
+        result = engine.prune_descendants(project_id, stage_key)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    await ws_manager.broadcast(
+        project_id,
+        {
+            "type": "descendants_pruned",
+            "stage_key": stage_key,
+            **result,
+        },
+    )
+    return {"status": "pruned", **result}
+
+
 @pipeline_router.post("/{project_id}/artifacts/{artifact_id}/reparse")
 async def reparse_fanout(
     project_id: str,

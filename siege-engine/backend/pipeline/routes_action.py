@@ -153,6 +153,11 @@ async def pipeline_action(
 
             return await prune_artifact(project_id, action.artifact_id, db, user)
 
+        case "prune_descendants":
+            from backend.pipeline.routes_pipeline import prune_descendants
+
+            return await prune_descendants(project_id, action.stage_key, db, user)
+
         case "reparse":
             from backend.pipeline.routes_pipeline import reparse_fanout
 

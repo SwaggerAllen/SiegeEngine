@@ -196,6 +196,10 @@ export async function pruneArtifact(projectId: string, artifactId: string) {
   return pipelineAction(projectId, { type: 'prune', artifact_id: artifactId });
 }
 
+export async function pruneDescendants(projectId: string, stageKey: string) {
+  return pipelineAction(projectId, { type: 'prune_descendants', stage_key: stageKey });
+}
+
 export async function reparseFanout(projectId: string, artifactId: string): Promise<{
   added: string[];
   removed: string[];
