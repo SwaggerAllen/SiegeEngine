@@ -299,6 +299,15 @@ def reconcile_project(db: Session, project_id: str) -> list[dict]:
     corrections.extend(_prune_orphan_fanout_entries(db, es, project_id))
 
     # ══════════════════════════════════════════════════════════════════════
+    # Phase 2c: Fix phantom stage_statuses (awaiting_review but no artifact)
+    # ══════════════════════════════════════════════════════════════════════
+    # After pipeline_reset, all stage_statuses are set to awaiting_review.
+    # But some stages (e.g., failed executions with no artifact) don't
+    # actually have content.  Detect these by checking for a real artifact
+    # in the DB and reset to pending so the engine regenerates them.
+    corrections.extend(_fix_phantom_stage_statuses(db, es, project_id))
+
+    # ══════════════════════════════════════════════════════════════════════
     # Phase 3: Sync DB projections from final snapshot state
     # ══════════════════════════════════════════════════════════════════════
     # Re-read the snapshot after all event emissions so we sync against
@@ -508,6 +517,91 @@ def _active_job_execution_ids(
         if job_project == project_id and job_exec:
             exec_ids.add(job_exec)
     return exec_ids
+
+
+def _fix_phantom_stage_statuses(
+    db: Session,
+    es: EventStore,
+    project_id: str,
+) -> list[dict]:
+    """Fix stage_statuses marked as awaiting_review but with no real artifact.
+
+    After pipeline_reset, all stage_statuses are set to awaiting_review.
+    But some stages (e.g., a component whose generation failed with no output)
+    don't actually have an artifact.  The engine treats awaiting_review as
+    "generated" and skips them.  Fix by setting those to pending.
+    """
+    from backend.models.enums import ArtifactType
+
+    # Map stage_key → ArtifactType for fan-out stages
+    _STAGE_KEY_TO_ARTIFACT_TYPE = {
+        "component_architectures": ArtifactType.COMPONENT_ARCHITECTURE,
+        "component_plans": ArtifactType.COMPONENT_PLAN,
+        "extract_sub_components": ArtifactType.SUB_COMPONENT_MAP,
+        "sub_component_architectures": ArtifactType.SUB_COMPONENT_ARCHITECTURE,
+        "sub_component_plans": ArtifactType.SUB_COMPONENT_PLAN,
+        "code_generation": ArtifactType.CODE,
+        "code_review": ArtifactType.CODE_REVIEW,
+        "fe_component_architectures": ArtifactType.FRONTEND_COMPONENT_ARCHITECTURE,
+        "fe_component_plans": ArtifactType.FRONTEND_COMPONENT_PLAN,
+        "fe_extract_sub_components": ArtifactType.FRONTEND_SUB_COMPONENT_MAP,
+        "fe_sub_component_architectures": ArtifactType.FRONTEND_SUB_COMPONENT_ARCHITECTURE,
+        "fe_sub_component_plans": ArtifactType.FRONTEND_SUB_COMPONENT_PLAN,
+        "fe_code_generation": ArtifactType.FRONTEND_CODE,
+        "fe_code_review": ArtifactType.FRONTEND_CODE_REVIEW,
+    }
+
+    corrections: list[dict] = []
+    snapshot = es.get_snapshot(project_id)
+    stage_statuses = snapshot.stage_statuses or {}
+
+    # Build a cache of which (artifact_type, component_key) pairs exist
+    existing_artifacts: set[tuple[str, str | None]] = set()
+    all_arts = db.query(Artifact.artifact_type, Artifact.component_key).filter_by(
+        project_id=project_id
+    ).all()
+    for art_type, comp_key in all_arts:
+        existing_artifacts.add((art_type.value if hasattr(art_type, "value") else art_type, comp_key))
+
+    for full_key, status in list(stage_statuses.items()):
+        if status != "awaiting_review":
+            continue
+        if "/" not in full_key:
+            continue  # non-fan-out stages always have artifacts if status is set
+
+        stage_key, comp_key = full_key.split("/", 1)
+        art_type = _STAGE_KEY_TO_ARTIFACT_TYPE.get(stage_key)
+        if not art_type:
+            continue
+
+        art_type_val = art_type.value if hasattr(art_type, "value") else art_type
+        if (art_type_val, comp_key) not in existing_artifacts:
+            # Phantom: stage says awaiting_review but no artifact exists
+            corrections.append(
+                {
+                    "type": "phantom_stage_status",
+                    "stage_key": full_key,
+                    "component_key": comp_key,
+                    "from": "awaiting_review",
+                    "to": "pending",
+                }
+            )
+            logger.warning(
+                "Fixing phantom stage_status %s: awaiting_review but no artifact "
+                "(type=%s, component=%s)",
+                full_key,
+                art_type_val,
+                comp_key,
+            )
+            # Directly update the snapshot — no event needed since this is
+            # a correction during rebuild, not a state transition.
+            stage_statuses[full_key] = "pending"
+
+    if corrections:
+        # Persist the corrected snapshot
+        db.commit()
+
+    return corrections
 
 
 def reconcile_all_projects(db: Session) -> dict[str, list[dict]]:
