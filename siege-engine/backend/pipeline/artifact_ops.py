@@ -1055,6 +1055,164 @@ class ArtifactOpsMixin:
             project_id,
         )
 
+    def prune_descendants(self, project_id: str, stage_key: str) -> dict:
+        """Prune all artifacts and executions downstream of a given stage.
+
+        Given a stage like extract_components (order_index=3), deletes all
+        artifacts and executions for stages with order_index > 3.  Emits
+        ARTIFACT_PRUNED events for each so the snapshot is cleaned up.
+        Preserves ComponentDefinitions so the pipeline knows what to regenerate.
+
+        Returns a summary of what was pruned.
+        """
+        config = self.db.query(PipelineConfig).filter_by(project_id=project_id).first()
+        if not config:
+            raise ValueError("No pipeline config found")
+
+        # Find the anchor stage
+        anchor = None
+        for s in config.stages:
+            if s.stage_key == stage_key:
+                anchor = s
+                break
+        if not anchor:
+            raise ValueError(f"Stage {stage_key} not found in pipeline config")
+
+        # Collect all downstream stage keys (higher order_index)
+        downstream_keys = [
+            s.stage_key for s in config.stages if s.order_index > anchor.order_index
+        ]
+        if not downstream_keys:
+            return {"pruned_artifacts": 0, "pruned_executions": 0, "stages": []}
+
+        # Find all artifacts for downstream stages
+        from backend.pipeline.readiness import _ARTIFACT_TYPE_TO_STAGE_KEY
+
+        # Build reverse map: stage_key → set of artifact types
+        stage_to_types: dict[str, list] = {}
+        for art_type, sk in _ARTIFACT_TYPE_TO_STAGE_KEY.items():
+            if sk in downstream_keys:
+                stage_to_types.setdefault(sk, []).append(art_type)
+
+        # Collect all downstream artifacts
+        downstream_artifacts = []
+        for sk, art_types in stage_to_types.items():
+            arts = (
+                self.db.query(Artifact)
+                .filter(
+                    Artifact.project_id == project_id,
+                    Artifact.artifact_type.in_(art_types),
+                )
+                .all()
+            )
+            downstream_artifacts.extend(arts)
+
+        # Also find any downstream artifacts by stage executions
+        downstream_exec_art_ids = set()
+        downstream_execs = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.project_id == project_id,
+                StageExecution.stage_key.in_(downstream_keys),
+            )
+            .all()
+        )
+        for ex in downstream_execs:
+            if ex.artifact_id:
+                downstream_exec_art_ids.add(ex.artifact_id)
+
+        # Merge: ensure we have all artifact IDs
+        all_art_ids = {a.id for a in downstream_artifacts} | downstream_exec_art_ids
+
+        # Delete dependency edges
+        if all_art_ids:
+            (
+                self.db.query(ArtifactDependency)
+                .filter(
+                    (ArtifactDependency.upstream_artifact_id.in_(all_art_ids))
+                    | (ArtifactDependency.downstream_artifact_id.in_(all_art_ids))
+                )
+                .delete(synchronize_session="fetch")
+            )
+            # Delete comments
+            (
+                self.db.query(ArtifactComment)
+                .filter(ArtifactComment.artifact_id.in_(all_art_ids))
+                .delete(synchronize_session="fetch")
+            )
+
+        # Delete all downstream executions
+        pruned_executions = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.project_id == project_id,
+                StageExecution.stage_key.in_(downstream_keys),
+            )
+            .delete(synchronize_session="fetch")
+        )
+
+        # Build artifact_type → stage_key map for proper event stage_keys
+        art_type_to_stage = {v: k for k, v in _ARTIFACT_TYPE_TO_STAGE_KEY.items()}
+
+        # Delete artifacts
+        pruned_artifacts = 0
+        pruning_events: list[dict] = []
+        for art in downstream_artifacts:
+            sk = _ARTIFACT_TYPE_TO_STAGE_KEY.get(art.artifact_type, art.artifact_type.value)
+            pruning_events.append(
+                {
+                    "artifact_id": art.id,
+                    "stage_key": sk,
+                    "component_key": art.component_key,
+                }
+            )
+            self.db.delete(art)
+            pruned_artifacts += 1
+
+        # Emit pruning events for ALL snapshot stage_status entries in
+        # downstream stages (including fan-out per-component entries like
+        # "component_architectures/identity") so they get cleared.
+        snapshot = self.events.get_snapshot(project_id)
+        stage_statuses = snapshot.stage_statuses or {}
+        downstream_set = set(downstream_keys)
+        for full_key in list(stage_statuses.keys()):
+            # Match both "stage_key" and "stage_key/component_key" forms
+            base = full_key.split("/", 1)[0]
+            if base in downstream_set:
+                comp = full_key.split("/", 1)[1] if "/" in full_key else None
+                pruning_events.append(
+                    {
+                        "artifact_id": f"__prune_stage__{full_key}",
+                        "stage_key": base,
+                        "component_key": comp,
+                    }
+                )
+
+        self.db.commit()
+
+        # Emit events after commit
+        for info in pruning_events:
+            self.events.emit(
+                project_id,
+                evt.ARTIFACT_PRUNED,
+                info,
+            )
+
+        logger.info(
+            "Pruned descendants of %s in project %s: %d artifacts, %d executions, stages=%s",
+            stage_key,
+            project_id,
+            pruned_artifacts,
+            pruned_executions,
+            downstream_keys,
+        )
+
+        return {
+            "pruned_artifacts": pruned_artifacts,
+            "pruned_executions": pruned_executions,
+            "stages": downstream_keys,
+        }
+
     async def consolidate_artifact(self, artifact_id: str):
         """Consolidate an artifact to reduce redundancy via ConsolidateStrategy."""
         from backend.pipeline.stage_execution import (

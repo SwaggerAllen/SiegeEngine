@@ -14,6 +14,7 @@ export interface DAGEdge {
 // Artifact types that live at system level (no component_key)
 const SYSTEM_ARTIFACT_TYPES = new Set([
   'project_doc',
+  'feature_expansion',
   'system_requirements',
   'system_architecture',
   'high_level_plan',
@@ -24,11 +25,12 @@ const SYSTEM_ARTIFACT_TYPES = new Set([
 // Order for system-level docs
 const SYSTEM_ORDER: Record<string, number> = {
   project_doc: 0,
-  system_requirements: 1,
-  system_architecture: 2,
-  high_level_plan: 3,
-  component_map: 4,
-  frontend_component_map: 5,
+  feature_expansion: 1,
+  system_requirements: 2,
+  system_architecture: 3,
+  high_level_plan: 4,
+  component_map: 5,
+  frontend_component_map: 6,
 };
 
 // Artifact types that belong directly to a component
