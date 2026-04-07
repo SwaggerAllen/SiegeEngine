@@ -497,9 +497,8 @@ function getElkLayoutOptions() {
       'elk.layered.layering.strategy': 'INTERACTIVE',
     },
     // Map each node's partition from its data
-    elkOverrides: (node: cytoscape.NodeSingular) => ({
+    nodeLayoutOptions: (node: cytoscape.NodeSingular) => ({
       'elk.partitioning.partition': String(node.data('elkPartition') ?? 0),
-      'elk.layered.layerConstraint': undefined,
     }),
   };
 }
