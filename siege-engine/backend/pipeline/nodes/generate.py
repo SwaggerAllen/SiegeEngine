@@ -658,5 +658,13 @@ def _stage_key_to_type(stage_key: str) -> str:
         "sub_component_plans": "sub_component_plan",
         "code_generation": "code",
         "code_review": "code_review",
+        # Frontend DAG stages
+        "fe_component_architectures": "frontend_component_architecture",
+        "fe_extract_sub_components": "frontend_sub_component_map",
+        "fe_component_plans": "frontend_component_plan",
+        "fe_sub_component_architectures": "frontend_sub_component_architecture",
+        "fe_sub_component_plans": "frontend_sub_component_plan",
+        "fe_code_generation": "frontend_code",
+        "fe_code_review": "frontend_code_review",
     }
     return mapping.get(stage_key, stage_key)

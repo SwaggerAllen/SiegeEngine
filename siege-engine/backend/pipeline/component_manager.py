@@ -680,7 +680,7 @@ class ComponentManagerMixin:
         if artifact.artifact_type == ArtifactType.COMPONENT_MAP:
             old_defs = (
                 self.db.query(ComponentDefinition)
-                .filter_by(project_id=project_id)
+                .filter_by(project_id=project_id, dag_type="domain")
                 .filter(ComponentDefinition.parent_key.is_(None))
                 .all()
             )
@@ -693,7 +693,7 @@ class ComponentManagerMixin:
 
             new_defs = (
                 self.db.query(ComponentDefinition)
-                .filter_by(project_id=project_id)
+                .filter_by(project_id=project_id, dag_type="domain")
                 .filter(ComponentDefinition.parent_key.is_(None))
                 .all()
             )
