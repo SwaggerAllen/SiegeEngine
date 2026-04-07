@@ -466,6 +466,7 @@ class ReadinessMixin:
     ) -> bool:
         """Check if a sub-component is ready for a given stage."""
         is_frontend = stage_def.stage_key.startswith("fe_")
+
         existing = (
             self.db.query(StageExecution)
             .filter_by(
