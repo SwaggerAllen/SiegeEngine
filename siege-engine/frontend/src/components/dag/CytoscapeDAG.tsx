@@ -587,7 +587,7 @@ function DocumentsDAGInner({ projectId }: { projectId: string }) {
     );
   }
 
-  return <CytoscapeCanvas projectId={projectId} variant="documents" query={query} onTreeView={() => setViewMode('tree')} headerExtra={dagToggle} />;
+  return <CytoscapeCanvas key={dagType} projectId={projectId} variant="documents" query={query} onTreeView={() => setViewMode('tree')} headerExtra={dagToggle} />;
 }
 
 // ── Canvas ──────────────────────────────────────────────────────────────
