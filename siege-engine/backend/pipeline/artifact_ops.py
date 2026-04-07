@@ -1079,9 +1079,7 @@ class ArtifactOpsMixin:
             raise ValueError(f"Stage {stage_key} not found in pipeline config")
 
         # Collect all downstream stage keys (higher order_index)
-        downstream_keys = [
-            s.stage_key for s in config.stages if s.order_index > anchor.order_index
-        ]
+        downstream_keys = [s.stage_key for s in config.stages if s.order_index > anchor.order_index]
         if not downstream_keys:
             return {"pruned_artifacts": 0, "pruned_executions": 0, "stages": []}
 
@@ -1150,9 +1148,6 @@ class ArtifactOpsMixin:
             )
             .delete(synchronize_session="fetch")
         )
-
-        # Build artifact_type → stage_key map for proper event stage_keys
-        art_type_to_stage = {v: k for k, v in _ARTIFACT_TYPE_TO_STAGE_KEY.items()}
 
         # Delete artifacts
         pruned_artifacts = 0

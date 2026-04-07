@@ -12,6 +12,10 @@ class ProjectUpdate(BaseModel):
     description: str | None = None
 
 
+class ProjectClone(BaseModel):
+    new_name: str | None = None
+
+
 class ProjectResponse(BaseModel):
     id: str
     name: str

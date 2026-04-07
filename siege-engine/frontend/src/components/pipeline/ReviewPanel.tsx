@@ -636,11 +636,14 @@ export function ReviewPanel({ projectId, artifact, execution, executions = [], m
         <ActionButtonsBar
           canPrune={s.canPrune}
           canReparse={s.canReparse}
+          canPruneDescendants={s.canPruneDescendants}
           pruning={s.pruning}
           reparsing={s.reparsing}
+          pruningDescendants={s.pruningDescendants}
           reparseResult={s.reparseResult}
           onPrune={s.handlePrune}
           onReparse={s.handleReparse}
+          onPruneDescendants={s.handlePruneDescendants}
         />
       </div>
       {runControls}

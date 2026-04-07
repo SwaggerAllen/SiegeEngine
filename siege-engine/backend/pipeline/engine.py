@@ -661,9 +661,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                     run_id=run_id,
                 )
                 .filter(
-                    StageExecution.status.in_(
-                        [StageStatus.APPROVED, StageStatus.AWAITING_REVIEW]
-                    )
+                    StageExecution.status.in_([StageStatus.APPROVED, StageStatus.AWAITING_REVIEW])
                 )
                 .first()
             )
@@ -705,9 +703,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                 if existing_sub:
                     continue
             elif stage_def.stage_key == "fe_extract_sub_components":
-                existing_sub = self._get_sub_component_defs(
-                    project_id, dag_type="frontend"
-                )
+                existing_sub = self._get_sub_component_defs(project_id, dag_type="frontend")
                 if existing_sub:
                     continue
 

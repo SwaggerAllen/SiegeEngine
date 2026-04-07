@@ -14,6 +14,7 @@ from backend.projects import service
 from backend.projects.schemas import (
     ArtifactResponse,
     ArtifactUpdate,
+    ProjectClone,
     ProjectCreate,
     ProjectDetailResponse,
     ProjectResponse,
@@ -114,6 +115,28 @@ def update_project(
     project = service.update_project(db, project_id, req.name, req.description)
     if not project:
         raise HTTPException(404, "Project not found")
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "git_repo_path": project.git_repo_path,
+        "created_at": project.created_at.isoformat(),
+        "updated_at": project.updated_at.isoformat(),
+        "artifact_count": len(project.artifacts),
+    }
+
+
+@router.post("/{project_id}/clone", response_model=ProjectResponse, status_code=201)
+def clone_project(
+    project_id: str,
+    req: ProjectClone,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    try:
+        project = service.clone_project(db, project_id, req.new_name)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
     return {
         "id": project.id,
         "name": project.name,
