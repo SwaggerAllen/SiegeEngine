@@ -125,9 +125,14 @@ class ComponentManagerMixin:
             logger.warning("No components parsed from extract_components output")
             return
 
-        # Store frontend components (if any) before domain to keep method tidy
+        # Store frontend components (if any) before domain to keep method tidy.
+        # Pass parsed domain keys so auto-split works on first extraction
+        # (before domain components exist in the DB).
         if frontend_components:
-            self._store_frontend_components(project_id, frontend_components)
+            parsed_domain_keys = {c["key"] for c in components}
+            self._store_frontend_components(
+                project_id, frontend_components, parsed_domain_keys
+            )
 
         if not components:
             return
@@ -309,13 +314,61 @@ class ComponentManagerMixin:
             len(removed_keys),
         )
 
-    def _store_frontend_components(self, project_id: str, components: list[dict]):
+    def _store_frontend_components(
+        self,
+        project_id: str,
+        components: list[dict],
+        parsed_domain_keys: set[str] | None = None,
+    ):
         """Store frontend ComponentDefinition records (called from _store_components).
 
         Uses the same orphan-cleanup pattern as domain components but targets
         frontend-specific fan-out stages.
+
+        Auto-classifies cross-DAG dependencies: any key in a frontend component's
+        ``dependencies`` that matches a domain component key is moved to
+        ``domain_parents`` instead.  This lets the LLM freely list domain keys
+        in ``dependencies`` without requiring strict separation.
+
+        ``parsed_domain_keys`` should be passed from the caller when domain
+        components haven't been stored yet (first extraction).  Falls back to
+        querying the DB for existing domain keys.
         """
         from backend.pipeline import events as evt
+
+        # Build set of domain component keys to detect cross-DAG deps.
+        # Prefer caller-supplied keys (covers first-extraction case where
+        # domain components aren't in the DB yet), union with DB keys
+        # (covers re-extraction where new parse may have fewer domain keys
+        # than what's already stored).
+        domain_keys = set(parsed_domain_keys) if parsed_domain_keys else set()
+        domain_keys |= {
+            d.key
+            for d in self.db.query(ComponentDefinition)
+            .filter_by(project_id=project_id, dag_type="domain")
+            .filter(ComponentDefinition.parent_key.is_(None))
+            .all()
+        }
+
+        fe_keys = {c["key"] for c in components}
+
+        # Auto-split: move domain refs from dependencies → domain_parents
+        for comp in components:
+            raw_deps = comp.get("dependencies") or []
+            explicit_parents = comp.get("domain_parents") or []
+            intra_deps = []
+            cross_parents = list(explicit_parents)
+            for dep in raw_deps:
+                if dep in fe_keys:
+                    intra_deps.append(dep)
+                elif dep in domain_keys:
+                    if dep not in cross_parents:
+                        cross_parents.append(dep)
+                else:
+                    # Unknown key — keep as dependency; validator will flag it
+                    intra_deps.append(dep)
+            comp["dependencies"] = intra_deps
+            comp["domain_parents"] = cross_parents
 
         errors = validate_dependency_dag(components)
         if errors:
