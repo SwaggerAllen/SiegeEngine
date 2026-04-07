@@ -141,7 +141,7 @@ class ComponentManagerMixin:
 
         old_defs = (
             self.db.query(ComponentDefinition)
-            .filter_by(project_id=project_id)
+            .filter_by(project_id=project_id, dag_type="domain")
             .filter(ComponentDefinition.parent_key.is_(None))
             .all()
         )
@@ -297,7 +297,7 @@ class ComponentManagerMixin:
         if removed_keys:
             (
                 self.db.query(ComponentDefinition)
-                .filter_by(project_id=project_id)
+                .filter_by(project_id=project_id, dag_type="domain")
                 .filter(ComponentDefinition.parent_key.is_(None))
                 .filter(ComponentDefinition.key.in_(removed_keys))
                 .delete(synchronize_session="fetch")
