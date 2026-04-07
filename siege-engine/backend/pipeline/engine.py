@@ -649,16 +649,36 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
             if stage_def.stage_key not in BRANCHING_STAGES:
                 continue
 
+            # Look for an execution with content — first in the current run,
+            # then across all runs.  After reset_all + fresh start, nothing
+            # is carried over (all statuses are awaiting_review), so the
+            # branching artifact's execution lives in a previous run.
             exec_ = (
                 self.db.query(StageExecution)
                 .filter_by(
                     project_id=project_id,
                     stage_key=stage_def.stage_key,
                     run_id=run_id,
-                    status=StageStatus.APPROVED,
+                )
+                .filter(
+                    StageExecution.status.in_(
+                        [StageStatus.APPROVED, StageStatus.AWAITING_REVIEW]
+                    )
                 )
                 .first()
             )
+            if not exec_ or not exec_.artifact_id:
+                # Fall back to any execution with an artifact across all runs
+                exec_ = (
+                    self.db.query(StageExecution)
+                    .filter_by(
+                        project_id=project_id,
+                        stage_key=stage_def.stage_key,
+                    )
+                    .filter(StageExecution.artifact_id.isnot(None))
+                    .order_by(StageExecution.completed_at.desc())
+                    .first()
+                )
             if not exec_ or not exec_.artifact_id:
                 continue
 
