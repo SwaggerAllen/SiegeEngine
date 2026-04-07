@@ -320,7 +320,8 @@ def _handle_pipeline_reset(snap: dict, p: dict) -> None:
     for aid in snap["artifact_statuses"]:
         snap["artifact_statuses"][aid] = "awaiting_review"
     for key in snap["stage_statuses"]:
-        snap["stage_statuses"][key] = "awaiting_review"
+        if snap["stage_statuses"][key] != "pending":
+            snap["stage_statuses"][key] = "awaiting_review"
     # Cancel any runs still marked as running
     for run_id, status in snap["run_status"].items():
         if status == "running":
