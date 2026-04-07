@@ -737,7 +737,7 @@ function CytoscapeCanvas({ projectId, variant, query, onTreeView, headerExtra }:
         </div>
       )}
       {headerExtra && (
-        <div className="absolute top-2 left-2 z-10">{headerExtra}</div>
+        <div className="absolute top-14 left-2 z-20">{headerExtra}</div>
       )}
       <DAGSearchBar nodes={searchableNodes} variant={variant} cyRef={cyRef} />
       <div className="absolute top-2 right-2 z-10 flex flex-col gap-1">
