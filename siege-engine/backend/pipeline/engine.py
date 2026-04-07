@@ -684,6 +684,12 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                 existing_sub = self._get_sub_component_defs(project_id)
                 if existing_sub:
                     continue
+            elif stage_def.stage_key == "fe_extract_sub_components":
+                existing_sub = self._get_sub_component_defs(
+                    project_id, dag_type="frontend"
+                )
+                if existing_sub:
+                    continue
 
             logger.info(
                 "Re-populating definitions for carried-over %s (artifact=%s)",
