@@ -387,6 +387,17 @@ class ReadinessMixin:
     ) -> bool:
         """Check if a component is ready for a given stage."""
         is_frontend = stage_def.stage_key.startswith("fe_")
+
+        # Skip entities that already have generated content (awaiting_review
+        # or approved) — they don't need regeneration.  This prevents the
+        # engine from unnecessarily re-running entities after a pipeline_reset
+        # when only some entities in the stage are missing.
+        snapshot = self.events.get_snapshot(project_id)
+        stage_key = f"{stage_def.stage_key}/{comp_key}"
+        entity_status = (snapshot.stage_statuses or {}).get(stage_key)
+        if entity_status in _GENERATED_STATUSES:
+            return False
+
         existing = (
             self.db.query(StageExecution)
             .filter_by(
@@ -466,6 +477,14 @@ class ReadinessMixin:
     ) -> bool:
         """Check if a sub-component is ready for a given stage."""
         is_frontend = stage_def.stage_key.startswith("fe_")
+
+        # Skip already-generated entities
+        snapshot = self.events.get_snapshot(project_id)
+        stage_key = f"{stage_def.stage_key}/{full_key}"
+        entity_status = (snapshot.stage_statuses or {}).get(stage_key)
+        if entity_status in _GENERATED_STATUSES:
+            return False
+
         existing = (
             self.db.query(StageExecution)
             .filter_by(
@@ -507,6 +526,14 @@ class ReadinessMixin:
     ) -> bool:
         """Check if a leaf entity is ready for code generation/review."""
         is_frontend = stage_def.stage_key.startswith("fe_")
+
+        # Skip already-generated entities
+        snapshot = self.events.get_snapshot(project_id)
+        stage_key_full = f"{stage_def.stage_key}/{leaf_key}"
+        entity_status = (snapshot.stage_statuses or {}).get(stage_key_full)
+        if entity_status in _GENERATED_STATUSES:
+            return False
+
         existing = (
             self.db.query(StageExecution)
             .filter_by(
