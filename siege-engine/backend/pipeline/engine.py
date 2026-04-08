@@ -102,6 +102,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
         error_message: str | None = None,
         set_completed: bool = False,
         trigger: str | None = None,
+        restore_artifact_status: str | None = None,
     ) -> None:
         """Transition execution status, emit event, then update DB as projection.
 
@@ -132,6 +133,8 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
             }
             if trigger:
                 payload["trigger"] = trigger
+            if restore_artifact_status:
+                payload["restore_artifact_status"] = restore_artifact_status
             # Include artifact metadata when available
             if execution.artifact_id:
                 artifact = self.db.get(Artifact, execution.artifact_id)
@@ -975,6 +978,11 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                     self.db.add(execution)
                     self.db.flush()
 
+                    prev_content = (
+                        existing_artifact.content
+                        if existing_artifact and existing_artifact.content
+                        else None
+                    )
                     ctx = StageExecutionContext(
                         project_id=project_id,
                         stage_def=stage_def,
@@ -984,6 +992,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                         pipeline_run=pipeline_run,
                         input_artifacts=input_artifacts,
                         human_notes=rejected_notes,
+                        current_content=prev_content,
                     )
                     await self._run_stage(ctx)
                     did_work = True
@@ -1106,6 +1115,11 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                         self.db.add(execution)
                         self.db.flush()
 
+                        prev_content = (
+                            existing_artifact.content
+                            if existing_artifact and existing_artifact.content
+                            else None
+                        )
                         ctx = StageExecutionContext(
                             project_id=project_id,
                             stage_def=stage_def,
@@ -1115,6 +1129,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                             pipeline_run=pipeline_run,
                             input_artifacts=input_artifacts,
                             human_notes=rejected_notes,
+                            current_content=prev_content,
                         )
                         await self._run_stage(ctx)
                         did_work = True
@@ -1546,6 +1561,9 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                 StageStatus.FAILED,
                 error_message="Cancelled by force-restart",
                 set_completed=True,
+                restore_artifact_status=(
+                    ctx.error_artifact_status.value if ctx.error_artifact_status else None
+                ),
             )
             self.db.commit()
             raise  # Let the worker loop see the CancelledError
@@ -1560,6 +1578,9 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                 StageStatus.FAILED,
                 error_message=str(e),
                 set_completed=True,
+                restore_artifact_status=(
+                    ctx.error_artifact_status.value if ctx.error_artifact_status else None
+                ),
             )
 
             self.db.commit()

@@ -418,6 +418,19 @@ def get_documents_dag(db: Session, project_id: str, dag_type: str = "domain") ->
     for art in artifacts:
         type_to_artifacts[art.artifact_type.value].append(art)
 
+    # Build component_key → domain_parents lookup
+    comp_domain_parents: dict[str | None, list[str]] = {}
+    dep_dag_types = ["frontend"] if dag_type == "frontend" else ["domain"]
+    for cd in (
+        db.query(ComponentDefinition)
+        .filter_by(project_id=project_id)
+        .filter(ComponentDefinition.dag_type.in_(dep_dag_types))
+        .all()
+    ):
+        full_key = f"{cd.parent_key}.{cd.key}" if cd.parent_key else cd.key
+        if cd.domain_parents:
+            comp_domain_parents[full_key] = cd.domain_parents
+
     nodes: list[dict] = []
     stage_to_node_ids: dict[str, list[str]] = {}
 
@@ -483,6 +496,7 @@ def get_documents_dag(db: Session, project_id: str, dag_type: str = "domain") ->
                         "prompt_info": _build_prompt_info(stage_def),
                         "execution_id": execution_id,
                         "execution_status": stage_status,
+                        "domain_parents": comp_domain_parents.get(art.component_key),
                     },
                     "position": {"x": 0, "y": 0},
                 }
@@ -540,6 +554,7 @@ def get_documents_dag(db: Session, project_id: str, dag_type: str = "domain") ->
                         "prompt_info": _build_prompt_info(stage_def),
                         "execution_id": exec_entry.get("execution_id"),
                         "execution_status": snap_status,
+                        "domain_parents": comp_domain_parents.get(comp_key_val),
                     },
                     "position": {"x": 0, "y": 0},
                 }
@@ -622,6 +637,7 @@ def get_documents_dag(db: Session, project_id: str, dag_type: str = "domain") ->
                             "prompt_info": _build_prompt_info(stage_def),
                             "execution_id": None,
                             "execution_status": None,
+                            "domain_parents": comp_domain_parents.get(comp_key),
                         },
                         "position": {"x": 0, "y": 0},
                     }
