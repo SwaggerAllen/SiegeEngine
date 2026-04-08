@@ -978,6 +978,11 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                     self.db.add(execution)
                     self.db.flush()
 
+                    prev_content = (
+                        existing_artifact.content
+                        if existing_artifact and existing_artifact.content
+                        else None
+                    )
                     ctx = StageExecutionContext(
                         project_id=project_id,
                         stage_def=stage_def,
@@ -987,6 +992,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                         pipeline_run=pipeline_run,
                         input_artifacts=input_artifacts,
                         human_notes=rejected_notes,
+                        current_content=prev_content,
                     )
                     await self._run_stage(ctx)
                     did_work = True
@@ -1109,6 +1115,11 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                         self.db.add(execution)
                         self.db.flush()
 
+                        prev_content = (
+                            existing_artifact.content
+                            if existing_artifact and existing_artifact.content
+                            else None
+                        )
                         ctx = StageExecutionContext(
                             project_id=project_id,
                             stage_def=stage_def,
@@ -1118,6 +1129,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                             pipeline_run=pipeline_run,
                             input_artifacts=input_artifacts,
                             human_notes=rejected_notes,
+                            current_content=prev_content,
                         )
                         await self._run_stage(ctx)
                         did_work = True
