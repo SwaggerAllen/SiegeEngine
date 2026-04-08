@@ -10,6 +10,7 @@ class PipelineStartRequest(BaseModel):
     stop_point: str = "end_of_phase"  # "end_of_phase", "before_code", "every_artifact"
     start_stage_key: str | None = None  # Stage to start from (None = first incomplete)
     start_component_key: str | None = None  # Component to scope the run to
+    pending_only: bool = False  # Only generate nodes without existing content
 
 
 class ResumeRequest(BaseModel):
@@ -40,6 +41,7 @@ class ResumeRunRequest(BaseModel):
     stop_point: str = "end_of_phase"
     start_stage_key: str | None = None
     start_component_key: str | None = None
+    pending_only: bool = False
 
 
 class CancelRequest(BaseModel):
@@ -72,6 +74,7 @@ class StartAction(BaseModel):
     stop_point: str = "end_of_phase"
     start_stage_key: str | None = None
     start_component_key: str | None = None
+    pending_only: bool = False
 
 
 class ResumeRunAction(BaseModel):
@@ -80,6 +83,7 @@ class ResumeRunAction(BaseModel):
     stop_point: str = "end_of_phase"
     start_stage_key: str | None = None
     start_component_key: str | None = None
+    pending_only: bool = False
 
 
 class PropagateAction(BaseModel):

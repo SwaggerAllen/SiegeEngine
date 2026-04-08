@@ -61,6 +61,7 @@ class PipelineRun(Base):
     start_stage_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     start_component_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     regen_generated_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    pending_only: Mapped[bool] = mapped_column(Boolean, default=False)
     git_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

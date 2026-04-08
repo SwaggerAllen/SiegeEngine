@@ -293,6 +293,7 @@ class ReadinessMixin:
         is_frontend = stage_def.stage_key.startswith("fe_")
         dag_type = "frontend" if is_frontend else "domain"
         regen_only = pipeline_run.regen_generated_only if pipeline_run else False
+        pending_only = pipeline_run.pending_only if pipeline_run else False
         leaf_plan_key = "fe_component_plans" if is_frontend else "component_plans"
         ready = []
 
@@ -321,6 +322,15 @@ class ReadinessMixin:
                 ):
                     logger.debug(
                         "[readiness] %s/%s: skipped (regen_only, not previously generated)",
+                        stage_def.stage_key,
+                        key,
+                    )
+                    continue
+                if pending_only and self._entity_already_generated(
+                    project_id, stage_def.stage_key, key
+                ):
+                    logger.debug(
+                        "[readiness] %s/%s: skipped (pending_only, already generated)",
                         stage_def.stage_key,
                         key,
                     )
@@ -355,6 +365,10 @@ class ReadinessMixin:
                     project_id, stage_def.stage_key, full_key
                 ):
                     continue
+                if pending_only and self._entity_already_generated(
+                    project_id, stage_def.stage_key, full_key
+                ):
+                    continue
                 deps = sc.dependencies or []
                 full_deps = [f"{parent_key}.{d}" for d in deps]
                 if self._is_sub_component_ready(
@@ -368,6 +382,10 @@ class ReadinessMixin:
                 if not self._is_in_run_scope(stage_def, leaf_key, pipeline_run):
                     continue
                 if regen_only and not self._entity_already_generated(
+                    project_id, stage_def.stage_key, leaf_key
+                ):
+                    continue
+                if pending_only and self._entity_already_generated(
                     project_id, stage_def.stage_key, leaf_key
                 ):
                     continue

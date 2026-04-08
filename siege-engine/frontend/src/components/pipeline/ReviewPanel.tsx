@@ -96,6 +96,7 @@ function RunFromNodeControls({
   const [mode, setMode] = useState<'start' | 'resume'>('start');
   const [aiLoops, setAiLoops] = useState(1);
   const [stopPoint, setStopPoint] = useState('end_of_phase');
+  const [pendingOnly, setPendingOnly] = useState(false);
   const [starting, setStarting] = useState(false);
 
   const hasCompletedRun = runs.some(
@@ -120,6 +121,7 @@ function RunFromNodeControls({
           stop_point: stopPoint,
           start_stage_key: stageKey,
           start_component_key: mode === 'resume' ? null : componentKey,
+          pending_only: pendingOnly || undefined,
         };
         if (mode === 'resume') {
           await resumeRunMutation.mutateAsync(options);
@@ -202,6 +204,18 @@ function RunFromNodeControls({
               </p>
             )}
           </div>
+
+          {!isRegen && (
+            <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={pendingOnly}
+                onChange={(e) => setPendingOnly(e.target.checked)}
+                className="rounded border-gray-600 bg-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-0"
+              />
+              Pending only — skip already-generated nodes
+            </label>
+          )}
 
           <div className="flex items-center gap-2">
             <button

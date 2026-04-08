@@ -142,6 +142,7 @@ export const PipelineStartOptionsSchema = z.object({
   stop_point: z.string().optional(),
   start_stage_key: z.string().nullable().optional(),
   start_component_key: z.string().nullable().optional(),
+  pending_only: z.boolean().optional(),
 });
 
 // --- Inferred types ---

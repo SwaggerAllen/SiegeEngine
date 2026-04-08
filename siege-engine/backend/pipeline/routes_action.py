@@ -43,6 +43,7 @@ async def pipeline_action(
                 stop_point=action.stop_point,
                 start_stage_key=action.start_stage_key,
                 start_component_key=action.start_component_key,
+                pending_only=action.pending_only,
             )
             return await start_pipeline(project_id, req, db, user)
 
@@ -55,6 +56,7 @@ async def pipeline_action(
                 stop_point=action.stop_point,
                 start_stage_key=action.start_stage_key,
                 start_component_key=action.start_component_key,
+                pending_only=action.pending_only,
             )
             return await resume_run(project_id, resume_run_req, db, user)
 
