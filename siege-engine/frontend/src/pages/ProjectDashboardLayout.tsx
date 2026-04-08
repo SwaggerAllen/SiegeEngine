@@ -25,6 +25,7 @@ import type { Artifact } from '../types/project';
  *
  * Input docs (project_doc) skip component_key fallbacks — they have no StageExecution.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function findSelectedExecution(
   executions: StageExecution[],
   artifact: Artifact,

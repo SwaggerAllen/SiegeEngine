@@ -933,9 +933,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
 
                     # pending_only: skip if entity already has generated content
                     if pipeline_run and pipeline_run.pending_only:
-                        if self._entity_already_generated(
-                            project_id, stage_def.stage_key, None
-                        ):
+                        if self._entity_already_generated(project_id, stage_def.stage_key, None):
                             continue
 
                     # Guard: skip if this stage is already running in ANY run

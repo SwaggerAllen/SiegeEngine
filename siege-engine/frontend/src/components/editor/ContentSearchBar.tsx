@@ -111,8 +111,8 @@ export function ContentSearchBar({ containerRef, contentKey, copyContent }: Cont
 
   // Clean up marks on unmount or close
   useEffect(() => {
+    const container = containerRef.current;
     return () => {
-      const container = containerRef.current;
       if (container) clearMarks(container);
     };
   }, [containerRef]);
