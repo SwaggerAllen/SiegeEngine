@@ -39,6 +39,7 @@ export const StageExecutionSchema = z.object({
   artifact_id: z.string().nullable(),
   started_at: z.string().nullable(),
   completed_at: z.string().nullable(),
+  generation_completed_at: z.string().nullable().optional(),
   error_message: z.string().nullable(),
   run_id: z.string(),
 });

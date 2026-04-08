@@ -1530,6 +1530,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
 
             # All generated artifacts go to AWAITING_REVIEW — only human
             # approval can move them to APPROVED.
+            execution.generation_completed_at = datetime.utcnow()
             self._transition_execution(
                 execution,
                 StageStatus.AWAITING_REVIEW,

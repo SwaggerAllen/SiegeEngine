@@ -22,19 +22,28 @@ function formatDurationMs(ms: number): string {
   return m > 0 ? `${m}m ${s.toString().padStart(2, '0')}s` : `${s}s`;
 }
 
-function useElapsedTime(executionId: string | null | undefined, startedAt: string | null | undefined) {
+function useElapsedTime(
+  executionId: string | null | undefined,
+  startedAt: string | null | undefined,
+  generationCompletedAt: string | null | undefined,
+) {
   const [elapsed, setElapsed] = useState('');
   useEffect(() => {
     if (!startedAt) { setElapsed(''); return; }
     const start = new Date(startedAt).getTime();
+    // If generation already finished, show final generation duration
+    if (generationCompletedAt) {
+      setElapsed(formatDurationMs(new Date(generationCompletedAt).getTime() - start));
+      return;
+    }
     const tick = () => {
       setElapsed(formatDurationMs(Date.now() - start));
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on executionId only to prevent timer resets on refetch
-  }, [executionId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on executionId + generationCompletedAt to stop timer when generation finishes
+  }, [executionId, generationCompletedAt]);
   return elapsed;
 }
 
@@ -53,10 +62,11 @@ function useLastDuration(
         e.id !== currentExecutionId &&
         e.artifact_id === artifactId &&
         e.started_at &&
-        e.completed_at,
+        (e.generation_completed_at || e.completed_at),
     );
     if (!prev) return null;
-    const ms = new Date(prev.completed_at!).getTime() - new Date(prev.started_at!).getTime();
+    const endTime = prev.generation_completed_at || prev.completed_at!;
+    const ms = new Date(endTime).getTime() - new Date(prev.started_at!).getTime();
     if (ms <= 0) return null;
     return formatDurationMs(ms);
   }, [executions, currentExecutionId, artifactId]);
@@ -251,7 +261,7 @@ interface ReviewPanelProps {
 
 export function ReviewPanel({ projectId, artifact, execution, executions = [], mode = 'actions' }: ReviewPanelProps) {
   const s = useReviewState(projectId, artifact, execution);
-  const elapsed = useElapsedTime(execution?.id, execution?.started_at);
+  const elapsed = useElapsedTime(execution?.id, execution?.started_at, execution?.generation_completed_at);
   const lastDuration = useLastDuration(executions, execution?.id, artifact.id);
   const consolidateMutation = useConsolidateArtifact(projectId);
 

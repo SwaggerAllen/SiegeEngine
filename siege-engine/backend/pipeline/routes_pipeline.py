@@ -641,6 +641,7 @@ def get_status(
                 "artifact_id": e.artifact_id,
                 "started_at": _utc_iso(e.started_at),
                 "completed_at": _utc_iso(e.completed_at),
+                "generation_completed_at": _utc_iso(getattr(e, "generation_completed_at", None)),
                 "error_message": e.error_message,
                 "run_id": e.run_id,
             }
@@ -744,6 +745,7 @@ def get_debug_state(
             "retry_count": e.retry_count,
             "started_at": _utc_iso(e.started_at),
             "completed_at": _utc_iso(e.completed_at),
+            "generation_completed_at": _utc_iso(getattr(e, "generation_completed_at", None)),
         }
         for e in executions
     ]
