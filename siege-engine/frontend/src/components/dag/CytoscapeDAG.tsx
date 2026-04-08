@@ -90,6 +90,7 @@ export interface SearchableNode {
   stageKey: string;
   artifactType: string;
   hasArtifact: boolean;
+  domainParents?: string[] | null;
 }
 
 // ── Search bar ──────────────────────────────────────────────────────────
@@ -537,6 +538,7 @@ function DocumentsDAGInner({ projectId }: { projectId: string }) {
       stageKey: n.data.stage_key,
       artifactType: n.data.artifact_type,
       hasArtifact: n.data.has_artifact,
+      domainParents: n.data.domain_parents ?? null,
     }));
   }, [query.data]);
 
@@ -622,6 +624,7 @@ function CytoscapeCanvas({ projectId, variant, query, onTreeView, headerExtra }:
       stageKey: n.data.stage_key,
       artifactType: n.data.artifact_type,
       hasArtifact: n.data.has_artifact,
+      domainParents: n.data.domain_parents ?? null,
     }));
   }, [dagData]);
 

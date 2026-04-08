@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
+import { CollapsibleMarkdown } from './CollapsibleMarkdown';
 import { useAuthStore } from '../../store/authStore';
 import { useReviseArtifact } from '../../hooks/mutations/usePipelineMutations';
 import { useUpdateArtifact } from '../../hooks/mutations/useProjectMutations';
@@ -447,7 +447,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
         <div ref={contentRef} className="flex-1 flex flex-col overflow-hidden">
           {isViewingHistory ? (
             <div className={proseClasses}>
-              <Markdown>{historicalContent || 'Loading...'}</Markdown>
+              <CollapsibleMarkdown>{historicalContent || 'Loading...'}</CollapsibleMarkdown>
             </div>
           ) : editing && !viewOnly ? (
             <textarea
@@ -457,7 +457,7 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
             />
           ) : (
             <div className={proseClasses}>
-              <Markdown>{artifact.content || 'No content'}</Markdown>
+              <CollapsibleMarkdown>{artifact.content || 'No content'}</CollapsibleMarkdown>
             </div>
           )}
         </div>
@@ -506,9 +506,9 @@ export function ArtifactEditor({ artifact, projectId, compactMobile = false, vie
           )}
           {/* Full review document */}
           <div className={proseClasses}>
-            <Markdown>
+            <CollapsibleMarkdown>
               {(typeof reviewFeedback?.document === 'string' ? reviewFeedback.document : '') || 'No feedback available'}
-            </Markdown>
+            </CollapsibleMarkdown>
           </div>
         </div>
       ) : activeTab === 'diff' ? (
@@ -594,7 +594,7 @@ function SummaryPanel({ artifact, projectId }: { artifact: Artifact; projectId: 
   return (
     <div className="flex-1 overflow-auto pb-64">
       <div className="prose prose-invert prose-sm max-w-none p-3">
-        <Markdown>{summary}</Markdown>
+        <CollapsibleMarkdown>{summary}</CollapsibleMarkdown>
       </div>
       <div className="px-3 pt-2">
         <button

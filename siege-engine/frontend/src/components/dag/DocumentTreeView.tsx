@@ -384,6 +384,42 @@ function DepList({
 }
 
 // ---------------------------------------------------------------------------
+// Domain parents list (cross-DAG, non-clickable)
+// ---------------------------------------------------------------------------
+
+function DomainParentList({ label, keys }: { label: string; keys: string[] }) {
+  const [open, setOpen] = useState(false);
+  if (keys.length === 0) return null;
+
+  return (
+    <div className="ml-10 mb-0.5">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1"
+      >
+        <span className="w-3 text-center transition-transform duration-150"
+          style={{ transform: open ? 'rotate(90deg)' : undefined, fontSize: '8px' }}
+        >▶</span>
+        {label} ({keys.length})
+      </button>
+      {open && (
+        <div className="ml-4 mt-0.5 space-y-px">
+          {keys.map((key) => (
+            <div
+              key={key}
+              className="flex items-center gap-1.5 px-1 py-0.5 text-xs text-purple-300"
+            >
+              <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-purple-500" />
+              <span className="truncate">{key}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Folder row
 // ---------------------------------------------------------------------------
 
@@ -478,6 +514,9 @@ function DocumentRow({
       )}
       {dependents.length > 0 && (
         <DepList label="Dependents" nodeIds={dependents} nodeMap={nodeMap} onSelect={onSelectDep} />
+      )}
+      {searchNode.domainParents && searchNode.domainParents.length > 0 && (
+        <DomainParentList label="Domain Parents" keys={searchNode.domainParents} />
       )}
     </div>
   );
