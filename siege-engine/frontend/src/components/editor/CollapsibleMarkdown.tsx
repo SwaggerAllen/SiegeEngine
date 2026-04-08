@@ -49,7 +49,9 @@ interface CollapsibleMarkdownProps {
 
 export function CollapsibleMarkdown({ children, className }: CollapsibleMarkdownProps) {
   const { preamble, sections } = useMemo(() => splitIntoSections(children), [children]);
-  const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<Set<number>>(
+    () => new Set(sections.map((_, i) => i)),
+  );
 
   const toggle = (idx: number) => {
     setCollapsed((prev) => {
