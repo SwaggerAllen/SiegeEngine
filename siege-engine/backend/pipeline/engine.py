@@ -102,6 +102,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
         error_message: str | None = None,
         set_completed: bool = False,
         trigger: str | None = None,
+        restore_artifact_status: str | None = None,
     ) -> None:
         """Transition execution status, emit event, then update DB as projection.
 
@@ -132,6 +133,8 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
             }
             if trigger:
                 payload["trigger"] = trigger
+            if restore_artifact_status:
+                payload["restore_artifact_status"] = restore_artifact_status
             # Include artifact metadata when available
             if execution.artifact_id:
                 artifact = self.db.get(Artifact, execution.artifact_id)
@@ -1546,6 +1549,9 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                 StageStatus.FAILED,
                 error_message="Cancelled by force-restart",
                 set_completed=True,
+                restore_artifact_status=(
+                    ctx.error_artifact_status.value if ctx.error_artifact_status else None
+                ),
             )
             self.db.commit()
             raise  # Let the worker loop see the CancelledError
@@ -1560,6 +1566,9 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                 StageStatus.FAILED,
                 error_message=str(e),
                 set_completed=True,
+                restore_artifact_status=(
+                    ctx.error_artifact_status.value if ctx.error_artifact_status else None
+                ),
             )
 
             self.db.commit()

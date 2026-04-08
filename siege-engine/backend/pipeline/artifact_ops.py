@@ -522,7 +522,12 @@ class ArtifactOpsMixin:
         if not execution.run_id:
             return
         pipeline_run = self._lookup_pipeline_run(execution.run_id)
-        if not pipeline_run or pipeline_run.status != PipelineRunStatus.RUNNING:
+        if not pipeline_run:
+            # Standalone run (revision/consolidation) — no PipelineRun record.
+            # Emit RUN_COMPLETED so the snapshot can clear is_running.
+            await self._try_complete_orphan_run(execution)
+            return
+        if pipeline_run.status != PipelineRunStatus.RUNNING:
             return
 
         # Check if any executions in this run are still in-flight
@@ -576,6 +581,48 @@ class ArtifactOpsMixin:
                 "type": "pipeline_completed",
                 "run_id": execution.run_id,
             },
+        )
+
+    async def _try_complete_orphan_run(self, execution: StageExecution):
+        """Emit RUN_COMPLETED for standalone runs (revision/consolidation).
+
+        These runs have no PipelineRun record, so _try_complete_run can't
+        complete them normally.  We still need the event so the snapshot
+        reducer can clear is_running.
+        """
+        in_flight = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.run_id == execution.run_id,
+                StageExecution.status.in_(
+                    [
+                        StageStatus.RUNNING,
+                        StageStatus.AI_REVIEW,
+                        StageStatus.AWAITING_REVIEW,
+                        StageStatus.PENDING,
+                    ]
+                ),
+            )
+            .count()
+        )
+        if in_flight > 0:
+            return
+
+        has_failure = (
+            self.db.query(StageExecution)
+            .filter(
+                StageExecution.run_id == execution.run_id,
+                StageExecution.status == StageStatus.FAILED,
+            )
+            .count()
+        ) > 0
+        status_str = "failed" if has_failure else "completed"
+
+        self.events.emit(
+            execution.project_id,
+            evt.RUN_COMPLETED,
+            {"run_id": execution.run_id, "status": status_str},
+            run_id=execution.run_id,
         )
 
     def _ensure_active_run(

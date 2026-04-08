@@ -122,12 +122,18 @@ def _handle_run_created(snap: dict, p: dict) -> None:
 
 def _handle_run_completed(snap: dict, p: dict) -> None:
     run_id = p["run_id"]
+    was_tracked = run_id in snap.get("run_status", {})
     snap["run_status"][run_id] = p.get("status", "completed")
     # Only clear running if this is the current run
     if snap.get("current_run_id") == run_id:
         snap["is_running"] = False
         snap["is_paused"] = False
         snap["paused_stage"] = None
+    elif not was_tracked:
+        # Orphan run (revision/consolidation) that never had RUN_CREATED.
+        # Clear is_running if no stages are actively running.
+        if not any(s == "running" for s in snap.get("stage_statuses", {}).values()):
+            snap["is_running"] = False
 
 
 def _handle_stage_queued(snap: dict, p: dict) -> None:
@@ -225,6 +231,10 @@ def _handle_stage_failed(snap: dict, p: dict) -> None:
         current = snap["artifact_statuses"].get(p["artifact_id"])
         if is_force_restart:
             snap["artifact_statuses"][p["artifact_id"]] = "pending"
+        elif p.get("restore_artifact_status"):
+            # Revision/consolidation failure — restore to pre-error status
+            # (e.g. awaiting_review) so the artifact remains accessible.
+            snap["artifact_statuses"][p["artifact_id"]] = p["restore_artifact_status"]
         elif current not in ("approved", "awaiting_review", "rejected"):
             snap["artifact_statuses"][p["artifact_id"]] = "failed"
     # Track error message
