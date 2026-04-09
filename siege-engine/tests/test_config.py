@@ -12,7 +12,7 @@ class TestSettings:
         assert settings.jwt_algorithm == "HS256"
 
     def test_default_jwt_expiry(self):
-        assert settings.jwt_expiry_hours == 24
+        assert settings.jwt_expiry_hours == 720
 
     def test_default_model(self):
         assert "claude" in settings.default_model
