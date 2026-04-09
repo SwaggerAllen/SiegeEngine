@@ -332,10 +332,13 @@ async def apply_context_budget(
                 continue
 
         # Generate hot-path summary on demand
+        pcfg = stage_def.pipeline_config
+        summary_timeout = pcfg.cli_timeout_summary if pcfg else None
         summary = await generate_hotpath_summary(
             result[key],
             stage_def.output_artifact_type,
             component_key,
+            timeout=summary_timeout,
         )
         if summary:
             # Save to source artifact for reuse
@@ -426,16 +429,17 @@ async def generate(
     # Determine CLI settings based on stage type
     is_code_stage = stage_def.output_artifact_type in ("code", "code_review")
     project_id = stage_def.pipeline_config.project_id
+    pcfg = stage_def.pipeline_config
 
     if is_code_stage:
         working_dir = str(git_manager.base_path / project_id)
         tools = "default"
-        timeout = settings.cli_timeout_code
-        max_budget = settings.cli_max_budget_code
+        timeout = pcfg.cli_timeout_code or settings.cli_timeout_code
+        max_budget = pcfg.cli_max_budget_code or settings.cli_max_budget_code
     else:
         working_dir = None
         tools = "WebFetch,WebSearch"  # Research tools for document generation
-        timeout = settings.cli_timeout_document
+        timeout = pcfg.cli_timeout_document or settings.cli_timeout_document
         max_budget = None
 
     logger.info(

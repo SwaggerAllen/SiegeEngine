@@ -22,6 +22,10 @@ export const PipelineConfigSchema = z.object({
   execution_mode: z.string(),
   default_model: z.string(),
   default_temperature: z.number(),
+  cli_timeout_document: z.number().nullable().optional(),
+  cli_timeout_code: z.number().nullable().optional(),
+  cli_timeout_summary: z.number().nullable().optional(),
+  cli_max_budget_code: z.number().nullable().optional(),
   stages: z.array(StageDefinitionSchema),
 });
 

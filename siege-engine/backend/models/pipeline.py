@@ -34,6 +34,12 @@ class PipelineConfig(Base):
     default_temperature: Mapped[float] = mapped_column(Float, default=0.3)
     review_prompt_overrides: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # Per-project timeout overrides (nullable → fall back to global settings)
+    cli_timeout_document: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cli_timeout_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cli_timeout_summary: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cli_max_budget_code: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     project: Mapped["Project"] = relationship(back_populates="pipeline_config")
     stages: Mapped[list["StageDefinition"]] = relationship(
         back_populates="pipeline_config",

@@ -1522,9 +1522,11 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
             try:
                 from backend.pipeline.summarize import generate_summary
 
+                pcfg = stage_def.pipeline_config
+                summary_timeout = pcfg.cli_timeout_summary if pcfg else None
                 artifact = self.db.get(Artifact, artifact_id)
                 if artifact and artifact.content:
-                    summary = await generate_summary(artifact.content)
+                    summary = await generate_summary(artifact.content, timeout=summary_timeout)
                     artifact.summary = summary
                     self.db.flush()
             except Exception:

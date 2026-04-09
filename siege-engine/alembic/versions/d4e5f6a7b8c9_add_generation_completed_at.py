@@ -1,7 +1,7 @@
 """add generation_completed_at to stage_executions
 
-Revision ID: d4e5f6a7b8c9
-Revises: c3d4e5f6a7b8
+Revision ID: j0e1f2g3h4i5
+Revises: i9d0e1f2g3h4
 Create Date: 2026-04-08 00:00:00.000000
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = 'd4e5f6a7b8c9'
-down_revision: Union[str, Sequence[str], None] = 'c3d4e5f6a7b8'
+revision: str = 'j0e1f2g3h4i5'
+down_revision: Union[str, Sequence[str], None] = 'i9d0e1f2g3h4'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

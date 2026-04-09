@@ -347,6 +347,7 @@ async def _handle_consolidate_artifact(payload: dict) -> None:
 async def _handle_generate_summary(payload: dict) -> None:
     """Handle a generate_summary job."""
     from backend.models import Artifact
+    from backend.models.pipeline import PipelineConfig
     from backend.pipeline.summarize import generate_summary
     from backend.websocket.manager import ws_manager
 
@@ -367,7 +368,9 @@ async def _handle_generate_summary(payload: dict) -> None:
         if not artifact or not artifact.content:
             raise RuntimeError(f"Artifact {artifact_id} not found or has no content")
 
-        summary = await generate_summary(artifact.content)
+        pcfg = db.query(PipelineConfig).filter_by(project_id=project_id).first()
+        summary_timeout = pcfg.cli_timeout_summary if pcfg else None
+        summary = await generate_summary(artifact.content, timeout=summary_timeout)
         artifact.summary = summary
         db.commit()
 

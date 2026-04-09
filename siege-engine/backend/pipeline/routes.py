@@ -91,6 +91,10 @@ def get_config(
         "execution_mode": config.execution_mode.value,
         "default_model": config.default_model,
         "default_temperature": config.default_temperature,
+        "cli_timeout_document": config.cli_timeout_document,
+        "cli_timeout_code": config.cli_timeout_code,
+        "cli_timeout_summary": config.cli_timeout_summary,
+        "cli_max_budget_code": config.cli_max_budget_code,
         "stages": [
             {
                 "id": s.id,
@@ -126,6 +130,16 @@ def update_config(
         config.default_model = req.default_model
     if req.default_temperature is not None:
         config.default_temperature = req.default_temperature
+
+    # Timeout overrides — allow clearing (sending null resets to global default)
+    for field in (
+        "cli_timeout_document",
+        "cli_timeout_code",
+        "cli_timeout_summary",
+        "cli_max_budget_code",
+    ):
+        if field in req.model_fields_set:
+            setattr(config, field, getattr(req, field))
 
     db.commit()
     db.refresh(config)

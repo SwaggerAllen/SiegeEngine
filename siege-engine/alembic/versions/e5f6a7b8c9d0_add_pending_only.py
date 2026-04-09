@@ -1,7 +1,7 @@
 """add pending_only to pipeline_runs
 
-Revision ID: e5f6a7b8c9d0
-Revises: d4e5f6a7b8c9
+Revision ID: k1f2g3h4i5j6
+Revises: j0e1f2g3h4i5
 Create Date: 2026-04-08 00:00:00.000000
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = 'e5f6a7b8c9d0'
-down_revision: Union[str, Sequence[str], None] = 'd4e5f6a7b8c9'
+revision: str = 'k1f2g3h4i5j6'
+down_revision: Union[str, Sequence[str], None] = 'j0e1f2g3h4i5'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

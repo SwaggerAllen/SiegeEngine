@@ -269,6 +269,10 @@ class PipelineConfigResponse(BaseModel):
     execution_mode: str
     default_model: str
     default_temperature: float
+    cli_timeout_document: int | None = None
+    cli_timeout_code: int | None = None
+    cli_timeout_summary: int | None = None
+    cli_max_budget_code: float | None = None
     stages: list[StageDefinitionResponse]
 
     model_config = {"from_attributes": True}
@@ -278,6 +282,10 @@ class PipelineConfigUpdate(BaseModel):
     execution_mode: str | None = None
     default_model: str | None = None
     default_temperature: float | None = None
+    cli_timeout_document: int | None = None
+    cli_timeout_code: int | None = None
+    cli_timeout_summary: int | None = None
+    cli_max_budget_code: float | None = None
 
 
 class PromptConfigResponse(BaseModel):
