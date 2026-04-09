@@ -163,6 +163,10 @@ def clone_project(db: Session, source_project_id: str, new_name: str | None = No
             default_model=src_config.default_model,
             default_temperature=src_config.default_temperature,
             review_prompt_overrides=src_config.review_prompt_overrides,
+            cli_timeout_document=src_config.cli_timeout_document,
+            cli_timeout_code=src_config.cli_timeout_code,
+            cli_timeout_summary=src_config.cli_timeout_summary,
+            cli_max_budget_code=src_config.cli_max_budget_code,
         )
         db.add(new_config)
         db.flush()

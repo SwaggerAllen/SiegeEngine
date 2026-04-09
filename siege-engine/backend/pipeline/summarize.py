@@ -50,7 +50,10 @@ implementation details not relevant to the consuming stage.
 Keep the summary under 20% of the original document length."""
 
 
-async def generate_summary(content: str) -> str:
+async def generate_summary(
+    content: str,
+    timeout: int | None = None,
+) -> str:
     """Generate a summary for the given content.
 
     Pure function: content in, summary string out.
@@ -63,7 +66,7 @@ async def generate_summary(content: str) -> str:
         system_prompt=SUMMARY_SYSTEM_PROMPT,
         model=None,
         tools="",
-        timeout=settings.cli_timeout_summary,
+        timeout=timeout or settings.cli_timeout_summary,
     )
     if not summary.strip():
         raise RuntimeError("Summary generation returned empty output")
@@ -79,6 +82,7 @@ async def generate_hotpath_summary(
     content: str,
     stage_output_type: str,
     component_key: str | None,
+    timeout: int | None = None,
 ) -> str | None:
     """Generate a targeted summary for budget-constrained direct inputs.
 
@@ -101,7 +105,7 @@ async def generate_hotpath_summary(
             system_prompt=HOTPATH_SYSTEM_PROMPT,
             model=None,
             tools="",  # no tools needed
-            timeout=settings.cli_timeout_summary,
+            timeout=timeout or settings.cli_timeout_summary,
         )
         logger.info(
             "Hot-path summary generated: %d chars -> %d chars",

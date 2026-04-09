@@ -28,7 +28,15 @@ export async function getPipelineConfig(projectId: string): Promise<PipelineConf
 
 export async function updatePipelineConfig(
   projectId: string,
-  updates: { execution_mode?: string; default_model?: string; default_temperature?: number }
+  updates: {
+    execution_mode?: string;
+    default_model?: string;
+    default_temperature?: number;
+    cli_timeout_document?: number | null;
+    cli_timeout_code?: number | null;
+    cli_timeout_summary?: number | null;
+    cli_max_budget_code?: number | null;
+  },
 ): Promise<PipelineConfig> {
   const { data } = await api.put(`/pipeline/${projectId}/config`, updates);
   return PipelineConfigSchema.parse(data);

@@ -22,6 +22,10 @@ export const PipelineConfigSchema = z.object({
   execution_mode: z.string(),
   default_model: z.string(),
   default_temperature: z.number(),
+  cli_timeout_document: z.number().nullable().optional(),
+  cli_timeout_code: z.number().nullable().optional(),
+  cli_timeout_summary: z.number().nullable().optional(),
+  cli_max_budget_code: z.number().nullable().optional(),
   stages: z.array(StageDefinitionSchema),
 });
 
@@ -39,6 +43,7 @@ export const StageExecutionSchema = z.object({
   artifact_id: z.string().nullable(),
   started_at: z.string().nullable(),
   completed_at: z.string().nullable(),
+  generation_completed_at: z.string().nullable().optional(),
   error_message: z.string().nullable(),
   run_id: z.string(),
 });
@@ -141,6 +146,7 @@ export const PipelineStartOptionsSchema = z.object({
   stop_point: z.string().optional(),
   start_stage_key: z.string().nullable().optional(),
   start_component_key: z.string().nullable().optional(),
+  pending_only: z.boolean().optional(),
 });
 
 // --- Inferred types ---

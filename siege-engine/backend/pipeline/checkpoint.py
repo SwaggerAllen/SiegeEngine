@@ -49,6 +49,9 @@ def build_siege_state(db: Session, project_id: str, pipeline_run: PipelineRun) -
             "artifact_id": e.artifact_id,
             "started_at": e.started_at.isoformat() if e.started_at else None,
             "completed_at": e.completed_at.isoformat() if e.completed_at else None,
+            "generation_completed_at": (
+                e.generation_completed_at.isoformat() if e.generation_completed_at else None
+            ),
         }
         for e in executions
     ]

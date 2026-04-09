@@ -34,6 +34,12 @@ class PipelineConfig(Base):
     default_temperature: Mapped[float] = mapped_column(Float, default=0.3)
     review_prompt_overrides: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # Per-project timeout overrides (nullable → fall back to global settings)
+    cli_timeout_document: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cli_timeout_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cli_timeout_summary: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cli_max_budget_code: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     project: Mapped["Project"] = relationship(back_populates="pipeline_config")
     stages: Mapped[list["StageDefinition"]] = relationship(
         back_populates="pipeline_config",
@@ -61,6 +67,7 @@ class PipelineRun(Base):
     start_stage_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     start_component_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     regen_generated_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    pending_only: Mapped[bool] = mapped_column(Boolean, default=False)
     git_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -132,6 +139,7 @@ class StageExecution(Base):
     langgraph_thread_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    generation_completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
     run_id: Mapped[str] = mapped_column(String, nullable=False)

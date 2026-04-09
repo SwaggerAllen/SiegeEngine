@@ -88,19 +88,22 @@ async def start_pipeline(
         stop_point=StopPoint(req.stop_point),
         start_stage_key=req.start_stage_key,
         start_component_key=req.start_component_key,
+        pending_only=req.pending_only,
     )
     db.add(pipeline_run)
     db.commit()
     db.refresh(pipeline_run)
 
     logger.info(
-        "POST /start: project_id=%s, run_number=%d, ai_loops=%d, stop_point=%s, start=%s/%s",
+        "POST /start: project_id=%s, run_number=%d, ai_loops=%d, stop_point=%s, "
+        "start=%s/%s, pending_only=%s",
         project_id,
         run_number,
         req.ai_loops,
         req.stop_point,
         req.start_stage_key,
         req.start_component_key,
+        req.pending_only,
     )
 
     pipeline_run_id = pipeline_run.id
@@ -161,6 +164,7 @@ async def resume_run(
         stop_point=StopPoint(req.stop_point),
         start_stage_key=req.start_stage_key,
         start_component_key=req.start_component_key,
+        pending_only=req.pending_only,
     )
     db.add(pipeline_run)
     db.commit()
@@ -641,6 +645,7 @@ def get_status(
                 "artifact_id": e.artifact_id,
                 "started_at": _utc_iso(e.started_at),
                 "completed_at": _utc_iso(e.completed_at),
+                "generation_completed_at": _utc_iso(getattr(e, "generation_completed_at", None)),
                 "error_message": e.error_message,
                 "run_id": e.run_id,
             }
@@ -744,6 +749,7 @@ def get_debug_state(
             "retry_count": e.retry_count,
             "started_at": _utc_iso(e.started_at),
             "completed_at": _utc_iso(e.completed_at),
+            "generation_completed_at": _utc_iso(getattr(e, "generation_completed_at", None)),
         }
         for e in executions
     ]

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # Auth
     jwt_secret_key: str = "CHANGE-ME-IN-PRODUCTION"
     jwt_algorithm: str = "HS256"
-    jwt_expiry_hours: int = 24
+    jwt_expiry_hours: int = 720  # 30 days
 
     # Git
     git_repos_base_path: str = "data/repos"

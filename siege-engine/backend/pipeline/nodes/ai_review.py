@@ -262,13 +262,16 @@ async def ai_review(
     user_msgs = [m["content"] for m in messages if m["role"] == "user"]
     user_prompt = "\n\n".join(user_msgs)
 
+    pcfg = stage_def.pipeline_config
+    timeout = pcfg.cli_timeout_document or settings.cli_timeout_document
+
     logger.info("CLI ai_review: model=%s", model_name)
     content = await cli_manager.generate(
         prompt=user_prompt,
         system_prompt=system_msg,
         model=model_name,
         tools="",  # No tools needed for review — just prompt → response
-        timeout=settings.cli_timeout_document,
+        timeout=timeout,
     )
 
     # Extract recommendation from the review document

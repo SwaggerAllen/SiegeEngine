@@ -931,6 +931,11 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
                         ):
                             continue
 
+                    # pending_only: skip if entity already has generated content
+                    if pipeline_run and pipeline_run.pending_only:
+                        if self._entity_already_generated(project_id, stage_def.stage_key, None):
+                            continue
+
                     # Guard: skip if this stage is already running in ANY run
                     # (belt-and-suspenders with the stage-level check above)
                     already_running = (
@@ -1517,9 +1522,11 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
             try:
                 from backend.pipeline.summarize import generate_summary
 
+                pcfg = stage_def.pipeline_config
+                summary_timeout = pcfg.cli_timeout_summary if pcfg else None
                 artifact = self.db.get(Artifact, artifact_id)
                 if artifact and artifact.content:
-                    summary = await generate_summary(artifact.content)
+                    summary = await generate_summary(artifact.content, timeout=summary_timeout)
                     artifact.summary = summary
                     self.db.flush()
             except Exception:
@@ -1530,6 +1537,7 @@ class PipelineEngine(ComponentManagerMixin, ArtifactOpsMixin, ReadinessMixin):
 
             # All generated artifacts go to AWAITING_REVIEW — only human
             # approval can move them to APPROVED.
+            execution.generation_completed_at = datetime.utcnow()
             self._transition_execution(
                 execution,
                 StageStatus.AWAITING_REVIEW,

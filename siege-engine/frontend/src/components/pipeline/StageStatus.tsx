@@ -89,8 +89,8 @@ function ExecutionRow({ exec, projectId }: { exec: StageExecution; projectId?: s
       {exec.started_at && (
         <div className="text-gray-500 mt-0.5 pl-0.5">
           {formatTimestamp(exec.started_at)}
-          {exec.completed_at
-            ? ` · ${formatDuration(exec.started_at, exec.completed_at)}`
+          {(exec.generation_completed_at || exec.completed_at)
+            ? ` · ${formatDuration(exec.started_at, exec.generation_completed_at || exec.completed_at!)}`
             : ' · in progress'}
         </div>
       )}
