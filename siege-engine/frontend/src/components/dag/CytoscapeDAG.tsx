@@ -364,6 +364,16 @@ function buildStylesheet() {
         'line-dash-pattern': [6, 3],
       },
     },
+    // Highlighted edges (connected to selected node)
+    {
+      selector: 'edge.highlighted',
+      style: {
+        'line-color': '#60a5fa',
+        'target-arrow-color': '#60a5fa',
+        width: 2.5,
+        'z-index': 10,
+      },
+    },
     // Cross-component dependency edges (dashed indigo)
     {
       selector: 'edge[?isDependencyEdge]',
@@ -372,6 +382,16 @@ function buildStylesheet() {
         'line-dash-pattern': [5, 5],
         'line-color': '#818cf8',
         'target-arrow-color': '#818cf8',
+      },
+    },
+    // Highlighted dependency edges keep their dashed style
+    {
+      selector: 'edge[?isDependencyEdge].highlighted',
+      style: {
+        'line-color': '#a5b4fc',
+        'target-arrow-color': '#a5b4fc',
+        width: 2.5,
+        'z-index': 10,
       },
     },
     // Intra-layer edges (same partition) — routed distinctly
@@ -386,6 +406,16 @@ function buildStylesheet() {
         width: 1.5,
         'control-point-distances': [40],
         'control-point-weights': [0.5],
+      },
+    },
+    // Highlighted intra-layer edges
+    {
+      selector: 'edge[?isIntraLayer].highlighted',
+      style: {
+        'line-color': '#a5b4fc',
+        'target-arrow-color': '#a5b4fc',
+        width: 2.5,
+        'z-index': 10,
       },
     },
   ] as cytoscape.StylesheetStyle[];
@@ -689,10 +719,15 @@ function CytoscapeCanvas({ projectId, variant, query, onTreeView, headerExtra }:
     const cy = cyRef.current;
     if (!cy) return;
     const handler = (evt: cytoscape.EventObject) => {
+      cy.edges().removeClass('highlighted');
+      evt.target.connectedEdges().addClass('highlighted');
       setSelectedNodeId(evt.target.id());
     };
     const clearHandler = (evt: cytoscape.EventObject) => {
-      if (evt.target === cy) setSelectedNodeId(null);
+      if (evt.target === cy) {
+        cy.edges().removeClass('highlighted');
+        setSelectedNodeId(null);
+      }
     };
     cy.on('tap', 'node', handler);
     cy.on('tap', clearHandler);
