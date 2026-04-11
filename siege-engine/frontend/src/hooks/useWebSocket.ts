@@ -13,6 +13,7 @@ const FETCH_DEBOUNCE_MS = 300;
 
 const DAG_REFRESH_EVENTS = new Set([
   'stage_started',
+  'stage_progress',
   'stage_completed',
   'stage_awaiting_review',
   'stage_failed',
@@ -104,7 +105,8 @@ export function useWebSocket(projectId: string | undefined) {
         if (debounceFetchRef.current) clearTimeout(debounceFetchRef.current);
         debounceFetchRef.current = setTimeout(() => {
           qc.invalidateQueries({ queryKey: dagKeys.workflow(projectId) });
-          qc.invalidateQueries({ queryKey: dagKeys.documents(projectId) });
+          // Use prefix key to invalidate both domain and frontend document DAGs
+          qc.invalidateQueries({ queryKey: [...dagKeys.all(projectId), 'documents'] });
         }, FETCH_DEBOUNCE_MS);
       }
 
