@@ -12,6 +12,7 @@ from backend.graph.expansion import (
     EXPANSION_TIER,
     bootstrap_expansion_node,
     get_expansion_node,
+    has_been_approved,
     pending_expansion_draft,
 )
 from backend.graph.reducer import append_event
@@ -112,3 +113,50 @@ class TestPendingExpansionDraft:
 
         assert pending_expansion_draft(db, project.id) is not None
         assert pending_expansion_draft(db, project_b.id) is None
+
+
+class TestHasBeenApproved:
+    def test_no_node_returns_false(self, db, project):
+        assert has_been_approved(db, project.id) is False
+
+    def test_bootstrap_only_returns_false(self, db, project):
+        bootstrap_expansion_node(db, project.id)
+        db.flush()
+        assert has_been_approved(db, project.id) is False
+
+    def test_pending_draft_only_returns_false(self, db, project):
+        exp_id = bootstrap_expansion_node(db, project.id)
+        append_event(
+            db,
+            project.id,
+            ev.DraftGenerated(
+                draft_id="draft_PENDING1",
+                target_type="node",
+                target_id=exp_id,
+                content="draft content",
+                batch_id="batch_01",
+            ),
+        )
+        db.flush()
+        assert has_been_approved(db, project.id) is False
+
+    def test_after_approval_returns_true(self, db, project):
+        exp_id = bootstrap_expansion_node(db, project.id)
+        append_event(
+            db,
+            project.id,
+            ev.DraftGenerated(
+                draft_id="draft_APPROVE1",
+                target_type="node",
+                target_id=exp_id,
+                content="approved prose",
+                batch_id="batch_01",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.DraftApproved(draft_id="draft_APPROVE1"),
+        )
+        db.flush()
+        assert has_been_approved(db, project.id) is True

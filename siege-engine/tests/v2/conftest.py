@@ -33,9 +33,7 @@ def canonical_events() -> list[ev._EventBase]:
     frag_id = f"{comp_a}_pubapi"
 
     return [
-        ev.NodeCreated(
-            node_id=feat_id, tier="feat", kind="domain", name="Identity"
-        ),
+        ev.NodeCreated(node_id=feat_id, tier="feat", kind="domain", name="Identity"),
         ev.NodeCreated(
             node_id=resp_id,
             tier="resp",

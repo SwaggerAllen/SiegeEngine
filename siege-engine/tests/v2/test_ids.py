@@ -25,8 +25,13 @@ class TestKindEnum:
             "resp",
             "comp",
             "impl",
+            "plan",
             "edge",
             "expansion",
+            "reqs",
+            "sysarch",
+            "manifest",
+            "fanin",
         }
 
 

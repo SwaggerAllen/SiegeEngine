@@ -118,11 +118,30 @@ def client(db, project):
         app.dependency_overrides.clear()
 
 
-def _patch_cli(monkeypatch, output: str):
-    async def fake_generate(**kwargs):
-        return output
+def _patch_cli(
+    monkeypatch,
+    output: str,
+    *,
+    prompt_tokens: int = 100,
+    completion_tokens: int = 50,
+    model: str = "claude-sonnet-4-6",
+):
+    """Patch the CLI manager to return a deterministic GenerationResult."""
+    from backend.cli.manager import GenerationResult
 
-    monkeypatch.setattr(fe_handler.cli_manager, "generate", fake_generate)
+    async def fake_generate_with_usage(**kwargs):
+        return GenerationResult(
+            text=output,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            model=model,
+        )
+
+    monkeypatch.setattr(
+        fe_handler.cli_manager,
+        "generate_with_usage",
+        fake_generate_with_usage,
+    )
 
 
 class TestGetExpansion:
@@ -143,9 +162,7 @@ class TestGetExpansion:
     def test_reports_pending_draft(self, client, project, db, monkeypatch):
         _patch_cli(monkeypatch, "# A plan\n")
         asyncio.run(
-            fe_handler.generate_feature_expansion(
-                {"project_id": project.id, "feedback": None}
-            )
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
         resp = client.get(f"/api/projects/{project.id}/expansion")
         assert resp.status_code == 200
@@ -171,9 +188,7 @@ class TestFeedback:
         db.expire_all()
         jobs = list(
             db.execute(
-                select(Job).where(
-                    Job.job_type == fe_handler.GENERATE_FEATURE_EXPANSION_JOB_TYPE
-                )
+                select(Job).where(Job.job_type == fe_handler.GENERATE_FEATURE_EXPANSION_JOB_TYPE)
             ).scalars()
         )
         assert len(jobs) == 1
@@ -190,9 +205,7 @@ class TestFeedback:
         assert resp.status_code == 200
         db.expire_all()
         job = db.execute(
-            select(Job).where(
-                Job.job_type == fe_handler.GENERATE_FEATURE_EXPANSION_JOB_TYPE
-            )
+            select(Job).where(Job.job_type == fe_handler.GENERATE_FEATURE_EXPANSION_JOB_TYPE)
         ).scalar_one()
         assert job.payload["feedback"] is None
 
@@ -205,19 +218,73 @@ class TestFeedback:
         assert resp.status_code == 200
         assert resp.json()["generation_status"] == "running"
 
+    def test_get_surfaces_latest_telemetry_after_generation(self, client, project, db, monkeypatch):
+        _patch_cli(
+            monkeypatch,
+            "# some content\n",
+            prompt_tokens=2048,
+            completion_tokens=301,
+            model="claude-sonnet-4-6",
+        )
+        asyncio.run(
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
+        )
+
+        resp = client.get(f"/api/projects/{project.id}/expansion")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["latest_telemetry"] is not None
+        tlm = body["latest_telemetry"]
+        assert tlm["prompt_tokens"] == 2048
+        assert tlm["completion_tokens"] == 301
+        assert tlm["model"] == "claude-sonnet-4-6"
+        assert tlm["created_at"]
+
+    def test_get_returns_null_telemetry_when_never_generated(self, client, project):
+        resp = client.get(f"/api/projects/{project.id}/expansion")
+        assert resp.status_code == 200
+        assert resp.json()["latest_telemetry"] is None
+
+    def test_feedback_rejected_after_approval(self, client, project, db, monkeypatch):
+        """Post-approval feedback is blocked with 409.
+
+        The v2 spec makes bootstrap nodes (expansion, reqs, sysarch)
+        read-only after their initial approval — ongoing feature-layer
+        edits happen on individual feature nodes, not by re-editing
+        the expansion prose. This test exercises the guard at
+        ``post_expansion_feedback``.
+        """
+        _patch_cli(monkeypatch, "# Approved content\n")
+        asyncio.run(
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
+        )
+        db.expire_all()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
+
+        # Approve the draft — this flips node.content to non-empty.
+        approve_resp = client.post(
+            f"/api/projects/{project.id}/expansion/approve",
+            json={"draft_id": draft.id},
+        )
+        assert approve_resp.status_code == 200
+
+        # Now feedback should be rejected with 409.
+        resp = client.post(
+            f"/api/projects/{project.id}/expansion/feedback",
+            json={"feedback": "actually let me change this"},
+        )
+        assert resp.status_code == 409
+        assert "read-only" in resp.json()["detail"]
+
 
 class TestApprove:
     def test_commits_draft_to_node(self, client, project, db, monkeypatch):
         _patch_cli(monkeypatch, "# Final content\n")
         asyncio.run(
-            fe_handler.generate_feature_expansion(
-                {"project_id": project.id, "feedback": None}
-            )
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
         db.expire_all()
-        draft = db.execute(
-            select(Draft).where(Draft.project_id == project.id)
-        ).scalar_one()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
 
         resp = client.post(
             f"/api/projects/{project.id}/expansion/approve",
@@ -242,14 +309,10 @@ class TestApprove:
     def test_already_approved_returns_409(self, client, project, db, monkeypatch):
         _patch_cli(monkeypatch, "# content\n")
         asyncio.run(
-            fe_handler.generate_feature_expansion(
-                {"project_id": project.id, "feedback": None}
-            )
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
         db.expire_all()
-        draft = db.execute(
-            select(Draft).where(Draft.project_id == project.id)
-        ).scalar_one()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
         client.post(
             f"/api/projects/{project.id}/expansion/approve",
             json={"draft_id": draft.id},
@@ -266,14 +329,10 @@ class TestDiscard:
     def test_flips_draft_to_discarded(self, client, project, db, monkeypatch):
         _patch_cli(monkeypatch, "# content\n")
         asyncio.run(
-            fe_handler.generate_feature_expansion(
-                {"project_id": project.id, "feedback": None}
-            )
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
         db.expire_all()
-        draft = db.execute(
-            select(Draft).where(Draft.project_id == project.id)
-        ).scalar_one()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
 
         resp = client.post(
             f"/api/projects/{project.id}/expansion/discard",

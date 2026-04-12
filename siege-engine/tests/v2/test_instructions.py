@@ -128,9 +128,7 @@ _FIXTURES = [
 ]
 
 
-_FIXTURE_IDS = [
-    f"{type(i).__name__}_{idx}" for idx, (i, _) in enumerate(_FIXTURES)
-]
+_FIXTURE_IDS = [f"{type(i).__name__}_{idx}" for idx, (i, _) in enumerate(_FIXTURES)]
 
 
 @pytest.mark.parametrize("instruction,expected", _FIXTURES, ids=_FIXTURE_IDS)

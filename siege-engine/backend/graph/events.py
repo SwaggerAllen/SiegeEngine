@@ -20,6 +20,22 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.graph.fragments import FragmentKind
 
+# Keep this in sync with ``backend.models.node.NODE_TIERS`` and the
+# ``Kind`` enum in ``backend.graph.ids``. Listed inline as a Literal
+# so Pydantic validates at model-construction time.
+NodeTier = Literal[
+    "feat",
+    "resp",
+    "comp",
+    "impl",
+    "plan",
+    "expansion",
+    "reqs",
+    "sysarch",
+    "manifest",
+    "fanin",
+]
+
 
 class _EventBase(BaseModel):
     """Shared config for all event models: strict, extra-forbidden.
@@ -40,7 +56,7 @@ class _EventBase(BaseModel):
 class NodeCreated(_EventBase):
     event_type: Literal["NodeCreated"] = "NodeCreated"
     node_id: str
-    tier: Literal["feat", "resp", "comp", "impl", "expansion"]
+    tier: NodeTier
     kind: Literal["domain", "presentational"]
     parent_id: str | None = None
     name: str
@@ -62,13 +78,13 @@ class NodeReparented(_EventBase):
 class NodePromoted(_EventBase):
     event_type: Literal["NodePromoted"] = "NodePromoted"
     node_id: str
-    new_tier: Literal["feat", "resp", "comp", "impl", "expansion"]
+    new_tier: NodeTier
 
 
 class NodeDemoted(_EventBase):
     event_type: Literal["NodeDemoted"] = "NodeDemoted"
     node_id: str
-    new_tier: Literal["feat", "resp", "comp", "impl", "expansion"]
+    new_tier: NodeTier
 
 
 class NodesMerged(_EventBase):

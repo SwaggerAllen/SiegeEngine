@@ -31,42 +31,44 @@ class TestNodeEvents:
 
     def test_node_renamed_updates_name(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="comp_NNNNNNNN", tier="comp", kind="domain", name="Old"),
         )
-        append_event(
-            db, project.id, ev.NodeRenamed(node_id="comp_NNNNNNNN", new_name="New")
-        )
+        append_event(db, project.id, ev.NodeRenamed(node_id="comp_NNNNNNNN", new_name="New"))
         assert db.get(Node, "comp_NNNNNNNN").name == "New"
 
     def test_node_reparented(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="feat_PPPPPPPP", tier="feat", kind="domain", name="P"),
         )
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="resp_CCCCCCCC", tier="resp", kind="domain", name="C"),
         )
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeReparented(node_id="resp_CCCCCCCC", new_parent_id="feat_PPPPPPPP"),
         )
         assert db.get(Node, "resp_CCCCCCCC").parent_id == "feat_PPPPPPPP"
 
     def test_node_promoted_changes_tier(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="resp_XXXXXXXX", tier="resp", kind="domain", name="X"),
         )
-        append_event(
-            db, project.id, ev.NodePromoted(node_id="resp_XXXXXXXX", new_tier="feat")
-        )
+        append_event(db, project.id, ev.NodePromoted(node_id="resp_XXXXXXXX", new_tier="feat"))
         assert db.get(Node, "resp_XXXXXXXX").tier == "feat"
 
     def test_node_deleted_removes_row(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="comp_YYYYYYYY", tier="comp", kind="domain", name="Y"),
         )
         append_event(db, project.id, ev.NodeDeleted(node_id="comp_YYYYYYYY"))
@@ -75,11 +77,13 @@ class TestNodeEvents:
     def test_nodes_merged_deletes_others(self, db, project):
         for nid, name in [("comp_MMMMMMMM", "M"), ("comp_NNNNNNNN", "N")]:
             append_event(
-                db, project.id,
+                db,
+                project.id,
                 ev.NodeCreated(node_id=nid, tier="comp", kind="domain", name=name),
             )
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodesMerged(
                 source_ids=["comp_MMMMMMMM", "comp_NNNNNNNN"],
                 dest_id="comp_MMMMMMMM",
@@ -94,7 +98,8 @@ class TestEdgeEvents:
     def test_edge_created(self, db, project):
         _add_two_nodes(db, project.id, "comp_AAAAAAAA", "comp_BBBBBBBB")
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.EdgeCreated(
                 edge_id="edge_EEEEEEEE",
                 edge_type="dependency",
@@ -109,7 +114,8 @@ class TestEdgeEvents:
     def test_edge_deleted(self, db, project):
         _add_two_nodes(db, project.id, "comp_AAAAAAAA", "comp_BBBBBBBB")
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.EdgeCreated(
                 edge_id="edge_EEEEEEEE",
                 edge_type="dependency",
@@ -124,11 +130,13 @@ class TestEdgeEvents:
 class TestFragmentEvents:
     def test_fragment_updated_creates_row_first_time(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="comp_FFFFFFFF", tier="comp", kind="domain", name="F"),
         )
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.FragmentUpdated(
                 fragment_id="comp_FFFFFFFF_pubapi",
                 owner_id="comp_FFFFFFFF",
@@ -142,12 +150,14 @@ class TestFragmentEvents:
 
     def test_fragment_updated_overwrites(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="comp_FFFFFFFF", tier="comp", kind="domain", name="F"),
         )
         for content in ["first", "second"]:
             append_event(
-                db, project.id,
+                db,
+                project.id,
                 ev.FragmentUpdated(
                     fragment_id="comp_FFFFFFFF_pubapi",
                     owner_id="comp_FFFFFFFF",
@@ -159,12 +169,14 @@ class TestFragmentEvents:
 
     def test_fragment_id_mismatch_rolls_back(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="comp_FFFFFFFF", tier="comp", kind="domain", name="F"),
         )
         with pytest.raises(ReducerError, match="does not match"):
             append_event(
-                db, project.id,
+                db,
+                project.id,
                 ev.FragmentUpdated(
                     fragment_id="comp_FFFFFFFF_deps",  # wrong kind for pubapi
                     owner_id="comp_FFFFFFFF",
@@ -177,11 +189,13 @@ class TestFragmentEvents:
 class TestDraftLifecycle:
     def test_draft_generated_then_edited(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="comp_DDDDDDDD", tier="comp", kind="domain", name="D"),
         )
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.DraftGenerated(
                 draft_id="draft1",
                 target_type="node",
@@ -191,7 +205,8 @@ class TestDraftLifecycle:
             ),
         )
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.DraftEdited(draft_id="draft1", new_content="v2"),
         )
         row = db.get(Draft, "draft1")
@@ -200,11 +215,13 @@ class TestDraftLifecycle:
 
     def test_draft_approved_writes_to_target(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="comp_DDDDDDDD", tier="comp", kind="domain", name="D"),
         )
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.DraftGenerated(
                 draft_id="draft1",
                 target_type="node",
@@ -219,11 +236,13 @@ class TestDraftLifecycle:
 
     def test_draft_approved_on_cold_fragment(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="comp_DDDDDDDD", tier="comp", kind="domain", name="D"),
         )
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.DraftGenerated(
                 draft_id="draft1",
                 target_type="fragment",
@@ -239,11 +258,13 @@ class TestDraftLifecycle:
 
     def test_draft_discarded(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="comp_DDDDDDDD", tier="comp", kind="domain", name="D"),
         )
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.DraftGenerated(
                 draft_id="draft1",
                 target_type="node",
@@ -257,11 +278,13 @@ class TestDraftLifecycle:
 
     def test_cannot_edit_non_pending(self, db, project):
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.NodeCreated(node_id="comp_DDDDDDDD", tier="comp", kind="domain", name="D"),
         )
         append_event(
-            db, project.id,
+            db,
+            project.id,
             ev.DraftGenerated(
                 draft_id="draft1",
                 target_type="node",
@@ -272,18 +295,14 @@ class TestDraftLifecycle:
         )
         append_event(db, project.id, ev.DraftApproved(draft_id="draft1"))
         with pytest.raises(ReducerError, match="cannot edit"):
-            append_event(
-                db, project.id, ev.DraftEdited(draft_id="draft1", new_content="y")
-            )
+            append_event(db, project.id, ev.DraftEdited(draft_id="draft1", new_content="y"))
 
 
 # ── Rebuild correctness ──────────────────────────────────────────────
 
 
 class TestRebuild:
-    def test_canonical_sequence_rebuilds_identically(
-        self, db, project, canonical_events
-    ):
+    def test_canonical_sequence_rebuilds_identically(self, db, project, canonical_events):
         for event in canonical_events:
             append_event(db, project.id, event)
         incremental = _snapshot(db, project.id)
@@ -316,11 +335,13 @@ class TestRebuild:
 
 def _add_two_nodes(db, project_id: str, a: str, b: str) -> None:
     append_event(
-        db, project_id,
+        db,
+        project_id,
         ev.NodeCreated(node_id=a, tier="comp", kind="domain", name=a),
     )
     append_event(
-        db, project_id,
+        db,
+        project_id,
         ev.NodeCreated(node_id=b, tier="comp", kind="domain", name=b),
     )
 
@@ -342,19 +363,15 @@ def _snapshot(db, project_id: str) -> dict:
 
     return {
         "nodes": sorted(
-            _node(n)
-            for n in db.query(Node).filter(Node.project_id == project_id).all()
+            _node(n) for n in db.query(Node).filter(Node.project_id == project_id).all()
         ),
         "edges": sorted(
-            _edge(e)
-            for e in db.query(Edge).filter(Edge.project_id == project_id).all()
+            _edge(e) for e in db.query(Edge).filter(Edge.project_id == project_id).all()
         ),
         "fragments": sorted(
-            _frag(f)
-            for f in db.query(Fragment).filter(Fragment.project_id == project_id).all()
+            _frag(f) for f in db.query(Fragment).filter(Fragment.project_id == project_id).all()
         ),
         "drafts": sorted(
-            _draft(d)
-            for d in db.query(Draft).filter(Draft.project_id == project_id).all()
+            _draft(d) for d in db.query(Draft).filter(Draft.project_id == project_id).all()
         ),
     }

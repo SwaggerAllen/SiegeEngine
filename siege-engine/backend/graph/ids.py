@@ -26,14 +26,26 @@ COLLISION_RETRIES = 10
 
 
 class Kind(str, Enum):
-    """Entity kinds in the structured model ID vocabulary."""
+    """Entity kinds in the structured model ID vocabulary.
+
+    See ``docs/architecture/v2-rearchitecture.md`` §ID scheme for the
+    full list and what each kind means. Singletons (``expansion``,
+    ``reqs``, ``sysarch``, ``manifest``) still use the same
+    ``<kind>_<8 chars>`` form as the others — the suffix is decorative
+    for one-per-project nodes but keeps call sites uniform.
+    """
 
     FEAT = "feat"
     RESP = "resp"
     COMP = "comp"
     IMPL = "impl"
+    PLAN = "plan"
     EDGE = "edge"
     EXPANSION = "expansion"
+    REQS = "reqs"
+    SYSARCH = "sysarch"
+    MANIFEST = "manifest"
+    FANIN = "fanin"
 
 
 class InvalidIdError(ValueError):

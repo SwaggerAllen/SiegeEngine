@@ -38,6 +38,7 @@ from backend.graph.prompts.feature_expansion import (
 )
 from backend.graph.reducer import append_event
 from backend.models.input_document import InputDocument
+from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
 
 logger = logging.getLogger(__name__)
@@ -114,15 +115,16 @@ async def generate_feature_expansion(payload: dict) -> None:
         bool(prior_pending),
         bool(feedback),
     )
-    output = await cli_manager.generate(
+    result = await cli_manager.generate_with_usage(
         prompt=user_prompt,
         system_prompt=SYSTEM_PROMPT,
         tools=CLI_TOOLS,
         timeout=CLI_TIMEOUT_SECONDS,
         max_budget_usd=CLI_MAX_BUDGET_USD,
     )
+    output = result.text
 
-    # ── Phase 3: persist events ─────────────────────────────────────
+    # ── Phase 3: persist events + telemetry ─────────────────────────
     db = SessionLocal()
     try:
         if prior_pending_id is not None:
@@ -148,11 +150,27 @@ async def generate_feature_expansion(payload: dict) -> None:
                 batch_id=new_batch_id,
             ),
         )
+        # Telemetry is written in the same transaction as the event
+        # so either both land or neither does.
+        db.add(
+            GenerationTelemetry(
+                project_id=project_id,
+                node_id=exp_node_id,
+                section="expansion",
+                model=result.model,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
+            )
+        )
         db.commit()
         logger.info(
-            "generate_feature_expansion project=%s draft_id=%s committed",
+            "generate_feature_expansion project=%s draft_id=%s committed "
+            "(prompt=%d completion=%d model=%s)",
             project_id,
             new_draft_id,
+            result.prompt_tokens,
+            result.completion_tokens,
+            result.model,
         )
     finally:
         db.close()

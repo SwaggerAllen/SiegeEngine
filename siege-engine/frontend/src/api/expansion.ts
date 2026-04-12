@@ -19,11 +19,20 @@ export const ExpansionDraftSchema = z.object({
 });
 export type ExpansionDraft = z.infer<typeof ExpansionDraftSchema>;
 
+export const TelemetrySummarySchema = z.object({
+  prompt_tokens: z.number().int(),
+  completion_tokens: z.number().int(),
+  model: z.string(),
+  created_at: z.string(),
+});
+export type TelemetrySummary = z.infer<typeof TelemetrySummarySchema>;
+
 export const ExpansionResponseSchema = z.object({
   node: ExpansionNodeSchema,
   pending_draft: ExpansionDraftSchema.nullable(),
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
+  latest_telemetry: TelemetrySummarySchema.nullable(),
 });
 export type ExpansionResponse = z.infer<typeof ExpansionResponseSchema>;
 

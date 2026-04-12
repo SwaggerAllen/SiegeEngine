@@ -40,6 +40,7 @@ function makeResponse(overrides: Partial<ExpansionResponse> = {}): ExpansionResp
     pending_draft: null,
     generation_status: 'idle',
     last_error: null,
+    latest_telemetry: null,
     ...overrides,
   };
 }
@@ -145,7 +146,54 @@ describe('FeatureExpansionPanel', () => {
     );
   });
 
-  it('shows approved content with a Request revision button', async () => {
+  it('renders the telemetry line when latest_telemetry is present', async () => {
+    mockedGet.mockResolvedValue(
+      makeResponse({
+        node: {
+          id: 'expn_1',
+          name: 'Feature Expansion',
+          content: '# Approved plan',
+          updated_at: '2026-04-12T00:00:00',
+        },
+        latest_telemetry: {
+          prompt_tokens: 1234,
+          completion_tokens: 567,
+          model: 'claude-sonnet-4-6',
+          created_at: '2026-04-12T00:00:00',
+        },
+      })
+    );
+    renderPanel();
+
+    const line = await screen.findByTestId('telemetry-line');
+    expect(line).toHaveTextContent(/Last gen:/);
+    expect(line).toHaveTextContent(/1,234/);
+    expect(line).toHaveTextContent(/567 tokens/);
+    expect(line).toHaveTextContent(/claude-sonnet-4-6/);
+  });
+
+  it('does not render the telemetry line when latest_telemetry is null', async () => {
+    mockedGet.mockResolvedValue(
+      makeResponse({
+        node: {
+          id: 'expn_1',
+          name: 'Feature Expansion',
+          content: '# Approved plan',
+          updated_at: '2026-04-12T00:00:00',
+        },
+        latest_telemetry: null,
+      })
+    );
+    renderPanel();
+
+    await waitFor(() => expect(screen.getByText(/Approved plan/)).toBeInTheDocument());
+    expect(screen.queryByTestId('telemetry-line')).toBeNull();
+  });
+
+  it('renders approved content as read-only with no revision button', async () => {
+    // v2 spec: bootstrap nodes become read-only after their initial
+    // approval. Ongoing feature-layer work happens on individual
+    // feature nodes (Phase 2), not by re-editing the expansion prose.
     mockedGet.mockResolvedValue(
       makeResponse({
         node: {
@@ -159,9 +207,17 @@ describe('FeatureExpansionPanel', () => {
     renderPanel();
 
     await waitFor(() => expect(screen.getByText(/Approved plan/)).toBeInTheDocument());
+    // Read-only marker visible.
+    expect(screen.getByText(/Approved · read-only/i)).toBeInTheDocument();
+    // No "Request revision" button exists anywhere in the document.
     expect(
-      screen.getByRole('button', { name: /Request revision/i })
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: /Request revision/i })
+    ).toBeNull();
+    // No "Submit feedback" button either (old inline revision form
+    // is also gone).
+    expect(
+      screen.queryByRole('button', { name: /Submit feedback/i })
+    ).toBeNull();
   });
 
   it('shows an error banner with Retry when generation failed and no content', async () => {

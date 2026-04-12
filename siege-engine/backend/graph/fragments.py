@@ -1,10 +1,11 @@
 """Fragment ID format for transcluded architecture-doc sections.
 
 A fragment is a parseable section of an architecture doc — currently
-``<public-surface>``, ``<private-surface>``, or ``<dependencies>``.
-Fragments are transcluded by multiple docs (a component's public
-surface appears in both the component arch and the system architecture),
-and diff propagation operates on fragment granularity.
+``<technical-specification>``, ``<public-surface>``,
+``<private-surface>``, or ``<dependencies>``. Fragments are
+transcluded by multiple docs (a component's public surface appears
+in both the component arch and the system architecture), and diff
+propagation operates on fragment granularity.
 
 Fragment IDs have the form ``<owner_id>_<fragment_kind>`` where the
 owner is a node ID from :mod:`backend.graph.ids`. They are never
@@ -13,7 +14,9 @@ tied to their owner.
 
 Parsing splits on the **last** underscore: owner IDs contain an
 underscore themselves (``comp_a3f7k2m9``), so splitting on the first
-underscore would be wrong.
+underscore would be wrong. This means fragment kinds **must be
+single-token** (no underscore in the kind name); enforced at import
+time below.
 """
 
 from __future__ import annotations
@@ -25,11 +28,28 @@ from backend.graph.ids import validate as validate_owner_id
 
 
 class FragmentKind(str, Enum):
-    """Vocabulary of parseable architecture-doc fragments."""
+    """Vocabulary of parseable architecture-doc fragments.
 
+    Every member value must be a single token (no underscore). See
+    the module docstring for why.
+    """
+
+    TECHSPEC = "techspec"
     PUBAPI = "pubapi"
     PRIVAPI = "privapi"
     DEPS = "deps"
+
+
+# Enforce the single-token invariant at import time so a future
+# addition with an underscore fails loudly rather than corrupting
+# fragment-ID parsing.
+for _kind in FragmentKind:
+    assert "_" not in _kind.value, (
+        f"FragmentKind.{_kind.name} value {_kind.value!r} contains an "
+        "underscore; fragment kinds must be single-token because "
+        "parse_fragment_id splits on the last underscore."
+    )
+del _kind
 
 
 class InvalidFragmentIdError(ValueError):
