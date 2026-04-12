@@ -32,6 +32,7 @@ class GenerationResult:
     completion_tokens: int
     model: str
 
+
 _semaphore: asyncio.Semaphore | None = None
 _semaphore_loop: asyncio.AbstractEventLoop | None = None
 
@@ -281,8 +282,7 @@ def _parse_json_result(raw: str, fallback_model: str | None) -> GenerationResult
         doc = json.loads(raw)
     except json.JSONDecodeError as exc:
         logger.warning(
-            "CLI JSON output failed to parse (%s); returning raw text with "
-            "zeroed usage",
+            "CLI JSON output failed to parse (%s); returning raw text with zeroed usage",
             exc,
         )
         return GenerationResult(
@@ -300,23 +300,15 @@ def _parse_json_result(raw: str, fallback_model: str | None) -> GenerationResult
     prompt_tokens = 0
     completion_tokens = 0
     if isinstance(usage, dict):
-        prompt_tokens = int(
-            usage.get("input_tokens") or usage.get("prompt_tokens") or 0
-        )
-        completion_tokens = int(
-            usage.get("output_tokens") or usage.get("completion_tokens") or 0
-        )
+        prompt_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
 
     model_name = str(
-        (doc.get("model") if isinstance(doc, dict) else None)
-        or fallback_model
-        or "unknown"
+        (doc.get("model") if isinstance(doc, dict) else None) or fallback_model or "unknown"
     )
 
     if not text:
-        logger.warning(
-            "CLI JSON output had no 'result' or 'text' field; returning empty"
-        )
+        logger.warning("CLI JSON output had no 'result' or 'text' field; returning empty")
     if usage is None:
         logger.debug("CLI JSON output had no 'usage' field; tokens recorded as 0")
 

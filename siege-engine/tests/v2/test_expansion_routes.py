@@ -118,7 +118,14 @@ def client(db, project):
         app.dependency_overrides.clear()
 
 
-def _patch_cli(monkeypatch, output: str, *, prompt_tokens: int = 100, completion_tokens: int = 50, model: str = "claude-sonnet-4-6"):
+def _patch_cli(
+    monkeypatch,
+    output: str,
+    *,
+    prompt_tokens: int = 100,
+    completion_tokens: int = 50,
+    model: str = "claude-sonnet-4-6",
+):
     """Patch the CLI manager to return a deterministic GenerationResult."""
     from backend.cli.manager import GenerationResult
 
@@ -155,9 +162,7 @@ class TestGetExpansion:
     def test_reports_pending_draft(self, client, project, db, monkeypatch):
         _patch_cli(monkeypatch, "# A plan\n")
         asyncio.run(
-            fe_handler.generate_feature_expansion(
-                {"project_id": project.id, "feedback": None}
-            )
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
         resp = client.get(f"/api/projects/{project.id}/expansion")
         assert resp.status_code == 200
@@ -183,9 +188,7 @@ class TestFeedback:
         db.expire_all()
         jobs = list(
             db.execute(
-                select(Job).where(
-                    Job.job_type == fe_handler.GENERATE_FEATURE_EXPANSION_JOB_TYPE
-                )
+                select(Job).where(Job.job_type == fe_handler.GENERATE_FEATURE_EXPANSION_JOB_TYPE)
             ).scalars()
         )
         assert len(jobs) == 1
@@ -202,9 +205,7 @@ class TestFeedback:
         assert resp.status_code == 200
         db.expire_all()
         job = db.execute(
-            select(Job).where(
-                Job.job_type == fe_handler.GENERATE_FEATURE_EXPANSION_JOB_TYPE
-            )
+            select(Job).where(Job.job_type == fe_handler.GENERATE_FEATURE_EXPANSION_JOB_TYPE)
         ).scalar_one()
         assert job.payload["feedback"] is None
 
@@ -217,9 +218,7 @@ class TestFeedback:
         assert resp.status_code == 200
         assert resp.json()["generation_status"] == "running"
 
-    def test_get_surfaces_latest_telemetry_after_generation(
-        self, client, project, db, monkeypatch
-    ):
+    def test_get_surfaces_latest_telemetry_after_generation(self, client, project, db, monkeypatch):
         _patch_cli(
             monkeypatch,
             "# some content\n",
@@ -228,9 +227,7 @@ class TestFeedback:
             model="claude-sonnet-4-6",
         )
         asyncio.run(
-            fe_handler.generate_feature_expansion(
-                {"project_id": project.id, "feedback": None}
-            )
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
 
         resp = client.get(f"/api/projects/{project.id}/expansion")
@@ -243,16 +240,12 @@ class TestFeedback:
         assert tlm["model"] == "claude-sonnet-4-6"
         assert tlm["created_at"]
 
-    def test_get_returns_null_telemetry_when_never_generated(
-        self, client, project
-    ):
+    def test_get_returns_null_telemetry_when_never_generated(self, client, project):
         resp = client.get(f"/api/projects/{project.id}/expansion")
         assert resp.status_code == 200
         assert resp.json()["latest_telemetry"] is None
 
-    def test_feedback_rejected_after_approval(
-        self, client, project, db, monkeypatch
-    ):
+    def test_feedback_rejected_after_approval(self, client, project, db, monkeypatch):
         """Post-approval feedback is blocked with 409.
 
         The v2 spec makes bootstrap nodes (expansion, reqs, sysarch)
@@ -263,14 +256,10 @@ class TestFeedback:
         """
         _patch_cli(monkeypatch, "# Approved content\n")
         asyncio.run(
-            fe_handler.generate_feature_expansion(
-                {"project_id": project.id, "feedback": None}
-            )
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
         db.expire_all()
-        draft = db.execute(
-            select(Draft).where(Draft.project_id == project.id)
-        ).scalar_one()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
 
         # Approve the draft — this flips node.content to non-empty.
         approve_resp = client.post(
@@ -292,14 +281,10 @@ class TestApprove:
     def test_commits_draft_to_node(self, client, project, db, monkeypatch):
         _patch_cli(monkeypatch, "# Final content\n")
         asyncio.run(
-            fe_handler.generate_feature_expansion(
-                {"project_id": project.id, "feedback": None}
-            )
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
         db.expire_all()
-        draft = db.execute(
-            select(Draft).where(Draft.project_id == project.id)
-        ).scalar_one()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
 
         resp = client.post(
             f"/api/projects/{project.id}/expansion/approve",
@@ -324,14 +309,10 @@ class TestApprove:
     def test_already_approved_returns_409(self, client, project, db, monkeypatch):
         _patch_cli(monkeypatch, "# content\n")
         asyncio.run(
-            fe_handler.generate_feature_expansion(
-                {"project_id": project.id, "feedback": None}
-            )
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
         db.expire_all()
-        draft = db.execute(
-            select(Draft).where(Draft.project_id == project.id)
-        ).scalar_one()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
         client.post(
             f"/api/projects/{project.id}/expansion/approve",
             json={"draft_id": draft.id},
@@ -348,14 +329,10 @@ class TestDiscard:
     def test_flips_draft_to_discarded(self, client, project, db, monkeypatch):
         _patch_cli(monkeypatch, "# content\n")
         asyncio.run(
-            fe_handler.generate_feature_expansion(
-                {"project_id": project.id, "feedback": None}
-            )
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
         db.expire_all()
-        draft = db.execute(
-            select(Draft).where(Draft.project_id == project.id)
-        ).scalar_one()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
 
         resp = client.post(
             f"/api/projects/{project.id}/expansion/discard",

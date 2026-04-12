@@ -45,6 +45,14 @@ select = ["E", "F", "I", "W"]
 # SQLAlchemy models use string forward references for cross-model relationships
 "backend/models/*.py" = ["F821"]
 
+[tool.ruff.lint.isort]
+# The repo has a top-level ``alembic/`` directory for migrations, which
+# ruff otherwise misclassifies as first-party and splits it from the
+# ``alembic.config`` imports it appears next to. Force it into the
+# third-party group so ``from alembic import command`` and
+# ``from alembic.config import Config`` stay together.
+known-third-party = ["alembic"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

@@ -55,9 +55,7 @@ class TestDiscardPending:
 
         count = q.discard_pending(db, project.id)
         assert count == 1
-        statuses = {
-            r.status for r in db.query(PendingInstruction).filter_by(project_id=project.id)
-        }
+        statuses = {r.status for r in db.query(PendingInstruction).filter_by(project_id=project.id)}
         assert statuses == {"applied", "discarded"}
 
     def test_returns_zero_when_nothing_queued(self, db, project):

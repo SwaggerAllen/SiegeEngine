@@ -122,9 +122,7 @@ def _serialize_node(node) -> ExpansionNodeResponse:
     )
 
 
-def _latest_telemetry(
-    db: Session, project_id: str, node_id: str
-) -> TelemetrySummary | None:
+def _latest_telemetry(db: Session, project_id: str, node_id: str) -> TelemetrySummary | None:
     """Return the most recent telemetry row for a node, or None."""
     from sqlalchemy import select
 

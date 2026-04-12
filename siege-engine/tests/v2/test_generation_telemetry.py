@@ -54,9 +54,7 @@ class TestParseJsonResult:
         assert got.model == "claude-sonnet-4-6"
 
     def test_missing_model_uses_fallback(self):
-        raw = json.dumps(
-            {"result": "x", "usage": {"input_tokens": 1, "output_tokens": 2}}
-        )
+        raw = json.dumps({"result": "x", "usage": {"input_tokens": 1, "output_tokens": 2}})
         got = _parse_json_result(raw, fallback_model="claude-sonnet-4-6")
         assert got.model == "claude-sonnet-4-6"
 
@@ -81,8 +79,6 @@ class TestParseJsonResult:
 
 class TestGenerationResultDataclass:
     def test_frozen(self):
-        r = GenerationResult(
-            text="hi", prompt_tokens=1, completion_tokens=2, model="m"
-        )
+        r = GenerationResult(text="hi", prompt_tokens=1, completion_tokens=2, model="m")
         with pytest.raises(AttributeError):
             r.text = "oops"  # type: ignore[misc]

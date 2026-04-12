@@ -104,9 +104,7 @@ class TestCloneProject:
         src_ids = {
             d.id for d in db.query(InputDocument).filter_by(project_id=source_project.id).all()
         }
-        clone_ids = {
-            d.id for d in db.query(InputDocument).filter_by(project_id=clone.id).all()
-        }
+        clone_ids = {d.id for d in db.query(InputDocument).filter_by(project_id=clone.id).all()}
         assert src_ids.isdisjoint(clone_ids)
 
     def test_raises_for_missing_source(self, db, isolated_git_base):

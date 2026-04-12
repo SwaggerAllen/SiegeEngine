@@ -132,9 +132,7 @@ class TestDebugRoute:
         append_event(
             db,
             project.id,
-            ev.NodeCreated(
-                node_id="comp_SIMPLE11", tier="comp", kind="domain", name="Simple"
-            ),
+            ev.NodeCreated(node_id="comp_SIMPLE11", tier="comp", kind="domain", name="Simple"),
         )
         db.commit()
 

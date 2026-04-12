@@ -105,20 +105,14 @@ def _patch_cli(
             model=model,
         )
 
-    monkeypatch.setattr(
-        _handler_mod.cli_manager, "generate_with_usage", fake_generate_with_usage
-    )
+    monkeypatch.setattr(_handler_mod.cli_manager, "generate_with_usage", fake_generate_with_usage)
     return calls
 
 
 class TestHappyPath:
     def test_generates_pending_draft(self, shared_session_factory, seeded_project, monkeypatch):
         calls = _patch_cli(monkeypatch, "# First draft\n")
-        asyncio.run(
-            generate_feature_expansion(
-                {"project_id": seeded_project, "feedback": None}
-            )
-        )
+        asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
 
         assert len(calls) == 1
         assert "Build a widget tracker." in calls[0]["prompt"]
@@ -127,9 +121,7 @@ class TestHappyPath:
         session = shared_session_factory()
         try:
             drafts = list(
-                session.execute(
-                    select(Draft).where(Draft.project_id == seeded_project)
-                ).scalars()
+                session.execute(select(Draft).where(Draft.project_id == seeded_project)).scalars()
             )
             assert len(drafts) == 1
             assert drafts[0].status == "pending"
@@ -144,18 +136,12 @@ class TestHappyPath:
     ):
         # First generation
         _patch_cli(monkeypatch, "# Draft one\n")
-        asyncio.run(
-            generate_feature_expansion(
-                {"project_id": seeded_project, "feedback": None}
-            )
-        )
+        asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
 
         # Second generation with feedback
         _patch_cli(monkeypatch, "# Draft two\n")
         asyncio.run(
-            generate_feature_expansion(
-                {"project_id": seeded_project, "feedback": "Make it better"}
-            )
+            generate_feature_expansion({"project_id": seeded_project, "feedback": "Make it better"})
         )
 
         session = shared_session_factory()
@@ -181,11 +167,7 @@ class TestHappyPath:
         self, shared_session_factory, seeded_project, monkeypatch
     ):
         _patch_cli(monkeypatch, "# Draft one\n")
-        asyncio.run(
-            generate_feature_expansion(
-                {"project_id": seeded_project, "feedback": None}
-            )
-        )
+        asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
 
         calls = _patch_cli(monkeypatch, "# Draft two\n")
         asyncio.run(
@@ -217,9 +199,7 @@ class TestFailureModes:
             s.close()
 
         with pytest.raises(FeatureExpansionHandlerError, match="no expansion node"):
-            asyncio.run(
-                generate_feature_expansion({"project_id": pid, "feedback": None})
-            )
+            asyncio.run(generate_feature_expansion({"project_id": pid, "feedback": None}))
 
     def test_cli_failure_leaves_no_events(
         self, shared_session_factory, seeded_project, monkeypatch
@@ -229,23 +209,17 @@ class TestFailureModes:
         async def boom(**kwargs):
             raise RuntimeError("LLM exploded")
 
-        monkeypatch.setattr(
-            _handler_mod.cli_manager, "generate_with_usage", boom
-        )
+        monkeypatch.setattr(_handler_mod.cli_manager, "generate_with_usage", boom)
 
         with pytest.raises(RuntimeError, match="LLM exploded"):
             asyncio.run(
-                generate_feature_expansion(
-                    {"project_id": seeded_project, "feedback": None}
-                )
+                generate_feature_expansion({"project_id": seeded_project, "feedback": None})
             )
 
         session = shared_session_factory()
         try:
             drafts = list(
-                session.execute(
-                    select(Draft).where(Draft.project_id == seeded_project)
-                ).scalars()
+                session.execute(select(Draft).where(Draft.project_id == seeded_project)).scalars()
             )
             assert drafts == []
         finally:
@@ -262,11 +236,7 @@ class TestApprovalPath:
         self, shared_session_factory, seeded_project, monkeypatch
     ):
         _patch_cli(monkeypatch, "# Approved content\n")
-        asyncio.run(
-            generate_feature_expansion(
-                {"project_id": seeded_project, "feedback": None}
-            )
-        )
+        asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
 
         session = shared_session_factory()
         try:
@@ -288,9 +258,7 @@ class TestApprovalPath:
 class TestTelemetry:
     """Every successful generation call records a telemetry row."""
 
-    def test_records_telemetry_row(
-        self, shared_session_factory, seeded_project, monkeypatch
-    ):
+    def test_records_telemetry_row(self, shared_session_factory, seeded_project, monkeypatch):
         _patch_cli(
             monkeypatch,
             "# Draft\n",
@@ -298,11 +266,7 @@ class TestTelemetry:
             completion_tokens=567,
             model="claude-sonnet-4-6",
         )
-        asyncio.run(
-            generate_feature_expansion(
-                {"project_id": seeded_project, "feedback": None}
-            )
-        )
+        asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
 
         session = shared_session_factory()
         try:
@@ -334,11 +298,7 @@ class TestTelemetry:
             prompt_tokens=100,
             completion_tokens=50,
         )
-        asyncio.run(
-            generate_feature_expansion(
-                {"project_id": seeded_project, "feedback": None}
-            )
-        )
+        asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
         _patch_cli(
             monkeypatch,
             "# Second\n",
@@ -346,9 +306,7 @@ class TestTelemetry:
             completion_tokens=75,
         )
         asyncio.run(
-            generate_feature_expansion(
-                {"project_id": seeded_project, "feedback": "more please"}
-            )
+            generate_feature_expansion({"project_id": seeded_project, "feedback": "more please"})
         )
 
         session = shared_session_factory()
@@ -374,15 +332,11 @@ class TestTelemetry:
         async def boom(**kwargs):
             raise RuntimeError("LLM exploded")
 
-        monkeypatch.setattr(
-            _handler_mod.cli_manager, "generate_with_usage", boom
-        )
+        monkeypatch.setattr(_handler_mod.cli_manager, "generate_with_usage", boom)
 
         with pytest.raises(RuntimeError):
             asyncio.run(
-                generate_feature_expansion(
-                    {"project_id": seeded_project, "feedback": None}
-                )
+                generate_feature_expansion({"project_id": seeded_project, "feedback": None})
             )
 
         session = shared_session_factory()
