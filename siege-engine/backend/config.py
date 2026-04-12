@@ -22,16 +22,11 @@ class Settings(BaseSettings):
 
     # Rate Limiting
     max_concurrent_llm_calls: int = 1
-    max_concurrent_chat_calls: int = 1
     llm_retry_max_attempts: int = 3
     llm_retry_base_delay: float = 1.0
 
     # Claude CLI
-    cli_timeout_document: int = 2100  # 35 min for document stages
-    cli_timeout_code: int = 1800  # 30 min for code gen/review
-    cli_timeout_summary: int = 900  # 15 min for summary generation
-    cli_max_turns_code: int = 25  # Unused directly — CLI manages turns via budget
-    cli_max_budget_code: float = 5.0  # Max USD per code gen/review invocation
+    cli_timeout: int = 1800  # 30 min default for CLI invocations
 
     # GitHub OAuth
     github_client_id: str = ""

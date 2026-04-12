@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
@@ -25,9 +25,6 @@ class InputDocument(Base):
     doc_type: Mapped[str] = mapped_column(
         String(50), default="reference"
     )  # reference | requirements | constraints
-    inject_into_stages: Mapped[list] = mapped_column(
-        JSON, default=lambda: ["feature_expansion", "system_architecture"]
-    )  # which stages receive this doc directly
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
