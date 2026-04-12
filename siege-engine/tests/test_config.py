@@ -31,9 +31,8 @@ class TestSettings:
         assert isinstance(settings.cors_origins, list)
         assert len(settings.cors_origins) > 0
 
-    def test_cli_timeouts_positive(self):
-        assert settings.cli_timeout_document > 0
-        assert settings.cli_timeout_code > 0
+    def test_cli_timeout_positive(self):
+        assert settings.cli_timeout > 0
 
     def test_env_prefix(self):
         assert Settings.model_config["env_prefix"] == "SIEGE_"

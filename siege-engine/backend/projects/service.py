@@ -10,10 +10,6 @@ from backend.models import InputDocument, Project
 
 logger = logging.getLogger(__name__)
 
-_CLAUDE_MD_TEMPLATE = (
-    Path(__file__).resolve().parent.parent / "cli" / "claude_md_template.md"
-).read_text()
-
 
 def create_project(
     db: Session, name: str, description: str | None, project_doc_content: str
@@ -25,18 +21,6 @@ def create_project(
     # Init git repo
     repo_path = git_manager.init_repo(project.id)
     project.git_repo_path = repo_path
-
-    # Write CLAUDE.md to give CLI context about the project
-    claude_md = _CLAUDE_MD_TEMPLATE.format(
-        project_name=name,
-        project_description=description or "",
-    )
-    git_manager.commit_artifact(
-        project.id,
-        claude_md,
-        "CLAUDE.md",
-        "Add CLAUDE.md for CLI context",
-    )
 
     # Store the initial project doc as an InputDocument for the v2 build phase
     # to pick up. v1's artifact-based project_doc has been removed.
@@ -126,7 +110,6 @@ def clone_project(db: Session, source_project_id: str, new_name: str | None = No
                 name=doc.name,
                 content=doc.content,
                 doc_type=doc.doc_type,
-                inject_into_stages=doc.inject_into_stages,
                 version=doc.version,
             )
         )
