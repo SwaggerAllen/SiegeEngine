@@ -54,48 +54,67 @@ Features are user intent, not architecture — they fall out of the
 expansion naturally as a bulleted list, and the feature list is a
 user-facing artifact independent of components.
 
+After approval the expansion node becomes read-only; all ongoing
+feature-layer work happens as add/delete/edit on individual
+`feat_*` nodes, not by re-editing the expansion. This is the
+"approve to mint, then edit children directly" pattern that the
+other bootstrap nodes (`reqs_*`, `sysarch_*`) reuse.
+
 - [ ] Prompt: parse approved expansion markdown → list of features (name + one-line intent)
 - [ ] Generate-parse validation loop (retry on parse failure, escalate after N)
 - [ ] On `DraftApproved` for the expansion node: enqueue `v2.mint_features` job
-- [ ] Diff against existing `feat_*` nodes — mint new, update renames, mark orphans for review
-- [ ] Lineage preservation across re-approval (don't lose user edits to existing features)
+- [ ] Mint `feat_*` nodes from the parsed list; cascade becomes the destructive-gate moment for the feature layer
+- [ ] Flip the expansion node to a read-only state post-approval (historical bootstrap reference only, not a live editing surface)
 - [ ] Routes: `GET /{project_id}/features`
-- [ ] UI: feature list view on the dashboard under the approved expansion
+- [ ] UI: feature list view on the dashboard under the (now read-only) expansion
+- [ ] UI: add/delete/edit actions on individual `feat_*` nodes once minted, feeding the pending-change queue
 
-## Phase 3 — System architecture (two-pass singleton)
+## Phase 3 — Requirements + System architecture (two separate bootstrap nodes)
 
-The cold-start resolver. A singleton `sysarch` node generated in two
-passes, same gate model as the expansion. Pass A is local reasoning
-(features → responsibilities), Pass B is global reasoning
-(responsibilities → components + APIs + dep edges + domain-parent
-edges + system-level techspec in one call).
+The cold-start resolver chain. Two singleton nodes, each with its
+own handler, its own approval flow, and its own read-only-after-
+approval lifecycle. Implemented as one roadmap phase because the
+two handlers share most of their infrastructure, even though they
+are wholly separate nodes in the model.
 
-Why two passes and not four, and why not one: component boundaries
-are justified by the APIs they expose and the dep edges they avoid,
-so components + APIs + edges have to be reasoned about jointly or
-you get boundaries that don't hold up to their own API decisions.
-But features → responsibilities is local and low-risk, so splitting
-it off gives a cheap review checkpoint without costing joint
-reasoning on the parts that need it.
+- **`reqs_*`** — features → responsibilities. Local reasoning, low
+  cross-talk. Iterated on with prose feedback like the expansion.
+  Approval mints `resp_*` nodes downstream and freezes the `reqs_*`
+  node to read-only.
+- **`sysarch_*`** — responsibilities → components + APIs + dep
+  edges + domain-parent edges + system-level techspec. Single
+  joint-reasoning call because these are mutually informing.
+  Approval mints `comp_*` nodes and edges downstream and freezes
+  the `sysarch_*` node to read-only.
 
-- [ ] New singleton `sysarch` tier node minted once per project (similar bootstrap to expansion)
+**Requirements node:**
+- [ ] New singleton `reqs` tier node minted once per project after expansion approval
 - [ ] Cold-start vs incremental-add are distinct prompt templates (one job handler picks which)
-- [ ] **Pass A prompt:** approved feature set → responsibilities-only section of sysarch doc
-- [ ] **Pass B prompt:** approved pass A output + features → full sysarch (components, APIs, dep edges, domain-parent edges, system `techspec`)
-- [ ] Pass B consumes pass A's approved output; pass A must be approved before pass B runs
-- [ ] Parseable output sections: system `techspec`, responsibilities, per-component (API intent, responsibilities covered, dependency list, domain-parent list)
+- [ ] Cold-start prompt: approved feature set → responsibilities
+- [ ] Incremental-add prompt: existing `reqs` + one new feature → delta
+- [ ] Handler reuses the expansion flow (draft → feedback → approve → commit)
+- [ ] Generate-parse validation loop (retry-then-escalate)
+- [ ] On `DraftApproved`: mint `resp_*` nodes; flip `reqs_*` to read-only
+- [ ] Routes mirror expansion (`get / feedback / approve / discard`)
+
+**System architecture node:**
+- [ ] New singleton `sysarch` tier node minted once the `reqs_*` node is approved
+- [ ] Cold-start vs incremental-add prompt templates (one job handler picks which)
+- [ ] Cold-start prompt: approved requirements + features → full sysarch (components, APIs, dep edges, domain-parent edges, system `techspec`)
+- [ ] Incremental-add prompt: existing `sysarch` + one new responsibility or feature → delta
+- [ ] Parseable output sections: system `techspec`, per-component (API intent, responsibilities covered, dependency list, domain-parent list)
 - [ ] Generate-parse validation loop (retry-then-escalate) — sysarch output is load-bearing for everything downstream
-- [ ] Handler reuses Phase 1's flow (draft → approve → commit), extended to two sequential passes
-- [ ] On `DraftApproved` for the sysarch node (after pass B): parse structured output and emit:
-  - [ ] `NodeCreated` for each new `resp_*`
+- [ ] Handler reuses the expansion flow (draft → feedback → approve → commit)
+- [ ] On `DraftApproved` for the sysarch node: parse structured output and emit:
   - [ ] `NodeCreated` for each new `comp_*` (with API intent stored as the `pubapi` fragment and techspec as `techspec` fragment)
   - [ ] `EdgeCreated` for each `dependency` edge
   - [ ] `EdgeCreated` for each `domain_parent` edge
-  - [ ] Diff against existing resp / comp / edges — preserve lineage, mark orphans
+  - [ ] Diff against existing comp / edges — preserve lineage, mark orphans
 - [ ] Cycle prevention on dependency edges (DFS from target to source) inside the parser — reject the whole parse on a cycle and loop back to regen with the error
-- [ ] Initial mint is treated as destructive at the child level (gated on explicit approval); subsequent edits to minted children propagate normally
-- [ ] Routes mirror expansion (`get / feedback / approve / discard`) for both passes of the sysarch node
-- [ ] UI: read-only system architecture view with the expansion-style four-state panel, aware of which pass the node is in
+- [ ] Initial mint is treated as destructive at the child level (gated on explicit approval)
+- [ ] Flip `sysarch_*` to read-only post-approval
+- [ ] Routes mirror expansion
+- [ ] UI: read-only requirements and system architecture views with the expansion-style four-state panel each
 
 **Structured edit UIs for feat↔resp, resp↔comp, and dependency / domain-parent edges are NOT part of this phase.** They're layered on top of the minted structure in Phase 10 — every structured UI is a prose-instruction generator feeding the pending-change queue, not a separate generation step.
 
@@ -211,30 +230,41 @@ polished combined-navigable-diff UI is post-MVP.
 - [ ] Queryable audit history endpoint
 - [ ] Feeds into review UI (the summary is what gets shown as the diff header)
 
-## Phase 13 — Plan nodes + code generation leaf pass
+## Phase 13 — File manifest + plan nodes + code generation leaf pass
 
-The bottom of the DAG. Code is not generated directly from impl
-nodes — each impl change produces a single-use **plan node** which
-is the user's gate point before any code is written. Code gen
-consumes the plan, not the impl.
+The bottom of the DAG. Three artifacts land together here because
+they're mutually dependent: the manifest defines territory, plans
+are territory-limited, and code generation consumes plans.
 
-**Plan nodes:**
-- [ ] `plan` tier node, single-use, generated when an impl node changes
-- [ ] One "live" plan per impl at a time via a current-pointer; old plans kept in the event log for audit
-- [ ] Plan prompt: current impl + prior impl + dep `pubapi` fragments + project language settings → structured list of (file, region, change) tuples + prose explanation
+**File manifest (`manifest_*`):**
+- [ ] New singleton `manifest` tier node per project, generated after the component tree is first minted
+- [ ] Manifest prompt: component tree + project language settings + framework conventions → file/folder → owning component mapping
+- [ ] Reviewable like any other node (prose feedback, regen, approval flow) — the user can say "controllers belong to the presentational layer"
+- [ ] Regenerated on component-tree changes (create/delete/promote/demote/merge/split at the `comp_*` layer), not on every edit
+- [ ] Generate-parse validation loop
+- [ ] Conflict detection: two components claiming the same file is a parse error
+- [ ] Routes mirror expansion / sysarch
+- [ ] UI: read-only manifest view with prose feedback
+
+**Plan nodes (`plan_*`):**
+- [ ] `plan` tier node, generated when an impl node changes (or when the user re-opens review on an existing plan)
+- [ ] One "live" plan per impl at a time via a current-pointer on the impl node; old plans retained in the event log as consumed
+- [ ] Plan prompt: current impl + prior impl + dep `pubapi` fragments + project language settings + manifest entries for the owning component → structured list of (file, region, change) tuples + prose explanation
 - [ ] Plan is a parseable output: generate-parse validation loop (retry-then-escalate)
-- [ ] **Plans are independently gated** from the impls that produced them — approving an impl is permission to plan; approving the plan is permission to write code
+- [ ] **Reviewable with prose feedback like any other node.** A plan the user doesn't like is iterated on in place, not thrown away and silently re-derived.
+- [ ] **Independently gated** from the impls that produced them — approving an impl is permission for the plan to regenerate; approving the plan is permission to write code. Plan approval is a destructive-class gate.
 - [ ] Plans read earlier plans + their generated code from within the same batch, so cross-impl coherence falls out of dep topo order
-- [ ] Plans are destructive by default (they imply code mutations), so they halt the cascade at the user until approved
+- [ ] **Territory enforcement:** a plan that lists file changes outside its owning impl's manifest territory fails parse validation and triggers the retry loop
+- [ ] Plan marked consumed once code generation runs against it; event log retains it for audit
 
 **Code generation:**
 - [ ] Per-project language setting (Catapult = Elixir), inherited from the sysarch `techspec`
-- [ ] Code regen prompt: plan node + dep `pubapi` fragments + language conventions (no impl node)
+- [ ] Code regen prompt: approved plan + dep `pubapi` fragments + language conventions (no impl node)
 - [ ] Language-specific validator (compile / typecheck hook) as parse-validate loop
 - [ ] Retry-then-escalate on persistent failures
 - [ ] Dependency topological execution order, one plan at a time
 - [ ] Generated code written to the project's git repo (v1 git plumbing survives)
-- [ ] Plan is considered consumed once code is generated; event log retains it for audit
+- [ ] Code generation is **territory-limited** — refuses to write outside the plan's validated territory even if the plan somehow slipped one through (defense in depth)
 
 ## Phase 14 — Catapult smoke test
 

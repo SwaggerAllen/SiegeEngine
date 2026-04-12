@@ -26,7 +26,9 @@ Destructive operations are different. They include:
 
 These three gate. Everything else runs. The gate exists specifically to prevent unrecoverable content loss, not to make the user babysit every cascade. Without this narrowing the original "gate everything" rule would block even obviously-safe edits and train the user to click through without reading, which defeats the point.
 
-Corollary: a node's *initial mint* (e.g. minting responsibility/component nodes from an approved sysarch, or minting feature nodes from an approved expansion) is treated as destructive at the child level — the mint commits to a particular shape, and if the user wants a different shape, the mint is the moment to catch that. After the mint, edits to the minted children propagate normally.
+Corollary: a node's *initial mint* (e.g. minting responsibility nodes from approved requirements, minting component nodes from approved sysarch, or minting feature nodes from an approved expansion) is treated as destructive at the child level — the mint commits to a particular shape, and if the user wants a different shape, the mint is the moment to catch that. After the mint, edits to the minted children propagate normally.
+
+Second corollary: **the bootstrap nodes (`expansion`, `reqs`, `sysarch`) become read-only after their initial approval.** Ongoing work at each of those layers happens as add/delete/edit on the individual minted children (features, responsibilities, components), not by re-editing the bootstrap prose. This is how the "approve to mint" step stays coherent with later edits — there is no re-mint, only incremental edits at the child layer. The bootstrap node itself is kept in the event log as a historical reference but isn't a live editing surface.
 
 The pending-change queue and batched review flow are how gated changes are presented when the gate fires. Non-destructive changes also flow through the queue (it's how multi-instruction edits batch into one apply), but they don't halt at the user's attention.
 
@@ -39,20 +41,18 @@ The pending-change queue and batched review flow are how gated changes are prese
 The cold start — building a project from an input doc — runs through a fixed topological order. Each layer is a node (or set of nodes) with its own prose, its own approvals, its own regen prompt:
 
 1. **Input doc** — the raw prose the user brings in. The only node the user authors directly.
-2. **Feature expansion** — a prose decomposition of the input into features, iterated on as a standalone document node *before* any feature nodes exist. Approving the expansion is what mints (or updates) the individual feature nodes downstream.
-3. **System architecture (two passes, one node)** — the cold-start resolver: a singleton `sysarch` node that gets generated in two stages.
-   - **Pass A: features → responsibilities.** Each feature decomposes into responsibilities. Local reasoning, low cross-talk, easy to review. Produces the responsibilities-only section of the sysarch doc.
-   - **Pass B: responsibilities → components + dep edges + domain-parent edges + API intent + system-level technical specification.** Single LLM call. These are mutually informing — component boundaries are justified by the APIs they expose and the dep edges they avoid, so picking boundaries before APIs leads to bad boundaries. Pass B fills out the rest of the sysarch doc.
-   - Both passes are regens of the same sysarch node. Pass B consumes pass A's approved output.
-4. **Component architecture docs** — generated in dependency topological order. Each consumes the system architecture's entry for it (including its intended API) plus the public surfaces of its dependencies.
-5. **Subcomponent architecture docs** — generated in dependency topological order within each component.
-6. **Implementation docs** — separate leaf nodes (`impl_*`) hanging off each subcomponent and each un-fanned-out component. Carry the actual design and build details for that leaf, distinct from the parent's high-level technical specification.
-7. **Plan nodes** — single-use, per-impl planning artifacts that translate an impl edit into a concrete list of code changes (see *Plan nodes*). Generated whenever an impl node changes; consumed by the next code-gen pass.
-8. **Code** — generated as a final leaf pass, plan by plan, in dependency topological order.
+2. **Feature expansion** — a prose decomposition of the input into features, iterated on as a standalone document node *before* any feature nodes exist. Approving the expansion mints the individual feature nodes downstream. **After approval the expansion node becomes read-only** — a historical bootstrap artifact, not a live editing surface. All ongoing work at the feature layer happens as add / delete / edit on individual `feat_*` nodes, not by re-editing the expansion.
+3. **Requirements (`reqs_*`)** — a singleton node that decomposes the approved feature set into responsibilities. Local reasoning, low cross-talk, iterated on with prose feedback like any other node. Approving the requirements mints `resp_*` nodes downstream.
+4. **System architecture (`sysarch_*`)** — a singleton node that takes the approved requirements plus the features and produces the component graph: components, APIs, dep edges, domain-parent edges, and a system-level technical specification. This is a single joint-reasoning pass because component boundaries, APIs, and dep edges are mutually informing — picking any one before the others leads to boundaries that don't hold up. Approving the sysarch mints `comp_*` nodes and their edges downstream.
+5. **Component architecture docs** — generated in dependency topological order. Each consumes the system architecture's entry for it (including its intended API) plus the public surfaces of its dependencies.
+6. **Subcomponent architecture docs** — generated in dependency topological order within each component.
+7. **Implementation nodes (`impl_*`)** — separate leaf nodes hanging off each subcomponent and each un-fanned-out component. Carry the actual design and build details for that leaf, distinct from the parent's high-level technical specification. An implementation node generally maps to a folder on disk (see *Code generation territory*).
+8. **Plan nodes (`plan_*`)** — per-impl planning artifacts that translate an impl edit into a concrete list of code changes (see *Plan nodes*). Reviewable with prose feedback like any other node. Consumed by the next code-gen pass once approved.
+9. **Code** — generated as a final leaf pass, plan by plan, in dependency topological order, limited to the territory of the owning component/subcomponent chain.
 
-The system architecture resolves the chicken-and-egg of "component A's regen needs component B's public surface, but B hasn't been generated yet" by committing to API intent up front. Component archs then flesh the intent into full public-surface detail, and the system architecture's API entry for each component is a transcluded fragment of the component arch (see *Shared fragments*) — so drift between "what we said" and "what got built" is detectable as a fragment diff.
+The requirements and system architecture layers together resolve the chicken-and-egg of "component A's regen needs component B's public surface, but B hasn't been generated yet" by committing to responsibilities and then API intent up front. Component archs then flesh the intent into full public-surface detail, and the system architecture's API entry for each component is a transcluded fragment of the component arch (see *Shared fragments*) — so drift between "what we said" and "what got built" is detectable as a fragment diff.
 
-**Cold-start vs incremental sysarch are different prompts.** The cold-start prompt expects the full feature set and produces everything from scratch. Adding a feature later runs an incremental-add prompt that takes the existing sysarch plus the one new feature and produces a delta. Treating them as the same template with different inputs produces a prompt that hedges badly on both jobs. Two prompts, one job handler that picks which. The MVP scaling assumption is that the initial feature set fits in context and subsequent feature additions are rare.
+**Cold-start vs incremental prompts.** Both the requirements and sysarch nodes have distinct cold-start and incremental-add prompts. The cold-start prompt expects the full upstream set and produces everything from scratch. The incremental-add prompt takes the existing node plus the one new upstream item and produces a delta. Treating them as the same template produces a prompt that hedges badly on both jobs. Two prompts per node, one job handler per node that picks which. The MVP scaling assumption is that the initial feature set fits in context and subsequent additions are rare.
 
 ### Feature decomposition
 
@@ -131,15 +131,17 @@ Kind vocabulary:
 - `resp` — responsibility
 - `comp` — component (tier-agnostic: top-level components and subcomponents both use `comp_`, because promotion/demotion between tiers must not change the ID)
 - `impl` — implementation node (leaf under a subcomponent or un-fanned-out component)
-- `plan` — single-use plan node between `impl` and code generation (see *Plan nodes*)
+- `plan` — per-impl plan node between `impl` and code generation (see *Plan nodes*)
 - `edge` — dependency or domain-parent edge, when edges need their own identity
 - `expansion` — the per-project singleton feature expansion node
-- `sysarch` — the per-project singleton system architecture node
+- `reqs` — the per-project singleton requirements node (features → responsibilities)
+- `sysarch` — the per-project singleton system architecture node (responsibilities → components + APIs + edges)
+- `manifest` — the per-project singleton file-territory manifest (see *Code generation territory*)
 - `fanin` — a domain fan-in synthesis node (one per domain component with subcomponents)
 
 Fragment IDs extend this as described above.
 
-Singletons (`expansion`, `sysarch`) still use the `<kind>_<8 chars>` form for consistency even though the suffix is decorative for a one-per-project node. Uniform IDs mean uniform fragment keys, uniform lookup, no special cases at call sites.
+Singletons (`expansion`, `reqs`, `sysarch`, `manifest`) still use the `<kind>_<8 chars>` form for consistency even though the suffix is decorative for a one-per-project node. Uniform IDs mean uniform fragment keys, uniform lookup, no special cases at call sites.
 
 Design notes:
 
@@ -401,24 +403,28 @@ An **implementation node** (`impl_*`) is a leaf that hangs off every subcomponen
 
 Properties:
 
-- **One per leaf.** Each subcomponent has exactly one `impl_*` child. A component with subcomponents has no impl node of its own — its impl lives in its subcomponents' impl nodes. A component with no subcomponents (an "un-fanned-out component") has one directly.
+- **One per leaf of the architecture tree.** Each subcomponent has exactly one `impl_*` child. A component with subcomponents has no impl node of its own — its impl lives in its subcomponents' impl nodes. A component with no subcomponents (an "un-fanned-out component") has one directly.
+- **Generally maps to a folder on disk.** In the simple case, one impl node owns one folder. The file manifest (see below) is the authoritative map; for frameworks where a single folder is shared across components (Phoenix conventions, for example) the manifest can split folder ownership at finer granularity.
 - **Reads from two places.** Parent component's `techspec` and `pubapi`/`privapi` fragments, plus the `pubapi` fragments of its dependencies. Same fragment-based scoping as architecture regen.
 - **Feeds plan generation.** Code is not generated directly from impl nodes (see *Plan nodes*). Changes to an impl node produce a fresh plan node downstream.
 - **Gate on destructive edits only**, like everything else.
 
 ## Plan nodes
 
-Code generation does not consume implementation nodes directly. Each impl change produces a **plan node** — a single-use, reviewable artifact that translates the impl edit into a concrete list of code changes. Code generation then consumes the plan, not the impl.
+Code generation does not consume implementation nodes directly. Each impl change produces a **plan node** — a first-class reviewable artifact that translates the impl edit into a concrete list of code changes. Code generation then consumes the plan, not the impl.
 
 Why split the LLM call? Because this is the single most user-relevant gate point in the whole system. Generating code in one monolithic "read the impl, think, write code" call gives the user nowhere to intervene before files start moving. Splitting it into plan-then-execute makes the LLM's reasoning a reviewable artifact and gives the user a place to say "no, don't do it that way" before any code is touched.
 
 Properties:
 
-- **Single-use.** A plan is generated for one impl change and consumed by one code-gen pass. The next impl change generates a new plan. Old plans stay in the event log for audit; only one plan is "live" per impl at a time, via a current-pointer on the impl node.
-- **Reviewable and independently gated.** Approving an impl edit is permission to generate a plan; approving the plan is permission to write code. An impl approval never silently authorizes code mutations.
+- **Reviewable like any other node.** Plans accept prose feedback, regenerate with that feedback, and go through the normal approval flow. A plan the user doesn't like is iterated on, not thrown away and silently re-derived from the impl.
+- **One live plan per impl at a time.** When an impl node changes, a fresh plan is minted (or the current plan is regenerated from the new impl diff). Old plans are retained in the event log for audit but only one is current per impl, via a pointer on the impl node.
+- **Consumed on approval.** Once a plan is approved and code generation runs against it, the plan is marked consumed and a new plan will be minted on the next impl change. "Consumed" is a lifecycle flag, not a deletion — the plan stays in the log.
+- **Independently gated.** Approving an impl edit is permission for the plan to regenerate; approving the plan is permission to write code. An impl approval never silently authorizes code mutations. Plan approval is itself a destructive-class gate because the downstream effect is a code-write.
 - **Per-impl, per-change, dep-topo order.** Plans are generated in dependency topological order. Each plan can read prior plans + their generated code from earlier in the same batch, so cross-impl coherence falls out for free.
-- **Structured output.** The plan prompt takes (current impl node, prior impl node, dep `pubapi` fragments, project language settings) and produces a list of (file, region, change) tuples plus a prose explanation of why. The structured list is what code-gen consumes; the prose is what the user reviews.
+- **Structured output.** The plan prompt takes (current impl node, prior impl node, dep `pubapi` fragments, project language settings, manifest entries for the owning component) and produces a list of (file, region, change) tuples plus a prose explanation of why. The structured list is what code-gen consumes; the prose is what the user reviews.
 - **Parse-validate loop applies.** If the plan fails to parse, retry-then-escalate, same as any other parseable output.
+- **Territory-limited.** A plan may only touch files inside the territory its owning component/subcomponent claims in the manifest (see *Code generation territory*). A plan that tries to reach outside its territory is a parse error and triggers the retry loop.
 
 ## Code generation
 
@@ -428,9 +434,26 @@ Code is generated as a **leaf pass** at the bottom of the DAG, in dependency top
 - The `pubapi` fragments of its dependencies (same fragment-based scoping as architecture regen)
 - The target language and any project-level coding conventions (inherited from the sysarch `techspec`)
 
-Code generation is subject to the parse-validate loop: generated code must compile (or pass whatever language-specific check the project specifies) before it's considered valid. Failures escalate to human review after N retries. Once code is generated, the plan node is considered consumed; the event log keeps it for audit.
+Code generation is subject to the parse-validate loop: generated code must compile (or pass whatever language-specific check the project specifies) before it's considered valid. Failures escalate to human review after N retries. Once code is generated, the plan node is marked consumed; the event log keeps it for audit.
 
 The language is a project-level setting, not a framework assumption. Catapult targets Elixir. The language-agnostic public-surface format in architecture docs is what makes this viable.
+
+### Code generation territory and the file manifest
+
+An implementation node generally maps to a folder on disk, one impl one folder, clean isolation. That rule works cleanly for projects where components correspond to directories. It does **not** work for frameworks like Phoenix where multiple components share a directory tree by convention — controllers, contexts, schemas, and views are interleaved across `lib/foo_web/` and `lib/foo/` rather than grouped by domain component.
+
+To support both shapes, the project carries a singleton **file manifest** (`manifest_*`) that maps files and folders to the components/subcomponents that own them. The manifest is the authoritative answer to "what is this file's owning component?" — an impl node's territory is computed by querying the manifest for entries owned by that impl's component/subcomponent chain.
+
+**Code generation is territory-limited.** A plan may only list file changes inside its owning impl's territory. A plan that tries to write outside its territory fails parse validation and triggers the retry loop. The territory rule is how we keep per-component code generation from stomping on other components even when they share a folder tree.
+
+Properties of the manifest:
+
+- **Singleton per project**, regenerated when the component tree changes (not on every edit — only when components are created, deleted, promoted, demoted, merged, or split).
+- **Reviewable like any other node**, with prose feedback and the normal approval flow. The user needs to be able to tell the LLM "no, controllers belong to the presentational layer, not the domain component" and have it stick.
+- **Not a hard lock.** The manifest can be edited after code generation has already run; the next plan just has to honor the new territory. If the edit narrows a territory that already has files outside its new bounds, that's a migration the user drives through explicit edits — not something the system fixes automatically.
+- **Read by plan generation**, not directly by code generation. The plan is where territory enforcement happens; code gen just executes an already-validated plan.
+
+Details of manifest regeneration triggers, conflict resolution when two components claim the same file, and whether territory is per-impl or per-component are **TBD** and tracked in *Open questions*. This section exists to pin the shape; the specifics land during Phase 13.
 
 ### Subcomponent dependency scoping
 
@@ -459,17 +482,18 @@ Option 2 is a promotion followed by dependency edits. Natural flow: user notices
 
 **Included in MVP:**
 - Structured model (features, responsibilities, components, subcomponents, implementations) as source of truth
-- Feature expansion as a standalone prose-iterable doc node
-- System architecture as a singleton two-pass cold-start resolver (Pass A: features → responsibilities; Pass B: responsibilities → components + APIs + dep edges + domain-parent edges + system-level techspec)
-- Separate cold-start vs incremental-add sysarch prompts
+- Feature expansion as a standalone prose-iterable doc node that becomes read-only after initial approval (ongoing feature-layer work happens as add/delete/edit on `feat_*` nodes)
+- Separate singleton `reqs_*` (requirements: features → responsibilities) and `sysarch_*` (responsibilities → components + APIs + dep edges + domain-parent edges + system techspec) cold-start resolver nodes, each with distinct cold-start vs incremental-add prompts and read-only-after-approval behavior
 - Approval gates **narrowed to destructive operations** (delete, merge, split); non-destructive changes propagate automatically
 - Unified DAG with domain + presentational nodes (same shape, kind tag) and domain-parent edges
 - Parseable architecture docs with XML-tagged sections (`<technical-specification>`, `<public-surface>`, `<private-surface>`, `<dependencies>`) and language-agnostic fenced code
 - Shared-fragment transclusion with fragment IDs (`techspec`, `pubapi`, `privapi`, `deps`), fragment kinds required to be single-token
 - Section-aware (fragment-level) diffs, implemented as a shared regen helper from the start (not retrofitted)
-- Implementation nodes (`impl_*`) as separate leaf nodes under every subcomponent and un-fanned-out component
+- Implementation nodes (`impl_*`) as separate leaf nodes under every subcomponent and un-fanned-out component, generally mapping to one folder each
 - Always-mint domain fan-in synthesis nodes for every domain component with subcomponents (skipped in review)
-- Plan nodes (`plan_*`) between impl and code — single-use, independently gated, one-live-per-impl
+- Plan nodes (`plan_*`) between impl and code — reviewable with prose feedback like other nodes, independently gated, one-live-per-impl, consumed on code generation
+- Singleton file manifest (`manifest_*`) mapping files/folders to owning components, reviewable; regenerated on component-tree changes
+- Territory-limited code generation — plans may only write inside their owning impl's manifest territory
 - Bounded regen-prompt context (parent doc, related features, sibling API fragments, neighbor diffs)
 - Crude fanout decision per parent (no-op attenuation is correct, refinement is post-MVP)
 - Generate-parse validation with retry-then-escalate for all parseable outputs
@@ -536,11 +560,8 @@ Catapult is SiegeEngine's only real user and it needs all the bootstrapping chan
 
 - Exact schema for the structured model (component / responsibility / feature shapes)
 - Mechanism for minting the 8-char Crockford ID suffixes and detecting collisions (random + retry, or counter-based?)
-- How the feature expansion's "approve to mint feature nodes" step reconciles with later edits that change feature boundaries (does re-approval re-mint, or is there a reparse-diff step?)
-- How sysarch Pass A and Pass B coordinate on re-approval — does a pass B edit ever need to re-run pass A?
-- Granularity of the `impl` → `plan` → code mapping: one code unit per plan, or can a plan span multiple files / modules? Implications for plan-approval UX.
-- Whether plan nodes should be re-generatable with feedback (like other nodes) or strictly re-minted on impl change
-- Exact UI treatment for the destructive-vs-non-destructive gate distinction so users learn the difference quickly
+- **File manifest specifics** — regeneration triggers (which graph changes force a remint?), conflict resolution when two components claim the same file, whether territory is tracked per-impl or per-component, what happens when a manifest edit narrows a territory that already has orphan files outside it
+- Exact UI treatment for the destructive-vs-non-destructive gate distinction. MVP direction: gated nodes render in a distinct color + blinking/pulsing animation so they're visually impossible to miss in the DAG view; exact palette and animation details TBD during Phase 11.
 - Where change summaries live in the event stream vs. a separate log
 - Where generation telemetry lives (side table, event-log metadata, or both)
 - Multi-user concurrency on the pending-change queue (MVP assumes single-user-at-a-time per project; revisit if that's wrong)
