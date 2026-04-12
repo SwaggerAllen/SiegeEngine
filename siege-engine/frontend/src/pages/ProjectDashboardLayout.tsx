@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useProject } from '../hooks/queries/useProjectQueries';
 import { debugLog } from '../lib/debugLog';
+import { FeatureExpansionPanel } from '../components/FeatureExpansionPanel';
 
 export function ProjectDashboardLayout() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -49,8 +50,8 @@ function DashboardShell({ projectId }: { projectId: string }) {
           <h1 className="text-sm font-bold truncate">{currentProject?.name || 'Loading...'}</h1>
         </div>
       </header>
-      <main className="flex-1 flex items-center justify-center text-gray-500 text-sm">
-        v2 UI not yet implemented.
+      <main className="flex-1 overflow-auto">
+        <FeatureExpansionPanel projectId={projectId} />
       </main>
     </div>
   );

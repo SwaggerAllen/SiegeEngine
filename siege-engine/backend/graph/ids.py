@@ -33,6 +33,7 @@ class Kind(str, Enum):
     COMP = "comp"
     IMPL = "impl"
     EDGE = "edge"
+    EXPANSION = "expansion"
 
 
 class InvalidIdError(ValueError):

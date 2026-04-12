@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
 from backend.database import SessionLocal, engine, init_db
+from backend.pipeline import queue as pipeline_queue
 
 # Configure logging for the whole backend
 logging.basicConfig(
@@ -40,7 +42,30 @@ async def lifespan(app: FastAPI):
     # Log database diagnostics so we can tell if the volume mounted correctly
     _log_db_diagnostics()
 
+    # Start the pipeline job-queue worker loop unless disabled.
+    # Tests set SIEGE_DISABLE_WORKER_LOOP=1 to drive handlers inline.
+    worker_task: asyncio.Task | None = None
+    if os.environ.get("SIEGE_DISABLE_WORKER_LOOP"):
+        logger.info("SIEGE_DISABLE_WORKER_LOOP set — pipeline worker loop not started")
+    else:
+        worker_task = asyncio.create_task(pipeline_queue.worker_loop())
+        logger.info("Pipeline worker loop started")
+
     yield
+
+    # Signal the worker loop to stop and wait briefly for it to drain.
+    if worker_task is not None:
+        logger.info("Shutting down — stopping pipeline worker loop...")
+        pipeline_queue.shutdown_worker()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5)
+        except asyncio.TimeoutError:
+            logger.warning("Pipeline worker did not stop in 5s; cancelling")
+            worker_task.cancel()
+            try:
+                await worker_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
     # Graceful shutdown: checkpoint WAL so all data is in the main DB file
     # This prevents data loss when Fly.io stops the machine during deploys

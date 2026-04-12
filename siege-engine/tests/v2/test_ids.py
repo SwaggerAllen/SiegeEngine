@@ -20,7 +20,14 @@ from backend.models.node import Node
 
 class TestKindEnum:
     def test_all_kinds_present(self):
-        assert {k.value for k in Kind} == {"feat", "resp", "comp", "impl", "edge"}
+        assert {k.value for k in Kind} == {
+            "feat",
+            "resp",
+            "comp",
+            "impl",
+            "edge",
+            "expansion",
+        }
 
 
 class TestValidate:

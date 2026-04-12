@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from backend.graph import events as ev
 from backend.graph.reducer import append_event
+
+# Gate the background pipeline worker loop for every v2 test — we
+# drive handlers inline (via asyncio.run) and don't want a real
+# worker racing against fixture commits.
+os.environ.setdefault("SIEGE_DISABLE_WORKER_LOOP", "1")
 
 
 @pytest.fixture()
