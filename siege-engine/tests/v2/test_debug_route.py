@@ -24,12 +24,53 @@ except BaseException as _exc:  # pragma: no cover - env-dependent skip
     )
 
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from backend.auth.routes import get_current_user  # noqa: E402
-from backend.database import get_db  # noqa: E402
+from backend.database import Base, get_db  # noqa: E402
 from backend.graph import events as ev  # noqa: E402
 from backend.graph.reducer import append_event  # noqa: E402
 from backend.main import app  # noqa: E402
+from backend.models import Project  # noqa: E402
+
+
+@pytest.fixture()
+def db():
+    """Thread-safe in-memory SQLite session for TestClient.
+
+    The default ``db`` fixture in ``tests/conftest.py`` uses a bare
+    in-memory engine, which pins the connection to the thread that
+    created it. FastAPI's TestClient runs sync endpoints in a
+    threadpool, so the endpoint sees a different thread than the
+    fixture and sqlite3 raises ``ProgrammingError``. StaticPool +
+    ``check_same_thread=False`` keeps a single shared connection
+    usable from any thread.
+    """
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    session = Session(engine)
+    yield session
+    session.close()
+
+
+@pytest.fixture()
+def project(db):
+    import uuid
+
+    p = Project(
+        id=str(uuid.uuid4()),
+        name="Test Project",
+        git_repo_path="/tmp/test-repo",
+    )
+    db.add(p)
+    db.flush()
+    return p
 
 
 @pytest.fixture()
