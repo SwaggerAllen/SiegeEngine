@@ -14,7 +14,20 @@ from backend.graph.fragments import (
 
 class TestFragmentKind:
     def test_vocabulary(self):
-        assert {k.value for k in FragmentKind} == {"pubapi", "privapi", "deps"}
+        assert {k.value for k in FragmentKind} == {
+            "techspec",
+            "pubapi",
+            "privapi",
+            "deps",
+        }
+
+    def test_all_kinds_are_single_token(self):
+        # The parser splits on the last underscore, so any fragment
+        # kind containing "_" would corrupt owner-ID parsing. The
+        # module-level assert in backend.graph.fragments catches this
+        # at import time; this test is a second line of defense.
+        for kind in FragmentKind:
+            assert "_" not in kind.value
 
 
 class TestFragmentIdBuild:

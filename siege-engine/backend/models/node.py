@@ -32,10 +32,21 @@ from backend.database import Base
 # SQLite portability. The canonical definitions live as Python enums
 # in backend.graph.ids / backend.graph.fragments.
 
-NODE_TIERS = ("feat", "resp", "comp", "impl", "expansion")
+NODE_TIERS = (
+    "feat",
+    "resp",
+    "comp",
+    "impl",
+    "plan",
+    "expansion",
+    "reqs",
+    "sysarch",
+    "manifest",
+    "fanin",
+)
 NODE_KINDS = ("domain", "presentational")
 EDGE_TYPES = ("dependency", "domain_parent")
-FRAGMENT_KINDS = ("pubapi", "privapi", "deps")
+FRAGMENT_KINDS = ("techspec", "pubapi", "privapi", "deps")
 DRAFT_TARGET_TYPES = ("node", "fragment")
 DRAFT_STATUSES = ("pending", "approved", "discarded")
 
