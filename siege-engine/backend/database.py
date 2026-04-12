@@ -27,11 +27,10 @@ def init_db():
     """Initialize database: run Alembic migrations and enable WAL."""
     import logging
 
+    import alembic.command as command  # noqa: F401  # type: ignore[import-not-found]
     from alembic.config import Config
     from alembic.migration import MigrationContext
     from alembic.script import ScriptDirectory
-
-    from alembic import command
 
     logger = logging.getLogger(__name__)
 
