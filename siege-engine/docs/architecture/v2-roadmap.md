@@ -46,50 +46,56 @@ prompt template, minimal approval UI).
 
 ---
 
-## Phase 2 — Feature-node minting from approved expansion
+## Phase 2 — Feature minting from approved expansion
 
-Turn the prose feature expansion into structured `feat_*` nodes. This
-is where the structured model starts to replace the prose document as
-source of truth.
+Turn the prose feature expansion into structured `feat_*` nodes.
+Features are user intent, not architecture — they fall out of the
+expansion naturally as a bulleted list, and the feature list is a
+user-facing artifact independent of components.
 
 - [ ] Prompt: parse approved expansion markdown → list of features (name + one-line intent)
 - [ ] Generate-parse validation loop (retry on parse failure, escalate after N)
 - [ ] On `DraftApproved` for the expansion node: enqueue `v2.mint_features` job
-- [ ] Reducer / handler diffs against existing `feat_*` nodes — mint new, update renames, mark orphans for review
+- [ ] Diff against existing `feat_*` nodes — mint new, update renames, mark orphans for review
 - [ ] Lineage preservation across re-approval (don't lose user edits to existing features)
 - [ ] Routes: `GET /{project_id}/features`
 - [ ] UI: feature list view on the dashboard under the approved expansion
 
-## Phase 3 — Feature → Responsibility decomposition
+## Phase 3 — System architecture (one-shot)
 
-Each feature decomposes into responsibilities. Many-to-many with
-features, one-to-one up from component (later phase).
+The cold-start resolver. **One LLM call** with the full feature set in
+context produces the whole component graph in a single coherent
+artifact: responsibilities, components, their dependency edges, their
+domain-parent edges, and each component's API intent. Iterated on as
+a prose doc with feedback, same gate as the expansion.
 
-- [ ] `resp` tier already exists — add responsibility prompt
-- [ ] Per-feature regeneration handler (prose draft + approval, reuse Phase 1 pattern)
-- [ ] Structured UI #1: feature → responsibility drag-drop mapping page
-- [ ] Prose instructions emitted from the drag-drop page (UI-as-prose-generator)
-- [ ] Routes + hooks mirror the expansion pattern
+This is one phase, not four, because **dependencies and responsibility
+assignment are global decisions** — you cannot decide "component A
+depends on component B" from inside feature F's decomposition (B might
+not exist yet), and a responsibility that looks like it belongs to F
+might actually be shared with G. Per-feature decomposition loses the
+architect's "how does this all fit together" view, and extract-as-new-
+component — the most common cross-cutting answer — requires >1 feature
+in context at once.
 
-## Phase 4 — Responsibility → Component mapping
+- [ ] New `sysarch` tier node minted once per project (similar bootstrap to expansion)
+- [ ] Prompt: approved feature set + (optional) prior approved sysarch + feedback → single prose system architecture doc
+- [ ] Parseable output sections per component: API intent, responsibilities covered, dependency list, domain-parent list
+- [ ] Generate-parse validation loop (retry-then-escalate) — sysarch output is load-bearing for everything downstream
+- [ ] Handler reuses Phase 1's flow (draft → approve → commit)
+- [ ] On `DraftApproved` for the sysarch node: parse structured output and emit:
+  - [ ] `NodeCreated` for each new `resp_*`
+  - [ ] `NodeCreated` for each new `comp_*` (with API intent stored as the `pubapi` fragment)
+  - [ ] `EdgeCreated` for each `dependency` edge
+  - [ ] `EdgeCreated` for each `domain_parent` edge
+  - [ ] Diff against existing resp / comp / edges — preserve lineage, mark orphans
+- [ ] Cycle prevention on dependency edges (DFS from target to source) inside the parser — reject the whole parse on a cycle and loop back to regen with the error
+- [ ] Routes mirror expansion (`get / feedback / approve / discard`) for the sysarch node
+- [ ] UI: read-only system architecture view with the expansion-style four-state panel
 
-- [ ] Component prompt (spec-level, not full arch doc yet)
-- [ ] Structured UI #2: responsibility → component drag-drop mapping
-- [ ] Approval flow mints / updates `comp_*` nodes
+**Structured edit UIs for feat↔resp, resp↔comp, and dependency / domain-parent edges are NOT part of this phase.** They're layered on top of the minted structure in Phase 12 — every structured UI is a prose-instruction generator feeding the pending-change queue, not a separate generation step.
 
-## Phase 5 — System architecture layer
-
-The cold-start resolver: a top-level doc listing every component, its
-API intent, and its dependency edges. Breaks the chicken-and-egg.
-
-- [ ] New doc node kind at the system tier (or reuse existing `comp` tier with a system parent)
-- [ ] Prompt: feature set + responsibilities + components → system architecture
-- [ ] Parseable output: per-component API intent + dependency edges
-- [ ] Reducer branches: `EdgeCreated` for `dependency` edges from parsed output
-- [ ] Structured UI #5: dependency editor (Cytoscape) with cycle prevention (DFS from target to source)
-- [ ] Approval gate: edits to system arch don't cascade until approved
-
-## Phase 6 — Component architecture docs (parseable)
+## Phase 4 — Component architecture docs (parseable)
 
 The biggest single chunk. This is where fragments and section-aware
 propagation start paying off.
@@ -103,7 +109,7 @@ propagation start paying off.
 - [ ] Structured UI #3: component decomposition graph editor (Cytoscape)
 - [ ] Tests: transclusion drift detection (system arch `pubapi` vs component arch `pubapi`)
 
-## Phase 7 — Subcomponent recursion
+## Phase 5 — Subcomponent recursion
 
 Same shape as components, recursive.
 
@@ -112,7 +118,7 @@ Same shape as components, recursive.
 - [ ] Structured UI #4: subresponsibility → subcomponent mapping
 - [ ] Promotion / demotion instructions work across tiers without changing IDs
 
-## Phase 8 — Presentational nodes + domain-parent edges
+## Phase 6 — Presentational nodes + domain-parent edges
 
 Unified DAG: domain and presentational share shape, distinguished by
 `kind`. Presentational is strictly layered after domain.
@@ -122,7 +128,7 @@ Unified DAG: domain and presentational share shape, distinguished by
 - [ ] Structured UI #6: domain-parent editor (same Cytoscape, different edge type / color)
 - [ ] Regen prompt context for presentational: reads domain `pubapi` AND `domain-parent` sibling specs
 
-## Phase 9 — Domain fan-in synthesis nodes
+## Phase 7 — Domain fan-in synthesis nodes
 
 Bound the input set to presentational counterparts.
 
@@ -132,13 +138,13 @@ Bound the input set to presentational counterparts.
 - [ ] Excluded from review scoping (mechanical, not user-editable)
 - [ ] Staleness trigger: any subcomponent implementation change regenerates the fan-in
 
-## Phase 10 — Implementation docs (leaves)
+## Phase 8 — Implementation docs (leaves)
 
 - [ ] `impl` tier leaf under component / subcomponent
 - [ ] Implementation regen prompt (prose body, consumed whole by children)
 - [ ] Approval gate per implementation
 
-## Phase 11 — Section-aware diffs & bounded regen context
+## Phase 9 — Section-aware diffs & bounded regen context
 
 Formalize propagation. Everything after initial generation is diffs.
 
@@ -147,18 +153,26 @@ Formalize propagation. Everything after initial generation is diffs.
 - [ ] Staleness ledger: "this node is stale w.r.t. neighbor N at offset O"
 - [ ] Crude fanout decision (MVP: regen all downstream; refinement is post-MVP)
 
-## Phase 12 — Pending-change queue UX
+## Phase 10 — Pending-change queue UX + structured edit UIs
 
-The foundation already has the queue primitive. This phase is wiring
-the six structured UIs into it.
+The foundation already has the queue primitive. This phase is building
+all six structured edit UIs on top of the minted model from Phases 3
+and 4, and wiring them into the pending-change queue. **No UI mutates
+the model directly — every action produces prose instructions.**
 
-- [ ] Every structured UI emits prose instructions, not direct writes
-- [ ] Queue panel: list queued instructions, discard button (free undo)
-- [ ] "Apply changes" button enqueues `v2.apply_instructions`
-- [ ] Sequential execution invariant enforced (one job at a time, in submission order)
+- [ ] Queue panel: list queued instructions, discard button (free undo), "Apply changes" button
+- [ ] "Apply" enqueues a single `v2.apply_instructions` job; sequential execution invariant
 - [ ] Rename instructions rewrite prose via the LLM, not direct DB update
+- [ ] Structured UI #1: feature → responsibility mapping (drag-drop, assign-only)
+- [ ] Structured UI #2: responsibility → component mapping (drag-drop, assign-only)
+- [ ] Structured UI #3: component / subcomponent decomposition (Cytoscape, create/move/delete)
+- [ ] Structured UI #4: subresponsibility → subcomponent mapping (drag-drop)
+- [ ] Structured UI #5: dependency editor (Cytoscape, with cycle prevention)
+- [ ] Structured UI #6: domain-parent editor (same Cytoscape, different edge type / color)
+- [ ] Mobile interaction: tap-to-select + tap-to-place for drag-drop, tap-two-nodes for graph editors
+- [ ] All six UIs support promotion / demotion between tiers without changing IDs
 
-## Phase 13 — Batched review flow
+## Phase 11 — Batched review flow
 
 Review pass = component. Combined navigable diff across every affected
 node.
@@ -171,14 +185,14 @@ node.
 - [ ] Fan-in nodes skipped in review scoping
 - [ ] Accept releases propagation to that node's downstream
 
-## Phase 14 — Change summaries
+## Phase 12 — Change summaries
 
 - [ ] Every generation prompt appends a change-summary section
 - [ ] Parser strips the summary from stored content, writes to a structured change log
 - [ ] Queryable audit history endpoint
 - [ ] Feeds into review UI (the summary is what gets shown as the diff header)
 
-## Phase 15 — Code generation leaf pass
+## Phase 13 — Code generation leaf pass
 
 The bottom of the DAG: actual code.
 
@@ -189,15 +203,15 @@ The bottom of the DAG: actual code.
 - [ ] Dependency topological execution order
 - [ ] Generated code written to the project's git repo (v1 git plumbing survives)
 
-## Phase 16 — Catapult smoke test
+## Phase 14 — Catapult smoke test
 
 The acceptance test for v2. No migration from v1; rebuild from scratch.
 
 - [ ] Load Catapult's input doc into a fresh v2 project
-- [ ] Walk all 15 phases end-to-end, approving at each gate
+- [ ] Walk all 13 phases end-to-end, approving at each gate
 - [ ] Verify generated Elixir compiles
 - [ ] Capture feedback loop latency at each tier (is the 2s poll interval enough?)
-- [ ] Identify which Phase-17 deferred items are actually blocking day-to-day use
+- [ ] Identify which post-MVP deferred items are actually blocking day-to-day use
 
 ---
 
