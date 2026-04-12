@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
@@ -134,6 +134,37 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Global exception handler: unhandled server errors get a JSON
+# response in the same shape as FastAPI's HTTPException so the
+# frontend (which reads ``err.response.data.detail`` for every error)
+# shows a useful message instead of a blank "Failed to X" fallback.
+#
+# The actual traceback is logged server-side; the response only
+# carries the exception class name + its stringified message, which
+# is safe to surface to the user and specific enough to debug from.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception(
+        "Unhandled exception in %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+    )
+    # Short-circuit for subclasses that FastAPI handles natively —
+    # this handler is the fallback for anything else that bubbles up.
+    from fastapi.exceptions import HTTPException as FastAPIHTTPException
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    if isinstance(exc, (FastAPIHTTPException, StarletteHTTPException)):
+        raise exc  # let FastAPI's own handler take it
+    detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+    return JSONResponse(
+        status_code=500,
+        content={"detail": detail},
+    )
+
 
 # API routes
 # Importing backend.graph has the side effect of registering the

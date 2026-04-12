@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Markdown from 'react-markdown';
 import type { TelemetrySummary } from '../api/expansion';
+import { describeApiError } from '../lib/describeApiError';
 import { useExpansion } from '../hooks/queries/useExpansionQueries';
 import {
   useApproveMutation,
@@ -42,8 +43,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
   if (error) {
     return (
       <div className="p-6 text-red-400 text-sm">
-        Failed to load feature expansion:{' '}
-        {error instanceof Error ? error.message : 'Unknown error'}
+        {describeApiError(error, 'Failed to load feature expansion')}
       </div>
     );
   }

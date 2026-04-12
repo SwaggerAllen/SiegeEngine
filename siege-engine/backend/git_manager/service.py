@@ -61,10 +61,17 @@ class GitManager:
             # the SHA of the most recent commit that touched this file.
             # Empty commits break file-based history lookups (iter_commits
             # skips them) which causes stale diffs.
-            if not repo.index.diff("HEAD", paths=[file_path]):
-                commits = list(repo.iter_commits(paths=file_path, max_count=1))
-                if commits:
-                    return commits[0].hexsha
+            #
+            # Skip the "content unchanged" check entirely on a fresh repo
+            # with no commits yet — ``HEAD`` doesn't resolve until there
+            # is one, and ``index.diff("HEAD")`` raises ``BadName`` in
+            # that state. A fresh repo always needs the initial commit
+            # anyway, so fall through to the commit path.
+            if repo.head.is_valid():
+                if not repo.index.diff("HEAD", paths=[file_path]):
+                    commits = list(repo.iter_commits(paths=file_path, max_count=1))
+                    if commits:
+                        return commits[0].hexsha
 
             commit = repo.index.commit(message or f"Update {file_path}")
             return commit.hexsha
