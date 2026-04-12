@@ -12,6 +12,8 @@ Two groups:
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -21,6 +23,7 @@ from backend.database import get_db
 from backend.graph import events as ev
 from backend.graph import queries
 from backend.graph.expansion import (
+    bootstrap_expansion_node,
     get_expansion_node,
     has_been_approved,
     pending_expansion_draft,
@@ -33,6 +36,8 @@ from backend.models import Project, User
 from backend.models.node import Draft
 from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -154,10 +159,22 @@ def get_expansion(
     _require_project(db, project_id)
     node = get_expansion_node(db, project_id)
     if node is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Feature expansion node missing for project",
+        # Legacy projects created before the ``expansion`` tier shipped
+        # don't have a bootstrap node. Lazily mint one on first open
+        # and kick off an initial generation, so "open old project"
+        # Just Works instead of surfacing a raw 404 on the dashboard.
+        # This also covers any future migration or crash that leaves
+        # a project in a pre-bootstrap state.
+        logger.warning("Project %s has no expansion node; lazy-bootstrapping", project_id)
+        bootstrap_expansion_node(db, project_id)
+        db.commit()
+        pipeline_queue.enqueue(
+            db,
+            job_type=GENERATE_FEATURE_EXPANSION_JOB_TYPE,
+            payload={"project_id": project_id, "feedback": None},
         )
+        node = get_expansion_node(db, project_id)
+        assert node is not None, "bootstrap_expansion_node should have minted one"
     draft = pending_expansion_draft(db, project_id)
     status, last_error = queries.latest_generation_status(
         db, project_id, GENERATE_FEATURE_EXPANSION_JOB_TYPE

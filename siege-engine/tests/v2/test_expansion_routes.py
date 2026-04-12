@@ -103,6 +103,30 @@ def project(db):
 
 
 @pytest.fixture()
+def legacy_project(db):
+    """A project created without an expansion node — simulates a
+    project that existed before the ``expansion`` tier shipped, or
+    any future state where bootstrap didn't run.
+    """
+    p = Project(
+        id=str(uuid.uuid4()),
+        name="Legacy Project",
+        git_repo_path="/tmp/legacy-repo",
+    )
+    db.add(p)
+    db.add(
+        InputDocument(
+            project_id=p.id,
+            name="Project Document",
+            content="A legacy project without expansion bootstrap.",
+            doc_type="project_doc",
+        )
+    )
+    db.commit()
+    return p
+
+
+@pytest.fixture()
 def client(db, project):
     def _get_db():
         yield db
@@ -158,6 +182,33 @@ class TestGetExpansion:
     def test_missing_project_returns_404(self, client):
         resp = client.get("/api/projects/nonexistent/expansion")
         assert resp.status_code == 404
+
+    def test_legacy_project_auto_bootstraps_expansion(self, client, legacy_project, db):
+        """Project without an expansion node shouldn't 404 — the GET
+        route lazily mints one. Reproduces the "opening existing
+        projects 404s" bug for projects created before Phase 1.
+        """
+        from backend.graph.expansion import get_expansion_node
+
+        # Confirm the legacy project starts with no expansion node.
+        db.expire_all()
+        assert get_expansion_node(db, legacy_project.id) is None
+
+        resp = client.get(f"/api/projects/{legacy_project.id}/expansion")
+        assert resp.status_code == 200
+        body = resp.json()
+        # Bootstrap minted a node with expansion_ prefix and empty content.
+        assert body["node"]["id"].startswith("expansion_")
+        assert body["node"]["content"] == ""
+        # A generation job was enqueued, so the projection reflects
+        # "running".
+        assert body["generation_status"] == "running"
+
+        # And after the lazy bootstrap, the node persists.
+        db.expire_all()
+        persisted = get_expansion_node(db, legacy_project.id)
+        assert persisted is not None
+        assert persisted.id == body["node"]["id"]
 
     def test_reports_pending_draft(self, client, project, db, monkeypatch):
         _patch_cli(monkeypatch, "# A plan\n")
