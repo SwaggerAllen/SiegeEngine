@@ -31,7 +31,7 @@ def init_db():
     from alembic.migration import MigrationContext
     from alembic.script import ScriptDirectory
 
-    from alembic import command
+    from alembic import command  # type: ignore[attr-defined]
 
     logger = logging.getLogger(__name__)
 
