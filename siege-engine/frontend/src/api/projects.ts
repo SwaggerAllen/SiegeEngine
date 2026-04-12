@@ -1,11 +1,7 @@
 import { z } from 'zod';
 import api from './client';
-import {
-  ArtifactSchema,
-  ProjectSchema,
-  ProjectDetailSchema,
-} from '../schemas/project';
-import type { Artifact, Project, ProjectDetail } from '../types/project';
+import { ProjectSchema, ProjectDetailSchema } from '../schemas/project';
+import type { Project, ProjectDetail } from '../types/project';
 
 export async function listProjects(): Promise<Project[]> {
   const { data } = await api.get('/projects/');
@@ -45,42 +41,4 @@ export async function deleteProject(id: string): Promise<void> {
 export async function cloneProject(id: string, newName?: string): Promise<Project> {
   const { data } = await api.post(`/projects/${id}/clone`, { new_name: newName ?? null });
   return ProjectSchema.parse(data);
-}
-
-export async function getArtifact(artifactId: string): Promise<Artifact> {
-  const { data } = await api.get(`/projects/artifacts/${artifactId}`);
-  return ArtifactSchema.parse(data);
-}
-
-export async function updateArtifact(
-  artifactId: string,
-  content: string,
-  clearAiReview = false
-): Promise<Artifact> {
-  const { data } = await api.put(`/projects/artifacts/${artifactId}`, { content, clear_ai_review: clearAiReview });
-  return ArtifactSchema.parse(data);
-}
-
-export async function getArtifactDiff(artifactId: string) {
-  const { data } = await api.get(`/projects/artifacts/${artifactId}/diff`);
-  return data;
-}
-
-export interface ArtifactVersion {
-  sha: string;
-  message: string;
-  timestamp: string;
-}
-
-export async function getArtifactHistory(artifactId: string): Promise<ArtifactVersion[]> {
-  const { data } = await api.get(`/projects/artifacts/${artifactId}/history`);
-  return data;
-}
-
-export async function getArtifactVersion(
-  artifactId: string,
-  commitSha: string
-): Promise<{ content: string; sha: string }> {
-  const { data } = await api.get(`/projects/artifacts/${artifactId}/versions/${commitSha}`);
-  return data;
 }
