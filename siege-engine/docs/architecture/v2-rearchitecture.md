@@ -39,6 +39,18 @@ Component {
 - Implementation docs live at the component/subcomponent level (what v1 called "architectures").
 - Conditional fanout is preserved — a component decides how it decomposes.
 
+### Architecture documents are parseable
+
+Implementation/architecture docs (the doc each component or subcomponent owns) are not free-form prose. They have a stable section structure the model can parse, because sibling components' regen prompts pull each others' API surfaces out of these docs and stuffing the entire dependency doc into every dependent's prompt would blow up context.
+
+Required sections:
+
+- **Public surface** — the component's API. Types, function signatures, methods, events — anything a dependent is allowed to reach for. This is what gets extracted and handed to dependents at regen time.
+- **Private surface** — internal types and helpers. Visible to the component's own subcomponents during their regen, but not to sibling dependents.
+- **Implementation** — the prose body. Behavior, invariants, sequencing, edge cases. Not parsed structurally; consumed whole when the component itself or its children regen.
+
+The public/private split is real architectural work the LLM does at authoring time, not a post-hoc tagging pass. A wrong export decision propagates as silent context loss to every dependent, so the public-surface section is itself a reviewable artifact — surfaced as a derived view on the component, and probably promoted to one of the structured UIs if the export decisions turn out to be a frequent source of feedback.
+
 ### Unified DAG
 
 - No more dual domain/frontend DAGs.
@@ -46,6 +58,31 @@ Component {
 - Presentational nodes are strictly in layers after domain nodes.
 - Presentational nodes that are "primary views" into domain state carry a `domain_parent` edge (cross-cutting reference, not a dependency).
 - Admin functionality is just another feature, not a new node type — it decomposes into the same component shapes (possibly backed by event-stream introspection rather than traditional CRUD).
+
+### Domain fan-in nodes
+
+Domain-parent edges carry far more context than sibling dependency edges. A dependent that just imports an API only needs the public surface; a presentational node that's a primary view *into* a domain component needs to faithfully reflect what was actually built underneath, not just the contract.
+
+To carry that load without inflating presentational regen prompts, every domain component that (a) has a presentational counterpart via a domain-parent edge and (b) has subcomponents gets a **fan-in synthesis node** sitting at the bottom of its subtree:
+
+```
+domain feature
+  → domain responsibility
+    → domain component (spec / contract)
+      → domain subcomponents
+        → subcomponent implementations
+          → fan-in synthesis           ← bottom of the domain accordion
+            → presentational counterpart (cross-tree, via domain_parent edge)
+```
+
+Properties:
+
+- The fan-in is **strictly downstream** of subcomponent implementations. It synthesizes "given these subcomponent implementations, here is what this component actually exposes and does at the component level."
+- It feeds **only** the presentational counterpart, via the domain-parent edge. It is never read by its own domain component, so domain regen stays single-pass top-down — no upward propagation, no two-source regen on the domain component itself.
+- It is a real DAG node with its own diffs and its own staleness. When a subcomponent implementation changes, the fan-in regenerates, and *its* diff is what reaches the presentational side. The presentational node never sees N subcomponent diffs directly — its input set is bounded no matter how big the domain subtree grows.
+- The presentational counterpart therefore reads two inputs from the domain subtree: the **spec** from the domain component (top-down intent) and the **fan-in** (bottom-up "what exists"). If those two ever disagree, that's a meaningful signal that the domain side has drifted from its own contract, and the presentational regen is the place where it surfaces.
+- One fan-in per domain component, not one per level — the synthesis collects the entire subtree below the component in a single rollup.
+- Domain components without subcomponents don't need a fan-in — their own implementation doc already is the synthesis.
 
 ### Source of truth inversion
 
@@ -57,6 +94,19 @@ Component {
 ---
 
 ## Propagation model
+
+### Regen prompt context
+
+A regen prompt for a node sees a fixed, bounded set of inputs:
+
+- **Parent doc** — the responsibility (or component, depending on tier) the node lives under. Provides the contract the node is supposed to fulfill.
+- **Related features** — the features that route through this node's subtree. Provides "what is this for, in user terms."
+- **Sibling dependency APIs** — the public-surface section of every component this node depends on, extracted from those components' parseable architecture docs (see *Architecture documents are parseable*). Not the full sibling docs.
+- **Diffs from neighbors** — deltas from parents, children, sibling dependencies, **and** sibling dependents. Dependents matter even though their APIs are not pulled in: their diff is the signal that downstream consumers care about what this node is doing right now.
+
+Presentational nodes additionally read the domain fan-in (see *Domain fan-in nodes*) as their input from the domain parent — both the spec and the fan-in synthesis, never the raw subtree.
+
+This is the load-bearing scoping that keeps prompts bounded as the project grows. No node ever sees the full text of its dependencies — only their public surfaces and their diffs. No node ever sees the full implementation of its parent's other children — only what changed.
 
 ### Everything after initial generation is diffs
 
@@ -201,6 +251,9 @@ Option 2 is a promotion followed by dependency edits. Natural flow: user notices
 **Included in MVP:**
 - Structured model (features, responsibilities, components, subcomponents) as source of truth
 - Unified DAG with domain + presentational nodes and domain-parent edges
+- Parseable architecture docs with public/private surface sections
+- Domain fan-in synthesis nodes feeding presentational counterparts
+- Bounded regen-prompt context (parent doc, related features, sibling APIs, neighbor diffs)
 - Diff-based regen prompts (even without optimizing which nodes run)
 - Change summaries as part of generation
 - Per-component review scoping
@@ -264,3 +317,4 @@ Catapult is SiegeEngine's only real user and it needs all the bootstrapping chan
 - Where change summaries live in the event stream vs. a separate log
 - How the feature decomposition prompt is structured (though feature-extraction risk is considered low given v1's fanout reliability)
 - Mobile-specific interaction details for the graph editors
+- Concrete parse format for architecture docs — markdown with strict header conventions, fenced typed blocks, JSON sidecar, or something else. Drives both the architecture-doc template and the public-surface extractor.
