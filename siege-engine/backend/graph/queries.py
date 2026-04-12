@@ -23,8 +23,7 @@ def list_nodes(session: Session, project_id: str) -> list[Node]:
             select(Node)
             .where(Node.project_id == project_id)
             .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
-        )
-        .scalars()
+        ).scalars()
     )
 
 
@@ -34,19 +33,15 @@ def list_edges(session: Session, project_id: str) -> list[Edge]:
             select(Edge)
             .where(Edge.project_id == project_id)
             .order_by(Edge.edge_type.asc(), Edge.id.asc())
-        )
-        .scalars()
+        ).scalars()
     )
 
 
 def list_fragments(session: Session, project_id: str) -> list[Fragment]:
     return list(
         session.execute(
-            select(Fragment)
-            .where(Fragment.project_id == project_id)
-            .order_by(Fragment.id.asc())
-        )
-        .scalars()
+            select(Fragment).where(Fragment.project_id == project_id).order_by(Fragment.id.asc())
+        ).scalars()
     )
 
 
@@ -56,8 +51,7 @@ def list_drafts(session: Session, project_id: str) -> list[Draft]:
             select(Draft)
             .where(Draft.project_id == project_id)
             .order_by(Draft.created_at.asc(), Draft.id.asc())
-        )
-        .scalars()
+        ).scalars()
     )
 
 

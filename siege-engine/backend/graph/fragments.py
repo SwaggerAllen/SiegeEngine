@@ -52,25 +52,17 @@ def parse_fragment_id(fid: str) -> tuple[str, FragmentKind]:
     underscores (which they always do) round-trip correctly.
     """
     if not isinstance(fid, str):
-        raise InvalidFragmentIdError(
-            f"Fragment ID must be a string, got {type(fid).__name__}"
-        )
+        raise InvalidFragmentIdError(f"Fragment ID must be a string, got {type(fid).__name__}")
     try:
         owner_id, kind_str = fid.rsplit("_", 1)
     except ValueError as exc:
-        raise InvalidFragmentIdError(
-            f"Fragment ID missing underscore separator: {fid!r}"
-        ) from exc
+        raise InvalidFragmentIdError(f"Fragment ID missing underscore separator: {fid!r}") from exc
     try:
         kind = FragmentKind(kind_str)
     except ValueError as exc:
-        raise InvalidFragmentIdError(
-            f"Unknown fragment kind in {fid!r}: {kind_str!r}"
-        ) from exc
+        raise InvalidFragmentIdError(f"Unknown fragment kind in {fid!r}: {kind_str!r}") from exc
     try:
         validate_owner_id(owner_id)
     except InvalidIdError as exc:
-        raise InvalidFragmentIdError(
-            f"Invalid owner ID in fragment {fid!r}: {exc}"
-        ) from exc
+        raise InvalidFragmentIdError(f"Invalid owner ID in fragment {fid!r}: {exc}") from exc
     return owner_id, kind

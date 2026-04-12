@@ -17,6 +17,7 @@ state as applying events incrementally.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 
 from sqlalchemy import func, select
@@ -78,18 +79,12 @@ def rebuild_projections(
     for incremental correctness.
     """
     # Wipe projection rows for this project, in FK-safe order.
-    session.query(Draft).filter(Draft.project_id == project_id).delete(
-        synchronize_session=False
-    )
+    session.query(Draft).filter(Draft.project_id == project_id).delete(synchronize_session=False)
     session.query(Fragment).filter(Fragment.project_id == project_id).delete(
         synchronize_session=False
     )
-    session.query(Edge).filter(Edge.project_id == project_id).delete(
-        synchronize_session=False
-    )
-    session.query(Node).filter(Node.project_id == project_id).delete(
-        synchronize_session=False
-    )
+    session.query(Edge).filter(Edge.project_id == project_id).delete(synchronize_session=False)
+    session.query(Node).filter(Node.project_id == project_id).delete(synchronize_session=False)
     session.flush()
 
     q = (
@@ -155,9 +150,7 @@ def _apply_node_renamed(session: Session, project_id: str, event: ev.NodeRenamed
     node.updated_at = datetime.utcnow()
 
 
-def _apply_node_reparented(
-    session: Session, project_id: str, event: ev.NodeReparented
-) -> None:
+def _apply_node_reparented(session: Session, project_id: str, event: ev.NodeReparented) -> None:
     node = _require_node(session, project_id, event.node_id)
     node.parent_id = event.new_parent_id
     node.updated_at = datetime.utcnow()
@@ -249,9 +242,7 @@ def _apply_edge_deleted(session: Session, project_id: str, event: ev.EdgeDeleted
         session.delete(edge)
 
 
-def _apply_fragment_updated(
-    session: Session, project_id: str, event: ev.FragmentUpdated
-) -> None:
+def _apply_fragment_updated(session: Session, project_id: str, event: ev.FragmentUpdated) -> None:
     frag = session.get(Fragment, event.fragment_id)
     now = datetime.utcnow()
     expected_id = fragment_id(event.owner_id, event.fragment_kind)
@@ -274,16 +265,12 @@ def _apply_fragment_updated(
         )
     else:
         if frag.project_id != project_id:
-            raise ReducerError(
-                f"Fragment {event.fragment_id!r} belongs to a different project"
-            )
+            raise ReducerError(f"Fragment {event.fragment_id!r} belongs to a different project")
         frag.content = event.new_content
         frag.updated_at = now
 
 
-def _apply_draft_generated(
-    session: Session, project_id: str, event: ev.DraftGenerated
-) -> None:
+def _apply_draft_generated(session: Session, project_id: str, event: ev.DraftGenerated) -> None:
     now = datetime.utcnow()
     session.add(
         Draft(
@@ -305,23 +292,17 @@ def _apply_draft_edited(session: Session, project_id: str, event: ev.DraftEdited
     if draft is None or draft.project_id != project_id:
         raise ReducerError(f"Draft {event.draft_id!r} not found in project {project_id!r}")
     if draft.status != "pending":
-        raise ReducerError(
-            f"Draft {event.draft_id!r} is {draft.status!r}, cannot edit"
-        )
+        raise ReducerError(f"Draft {event.draft_id!r} is {draft.status!r}, cannot edit")
     draft.content = event.new_content
     draft.updated_at = datetime.utcnow()
 
 
-def _apply_draft_approved(
-    session: Session, project_id: str, event: ev.DraftApproved
-) -> None:
+def _apply_draft_approved(session: Session, project_id: str, event: ev.DraftApproved) -> None:
     draft = session.get(Draft, event.draft_id)
     if draft is None or draft.project_id != project_id:
         raise ReducerError(f"Draft {event.draft_id!r} not found in project {project_id!r}")
     if draft.status != "pending":
-        raise ReducerError(
-            f"Draft {event.draft_id!r} is {draft.status!r}, cannot approve"
-        )
+        raise ReducerError(f"Draft {event.draft_id!r} is {draft.status!r}, cannot approve")
     now = datetime.utcnow()
     draft.status = "approved"
     draft.updated_at = now
@@ -351,39 +332,29 @@ def _apply_draft_approved(
             )
         else:
             if frag.project_id != project_id:
-                raise ReducerError(
-                    f"Fragment {draft.target_id!r} belongs to a different project"
-                )
+                raise ReducerError(f"Fragment {draft.target_id!r} belongs to a different project")
             frag.content = draft.content
             frag.updated_at = now
     else:
-        raise ReducerError(
-            f"DraftApproved: unknown target_type {draft.target_type!r}"
-        )
+        raise ReducerError(f"DraftApproved: unknown target_type {draft.target_type!r}")
 
 
-def _apply_draft_discarded(
-    session: Session, project_id: str, event: ev.DraftDiscarded
-) -> None:
+def _apply_draft_discarded(session: Session, project_id: str, event: ev.DraftDiscarded) -> None:
     draft = session.get(Draft, event.draft_id)
     if draft is None or draft.project_id != project_id:
         raise ReducerError(f"Draft {event.draft_id!r} not found in project {project_id!r}")
     if draft.status != "pending":
-        raise ReducerError(
-            f"Draft {event.draft_id!r} is {draft.status!r}, cannot discard"
-        )
+        raise ReducerError(f"Draft {event.draft_id!r} is {draft.status!r}, cannot discard")
     draft.status = "discarded"
     draft.updated_at = datetime.utcnow()
 
 
-def _apply_view_recorded(
-    session: Session, project_id: str, event: ev.ViewRecorded
-) -> None:
+def _apply_view_recorded(session: Session, project_id: str, event: ev.ViewRecorded) -> None:
     # View markers are audit records only — no projection mutation.
     return
 
 
-_HANDLERS: dict[str, callable] = {
+_HANDLERS: dict[str, Callable[[Session, str, ev._EventBase], None]] = {
     "NodeCreated": _apply_node_created,
     "NodeRenamed": _apply_node_renamed,
     "NodeReparented": _apply_node_reparented,

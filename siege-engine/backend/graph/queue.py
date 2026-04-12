@@ -161,9 +161,7 @@ async def _stub_apply_instructions(payload: dict) -> None:
         now = datetime.utcnow()
         for row in rows:
             try:
-                instruction = instr_mod.instruction_from_row(
-                    row.instruction_type, row.payload
-                )
+                instruction = instr_mod.instruction_from_row(row.instruction_type, row.payload)
                 logger.info(
                     "v2.apply_instructions [STUB] project=%s seq=%d: %s",
                     project_id,
@@ -189,6 +187,4 @@ def register_stub_handler() -> None:
     Called from ``backend.graph.__init__`` at import time so the
     pipeline worker always has a handler for ``v2.apply_instructions``.
     """
-    pipeline_queue.register_handler(
-        APPLY_INSTRUCTIONS_JOB_TYPE, _stub_apply_instructions
-    )
+    pipeline_queue.register_handler(APPLY_INSTRUCTIONS_JOB_TYPE, _stub_apply_instructions)

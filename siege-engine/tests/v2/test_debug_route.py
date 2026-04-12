@@ -30,21 +30,18 @@ from backend.database import get_db  # noqa: E402
 from backend.graph import events as ev  # noqa: E402
 from backend.graph.reducer import append_event  # noqa: E402
 from backend.main import app  # noqa: E402
-from backend.models import User  # noqa: E402
 
 
 @pytest.fixture()
 def client(db, project):
     # Override get_db to yield our in-memory test session; override
-    # get_current_user to return a stub user so the HTTPBearer dep is
-    # bypassed.
-    stub_user = User(id="test-user", email="test@example.com", role="admin")
-
+    # get_current_user to short-circuit the HTTPBearer dep. We just
+    # need a truthy object — the debug route never inspects the user.
     def _get_db():
         yield db
 
     def _get_user():
-        return stub_user
+        return object()
 
     app.dependency_overrides[get_db] = _get_db
     app.dependency_overrides[get_current_user] = _get_user

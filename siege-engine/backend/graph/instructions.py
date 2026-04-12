@@ -40,11 +40,7 @@ class Create(_InstructionBase):
     parent_name: str | None = None
 
     def render(self) -> str:
-        parent = (
-            f' under {self.parent_name or self.parent_id}'
-            if self.parent_id
-            else ""
-        )
+        parent = f" under {self.parent_name or self.parent_id}" if self.parent_id else ""
         return f'- Create {self.tier} "{self.name}" ({self.node_id}){parent}'
 
 
@@ -87,7 +83,7 @@ class ReassignMapping(_InstructionBase):
             return f'- Detach "{self.name}" ({self.node_id}) from its current parent'
         return (
             f'- Reassign "{self.name}" ({self.node_id}) under '
-            f'{self.new_parent_name or self.new_parent_id}'
+            f"{self.new_parent_name or self.new_parent_id}"
         )
 
 
@@ -114,9 +110,7 @@ class Demote(_InstructionBase):
 
     def render(self) -> str:
         parent = (
-            f' under {self.new_parent_name or self.new_parent_id}'
-            if self.new_parent_id
-            else ""
+            f" under {self.new_parent_name or self.new_parent_id}" if self.new_parent_id else ""
         )
         return f'- Demote "{self.name}" ({self.node_id}) to {self.new_tier}{parent}'
 
@@ -135,7 +129,7 @@ class Merge(_InstructionBase):
         names = " and ".join(f'"{n}"' for n in self.source_names)
         ids = ", ".join(self.source_ids)
         return (
-            f'- Merge {names} ({ids}) into a single entity named '
+            f"- Merge {names} ({ids}) into a single entity named "
             f'"{self.dest_name}" ({self.dest_id})'
         )
 
@@ -196,7 +190,7 @@ class AddDomainParent(_InstructionBase):
         return (
             f'- Set domain parent: presentational "{self.source_name}" '
             f'({self.source_id}) maps to domain "{self.target_name}" '
-            f'({self.target_id})'
+            f"({self.target_id})"
         )
 
 
@@ -211,7 +205,7 @@ class RemoveDomainParent(_InstructionBase):
         return (
             f'- Remove domain parent: presentational "{self.source_name}" '
             f'({self.source_id}) unmapped from "{self.target_name}" '
-            f'({self.target_id})'
+            f"({self.target_id})"
         )
 
 
