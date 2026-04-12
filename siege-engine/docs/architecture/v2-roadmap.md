@@ -100,15 +100,17 @@ are wholly separate nodes in the model.
 **System architecture node:**
 - [ ] New singleton `sysarch` tier node minted once the `reqs_*` node is approved
 - [ ] Cold-start vs incremental-add prompt templates (one job handler picks which)
-- [ ] Cold-start prompt: approved requirements + features → full sysarch (components, APIs, dep edges, domain-parent edges, system `techspec`)
-- [ ] Incremental-add prompt: existing `sysarch` + one new responsibility or feature → delta
-- [ ] Parseable output sections: system `techspec`, per-component (API intent, responsibilities covered, dependency list, domain-parent list)
+- [ ] Cold-start prompt: approved requirements + features → full sysarch (components, APIs, **top-level policies**, dep edges, domain-parent edges, system `techspec`)
+- [ ] Incremental-add prompt: existing `sysarch` + one new responsibility or feature → delta (re-running policy application for affected components only)
+- [ ] Parseable output sections **in order**: system `techspec`, per-component (API intent, responsibilities covered), `<policies>` (top-level policy list referencing `resp_*` by ID), `<dependencies>` (dep edge list — including policy-induced edges), `<domain-parent>` (domain-parent edge list). Policies precede dependencies so policy-induced dep edges land in the same pass.
 - [ ] Generate-parse validation loop (retry-then-escalate) — sysarch output is load-bearing for everything downstream
 - [ ] Handler reuses the expansion flow (draft → feedback → approve → commit)
 - [ ] On `DraftApproved` for the sysarch node: parse structured output and emit:
   - [ ] `NodeCreated` for each new `comp_*` (with API intent stored as the `pubapi` fragment and techspec as `techspec` fragment)
+  - [ ] `NodeCreated` for each new `policy_*` (projected from the `<policies>` fragment, referencing `resp_*` for `required`)
   - [ ] `EdgeCreated` for each `dependency` edge
   - [ ] `EdgeCreated` for each `domain_parent` edge
+  - [ ] Run the **top-level policy application pass**: for each new `policy_*`, walk the component set and emit one `EdgeCreated` per (policy, component) pair where the trigger applies (LLM decision). Use the `policy_application` edge type.
   - [ ] Diff against existing comp / edges — preserve lineage, mark orphans
 - [ ] Cycle prevention on dependency edges (DFS from target to source) inside the parser — reject the whole parse on a cycle and loop back to regen with the error
 - [ ] Initial mint is treated as destructive at the child level (gated on explicit approval)
@@ -123,29 +125,41 @@ are wholly separate nodes in the model.
 The biggest single chunk. This is where fragments and section-aware
 propagation start paying off, and this is also where the shared
 diff-aware regen helper lands — built as a primitive from the start,
-not retrofitted later.
+not retrofitted later. This is **also** where policies become real:
+policy minting, `policy_application` edge emission, and the
+component-local policy application pass all live here rather than
+in a separate phase.
 
-- [ ] XML section parser (`<technical-specification>`, `<public-surface>`, `<private-surface>`, `<dependencies>`)
+- [ ] XML section parser for the five required sections in order: `<technical-specification>`, `<public-surface>`, `<private-surface>`, `<policies>`, `<dependencies>`
 - [ ] Generate-parse validation loop with retry-then-escalate
-- [ ] Fragment extraction: on approval, split into `comp_X_techspec`, `comp_X_pubapi`, `comp_X_privapi`, `comp_X_deps`
+- [ ] Fragment extraction: on approval, split into `comp_X_techspec`, `comp_X_pubapi`, `comp_X_privapi`, `comp_X_policies`, `comp_X_deps`
 - [ ] Fragment kinds validated as single-token at parser boundary
 - [ ] `FragmentUpdated` event fires per changed fragment
-- [ ] **Shared regen-prompt assembly helper** — one module used by every tier's regen: parent doc + related features + dep `pubapi` fragments + neighbor diffs. Phases 5/6/7/8 reuse it rather than reimplementing.
+- [ ] **Shared regen-prompt assembly helper** — one module used by every tier's regen: parent doc + related features + dep `pubapi` fragments + applicable policies (pulled via `policy_application` edges pointing at this component) + neighbor diffs. Phases 5/6/7/8 reuse it rather than reimplementing.
 - [ ] Fragment-level diff computation (before/after per fragment) lands here, not in a later consolidation phase
 - [ ] Component regen prompt in dependency topological order, via the shared helper
-- [ ] Prompt input scoping: parent `techspec` + related features + `pubapi` fragments of deps (NOT full dep docs)
+- [ ] Prompt input scoping: parent `techspec` + related features + `pubapi` fragments of deps + applicable policies (NOT full dep docs)
+- [ ] **Component arch generation produces `<policies>` before `<dependencies>` in the same LLM call**, so policy-induced dep edges land in `<dependencies>` naturally instead of being backfilled
 - [ ] Techspec propagates downward only; child impl changes do not regenerate parent techspec
+- [ ] **Component-local policy minting**: on `DraftApproved`, project each entry in the component's `<policies>` fragment into a `policy_*` node (with `parent_id` = the minting component; `required` = a subresponsibility of this component's subtree). Deleting an entry removes the policy and cascades to its application edges.
+- [ ] **Component-local policy application pass**: after minting, run an LLM pass over each new `policy_*` against the component's subcomponents to emit `policy_application` edges. Bounded to this component's subtree since component-local policies never apply outside it.
+- [ ] **Incremental re-application** on component-set changes within this subtree: `NodeCreated` with tier `comp` + parent in this subtree, `NodeReparented` into/out of this subtree, merge/split of subcomponents — re-run the application pass for just the affected edges.
 - [ ] Structured UI #3: component decomposition graph editor (Cytoscape)
-- [ ] Tests: transclusion drift detection (system arch `pubapi` vs component arch `pubapi`)
+- [ ] Tests: transclusion drift detection (system arch `pubapi` vs component arch `pubapi`), policy minting round-trip, application-edge emission, depth-cap reducer rejection when a subcomponent would get a subcomponent child
+- [ ] Depth-cap invariant wired into the prompt: "if decomposition needs three levels, stop and recommend promoting the middle layer"
 
-## Phase 5 — Subcomponent recursion
+## Phase 5 — Subcomponent architecture docs (leaf tier)
 
-Same shape as components, recursive.
+Same shape as Phase 4 but one level below. Per the subcomponent
+depth cap, subcomponents are terminal — they have no children of
+their own kind, so their arch docs omit the `<policies>` section
+(nothing new to target) and don't run an application pass.
 
-- [ ] Recursive decomposition prompt and handler
+- [ ] Subcomponent decomposition prompt and handler — generates the same four sections as component arch (`techspec`, `pubapi`, `privapi`, `deps`) but NOT `<policies>`
 - [ ] Subcomponent dependency scoping (same-parent siblings + parent's sibling components only)
 - [ ] Structured UI #4: subresponsibility → subcomponent mapping
-- [ ] Promotion / demotion instructions work across tiers without changing IDs
+- [ ] Promotion / demotion instructions work across the two tiers without changing IDs (subcomponent ↔ component)
+- [ ] Reducer enforces the depth-cap invariant: any `NodeCreated`/`NodeReparented`/`NodePromoted`/`NodeDemoted` that would create a three-level `comp_*` chain is rejected
 
 ## Phase 6 — Presentational nodes + domain-parent edges
 

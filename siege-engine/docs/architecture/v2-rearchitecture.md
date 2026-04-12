@@ -43,9 +43,9 @@ The cold start — building a project from an input doc — runs through a fixed
 1. **Input doc** — the raw prose the user brings in. The only node the user authors directly.
 2. **Feature expansion** — a prose decomposition of the input into features, iterated on as a standalone document node *before* any feature nodes exist. Approving the expansion mints the individual feature nodes downstream. **After approval the expansion node becomes read-only** — a historical bootstrap artifact, not a live editing surface. All ongoing work at the feature layer happens as add / delete / edit on individual `feat_*` nodes, not by re-editing the expansion.
 3. **Requirements (`reqs_*`)** — a singleton node that decomposes the approved feature set into responsibilities. Local reasoning, low cross-talk, iterated on with prose feedback like any other node. Approving the requirements mints `resp_*` nodes downstream.
-4. **System architecture (`sysarch_*`)** — a singleton node that takes the approved requirements plus the features and produces the component graph: components, APIs, dep edges, domain-parent edges, and a system-level technical specification. This is a single joint-reasoning pass because component boundaries, APIs, and dep edges are mutually informing — picking any one before the others leads to boundaries that don't hold up. Approving the sysarch mints `comp_*` nodes and their edges downstream.
-5. **Component architecture docs** — generated in dependency topological order. Each consumes the system architecture's entry for it (including its intended API) plus the public surfaces of its dependencies.
-6. **Subcomponent architecture docs** — generated in dependency topological order within each component.
+4. **System architecture (`sysarch_*`)** — a singleton node that takes the approved requirements plus the features and produces the component graph: components, APIs, **top-level policies**, dep edges, domain-parent edges, and a system-level technical specification. This is a single joint-reasoning pass because component boundaries, APIs, policies, and dep edges are mutually informing — picking any one before the others leads to boundaries that don't hold up, and policies must be settled before deps because a policy can *induce* a dep edge (see *Policies*). Approving the sysarch mints `comp_*` nodes, top-level `policy_*` nodes, their application edges, and dep / domain-parent edges.
+5. **Component architecture docs** — generated in dependency topological order. Each consumes the system architecture's entry for it (including its intended API) plus the public surfaces of its dependencies. Each component arch doc also produces **component-local policies** targeting that component's subresponsibilities, minted alongside the component's subcomponents.
+6. **Subcomponent architecture docs** — generated in dependency topological order within each component. These are the leaf tier: subcomponents cannot themselves be further decomposed (see *Subcomponent depth cap*), so a subcomponent arch doc introduces no new responsibilities and has no `<policies>` section.
 7. **Implementation nodes (`impl_*`)** — separate leaf nodes hanging off each subcomponent and each un-fanned-out component. Carry the actual design and build details for that leaf, distinct from the parent's high-level technical specification. An implementation node generally maps to a folder on disk (see *Code generation territory*).
 8. **Plan nodes (`plan_*`)** — per-impl planning artifacts that translate an impl edit into a concrete list of code changes (see *Plan nodes*). Reviewable with prose feedback like any other node. Consumed by the next code-gen pass once approved.
 9. **Code** — generated as a final leaf pass, plan by plan, in dependency topological order, limited to the territory of the owning component/subcomponent chain.
@@ -83,14 +83,15 @@ Component {
 
 Component and subcomponent architecture docs are not free-form prose. They have a stable section structure the model can parse, because sibling components' regen prompts pull each others' API surfaces out of these docs and stuffing the entire dependency doc into every dependent's prompt would blow up context.
 
-Required sections, each wrapped in an XML tag:
+Required sections, each wrapped in an XML tag, **in this order**:
 
 - `<technical-specification>` — the high-level "what are we building and with what" for this component: technologies, major algorithmic choices, cross-cutting invariants. Deliberately abstract — no responsibility assignments, no per-subcomponent sequencing. Its job is to let the LLM *think* about the shape of the thing before it decomposes. A change to a child's implementation does **not** regenerate the tech spec; the spec propagates downward, not upward.
 - `<public-surface>` — the component's API. Types, function signatures, methods, events — anything a dependent is allowed to reach for. This is what gets extracted and handed to dependents at regen time.
 - `<private-surface>` — internal types and helpers. Visible to the component's own subcomponents during their regen, but not to sibling dependents.
-- `<dependencies>` — the list of sibling components this one reaches for, by stable ID. Parseable separately because it feeds dependency-edge edits and cycle detection.
+- `<policies>` — the list of policies this arch doc mints, each a structured tuple of trigger + required responsibility + rationale (see *Policies*). Comes **before** `<dependencies>` because a policy can induce a dep edge; the LLM must decide which policies apply before enumerating deps, so policy-induced deps land in `<dependencies>` naturally instead of being backfilled. Subcomponent arch docs omit this section — they introduce no new responsibilities to target.
+- `<dependencies>` — the list of sibling components this one reaches for, by stable ID. Parseable separately because it feeds dependency-edge edits and cycle detection. Always generated *after* `<policies>` in the same LLM call.
 
-The system architecture node has its own `<technical-specification>` section at the top-level tier, where project-wide concerns like language choice and runtime targets live. Subordinate tech specs inherit those constraints; child tech specs are allowed to narrow the parent's choices but not contradict them.
+The system architecture node has its own `<technical-specification>` section at the top-level tier, where project-wide concerns like language choice and runtime targets live. Subordinate tech specs inherit those constraints; child tech specs are allowed to narrow the parent's choices but not contradict them. The sysarch's `<policies>` section is where top-level (project-wide) policies live; component arch docs' `<policies>` sections hold component-local policies.
 
 Note that the actual detailed implementation prose for a leaf — behavior, invariants, sequencing, edge cases — does **not** live inside the component arch doc. It lives in a separate `impl_*` leaf node hanging beneath each subcomponent or un-fanned-out component (see *Implementation nodes*). Splitting these apart is what keeps a child's iteration from constantly re-thrashing the parent's tech spec.
 
@@ -109,6 +110,7 @@ Fragment ID format: `<owner_id>_<fragment_kind>`. The fragment kind vocabulary i
 - `techspec` — the `<technical-specification>` section
 - `pubapi` — the `<public-surface>` section
 - `privapi` — the `<private-surface>` section
+- `policies` — the `<policies>` section (authoring surface for `policy_*` nodes; see *Policies*)
 - `deps` — the `<dependencies>` section
 
 Example: `comp_a3f7k2m9_pubapi` is the public surface fragment owned by component `comp_a3f7k2m9`. The parser splits on the last underscore; `<owner_id>` is stable and opaque (see *ID scheme*), `<fragment_kind>` is validated against the vocabulary.
@@ -129,13 +131,14 @@ Kind vocabulary:
 
 - `feat` — feature
 - `resp` — responsibility
-- `comp` — component (tier-agnostic: top-level components and subcomponents both use `comp_`, because promotion/demotion between tiers must not change the ID)
+- `comp` — component (tier-agnostic *for ID purposes* — top-level components and subcomponents both use `comp_`, because promotion/demotion between tiers must not change the ID — but the structural tree is capped at two levels; see *Subcomponent depth cap*)
 - `impl` — implementation node (leaf under a subcomponent or un-fanned-out component)
 - `plan` — per-impl plan node between `impl` and code generation (see *Plan nodes*)
-- `edge` — dependency or domain-parent edge, when edges need their own identity
+- `policy` — an enforced-usage policy, projected from a `<policies>` fragment on arch-doc approval (see *Policies*)
+- `edge` — dependency, domain-parent, or policy-application edge, when edges need their own identity
 - `expansion` — the per-project singleton feature expansion node
 - `reqs` — the per-project singleton requirements node (features → responsibilities)
-- `sysarch` — the per-project singleton system architecture node (responsibilities → components + APIs + edges)
+- `sysarch` — the per-project singleton system architecture node (responsibilities → components + APIs + edges + top-level policies)
 - `manifest` — the per-project singleton file-territory manifest (see *Code generation territory*)
 - `fanin` — a domain fan-in synthesis node (one per domain component with subcomponents)
 
@@ -186,6 +189,74 @@ Properties:
 - One fan-in per domain component, not one per level — the synthesis collects the entire subtree below the component in a single rollup.
 - Fan-ins are minted unconditionally for any domain component with subcomponents, even ones that don't yet have a presentational counterpart. Always-present fan-ins mean adding a domain-parent edge later is a pure edit, not a mint-on-the-fly.
 - Fan-in nodes are **not reviewed directly**. They're mechanical synthesis; real edits land at the subcomponent implementations below them, and "does this reflect what was built" is actually checked at the presentational counterpart. Reviewing the fan-in itself would be triple-counting the same diff.
+
+### Subcomponent depth cap
+
+The `comp_*` kind is tier-agnostic *for ID purposes* — promotion and demotion between top-level components and subcomponents must not change the ID, so both tiers share the prefix — but the structural tree is **hard-capped at two levels**. A `comp_*` whose parent is another `comp_*` cannot itself be the parent of any `comp_*`. In other words: component → subcomponent → impl is the full allowed structural chain; no sub-subcomponents, ever.
+
+Rationale: three-level component trees are harder to review, harder to render, and add only marginal expressiveness beyond what "promote the middle layer to its own top-level component" already provides. The promote instruction is a single operation in the structural-edit UI, and it's the right answer whenever a subcomponent's decomposition would need its own children. Capping the tree saves us from building promote/demote flows that have to reason about unbounded nesting.
+
+The cap is enforced by the reducer on `NodeCreated`, `NodeReparented`, `NodePromoted`, and `NodeDemoted` events whose target tier is `comp`: if the chosen parent is itself a `comp_*` whose own parent is a `comp_*`, the event is rejected. The component-arch regen prompt is also told about the cap explicitly, with the escape hatch framed as "if decomposition would require three levels, stop and recommend promoting the middle layer to a top-level component."
+
+Knock-on consequences:
+
+- **Subresponsibilities become a leaf responsibility tier.** "Subresp → subcomp" is the full story; there are no sub-subresps, so policies generated at the component-arch tier have a well-defined universe of subresps to target.
+- **Fan-in nodes never nest.** A fan-in synthesizes across one component's direct subcomponents, which is now also the only structural possibility.
+- **Policies have exactly two generation tiers**, matching the two tiers where responsibilities are minted (reqs → top-level resp at sysarch generation; component-arch → subresp at decomposition). No recursive policy-generation pass is needed.
+
+### Policies
+
+Some content isn't a capability, it's a constraint. "Every LLM call records telemetry." "Every DB write goes through the reducer." "Every route checks the session." These aren't things one component does — they're things every component does, and they need to be both **stated** (so the LLM writing an impl knows about them) and **reviewable** (so a human can confirm a cross-cutting invariant still holds).
+
+The capability a policy requires is still modeled as a normal component (`TelemetryService`, the reducer, the session check) reached via normal dependency edges. What's new is the *policy itself*: the statement that the capability must actually be used at every trigger site.
+
+#### Shape of a policy
+
+A `policy_*` node carries:
+
+- **`trigger`** — a short phrase identifying the site type where the policy applies ("any LLM call", "any DB write", "any presentational route handler"). The LLM reads this during component regen to decide whether the policy is relevant.
+- **`required`** — the ID of the responsibility that must be fulfilled at every trigger site (`resp_*`). Policies reference responsibilities, not components directly, because the resp → comp 1:1 mapping gives you the concrete component to call while keeping the policy stable across component refactors: if `TelemetryService` gets merged or split, the `resp_telemetry` it fulfills moves with it and the policy wording doesn't change.
+- **`rationale`** — prose explaining why the policy exists. Shown in review and included in regen prompts so the LLM understands intent.
+
+Policies live in the `<policies>` fragment of an arch doc. On approval, the reducer parses the fragment and projects each entry into a `policy_*` node, the same way the `<dependencies>` fragment projects into dependency edges. The fragment is the authoring surface; the node is the identity that `policy_application` edges reference.
+
+#### Where policies are born
+
+Policies are generated at exactly the tiers where responsibilities come into existence (see *Subcomponent depth cap*):
+
+1. **Top-level policies** — generated as part of the sysarch joint-reasoning pass, alongside components, API intent, and dep edges. They can reference top-level `resp_*` nodes (the ones reqs minted) and they apply project-wide. Live in the sysarch's `<policies>` fragment.
+2. **Component-local policies** — generated as part of each component's arch-doc pass, alongside subcomponents, subresponsibilities, and that component's deps. They can reference the subresponsibilities that component just minted. Live in the component arch doc's `<policies>` fragment.
+
+Subcomponent arch docs have no `<policies>` section; subcomponents are leaves, so there are no new responsibilities to target.
+
+#### Policy application
+
+"Does this policy apply to this component?" is an LLM decision, not a textual match. A policy with trigger "any LLM call" applies to any component whose implementation actually makes LLM calls, which the LLM can infer from the component's techspec and subresponsibilities but a regex cannot.
+
+The application pass runs on `DraftApproved` for the arch doc that minted the policy (sysarch or component arch). It reads each new `policy_*` node's trigger, walks the applicable component set (everything downstream of the policy's generation tier), and emits one `policy_application` edge per (policy, component) pair where the LLM decides the trigger actually occurs.
+
+- **Top-level policies** apply across all `comp_*` nodes (top-level or subcomponent, since they're the same kind) that exist at the time of sysarch approval.
+- **Component-local policies** apply only within the minting component's subtree — specifically to the subcomponents that component just minted.
+
+On events that change the component set — `NodeCreated` with tier `comp`, `NodePromoted`, `NodeDemoted`, `NodeReparented`, `NodesMerged`, `NodeSplit` — the application pass is re-run, but only for edges touching the affected components. Existing edges on untouched components are preserved.
+
+#### Application edges are editable but not formally reviewed
+
+Like fan-in nodes, `policy_application` edges are mechanical derivations and don't get their own review screen. Unlike fan-in nodes, they **are** user-editable: the instruction vocabulary includes `AddPolicyApplication` and `RemovePolicyApplication` for cases where the LLM's application decision is wrong (false positive or false negative). A user override is a normal structural edit, flows through the pending-change queue, and lands in the affected component's regen prompt as context on the next regen.
+
+The reason edges aren't reviewed separately: the *policies themselves* are reviewable (they're part of the arch doc's `<policies>` fragment, and the arch doc is reviewed as a whole). If a policy turns out to be too broad or too narrow, you edit the policy's wording or its trigger, not the edges one by one. Edges are the consequence, not the configuration.
+
+#### Policy-induced dependency edges
+
+A policy that says "at any LLM call, fulfill responsibility X" implicitly requires every applicable component to depend on whichever component owns responsibility X. Those dep edges have to exist or the generated code can't reach the required capability.
+
+This is why the `<policies>` section comes *before* `<dependencies>` in the arch-doc section order: the LLM is expected to reason about policies first, then emit a `<dependencies>` list that already reflects policy-induced edges. The joint-reasoning pass in sysarch generation and the component-arch generation pass both honor this ordering. Separating policy-induced deps from ordinary deps at the storage level isn't necessary — a dep edge is a dep edge regardless of why it was added — but the *ordering within the arch doc* is load-bearing for correctness.
+
+#### Read-only after initial mint, like other bootstrap content
+
+Individual `policy_*` nodes are minted once, by their owning arch doc's approval. Editing a policy's wording is an edit to the `<policies>` fragment of that arch doc, regenerated through the normal draft → approve flow. The `policy_*` node itself isn't edited in place — it's re-projected from the updated fragment.
+
+Deleting a policy deletes all its `policy_application` edges via cascade. Adding one re-runs the application pass for just the new policy. Neither operation is destructive at the component level, so policies don't introduce any new gate points beyond the ones arch docs already have.
 
 ### Source of truth inversion
 
@@ -372,6 +443,7 @@ UI actions and prose feedback both produce bulleted instructions consumed by reg
 - **Split** — one source into multiple destinations, distribute content
 - **Add / remove dependency edge**
 - **Add / remove domain-parent edge**
+- **Add / remove policy application edge** — pin a `policy_*` to a `comp_*` (or detach), overriding the LLM's application-pass decision when it's wrong
 
 ### Rename (and every other structural edit) goes through the LLM
 
@@ -468,7 +540,16 @@ A subcomponent cannot reach into another component's subcomponents. This preserv
 
 ## Cross-cutting concerns
 
-Because responsibilities map many-to-one to components, "cross-cutting" never means "this responsibility lives in multiple components." It means one of:
+"Cross-cutting" is really two different problems wearing one name:
+
+- **Capability ownership** — "which component provides this functionality?"
+- **Enforced usage** — "which components must actually call it, at every trigger site?"
+
+The data model separates them, because they have different shapes and different failure modes.
+
+### Capability ownership
+
+Because responsibilities map many-to-one to components, "the same responsibility lives in multiple components" is never the right answer. When a concern is needed by multiple places, pick one of:
 
 1. **Promote to a higher tier** — a subresponsibility needed by two subcomponents becomes a responsibility of their shared parent component.
 2. **Extract as a new component** — a concern needed by three components becomes a standalone component that the three depend on. (This is the most common real answer.)
@@ -476,25 +557,49 @@ Because responsibilities map many-to-one to components, "cross-cutting" never me
 
 Option 2 is a promotion followed by dependency edits. Natural flow: user notices cross-cutting, promotes the subresponsibility to a standalone component, opens the dependency editor to wire up the dependents. Two UI operations, both already in the set.
 
+Capability ownership answers *"where does this functionality live?"* — and a plain dependency edge from every consumer to the owning component is sufficient for it.
+
+### Enforced usage
+
+But a dep edge only says *"component A is allowed to call component B"*, not *"component A must call component B at every site where a trigger occurs."* For something like telemetry — "every LLM call records tokens via TelemetryService" — the dep edge is necessary but not sufficient. Each component's impl author (human or LLM) has to *remember* to instrument every call site, and without a reviewable statement of the invariant, nothing catches the omission.
+
+**Policies** (see *Policies*) are the model element for this case. A policy pins a trigger-to-responsibility obligation at the tier where it's minted, projects `policy_*` nodes from the arch doc's `<policies>` fragment, and emits `policy_application` edges to every affected component. Component regen prompts then see "this component is subject to the following policies" as input context, and the LLM writing the impl has the invariant in front of it at every trigger site.
+
+The decision chart:
+
+| Shape of the concern | Answer |
+|---|---|
+| One component provides a capability, others call it when they choose to | Plain dep edge |
+| One component provides a capability, others must call it at every trigger site | Dep edge *plus* a policy naming the trigger and requiring the responsibility |
+| Two subcomponents of one parent share a subresponsibility | Promote to the parent's responsibility |
+| Same concern across many components, decomposable | Extract as a new component |
+| Cross-cutting invariant applies to only one subtree | Component-local policy (lives in that component's arch doc) |
+| Project-wide cross-cutting invariant | Top-level policy (lives in the sysarch's `<policies>`) |
+
+Policies and capability extraction compose: telemetry is both a component you extract (`TelemetryService`) *and* a policy you add to the sysarch ("at any LLM call, fulfill `resp_telemetry`"). One lives in the component graph; the other lives in the policies fragment.
+
 ---
 
 ## MVP scope
 
 **Included in MVP:**
-- Structured model (features, responsibilities, components, subcomponents, implementations) as source of truth
+- Structured model (features, responsibilities, components, subcomponents, implementations, policies) as source of truth
 - Feature expansion as a standalone prose-iterable doc node that becomes read-only after initial approval (ongoing feature-layer work happens as add/delete/edit on `feat_*` nodes)
-- Separate singleton `reqs_*` (requirements: features → responsibilities) and `sysarch_*` (responsibilities → components + APIs + dep edges + domain-parent edges + system techspec) cold-start resolver nodes, each with distinct cold-start vs incremental-add prompts and read-only-after-approval behavior
+- Separate singleton `reqs_*` (requirements: features → responsibilities) and `sysarch_*` (responsibilities → components + APIs + top-level policies + dep edges + domain-parent edges + system techspec) cold-start resolver nodes, each with distinct cold-start vs incremental-add prompts and read-only-after-approval behavior
 - Approval gates **narrowed to destructive operations** (delete, merge, split); non-destructive changes propagate automatically
 - Unified DAG with domain + presentational nodes (same shape, kind tag) and domain-parent edges
-- Parseable architecture docs with XML-tagged sections (`<technical-specification>`, `<public-surface>`, `<private-surface>`, `<dependencies>`) and language-agnostic fenced code
-- Shared-fragment transclusion with fragment IDs (`techspec`, `pubapi`, `privapi`, `deps`), fragment kinds required to be single-token
+- Parseable architecture docs with XML-tagged sections (`<technical-specification>`, `<public-surface>`, `<private-surface>`, `<policies>`, `<dependencies>`, in that order) and language-agnostic fenced code. Policies precede dependencies so policy-induced dep edges land in the same pass.
+- Shared-fragment transclusion with fragment IDs (`techspec`, `pubapi`, `privapi`, `policies`, `deps`), fragment kinds required to be single-token
 - Section-aware (fragment-level) diffs, implemented as a shared regen helper from the start (not retrofitted)
+- **Subcomponent depth cap** — component tree hard-capped at two structural levels (component → subcomponent → impl). Reducer enforces the invariant on `NodeCreated` / `NodeReparented` / `NodePromoted` / `NodeDemoted` events.
 - Implementation nodes (`impl_*`) as separate leaf nodes under every subcomponent and un-fanned-out component, generally mapping to one folder each
 - Always-mint domain fan-in synthesis nodes for every domain component with subcomponents (skipped in review)
 - Plan nodes (`plan_*`) between impl and code — reviewable with prose feedback like other nodes, independently gated, one-live-per-impl, consumed on code generation
+- **Policies** (`policy_*`) as first-class nodes projected from the `<policies>` fragment of sysarch and component arch docs. Top-level policies target top-level responsibilities; component-local policies target subresponsibilities in the minting component's subtree.
+- **`policy_application` edges** (`policy` → `comp`, many-to-many) emitted by an LLM application pass on arch-doc approval. Editable via `AddPolicyApplication` / `RemovePolicyApplication` instructions. Not formally reviewed — the policies themselves are the reviewable artifact.
 - Singleton file manifest (`manifest_*`) mapping files/folders to owning components, reviewable; regenerated on component-tree changes
 - Territory-limited code generation — plans may only write inside their owning impl's manifest territory
-- Bounded regen-prompt context (parent doc, related features, sibling API fragments, neighbor diffs)
+- Bounded regen-prompt context (parent doc, related features, sibling API fragments, applicable policies, neighbor diffs)
 - Crude fanout decision per parent (no-op attenuation is correct, refinement is post-MVP)
 - Generate-parse validation with retry-then-escalate for all parseable outputs
 - Change summaries as part of generation
@@ -504,7 +609,7 @@ Option 2 is a promotion followed by dependency edits. Natural flow: user notices
 - Read-only generated views with tags displayed verbatim
 - All six structured UIs with create + promotion/demotion
 - Prose feedback on all nodes
-- Full instruction vocabulary with stable-ID lineage references (IDs in `<kind>_<8 chars>` form; singleton kinds included)
+- Full instruction vocabulary with stable-ID lineage references (IDs in `<kind>_<8 chars>` form; singleton kinds included; policy-application edit instructions included)
 - Sequential pending-change queue with batched review
 - Code generation as a plan-driven leaf pass in dependency topo order
 
@@ -561,6 +666,7 @@ Catapult is SiegeEngine's only real user and it needs all the bootstrapping chan
 - Exact schema for the structured model (component / responsibility / feature shapes)
 - Mechanism for minting the 8-char Crockford ID suffixes and detecting collisions (random + retry, or counter-based?)
 - **File manifest specifics** — regeneration triggers (which graph changes force a remint?), conflict resolution when two components claim the same file, whether territory is tracked per-impl or per-component, what happens when a manifest edit narrows a territory that already has orphan files outside it
+- **Incremental policy re-application** — on `NodeCreated` with tier `comp`, `NodePromoted`, `NodeDemoted`, `NodeReparented`, `NodesMerged`, `NodeSplit`, the application pass re-runs. The bounding rule is clear ("only touch edges that reference affected components"), but the exact prompt shape for incremental re-application vs. cold-start application is TBD — probably two prompts, same as reqs/sysarch cold-start vs incremental-add.
 - Exact UI treatment for the destructive-vs-non-destructive gate distinction. MVP direction: gated nodes render in a distinct color + blinking/pulsing animation so they're visually impossible to miss in the DAG view; exact palette and animation details TBD during Phase 11.
 - Where change summaries live in the event stream vs. a separate log
 - Where generation telemetry lives (side table, event-log metadata, or both)
