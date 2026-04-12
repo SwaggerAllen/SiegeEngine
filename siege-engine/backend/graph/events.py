@@ -29,6 +29,7 @@ NodeTier = Literal[
     "comp",
     "impl",
     "plan",
+    "policy",
     "expansion",
     "reqs",
     "sysarch",
@@ -109,7 +110,7 @@ class NodeDeleted(_EventBase):
 class EdgeCreated(_EventBase):
     event_type: Literal["EdgeCreated"] = "EdgeCreated"
     edge_id: str
-    edge_type: Literal["dependency", "domain_parent"]
+    edge_type: Literal["dependency", "domain_parent", "policy_application"]
     source_id: str
     target_id: str
 

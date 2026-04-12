@@ -18,6 +18,7 @@ class TestFragmentKind:
             "techspec",
             "pubapi",
             "privapi",
+            "policies",
             "deps",
         }
 

@@ -120,7 +120,58 @@ def apply_event(session: Session, project_id: str, event: ev._EventBase) -> None
 # ── Per-event handlers ───────────────────────────────────────────────
 
 
+def _enforce_comp_depth_cap(
+    session: Session,
+    project_id: str,
+    new_tier: str,
+    new_parent_id: str | None,
+    node_id_for_error: str,
+) -> None:
+    """Reject structural changes that would create a three-level ``comp_*`` chain.
+
+    Per ``docs/architecture/v2-rearchitecture.md`` §Subcomponent depth
+    cap, the structural component tree is hard-capped at two levels:
+    a top-level component can have subcomponent children, but a
+    subcomponent cannot itself be the parent of another component.
+
+    Enforced on ``NodeCreated`` / ``NodeReparented`` /
+    ``NodePromoted`` / ``NodeDemoted`` events whose *target* tier is
+    ``comp``. Non-comp tiers and comp nodes attached to a non-comp
+    parent (e.g. a top-level comp under a responsibility) are
+    unaffected.
+    """
+    if new_tier != "comp":
+        return
+    if new_parent_id is None:
+        return
+    parent = session.get(Node, new_parent_id)
+    if parent is None or parent.project_id != project_id:
+        raise ReducerError(
+            f"Cannot attach node {node_id_for_error!r}: parent "
+            f"{new_parent_id!r} not found in project {project_id!r}"
+        )
+    if parent.tier != "comp":
+        return  # Top-level comp under a responsibility or similar — fine.
+    # Parent is a comp. To avoid a three-level chain, the grandparent
+    # must not also be a comp.
+    if parent.parent_id is None:
+        return
+    grandparent = session.get(Node, parent.parent_id)
+    if grandparent is None or grandparent.project_id != project_id:
+        return  # Dangling parent chain — can't enforce, but also can't blow up.
+    if grandparent.tier == "comp":
+        raise ReducerError(
+            f"Subcomponent depth cap violated: cannot attach "
+            f"comp node {node_id_for_error!r} under subcomponent "
+            f"{new_parent_id!r} (whose parent {parent.parent_id!r} is "
+            "already a component). The structural component tree is "
+            "capped at two levels; promote the middle layer to a "
+            "top-level component instead."
+        )
+
+
 def _apply_node_created(session: Session, project_id: str, event: ev.NodeCreated) -> None:
+    _enforce_comp_depth_cap(session, project_id, event.tier, event.parent_id, event.node_id)
     now = datetime.utcnow()
     session.add(
         Node(
@@ -153,18 +204,21 @@ def _apply_node_renamed(session: Session, project_id: str, event: ev.NodeRenamed
 
 def _apply_node_reparented(session: Session, project_id: str, event: ev.NodeReparented) -> None:
     node = _require_node(session, project_id, event.node_id)
+    _enforce_comp_depth_cap(session, project_id, node.tier, event.new_parent_id, event.node_id)
     node.parent_id = event.new_parent_id
     node.updated_at = datetime.utcnow()
 
 
 def _apply_node_promoted(session: Session, project_id: str, event: ev.NodePromoted) -> None:
     node = _require_node(session, project_id, event.node_id)
+    _enforce_comp_depth_cap(session, project_id, event.new_tier, node.parent_id, event.node_id)
     node.tier = event.new_tier
     node.updated_at = datetime.utcnow()
 
 
 def _apply_node_demoted(session: Session, project_id: str, event: ev.NodeDemoted) -> None:
     node = _require_node(session, project_id, event.node_id)
+    _enforce_comp_depth_cap(session, project_id, event.new_tier, node.parent_id, event.node_id)
     node.tier = event.new_tier
     node.updated_at = datetime.utcnow()
 

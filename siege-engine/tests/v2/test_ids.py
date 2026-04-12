@@ -26,6 +26,7 @@ class TestKindEnum:
             "comp",
             "impl",
             "plan",
+            "policy",
             "edge",
             "expansion",
             "reqs",
