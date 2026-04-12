@@ -32,7 +32,7 @@ from backend.database import Base
 # SQLite portability. The canonical definitions live as Python enums
 # in backend.graph.ids / backend.graph.fragments.
 
-NODE_TIERS = ("feat", "resp", "comp", "impl")
+NODE_TIERS = ("feat", "resp", "comp", "impl", "expansion")
 NODE_KINDS = ("domain", "presentational")
 EDGE_TYPES = ("dependency", "domain_parent")
 FRAGMENT_KINDS = ("pubapi", "privapi", "deps")

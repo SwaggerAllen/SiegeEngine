@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 
 from backend.config import settings
 from backend.git_manager.service import git_manager
+from backend.graph.expansion import bootstrap_expansion_node
+from backend.graph.handlers.feature_expansion import (
+    GENERATE_FEATURE_EXPANSION_JOB_TYPE,
+)
 from backend.models import InputDocument, Project
+from backend.pipeline import queue as pipeline_queue
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +45,20 @@ def create_project(
     )
 
     db.commit()
+
+    # v2: mint the per-project expansion node and kick off the initial
+    # feature-expansion generation. Order matters: the node row must be
+    # committed before the job is enqueued so the async worker can see
+    # it on its next poll. pipeline_queue.enqueue commits its own write,
+    # so it must come last.
+    bootstrap_expansion_node(db, project.id)
+    db.commit()
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_FEATURE_EXPANSION_JOB_TYPE,
+        payload={"project_id": project.id, "feedback": None},
+    )
+
     db.refresh(project)
     return project
 

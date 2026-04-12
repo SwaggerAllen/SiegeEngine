@@ -10,11 +10,16 @@ phases will add paginated/filtered list APIs for the UI.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.models.graph_event import GraphEvent
+from backend.models.job import Job
 from backend.models.node import Draft, Edge, Fragment, Node
+
+GenerationStatus = Literal["idle", "running", "failed"]
 
 
 def list_nodes(session: Session, project_id: str) -> list[Node]:
@@ -124,3 +129,33 @@ def _draft_dict(d: Draft) -> dict:
         "status": d.status,
         "batch_id": d.batch_id,
     }
+
+
+def latest_generation_status(
+    session: Session, project_id: str, job_type: str
+) -> tuple[GenerationStatus, str | None]:
+    """Derive a generation status from the latest job of ``job_type``.
+
+    Returns ``("idle", None)`` if no matching job exists, or a project
+    has never had one for this type. Returns ``("running", None)`` if
+    the latest job is ``queued`` or ``running``. Returns
+    ``("failed", error)`` if the latest job is in a terminal-failure
+    state. Completed jobs are reported as ``("idle", None)``.
+    """
+    rows = (
+        session.execute(
+            select(Job).where(Job.job_type == job_type).order_by(Job.created_at.desc()).limit(10)
+        )
+        .scalars()
+        .all()
+    )
+    for job in rows:
+        if job.payload.get("project_id") != project_id:
+            continue
+        if job.status in ("queued", "running"):
+            return "running", None
+        if job.status in ("failed", "cancelled"):
+            return "failed", job.error_message
+        # completed
+        return "idle", None
+    return "idle", None

@@ -22,9 +22,16 @@ from backend.graph.fragments import FragmentKind
 
 
 class _EventBase(BaseModel):
-    """Shared config for all event models: strict, extra-forbidden."""
+    """Shared config for all event models: strict, extra-forbidden.
+
+    Subclasses override ``event_type`` with a ``Literal`` matching the
+    class name; it is declared here so the reducer can dispatch on it
+    without mypy complaining about a missing attribute on the base.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_type: str
 
 
 # ── Structural events ────────────────────────────────────────────────
@@ -33,7 +40,7 @@ class _EventBase(BaseModel):
 class NodeCreated(_EventBase):
     event_type: Literal["NodeCreated"] = "NodeCreated"
     node_id: str
-    tier: Literal["feat", "resp", "comp", "impl"]
+    tier: Literal["feat", "resp", "comp", "impl", "expansion"]
     kind: Literal["domain", "presentational"]
     parent_id: str | None = None
     name: str
@@ -55,13 +62,13 @@ class NodeReparented(_EventBase):
 class NodePromoted(_EventBase):
     event_type: Literal["NodePromoted"] = "NodePromoted"
     node_id: str
-    new_tier: Literal["feat", "resp", "comp", "impl"]
+    new_tier: Literal["feat", "resp", "comp", "impl", "expansion"]
 
 
 class NodeDemoted(_EventBase):
     event_type: Literal["NodeDemoted"] = "NodeDemoted"
     node_id: str
-    new_tier: Literal["feat", "resp", "comp", "impl"]
+    new_tier: Literal["feat", "resp", "comp", "impl", "expansion"]
 
 
 class NodesMerged(_EventBase):

@@ -19,9 +19,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class _InstructionBase(BaseModel):
-    """Shared config: strict, extra-forbidden, frozen."""
+    """Shared config: strict, extra-forbidden, frozen.
+
+    Subclasses override ``instruction_type`` with a ``Literal`` matching
+    the class name; it is declared here so callers can read it off the
+    base without mypy complaining about a missing attribute.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    instruction_type: str
 
     def render(self) -> str:
         """Render the instruction to a single bulleted line."""

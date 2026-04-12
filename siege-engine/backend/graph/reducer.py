@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -354,7 +355,13 @@ def _apply_view_recorded(session: Session, project_id: str, event: ev.ViewRecord
     return
 
 
-_HANDLERS: dict[str, Callable[[Session, str, ev._EventBase], None]] = {
+# Callable is contravariant in its parameter types, so a concrete
+# handler ``(Session, str, NodeCreated) -> None`` is NOT a subtype of
+# ``(Session, str, _EventBase) -> None``. The dispatch contract is
+# "the string key guarantees the event type matches", so we widen the
+# value type to ``Any`` on the event parameter and let each branch
+# narrow internally.
+_HANDLERS: dict[str, Callable[[Session, str, Any], None]] = {
     "NodeCreated": _apply_node_created,
     "NodeRenamed": _apply_node_renamed,
     "NodeReparented": _apply_node_reparented,
