@@ -5,15 +5,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.auth.routes import _require_writer, get_current_user
-from backend.dag.service import propagate_staleness
 from backend.database import get_db
 from backend.git_manager.service import git_manager
 from backend.github.service import GitHubService
-from backend.models import Artifact, GitHubCredential, Project, User
+from backend.models import GitHubCredential, Project, User
 from backend.projects import service
 from backend.projects.schemas import (
-    ArtifactResponse,
-    ArtifactUpdate,
     ProjectClone,
     ProjectCreate,
     ProjectDetailResponse,
@@ -26,24 +23,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _project_to_dict(project: Project) -> dict:
+    return {
+        "id": project.id,
+        "name": project.name,
+        "description": project.description,
+        "remote_url": project.remote_url,
+        "github_repo_slug": project.github_repo_slug,
+        "auto_push_enabled": project.auto_push_enabled,
+        "git_repo_path": project.git_repo_path,
+        "created_at": project.created_at.isoformat(),
+        "updated_at": project.updated_at.isoformat(),
+    }
+
+
 @router.get("/", response_model=list[ProjectResponse])
 def list_projects(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
     projects = service.list_projects(db)
-    return [
-        {
-            "id": p.id,
-            "name": p.name,
-            "description": p.description,
-            "git_repo_path": p.git_repo_path,
-            "created_at": p.created_at.isoformat(),
-            "updated_at": p.updated_at.isoformat(),
-            "artifact_count": len(p.artifacts),
-        }
-        for p in projects
-    ]
+    return [_project_to_dict(p) for p in projects]
 
 
 @router.post("/", response_model=ProjectResponse, status_code=201)
@@ -53,15 +53,7 @@ def create_project(
     _user: User = Depends(_require_writer),
 ):
     project = service.create_project(db, req.name, req.description, req.project_doc_content)
-    return {
-        "id": project.id,
-        "name": project.name,
-        "description": project.description,
-        "git_repo_path": project.git_repo_path,
-        "created_at": project.created_at.isoformat(),
-        "updated_at": project.updated_at.isoformat(),
-        "artifact_count": len(project.artifacts),
-    }
+    return _project_to_dict(project)
 
 
 @router.get("/{project_id}", response_model=ProjectDetailResponse)
@@ -73,36 +65,7 @@ def get_project(
     project = service.get_project(db, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
-    # Read artifact statuses from snapshot (source of truth)
-    from backend.pipeline.event_store import EventStore
-
-    snapshot = EventStore(db).get_snapshot(project_id)
-    artifact_statuses = snapshot.artifact_statuses or {}
-    artifact_versions = snapshot.artifact_versions or {}
-
-    return {
-        "id": project.id,
-        "name": project.name,
-        "description": project.description,
-        "remote_url": project.remote_url,
-        "github_repo_slug": project.github_repo_slug,
-        "auto_push_enabled": project.auto_push_enabled,
-        "git_repo_path": project.git_repo_path,
-        "created_at": project.created_at.isoformat(),
-        "updated_at": project.updated_at.isoformat(),
-        "artifact_count": len(project.artifacts),
-        "artifacts": [
-            {
-                "id": a.id,
-                "name": a.name,
-                "artifact_type": a.artifact_type.value,
-                "status": artifact_statuses.get(a.id, a.status.value),
-                "component_key": a.component_key,
-                "version": artifact_versions.get(a.id, a.version),
-            }
-            for a in project.artifacts
-        ],
-    }
+    return _project_to_dict(project)
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
@@ -115,15 +78,7 @@ def update_project(
     project = service.update_project(db, project_id, req.name, req.description)
     if not project:
         raise HTTPException(404, "Project not found")
-    return {
-        "id": project.id,
-        "name": project.name,
-        "description": project.description,
-        "git_repo_path": project.git_repo_path,
-        "created_at": project.created_at.isoformat(),
-        "updated_at": project.updated_at.isoformat(),
-        "artifact_count": len(project.artifacts),
-    }
+    return _project_to_dict(project)
 
 
 @router.post("/{project_id}/clone", response_model=ProjectResponse, status_code=201)
@@ -137,15 +92,7 @@ def clone_project(
         project = service.clone_project(db, project_id, req.new_name)
     except ValueError as e:
         raise HTTPException(404, str(e))
-    return {
-        "id": project.id,
-        "name": project.name,
-        "description": project.description,
-        "git_repo_path": project.git_repo_path,
-        "created_at": project.created_at.isoformat(),
-        "updated_at": project.updated_at.isoformat(),
-        "artifact_count": len(project.artifacts),
-    }
+    return _project_to_dict(project)
 
 
 @router.delete("/{project_id}", status_code=204)
@@ -156,140 +103,6 @@ def delete_project(
 ):
     if not service.delete_project(db, project_id):
         raise HTTPException(404, "Project not found")
-
-
-# ── Artifact endpoints ──
-
-
-@router.get("/artifacts/{artifact_id}", response_model=ArtifactResponse)
-def get_artifact(
-    artifact_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-):
-    artifact = db.get(Artifact, artifact_id)
-    if not artifact:
-        raise HTTPException(404, "Artifact not found")
-    return _artifact_to_dict(artifact, db)
-
-
-@router.put("/artifacts/{artifact_id}", response_model=ArtifactResponse)
-def update_artifact(
-    artifact_id: str,
-    req: ArtifactUpdate,
-    db: Session = Depends(get_db),
-    _user: User = Depends(_require_writer),
-):
-    artifact = db.get(Artifact, artifact_id)
-    if not artifact:
-        raise HTTPException(404, "Artifact not found")
-
-    artifact.prev_git_commit_sha = artifact.git_commit_sha
-    artifact.content = req.content
-    artifact.version += 1
-    if req.clear_ai_review:
-        artifact.ai_review_feedback = None
-
-    # Commit to git
-    if artifact.file_path:
-        try:
-            sha = git_manager.commit_artifact(
-                artifact.project_id,
-                req.content,
-                artifact.file_path,
-                f"Manual edit: {artifact.name} v{artifact.version}",
-            )
-            artifact.git_commit_sha = sha
-        except Exception:
-            logger.exception("Git commit failed for artifact %s", artifact_id)
-            raise HTTPException(500, "Failed to commit artifact to git")
-
-    # Emit event so the snapshot reflects the new version/SHA
-    from backend.pipeline import events as evt
-    from backend.pipeline.event_store import EventStore
-
-    event_store = EventStore(db)
-    event_store.emit(
-        artifact.project_id,
-        evt.ARTIFACT_COMMITTED,
-        {
-            "artifact_id": artifact_id,
-            "git_commit_sha": artifact.git_commit_sha,
-            "version": artifact.version,
-            "artifact_type": artifact.artifact_type.value,
-        },
-    )
-
-    # Propagate staleness
-    propagate_staleness(db, artifact_id, event_store=event_store)
-
-    db.commit()
-    db.refresh(artifact)
-    return _artifact_to_dict(artifact, db)
-
-
-@router.get("/artifacts/{artifact_id}/diff")
-def get_artifact_diff(
-    artifact_id: str,
-    version: int | None = None,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-):
-    artifact = db.get(Artifact, artifact_id)
-    if not artifact:
-        raise HTTPException(404, "Artifact not found")
-    if not artifact.file_path:
-        raise HTTPException(400, "Artifact has no file path")
-
-    history = git_manager.get_file_history(artifact.project_id, artifact.file_path)
-    if len(history) < 2:
-        return {"diff": "", "message": "No previous version to diff against"}
-
-    new_sha = history[0]["sha"]
-    # Use prev_git_commit_sha if available to skip self-improvement commits.
-    # Don't validate against file history — empty commits (unchanged content)
-    # won't appear in iter_commits(paths=...) but are still valid diff bases.
-    old_sha = None
-    if artifact.prev_git_commit_sha:
-        old_sha = artifact.prev_git_commit_sha
-    if not old_sha:
-        old_sha = history[1]["sha"]
-    diff = git_manager.get_diff(artifact.project_id, old_sha, new_sha, artifact.file_path)
-    return {"diff": diff, "old_sha": old_sha, "new_sha": new_sha}
-
-
-@router.get("/artifacts/{artifact_id}/history")
-def get_artifact_history(
-    artifact_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-):
-    artifact = db.get(Artifact, artifact_id)
-    if not artifact:
-        raise HTTPException(404, "Artifact not found")
-    if not artifact.file_path:
-        return []
-
-    return git_manager.get_file_history(artifact.project_id, artifact.file_path)
-
-
-@router.get("/artifacts/{artifact_id}/versions/{commit_sha}")
-def get_artifact_version(
-    artifact_id: str,
-    commit_sha: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-):
-    artifact = db.get(Artifact, artifact_id)
-    if not artifact:
-        raise HTTPException(404, "Artifact not found")
-    if not artifact.file_path:
-        raise HTTPException(400, "Artifact has no file path")
-
-    content = git_manager.get_file_at_version(artifact.project_id, artifact.file_path, commit_sha)
-    if content is None:
-        raise HTTPException(404, "Version not found")
-    return {"content": content, "sha": commit_sha}
 
 
 # ── Remote / GitHub PR endpoints ──
@@ -441,79 +254,4 @@ async def get_pr_status(
             }
             for pr in prs
         ]
-    }
-
-
-def _artifact_to_dict(artifact: Artifact, db: Session | None = None) -> dict:
-    # Read status/version/git_sha from snapshot (source of truth) when db is available
-    status = artifact.status.value
-    version = artifact.version
-    git_sha = artifact.git_commit_sha
-    if db:
-        from backend.pipeline.event_store import EventStore
-
-        snapshot = EventStore(db).get_snapshot(artifact.project_id)
-        status = (snapshot.artifact_statuses or {}).get(artifact.id, status)
-        version = (snapshot.artifact_versions or {}).get(artifact.id, version)
-        git_sha = (snapshot.artifact_git_shas or {}).get(artifact.id, git_sha)
-
-    # Check if a summary generation job is active or recently failed
-    summary_generating = False
-    summary_error = None
-    if db:
-        from sqlalchemy import text as sa_text
-
-        try:
-            summary_generating = (
-                db.execute(
-                    sa_text(
-                        "SELECT 1 FROM jobs WHERE job_type = 'generate_summary'"
-                        " AND status IN ('queued', 'running')"
-                        " AND json_extract(payload, '$.artifact_id') = :aid"
-                        " LIMIT 1"
-                    ),
-                    {"aid": artifact.id},
-                ).first()
-                is not None
-            )
-
-            # If not generating and no summary, check for a recent failure
-            if not summary_generating and not artifact.summary:
-                failed_row = db.execute(
-                    sa_text(
-                        "SELECT error_message FROM jobs WHERE job_type = 'generate_summary'"
-                        " AND status = 'failed'"
-                        " AND json_extract(payload, '$.artifact_id') = :aid"
-                        " ORDER BY completed_at DESC LIMIT 1"
-                    ),
-                    {"aid": artifact.id},
-                ).first()
-                if failed_row and failed_row[0]:
-                    summary_error = failed_row[0]
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "Failed to query summary job status for %s",
-                artifact.id,
-                exc_info=True,
-            )
-
-    return {
-        "id": artifact.id,
-        "project_id": artifact.project_id,
-        "artifact_type": artifact.artifact_type.value,
-        "name": artifact.name,
-        "component_key": artifact.component_key,
-        "content": artifact.content,
-        "summary": artifact.summary,
-        "summary_generating": summary_generating,
-        "summary_error": summary_error,
-        "status": status,
-        "version": version,
-        "ai_review_feedback": artifact.ai_review_feedback,
-        "human_review_notes": artifact.human_review_notes,
-        "file_path": artifact.file_path,
-        "git_commit_sha": git_sha,
-        "language": artifact.language,
-        "created_at": artifact.created_at.isoformat(),
-        "updated_at": artifact.updated_at.isoformat(),
     }

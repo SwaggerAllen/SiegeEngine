@@ -12,9 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.database import Base
 
 if TYPE_CHECKING:
-    from backend.models.artifact import Artifact, ComponentDefinition
     from backend.models.input_document import InputDocument
-    from backend.models.pipeline import PipelineConfig, PipelineRun, StageExecution
 
 
 class Project(Base):
@@ -34,21 +32,6 @@ class Project(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    artifacts: Mapped[list["Artifact"]] = relationship(
-        back_populates="project", cascade="all, delete-orphan"
-    )
-    pipeline_config: Mapped["PipelineConfig"] = relationship(
-        back_populates="project", uselist=False, cascade="all, delete-orphan"
-    )
-    stage_executions: Mapped[list["StageExecution"]] = relationship(
-        back_populates="project", cascade="all, delete-orphan"
-    )
-    component_definitions: Mapped[list["ComponentDefinition"]] = relationship(
-        back_populates="project", cascade="all, delete-orphan"
-    )
-    pipeline_runs: Mapped[list["PipelineRun"]] = relationship(
-        back_populates="project", cascade="all, delete-orphan"
-    )
     input_documents: Mapped[list["InputDocument"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )

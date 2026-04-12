@@ -26,40 +26,9 @@ class ProjectResponse(BaseModel):
     git_repo_path: str
     created_at: str
     updated_at: str
-    artifact_count: int = 0
-    pipeline_status: str | None = None
 
     model_config = {"from_attributes": True}
 
 
 class ProjectDetailResponse(ProjectResponse):
-    artifacts: list[dict] = []
-
-
-class ArtifactResponse(BaseModel):
-    id: str
-    project_id: str
-    artifact_type: str
-    name: str
-    component_key: str | None
-    content: str | None
-    summary: str | None = None
-    summary_generating: bool = False
-    summary_error: str | None = None
-    status: str
-    version: int
-    ai_review_feedback: dict | None
-    human_review_notes: str | None
-    file_path: str | None
-    git_commit_sha: str | None = None
-    language: str | None
-    is_stale: bool = False
-    created_at: str
-    updated_at: str
-
-    model_config = {"from_attributes": True}
-
-
-class ArtifactUpdate(BaseModel):
-    content: str
-    clear_ai_review: bool = False
+    pass

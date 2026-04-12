@@ -8,6 +8,7 @@ and backpressure (configurable concurrency).
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from sqlalchemy import text
@@ -15,6 +16,8 @@ from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal
 from backend.models.job import Job
+
+JobHandler = Callable[[dict], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -201,212 +204,16 @@ def _complete_job_sync(job_id: str, error: str | None = None) -> None:
 
 
 # ── Job Handlers ──────────────────────────────────────────────────────────────
+#
+# Handlers are registered by the v2 build phase. The queue infrastructure is
+# generic and transport-only; it knows nothing about pipeline semantics.
+
+_JOB_HANDLERS: dict[str, JobHandler] = {}
 
 
-async def _handle_start_pipeline(payload: dict) -> None:
-    """Handle a start_pipeline job."""
-    from backend.pipeline.engine import PipelineEngine
-
-    db = SessionLocal()
-    try:
-        engine = PipelineEngine(db)
-        await engine.start_pipeline(
-            payload["project_id"],
-            pipeline_run_id=payload.get("pipeline_run_id"),
-        )
-    finally:
-        db.close()
-
-
-async def _handle_resume_run(payload: dict) -> None:
-    """Handle a resume_run job."""
-    from backend.pipeline.engine import PipelineEngine
-
-    db = SessionLocal()
-    try:
-        engine = PipelineEngine(db)
-        await engine.resume_run(
-            payload["project_id"],
-            payload["pipeline_run_id"],
-            payload["prev_run_id"],
-        )
-    finally:
-        db.close()
-
-
-async def _handle_resume_stage(payload: dict) -> None:
-    """Handle a resume_stage job."""
-    from backend.pipeline.engine import PipelineEngine
-
-    db = SessionLocal()
-    try:
-        engine = PipelineEngine(db)
-        await engine.resume_stage(
-            payload["execution_id"],
-            payload["action"],
-            notes=payload.get("notes"),
-            edited_content=payload.get("edited_content"),
-            user_id=payload.get("user_id"),
-        )
-    finally:
-        db.close()
-
-
-async def _handle_revise_artifact(payload: dict) -> None:
-    """Handle a revise_artifact job."""
-    from backend.pipeline.engine import PipelineEngine
-
-    db = SessionLocal()
-    try:
-        engine = PipelineEngine(db)
-        await engine.revise_artifact(
-            payload["artifact_id"],
-            payload["feedback"],
-            user_id=payload.get("user_id"),
-        )
-    finally:
-        db.close()
-
-
-async def _handle_resolve_stale(payload: dict) -> None:
-    """Handle a resolve_stale job."""
-    from backend.pipeline.engine import PipelineEngine
-
-    db = SessionLocal()
-    try:
-        engine = PipelineEngine(db)
-        await engine.resolve_stale(
-            payload["artifact_id"],
-            payload["action"],
-            notes=payload.get("notes"),
-            edited_content=payload.get("edited_content"),
-            user_id=payload.get("user_id"),
-        )
-    finally:
-        db.close()
-
-
-async def _handle_retry_stage(payload: dict) -> None:
-    """Handle a retry_stage job."""
-    from backend.pipeline.engine import PipelineEngine
-
-    db = SessionLocal()
-    try:
-        engine = PipelineEngine(db)
-        from backend.models import StageExecution
-
-        execution = db.get(StageExecution, payload["execution_id"])
-        if execution:
-            await engine.retry_stage(execution)
-    finally:
-        db.close()
-
-
-async def _handle_regen_downstream(payload: dict) -> None:
-    """Handle a regen_downstream job."""
-    from backend.pipeline.engine import PipelineEngine
-
-    db = SessionLocal()
-    try:
-        engine = PipelineEngine(db)
-        await engine.regen_downstream(
-            payload["artifact_id"],
-        )
-    finally:
-        db.close()
-
-
-async def _handle_trigger_stage(payload: dict) -> None:
-    """Handle a trigger_stage job (manual kickoff)."""
-    from backend.pipeline.engine import PipelineEngine
-
-    db = SessionLocal()
-    try:
-        engine = PipelineEngine(db)
-        await engine.trigger_stage(
-            payload["project_id"],
-            payload["stage_key"],
-            component_key=payload.get("component_key"),
-        )
-    finally:
-        db.close()
-
-
-async def _handle_consolidate_artifact(payload: dict) -> None:
-    """Handle a consolidate_artifact job."""
-    from backend.pipeline.engine import PipelineEngine
-
-    db = SessionLocal()
-    try:
-        engine = PipelineEngine(db)
-        await engine.consolidate_artifact(payload["artifact_id"])
-    finally:
-        db.close()
-
-
-async def _handle_generate_summary(payload: dict) -> None:
-    """Handle a generate_summary job."""
-    from backend.models import Artifact
-    from backend.models.pipeline import PipelineConfig
-    from backend.pipeline.summarize import generate_summary
-    from backend.websocket.manager import ws_manager
-
-    project_id = payload["project_id"]
-    artifact_id = payload["artifact_id"]
-
-    await ws_manager.broadcast(
-        project_id,
-        {
-            "type": "summary_started",
-            "artifact_id": artifact_id,
-        },
-    )
-
-    db = SessionLocal()
-    try:
-        artifact = db.get(Artifact, artifact_id)
-        if not artifact or not artifact.content:
-            raise RuntimeError(f"Artifact {artifact_id} not found or has no content")
-
-        pcfg = db.query(PipelineConfig).filter_by(project_id=project_id).first()
-        summary_timeout = pcfg.cli_timeout_summary if pcfg else None
-        summary = await generate_summary(artifact.content, timeout=summary_timeout)
-        artifact.summary = summary
-        db.commit()
-
-        await ws_manager.broadcast(
-            project_id,
-            {
-                "type": "summary_completed",
-                "artifact_id": artifact_id,
-            },
-        )
-    except Exception:
-        db.rollback()
-        await ws_manager.broadcast(
-            project_id,
-            {
-                "type": "summary_failed",
-                "artifact_id": artifact_id,
-            },
-        )
-        raise
-    finally:
-        db.close()
-
-
-_JOB_HANDLERS = {
-    "start_pipeline": _handle_start_pipeline,
-    "resume_run": _handle_resume_run,
-    "resume_stage": _handle_resume_stage,
-    "revise_artifact": _handle_revise_artifact,
-    "resolve_stale": _handle_resolve_stale,
-    "regen_downstream": _handle_regen_downstream,
-    "retry_stage": _handle_retry_stage,
-    "trigger_stage": _handle_trigger_stage,
-    "consolidate_artifact": _handle_consolidate_artifact,
-    "generate_summary": _handle_generate_summary,
-}
+def register_handler(job_type: str, handler: JobHandler) -> None:
+    """Register a job handler. Called at app startup by the v2 pipeline."""
+    _JOB_HANDLERS[job_type] = handler
 
 
 # ── Worker Loop ───────────────────────────────────────────────────────────────

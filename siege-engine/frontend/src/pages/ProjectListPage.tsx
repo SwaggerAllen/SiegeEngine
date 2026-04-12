@@ -60,8 +60,7 @@ export function ProjectListPage() {
                 <p className="text-gray-400 text-sm mb-3 line-clamp-2">
                   {project.description || 'No description'}
                 </p>
-                <div className="flex items-center justify-between text-xs text-gray-500">
-                  <span>{project.artifact_count} artifacts</span>
+                <div className="flex items-center justify-end text-xs text-gray-500">
                   <div className="flex gap-3">
                     <button
                       onClick={(e) => {

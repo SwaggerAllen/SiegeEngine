@@ -1,7 +1,1 @@
-export type {
-  Project,
-  ProjectDetail,
-  Artifact,
-  ArtifactSummary,
-  ArtifactStatus,
-} from '../schemas/project';
+export type { Project, ProjectDetail } from '../schemas/project';
