@@ -20,7 +20,11 @@ from backend.auth.routes import get_current_user
 from backend.database import get_db
 from backend.graph import events as ev
 from backend.graph import queries
-from backend.graph.expansion import get_expansion_node, pending_expansion_draft
+from backend.graph.expansion import (
+    get_expansion_node,
+    has_been_approved,
+    pending_expansion_draft,
+)
 from backend.graph.handlers.feature_expansion import (
     GENERATE_FEATURE_EXPANSION_JOB_TYPE,
 )
@@ -154,6 +158,19 @@ def post_expansion_feedback(
         raise HTTPException(
             status_code=404,
             detail="Feature expansion node missing for project",
+        )
+    # v2 bootstrap nodes are read-only after approval: feature-layer
+    # edits after that point land on individual feat_* nodes, not by
+    # re-editing the expansion prose. See docs/architecture/
+    # v2-rearchitecture.md §Core principle (second corollary).
+    if has_been_approved(db, project_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Feature expansion is read-only after approval; "
+                "further feature-layer edits happen on individual "
+                "feature nodes."
+            ),
         )
     feedback = (req.feedback or "").strip() or None
     job_id = pipeline_queue.enqueue(

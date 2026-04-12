@@ -145,7 +145,10 @@ describe('FeatureExpansionPanel', () => {
     );
   });
 
-  it('shows approved content with a Request revision button', async () => {
+  it('renders approved content as read-only with no revision button', async () => {
+    // v2 spec: bootstrap nodes become read-only after their initial
+    // approval. Ongoing feature-layer work happens on individual
+    // feature nodes (Phase 2), not by re-editing the expansion prose.
     mockedGet.mockResolvedValue(
       makeResponse({
         node: {
@@ -159,9 +162,17 @@ describe('FeatureExpansionPanel', () => {
     renderPanel();
 
     await waitFor(() => expect(screen.getByText(/Approved plan/)).toBeInTheDocument());
+    // Read-only marker visible.
+    expect(screen.getByText(/Approved · read-only/i)).toBeInTheDocument();
+    // No "Request revision" button exists anywhere in the document.
     expect(
-      screen.getByRole('button', { name: /Request revision/i })
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: /Request revision/i })
+    ).toBeNull();
+    // No "Submit feedback" button either (old inline revision form
+    // is also gone).
+    expect(
+      screen.queryByRole('button', { name: /Submit feedback/i })
+    ).toBeNull();
   });
 
   it('shows an error banner with Retry when generation failed and no content', async () => {

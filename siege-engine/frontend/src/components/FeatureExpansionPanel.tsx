@@ -18,7 +18,6 @@ export function FeatureExpansionPanel({ projectId }: Props) {
   const discardMutation = useDiscardMutation(projectId);
 
   const [feedback, setFeedback] = useState('');
-  const [revisionOpen, setRevisionOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -47,7 +46,6 @@ export function FeatureExpansionPanel({ projectId }: Props) {
     feedbackMutation.mutate(trimmed, {
       onSuccess: () => {
         setFeedback('');
-        setRevisionOpen(false);
       },
     });
   };
@@ -141,62 +139,41 @@ export function FeatureExpansionPanel({ projectId }: Props) {
     );
   }
 
-  // State 3: approved content, no pending draft.
+  // State 3: approved content, no pending draft. The expansion node
+  // is read-only after approval per v2 spec — further feature-layer
+  // edits land on individual feature nodes (Phase 2), not by
+  // re-editing the expansion prose. So no "Request revision" button.
+  if (node.content) {
+    return (
+      <div className="p-6 space-y-4 max-w-4xl mx-auto">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">{node.name}</h2>
+          <span className="text-xs text-gray-500 uppercase tracking-wide">
+            Approved · read-only
+          </span>
+        </div>
+        <div className="prose prose-invert max-w-none border border-gray-700 rounded p-4 bg-gray-800/50">
+          <Markdown>{node.content}</Markdown>
+        </div>
+        <div className="text-xs text-gray-500 italic">
+          Further feature-layer edits happen on individual feature
+          nodes once Phase 2 lands.
+        </div>
+      </div>
+    );
+  }
+
+  // State 3b: node exists but has no content and no pending draft —
+  // pre-bootstrap empty state (shouldn't normally be reached in the
+  // happy path, but we render something sensible instead of nothing).
   return (
     <div className="p-6 space-y-4 max-w-4xl mx-auto">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{node.name}</h2>
-        {!revisionOpen && (
-          <button
-            type="button"
-            onClick={() => setRevisionOpen(true)}
-            className="px-3 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600"
-          >
-            Request revision
-          </button>
-        )}
       </div>
-      {node.content ? (
-        <div className="prose prose-invert max-w-none border border-gray-700 rounded p-4 bg-gray-800/50">
-          <Markdown>{node.content}</Markdown>
-        </div>
-      ) : (
-        <div className="text-sm text-gray-400 italic">
-          No approved content yet.
-        </div>
-      )}
-      {revisionOpen && (
-        <div className="space-y-2">
-          <textarea
-            className="w-full h-24 bg-gray-900 border border-gray-700 rounded p-2 text-sm"
-            placeholder="What should change?"
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-            disabled={isBusy}
-          />
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={submitFeedback}
-              disabled={isBusy || !feedback.trim()}
-              className="px-4 py-2 text-sm rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
-            >
-              Submit feedback
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setRevisionOpen(false);
-                setFeedback('');
-              }}
-              disabled={isBusy}
-              className="px-4 py-2 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
+      <div className="text-sm text-gray-400 italic">
+        No approved content yet.
+      </div>
     </div>
   );
 }

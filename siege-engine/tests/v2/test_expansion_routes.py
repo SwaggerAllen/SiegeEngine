@@ -205,6 +205,43 @@ class TestFeedback:
         assert resp.status_code == 200
         assert resp.json()["generation_status"] == "running"
 
+    def test_feedback_rejected_after_approval(
+        self, client, project, db, monkeypatch
+    ):
+        """Post-approval feedback is blocked with 409.
+
+        The v2 spec makes bootstrap nodes (expansion, reqs, sysarch)
+        read-only after their initial approval — ongoing feature-layer
+        edits happen on individual feature nodes, not by re-editing
+        the expansion prose. This test exercises the guard at
+        ``post_expansion_feedback``.
+        """
+        _patch_cli(monkeypatch, "# Approved content\n")
+        asyncio.run(
+            fe_handler.generate_feature_expansion(
+                {"project_id": project.id, "feedback": None}
+            )
+        )
+        db.expire_all()
+        draft = db.execute(
+            select(Draft).where(Draft.project_id == project.id)
+        ).scalar_one()
+
+        # Approve the draft — this flips node.content to non-empty.
+        approve_resp = client.post(
+            f"/api/projects/{project.id}/expansion/approve",
+            json={"draft_id": draft.id},
+        )
+        assert approve_resp.status_code == 200
+
+        # Now feedback should be rejected with 409.
+        resp = client.post(
+            f"/api/projects/{project.id}/expansion/feedback",
+            json={"feedback": "actually let me change this"},
+        )
+        assert resp.status_code == 409
+        assert "read-only" in resp.json()["detail"]
+
 
 class TestApprove:
     def test_commits_draft_to_node(self, client, project, db, monkeypatch):

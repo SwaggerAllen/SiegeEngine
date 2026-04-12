@@ -81,3 +81,24 @@ def pending_expansion_draft(session: Session, project_id: str) -> Draft | None:
             Draft.status == "pending",
         )
     ).scalar_one_or_none()
+
+
+def has_been_approved(session: Session, project_id: str) -> bool:
+    """Return True if the project's expansion has ever been approved.
+
+    Used by ``post_expansion_feedback`` and the frontend state machine
+    to enforce the "bootstrap nodes become read-only after their
+    initial approval" rule from the v2 architecture doc.
+
+    **Detection relies on the fact that ``Node.content`` is only
+    written by the ``DraftApproved`` reducer branch** — the bootstrap
+    path leaves it as the empty string. As long as that invariant
+    holds, a non-empty content field means at least one draft has
+    been approved against this node. Phase 2 will add a formal
+    read-only flag once ``reqs_*`` and ``sysarch_*`` also need it;
+    until then this check is cheap and correct.
+    """
+    node = get_expansion_node(session, project_id)
+    if node is None:
+        return False
+    return bool(node.content)
