@@ -40,6 +40,7 @@ function makeResponse(overrides: Partial<ExpansionResponse> = {}): ExpansionResp
     pending_draft: null,
     generation_status: 'idle',
     last_error: null,
+    latest_telemetry: null,
     ...overrides,
   };
 }
@@ -143,6 +144,50 @@ describe('FeatureExpansionPanel', () => {
     await waitFor(() =>
       expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', 'Add reporting')
     );
+  });
+
+  it('renders the telemetry line when latest_telemetry is present', async () => {
+    mockedGet.mockResolvedValue(
+      makeResponse({
+        node: {
+          id: 'expn_1',
+          name: 'Feature Expansion',
+          content: '# Approved plan',
+          updated_at: '2026-04-12T00:00:00',
+        },
+        latest_telemetry: {
+          prompt_tokens: 1234,
+          completion_tokens: 567,
+          model: 'claude-sonnet-4-6',
+          created_at: '2026-04-12T00:00:00',
+        },
+      })
+    );
+    renderPanel();
+
+    const line = await screen.findByTestId('telemetry-line');
+    expect(line).toHaveTextContent(/Last gen:/);
+    expect(line).toHaveTextContent(/1,234/);
+    expect(line).toHaveTextContent(/567 tokens/);
+    expect(line).toHaveTextContent(/claude-sonnet-4-6/);
+  });
+
+  it('does not render the telemetry line when latest_telemetry is null', async () => {
+    mockedGet.mockResolvedValue(
+      makeResponse({
+        node: {
+          id: 'expn_1',
+          name: 'Feature Expansion',
+          content: '# Approved plan',
+          updated_at: '2026-04-12T00:00:00',
+        },
+        latest_telemetry: null,
+      })
+    );
+    renderPanel();
+
+    await waitFor(() => expect(screen.getByText(/Approved plan/)).toBeInTheDocument());
+    expect(screen.queryByTestId('telemetry-line')).toBeNull();
   });
 
   it('renders approved content as read-only with no revision button', async () => {

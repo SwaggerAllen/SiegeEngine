@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Markdown from 'react-markdown';
+import type { TelemetrySummary } from '../api/expansion';
 import { useExpansion } from '../hooks/queries/useExpansionQueries';
 import {
   useApproveMutation,
@@ -9,6 +10,20 @@ import {
 
 interface Props {
   projectId: string;
+}
+
+function TelemetryLine({ telemetry }: { telemetry: TelemetrySummary | null }) {
+  if (!telemetry) return null;
+  return (
+    <div
+      className="text-xs text-gray-500 italic"
+      data-testid="telemetry-line"
+    >
+      Last gen: {telemetry.prompt_tokens.toLocaleString()} →{' '}
+      {telemetry.completion_tokens.toLocaleString()} tokens ·{' '}
+      {telemetry.model}
+    </div>
+  );
 }
 
 export function FeatureExpansionPanel({ projectId }: Props) {
@@ -34,7 +49,13 @@ export function FeatureExpansionPanel({ projectId }: Props) {
   }
   if (!data) return null;
 
-  const { node, pending_draft, generation_status, last_error } = data;
+  const {
+    node,
+    pending_draft,
+    generation_status,
+    last_error,
+    latest_telemetry,
+  } = data;
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
@@ -115,6 +136,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
             Discard
           </button>
         </div>
+        <TelemetryLine telemetry={latest_telemetry} />
       </div>
     );
   }
@@ -135,6 +157,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
         >
           Retry
         </button>
+        <TelemetryLine telemetry={latest_telemetry} />
       </div>
     );
   }
@@ -159,6 +182,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
           Further feature-layer edits happen on individual feature
           nodes once Phase 2 lands.
         </div>
+        <TelemetryLine telemetry={latest_telemetry} />
       </div>
     );
   }

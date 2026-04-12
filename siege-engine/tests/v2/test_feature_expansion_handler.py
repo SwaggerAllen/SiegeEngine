@@ -28,6 +28,7 @@ from backend.graph.handlers.feature_expansion import (
 from backend.graph.reducer import append_event
 from backend.models import InputDocument, Project
 from backend.models.node import Draft
+from backend.models.telemetry import GenerationTelemetry
 
 
 @pytest.fixture()
@@ -81,17 +82,32 @@ def seeded_project(shared_session_factory):
         session.close()
 
 
-def _patch_cli(monkeypatch, return_value: str = "# Generated expansion\n"):
-    """Patch the ``cli_manager.generate`` bound method used by the handler."""
+def _patch_cli(
+    monkeypatch,
+    return_value: str = "# Generated expansion\n",
+    *,
+    prompt_tokens: int = 100,
+    completion_tokens: int = 50,
+    model: str = "claude-sonnet-4-6",
+):
+    """Patch the ``cli_manager.generate_with_usage`` bound method used by the handler."""
     import backend.graph.handlers.feature_expansion as _handler_mod
+    from backend.cli.manager import GenerationResult
 
     calls: list[dict] = []
 
-    async def fake_generate(**kwargs):
+    async def fake_generate_with_usage(**kwargs):
         calls.append(kwargs)
-        return return_value
+        return GenerationResult(
+            text=return_value,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            model=model,
+        )
 
-    monkeypatch.setattr(_handler_mod.cli_manager, "generate", fake_generate)
+    monkeypatch.setattr(
+        _handler_mod.cli_manager, "generate_with_usage", fake_generate_with_usage
+    )
     return calls
 
 
@@ -213,7 +229,9 @@ class TestFailureModes:
         async def boom(**kwargs):
             raise RuntimeError("LLM exploded")
 
-        monkeypatch.setattr(_handler_mod.cli_manager, "generate", boom)
+        monkeypatch.setattr(
+            _handler_mod.cli_manager, "generate_with_usage", boom
+        )
 
         with pytest.raises(RuntimeError, match="LLM exploded"):
             asyncio.run(
@@ -263,5 +281,119 @@ class TestApprovalPath:
             node = get_expansion_node(session, seeded_project)
             assert node is not None
             assert node.content == "# Approved content\n"
+        finally:
+            session.close()
+
+
+class TestTelemetry:
+    """Every successful generation call records a telemetry row."""
+
+    def test_records_telemetry_row(
+        self, shared_session_factory, seeded_project, monkeypatch
+    ):
+        _patch_cli(
+            monkeypatch,
+            "# Draft\n",
+            prompt_tokens=1234,
+            completion_tokens=567,
+            model="claude-sonnet-4-6",
+        )
+        asyncio.run(
+            generate_feature_expansion(
+                {"project_id": seeded_project, "feedback": None}
+            )
+        )
+
+        session = shared_session_factory()
+        try:
+            rows = list(
+                session.execute(
+                    select(GenerationTelemetry).where(
+                        GenerationTelemetry.project_id == seeded_project
+                    )
+                ).scalars()
+            )
+            assert len(rows) == 1
+            row = rows[0]
+            assert row.section == "expansion"
+            assert row.prompt_tokens == 1234
+            assert row.completion_tokens == 567
+            assert row.model == "claude-sonnet-4-6"
+            assert row.node_id is not None
+            assert row.node_id.startswith("expansion_")
+        finally:
+            session.close()
+
+    def test_telemetry_accumulates_across_regens(
+        self, shared_session_factory, seeded_project, monkeypatch
+    ):
+        """Two generations produce two telemetry rows, newest last."""
+        _patch_cli(
+            monkeypatch,
+            "# First\n",
+            prompt_tokens=100,
+            completion_tokens=50,
+        )
+        asyncio.run(
+            generate_feature_expansion(
+                {"project_id": seeded_project, "feedback": None}
+            )
+        )
+        _patch_cli(
+            monkeypatch,
+            "# Second\n",
+            prompt_tokens=200,
+            completion_tokens=75,
+        )
+        asyncio.run(
+            generate_feature_expansion(
+                {"project_id": seeded_project, "feedback": "more please"}
+            )
+        )
+
+        session = shared_session_factory()
+        try:
+            rows = list(
+                session.execute(
+                    select(GenerationTelemetry)
+                    .where(GenerationTelemetry.project_id == seeded_project)
+                    .order_by(GenerationTelemetry.created_at)
+                ).scalars()
+            )
+            assert len(rows) == 2
+            assert rows[0].prompt_tokens == 100
+            assert rows[1].prompt_tokens == 200
+        finally:
+            session.close()
+
+    def test_cli_failure_writes_no_telemetry_row(
+        self, shared_session_factory, seeded_project, monkeypatch
+    ):
+        import backend.graph.handlers.feature_expansion as _handler_mod
+
+        async def boom(**kwargs):
+            raise RuntimeError("LLM exploded")
+
+        monkeypatch.setattr(
+            _handler_mod.cli_manager, "generate_with_usage", boom
+        )
+
+        with pytest.raises(RuntimeError):
+            asyncio.run(
+                generate_feature_expansion(
+                    {"project_id": seeded_project, "feedback": None}
+                )
+            )
+
+        session = shared_session_factory()
+        try:
+            rows = list(
+                session.execute(
+                    select(GenerationTelemetry).where(
+                        GenerationTelemetry.project_id == seeded_project
+                    )
+                ).scalars()
+            )
+            assert rows == []
         finally:
             session.close()

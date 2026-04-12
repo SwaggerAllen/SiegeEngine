@@ -1,12 +1,36 @@
 import asyncio
+import json
 import logging
 import os
 import tempfile
 import time
+from dataclasses import dataclass
 
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class GenerationResult:
+    """Result of a generation call that captured token usage.
+
+    Returned by :meth:`CLIManager.generate_with_usage`. The ``text``
+    field is the model's response; the remaining fields are
+    observability plumbing surfaced in the UI alongside the generated
+    artifact (see ``docs/architecture/v2-rearchitecture.md``
+    §Generation telemetry).
+
+    All token / model fields are best-effort — if the CLI's JSON
+    output omits them (older versions, a parse error), we log a
+    warning and fall back to zeros + ``"unknown"`` so telemetry is
+    never load-bearing on generation success.
+    """
+
+    text: str
+    prompt_tokens: int
+    completion_tokens: int
+    model: str
 
 _semaphore: asyncio.Semaphore | None = None
 _semaphore_loop: asyncio.AbstractEventLoop | None = None
@@ -61,7 +85,49 @@ class CLIManager:
                 tools,
                 timeout,
                 max_budget_usd,
+                output_format="text",
             )
+
+    async def generate_with_usage(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        working_dir: str | None = None,
+        model: str | None = None,
+        tools: str | None = None,
+        timeout: int | None = None,
+        max_budget_usd: float | None = None,
+    ) -> GenerationResult:
+        """Run claude CLI with ``--output-format json`` and return text + usage.
+
+        Same semantics as :meth:`generate` but uses the CLI's JSON
+        output mode so the returned ``GenerationResult`` carries
+        prompt/completion token counts and the model name. Used by
+        handlers that want to record telemetry for the UI
+        (``docs/architecture/v2-rearchitecture.md`` §Generation
+        telemetry).
+
+        Token-usage extraction is best-effort: if the CLI's JSON
+        shape omits the usage fields or parse fails, we log a warning
+        and return zeros + ``model="unknown"`` rather than fail the
+        generation. Telemetry is observability, not correctness — a
+        missing row should never block a draft from landing.
+        """
+        if timeout is None:
+            timeout = settings.cli_timeout
+
+        async with _get_semaphore():
+            raw = await self._invoke(
+                prompt,
+                system_prompt,
+                working_dir,
+                model,
+                tools,
+                timeout,
+                max_budget_usd,
+                output_format="json",
+            )
+        return _parse_json_result(raw, fallback_model=model)
 
     async def _invoke(
         self,
@@ -72,8 +138,9 @@ class CLIManager:
         tools: str | None,
         timeout: int,
         max_budget_usd: float | None,
+        output_format: str = "text",
     ) -> str:
-        args = ["claude", "-p", "--output-format", "text"]
+        args = ["claude", "-p", "--output-format", output_format]
 
         # Write system prompt to a temp file to avoid ARG_MAX limits
         # (pinned artifacts can make the system prompt very large).
@@ -190,6 +257,75 @@ class CLIManager:
             t_exit,
         )
         return output
+
+
+def _parse_json_result(raw: str, fallback_model: str | None) -> GenerationResult:
+    """Parse the ``--output-format json`` single-result payload.
+
+    The claude CLI emits a JSON object whose exact shape varies
+    between versions — we look for the common fields and fall back
+    gracefully when any are absent. The fields we look for:
+
+    * ``result`` or ``text`` — the generated content
+    * ``usage.input_tokens`` / ``usage.output_tokens`` —
+      or, as older CLIs used, ``usage.prompt_tokens`` /
+      ``usage.completion_tokens``
+    * ``model`` at the top level — else the caller-supplied override,
+      else ``"unknown"``
+
+    Any parse error is logged and swallowed; we return a best-effort
+    ``GenerationResult`` rather than fail the generation. Telemetry
+    is observability, not correctness.
+    """
+    try:
+        doc = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "CLI JSON output failed to parse (%s); returning raw text with "
+            "zeroed usage",
+            exc,
+        )
+        return GenerationResult(
+            text=raw,
+            prompt_tokens=0,
+            completion_tokens=0,
+            model=fallback_model or "unknown",
+        )
+
+    text = ""
+    if isinstance(doc, dict):
+        text = str(doc.get("result") or doc.get("text") or "")
+
+    usage = doc.get("usage") if isinstance(doc, dict) else None
+    prompt_tokens = 0
+    completion_tokens = 0
+    if isinstance(usage, dict):
+        prompt_tokens = int(
+            usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+        )
+        completion_tokens = int(
+            usage.get("output_tokens") or usage.get("completion_tokens") or 0
+        )
+
+    model_name = str(
+        (doc.get("model") if isinstance(doc, dict) else None)
+        or fallback_model
+        or "unknown"
+    )
+
+    if not text:
+        logger.warning(
+            "CLI JSON output had no 'result' or 'text' field; returning empty"
+        )
+    if usage is None:
+        logger.debug("CLI JSON output had no 'usage' field; tokens recorded as 0")
+
+    return GenerationResult(
+        text=text,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        model=model_name,
+    )
 
 
 cli_manager = CLIManager()

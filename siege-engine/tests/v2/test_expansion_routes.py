@@ -118,11 +118,23 @@ def client(db, project):
         app.dependency_overrides.clear()
 
 
-def _patch_cli(monkeypatch, output: str):
-    async def fake_generate(**kwargs):
-        return output
+def _patch_cli(monkeypatch, output: str, *, prompt_tokens: int = 100, completion_tokens: int = 50, model: str = "claude-sonnet-4-6"):
+    """Patch the CLI manager to return a deterministic GenerationResult."""
+    from backend.cli.manager import GenerationResult
 
-    monkeypatch.setattr(fe_handler.cli_manager, "generate", fake_generate)
+    async def fake_generate_with_usage(**kwargs):
+        return GenerationResult(
+            text=output,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            model=model,
+        )
+
+    monkeypatch.setattr(
+        fe_handler.cli_manager,
+        "generate_with_usage",
+        fake_generate_with_usage,
+    )
 
 
 class TestGetExpansion:
@@ -204,6 +216,39 @@ class TestFeedback:
         resp = client.get(f"/api/projects/{project.id}/expansion")
         assert resp.status_code == 200
         assert resp.json()["generation_status"] == "running"
+
+    def test_get_surfaces_latest_telemetry_after_generation(
+        self, client, project, db, monkeypatch
+    ):
+        _patch_cli(
+            monkeypatch,
+            "# some content\n",
+            prompt_tokens=2048,
+            completion_tokens=301,
+            model="claude-sonnet-4-6",
+        )
+        asyncio.run(
+            fe_handler.generate_feature_expansion(
+                {"project_id": project.id, "feedback": None}
+            )
+        )
+
+        resp = client.get(f"/api/projects/{project.id}/expansion")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["latest_telemetry"] is not None
+        tlm = body["latest_telemetry"]
+        assert tlm["prompt_tokens"] == 2048
+        assert tlm["completion_tokens"] == 301
+        assert tlm["model"] == "claude-sonnet-4-6"
+        assert tlm["created_at"]
+
+    def test_get_returns_null_telemetry_when_never_generated(
+        self, client, project
+    ):
+        resp = client.get(f"/api/projects/{project.id}/expansion")
+        assert resp.status_code == 200
+        assert resp.json()["latest_telemetry"] is None
 
     def test_feedback_rejected_after_approval(
         self, client, project, db, monkeypatch

@@ -31,6 +31,7 @@ from backend.graph.handlers.feature_expansion import (
 from backend.graph.reducer import append_event
 from backend.models import Project, User
 from backend.models.node import Draft
+from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
 
 router = APIRouter()
@@ -67,11 +68,19 @@ class ExpansionDraftResponse(BaseModel):
     created_at: str
 
 
+class TelemetrySummary(BaseModel):
+    prompt_tokens: int
+    completion_tokens: int
+    model: str
+    created_at: str
+
+
 class ExpansionResponse(BaseModel):
     node: ExpansionNodeResponse
     pending_draft: ExpansionDraftResponse | None
     generation_status: queries.GenerationStatus
     last_error: str | None
+    latest_telemetry: TelemetrySummary | None
 
 
 class FeedbackRequest(BaseModel):
@@ -113,6 +122,31 @@ def _serialize_node(node) -> ExpansionNodeResponse:
     )
 
 
+def _latest_telemetry(
+    db: Session, project_id: str, node_id: str
+) -> TelemetrySummary | None:
+    """Return the most recent telemetry row for a node, or None."""
+    from sqlalchemy import select
+
+    row = db.execute(
+        select(GenerationTelemetry)
+        .where(
+            GenerationTelemetry.project_id == project_id,
+            GenerationTelemetry.node_id == node_id,
+        )
+        .order_by(GenerationTelemetry.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    return TelemetrySummary(
+        prompt_tokens=row.prompt_tokens,
+        completion_tokens=row.completion_tokens,
+        model=row.model,
+        created_at=row.created_at.isoformat() if row.created_at else "",
+    )
+
+
 @router.get("/{project_id}/expansion", response_model=ExpansionResponse)
 def get_expansion(
     project_id: str,
@@ -143,6 +177,7 @@ def get_expansion(
         ),
         generation_status=status,
         last_error=last_error,
+        latest_telemetry=_latest_telemetry(db, project_id, node.id),
     )
 
 
