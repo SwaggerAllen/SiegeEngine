@@ -51,21 +51,6 @@ def init_db():
         context = MigrationContext.configure(conn)
         current_rev = context.get_current_revision()
 
-    # Recovery for a rewritten migration chain: if alembic_version points
-    # at a revision that no longer exists in the script directory (e.g.
-    # after a squash), clear it so the stamp-existing-DB branch below
-    # picks up. TODO: revert with the next commit once prod has booted.
-    if current_rev is not None:
-        try:
-            script.get_revision(current_rev)
-        except Exception:
-            logger.warning(
-                "alembic_version points at unknown revision %s; clearing", current_rev
-            )
-            with engine.begin() as conn:
-                conn.execute(text("DELETE FROM alembic_version"))
-            current_rev = None
-
     if current_rev is None:
         from sqlalchemy import inspect
 
