@@ -44,7 +44,7 @@ def bootstrap_expansion_node(session: Session, project_id: str) -> str:
         project_id,
         ev.NodeCreated(
             node_id=node_id,
-            tier=EXPANSION_TIER,
+            tier="expansion",
             kind="domain",
             parent_id=None,
             name=EXPANSION_NODE_NAME,

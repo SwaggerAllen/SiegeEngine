@@ -22,9 +22,16 @@ from backend.graph.fragments import FragmentKind
 
 
 class _EventBase(BaseModel):
-    """Shared config for all event models: strict, extra-forbidden."""
+    """Shared config for all event models: strict, extra-forbidden.
+
+    Subclasses override ``event_type`` with a ``Literal`` matching the
+    class name; it is declared here so the reducer can dispatch on it
+    without mypy complaining about a missing attribute on the base.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    event_type: str
 
 
 # ── Structural events ────────────────────────────────────────────────
