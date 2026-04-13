@@ -46,11 +46,7 @@ from backend.cli.manager import cli_manager
 from backend.database import SessionLocal
 from backend.graph import events as ev
 from backend.graph.expansion import get_expansion_node, pending_expansion_draft
-from backend.graph.parsers.validators import (
-    ValidationError,
-    validate_features,
-)
-from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
+from backend.graph.parsers.validators import validate_features
 from backend.graph.prompts.feature_expansion import (
     SYSTEM_PROMPT,
     render_user_prompt,
@@ -156,19 +152,39 @@ async def generate_feature_expansion(payload: dict) -> None:
     # The session is closed across all LLM calls and only reopened
     # after we have validated content to commit. Each LLM call's
     # telemetry is buffered and written alongside the
-    # DraftGenerated event on success.
+    # DraftGenerated event on success. The retry loop itself lives
+    # in ``_bootstrap_generation.run_parse_validate_loop``; we bind
+    # our tier-specific prompt + validator into closures here.
     logger.info(
         "generate_feature_expansion project=%s prior_pending=%s feedback=%s",
         project_id,
         bool(prior_pending),
         bool(feedback),
     )
-    validated_output, attempts = await _generate_with_parse_validate(
-        input_doc=input_doc,
-        prior_approved=prior_approved,
-        prior_pending=prior_pending,
-        feedback=feedback,
+
+    def _render(*, prior_pending: str | None, parse_error: str | None) -> str:
+        return render_user_prompt(
+            input_doc=input_doc,
+            prior_approved=prior_approved,
+            prior_pending=prior_pending,
+            feedback=feedback,
+            parse_error=parse_error,
+        )
+
+    def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+        validate_features(tree)
+
+    from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
+
+    validated_output, attempts = await run_parse_validate_loop(
+        root_tag="features",
+        system_prompt=SYSTEM_PROMPT,
         cli_timeout_seconds=cli_timeout_seconds,
+        prior_pending=prior_pending,
+        render_prompt=_render,
+        validate=_validate,
+        exhausted_exception_cls=FeatureExpansionParseRetryExhausted,
+        log_handler_name="generate_feature_expansion",
     )
 
     # ── Phase 3: persist events + telemetry ─────────────────────────
@@ -263,76 +279,6 @@ async def _call_cli_with_transient_retry(**kwargs):  # type: ignore[no-untyped-d
             await asyncio.sleep(backoff)
     assert last_exc is not None
     raise last_exc
-
-
-async def _generate_with_parse_validate(
-    *,
-    input_doc: str,
-    prior_approved: str | None,
-    prior_pending: str | None,
-    feedback: str | None,
-    cli_timeout_seconds: int,
-):  # type: ignore[no-untyped-def]
-    """Run the LLM with a parse-validate retry loop.
-
-    Returns ``(final_result, [every GenerationResult including
-    retries])``. The final result is guaranteed to parse and
-    validate as a ``<features>`` block per
-    :func:`backend.graph.parsers.validators.validate_features`.
-
-    Raises :class:`FeatureExpansionParseRetryExhausted` if none of
-    the attempts produce valid output, carrying the final
-    parse/validation error as context.
-    """
-    attempts: list = []  # list[GenerationResult]
-    parse_error: str | None = None
-
-    # We try MAX_PARSE_RETRIES + 1 total times: one initial attempt
-    # plus up to MAX_PARSE_RETRIES retries that feed the previous
-    # error back into the prompt.
-    for attempt_idx in range(MAX_PARSE_RETRIES + 1):
-        # On retries, use the *previous* attempt's raw text as the
-        # "prior pending" so the LLM sees what it produced and can
-        # correct it. First attempt uses the caller-supplied prior.
-        effective_prior_pending = attempts[-1].text if attempt_idx > 0 else prior_pending
-
-        user_prompt = render_user_prompt(
-            input_doc=input_doc,
-            prior_approved=prior_approved,
-            prior_pending=effective_prior_pending,
-            feedback=feedback,
-            parse_error=parse_error,
-        )
-        result = await _call_cli_with_transient_retry(
-            prompt=user_prompt,
-            system_prompt=SYSTEM_PROMPT,
-            tools=CLI_TOOLS,
-            timeout=cli_timeout_seconds,
-            max_budget_usd=CLI_MAX_BUDGET_USD,
-        )
-        attempts.append(result)
-
-        try:
-            tree = extract_tag_tree(result.text, "features")
-            validate_features(tree)
-        except (ParseError, ValidationError) as exc:
-            parse_error = str(exc)
-            logger.warning(
-                "generate_feature_expansion attempt %d/%d failed parse-validate: %s",
-                attempt_idx + 1,
-                MAX_PARSE_RETRIES + 1,
-                parse_error,
-            )
-            continue
-
-        # Success.
-        return result, attempts
-
-    # Exhausted all attempts.
-    raise FeatureExpansionParseRetryExhausted(
-        f"Feature expansion failed parse-validate after "
-        f"{MAX_PARSE_RETRIES + 1} attempts. Final error: {parse_error}"
-    )
 
 
 def register() -> None:

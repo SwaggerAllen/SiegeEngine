@@ -41,17 +41,8 @@ import uuid
 
 from backend.database import SessionLocal
 from backend.graph import events as ev
-from backend.graph.handlers.feature_expansion import (
-    CLI_MAX_BUDGET_USD,
-    CLI_TOOLS,
-    MAX_PARSE_RETRIES,
-    _call_cli_with_transient_retry,
-)
-from backend.graph.parsers.validators import (
-    ValidationError,
-    validate_requirements,
-)
-from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
+from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
+from backend.graph.parsers.validators import validate_requirements
 from backend.graph.prompts.requirements import (
     SYSTEM_PROMPT,
     format_features_summary,
@@ -156,13 +147,28 @@ async def generate_requirements(payload: dict) -> None:
         bool(feedback),
         len(feature_rows),
     )
-    validated_output, attempts = await _generate_with_parse_validate(
-        features_summary=features_summary,
-        prior_approved=prior_approved,
-        prior_pending=prior_pending,
-        feedback=feedback,
+
+    def _render(*, prior_pending: str | None, parse_error: str | None) -> str:
+        return render_user_prompt(
+            features_summary=features_summary,
+            prior_approved=prior_approved,
+            prior_pending=prior_pending,
+            feedback=feedback,
+            parse_error=parse_error,
+        )
+
+    def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+        validate_requirements(tree, known_feature_ids=known_feature_ids)
+
+    validated_output, attempts = await run_parse_validate_loop(
+        root_tag="requirements",
+        system_prompt=SYSTEM_PROMPT,
         cli_timeout_seconds=cli_timeout_seconds,
-        known_feature_ids=known_feature_ids,
+        prior_pending=prior_pending,
+        render_prompt=_render,
+        validate=_validate,
+        exhausted_exception_cls=RequirementsParseRetryExhausted,
+        log_handler_name="generate_requirements",
     )
 
     # ── Phase 3: persist events + telemetry ─────────────────────────
@@ -212,68 +218,6 @@ async def generate_requirements(payload: dict) -> None:
         )
     finally:
         db.close()
-
-
-async def _generate_with_parse_validate(
-    *,
-    features_summary: str,
-    prior_approved: str | None,
-    prior_pending: str | None,
-    feedback: str | None,
-    cli_timeout_seconds: int,
-    known_feature_ids: set[str],
-):  # type: ignore[no-untyped-def]
-    """Run the requirements LLM call with a parse-validate retry loop.
-
-    Same shape as
-    :func:`backend.graph.handlers.feature_expansion._generate_with_parse_validate`
-    but with the requirements prompt and validator. Shares the
-    ``MAX_PARSE_RETRIES`` budget so both handlers stay symmetric.
-    Validator checks ``<covers>`` references against
-    ``known_feature_ids`` so unknown / missing / uncovered IDs
-    become parse errors that the LLM can fix on retry.
-    """
-    attempts: list = []  # list[GenerationResult]
-    parse_error: str | None = None
-
-    for attempt_idx in range(MAX_PARSE_RETRIES + 1):
-        effective_prior_pending = attempts[-1].text if attempt_idx > 0 else prior_pending
-
-        user_prompt = render_user_prompt(
-            features_summary=features_summary,
-            prior_approved=prior_approved,
-            prior_pending=effective_prior_pending,
-            feedback=feedback,
-            parse_error=parse_error,
-        )
-        result = await _call_cli_with_transient_retry(
-            prompt=user_prompt,
-            system_prompt=SYSTEM_PROMPT,
-            tools=CLI_TOOLS,
-            timeout=cli_timeout_seconds,
-            max_budget_usd=CLI_MAX_BUDGET_USD,
-        )
-        attempts.append(result)
-
-        try:
-            tree = extract_tag_tree(result.text, "requirements")
-            validate_requirements(tree, known_feature_ids=known_feature_ids)
-        except (ParseError, ValidationError) as exc:
-            parse_error = str(exc)
-            logger.warning(
-                "generate_requirements attempt %d/%d failed parse-validate: %s",
-                attempt_idx + 1,
-                MAX_PARSE_RETRIES + 1,
-                parse_error,
-            )
-            continue
-
-        return result, attempts
-
-    raise RequirementsParseRetryExhausted(
-        f"Requirements failed parse-validate after "
-        f"{MAX_PARSE_RETRIES + 1} attempts. Final error: {parse_error}"
-    )
 
 
 def register() -> None:
