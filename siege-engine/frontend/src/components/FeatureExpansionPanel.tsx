@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import Markdown from 'react-markdown';
 import type { TelemetrySummary } from '../api/expansion';
 import { describeApiError } from '../lib/describeApiError';
 import { useExpansion } from '../hooks/queries/useExpansionQueries';
@@ -8,6 +7,7 @@ import {
   useDiscardMutation,
   useFeedbackMutation,
 } from '../hooks/mutations/useExpansionMutations';
+import { XmlBlock } from './XmlBlock';
 
 interface Props {
   projectId: string;
@@ -95,9 +95,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
             <span className="text-xs text-gray-400">regenerating…</span>
           )}
         </div>
-        <div className="prose prose-invert max-w-none border border-gray-700 rounded p-4 bg-gray-800/50">
-          <Markdown>{pending_draft.content}</Markdown>
-        </div>
+        <XmlBlock content={pending_draft.content} />
         <div className="space-y-2">
           <label className="block text-xs text-gray-400">
             Feedback for regeneration (optional)
@@ -176,9 +174,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
             Approved · read-only
           </span>
         </div>
-        <div className="prose prose-invert max-w-none border border-gray-700 rounded p-4 bg-gray-800/50">
-          <Markdown>{node.content}</Markdown>
-        </div>
+        <XmlBlock content={node.content} />
         <div className="text-xs text-gray-500 italic">
           Further feature-layer edits happen on individual feature
           nodes once Phase 2 lands.

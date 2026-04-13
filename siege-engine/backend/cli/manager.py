@@ -168,6 +168,11 @@ class CLIManager:
         env = {**os.environ}
         env.pop("CLAUDECODE", None)
         env.pop("ANTHROPIC_API_KEY", None)
+        # Pipeline generations are worth burning extra thinking budget
+        # on — they run once and are cached as approved content. Force
+        # max effort unconditionally so this can't be forgotten in a
+        # deployment env. Parent-process overrides don't apply.
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = "max"
 
         logger.info(
             "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds (using CLI login credentials)",
