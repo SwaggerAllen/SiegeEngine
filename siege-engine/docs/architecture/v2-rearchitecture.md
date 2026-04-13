@@ -700,6 +700,7 @@ Policies and capability extraction compose: telemetry is both a component you ex
 - Full instruction vocabulary with stable-ID lineage references (IDs in `<kind>_<8 chars>` form; singleton kinds included; policy-application edit instructions included)
 - Sequential pending-change queue with batched review
 - Code generation as a plan-driven leaf pass in dependency topo order
+- **Project export** — one-shot read-only transcription of the v2 graph into a bundle of markdown documents that Catapult's input parser can ingest. Walks projections deterministically, preserves XML tags verbatim, streams as a zip archive. Final phase before Catapult acceptance.
 
 **Deferred post-MVP:**
 - Fanout decision refinement (the optimization the old "delta attenuation" bullet described)

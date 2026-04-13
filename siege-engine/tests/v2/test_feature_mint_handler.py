@@ -301,3 +301,136 @@ class TestEventLog:
             assert {f.name for f in feats} == {"A", "B"}
         finally:
             session.close()
+
+
+# ── Groups + implicit mint paths ─────────────────────────────────────
+
+
+class TestMintGroupsAndImplicit:
+    def test_grouped_features_carry_group_label(self, shared_session_factory):
+        approved = (
+            "<features>"
+            "<group>"
+            "<name>User Management</name>"
+            "<feature><name>Login</name><intent>Users sign in.</intent></feature>"
+            "<feature>"
+            "<name>Password Reset</name>"
+            "<intent>Users reset via email.</intent>"
+            "<implicit/>"
+            "</feature>"
+            "</group>"
+            "<group>"
+            "<name>Billing</name>"
+            "<feature>"
+            "<name>Subscription</name>"
+            "<intent>Tiered plans.</intent>"
+            "</feature>"
+            "</group>"
+            "</features>"
+        )
+        pid = _seed_project_with_approved_expansion(shared_session_factory, approved)
+        asyncio.run(mint_features({"project_id": pid}))
+
+        session = shared_session_factory()
+        try:
+            feats = list(
+                session.execute(
+                    select(Node)
+                    .where(Node.project_id == pid, Node.tier == "feat")
+                    .order_by(Node.display_order)
+                ).scalars()
+            )
+            assert len(feats) == 3
+            assert [f.name for f in feats] == ["Login", "Password Reset", "Subscription"]
+            assert [f.group_label for f in feats] == [
+                "User Management",
+                "User Management",
+                "Billing",
+            ]
+            assert [f.is_implicit for f in feats] == [False, True, False]
+            # display_order reflects document order across groups.
+            assert [f.display_order for f in feats] == [0, 1, 2]
+        finally:
+            session.close()
+
+    def test_ungrouped_features_have_null_group_label(self, shared_session_factory):
+        approved = _features_xml(
+            ("Billing", "Users pay."),
+            ("Search", "Global search."),
+        )
+        pid = _seed_project_with_approved_expansion(shared_session_factory, approved)
+        asyncio.run(mint_features({"project_id": pid}))
+
+        session = shared_session_factory()
+        try:
+            feats = list(
+                session.execute(
+                    select(Node).where(Node.project_id == pid, Node.tier == "feat")
+                ).scalars()
+            )
+            assert len(feats) == 2
+            assert all(f.group_label is None for f in feats)
+            assert all(f.is_implicit is False for f in feats)
+        finally:
+            session.close()
+
+    def test_mixed_grouped_and_ungrouped(self, shared_session_factory):
+        approved = (
+            "<features>"
+            "<group>"
+            "<name>Content</name>"
+            "<feature><name>Posting</name><intent>Create posts.</intent></feature>"
+            "</group>"
+            "<feature><name>Search</name><intent>Global search.</intent></feature>"
+            "</features>"
+        )
+        pid = _seed_project_with_approved_expansion(shared_session_factory, approved)
+        asyncio.run(mint_features({"project_id": pid}))
+
+        session = shared_session_factory()
+        try:
+            feats = list(
+                session.execute(
+                    select(Node)
+                    .where(Node.project_id == pid, Node.tier == "feat")
+                    .order_by(Node.display_order)
+                ).scalars()
+            )
+            assert len(feats) == 2
+            assert feats[0].name == "Posting"
+            assert feats[0].group_label == "Content"
+            assert feats[1].name == "Search"
+            assert feats[1].group_label is None
+        finally:
+            session.close()
+
+    def test_rebuild_preserves_group_and_implicit(self, shared_session_factory):
+        """Event-log round trip restores group_label and is_implicit."""
+        approved = (
+            "<features>"
+            "<group>"
+            "<name>Auth</name>"
+            "<feature>"
+            "<name>Password Reset</name>"
+            "<intent>Via email.</intent>"
+            "<implicit/>"
+            "</feature>"
+            "</group>"
+            "</features>"
+        )
+        pid = _seed_project_with_approved_expansion(shared_session_factory, approved)
+        asyncio.run(mint_features({"project_id": pid}))
+
+        session = shared_session_factory()
+        try:
+            from backend.graph.reducer import rebuild_projections
+
+            rebuild_projections(session, pid)
+            feat = session.execute(
+                select(Node).where(Node.project_id == pid, Node.tier == "feat")
+            ).scalar_one()
+            assert feat.name == "Password Reset"
+            assert feat.group_label == "Auth"
+            assert feat.is_implicit is True
+        finally:
+            session.close()

@@ -318,10 +318,63 @@ are territory-limited, and code generation consumes plans.
 The acceptance test for v2. No migration from v1; rebuild from scratch.
 
 - [ ] Load Catapult's input doc into a fresh v2 project
-- [ ] Walk all 13 phases end-to-end, approving at each gate
+- [ ] Walk Phases 1 through 13 end-to-end, approving at each gate
 - [ ] Verify generated Elixir compiles
 - [ ] Capture feedback loop latency at each tier (is the 2s poll interval enough?)
 - [ ] Identify which post-MVP deferred items are actually blocking day-to-day use
+- [ ] Export the resulting project via Phase 15 and verify Catapult's input parser can ingest the bundle
+
+## Phase 15 — Project export for external consumption
+
+A one-shot "export this project" action that reads the v2 graph
+and transcribes it back into prose documents a downstream tool
+(specifically Catapult) can ingest. Exists because the v2
+graph is rich enough that a human-readable round-trippable
+snapshot is genuinely useful — for handing the project off,
+archiving an approved state, or feeding it into a tool that
+doesn't speak the v2 model natively.
+
+The export is **read-only** and doesn't touch the DAG. It walks
+the projections (features, responsibilities, components, arch
+docs, impls, policies, manifest) in a deterministic order and
+renders each to markdown with the XML sections preserved as-is
+(per "tags are displayed, not stripped"). The output is a
+bundle of files rather than one monolith — one file per
+top-level comp_* with its arch doc content, one for reqs, one
+for sysarch, one for the feature list, etc. — so Catapult's
+import can consume them piecewise.
+
+Catapult's input-doc format is the target shape. Each exported
+document should be something Catapult's input parser would
+accept unchanged if dropped in.
+
+- [ ] Export handler that runs synchronously in response to a
+      UI button; no pipeline job needed (read-only, seconds-scale)
+- [ ] Walks projections in deterministic order: expansion →
+      reqs → sysarch → per-component arch docs → per-subcomponent
+      arch docs → impls → plans → manifest
+- [ ] Renders each node's content + fragments as markdown, with
+      XML tags preserved verbatim and a frontmatter block
+      carrying the stable `<kind>_<8 chars>` ID plus metadata
+      (tier, name, parent, timestamps, group_label if feat_*,
+      is_implicit if feat_*)
+- [ ] Bundles into a zip archive with a manifest.json describing
+      what's inside and its order
+- [ ] Reviewable in the UI as a file tree before download (so
+      the user can spot-check what they're about to get)
+- [ ] New endpoint: `GET /api/projects/{id}/export` returning the
+      archive as a streamed response
+- [ ] UI: "Export" button on the project dashboard header;
+      downloads the archive
+- [ ] Tests: round-trip a canonical project through export and
+      confirm the structure + content match what's in the
+      projection
+- [ ] Documented format stays stable — Catapult's import is
+      coupled to it, so format changes go through a migration
+      note
+
+Post-MVP candidate for round-two: bi-directional sync (import
+an edited Catapult bundle back into v2). MVP just exports.
 
 ---
 

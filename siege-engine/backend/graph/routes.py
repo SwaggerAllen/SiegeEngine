@@ -117,6 +117,8 @@ class FeatureSummary(BaseModel):
     name: str
     content: str
     display_order: int
+    group_label: str | None
+    is_implicit: bool
     updated_at: str
 
 
@@ -330,6 +332,20 @@ def post_expansion_discard(
 
     append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
     db.commit()
+
+    # Rejecting a draft is usually a step in an iteration loop, not
+    # a "give up" signal. Enqueue a fresh generation so the user
+    # gets a new draft to react to without having to type "try
+    # again" into the feedback box. The generation handler runs
+    # without prior_pending (we just discarded it) and without
+    # explicit feedback, so it regenerates from scratch against
+    # the input doc.
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_FEATURE_EXPANSION_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": None},
+    )
+
     return DiscardResponse(ok=True)
 
 
@@ -359,6 +375,8 @@ def get_features(
                 name=f.name,
                 content=f.content,
                 display_order=f.display_order,
+                group_label=f.group_label,
+                is_implicit=f.is_implicit,
                 updated_at=f.updated_at.isoformat() if f.updated_at else "",
             )
             for f in features

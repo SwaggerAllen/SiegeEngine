@@ -46,28 +46,50 @@ class Feature:
     expected). ``intent`` is the paragraph-length description of
     what the feature does. Both are non-empty and already
     whitespace-stripped at their outer edges.
+
+    ``group_label`` is the enclosing ``<group>``'s ``<name>`` if
+    the feature was inside one, or ``None`` for ungrouped
+    features. ``is_implicit`` is ``True`` when the ``<feature>``
+    carried an ``<implicit/>`` marker, signalling that the LLM
+    inferred it as obviously-necessary rather than finding it in
+    the user's input doc.
     """
 
     name: str
     intent: str
+    group_label: str | None = None
+    is_implicit: bool = False
 
 
-_FEATURE_ALLOWED_CHILDREN = {"name", "intent"}
-_FEATURES_ALLOWED_CHILDREN = {"feature"}
+_FEATURE_ALLOWED_CHILDREN = {"name", "intent", "implicit"}
+_FEATURES_ALLOWED_CHILDREN = {"feature", "group"}
+_GROUP_ALLOWED_CHILDREN = {"name", "feature"}
 
 
 def validate_features(tree: TagNode) -> list[Feature]:
     """Validate a parsed ``<features>`` tree and return its features.
 
-    Rules:
+    Shape:
 
     * ``tree.tag`` must be exactly ``"features"``.
-    * It must contain at least one ``<feature>`` child.
-    * Unknown tags at the ``<features>`` level are rejected.
-    * Each ``<feature>`` must contain exactly one ``<name>`` and
-      exactly one ``<intent>``, with no other child tags.
-    * Both ``<name>`` and ``<intent>`` must have non-empty text
-      after stripping.
+    * ``<features>`` may contain a mix of ``<feature>`` entries
+      (ungrouped) and ``<group>`` blocks (each holding one or more
+      ``<feature>`` entries).
+    * There must be at least one ``<feature>`` overall (grouped
+      or ungrouped).
+    * Unknown tags at any level are rejected.
+    * Each ``<feature>`` contains exactly one ``<name>`` and
+      exactly one ``<intent>``. Both must be non-empty after
+      stripping. An optional ``<implicit/>`` marker flags the
+      feature as LLM-inferred.
+    * Each ``<group>`` contains exactly one ``<name>`` (the group
+      label) and at least one ``<feature>``. Groups do not nest —
+      a ``<group>`` inside a ``<group>`` is rejected.
+
+    The returned list is **flat** in document order: grouped and
+    ungrouped features appear in the order they were written,
+    with each ``Feature.group_label`` reflecting its source
+    ``<group>`` (or ``None`` if ungrouped).
 
     Raises :class:`ValidationError` on the first problem found,
     with a message naming the offending tag path.
@@ -78,37 +100,109 @@ def validate_features(tree: TagNode) -> list[Feature]:
             "Wrap the feature list in a single <features>...</features> block."
         )
 
-    # Reject unknown children at the features level.
+    # Reject unknown children at the features level. Only
+    # <feature> and <group> are permitted.
     for child in tree.children:
         if child.tag not in _FEATURES_ALLOWED_CHILDREN:
             raise ValidationError(
                 f"<features> contains an unexpected child <{child.tag}>. "
-                "Only <feature> entries are allowed at this level."
+                "Only <feature> entries and <group> blocks are allowed at "
+                "this level."
             )
 
-    feature_children = tree.find_all("feature")
-    if not feature_children:
+    result: list[Feature] = []
+    feature_index = 0  # flat position across groups + ungrouped
+    for child in tree.children:
+        if child.tag == "feature":
+            result.append(_validate_feature(child, feature_index, group_label=None))
+            feature_index += 1
+        elif child.tag == "group":
+            group_label, group_features = _validate_group(child, feature_index)
+            result.extend(group_features)
+            feature_index += len(group_features)
+
+    if not result:
         raise ValidationError(
             "<features> block contains no <feature> entries. "
             "Every project must have at least one feature."
         )
 
-    result: list[Feature] = []
-    for idx, feature_node in enumerate(feature_children):
-        result.append(_validate_feature(feature_node, idx))
     return result
 
 
-def _validate_feature(node: TagNode, index: int) -> Feature:
-    """Validate a single ``<feature>`` entry and return its ``Feature``."""
+def _validate_group(node: TagNode, base_index: int) -> tuple[str, list[Feature]]:
+    """Validate a ``<group>`` block and return ``(label, [Feature, ...])``.
+
+    ``base_index`` is the flat feature index the first child
+    feature will take — used only for error messages to help the
+    LLM locate the problem in a retry prompt.
+    """
+    # Reject unknown children inside a group.
+    for child in node.children:
+        if child.tag not in _GROUP_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<group> contains an unexpected child <{child.tag}>. "
+                "Only <name> and <feature> entries are allowed inside a <group>. "
+                "Groups do not nest."
+            )
+
+    name_children = node.find_all("name")
+    if len(name_children) == 0:
+        raise ValidationError(
+            "<group> is missing a <name> child. Every group must have "
+            "exactly one <name> identifying the grouping theme."
+        )
+    if len(name_children) > 1:
+        raise ValidationError(
+            f"<group> has {len(name_children)} <name> children; exactly one is required."
+        )
+
+    label = name_children[0].text
+    if not label:
+        raise ValidationError(
+            "<group> has an empty <name>. The group name must be a short "
+            'label identifying the theme (e.g. "User Management").'
+        )
+
+    feature_children = node.find_all("feature")
+    if not feature_children:
+        raise ValidationError(
+            f'<group> "{label}" contains no <feature> entries. A group '
+            "with no features is meaningless — inline the features directly "
+            "under <features> or add features to the group."
+        )
+
+    features: list[Feature] = []
+    for offset, feature_node in enumerate(feature_children):
+        features.append(
+            _validate_feature(
+                feature_node,
+                base_index + offset,
+                group_label=label,
+            )
+        )
+    return label, features
+
+
+def _validate_feature(node: TagNode, index: int, *, group_label: str | None) -> Feature:
+    """Validate a single ``<feature>`` entry and return its ``Feature``.
+
+    ``index`` is the flat position of this feature across the
+    whole ``<features>`` block — used in error messages to help
+    the LLM locate the problem. ``group_label`` is propagated from
+    the enclosing ``<group>``, or ``None`` when the feature sits
+    directly under ``<features>``.
+    """
     pos = f"<feature> at position {index}"
 
-    # Reject unknown children inside a feature.
+    # Reject unknown children inside a feature. <implicit/> is a
+    # self-closing marker with no text or children of its own.
     for child in node.children:
         if child.tag not in _FEATURE_ALLOWED_CHILDREN:
             raise ValidationError(
                 f"{pos} contains an unexpected child <{child.tag}>. "
-                "Only <name> and <intent> are allowed inside a <feature>."
+                "Only <name>, <intent>, and an optional <implicit/> marker "
+                "are allowed inside a <feature>."
             )
 
     name_children = node.find_all("name")
@@ -131,6 +225,13 @@ def _validate_feature(node: TagNode, index: int) -> Feature:
             f"{pos} has {len(intent_children)} <intent> children; exactly one is required."
         )
 
+    implicit_children = node.find_all("implicit")
+    if len(implicit_children) > 1:
+        raise ValidationError(
+            f"{pos} has {len(implicit_children)} <implicit/> markers; at most one is allowed."
+        )
+    is_implicit = len(implicit_children) == 1
+
     name_text = name_children[0].text
     if not name_text:
         raise ValidationError(
@@ -145,4 +246,9 @@ def _validate_feature(node: TagNode, index: int) -> Feature:
             "be a short paragraph describing what the feature does."
         )
 
-    return Feature(name=name_text, intent=intent_text)
+    return Feature(
+        name=name_text,
+        intent=intent_text,
+        group_label=group_label,
+        is_implicit=is_implicit,
+    )
