@@ -7,6 +7,7 @@ import { LoginPage } from './pages/LoginPage';
 import { ProjectListPage } from './pages/ProjectListPage';
 import { ProjectCreatePage } from './pages/ProjectCreatePage';
 import { ProjectDashboardLayout } from './pages/ProjectDashboardLayout';
+import { ProjectSettingsPage } from './pages/ProjectSettingsPage';
 import { GitHubCallbackPage } from './pages/GitHubCallbackPage';
 
 function NavigationLogger() {
@@ -70,6 +71,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ProjectDashboardLayout />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:id/settings"
+          element={
+            <ProtectedRoute>
+              <ProjectSettingsPage />
             </ProtectedRoute>
           }
         />

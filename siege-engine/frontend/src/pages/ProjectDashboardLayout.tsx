@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { DashboardMenu } from '../components/DashboardMenu';
 import { FeatureExpansionPanel } from '../components/FeatureExpansionPanel';
 import { FeatureList } from '../components/FeatureList';
 import { useExpansion } from '../hooks/queries/useExpansionQueries';
@@ -57,6 +58,7 @@ function DashboardShell({ projectId }: { projectId: string }) {
         <div className="flex-1 min-w-0">
           <h1 className="text-sm font-bold truncate">{currentProject?.name || 'Loading...'}</h1>
         </div>
+        <DashboardMenu projectId={projectId} />
       </header>
       <main className="flex-1 overflow-auto">
         <FeatureExpansionPanel projectId={projectId} />
