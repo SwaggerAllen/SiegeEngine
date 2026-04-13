@@ -32,9 +32,37 @@ from backend.graph.handlers.feature_expansion import (
     GENERATE_FEATURE_EXPANSION_JOB_TYPE,
 )
 from backend.graph.handlers.feature_mint import MINT_FEATURES_JOB_TYPE
+from backend.graph.handlers.requirements_generation import (
+    GENERATE_REQUIREMENTS_JOB_TYPE,
+)
+from backend.graph.handlers.requirements_mint import MINT_REQUIREMENTS_JOB_TYPE
+from backend.graph.handlers.subreqs_generation import (
+    GENERATE_SUBREQS_JOB_TYPE,
+)
+from backend.graph.handlers.subreqs_mint import MINT_SUBREQS_JOB_TYPE
+from backend.graph.handlers.sysarch_generation import GENERATE_SYSARCH_JOB_TYPE
+from backend.graph.handlers.sysarch_mint import MINT_SYSARCH_JOB_TYPE
 from backend.graph.reducer import append_event
+from backend.graph.requirements import (
+    bootstrap_reqs_node,
+    get_reqs_node,
+    pending_reqs_draft,
+)
+from backend.graph.requirements import has_been_approved as reqs_has_been_approved
+from backend.graph.subrequirements import (
+    bootstrap_subreqs_node,
+    get_subreqs_node,
+    pending_subreqs_draft,
+)
+from backend.graph.subrequirements import has_been_approved as subreqs_has_been_approved
+from backend.graph.sysarch import (
+    bootstrap_sysarch_node,
+    get_sysarch_node,
+    pending_sysarch_draft,
+)
+from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
-from backend.models.node import Draft
+from backend.models.node import Draft, Node
 from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
 
@@ -380,5 +408,832 @@ def get_features(
                 updated_at=f.updated_at.isoformat() if f.updated_at else "",
             )
             for f in features
+        ]
+    )
+
+
+# ── Requirements response models ────────────────────────────────────
+
+
+class ReqsNodeResponse(BaseModel):
+    id: str
+    name: str
+    content: str
+    updated_at: str
+
+
+class ReqsDraftResponse(BaseModel):
+    id: str
+    content: str
+    created_at: str
+
+
+class ReqsResponse(BaseModel):
+    node: ReqsNodeResponse
+    pending_draft: ReqsDraftResponse | None
+    generation_status: queries.GenerationStatus
+    last_error: str | None
+    latest_telemetry: TelemetrySummary | None
+
+
+class ReqsApproveResponse(BaseModel):
+    node: ReqsNodeResponse
+
+
+class ResponsibilitySummary(BaseModel):
+    id: str
+    name: str
+    content: str
+    display_order: int
+    updated_at: str
+
+
+class ResponsibilityListResponse(BaseModel):
+    responsibilities: list[ResponsibilitySummary]
+
+
+def _serialize_reqs_node(node) -> ReqsNodeResponse:
+    return ReqsNodeResponse(
+        id=node.id,
+        name=node.name,
+        content=node.content,
+        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+    )
+
+
+# ── Requirements endpoints ──────────────────────────────────────────
+
+
+@router.get("/{project_id}/requirements", response_model=ReqsResponse)
+def get_requirements(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReqsResponse:
+    """Return the project's reqs node state — same four-state shape
+    as ``GET /{project_id}/expansion``.
+
+    Lazily bootstraps the node and enqueues its initial generation
+    if it's missing, so opening a project whose feature mint
+    finished before the reqs bootstrap (e.g. a replay before Phase
+    3 shipped) still works without a 404.
+    """
+    _require_project(db, project_id)
+    node = get_reqs_node(db, project_id)
+    if node is None:
+        logger.warning("Project %s has no reqs node; lazy-bootstrapping", project_id)
+        bootstrap_reqs_node(db, project_id)
+        db.commit()
+        pipeline_queue.enqueue(
+            db,
+            job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
+            payload={"project_id": project_id, "feedback": None},
+        )
+        node = get_reqs_node(db, project_id)
+        assert node is not None, "bootstrap_reqs_node should have minted one"
+    draft = pending_reqs_draft(db, project_id)
+    status, last_error = queries.latest_generation_status(
+        db, project_id, GENERATE_REQUIREMENTS_JOB_TYPE
+    )
+    return ReqsResponse(
+        node=_serialize_reqs_node(node),
+        pending_draft=(
+            ReqsDraftResponse(
+                id=draft.id,
+                content=draft.content,
+                created_at=draft.created_at.isoformat() if draft.created_at else "",
+            )
+            if draft is not None
+            else None
+        ),
+        generation_status=status,
+        last_error=last_error,
+        latest_telemetry=_latest_telemetry(db, project_id, node.id),
+    )
+
+
+@router.post("/{project_id}/requirements/feedback", response_model=FeedbackResponse)
+def post_requirements_feedback(
+    project_id: str,
+    req: FeedbackRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_project(db, project_id)
+    if get_reqs_node(db, project_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Requirements node missing for project",
+        )
+    # Read-only after approval — further changes land as structural
+    # edits on resp_* nodes (Phase 10), not by re-editing the prose.
+    if reqs_has_been_approved(db, project_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Requirements is read-only after approval; further "
+                "responsibility-layer edits happen on individual "
+                "responsibility nodes."
+            ),
+        )
+    feedback = (req.feedback or "").strip() or None
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": feedback},
+    )
+    return FeedbackResponse(job_id=job_id)
+
+
+@router.post("/{project_id}/requirements/approve", response_model=ReqsApproveResponse)
+def post_requirements_approve(
+    project_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReqsApproveResponse:
+    _require_project(db, project_id)
+    node = get_reqs_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Requirements node missing for project")
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != node.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this project's requirements",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
+    db.commit()
+    db.refresh(node)
+
+    # Approval is destructive at the child level — mint top-level
+    # resp_* nodes from the approved content. Runs on the pipeline
+    # worker; the frontend polls /responsibilities.
+    pipeline_queue.enqueue(
+        db,
+        job_type=MINT_REQUIREMENTS_JOB_TYPE,
+        payload={"project_id": project_id},
+    )
+
+    return ReqsApproveResponse(node=_serialize_reqs_node(node))
+
+
+@router.post("/{project_id}/requirements/discard", response_model=DiscardResponse)
+def post_requirements_discard(
+    project_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    _require_project(db, project_id)
+    node = get_reqs_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Requirements node missing for project")
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != node.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this project's requirements",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
+    db.commit()
+
+    # Mirrors /expansion/discard: reject regenerates from scratch.
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": None},
+    )
+
+    return DiscardResponse(ok=True)
+
+
+# ── Responsibilities list endpoint ──────────────────────────────────
+
+
+@router.get("/{project_id}/responsibilities", response_model=ResponsibilityListResponse)
+def get_responsibilities(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResponsibilityListResponse:
+    """List all top-level ``resp_*`` nodes for a project in document order.
+
+    Top-level responsibilities are the ones minted by the
+    ``v2.mint_requirements`` pipeline job after the user approves
+    the requirements. Subresponsibilities (minted later by per-
+    component subreqs handlers) have a non-null ``parent_id`` and
+    are not included in this list.
+    """
+    _require_project(db, project_id)
+    responsibilities = queries.list_top_level_responsibilities(db, project_id)
+    return ResponsibilityListResponse(
+        responsibilities=[
+            ResponsibilitySummary(
+                id=r.id,
+                name=r.name,
+                content=r.content,
+                display_order=r.display_order,
+                updated_at=r.updated_at.isoformat() if r.updated_at else "",
+            )
+            for r in responsibilities
+        ]
+    )
+
+
+# ── Sysarch response models ─────────────────────────────────────────
+
+
+class SysarchNodeResponse(BaseModel):
+    id: str
+    name: str
+    content: str
+    updated_at: str
+
+
+class SysarchDraftResponse(BaseModel):
+    id: str
+    content: str
+    created_at: str
+
+
+class SysarchResponse(BaseModel):
+    node: SysarchNodeResponse
+    pending_draft: SysarchDraftResponse | None
+    generation_status: queries.GenerationStatus
+    last_error: str | None
+    latest_telemetry: TelemetrySummary | None
+
+
+class SysarchApproveResponse(BaseModel):
+    node: SysarchNodeResponse
+
+
+class ComponentSummary(BaseModel):
+    id: str
+    name: str
+    kind: str  # "domain" | "presentational"
+    display_order: int
+    updated_at: str
+
+
+class ComponentListResponse(BaseModel):
+    components: list[ComponentSummary]
+
+
+class PolicySummary(BaseModel):
+    id: str
+    name: str
+    # The raw <policy>...</policy> blob stored on Node.content. The
+    # frontend parses it for display; no need to double-parse on
+    # every list read when the payload is small.
+    content: str
+    display_order: int
+    updated_at: str
+
+
+class PolicyListResponse(BaseModel):
+    policies: list[PolicySummary]
+
+
+def _serialize_sysarch_node(node) -> SysarchNodeResponse:
+    return SysarchNodeResponse(
+        id=node.id,
+        name=node.name,
+        content=node.content,
+        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+    )
+
+
+# ── Sysarch endpoints ───────────────────────────────────────────────
+
+
+@router.get("/{project_id}/sysarch", response_model=SysarchResponse)
+def get_sysarch(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> SysarchResponse:
+    """Return the project's sysarch node state — same four-state shape
+    as ``GET /{project_id}/expansion`` and ``/requirements``.
+
+    Lazily bootstraps the sysarch node + first generation job if
+    missing, so opening a project whose reqs mint finished before
+    the sysarch bootstrap path shipped still works without a 404.
+    """
+    _require_project(db, project_id)
+    node = get_sysarch_node(db, project_id)
+    if node is None:
+        logger.warning("Project %s has no sysarch node; lazy-bootstrapping", project_id)
+        bootstrap_sysarch_node(db, project_id)
+        db.commit()
+        pipeline_queue.enqueue(
+            db,
+            job_type=GENERATE_SYSARCH_JOB_TYPE,
+            payload={"project_id": project_id, "feedback": None},
+        )
+        node = get_sysarch_node(db, project_id)
+        assert node is not None, "bootstrap_sysarch_node should have minted one"
+    draft = pending_sysarch_draft(db, project_id)
+    status, last_error = queries.latest_generation_status(db, project_id, GENERATE_SYSARCH_JOB_TYPE)
+    return SysarchResponse(
+        node=_serialize_sysarch_node(node),
+        pending_draft=(
+            SysarchDraftResponse(
+                id=draft.id,
+                content=draft.content,
+                created_at=draft.created_at.isoformat() if draft.created_at else "",
+            )
+            if draft is not None
+            else None
+        ),
+        generation_status=status,
+        last_error=last_error,
+        latest_telemetry=_latest_telemetry(db, project_id, node.id),
+    )
+
+
+@router.post("/{project_id}/sysarch/feedback", response_model=FeedbackResponse)
+def post_sysarch_feedback(
+    project_id: str,
+    req: FeedbackRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_project(db, project_id)
+    if get_sysarch_node(db, project_id) is None:
+        raise HTTPException(status_code=404, detail="Sysarch node missing for project")
+    # Read-only after approval. Post-approval sysarch regen is
+    # deferred to Phase 11 structural edit UIs.
+    if sysarch_has_been_approved(db, project_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "System architecture is read-only after approval; further "
+                "component-layer edits happen on individual comp_* nodes "
+                "and their arch docs."
+            ),
+        )
+    feedback = (req.feedback or "").strip() or None
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_SYSARCH_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": feedback},
+    )
+    return FeedbackResponse(job_id=job_id)
+
+
+@router.post("/{project_id}/sysarch/approve", response_model=SysarchApproveResponse)
+def post_sysarch_approve(
+    project_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> SysarchApproveResponse:
+    _require_project(db, project_id)
+    node = get_sysarch_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Sysarch node missing for project")
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != node.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this project's sysarch",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
+    db.commit()
+    db.refresh(node)
+
+    # Approval is destructive at the child level — enqueues the
+    # sysarch mint which will produce comp_*, policy_*, edges, and
+    # fan out subreqs bootstrap jobs for every top-level component.
+    pipeline_queue.enqueue(
+        db,
+        job_type=MINT_SYSARCH_JOB_TYPE,
+        payload={"project_id": project_id},
+    )
+
+    return SysarchApproveResponse(node=_serialize_sysarch_node(node))
+
+
+@router.post("/{project_id}/sysarch/discard", response_model=DiscardResponse)
+def post_sysarch_discard(
+    project_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    _require_project(db, project_id)
+    node = get_sysarch_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Sysarch node missing for project")
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != node.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this project's sysarch",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
+    db.commit()
+
+    # Mirrors the other discard routes: reject regenerates from scratch.
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_SYSARCH_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": None},
+    )
+
+    return DiscardResponse(ok=True)
+
+
+# ── Components + policies list endpoints ────────────────────────────
+
+
+@router.get("/{project_id}/components", response_model=ComponentListResponse)
+def get_components(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ComponentListResponse:
+    """List all top-level ``comp_*`` nodes for a project.
+
+    Populated by the ``v2.mint_sysarch`` pipeline job after the
+    sysarch draft is approved. Before then, empty. Frontend polls
+    while the mint might still be running; stops once at least one
+    component is present.
+    """
+    _require_project(db, project_id)
+    components = queries.list_top_level_components(db, project_id)
+    return ComponentListResponse(
+        components=[
+            ComponentSummary(
+                id=c.id,
+                name=c.name,
+                kind=c.kind,
+                display_order=c.display_order,
+                updated_at=c.updated_at.isoformat() if c.updated_at else "",
+            )
+            for c in components
+        ]
+    )
+
+
+@router.get("/{project_id}/policies", response_model=PolicyListResponse)
+def get_policies(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> PolicyListResponse:
+    """List all ``policy_*`` nodes for a project.
+
+    Includes top-level policies minted at sysarch approval and
+    component-local policies minted at comparch approval (Phase 4).
+    Frontend is responsible for parsing the inline ``<policy>`` XML
+    blob on ``Node.content`` into structured fields for display.
+    """
+    _require_project(db, project_id)
+    policies = queries.list_policies(db, project_id)
+    return PolicyListResponse(
+        policies=[
+            PolicySummary(
+                id=p.id,
+                name=p.name,
+                content=p.content,
+                display_order=p.display_order,
+                updated_at=p.updated_at.isoformat() if p.updated_at else "",
+            )
+            for p in policies
+        ]
+    )
+
+
+# ── Subreqs response models ─────────────────────────────────────────
+
+
+class SubreqsNodeResponse(BaseModel):
+    id: str
+    name: str
+    content: str
+    updated_at: str
+
+
+class SubreqsDraftResponse(BaseModel):
+    id: str
+    content: str
+    created_at: str
+
+
+class SubreqsResponse(BaseModel):
+    node: SubreqsNodeResponse
+    pending_draft: SubreqsDraftResponse | None
+    generation_status: queries.GenerationStatus
+    last_error: str | None
+    latest_telemetry: TelemetrySummary | None
+
+
+class SubreqsApproveResponse(BaseModel):
+    node: SubreqsNodeResponse
+
+
+class SubresponsibilitySummary(BaseModel):
+    id: str
+    name: str
+    content: str
+    display_order: int
+    updated_at: str
+
+
+class SubresponsibilityListResponse(BaseModel):
+    subresponsibilities: list[SubresponsibilitySummary]
+
+
+def _serialize_subreqs_node(node) -> SubreqsNodeResponse:
+    return SubreqsNodeResponse(
+        id=node.id,
+        name=node.name,
+        content=node.content,
+        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+    )
+
+
+def _require_top_level_comp(db: Session, project_id: str, comp_id: str) -> Node:
+    """404 unless ``comp_id`` is a top-level ``comp_*`` in the project.
+
+    Used by the per-component subreqs routes to validate the
+    ``comp_id`` path parameter before dispatching. Rejects
+    unknown IDs, IDs belonging to other projects, subcomponent
+    IDs (``parent_id`` is a comp), and non-comp tier nodes.
+    """
+    node = db.get(Node, comp_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Component not found")
+    if node.tier != "comp":
+        raise HTTPException(status_code=404, detail="Not a component")
+    if node.parent_id is not None:
+        # Phase 3 subreqs is per top-level comp only. Subcomponents
+        # get their own arch doc flow in Phase 4; they don't have
+        # their own subreqs.
+        raise HTTPException(status_code=404, detail="Subreqs are per top-level component only")
+    return node
+
+
+# ── Subreqs endpoints (per-component scoping) ───────────────────────
+
+
+@router.get(
+    "/{project_id}/components/{comp_id}/subrequirements",
+    response_model=SubreqsResponse,
+)
+def get_subreqs(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> SubreqsResponse:
+    """Return the subreqs node state for a single component.
+
+    Same four-state shape as ``/sysarch``, scoped by ``comp_id``.
+    Lazy-bootstraps the subreqs node if missing — handles the
+    "component exists but its subreqs node wasn't minted" edge
+    case (e.g. sysarch-mint fan-out partially failed and a later
+    component was missed).
+    """
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    node = get_subreqs_node(db, project_id, comp_id)
+    if node is None:
+        logger.warning("Component %s has no subreqs node; lazy-bootstrapping", comp_id)
+        bootstrap_subreqs_node(db, project_id, comp_id)
+        db.commit()
+        pipeline_queue.enqueue(
+            db,
+            job_type=GENERATE_SUBREQS_JOB_TYPE,
+            payload={
+                "project_id": project_id,
+                "component_id": comp_id,
+                "feedback": None,
+            },
+        )
+        node = get_subreqs_node(db, project_id, comp_id)
+        assert node is not None
+    draft = pending_subreqs_draft(db, project_id, comp_id)
+    status, last_error = queries.latest_generation_status(db, project_id, GENERATE_SUBREQS_JOB_TYPE)
+    return SubreqsResponse(
+        node=_serialize_subreqs_node(node),
+        pending_draft=(
+            SubreqsDraftResponse(
+                id=draft.id,
+                content=draft.content,
+                created_at=draft.created_at.isoformat() if draft.created_at else "",
+            )
+            if draft is not None
+            else None
+        ),
+        generation_status=status,
+        last_error=last_error,
+        latest_telemetry=_latest_telemetry(db, project_id, node.id),
+    )
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/subrequirements/feedback",
+    response_model=FeedbackResponse,
+)
+def post_subreqs_feedback(
+    project_id: str,
+    comp_id: str,
+    req: FeedbackRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    if get_subreqs_node(db, project_id, comp_id) is None:
+        raise HTTPException(status_code=404, detail="Subreqs node missing for this component")
+    if subreqs_has_been_approved(db, project_id, comp_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Subrequirements is read-only after approval; further "
+                "subresponsibility-layer edits happen via individual "
+                "subresp nodes and structural edit UIs."
+            ),
+        )
+    feedback = (req.feedback or "").strip() or None
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_SUBREQS_JOB_TYPE,
+        payload={
+            "project_id": project_id,
+            "component_id": comp_id,
+            "feedback": feedback,
+        },
+    )
+    return FeedbackResponse(job_id=job_id)
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/subrequirements/approve",
+    response_model=SubreqsApproveResponse,
+)
+def post_subreqs_approve(
+    project_id: str,
+    comp_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> SubreqsApproveResponse:
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    node = get_subreqs_node(db, project_id, comp_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Subreqs node missing for this component")
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != node.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this component's subreqs",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
+    db.commit()
+    db.refresh(node)
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=MINT_SUBREQS_JOB_TYPE,
+        payload={"project_id": project_id, "component_id": comp_id},
+    )
+
+    return SubreqsApproveResponse(node=_serialize_subreqs_node(node))
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/subrequirements/discard",
+    response_model=DiscardResponse,
+)
+def post_subreqs_discard(
+    project_id: str,
+    comp_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    node = get_subreqs_node(db, project_id, comp_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Subreqs node missing for this component")
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != node.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this component's subreqs",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
+    db.commit()
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_SUBREQS_JOB_TYPE,
+        payload={
+            "project_id": project_id,
+            "component_id": comp_id,
+            "feedback": None,
+        },
+    )
+
+    return DiscardResponse(ok=True)
+
+
+@router.get(
+    "/{project_id}/components/{comp_id}/subresponsibilities",
+    response_model=SubresponsibilityListResponse,
+)
+def get_subresponsibilities(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> SubresponsibilityListResponse:
+    """List the subresp ``resp_*`` nodes under a given component."""
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    subresps = queries.list_subresponsibilities(db, comp_id)
+    return SubresponsibilityListResponse(
+        subresponsibilities=[
+            SubresponsibilitySummary(
+                id=sr.id,
+                name=sr.name,
+                content=sr.content,
+                display_order=sr.display_order,
+                updated_at=sr.updated_at.isoformat() if sr.updated_at else "",
+            )
+            for sr in subresps
         ]
     )

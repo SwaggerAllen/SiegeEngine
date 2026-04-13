@@ -1,0 +1,259 @@
+"""Prompt template for the subrequirements (``subreqs_*``) draft.
+
+A subreqs node is the per-component analogue of the reqs_* doc.
+It takes a single component's sysarch entry (role + api-intent)
+and its assigned top-level responsibilities and produces the
+list of subresponsibilities that the component's comparch pass
+(Phase 4) will later map onto subcomponents.
+
+Output format:
+
+    <subrequirements>
+      <subresponsibility>
+        <name>Card Tokenization</name>
+        <intent>…paragraph-length description…</intent>
+        <derived-from>
+          <resp id="resp_payment01"/>
+          <resp id="resp_invoice02"/>
+        </derived-from>
+      </subresponsibility>
+      …
+    </subrequirements>
+
+Parallel shape to ``<requirements>`` but with ``<derived-from>``
+replacing ``<covers>``: each subresp lists which top-level resps
+(assigned to this component) it decomposes. Many-to-many
+relationship; subresps can serve multiple parent resps.
+
+The validator enforces that every resp ID in ``<derived-from>``
+is one of the top-level resps assigned to *this* component —
+cross-component leaks are parse errors. It also enforces the
+coverage invariant: every parent resp must appear in at least
+one subresp's ``<derived-from>``.
+
+See ``docs/architecture/v2-rearchitecture.md`` §Subrequirements
+decomposition and ``docs/architecture/v2-roadmap.md`` Phase 3.
+"""
+
+from __future__ import annotations
+
+SYSTEM_PROMPT = """\
+You are a senior software architect decomposing a single \
+component's top-level responsibilities into subresponsibilities. \
+You will be given:
+
+1. The component's name, role, and API intent (from the approved \
+system architecture).
+2. The list of top-level responsibilities assigned to this \
+component, each with a stable ``resp_*`` ID.
+
+Your job is to produce a ``<subrequirements>`` block that lists \
+the subresponsibilities — the finer-grained work units that \
+this component's subcomponents (Phase 4) will be held \
+accountable for. Each subresponsibility names which of the \
+component's top-level responsibilities it decomposes, via a \
+``<derived-from>`` block.
+
+A subresponsibility is a **role** at a finer granularity than \
+the top-level responsibility it derives from. "Card \
+Tokenization" under "Payment Collection". "Session Refresh" \
+under "Authentication". "Retry Scheduling" under both "Payment \
+Collection" and "Invoicing" when the same mechanism serves both.
+
+# Output format
+
+Output a single ``<subrequirements>`` block. Nothing else. \
+Each ``<subresponsibility>`` has exactly one ``<name>``, exactly \
+one ``<intent>``, and exactly one ``<derived-from>`` block \
+containing one or more ``<resp>`` children with an ``id`` \
+attribute:
+
+    <subrequirements>
+      <subresponsibility>
+        <name>Card Tokenization</name>
+        <intent>Convert raw card numbers into opaque tokens at \
+entry and ensure the raw numbers never leave the boundary. All \
+downstream code operates on tokens exclusively.</intent>
+        <derived-from>
+          <resp id="resp_payment01"/>
+        </derived-from>
+      </subresponsibility>
+      <subresponsibility>
+        <name>Retry Scheduling</name>
+        <intent>Schedule delayed retries of failed operations, \
+with exponential backoff and a hard cap. Serves both payment \
+retries and invoice delivery retries.</intent>
+        <derived-from>
+          <resp id="resp_payment01"/>
+          <resp id="resp_invoice02"/>
+        </derived-from>
+      </subresponsibility>
+    </subrequirements>
+
+# Rules
+
+* Use the tag structure exactly as shown. Each ``<subresponsibility>`` \
+has exactly one ``<name>``, exactly one ``<intent>``, and exactly \
+one ``<derived-from>`` block. No other tags inside.
+* ``<name>`` is a short identifier — typically 2 to 5 words, \
+title case. Think "Card Tokenization", "Session Refresh", \
+"Retry Scheduling".
+* ``<intent>`` is a paragraph — typically 2 to 5 sentences. \
+Describe what this subresponsibility covers, at a finer \
+granularity than its parent responsibility, and what it does \
+not cover.
+* ``<derived-from>`` is **required** and must contain **at \
+least one** ``<resp>`` child per subresponsibility. Each \
+``<resp>`` carries an ``id`` attribute matching exactly one of \
+this component's top-level responsibility IDs shown in the \
+input list (the ``resp_*`` prefix plus the 8-character Crockford \
+suffix).
+* **Cross-component leaks are forbidden.** Every id in a \
+``<derived-from>`` block must be one of the top-level resps \
+assigned to this component. Referencing a resp that belongs to \
+a different component is a parse error.
+* A top-level resp may appear under multiple ``<derived-from>`` \
+blocks — the relationship is many-to-many within this \
+component's scope.
+* **Every top-level resp in the input must be covered by at \
+least one subresp.** Before emitting the list, mentally check \
+that each parent resp ID appears in at least one \
+``<derived-from>`` block. Missing coverage is a parse error.
+* **Granularity.** A typical component produces 4 to 12 \
+subresponsibilities. If you're producing 1 or 2, you're \
+probably not decomposing enough. If you're producing 30, \
+you're reaching into implementation detail that belongs in the \
+component arch doc (Phase 4) or in individual impl nodes.
+* Do not include meta-commentary about what you are doing. \
+Output only the ``<subrequirements>`` block.
+* Unescaped ``&`` and ``<`` in intent text are fine — the parser \
+tolerates them.
+"""
+
+
+def render_user_prompt(
+    *,
+    component_summary: str,
+    parent_resps_summary: str,
+    prior_approved: str | None,
+    prior_pending: str | None,
+    feedback: str | None,
+    parse_error: str | None = None,
+) -> str:
+    """Build the user prompt for the subreqs generator.
+
+    ``component_summary`` is the component's name + role + api-
+    intent rendered as prompt-ready text. ``parent_resps_summary``
+    is the list of top-level resps assigned to this component,
+    each with a stable ID the LLM echoes into ``<derived-from>``
+    blocks. The remaining parameters mirror the other bootstrap
+    prompts.
+    """
+    parts: list[str] = []
+    parts.append("# Component")
+    parts.append("")
+    parts.append(component_summary.strip() or "(component details missing)")
+    parts.append("")
+    parts.append("# Top-level responsibilities assigned to this component")
+    parts.append("")
+    parts.append(parent_resps_summary.strip() or "(no responsibilities assigned)")
+    parts.append("")
+
+    if prior_approved:
+        parts.append("# Previously-approved subrequirements")
+        parts.append("")
+        parts.append(prior_approved.strip())
+        parts.append("")
+
+    if prior_pending:
+        parts.append("# Current draft (not yet approved)")
+        parts.append("")
+        parts.append(prior_pending.strip())
+        parts.append("")
+
+    if feedback:
+        parts.append("# User feedback")
+        parts.append("")
+        parts.append(feedback.strip())
+        parts.append("")
+
+    if parse_error:
+        parts.append("# Previous output failed structural validation")
+        parts.append("")
+        parts.append(
+            "Your previous response did not parse into a valid "
+            "<subrequirements> block. The specific error was:"
+        )
+        parts.append("")
+        parts.append(f"> {parse_error.strip()}")
+        parts.append("")
+        parts.append(
+            "Fix the structure and re-emit the full "
+            "<subrequirements> block. Keep the subresp set itself "
+            "the same where possible — this retry is about format, "
+            "not content."
+        )
+        parts.append("")
+
+    parts.append("# Task")
+    parts.append("")
+    if parse_error:
+        parts.append(
+            "Re-emit the subrequirements as a valid <subrequirements> "
+            "block addressing the structural error above. Output only "
+            "the corrected block."
+        )
+    elif feedback and (prior_pending or prior_approved):
+        parts.append(
+            "Revise the subrequirements to address the user feedback "
+            "above. Preserve structure where the feedback does not "
+            "require a change. Output only the revised "
+            "<subrequirements> block."
+        )
+    elif prior_pending or prior_approved:
+        parts.append(
+            "Regenerate the subrequirements from scratch based on "
+            "the component and its top-level responsibilities above. "
+            "Output only the <subrequirements> block."
+        )
+    else:
+        parts.append(
+            "Write an initial subrequirements list for this "
+            "component based on its assigned top-level responsibilities. "
+            "Output only the <subrequirements> block."
+        )
+
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def format_component_summary(name: str, role: str, api_intent: str) -> str:
+    """Render component metadata as a prompt-ready markdown block."""
+    parts: list[str] = []
+    parts.append(f"**{name}**")
+    parts.append("")
+    if role:
+        parts.append("*Role:*")
+        parts.append(role.strip())
+        parts.append("")
+    if api_intent:
+        parts.append("*API intent:*")
+        parts.append(api_intent.strip())
+    return "\n".join(parts).rstrip()
+
+
+def format_parent_resps_summary(resps: list[dict]) -> str:
+    """Render assigned top-level resps as prompt-ready markdown.
+
+    Each entry must carry ``id``, ``name``, ``content``. IDs are
+    rendered prominently so the LLM echoes them verbatim into
+    ``<derived-from>`` blocks.
+    """
+    if not resps:
+        return "(no responsibilities assigned to this component)"
+    lines: list[str] = []
+    for resp in resps:
+        rid = resp.get("id", "").strip() or "(unknown-id)"
+        name = resp.get("name", "").strip() or "(unnamed)"
+        intent = (resp.get("content") or "").strip()
+        lines.append(f"- `{rid}` **{name}**: {intent}")
+    return "\n".join(lines)

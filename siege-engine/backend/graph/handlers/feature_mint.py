@@ -52,6 +52,7 @@ from backend.graph.parsers.validators import (
 )
 from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
 from backend.graph.reducer import append_event
+from backend.graph.requirements import bootstrap_reqs_node, get_reqs_node
 from backend.models.node import Node
 from backend.pipeline import queue as pipeline_queue
 
@@ -150,7 +151,28 @@ async def mint_features(payload: dict) -> None:
             )
             minted_ids.append(feat_id)
 
+        # Bootstrap the requirements node in the same transaction
+        # as the feature mints so either both land or neither does.
+        # Skip bootstrap if a reqs node already exists — handles the
+        # "mint_features is being replayed" crash-recovery case.
+        should_enqueue_reqs_generation = get_reqs_node(db, project_id) is None
+        if should_enqueue_reqs_generation:
+            bootstrap_reqs_node(db, project_id)
+
         db.commit()
+
+        # Enqueue the initial requirements generation after the
+        # commit so a transient enqueue failure doesn't roll back
+        # the successful feat mints. The enqueue has its own commit;
+        # the worst case is a bootstrap node without a job, which
+        # the GET /requirements route lazy-bootstrap path handles.
+        if should_enqueue_reqs_generation:
+            pipeline_queue.enqueue(
+                db,
+                job_type="v2.generate_requirements",
+                payload={"project_id": project_id, "feedback": None},
+            )
+
         logger.info(
             "mint_features project=%s minted %d feat_* nodes: %s",
             project_id,
