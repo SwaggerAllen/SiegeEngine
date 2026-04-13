@@ -1374,3 +1374,590 @@ def _validate_derived_from(
         ids.append(rid)
 
     return tuple(ids)
+
+
+# ── Component architecture doc (Phase 4: comparch) ─────────────────
+
+
+@dataclass(frozen=True)
+class Subcomponent:
+    """A single validated subcomponent entry from a ``<comparch>`` block.
+
+    ``alias`` is the local reference used inside the owning
+    component's ``<sub-dependencies>`` edges — it is *not* a
+    node ID. The comparch mint handler resolves aliases to real
+    ``comp_*`` IDs at approval time.
+
+    Subcomponents do **not** carry a ``kind`` field; they
+    inherit the kind (domain / presentational) of the owning
+    top-level component. ``resp_refs`` holds the pre-minted
+    subresp IDs this subcomponent owns; the 1:1 subresp →
+    subcomponent assignment is enforced at the ``<subcomponents>``
+    block level so every minted subresp lands in exactly one
+    subcomponent.
+    """
+
+    alias: str
+    name: str
+    role: str
+    api_intent: str
+    resp_refs: tuple[str, ...]
+    is_foundation: bool
+
+
+@dataclass(frozen=True)
+class ArchDoc:
+    """The full validated comparch output as structured data.
+
+    Fields mirror the seven sections of the arch doc XML. The
+    first five are fragment sections (stored verbatim as the
+    persistent, transcluded content of each ``comp_X_<kind>``
+    fragment). The last two are mint-time directives that
+    project into ``NodeCreated`` / ``EdgeCreated`` events and
+    then drop away as standalone artifacts.
+
+    ``external_deps`` holds the raw ``comp_*`` IDs from the
+    ``<dependencies>`` section — already globally unique so
+    no alias resolution is needed. ``sub_deps`` holds alias
+    pairs; the mint handler resolves them against the
+    newly-minted subcomponents.
+    """
+
+    techspec: str
+    pubapi: str
+    privapi: str
+    policies: tuple[Policy, ...]
+    external_deps: tuple[str, ...]
+    subcomponents: tuple[Subcomponent, ...]
+    sub_deps: tuple[DepEdge, ...]
+
+
+_COMPARCH_ALLOWED_CHILDREN = {
+    "technical-specification",
+    "public-surface",
+    "private-surface",
+    "policies",
+    "dependencies",
+    "subcomponents",
+    "sub-dependencies",
+}
+_COMPARCH_REQUIRED_ORDER = (
+    "technical-specification",
+    "public-surface",
+    "private-surface",
+    "policies",
+    "dependencies",
+    "subcomponents",
+    "sub-dependencies",
+)
+_SUBCOMPONENTS_ALLOWED_CHILDREN = {"subcomponent"}
+_SUBCOMPONENT_ALLOWED_CHILDREN = {
+    "name",
+    "role",
+    "api-intent",
+    "responsibilities",
+    "foundation",
+}
+_SUB_DEPENDENCIES_ALLOWED_CHILDREN = {"dep"}
+
+
+def validate_arch_doc(
+    tree: TagNode,
+    *,
+    known_subresp_ids: set[str],
+    known_sibling_comp_ids: set[str],
+    known_resp_ids_for_policies: set[str],
+) -> ArchDoc:
+    """Validate a parsed ``<comparch>`` tree and return an ArchDoc.
+
+    Enforces the seven-section structure described in
+    :mod:`backend.graph.prompts.comparch`: single root, seven
+    sections in order, non-empty fragment text for the first
+    three, policy sub-grammar referencing resps from the
+    project-wide + component-local allowed set, ``<dependencies>``
+    references constrained to the sibling comp allowlist,
+    ``<subcomponents>`` with alias syntax / uniqueness / kind
+    inheritance (no ``<kind>`` tag) / exactly-one-foundation (if
+    decomposing) / subresp coverage, and ``<sub-dependencies>``
+    acyclicity + foundation-dep rule.
+
+    ``known_subresp_ids`` is the set of pre-minted subresp IDs
+    owned by this component (from its approved ``subreqs_*``).
+    Every resp reference in ``<subcomponents>/<responsibilities>``
+    must come from this set and every ID in the set must be
+    assigned to exactly one subcomponent when decomposing.
+
+    ``known_sibling_comp_ids`` is the set of top-level
+    ``comp_*`` IDs other than this component. ``<dependencies>``
+    may only reference IDs from this set.
+
+    ``known_resp_ids_for_policies`` is the union of
+    (a) top-level resp_* IDs assigned to this component and
+    (b) the component's pre-minted subresps. Component-local
+    policies' ``<required>`` field must reference an ID from
+    this set — top-level resps owned by OTHER components are
+    cross-component leaks.
+
+    Un-fanned-out is legal: both ``<subcomponents>`` and
+    ``<sub-dependencies>`` may be empty. In that case there is
+    no foundation requirement and no subresp coverage check —
+    the subresps will be projected into a single ``impl_*``
+    leaf by Phase 6.
+    """
+    if tree.tag != "comparch":
+        raise ValidationError(
+            f"Expected root tag <comparch>, got <{tree.tag}>. "
+            "Wrap the architecture doc in a single "
+            "<comparch>...</comparch> block."
+        )
+
+    section_map: dict[str, TagNode] = {}
+    for child in tree.children:
+        if child.tag not in _COMPARCH_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<comparch> contains an unexpected child <{child.tag}>. "
+                f"Allowed children are: {sorted(_COMPARCH_ALLOWED_CHILDREN)}."
+            )
+        if child.tag in section_map:
+            raise ValidationError(
+                f"<comparch> contains more than one <{child.tag}> section; "
+                "exactly one of each section is required."
+            )
+        section_map[child.tag] = child
+
+    actual_order = [c.tag for c in tree.children if c.tag in _COMPARCH_REQUIRED_ORDER]
+    if actual_order != list(_COMPARCH_REQUIRED_ORDER):
+        raise ValidationError(
+            f"<comparch> sections are not in the required order. "
+            f"Expected: {list(_COMPARCH_REQUIRED_ORDER)}. "
+            f"Got: {actual_order}. "
+            "Reorder the children of <comparch> to match the required sequence."
+        )
+
+    techspec = _validate_fragment_section(
+        section_map["technical-specification"], "technical-specification"
+    )
+    pubapi = _validate_fragment_section(section_map["public-surface"], "public-surface")
+    privapi = _validate_fragment_section(section_map["private-surface"], "private-surface")
+
+    policies = _validate_arch_doc_policies(
+        section_map["policies"], known_resp_ids=known_resp_ids_for_policies
+    )
+    external_deps = _validate_arch_doc_external_dependencies(
+        section_map["dependencies"], known_sibling_comp_ids=known_sibling_comp_ids
+    )
+    subcomponents = _validate_arch_doc_subcomponents(
+        section_map["subcomponents"], known_subresp_ids=known_subresp_ids
+    )
+
+    sub_alias_set = {s.alias for s in subcomponents}
+    sub_deps = _validate_arch_doc_sub_dependencies(section_map["sub-dependencies"], sub_alias_set)
+
+    # Sub-dep cycle detection + foundation-dep enforcement — only
+    # meaningful when decomposing. Un-fanned-out components have
+    # no sub-alias set so the checks degenerate to no-ops.
+    if subcomponents:
+        _detect_dep_cycles(sub_deps, sub_alias_set)
+        _enforce_sub_foundation_dependency(subcomponents, sub_deps)
+
+    return ArchDoc(
+        techspec=techspec,
+        pubapi=pubapi,
+        privapi=privapi,
+        policies=policies,
+        external_deps=external_deps,
+        subcomponents=subcomponents,
+        sub_deps=sub_deps,
+    )
+
+
+def _validate_fragment_section(node: TagNode, section_name: str) -> str:
+    """Extract the non-empty text of a fragment section.
+
+    Fragment sections (``<technical-specification>``,
+    ``<public-surface>``, ``<private-surface>``) are prose with
+    optional fenced code blocks. The parser treats the whole
+    section as text — no nested XML tags allowed, because the
+    parser doesn't have a grammar for "section text" vs
+    "structured child" inside a fragment.
+    """
+    if node.children:
+        raise ValidationError(
+            f"<{section_name}> must contain plain text and fenced code "
+            "blocks only, no nested XML tags. Found children: "
+            f"{[c.tag for c in node.children]}."
+        )
+    text = node.text.strip() if node.text else ""
+    if not text:
+        raise ValidationError(
+            f"<{section_name}> is empty. This fragment section must be "
+            "a non-empty paragraph describing the component's "
+            f"{section_name.replace('-', ' ')}."
+        )
+    return text
+
+
+def _validate_arch_doc_policies(node: TagNode, *, known_resp_ids: set[str]) -> tuple[Policy, ...]:
+    """Validate ``<policies>`` and return a tuple of Policy.
+
+    Reuses the existing :func:`_validate_policy` helper that the
+    sysarch validator uses — component-local policies have
+    identical sub-grammar to top-level ones. The only difference
+    is the set of allowed ``<required>`` resp IDs, which the
+    caller supplies.
+    """
+    for child in node.children:
+        if child.tag not in _POLICIES_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<policies> contains an unexpected child <{child.tag}>. "
+                "Only <policy> entries are allowed."
+            )
+    policy_nodes = node.find_all("policy")
+    policies: list[Policy] = []
+    for index, pnode in enumerate(policy_nodes):
+        policies.append(_validate_policy(pnode, index=index, known_resp_ids=known_resp_ids))
+    return tuple(policies)
+
+
+def _validate_arch_doc_external_dependencies(
+    node: TagNode, *, known_sibling_comp_ids: set[str]
+) -> tuple[str, ...]:
+    """Validate ``<dependencies>`` and return the sibling comp IDs.
+
+    Unlike sysarch's ``<dependencies>`` which uses local aliases,
+    comparch's external dependencies use real ``comp_*`` IDs
+    because sibling top-level components are already minted and
+    globally unique. Each ``<dep>`` has a single ``to``
+    attribute — there's no ``from`` because the owning component
+    is implicit.
+    """
+    for child in node.children:
+        if child.tag not in _DEPENDENCIES_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<dependencies> contains an unexpected child <{child.tag}>. "
+                'Only <dep to="comp_..."/> entries are allowed.'
+            )
+    dep_nodes = node.find_all("dep")
+    seen: set[str] = set()
+    deps: list[str] = []
+    for index, dnode in enumerate(dep_nodes):
+        target = dnode.attrs.get("to", "").strip()
+        if not target:
+            raise ValidationError(
+                f"<dep> at position {index} is missing the to attribute. "
+                'Every external <dep> must carry to="comp_..." with a '
+                "real sibling component ID."
+            )
+        if dnode.attrs.get("from"):
+            raise ValidationError(
+                f"<dep> at position {index} has a from attribute. "
+                "External dependencies are always from this component "
+                'implicitly — do not add from="..." to <dependencies> '
+                "entries. Sub-dependencies inside <sub-dependencies> "
+                "do use from/to aliases."
+            )
+        if target not in known_sibling_comp_ids:
+            valid_list = sorted(known_sibling_comp_ids) or (
+                "(none — this is the only top-level component)"
+            )
+            raise ValidationError(
+                f"<dep> at position {index} targets {target!r}, which is "
+                "not in the allowed sibling component set. Valid targets: "
+                f"{valid_list}."
+            )
+        if target in seen:
+            raise ValidationError(
+                f"<dependencies> lists duplicate target {target!r}. Each "
+                "sibling may appear at most once."
+            )
+        seen.add(target)
+        deps.append(target)
+    return tuple(deps)
+
+
+def _validate_arch_doc_subcomponents(
+    node: TagNode, *, known_subresp_ids: set[str]
+) -> tuple[Subcomponent, ...]:
+    """Validate ``<subcomponents>`` and return a tuple of Subcomponent.
+
+    May legitimately be empty (un-fanned-out component). If
+    populated: enforces alias syntax + uniqueness, per-subcomponent
+    field completeness, exactly-one-foundation, and coverage of
+    every pre-minted subresp in ``known_subresp_ids``.
+    """
+    for child in node.children:
+        if child.tag not in _SUBCOMPONENTS_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<subcomponents> contains an unexpected child "
+                f"<{child.tag}>. Only <subcomponent> entries are allowed."
+            )
+    subcomponent_nodes = [c for c in node.children if c.tag == "subcomponent"]
+    if not subcomponent_nodes:
+        # Un-fanned-out: valid only if there are no subresps to cover.
+        if known_subresp_ids:
+            raise ValidationError(
+                "<subcomponents> is empty but the owning component has "
+                f"{len(known_subresp_ids)} pre-minted subresponsibilities "
+                "from its subreqs approval. Decompose the component into "
+                "at least one subcomponent that owns them, or if this "
+                "component really has no decomposition, the subreqs "
+                "pass should not have produced subresps in the first "
+                "place. Missing subresps: "
+                f"{', '.join(sorted(known_subresp_ids))}."
+            )
+        return ()
+
+    subcomponents: list[Subcomponent] = []
+    seen_aliases: set[str] = set()
+    assigned_subresp_ids: dict[str, str] = {}
+    foundation_aliases: list[str] = []
+
+    for index, snode in enumerate(subcomponent_nodes):
+        sub = _validate_subcomponent(snode, index=index, known_subresp_ids=known_subresp_ids)
+        if sub.alias in seen_aliases:
+            raise ValidationError(
+                f"<subcomponents> contains two <subcomponent> entries "
+                f"with the same alias {sub.alias!r}. Aliases must be "
+                "unique within an arch doc. Rename one."
+            )
+        seen_aliases.add(sub.alias)
+        if sub.is_foundation:
+            foundation_aliases.append(sub.alias)
+        for rid in sub.resp_refs:
+            if rid in assigned_subresp_ids:
+                raise ValidationError(
+                    f"Subresponsibility {rid!r} is assigned to both "
+                    f"{assigned_subresp_ids[rid]!r} and {sub.alias!r}. "
+                    "Each pre-minted subresp must be assigned to "
+                    "exactly one subcomponent."
+                )
+            assigned_subresp_ids[rid] = sub.alias
+        subcomponents.append(sub)
+
+    if len(foundation_aliases) == 0:
+        raise ValidationError(
+            "<subcomponents> has no foundation subcomponent. When a "
+            "component decomposes, exactly one subcomponent must carry "
+            "a self-closing <foundation/> marker — it owns the "
+            "component's root folder territory. Un-fanned-out "
+            "components (empty <subcomponents>) do not need one, but "
+            "once you decompose at all, a foundation is required."
+        )
+    if len(foundation_aliases) > 1:
+        raise ValidationError(
+            f"<subcomponents> has {len(foundation_aliases)} foundation "
+            f"subcomponents ({', '.join(sorted(foundation_aliases))}). "
+            "Exactly one foundation is required; promote the others to "
+            "regular subcomponents or merge them into the single "
+            "foundation."
+        )
+
+    missing = sorted(known_subresp_ids - set(assigned_subresp_ids.keys()))
+    if missing:
+        raise ValidationError(
+            "<subcomponents> does not assign every pre-minted "
+            "subresponsibility to a subcomponent. Missing: "
+            f"{', '.join(missing)}. Every subresp from the input list "
+            "must appear in exactly one subcomponent's "
+            "<responsibilities> block."
+        )
+
+    return tuple(subcomponents)
+
+
+def _validate_subcomponent(
+    node: TagNode, *, index: int, known_subresp_ids: set[str]
+) -> Subcomponent:
+    """Validate a single ``<subcomponent>`` entry."""
+    pos = f"<subcomponent> at position {index}"
+
+    alias = node.attrs.get("alias", "").strip()
+    if not alias:
+        raise ValidationError(
+            f"{pos} is missing the alias attribute. Every subcomponent "
+            'must carry alias="..." (lowercase snake_case, 1-32 chars, '
+            "starts with a letter)."
+        )
+    if not _ALIAS_RE.match(alias):
+        raise ValidationError(
+            f"{pos} has invalid alias {alias!r}. Aliases must match "
+            "^[a-z][a-z0-9_]{0,31}$ — lowercase letter first, then "
+            "lowercase alphanumerics or underscores, 1-32 characters."
+        )
+
+    for child in node.children:
+        if child.tag not in _SUBCOMPONENT_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) contains an unexpected child "
+                f"<{child.tag}>. Allowed children are: "
+                f"{sorted(_SUBCOMPONENT_ALLOWED_CHILDREN)}. Note: "
+                "subcomponents do NOT have a <kind> tag — kind is "
+                "inherited from the owning component."
+            )
+
+    def _require_one(tag: str) -> TagNode:
+        matching = node.find_all(tag)
+        if len(matching) == 0:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) is missing a <{tag}> child. "
+                "Every subcomponent must have exactly one."
+            )
+        if len(matching) > 1:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has {len(matching)} <{tag}> "
+                "children; exactly one is required."
+            )
+        return matching[0]
+
+    name_node = _require_one("name")
+    role_node = _require_one("role")
+    api_intent_node = _require_one("api-intent")
+    responsibilities_node = _require_one("responsibilities")
+
+    name = (name_node.text or "").strip()
+    if not name:
+        raise ValidationError(
+            f"{pos} (alias={alias!r}) has an empty <name>. The display "
+            "name must be a short title-case identifier."
+        )
+
+    role = (role_node.text or "").strip()
+    if not role:
+        raise ValidationError(
+            f"{pos} (alias={alias!r}) has an empty <role>. Every "
+            "subcomponent must have a role paragraph describing what "
+            "it does within this component."
+        )
+
+    api_intent = (api_intent_node.text or "").strip()
+    if not api_intent:
+        raise ValidationError(
+            f"{pos} (alias={alias!r}) has an empty <api-intent>. Every "
+            "subcomponent must describe the shape of its intended API."
+        )
+
+    for rchild in responsibilities_node.children:
+        if rchild.tag not in _RESPONSIBILITIES_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has a <responsibilities> "
+                f"block containing an unexpected child <{rchild.tag}>. "
+                'Only <resp id="resp_..."/> entries are allowed.'
+            )
+    resp_nodes = responsibilities_node.find_all("resp")
+    if not resp_nodes:
+        raise ValidationError(
+            f"{pos} (alias={alias!r}) has an empty <responsibilities> "
+            "block. Every subcomponent must be assigned at least one "
+            'pre-minted subresponsibility via a <resp id="resp_..."/> child.'
+        )
+    resp_refs: list[str] = []
+    seen_refs: set[str] = set()
+    for ri, rnode in enumerate(resp_nodes):
+        rid = rnode.attrs.get("id", "").strip()
+        if not rid:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has a <resp> entry at position "
+                f"{ri} with no id attribute. Every <resp> must carry "
+                'an id="resp_..." attribute referencing a pre-minted '
+                "subresponsibility."
+            )
+        if rid in seen_refs:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has duplicate <resp> reference "
+                f"{rid!r}. Each subresponsibility may be listed at most "
+                "once per subcomponent."
+            )
+        seen_refs.add(rid)
+        if rid not in known_subresp_ids:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) references unknown "
+                f"subresponsibility {rid!r}. Valid pre-minted subresps "
+                f"for this component: {', '.join(sorted(known_subresp_ids))}."
+            )
+        resp_refs.append(rid)
+
+    is_foundation = len(node.find_all("foundation")) > 0
+
+    return Subcomponent(
+        alias=alias,
+        name=name,
+        role=role,
+        api_intent=api_intent,
+        resp_refs=tuple(resp_refs),
+        is_foundation=is_foundation,
+    )
+
+
+def _validate_arch_doc_sub_dependencies(node: TagNode, alias_set: set[str]) -> tuple[DepEdge, ...]:
+    """Validate ``<sub-dependencies>`` and return a tuple of DepEdge.
+
+    Same shape as the sysarch dependencies validator: every
+    ``<dep from="ALIAS1" to="ALIAS2"/>`` must reference aliases
+    declared in ``<subcomponents>``, no self-deps. Acyclicity
+    and foundation-dep enforcement happen in the caller via
+    :func:`_detect_dep_cycles` and
+    :func:`_enforce_sub_foundation_dependency`.
+    """
+    for child in node.children:
+        if child.tag not in _SUB_DEPENDENCIES_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<sub-dependencies> contains an unexpected child "
+                f"<{child.tag}>. Only <dep> entries are allowed."
+            )
+    dep_nodes = node.find_all("dep")
+    deps: list[DepEdge] = []
+    for index, dnode in enumerate(dep_nodes):
+        from_alias = dnode.attrs.get("from", "").strip()
+        to_alias = dnode.attrs.get("to", "").strip()
+        if not from_alias or not to_alias:
+            raise ValidationError(
+                f"<dep> at <sub-dependencies> position {index} is "
+                "missing a from or to attribute. Every sub-dependency "
+                'must carry from="..." to="..." with known aliases.'
+            )
+        if from_alias not in alias_set:
+            raise ValidationError(
+                f"<dep> at <sub-dependencies> position {index} has "
+                f"unknown from alias {from_alias!r}. Valid aliases: "
+                f"{sorted(alias_set)}."
+            )
+        if to_alias not in alias_set:
+            raise ValidationError(
+                f"<dep> at <sub-dependencies> position {index} has "
+                f"unknown to alias {to_alias!r}. Valid aliases: "
+                f"{sorted(alias_set)}."
+            )
+        if from_alias == to_alias:
+            raise ValidationError(
+                f"<dep> at <sub-dependencies> position {index} has "
+                f"from == to (both {from_alias!r}). A subcomponent "
+                "cannot depend on itself."
+            )
+        deps.append(DepEdge(from_alias=from_alias, to_alias=to_alias))
+    return tuple(deps)
+
+
+def _enforce_sub_foundation_dependency(
+    subcomponents: tuple[Subcomponent, ...], deps: tuple[DepEdge, ...]
+) -> None:
+    """Every non-foundation subcomponent must depend on the foundation.
+
+    Mirrors :func:`_enforce_foundation_dependency` at the
+    subcomponent layer. Inlined rather than refactored to a
+    shared generic helper because the call sites type the
+    components differently (``Component`` vs ``Subcomponent``)
+    and a Protocol/TypeVar refactor is more ceremony than this
+    five-line check deserves.
+    """
+    foundation_alias = next(s.alias for s in subcomponents if s.is_foundation)
+    required_from = {s.alias for s in subcomponents if not s.is_foundation}
+    seen: set[str] = {d.from_alias for d in deps if d.to_alias == foundation_alias}
+    missing = sorted(required_from - seen)
+    if missing:
+        raise ValidationError(
+            "Every non-foundation subcomponent must have a <dep> edge "
+            f"pointing at the foundation subcomponent {foundation_alias!r}. "
+            f"Missing foundation dependency from: {', '.join(missing)}. "
+            'Add <dep from="<alias>" to="' + foundation_alias + '"/> '
+            "for each missing subcomponent."
+        )
