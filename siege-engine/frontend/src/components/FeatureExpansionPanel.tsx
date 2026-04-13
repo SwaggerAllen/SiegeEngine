@@ -132,8 +132,9 @@ export function FeatureExpansionPanel({ projectId }: Props) {
             onClick={() => discardMutation.mutate(pending_draft.id)}
             disabled={isBusy}
             className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
+            title="Discard this draft and generate a new one from scratch"
           >
-            Discard
+            Reject &amp; Regenerate
           </button>
         </div>
         <TelemetryLine telemetry={latest_telemetry} />

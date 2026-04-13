@@ -72,9 +72,15 @@ describe('FeatureExpansionPanel', () => {
 
     await waitFor(() => expect(screen.getByText(/Hello/)).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Discard/i })).toBeInTheDocument();
-    // Regenerate is disabled until feedback is non-empty
-    expect(screen.getByRole('button', { name: /Regenerate/i })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Reject & Regenerate' })
+    ).toBeInTheDocument();
+    // The feedback-driven Regenerate button is disabled until
+    // feedback is non-empty. Use exact match since "Reject &
+    // Regenerate" also contains the word "Regenerate".
+    expect(
+      screen.getByRole('button', { name: 'Regenerate' })
+    ).toBeDisabled();
   });
 
   it('invokes approveDraft when Approve is clicked', async () => {
@@ -103,7 +109,12 @@ describe('FeatureExpansionPanel', () => {
     );
   });
 
-  it('invokes discardDraft when Discard is clicked', async () => {
+  it('invokes discardDraft when Reject & Regenerate is clicked', async () => {
+    // The button is labeled "Reject & Regenerate" but still hits
+    // the same discardDraft API; the backend's discard endpoint
+    // now enqueues a fresh generation after discarding, so the
+    // button semantics match the label even though the mutation
+    // name hasn't changed.
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -116,7 +127,9 @@ describe('FeatureExpansionPanel', () => {
     mockedDiscard.mockResolvedValue(undefined);
 
     renderPanel();
-    const btn = await screen.findByRole('button', { name: /Discard/i });
+    const btn = await screen.findByRole('button', {
+      name: 'Reject & Regenerate',
+    });
     fireEvent.click(btn);
 
     await waitFor(() =>
@@ -139,7 +152,7 @@ describe('FeatureExpansionPanel', () => {
     renderPanel();
     const textarea = await screen.findByPlaceholderText(/Add reporting/i);
     fireEvent.change(textarea, { target: { value: 'Add reporting' } });
-    fireEvent.click(screen.getByRole('button', { name: /Regenerate/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
 
     await waitFor(() =>
       expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', 'Add reporting')

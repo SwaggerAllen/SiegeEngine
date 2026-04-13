@@ -1,3 +1,4 @@
+import type { FeatureSummary } from '../api/features';
 import { useFeatures } from '../hooks/queries/useFeatureQueries';
 import { describeApiError } from '../lib/describeApiError';
 
@@ -51,29 +52,80 @@ export function FeatureList({ projectId, mintPending }: Props) {
     );
   }
 
+  // Group features by group_label while preserving the display_order
+  // of the first appearance of each group. Ungrouped features (null
+  // group_label) get rendered as a single implicit "Ungrouped"
+  // section at the end if there are any.
+  const grouped = groupFeatures(features);
+
   return (
-    <div className="p-6 space-y-3 max-w-4xl mx-auto">
+    <div className="p-6 space-y-6 max-w-4xl mx-auto">
       <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wide">
         Features ({features.length})
       </h3>
-      <ul className="grid gap-3 md:grid-cols-2">
-        {features.map((feature) => (
-          <li
-            key={feature.id}
-            className="bg-gray-800/50 border border-gray-700 rounded p-4 space-y-2"
-          >
-            <div className="flex items-baseline justify-between gap-2">
-              <h4 className="font-semibold text-white">{feature.name}</h4>
-              <span className="text-xs text-gray-500 tabular-nums">
-                #{feature.display_order}
-              </span>
-            </div>
-            <p className="text-sm text-gray-300 line-clamp-4">
-              {feature.content}
-            </p>
-          </li>
-        ))}
-      </ul>
+      {grouped.map(({ label, items }) => (
+        <section key={label ?? '__ungrouped__'} className="space-y-3">
+          <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            {label ?? 'Ungrouped'}
+            <span className="ml-2 text-gray-600 font-normal normal-case tracking-normal">
+              ({items.length})
+            </span>
+          </h4>
+          <ul className="grid gap-3 md:grid-cols-2">
+            {items.map((feature) => (
+              <li
+                key={feature.id}
+                className="bg-gray-800/50 border border-gray-700 rounded p-4 space-y-2"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <h5 className="font-semibold text-white">
+                    {feature.name}
+                    {feature.is_implicit && (
+                      <span
+                        className="ml-2 text-xs font-normal italic text-blue-300/80"
+                        title="Inferred by the LLM — not explicit in the input doc"
+                      >
+                        inferred
+                      </span>
+                    )}
+                  </h5>
+                  <span className="text-xs text-gray-500 tabular-nums">
+                    #{feature.display_order}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-300 line-clamp-4">
+                  {feature.content}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
     </div>
   );
+}
+
+/**
+ * Bucket features by group_label while preserving the document
+ * order of both groups and their contents. Ungrouped features land
+ * in a single ``null``-labeled bucket at whichever position they
+ * first appear relative to the groups.
+ *
+ * Returns an array rather than a Map so the caller can render it
+ * in order.
+ */
+function groupFeatures(
+  features: FeatureSummary[]
+): Array<{ label: string | null; items: FeatureSummary[] }> {
+  const buckets = new Map<string | null, FeatureSummary[]>();
+  const order: Array<string | null> = [];
+  for (const f of features) {
+    const key = f.group_label;
+    if (!buckets.has(key)) {
+      buckets.set(key, []);
+      order.push(key);
+    }
+    buckets.get(key)!.push(f);
+  }
+  return order.map((label) => ({ label, items: buckets.get(label)! }));
 }
