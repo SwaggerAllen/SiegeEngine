@@ -37,6 +37,7 @@ approved expansion content is structurally valid.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import uuid
@@ -73,6 +74,15 @@ CLI_TOOLS = '""'
 # calls per user-requested generation. Keep small so runaway
 # broken output doesn't silently blow the token budget.
 MAX_PARSE_RETRIES = 3
+
+# Transient-CLI-error retry budget. Separate from the parse-validate
+# loop: this retries when the CLI itself fails (upstream Anthropic
+# 5xx, process crash, etc.) — i.e. we never got usable output. The
+# first attempt plus this many retries means up to
+# ``CLI_MAX_TRANSIENT_RETRIES + 1`` total CLI invocations per
+# parse-validate attempt. Backoff is exponential.
+CLI_MAX_TRANSIENT_RETRIES = 3
+CLI_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (2.0, 4.0, 8.0)
 
 
 class FeatureExpansionHandlerError(RuntimeError):
@@ -207,6 +217,45 @@ async def generate_feature_expansion(payload: dict) -> None:
         db.close()
 
 
+async def _call_cli_with_transient_retry(**kwargs):  # type: ignore[no-untyped-def]
+    """Invoke ``cli_manager.generate_with_usage`` with retry on transient errors.
+
+    Upstream Anthropic 5xx, CLI crashes, and any other non-zero-exit
+    failures from the CLI all surface as ``RuntimeError`` from
+    ``generate_with_usage``. These are usually transient — the fix
+    is to wait and retry — so we do that up to
+    :data:`CLI_MAX_TRANSIENT_RETRIES` times with an exponential
+    backoff schedule before giving up and re-raising.
+
+    Parse / validation errors have their own retry loop in
+    :func:`_generate_with_parse_validate`; this helper only retries
+    the "never got output at all" failure mode.
+
+    ``TimeoutError`` is **not** retried — the CLI already has its own
+    timeout budget and three back-to-back 180s hangs is worse than
+    failing fast. Any other exception type propagates unchanged.
+    """
+    last_exc: RuntimeError | None = None
+    for attempt_idx in range(CLI_MAX_TRANSIENT_RETRIES + 1):
+        try:
+            return await cli_manager.generate_with_usage(**kwargs)
+        except RuntimeError as exc:
+            last_exc = exc
+            if attempt_idx >= CLI_MAX_TRANSIENT_RETRIES:
+                break
+            backoff = CLI_RETRY_BACKOFF_SECONDS[attempt_idx]
+            logger.warning(
+                "CLI call failed on attempt %d/%d, retrying in %.1fs: %s",
+                attempt_idx + 1,
+                CLI_MAX_TRANSIENT_RETRIES + 1,
+                backoff,
+                str(exc)[:500],
+            )
+            await asyncio.sleep(backoff)
+    assert last_exc is not None
+    raise last_exc
+
+
 async def _generate_with_parse_validate(
     *,
     input_doc: str,
@@ -244,7 +293,7 @@ async def _generate_with_parse_validate(
             feedback=feedback,
             parse_error=parse_error,
         )
-        result = await cli_manager.generate_with_usage(
+        result = await _call_cli_with_transient_retry(
             prompt=user_prompt,
             system_prompt=SYSTEM_PROMPT,
             tools=CLI_TOOLS,

@@ -22,6 +22,7 @@ from backend.database import Base
 from backend.graph import events as ev
 from backend.graph.expansion import bootstrap_expansion_node
 from backend.graph.handlers.feature_expansion import (
+    CLI_MAX_TRANSIENT_RETRIES,
     MAX_PARSE_RETRIES,
     FeatureExpansionHandlerError,
     FeatureExpansionParseRetryExhausted,
@@ -31,6 +32,23 @@ from backend.graph.reducer import append_event
 from backend.models import InputDocument, Project
 from backend.models.node import Draft
 from backend.models.telemetry import GenerationTelemetry
+
+
+@pytest.fixture(autouse=True)
+def _fast_cli_retry_backoff(monkeypatch):
+    """Zero out the transient-CLI-error backoff so tests don't sleep.
+
+    The real handler waits seconds between retries; in tests we just
+    want the retry *count* and *control flow* to exercise, not the
+    wall-clock pauses.
+    """
+    import backend.graph.handlers.feature_expansion as _handler_mod
+
+    monkeypatch.setattr(
+        _handler_mod,
+        "CLI_RETRY_BACKOFF_SECONDS",
+        (0.0,) * (_handler_mod.CLI_MAX_TRANSIENT_RETRIES + 1),
+    )
 
 
 @pytest.fixture()
@@ -549,3 +567,159 @@ class TestParseValidateRetry:
         # (via the "Current draft" section) and the parse error.
         assert "<name>OnlyName</name>" in retry_prompt
         assert "missing an <intent>" in retry_prompt
+
+
+def _patch_cli_mixed(
+    monkeypatch,
+    outcomes: list,  # list of str | Exception
+    *,
+    prompt_tokens: int = 100,
+    completion_tokens: int = 50,
+    model: str = "claude-sonnet-4-6",
+):
+    """Patch the CLI with a sequence of outcomes where each entry is
+    either a string (returned as GenerationResult text) or an
+    Exception instance (raised). Used by transient-retry tests to
+    simulate 'upstream 500 then success' patterns.
+    """
+    import backend.graph.handlers.feature_expansion as _handler_mod
+    from backend.cli.manager import GenerationResult
+
+    calls: list[dict] = []
+    remaining = list(outcomes)
+
+    async def fake(**kwargs):
+        calls.append(kwargs)
+        if not remaining:
+            raise RuntimeError("CLI mock exhausted — test called it too many times")
+        outcome = remaining.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return GenerationResult(
+            text=outcome,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            model=model,
+        )
+
+    monkeypatch.setattr(_handler_mod.cli_manager, "generate_with_usage", fake)
+    return calls
+
+
+class TestTransientCLIRetry:
+    """The handler retries the CLI when it fails non-deterministically
+    (upstream Anthropic 5xx, process crash, etc.) with exponential
+    backoff. This is separate from the parse-validate retry loop:
+    this handles "we never got output" rather than "we got bad
+    output".
+    """
+
+    def test_transient_failure_then_success(
+        self, shared_session_factory, seeded_project, monkeypatch
+    ):
+        good = _feature_xml(("Recovered", "After one flake."))
+        calls = _patch_cli_mixed(
+            monkeypatch,
+            [RuntimeError("API Error: 500 transient blip"), good],
+        )
+
+        asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
+
+        # Two CLI calls: the failed one and the successful retry.
+        assert len(calls) == 2
+        session = shared_session_factory()
+        try:
+            drafts = list(
+                session.execute(select(Draft).where(Draft.project_id == seeded_project)).scalars()
+            )
+            assert len(drafts) == 1
+            assert drafts[0].content == good
+            # Only the successful call produced telemetry — failed
+            # CLI calls never reach the attempts list.
+            rows = list(
+                session.execute(
+                    select(GenerationTelemetry).where(
+                        GenerationTelemetry.project_id == seeded_project
+                    )
+                ).scalars()
+            )
+            assert len(rows) == 1
+        finally:
+            session.close()
+
+    def test_transient_retry_exhaustion_raises(
+        self, shared_session_factory, seeded_project, monkeypatch
+    ):
+        # Every CLI call fails with a RuntimeError. The handler retries
+        # CLI_MAX_TRANSIENT_RETRIES + 1 times total before bubbling
+        # the final error.
+        total_attempts = CLI_MAX_TRANSIENT_RETRIES + 1
+        failures = [RuntimeError(f"API Error: 500 #{i}") for i in range(total_attempts)]
+        calls = _patch_cli_mixed(monkeypatch, failures)
+
+        with pytest.raises(RuntimeError, match="API Error: 500"):
+            asyncio.run(
+                generate_feature_expansion({"project_id": seeded_project, "feedback": None})
+            )
+
+        assert len(calls) == total_attempts
+
+        # No draft, no telemetry: the handler bubbled out before
+        # committing anything.
+        session = shared_session_factory()
+        try:
+            drafts = list(
+                session.execute(select(Draft).where(Draft.project_id == seeded_project)).scalars()
+            )
+            assert drafts == []
+            tlm = list(
+                session.execute(
+                    select(GenerationTelemetry).where(
+                        GenerationTelemetry.project_id == seeded_project
+                    )
+                ).scalars()
+            )
+            assert tlm == []
+        finally:
+            session.close()
+
+    def test_transient_retry_composes_with_parse_retry(
+        self, shared_session_factory, seeded_project, monkeypatch
+    ):
+        # First call flakes (RuntimeError), retry succeeds but with
+        # malformed output, parse-retry triggers another CLI call that
+        # returns valid output. Verify the whole chain: 3 total calls,
+        # final draft is the validated one.
+        good = _feature_xml(("Ok", "Good output."))
+        calls = _patch_cli_mixed(
+            monkeypatch,
+            [
+                RuntimeError("API Error: 500 transient"),
+                "not xml at all",
+                good,
+            ],
+        )
+
+        asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
+
+        assert len(calls) == 3
+        session = shared_session_factory()
+        try:
+            drafts = list(
+                session.execute(select(Draft).where(Draft.project_id == seeded_project)).scalars()
+            )
+            assert len(drafts) == 1
+            assert drafts[0].content == good
+            # Two telemetry rows: the malformed-but-returned attempt
+            # and the good attempt. The transient failure never made
+            # it into the attempts list.
+            rows = list(
+                session.execute(
+                    select(GenerationTelemetry).where(
+                        GenerationTelemetry.project_id == seeded_project
+                    )
+                ).scalars()
+            )
+            assert len(rows) == 2
+        finally:
+            session.close()
