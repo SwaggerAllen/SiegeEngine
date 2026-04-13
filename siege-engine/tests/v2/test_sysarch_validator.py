@@ -112,16 +112,23 @@ def _default_components() -> str:
     )
 
 
+# Every non-foundation component in _default_components() must have
+# a <dep> edge to "foundation" after the Phase 3 stage 2 foundation-
+# dependency rule landed. Tests that don't specifically exercise
+# dependency validation use this helper to keep the noise down.
+_DEFAULT_DEPS = '<dep from="auth" to="foundation"/><dep from="billing" to="foundation"/>'
+
+
 class TestHappyPath:
     def test_minimal_valid_sysarch(self):
         doc = validate_sysarch(
-            _parse(_sysarch(components=_default_components())),
+            _parse(_sysarch(components=_default_components(), dependencies=_DEFAULT_DEPS)),
             known_top_level_resp_ids=KNOWN_RESPS,
         )
         assert doc.techspec.startswith("A typical stack")
         assert [c.alias for c in doc.components] == ["auth", "billing", "foundation"]
         assert doc.policies == ()
-        assert doc.deps == ()
+        assert len(doc.deps) == 2
         assert doc.domain_parents == ()
         # Foundation flag preserved
         assert [c.is_foundation for c in doc.components] == [False, False, True]
@@ -199,7 +206,9 @@ class TestHappyPath:
             dependencies=(
                 '<dep from="billing" to="auth"/>'
                 '<dep from="billing" to="foundation"/>'
+                '<dep from="auth" to="foundation"/>'
                 '<dep from="ui_billing" to="billing"/>'
+                '<dep from="ui_billing" to="foundation"/>'
             ),
             domain_parent='<parent from="ui_billing" to="billing"/>',
         )
@@ -208,7 +217,7 @@ class TestHappyPath:
         assert len(doc.policies) == 1
         assert doc.policies[0].name == "Telemetry"
         assert doc.policies[0].required_resp_id == "resp_config001"
-        assert len(doc.deps) == 3
+        assert len(doc.deps) == 5
         assert len(doc.domain_parents) == 1
         assert doc.domain_parents[0].from_alias == "ui_billing"
         assert doc.domain_parents[0].to_alias == "billing"
@@ -483,6 +492,7 @@ class TestPolicyValidation:
     def test_policy_happy_path(self):
         raw = _sysarch(
             components=_default_components(),
+            dependencies=_DEFAULT_DEPS,
             policies=_policy(
                 "Telemetry",
                 "any LLM call",
@@ -596,6 +606,7 @@ class TestDomainParentEdges:
         )
         raw = _sysarch(
             components=comps,
+            dependencies=(_DEFAULT_DEPS + '<dep from="ui_billing" to="foundation"/>'),
             domain_parent='<parent from="ui_billing" to="billing"/>',
         )
         doc = validate_sysarch(_parse(raw), known_top_level_resp_ids=known)
@@ -627,4 +638,78 @@ class TestDomainParentEdges:
             domain_parent='<parent from="ui_billing" to="ui_billing"/>',
         )
         with pytest.raises(ValidationError, match="must be a domain"):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids=known)
+
+
+class TestFoundationDependency:
+    def test_all_non_foundation_with_dep_accepted(self):
+        raw = _sysarch(
+            components=_default_components(),
+            dependencies=_DEFAULT_DEPS,
+        )
+        doc = validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+        # Both non-foundation components have a dep to foundation
+        assert len(doc.deps) == 2
+        assert all(d.to_alias == "foundation" for d in doc.deps)
+
+    def test_missing_dep_from_one_component_rejected(self):
+        # auth is missing its foundation dep; billing has one.
+        raw = _sysarch(
+            components=_default_components(),
+            dependencies='<dep from="billing" to="foundation"/>',
+        )
+        with pytest.raises(ValidationError, match="Missing foundation dependency from: auth"):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+
+    def test_missing_dep_from_all_components_rejected(self):
+        raw = _sysarch(
+            components=_default_components(),
+            dependencies="",
+        )
+        with pytest.raises(
+            ValidationError,
+            match="Missing foundation dependency from: auth, billing",
+        ):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+
+    def test_foundation_needs_no_self_dependency(self):
+        # Foundation itself is exempt — no requirement to depend on
+        # anything. The default components have auth and billing
+        # each depending on foundation, and foundation with no
+        # outbound deps. That's the intended shape.
+        raw = _sysarch(
+            components=_default_components(),
+            dependencies=_DEFAULT_DEPS,
+        )
+        doc = validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+        foundation_outbound = [d for d in doc.deps if d.from_alias == "foundation"]
+        assert foundation_outbound == []
+
+    def test_policy_induced_deps_still_require_foundation(self):
+        # A dep to a non-foundation target doesn't count toward the
+        # foundation requirement. billing → auth isn't enough.
+        raw = _sysarch(
+            components=_default_components(),
+            dependencies='<dep from="billing" to="auth"/><dep from="auth" to="foundation"/>',
+        )
+        with pytest.raises(ValidationError, match="Missing foundation dependency from: billing"):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+
+    def test_presentational_component_also_requires_foundation_dep(self):
+        # The foundation-dep rule applies to presentational components
+        # too, not just domain components.
+        known = KNOWN_RESPS | {"resp_ui00001"}
+        comps = _default_components() + _comp(
+            "ui_billing",
+            "Billing UI",
+            "presentational",
+            "Render billing.",
+            "Dashboard view.",
+            ("resp_ui00001",),
+        )
+        raw = _sysarch(
+            components=comps,
+            dependencies=_DEFAULT_DEPS,  # no ui_billing → foundation
+        )
+        with pytest.raises(ValidationError, match="Missing foundation dependency from: ui_billing"):
             validate_sysarch(_parse(raw), known_top_level_resp_ids=known)

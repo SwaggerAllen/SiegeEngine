@@ -270,16 +270,21 @@ rejected.
 * **The dependency graph must be acyclic.** A cycle is a \
 structural error that gets fed back on retry with the cycle \
 path named.
-* Foundation should typically be a *sink* (everything depends \
-on it, it depends on nothing). It's fine for it to have no \
-dependencies.
-* Policies can induce dependency edges — if a policy says "any \
-LLM call must fulfill ``resp_telemetry``," every component that \
-has LLM-calling responsibilities needs a dep on whichever \
-component fulfills ``resp_telemetry``. Reason about policies \
-first, then emit ``<dependencies>`` so policy-induced deps \
-land naturally. This is why the section order puts \
-``<policies>`` before ``<dependencies>``.
+* **Every non-foundation component must have a `<dep>` edge \
+pointing at the foundation component.** Foundation owns the \
+project root — build config, shared utilities, base types, \
+the application factory — and every other component's code \
+reaches into it at runtime, so the dependency is mandatory and \
+enforced by the validator. Foundation itself has no outbound \
+dependencies and is the only sink in the dep DAG.
+* Policies can induce additional dependency edges — if a policy \
+says "any LLM call must fulfill ``resp_telemetry``," every \
+component that has LLM-calling responsibilities needs a dep on \
+whichever component fulfills ``resp_telemetry``. Reason about \
+policies first, then emit ``<dependencies>`` so policy-induced \
+deps land naturally on top of the mandatory foundation deps. \
+This is why the section order puts ``<policies>`` before \
+``<dependencies>``.
 
 ## Domain-parent
 
