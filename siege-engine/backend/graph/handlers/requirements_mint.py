@@ -4,32 +4,36 @@ Registered on the pipeline job queue as
 ``v2.mint_requirements``. Triggered by the requirements approve
 route after a ``DraftApproved`` event has committed the approved
 requirements content to the reqs node. The handler parses that
-content and mints one ``resp_*`` node per validated
-``<responsibility>`` entry, in document order.
+content, mints one ``resp_*`` node per validated
+``<responsibility>`` entry, **and** emits ``decomposition``
+edges (``feat_* → resp_*``) for every feature each responsibility
+covers, in one transaction.
 
 Flow parallels :mod:`backend.graph.handlers.feature_mint`:
 
 1. Open a DB session. Look up the reqs node's current content
-   (``DraftApproved`` just committed it).
+   (``DraftApproved`` just committed it) and the set of known
+   ``feat_*`` IDs in the project (the validator's reference set).
 2. **Idempotency check:** if any top-level ``resp_*`` nodes exist
    in this project (``parent_id=None``, since this mint produces
    top-level responsibilities), log and return. Note that
    subresponsibilities minted by future ``v2.mint_subreqs`` runs
    will have non-null ``parent_id`` and are not counted.
-3. Parse + validate via :func:`validate_requirements`. Failure
-   here is a bug state because generation already ran its own
-   parse-validate loop.
+3. Parse + validate via :func:`validate_requirements`, passing
+   the known feature IDs. Failure here is a bug state because
+   generation already ran its own parse-validate loop with the
+   same check.
 4. Append one ``NodeCreated`` event per validated
-   :class:`Responsibility` with ``tier="resp"``, ``parent_id=None``
-   (top-level responsibilities are project-level siblings like
-   features), ``display_order`` from the parse order, and
-   ``content`` = the intent paragraph.
+   :class:`Responsibility`, then one ``EdgeCreated`` event per
+   ``(feat_id, resp_id)`` pair in its ``covers`` list. All
+   events land in the same transaction.
 5. Commit.
 
 The mint handler does **not** run an LLM call. It is deterministic
 and idempotent.
 
-See ``docs/architecture/v2-roadmap.md`` Phase 3.
+See ``docs/architecture/v2-roadmap.md`` Phase 3 and
+``docs/architecture/v2-rearchitecture.md`` §Feature → Responsibility → Component.
 """
 
 from __future__ import annotations
@@ -84,6 +88,19 @@ async def mint_requirements(payload: dict) -> None:
                 "was mint_requirements enqueued before DraftApproved?"
             )
 
+        # Collect the set of known feature IDs for validator checks.
+        # The generation handler ran the same check against the same
+        # set of features, so in the happy path this should be a
+        # re-run of a parse that already passed. If features were
+        # added between generation and approval, the validator
+        # catches the resulting missing-coverage case here.
+        feature_ids: set[str] = {
+            fid
+            for (fid,) in db.query(Node.id)
+            .filter(Node.project_id == project_id, Node.tier == "feat")
+            .all()
+        }
+
         # Idempotency: skip if any top-level resp_* already exist
         # in this project. Subresp nodes (minted later by subreqs)
         # have parent_id != None, so filtering on parent_id is how
@@ -109,14 +126,15 @@ async def mint_requirements(payload: dict) -> None:
 
         try:
             tree = extract_tag_tree(content, "requirements")
-            responsibilities = validate_requirements(tree)
+            responsibilities = validate_requirements(tree, known_feature_ids=feature_ids)
         except (ParseError, ValidationError) as exc:
             raise RequirementsMintHandlerError(
                 f"mint_requirements project={project_id} could not parse "
                 f"approved reqs content: {exc}"
             ) from exc
 
-        minted_ids: list[str] = []
+        minted_resp_ids: list[str] = []
+        minted_edge_ids: list[str] = []
         for index, resp in enumerate(responsibilities):
             resp_id = mint(db, Kind.RESP)
             append_event(
@@ -132,14 +150,32 @@ async def mint_requirements(payload: dict) -> None:
                     content=resp.intent,
                 ),
             )
-            minted_ids.append(resp_id)
+            minted_resp_ids.append(resp_id)
+
+            # Emit one decomposition edge per covered feature.
+            # Direction is upstream → downstream: feature is
+            # the source, responsibility is the target, matching
+            # the "feat decomposes INTO resp" reading.
+            for feat_id in resp.covers:
+                edge_id = mint(db, Kind.EDGE)
+                append_event(
+                    db,
+                    project_id,
+                    ev.EdgeCreated(
+                        edge_id=edge_id,
+                        edge_type="decomposition",
+                        source_id=feat_id,
+                        target_id=resp_id,
+                    ),
+                )
+                minted_edge_ids.append(edge_id)
 
         db.commit()
         logger.info(
-            "mint_requirements project=%s minted %d resp_* nodes: %s",
+            "mint_requirements project=%s minted %d resp_* nodes and %d decomposition edges",
             project_id,
-            len(minted_ids),
-            minted_ids,
+            len(minted_resp_ids),
+            len(minted_edge_ids),
         )
     finally:
         db.close()

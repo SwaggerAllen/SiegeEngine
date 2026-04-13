@@ -60,6 +60,9 @@ class TagNode:
       string if the tag is purely structural (only has children).
       For leaves like ``<name>Billing</name>``, this is the leaf
       content.
+    * ``attrs`` — tag attributes as a plain ``{str: str}`` dict.
+      Multi-value attributes (rare in our grammar) get joined with
+      spaces; missing attributes get looked up via ``attrs.get``.
     * ``children`` — child ``TagNode``s in document order.
 
     Mixed content (text interleaved with tags) is flattened: the
@@ -73,6 +76,7 @@ class TagNode:
 
     tag: str
     text: str = ""
+    attrs: dict[str, str] = field(default_factory=dict)
     children: list["TagNode"] = field(default_factory=list)
 
     def find_all(self, tag: str) -> list["TagNode"]:
@@ -140,4 +144,16 @@ def _bs_to_tag_node(element) -> TagNode:  # type: ignore[no-untyped-def]
             children.append(_bs_to_tag_node(node))
 
     direct_text = "".join(text_fragments).strip()
-    return TagNode(tag=element.name, text=direct_text, children=children)
+    # Flatten attributes: BeautifulSoup returns a dict where values
+    # may be strings or lists (for multi-value attrs like class).
+    # Join list values with a space so callers always see a plain
+    # {str: str} dict. Our grammars don't use multi-value attrs in
+    # practice, so this is defensive normalization.
+    raw_attrs = getattr(element, "attrs", {}) or {}
+    attrs: dict[str, str] = {}
+    for k, v in raw_attrs.items():
+        if isinstance(v, list):
+            attrs[k] = " ".join(str(x) for x in v)
+        else:
+            attrs[k] = str(v)
+    return TagNode(tag=element.name, text=direct_text, attrs=attrs, children=children)

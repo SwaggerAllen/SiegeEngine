@@ -3,11 +3,11 @@
 The requirements pass consumes the approved feature set (the
 ``feat_*`` nodes minted from the feature expansion) and produces a
 structured, tag-based list of **top-level responsibilities** that
-downstream passes will map onto concrete components. One
-responsibility may be implicated by many features and vice versa —
-the many-to-many relationship is authored at the sysarch layer,
-not here. This pass only names the responsibilities and explains
-what they're for.
+downstream passes will map onto concrete components. The
+feature → responsibility relationship is many-to-many and is
+captured as ``<covers>`` children on each responsibility — on
+approval the mint handler emits a ``decomposition`` edge
+(``feat_X → resp_Y``) for every listed feature.
 
 Output format (parsed by :mod:`backend.graph.parsers.xml_sections`
 and validated by :func:`backend.graph.parsers.validators.validate_requirements`):
@@ -17,6 +17,10 @@ and validated by :func:`backend.graph.parsers.validators.validate_requirements`)
         <name>User Authentication</name>
         <intent>…paragraph-length description of what this
         responsibility covers, framed at the role level…</intent>
+        <covers>
+          <feat id="feat_abc12345"/>
+          <feat id="feat_def67890"/>
+        </covers>
       </responsibility>
       …
     </requirements>
@@ -37,8 +41,9 @@ You are a senior software architect helping to decompose a \
 project's feature set into top-level **responsibilities** — the \
 coarsest building blocks that concrete software components will \
 later fulfill. You will be given a list of features (approved in \
-an upstream pass) and must produce a structured responsibility \
-list.
+an upstream pass, each with a stable ``feat_*`` ID) and must \
+produce a structured responsibility list that maps each feature \
+to the responsibilities that serve it.
 
 A responsibility is a **role**, not a thing: "User \
 Authentication", "Billing", "Content Storage", "Scheduled Job \
@@ -46,13 +51,16 @@ Execution". Each responsibility is something the software must \
 *do* regardless of how it ends up being built. Many features may \
 share one responsibility (auth is implicated by almost every \
 user-facing feature), and one feature may span several \
-responsibilities.
+responsibilities. The relationship is many-to-many and you \
+record it via ``<covers>`` children listing the feature IDs \
+each responsibility serves.
 
 # Output format
 
 Output a single ``<requirements>`` block. Nothing else. Inside \
-it, each responsibility has exactly one ``<name>`` and exactly \
-one ``<intent>``:
+it, each responsibility has exactly one ``<name>``, exactly one \
+``<intent>``, and exactly one ``<covers>`` block containing one \
+or more ``<feat>`` children with an ``id`` attribute:
 
     <requirements>
       <responsibility>
@@ -63,6 +71,11 @@ identity available to downstream logic. Covers sign-in, sign-out, \
 token refresh, and session invalidation, but not the specific \
 credential mechanism (password, SSO, passkey) — that's an \
 implementation choice settled later.</intent>
+        <covers>
+          <feat id="feat_login01"/>
+          <feat id="feat_pwdrst2"/>
+          <feat id="feat_session"/>
+        </covers>
       </responsibility>
       <responsibility>
         <name>Authorization</name>
@@ -71,6 +84,10 @@ perform a given action on a given resource. Separate from \
 authentication because the checks apply at every request, not \
 just at sign-in, and because the policy surface grows \
 independently of the identity surface.</intent>
+        <covers>
+          <feat id="feat_login01"/>
+          <feat id="feat_admin99"/>
+        </covers>
       </responsibility>
       <responsibility>
         <name>Billing</name>
@@ -79,14 +96,18 @@ payment, and gate product access based on the current billing \
 state. Covers tiered plans, invoices, payment retries, and \
 account suspension. Does not cover pricing-model \
 decisions.</intent>
+        <covers>
+          <feat id="feat_plans00"/>
+          <feat id="feat_invoice"/>
+        </covers>
       </responsibility>
     </requirements>
 
 # Rules
 
 * Use the tag structure exactly as shown. Each ``<responsibility>`` \
-has exactly one ``<name>`` and exactly one ``<intent>``. No other \
-tags inside a responsibility.
+has exactly one ``<name>``, exactly one ``<intent>``, and exactly \
+one ``<covers>`` block. No other tags inside a responsibility.
 * ``<name>`` is a short identifier — typically 2 to 5 words, title \
 case. Think "User Authentication", "Rate Limiting", "Audit \
 Logging", not "The ability to check who a user is."
@@ -95,6 +116,23 @@ Describe the *role* the responsibility plays, the scope it \
 covers, and when useful the things it explicitly does **not** \
 cover. Avoid prescribing implementation (no "we will use JWT", no \
 "this service will expose a REST API").
+* ``<covers>`` is **required** and must contain **at least one** \
+``<feat>`` child per responsibility. Each ``<feat>`` carries an \
+``id`` attribute matching exactly the feature ID shown in the \
+input list (the ``feat_*`` prefix plus the 8-character Crockford \
+suffix). Do not invent IDs, do not rewrite them, do not rename \
+them. A responsibility that covers no features is not a valid \
+top-level responsibility — either merge it into one that does \
+or drop it.
+* A feature may appear under multiple ``<covers>`` blocks — the \
+relationship is many-to-many. A cross-cutting responsibility \
+like "Telemetry" will typically cover most features; a scoped \
+responsibility like "Billing" will cover only a handful. This \
+is expected.
+* **Every feature in the input must be covered by at least one \
+responsibility.** Before emitting the list, mentally check that \
+each input feature ID appears in at least one ``<covers>`` block. \
+Missing coverage is a parse error that gets fed back to you.
 * **Granularity.** Aim for a responsibility list that's coarser \
 than the feature list but finer than the project description. A \
 typical project produces 8–20 top-level responsibilities. If \
@@ -102,19 +140,15 @@ you're at 40, you're reaching into implementation territory; if \
 you're at 3, you're probably glossing over real decomposition \
 work. Err on the side of fewer, coarser responsibilities — \
 sub-decomposition happens in a later pass per component.
-* **Coverage.** Every feature in the input should be implicated \
-by at least one responsibility in the output. You do not need to \
-write the mapping down in this pass (it's produced by the sysarch \
-pass later), but mentally check that "could I route each feature \
-to at least one of these responsibilities?" is true before \
-emitting the list.
 * **Cross-cutting concerns are responsibilities too.** Logging, \
 telemetry, health checks, background job scheduling, rate \
 limiting, secrets handling — if the project needs them, name \
 them. They won't always appear in the feature list directly, but \
 they're real work the system has to do and the sysarch pass will \
 want them named up front so cross-cutting policies can target \
-them later.
+them later. Cross-cutting responsibilities still need a \
+``<covers>`` block — list the features whose generation or \
+execution you'd expect to trigger the cross-cutting concern.
 * Do not include meta-commentary about what you are doing, what \
 the tags mean, or how you arrived at the list. Output only the \
 ``<requirements>`` block.
@@ -217,12 +251,16 @@ def format_features_summary(features: list[dict]) -> str:
     suitable for embedding in the prompt.
 
     Each ``features`` element must have at least these keys:
-    ``name``, ``content`` (the intent paragraph), and optionally
-    ``group_label`` (for group grouping in the output). Features
-    are rendered in the provided order, grouped by label. Ungrouped
-    features land under an implicit "(ungrouped)" heading only if
-    there are also grouped features in the same batch — otherwise
-    the list is flat.
+    ``id``, ``name``, ``content`` (the intent paragraph), and
+    optionally ``group_label`` (for group grouping in the output)
+    and ``is_implicit``. Features are rendered in the provided
+    order, grouped by label. Ungrouped features land under an
+    implicit "(ungrouped)" heading only if there are also grouped
+    features in the same batch — otherwise the list is flat.
+
+    **The ID is the load-bearing part** — the LLM needs to echo
+    these IDs verbatim in each ``<covers>`` block, so they must
+    appear in the rendered list. The name and intent are context.
     """
     if not features:
         return "(no features minted yet)"
@@ -249,10 +287,11 @@ def format_features_summary(features: list[dict]) -> str:
             lines.append(f"## {label or '(ungrouped)'}")
             lines.append("")
         for feat in bucket:
+            fid = feat.get("id", "").strip() or "(unknown-id)"
             name = feat.get("name", "").strip() or "(unnamed)"
             intent = (feat.get("content") or "").strip()
             implicit_marker = " (inferred)" if feat.get("is_implicit") else ""
-            lines.append(f"- **{name}**{implicit_marker}: {intent}")
+            lines.append(f"- `{fid}` **{name}**{implicit_marker}: {intent}")
         lines.append("")
 
     return "\n".join(lines).rstrip()

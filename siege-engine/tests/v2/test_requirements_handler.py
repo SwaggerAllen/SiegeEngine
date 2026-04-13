@@ -4,7 +4,8 @@ Same scaffold as test_feature_expansion_handler.py — the reqs
 handler is a near-clone, so these tests mirror its structure:
 happy path, regen, CLI failure, parse-validate retry loop,
 telemetry, project settings timeout wiring. Plus a couple of
-reqs-specific tests for the features-summary plumbing.
+reqs-specific tests for the features-summary plumbing and the
+``<covers>`` many-to-many coverage check.
 
 ``cli_manager.generate_with_usage`` is monkeypatched so the real
 CLI never runs; tests feed deterministic text through the parse-
@@ -31,7 +32,7 @@ from backend.graph.handlers.requirements_generation import (
 from backend.graph.reducer import append_event
 from backend.graph.requirements import bootstrap_reqs_node
 from backend.models import InputDocument, Project
-from backend.models.node import Draft
+from backend.models.node import Draft, Node
 from backend.models.telemetry import GenerationTelemetry
 
 
@@ -67,7 +68,7 @@ def shared_session_factory(monkeypatch):
     engine.dispose()
 
 
-def _mint_feature(session: Session, project_id: str, name: str, intent: str, order: int) -> None:
+def _mint_feature(session: Session, project_id: str, name: str, intent: str, order: int) -> str:
     from backend.graph.ids import Kind, mint
 
     feat_id = mint(session, Kind.FEAT)
@@ -84,11 +85,16 @@ def _mint_feature(session: Session, project_id: str, name: str, intent: str, ord
             content=intent,
         ),
     )
+    return feat_id
 
 
 @pytest.fixture()
 def seeded_project(shared_session_factory):
-    """Project + input doc + expansion node (approved) + two minted features + reqs node."""
+    """Project + input doc + two minted features + reqs node.
+
+    Returns the project id as a plain string; the feature ids
+    are looked up via the ``seeded_feat_ids`` fixture.
+    """
     factory = shared_session_factory
     session: Session = factory()
     try:
@@ -103,20 +109,8 @@ def seeded_project(shared_session_factory):
                 doc_type="project_doc",
             )
         )
-        _mint_feature(
-            session,
-            project_id,
-            "Billing",
-            "Users pay for plans.",
-            0,
-        )
-        _mint_feature(
-            session,
-            project_id,
-            "Auth",
-            "Users sign in.",
-            1,
-        )
+        _mint_feature(session, project_id, "Billing", "Users pay for plans.", 0)
+        _mint_feature(session, project_id, "Auth", "Users sign in.", 1)
         bootstrap_reqs_node(session, project_id)
         session.commit()
         yield project_id
@@ -124,27 +118,55 @@ def seeded_project(shared_session_factory):
         session.close()
 
 
-_VALID_REQS_XML = (
-    "<requirements>"
-    "<responsibility>"
-    "<name>User Authentication</name>"
-    "<intent>Identify callers and make them available downstream.</intent>"
-    "</responsibility>"
-    "</requirements>"
-)
+@pytest.fixture()
+def seeded_feat_ids(shared_session_factory, seeded_project) -> list[str]:
+    """Return the feature IDs seeded by ``seeded_project`` in display order."""
+    factory = shared_session_factory
+    s: Session = factory()
+    try:
+        return [
+            fid
+            for (fid,) in s.execute(
+                select(Node.id)
+                .where(Node.project_id == seeded_project, Node.tier == "feat")
+                .order_by(Node.display_order)
+            ).all()
+        ]
+    finally:
+        s.close()
 
 
-def _reqs_xml(*entries: tuple[str, str]) -> str:
+def _covers_all(feat_ids: list[str]) -> str:
+    """Build a ``<covers>`` block listing every known feature id.
+
+    Using all-features-per-responsibility keeps the coverage
+    check happy in a maximally-boring way. Tests that want to
+    exercise specific subsets can build their own covers blocks.
+    """
+    return "<covers>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</covers>"
+
+
+def _reqs_xml(feat_ids: list[str], *entries: tuple[str, str]) -> str:
+    """Build a valid ``<requirements>`` block where every entry
+    covers every feature in ``feat_ids``."""
+    covers = _covers_all(feat_ids)
     inner = "".join(
-        f"<responsibility><name>{name}</name><intent>{intent}</intent></responsibility>"
+        f"<responsibility><name>{name}</name><intent>{intent}</intent>{covers}</responsibility>"
         for name, intent in entries
     )
     return f"<requirements>{inner}</requirements>"
 
 
+def _valid_xml(feat_ids: list[str]) -> str:
+    return _reqs_xml(
+        feat_ids,
+        ("User Authentication", "Identify callers and make them available downstream."),
+    )
+
+
 def _patch_cli(
     monkeypatch,
-    return_value: str = _VALID_REQS_XML,
+    return_value: str,
     *,
     prompt_tokens: int = 100,
     completion_tokens: int = 50,
@@ -165,9 +187,6 @@ def _patch_cli(
             model=model,
         )
 
-    # The reqs handler routes through feature_expansion's shared
-    # _call_cli_with_transient_retry helper, which calls
-    # cli_manager.generate_with_usage by the same binding.
     monkeypatch.setattr(_fe_handler.cli_manager, "generate_with_usage", fake)
     return calls
 
@@ -193,8 +212,10 @@ def _patch_cli_sequence(monkeypatch, return_values: list[str]):
 
 
 class TestHappyPath:
-    def test_generates_pending_draft(self, shared_session_factory, seeded_project, monkeypatch):
-        draft_xml = _reqs_xml(("Auth", "Identify callers."))
+    def test_generates_pending_draft(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        draft_xml = _reqs_xml(seeded_feat_ids, ("Auth", "Identify callers."))
         calls = _patch_cli(monkeypatch, draft_xml)
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
 
@@ -204,6 +225,9 @@ class TestHappyPath:
         assert "Billing" in prompt
         assert "Users pay for plans." in prompt
         assert "Auth" in prompt
+        # Feature IDs must appear in the prompt — LLM echoes them in <covers>
+        for fid in seeded_feat_ids:
+            assert fid in prompt
 
         session = shared_session_factory()
         try:
@@ -217,10 +241,10 @@ class TestHappyPath:
             session.close()
 
     def test_regeneration_discards_old_pending(
-        self, shared_session_factory, seeded_project, monkeypatch
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        first = _reqs_xml(("One", "First draft."))
-        second = _reqs_xml(("Two", "Second draft."))
+        first = _reqs_xml(seeded_feat_ids, ("One", "First draft."))
+        second = _reqs_xml(seeded_feat_ids, ("Two", "Second draft."))
 
         _patch_cli(monkeypatch, first)
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
@@ -248,12 +272,14 @@ class TestHappyPath:
         finally:
             session.close()
 
-    def test_feedback_appears_in_prompt(self, shared_session_factory, seeded_project, monkeypatch):
-        first = _reqs_xml(("Auth", "v1."))
+    def test_feedback_appears_in_prompt(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        first = _reqs_xml(seeded_feat_ids, ("Auth", "v1."))
         _patch_cli(monkeypatch, first)
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
 
-        calls = _patch_cli(monkeypatch, _reqs_xml(("Auth", "v2.")))
+        calls = _patch_cli(monkeypatch, _reqs_xml(seeded_feat_ids, ("Auth", "v2.")))
         asyncio.run(
             generate_requirements({"project_id": seeded_project, "feedback": "Add rate limiting"})
         )
@@ -302,10 +328,10 @@ class TestFailureModes:
 
 class TestParseValidateRetry:
     def test_retry_succeeds_on_second_attempt(
-        self, shared_session_factory, seeded_project, monkeypatch
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
         first_bad = "Here are the requirements but I forgot the tags."
-        second_good = _reqs_xml(("Auth", "Ok."))
+        second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
         calls = _patch_cli_sequence(monkeypatch, [first_bad, second_good])
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 2
@@ -313,7 +339,62 @@ class TestParseValidateRetry:
         assert "Previous output failed structural validation" in retry_prompt
         assert "<requirements>" in retry_prompt
 
-    def test_retry_exhaustion_raises(self, shared_session_factory, seeded_project, monkeypatch):
+    def test_retry_on_missing_covers_block(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        # First attempt: no <covers> block (regression of the v2
+        # retrofit — the LLM forgot to include it).
+        first_bad = (
+            "<requirements>"
+            "<responsibility><name>Auth</name><intent>Ok.</intent></responsibility>"
+            "</requirements>"
+        )
+        second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
+        calls = _patch_cli_sequence(monkeypatch, [first_bad, second_good])
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+        assert len(calls) == 2
+        retry_prompt = calls[1]["prompt"]
+        # The retry prompt surfaces the specific validation error.
+        assert "missing a <covers>" in retry_prompt
+
+    def test_retry_on_missing_feature_coverage(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        # First attempt: covers only the first feature, leaving
+        # the second uncovered.
+        partial_covers = "<covers>" + f'<feat id="{seeded_feat_ids[0]}"/>' + "</covers>"
+        first_bad = (
+            "<requirements>"
+            f"<responsibility><name>Auth</name><intent>Ok.</intent>{partial_covers}</responsibility>"
+            "</requirements>"
+        )
+        second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
+        calls = _patch_cli_sequence(monkeypatch, [first_bad, second_good])
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+        assert len(calls) == 2
+        retry_prompt = calls[1]["prompt"]
+        assert "does not cover every feature" in retry_prompt
+        # The uncovered id is named in the error feedback
+        assert seeded_feat_ids[1] in retry_prompt
+
+    def test_retry_on_unknown_feature_id(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        fake_covers = '<covers><feat id="feat_bogus01"/></covers>'
+        first_bad = (
+            "<requirements>"
+            f"<responsibility><name>Auth</name><intent>Ok.</intent>{fake_covers}</responsibility>"
+            "</requirements>"
+        )
+        second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
+        calls = _patch_cli_sequence(monkeypatch, [first_bad, second_good])
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+        assert len(calls) == 2
+        assert "unknown feature id" in calls[1]["prompt"]
+
+    def test_retry_exhaustion_raises(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
         from backend.graph.handlers.feature_expansion import MAX_PARSE_RETRIES
 
         total = MAX_PARSE_RETRIES + 1
@@ -332,10 +413,12 @@ class TestParseValidateRetry:
 
 
 class TestTelemetry:
-    def test_records_telemetry_row(self, shared_session_factory, seeded_project, monkeypatch):
+    def test_records_telemetry_row(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
         _patch_cli(
             monkeypatch,
-            _reqs_xml(("Auth", "Ok.")),
+            _reqs_xml(seeded_feat_ids, ("Auth", "Ok.")),
             prompt_tokens=1234,
             completion_tokens=567,
             model="claude-sonnet-4-6",
@@ -364,15 +447,15 @@ class TestTelemetry:
 
 class TestProjectSettingsTimeout:
     def test_default_timeout_is_900_when_settings_is_null(
-        self, shared_session_factory, seeded_project, monkeypatch
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        calls = _patch_cli(monkeypatch)
+        calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 1
         assert calls[0]["timeout"] == 900
 
     def test_uses_override_when_settings_is_populated(
-        self, shared_session_factory, seeded_project, monkeypatch
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
         factory = shared_session_factory
         s = factory()
@@ -383,19 +466,22 @@ class TestProjectSettingsTimeout:
             s.commit()
         finally:
             s.close()
-        calls = _patch_cli(monkeypatch)
+        calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         assert calls[0]["timeout"] == 1500
 
 
 class TestFeaturesInPrompt:
     def test_features_summary_includes_all_minted_features(
-        self, shared_session_factory, seeded_project, monkeypatch
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        calls = _patch_cli(monkeypatch)
+        calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         prompt = calls[0]["prompt"]
         assert "Billing" in prompt
         assert "Users pay for plans." in prompt
         assert "Auth" in prompt
         assert "Users sign in." in prompt
+        # IDs are prominent in the rendered feature list
+        for fid in seeded_feat_ids:
+            assert fid in prompt

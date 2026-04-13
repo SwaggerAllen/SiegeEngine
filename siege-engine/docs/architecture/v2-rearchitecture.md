@@ -63,9 +63,10 @@ The input doc is decomposed into a machine-readable breakdown of **features**, n
 
 ### Feature → Responsibility → Component
 
-- Features decompose into **responsibilities** (many-to-many with features).
+- Features decompose into **responsibilities** (many-to-many with features). The relationship is captured as `decomposition` edges (`feat_X → resp_Y`) emitted at `reqs_*` approval time — see *Projection sources* for the emission mechanism.
 - Each responsibility maps to exactly one **component** (many responsibilities per component, but one component per responsibility).
 - This asymmetry is load-bearing: it's what makes per-component review tractable, because all the diffs touching a component can be grouped naturally.
+- The full feature-to-subcomponent traversal goes through four hops: `feat_* ─decomp→ resp_* ─assigned→ comp_* (1:1) ─decomp→ resp_* ─assigned→ comp_* (1:1)`. The two decomposition hops are many-to-many; the two assignment hops are many-to-one. A feature implicates every leaf in its reachable subgraph, and a component's full set of implicating features is computable by a reverse walk.
 
 ### Subrequirements decomposition
 
@@ -74,7 +75,7 @@ The feature → responsibility decomposition happens twice, at two tiers:
 - **Top-level.** The `reqs_*` singleton takes the approved feature set and produces top-level responsibilities. These are the responsibilities the sysarch pass then maps to top-level components.
 - **Per top-level component.** A `subreqs_*` node per top-level component takes that component's top-level responsibilities and produces its subresponsibilities. These are the subresps the component-arch pass then maps to subcomponents.
 
-Both tiers are structured identically — prose bootstrap node, iterated with feedback, approved once, then read-only; projects parseable `resp_*` children on approval — and they sit in the same position relative to their respective structural-layout passes:
+Both tiers are structured identically — prose bootstrap node, iterated with feedback, approved once, then read-only; projects parseable `resp_*` children on approval *plus* `decomposition` edges from their upstream source (features for `reqs_*`, top-level resps for `subreqs_*`); and they sit in the same position relative to their respective structural-layout passes:
 
 ```
 reqs_*      → approve → mint top-level resp_*     → sysarch_*                    → mint top-level comp_*
@@ -87,6 +88,13 @@ Keeping decomposition separate from structural layout at both tiers gives the sa
 
 - **Review locality.** You can confirm "are these the right responsibilities / subresponsibilities?" before seeing how they get mapped onto components. A wrong decomposition is cheaper to catch at the prose-bootstrap stage than after the sysarch or comparch pass has already committed to boundaries.
 - **Stable references.** By the time a policy is written in the sysarch's or comparch's `<policies>` section, the responsibilities its `required` field points at are already minted as durable `resp_*` nodes. The LLM isn't referencing IDs it's inventing in the same pass.
+
+**Many-to-many decomposition edges.** Both tiers emit their decomposition edges at mint time, in the same transaction as their node children:
+
+- **`reqs_*` approval** emits one `resp_*` per `<responsibility>` entry **and** a `decomposition` edge (`feat_X → resp_Y`) for every upstream feature the responsibility serves. The prompt requires each `<responsibility>` to list the feature IDs it covers via a `<covers>` child (see *Projection sources*). Features are already minted before `reqs_*` runs (they come from the `expansion_*` approval), so the IDs are stable references.
+- **`subreqs_*` approval** emits one subresp `resp_*` per `<subresponsibility>` entry (parented to the owning component) **and** a `decomposition` edge (`top_level_resp_X → subresp_Y`) for every upstream top-level resp the subresp derives from. The prompt requires each `<subresponsibility>` to list the top-level resp IDs it derives from via a `<derived-from>` child. The validator rejects references to top-level resps that aren't assigned to the owning component (that would be a leak across component boundaries).
+
+In both cases the many-to-many edges are what the review UI walks to answer "which features implicate this component's subcomponents?" — a question that isn't answerable from the 1:1 resp→comp assignment alone.
 
 Subcomponents are leaves (see *Subcomponent depth cap*), so there is no third-tier `subsubreqs_*` and no recursion. Exactly two `resp` tiers exist: top-level resps owned by the `reqs_*` bootstrap, and subresps owned by a component's `subreqs_*` bootstrap. The `resp_*` ID kind is tier-agnostic so promotion/demotion between tiers doesn't change the ID.
 
@@ -190,6 +198,20 @@ Design notes:
 - **Domain-parent edges mark primary views.** They are presentational → domain, 1:N, and indicate the domain component(s) this presentational component is a *primary view* into. The semantics differ from dependency: a primary view needs to reflect what was actually built, not just the contract, which is why domain-parent edges feed fan-in synthesis (see below) while dependency edges feed only public surfaces.
 - **Sibling means "same parent / same level," not "same kind."** A presentational component can have domain components as dependency siblings in the regen-prompt sense. A notifications UI component, for example, has no domain parent (notifications isn't a primary view into a single domain concept) but depends on several domain components for the data it shows.
 - Admin functionality and documentation are regular features, not new node kinds. Each admin surface or doc page is a presentational feature with its own domain-parent edges where it makes sense and plain dependency edges everywhere else. No third node kind.
+
+### Edge type vocabulary
+
+The DAG has a small closed vocabulary of edge types. Every edge is a row in the `edges` table with an `edge_type` tag and a `source_id` / `target_id` pair of node IDs. The vocabulary:
+
+- **`dependency`** — `comp_* → comp_*`. "A depends on B": A's public surface reaches into B's public surface. Emitted by the sysarch and comparch passes in each arch doc's `<dependencies>` section. Includes policy-induced dep edges emitted at the same time as the policies that imply them.
+- **`domain_parent`** — `comp_* → comp_*` (presentational → domain, 1:N). "This presentational component is a primary view into this domain component." Emitted by the sysarch pass in the `<domain-parent>` section; regenerated by the comparch pass if a component's primary-view relationships change.
+- **`policy_application`** — `policy_* → comp_*`. "This policy applies to this component at these trigger sites." Emitted by the comparch pass, *not* by sysarch, because applicability is a decision that needs the target component's techspec and subresponsibilities as input (see *Policies / Policy application happens at component-arch time*). Editable via the instruction vocabulary for false positives / false negatives.
+- **`decomposition`** — many-to-many projection edge. Two direction conventions share the same edge type:
+  - `feat_* → resp_*`: the feature implicates the top-level responsibility. Emitted by the `reqs_*` mint pass.
+  - `resp_* → resp_*` (top-level → subresp): the top-level responsibility decomposes into the subresp within the subresp's owning component. Emitted by the `subreqs_*` mint pass. Both endpoints are `resp_*` because the ID kind is tier-agnostic; the tier split lives in the nodes' parent assignments, not the edge.
+  - Both forms are many-to-many and exist to make "trace features to leaves" / "trace leaves to features" walks possible across the 1:1 resp→comp assignment hop. See §Feature → Responsibility → Component.
+
+Edges are minted by passes that *approve a projection source*. No edge type is ever authored by direct user action; structural edits go through the instruction vocabulary (*Instruction vocabulary*), which emits events that the reducer projects into edge mutations. Edge IDs use the `edge_*` prefix from the ID scheme.
 
 ### Domain fan-in nodes
 
@@ -334,6 +356,28 @@ This is why the `<policies>` section comes *before* `<dependencies>` in the arch
 Individual `policy_*` nodes are minted once, by their owning arch doc's approval. Editing a policy's wording is an edit to the `<policies>` fragment of that arch doc, regenerated through the normal draft → approve flow. The `policy_*` node itself isn't edited in place — it's re-projected from the updated fragment.
 
 Deleting a policy deletes all its `policy_application` edges via cascade. Adding one re-runs the application pass for just the new policy against the relevant subtree. Neither operation is destructive at the component level, so policies don't introduce any new gate points beyond the ones arch docs already have.
+
+### Projection sources
+
+Throughout the v2 model, several different constructs share one underlying pattern: **prose authoring surface → parse-and-mint on approval → structured DAG children**. We call those authoring surfaces *projection sources*. The bootstrap-node and fragment constructs are both instances of it:
+
+- **Bootstrap nodes** (`expansion_*`, `reqs_*`, `sysarch_*`, `subreqs_*`, `manifest_*`) are whole-document projection sources. The LLM writes the entire document, the user reviews it as a unit, and approval projects the content into structured children: feature nodes from an expansion, responsibility nodes (plus `decomposition` edges) from a reqs node, component nodes (plus techspec/pubapi fragments, policy nodes, dep edges, and domain-parent edges) from a sysarch, subresponsibility nodes (plus their own `decomposition` edges) from a subreqs, manifest path entries from a manifest.
+- **Fragments** (`techspec`, `pubapi`, `privapi`, `policies`, `deps`) are section-of-document projection sources. They live inside component arch docs and subcomponent arch docs as tagged sections of those docs' content. Individual fragments don't have their own drafts — the arch doc is approved as a unit — but on approval, each fragment's content is projected separately: the `<policies>` fragment mints `policy_*` nodes, the `<dependencies>` fragment mints `dependency` edges, and so on. The arch doc as a whole is the approval unit; the fragments are the projection units inside it.
+
+The relationship — authoring surface → parse → structured children on approval — is the same for both. What differs is scope and lifecycle, not mechanism:
+
+| | Bootstrap nodes | Fragments |
+|---|---|---|
+| Approval granularity | Whole document | Approved as part of the owning arch doc |
+| Storage | `Node.content` (one row per source) | `Fragment.content` (one row per kind per owner) |
+| Lifecycle | Write-once; read-only after initial approval | Iterable; re-projected on every arch doc regen |
+| Transclusion | None | Fragment IDs are addressable and pulled into other nodes' regen prompts by ID |
+
+The storage and lifecycle asymmetry is load-bearing: bootstrap nodes don't need transclusion (nothing pulls a section of a reqs doc into another node's regen prompt), and arch docs do (a component's `pubapi` fragment is pulled by every dependent's regen prompt). Forcing either shape onto the other would lose information — making bootstrap nodes fragment-backed costs a join for no benefit, and making fragments node-backed loses the transclusion addressability.
+
+But **the mint-handler code shape is identical** across both: load inputs → parse approved content → emit `NodeCreated` / `EdgeCreated` / `FragmentUpdated` events for the derived children → commit in one transaction. A shared mint-handler helper can be extracted once enough instances exist to see the exact axis of variation; until then, each handler is a near-copy of `feature_mint` with a different parser and emit list.
+
+One consequence of the projection-source framing: when we talk about "the `<policies>` fragment mints `policy_*` nodes", we mean the policy nodes are projected *from* the fragment's content, but they don't have a structural edge pointing back at the fragment. The origin is tracked implicitly (each `policy_*` is parented to the arch-doc node whose fragment produced it) and re-projection on fragment regen first discards the old policies, then mints fresh ones, preserving lineage through the event log.
 
 ### Source of truth inversion
 
@@ -608,7 +652,7 @@ Properties of the manifest:
 - **Not a hard lock.** The manifest can be edited after code generation has already run; the next plan just has to honor the new territory. If the edit narrows a territory that already has files outside its new bounds, that's a migration the user drives through explicit edits — not something the system fixes automatically.
 - **Read by plan generation**, not directly by code generation. The plan is where territory enforcement happens; code gen just executes an already-validated plan.
 
-Details of manifest regeneration triggers, conflict resolution when two components claim the same file, and whether territory is per-impl or per-component are **TBD** and tracked in *Open questions*. This section exists to pin the shape; the specifics land during Phase 13.
+Details of manifest regeneration triggers, conflict resolution when two components claim the same file, and whether territory is per-impl or per-component are **TBD** and tracked in *Open questions*. This section exists to pin the shape; the specifics land during Phase 14.
 
 ### Subcomponent dependency scoping
 
@@ -756,7 +800,7 @@ Catapult is SiegeEngine's only real user and it needs all the bootstrapping chan
 - Mechanism for minting the 8-char Crockford ID suffixes and detecting collisions (random + retry, or counter-based?)
 - **File manifest specifics** — regeneration triggers (which graph changes force a remint?), conflict resolution when two components claim the same file, whether territory is tracked per-impl or per-component, what happens when a manifest edit narrows a territory that already has orphan files outside it
 - **Incremental policy re-application** — on `NodeCreated` with tier `comp`, `NodePromoted`, `NodeDemoted`, `NodeReparented`, `NodesMerged`, `NodeSplit`, the application pass re-runs. The bounding rule is clear ("only touch edges that reference affected components"), but the exact prompt shape for incremental re-application vs. cold-start application is TBD — probably two prompts, same as reqs/sysarch cold-start vs incremental-add.
-- Exact UI treatment for the destructive-vs-non-destructive gate distinction. MVP direction: gated nodes render in a distinct color + blinking/pulsing animation so they're visually impossible to miss in the DAG view; exact palette and animation details TBD during Phase 11.
+- Exact UI treatment for the destructive-vs-non-destructive gate distinction. MVP direction: gated nodes render in a distinct color + blinking/pulsing animation so they're visually impossible to miss in the DAG view; exact palette and animation details TBD during Phase 12.
 - Where change summaries live in the event stream vs. a separate log
 - Where generation telemetry lives (side table, event-log metadata, or both)
 - Multi-user concurrency on the pending-change queue (MVP assumes single-user-at-a-time per project; revisit if that's wrong)

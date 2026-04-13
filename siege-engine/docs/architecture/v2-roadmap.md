@@ -99,14 +99,19 @@ separate nodes in the model.
   4's component-arch pass for a given component cannot run until
   that component's `subreqs_*` is approved.
 
+**Shared infrastructure for the phase:**
+- [ ] Alembic migration widening `ck_edges_edge_type` to include `decomposition`. The new edge type is used by both the `reqs_*` mint (`feat_* → resp_*`) and the `subreqs_*` mint (`top_level_resp_* → subresp_*`) below. See architecture doc §Edge type vocabulary for the semantics.
+- [ ] `EdgeCreated.edge_type` Literal widened to include `decomposition` in `backend/graph/events.py`. No reducer changes needed — `_apply_edge_created` is generic.
+- [ ] Backend `EDGE_TYPES` constant in `backend/models/node.py` widened to match.
+
 **Requirements node:**
 - [ ] New singleton `reqs` tier node minted once per project after expansion approval
 - [ ] Cold-start vs incremental-add are distinct prompt templates (one job handler picks which)
-- [ ] Cold-start prompt: approved feature set → top-level responsibilities
+- [ ] Cold-start prompt: approved feature set → top-level responsibilities. Each `<responsibility>` output carries a `<covers>` child listing the feature IDs it serves (many-to-many, required — see architecture doc §Feature → Responsibility → Component).
 - [ ] Incremental-add prompt: existing `reqs` + one new feature → delta
 - [ ] Handler reuses the expansion flow (draft → feedback → approve → commit)
-- [ ] Generate-parse validation loop (retry-then-escalate)
-- [ ] On `DraftApproved`: mint top-level `resp_*` nodes; flip `reqs_*` to read-only
+- [ ] Generate-parse validation loop (retry-then-escalate). Validator rejects unknown / missing feature IDs in `<covers>` — fed back into the retry loop.
+- [ ] On `DraftApproved`: mint top-level `resp_*` nodes **and** `decomposition` `feat_* → resp_*` edges in the same transaction. Flip `reqs_*` to read-only.
 - [ ] Routes mirror expansion (`get / feedback / approve / discard`)
 
 **System architecture node:**
@@ -134,16 +139,16 @@ separate nodes in the model.
 **Subrequirements node (per top-level component):**
 - [ ] New `subreqs` tier node kind minted at sysarch approval, one per top-level `comp_*`. Not a singleton — use the full Crockford suffix. Parent is the owning component.
 - [ ] Cold-start vs incremental-add prompt templates (one job handler picks which)
-- [ ] Cold-start prompt: the owning component's sysarch entry (role + API intent) + its assigned top-level `resp_*` nodes → that component's subresponsibilities as prose
+- [ ] Cold-start prompt: the owning component's sysarch entry (role + API intent) + its assigned top-level `resp_*` nodes → that component's subresponsibilities as prose. Each `<subresponsibility>` output carries a `<derived-from>` child listing the top-level resp IDs it decomposes (many-to-many, required).
 - [ ] Incremental-add prompt: existing `subreqs_*` for this component + one new top-level `resp_*` (e.g. because the sysarch got regenerated and assigned a new top-level resp to this component) → delta
 - [ ] Handler reuses the expansion flow (draft → feedback → approve → commit)
-- [ ] Generate-parse validation loop (retry-then-escalate)
-- [ ] On `DraftApproved`: parse the prose into structured subresp entries and emit `NodeCreated` for each subresp `resp_*` (parented to the owning component). Flip the `subreqs_*` to read-only. Enqueue this component's component-arch generation job, which blocks on subreqs approval.
+- [ ] Generate-parse validation loop (retry-then-escalate). Validator rejects `<derived-from>` references to top-level resps that aren't assigned to the owning component — leak across component boundaries is a parse error fed into the retry loop.
+- [ ] On `DraftApproved`: parse the prose into structured subresp entries and emit `NodeCreated` for each subresp `resp_*` (parented to the owning component) **plus** `decomposition` `top_level_resp_* → subresp_*` edges in the same transaction. Flip the `subreqs_*` to read-only. Enqueue this component's component-arch generation job, which blocks on subreqs approval.
 - [ ] Routes mirror expansion, scoped by owning component ID: `get / feedback / approve / discard` for each component's subreqs
 - [ ] UI: read-only subrequirements view per top-level component, with the expansion-style four-state panel
 - [ ] Diff against existing subresps on re-approval: preserve lineage, mark orphans
 
-**Structured edit UIs for feat↔resp, resp↔comp, and dependency / domain-parent edges are NOT part of this phase.** They're layered on top of the minted structure in Phase 10 — every structured UI is a prose-instruction generator feeding the pending-change queue, not a separate generation step.
+**Structured edit UIs for feat↔resp, resp↔comp, and dependency / domain-parent edges are NOT part of this phase.** They're layered on top of the minted structure in Phase 11 — every structured UI is a prose-instruction generator feeding the pending-change queue, not a separate generation step.
 
 ## Phase 4 — Component architecture docs (parseable)
 
@@ -236,7 +241,102 @@ What remains for propagation is the bookkeeping layer that decides
 - [ ] Crude fanout decision (MVP: regen all downstream; refinement is post-MVP)
 - [ ] Wire the destructive-op gate into the fanout decision — destructive edits halt the cascade, non-destructive edits flow through
 
-## Phase 10 — Pending-change queue UX + structured edit UIs
+## Phase 10 — Layered DAG view
+
+A single navigable view of the whole project graph. Lands as soon
+as enough structural tiers exist to be interesting — features,
+responsibilities, top-level policies, components and their
+dependencies, subresponsibilities, subcomponents, impls. Reads
+projections and edges directly; emits no events. The view becomes
+the primary way users navigate the structured model, and is the
+host surface every Phase 11 structured edit UI drops into via
+contextual affordances on a selected node.
+
+**Top-level view** shows the whole project in layers:
+
+- **L0 — features** (flat, no internal deps): side-by-side cards
+- **L1 — top-level responsibilities** (flat): side-by-side cards
+- **L2 — top-level policies** (flat): side-by-side cards. Their
+  `policy_application` edges don't land until each component's
+  comparch pass runs, so early in a project's lifecycle they're
+  visible but disconnected from the component layer.
+- **L3+ — components**, arranged in dependency-topological
+  layers (sources at the top, sinks at the bottom, one tier of
+  layer per dependency hop)
+- Edges shown: `decomposition` (feat → resp), resp → comp 1:1
+  assignment (inferred from `parent_id` or the 1:1 mapping
+  state, not a stored edge), `policy → resp` "required"
+  reference, `policy_application`, `dependency`, `domain_parent`
+
+**Drill-into-component view** swaps the canvas when a component is
+double-clicked or long-pressed:
+
+- **L0 — external context**: the external features / responsibilities
+  / top-level policies that trace *into* this component via the
+  DAG (computed as a reverse walk from the component)
+- **L1 — component-local policies** (minted at this component's
+  comparch approval)
+- **L2 — subresponsibilities** (minted at this component's
+  `subreqs_*` approval)
+- **L3+ — subcomponents**, arranged in dependency-topological
+  layers within this component's subtree
+- **L-bottom — fan-in synthesis node** (`fanin_*`) if any
+- Edges shown: `decomposition` (top_level_resp → subresp), subresp
+  → subcomp 1:1 assignment, component-local `policy_application`,
+  inner `dependency`, outer edges to/from external context layer
+- **impls / plans / codegen**: structurally these are leaves
+  hanging off each subcomponent. Hidden by default to keep the
+  canvas readable. Reveal-on-click (clicking a subcomponent
+  expands its impl / plan / codegen leaves inline). Decision
+  about precisely how to position them in the layer stack is
+  deferred to this phase's implementation pass.
+
+**Interaction model:**
+
+- **Single tap / click** on a node selects it and highlights all
+  of its edges plus the full reachable subgraph to leaves (DFS
+  downstream from the selected node). Upstream reachable set is
+  also highlighted but distinguished visually so "what implicates
+  me" is readable separately from "what do I implicate".
+- **Double-tap / long-press** on a `comp_*` node drills into its
+  internal view. The browser URL updates so the drill state is
+  shareable and back-button-navigable.
+- **Escape / back button** returns to the parent view.
+- **Edge hover** shows the edge type + source/target ID summary.
+- Mobile: tap to select, double-tap to drill, long-press for
+  context menu.
+
+**Layout:**
+
+- Libraries already in `package.json`: `cytoscape`, `cytoscape-elk`,
+  `dagre`, `elkjs`, `react-cytoscapejs`, `@xyflow/react`. Pick
+  one during implementation — cytoscape + elk is the likely
+  default for the tap/highlight ergonomics and layered-layout
+  support.
+- Layer assignment is a topological sort on `dependency` edges
+  within each layer-capable tier. Cross-layer edges (feat→resp,
+  resp→comp assignment, policy_application) are drawn as long
+  arcs that don't participate in layer assignment.
+
+**Out of scope for this phase:**
+
+- Structural edits — the DAG view is read-only for the structure.
+  Phase 11 adds the structured edit UIs that run on top of a
+  selected DAG node.
+- Animation, transition effects, multi-select, export to SVG/PNG.
+  All post-MVP polish.
+- Non-trivial layout caching — MVP recomputes on each projection
+  change, which is fast enough for < 500 nodes.
+
+**Data dependencies:**
+
+- Phases 3–8 must have landed for the view to be useful — before
+  Phase 3 there are only features, which is a boring flat layer.
+- Phase 9's staleness ledger is orthogonal but integrates
+  naturally: nodes with pending upstream changes get a visual
+  marker on the DAG.
+
+## Phase 11 — Pending-change queue UX + structured edit UIs
 
 The foundation already has the queue primitive. This phase is building
 all six structured edit UIs on top of the minted model from Phases 3
@@ -255,7 +355,7 @@ the model directly — every action produces prose instructions.**
 - [ ] Mobile interaction: tap-to-select + tap-to-place for drag-drop, tap-two-nodes for graph editors
 - [ ] All six UIs support promotion / demotion between tiers without changing IDs
 
-## Phase 11 — Batched review flow
+## Phase 12 — Batched review flow
 
 Review pass = component. MVP ships a simple per-component walk; the
 polished combined-navigable-diff UI is post-MVP.
@@ -270,14 +370,14 @@ polished combined-navigable-diff UI is post-MVP.
 - [ ] UI distinguishes **destructive** (blocking, requires approval) from **non-destructive** (informational, already propagated) changes so users learn which ones actually need attention
 - [ ] Accept on a destructive change releases the halted cascade; accept on a non-destructive change is informational only
 
-## Phase 12 — Change summaries
+## Phase 13 — Change summaries
 
 - [ ] Every generation prompt appends a change-summary section
 - [ ] Parser strips the summary from stored content, writes to a structured change log
 - [ ] Queryable audit history endpoint
 - [ ] Feeds into review UI (the summary is what gets shown as the diff header)
 
-## Phase 13 — File manifest + plan nodes + code generation leaf pass
+## Phase 14 — File manifest + plan nodes + code generation leaf pass
 
 The bottom of the DAG. Three artifacts land together here because
 they're mutually dependent: the manifest defines territory, plans
@@ -313,7 +413,7 @@ are territory-limited, and code generation consumes plans.
 - [ ] Generated code written to the project's git repo (v1 git plumbing survives)
 - [ ] Code generation is **territory-limited** — refuses to write outside the plan's validated territory even if the plan somehow slipped one through (defense in depth)
 
-## Phase 14 — Catapult smoke test
+## Phase 15 — Catapult smoke test
 
 The acceptance test for v2. No migration from v1; rebuild from scratch.
 
@@ -322,9 +422,9 @@ The acceptance test for v2. No migration from v1; rebuild from scratch.
 - [ ] Verify generated Elixir compiles
 - [ ] Capture feedback loop latency at each tier (is the 2s poll interval enough?)
 - [ ] Identify which post-MVP deferred items are actually blocking day-to-day use
-- [ ] Export the resulting project via Phase 15 and verify Catapult's input parser can ingest the bundle
+- [ ] Export the resulting project via Phase 16 and verify Catapult's input parser can ingest the bundle
 
-## Phase 15 — Project export for external consumption
+## Phase 16 — Project export for external consumption
 
 A one-shot "export this project" action that reads the v2 graph
 and transcribes it back into prose documents a downstream tool
@@ -387,7 +487,7 @@ shippable product.
 - [ ] Vector search review augmentation
 - [ ] Two-pass upward propagation automation
 - [ ] Polished combined-navigable-diff review UI with version-dropdown navigation (MVP ships a simpler per-component walk; auto-propagation of non-destructive changes is already MVP)
-- [ ] View-history snapshot optimization beyond the basic Phase 11 cache
+- [ ] View-history snapshot optimization beyond the basic Phase 12 cache
 - [ ] Multi-user concurrency on the pending-change queue
 - [ ] WebSocket push instead of polling
 

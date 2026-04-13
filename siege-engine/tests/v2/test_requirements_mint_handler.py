@@ -1,7 +1,9 @@
 """Tests for backend.graph.handlers.requirements_mint.
 
 Mirrors test_feature_mint_handler.py's shape. The mint handler
-is deterministic (no LLM call) and idempotent.
+is deterministic (no LLM call) and idempotent. It emits both
+``resp_*`` nodes and ``decomposition`` edges (``feat_* → resp_*``)
+in one transaction.
 """
 
 from __future__ import annotations
@@ -15,13 +17,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.database import Base
+from backend.graph import events as ev
 from backend.graph.handlers.requirements_mint import (
     RequirementsMintHandlerError,
     mint_requirements,
 )
+from backend.graph.reducer import append_event
 from backend.graph.requirements import bootstrap_reqs_node
 from backend.models import Project
-from backend.models.node import Node
+from backend.models.node import Edge, Node
 
 
 @pytest.fixture()
@@ -43,39 +47,85 @@ def shared_session_factory(monkeypatch):
     engine.dispose()
 
 
-def _seed_project_with_approved_reqs(session: Session, approved_content: str) -> str:
-    """Create a project with a reqs node whose content is already
-    set to ``approved_content`` (simulating post-DraftApproved state).
+def _mint_feature(session: Session, project_id: str, name: str, order: int) -> str:
+    from backend.graph.ids import Kind, mint
+
+    feat_id = mint(session, Kind.FEAT)
+    append_event(
+        session,
+        project_id,
+        ev.NodeCreated(
+            node_id=feat_id,
+            tier="feat",
+            kind="domain",
+            parent_id=None,
+            name=name,
+            display_order=order,
+            content=f"{name} intent.",
+        ),
+    )
+    return feat_id
+
+
+def _seed_project_with_features_and_reqs(
+    session: Session, feature_names: list[str]
+) -> tuple[str, list[str]]:
+    """Create a project with the given feature names plus a reqs
+    node. Returns ``(project_id, [feat_id, ...])``. Caller is
+    responsible for committing and for writing approved content
+    to the reqs node via ``_set_reqs_content``.
     """
     project_id = str(uuid.uuid4())
     session.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
     session.flush()
-    reqs_id = bootstrap_reqs_node(session, project_id)
-    # Fake a DraftApproved by directly writing content. In the real
-    # flow DraftApproved flows through the reducer; here we shortcut
-    # because we're only testing the mint handler.
-    reqs_node = session.get(Node, reqs_id)
-    assert reqs_node is not None
-    reqs_node.content = approved_content
+    feat_ids = [_mint_feature(session, project_id, name, i) for i, name in enumerate(feature_names)]
+    bootstrap_reqs_node(session, project_id)
     session.commit()
-    return project_id
+    return project_id, feat_ids
 
 
-_VALID_REQS = (
-    "<requirements>"
-    "<responsibility><name>Auth</name><intent>Identify callers.</intent></responsibility>"
-    "<responsibility><name>Billing</name><intent>Bill accounts.</intent></responsibility>"
-    "<responsibility><name>Telemetry</name><intent>Record every call.</intent></responsibility>"
-    "</requirements>"
-)
+def _set_reqs_content(session: Session, project_id: str, content: str) -> None:
+    """Simulate DraftApproved by writing content directly to the
+    reqs node. Avoids going through the reducer's approval
+    machinery just to seed a test fixture.
+    """
+    node = session.execute(
+        select(Node).where(Node.project_id == project_id, Node.tier == "reqs")
+    ).scalar_one()
+    node.content = content
+    session.commit()
+
+
+def _covers(*feat_ids: str) -> str:
+    return "<covers>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</covers>"
+
+
+def _reqs_block(feat_ids: list[str], *entries: tuple[str, str]) -> str:
+    """Build a valid <requirements> block; every responsibility
+    covers every feature in ``feat_ids`` so the coverage check
+    passes automatically.
+    """
+    cov = _covers(*feat_ids)
+    inner = "".join(
+        f"<responsibility><name>{name}</name><intent>{intent}</intent>{cov}</responsibility>"
+        for name, intent in entries
+    )
+    return f"<requirements>{inner}</requirements>"
 
 
 class TestHappyPath:
-    def test_mints_top_level_resp_nodes(self, shared_session_factory):
+    def test_mints_top_level_resp_nodes_and_edges(self, shared_session_factory):
         factory = shared_session_factory
         s = factory()
         try:
-            project_id = _seed_project_with_approved_reqs(s, _VALID_REQS)
+            project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
+            content = _reqs_block(
+                feat_ids,
+                ("Auth", "Identify callers."),
+                ("Billing", "Bill accounts."),
+                ("Telemetry", "Record every call."),
+            )
+            _set_reqs_content(s, project_id, content)
         finally:
             s.close()
 
@@ -102,6 +152,61 @@ class TestHappyPath:
             ]
             assert all(r.id.startswith("resp_") for r in resps)
             assert [r.display_order for r in resps] == [0, 1, 2]
+
+            # Each of the 3 resps covers both features → 6 edges.
+            edges = list(
+                s.execute(
+                    select(Edge).where(
+                        Edge.project_id == project_id,
+                        Edge.edge_type == "decomposition",
+                    )
+                ).scalars()
+            )
+            assert len(edges) == 6
+            for e in edges:
+                assert e.source_id in feat_ids
+                assert any(e.target_id == r.id for r in resps)
+                assert e.id.startswith("edge_")
+        finally:
+            s.close()
+
+    def test_partial_coverage_across_resps(self, shared_session_factory):
+        # Each resp covers only one feature; together they cover
+        # both features (coverage check passes) and produce exactly
+        # 2 edges.
+        factory = shared_session_factory
+        s = factory()
+        try:
+            project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
+            content = (
+                "<requirements>"
+                f"<responsibility><name>Auth</name><intent>Identify.</intent>"
+                f'<covers><feat id="{feat_ids[0]}"/></covers>'
+                "</responsibility>"
+                f"<responsibility><name>Billing</name><intent>Bill.</intent>"
+                f'<covers><feat id="{feat_ids[1]}"/></covers>'
+                "</responsibility>"
+                "</requirements>"
+            )
+            _set_reqs_content(s, project_id, content)
+        finally:
+            s.close()
+
+        asyncio.run(mint_requirements({"project_id": project_id}))
+
+        s = factory()
+        try:
+            edges = list(
+                s.execute(
+                    select(Edge).where(
+                        Edge.project_id == project_id,
+                        Edge.edge_type == "decomposition",
+                    )
+                ).scalars()
+            )
+            assert len(edges) == 2
+            sources = {e.source_id for e in edges}
+            assert sources == set(feat_ids)
         finally:
             s.close()
 
@@ -111,7 +216,14 @@ class TestIdempotency:
         factory = shared_session_factory
         s = factory()
         try:
-            project_id = _seed_project_with_approved_reqs(s, _VALID_REQS)
+            project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
+            content = _reqs_block(
+                feat_ids,
+                ("Auth", "A."),
+                ("Billing", "B."),
+                ("Telemetry", "T."),
+            )
+            _set_reqs_content(s, project_id, content)
         finally:
             s.close()
 
@@ -120,14 +232,29 @@ class TestIdempotency:
 
         s = factory()
         try:
-            count = s.execute(
-                select(Node).where(
-                    Node.project_id == project_id,
-                    Node.tier == "resp",
-                    Node.parent_id.is_(None),
+            count_resps = len(
+                list(
+                    s.execute(
+                        select(Node).where(
+                            Node.project_id == project_id,
+                            Node.tier == "resp",
+                            Node.parent_id.is_(None),
+                        )
+                    ).scalars()
                 )
-            ).all()
-            assert len(count) == 3  # Not 6
+            )
+            assert count_resps == 3  # Not 6
+            count_edges = len(
+                list(
+                    s.execute(
+                        select(Edge).where(
+                            Edge.project_id == project_id,
+                            Edge.edge_type == "decomposition",
+                        )
+                    ).scalars()
+                )
+            )
+            assert count_edges == 6  # Not 12
         finally:
             s.close()
 
@@ -153,11 +280,7 @@ class TestFailureModes:
         factory = shared_session_factory
         s = factory()
         try:
-            project_id = str(uuid.uuid4())
-            s.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
-            s.flush()
-            bootstrap_reqs_node(s, project_id)
-            s.commit()
+            project_id, _ = _seed_project_with_features_and_reqs(s, ["FeatA"])
         finally:
             s.close()
         with pytest.raises(RequirementsMintHandlerError, match="empty content"):
@@ -167,8 +290,33 @@ class TestFailureModes:
         factory = shared_session_factory
         s = factory()
         try:
-            project_id = _seed_project_with_approved_reqs(s, "not xml at all")
+            project_id, _ = _seed_project_with_features_and_reqs(s, ["FeatA"])
+            _set_reqs_content(s, project_id, "not xml at all")
         finally:
             s.close()
         with pytest.raises(RequirementsMintHandlerError, match="could not parse"):
+            asyncio.run(mint_requirements({"project_id": project_id}))
+
+    def test_uncovered_feature_raises(self, shared_session_factory):
+        # Mint-time coverage check: if content was approved with
+        # coverage valid at generation time but a feature was added
+        # after approval, the mint handler's parse-validate pass
+        # catches it and refuses to mint rather than emit an
+        # orphaned resp set.
+        factory = shared_session_factory
+        s = factory()
+        try:
+            project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
+            # Content covers only the first feature
+            partial = (
+                "<requirements>"
+                f"<responsibility><name>Auth</name><intent>Ok.</intent>"
+                f'<covers><feat id="{feat_ids[0]}"/></covers>'
+                "</responsibility>"
+                "</requirements>"
+            )
+            _set_reqs_content(s, project_id, partial)
+        finally:
+            s.close()
+        with pytest.raises(RequirementsMintHandlerError, match="does not cover every feature"):
             asyncio.run(mint_requirements({"project_id": project_id}))

@@ -263,19 +263,25 @@ class Responsibility:
 
     ``name`` is the short identifier (2–5 words, title case
     expected). ``intent`` is the paragraph-length description of
-    the responsibility's role and scope. Both are non-empty and
-    already whitespace-stripped at their outer edges.
+    the responsibility's role and scope. ``covers`` is the set of
+    feature IDs this responsibility serves — at least one, drawn
+    from a closed set of known features (the validator checks
+    membership against a caller-supplied allowlist). All strings
+    are non-empty and already whitespace-stripped at their outer
+    edges.
     """
 
     name: str
     intent: str
+    covers: tuple[str, ...]
 
 
 _REQUIREMENTS_ALLOWED_CHILDREN = {"responsibility"}
-_RESPONSIBILITY_ALLOWED_CHILDREN = {"name", "intent"}
+_RESPONSIBILITY_ALLOWED_CHILDREN = {"name", "intent", "covers"}
+_COVERS_ALLOWED_CHILDREN = {"feat"}
 
 
-def validate_requirements(tree: TagNode) -> list[Responsibility]:
+def validate_requirements(tree: TagNode, *, known_feature_ids: set[str]) -> list[Responsibility]:
     """Validate a parsed ``<requirements>`` tree and return its entries.
 
     Shape:
@@ -283,16 +289,25 @@ def validate_requirements(tree: TagNode) -> list[Responsibility]:
     * ``tree.tag`` must be exactly ``"requirements"``.
     * ``<requirements>`` contains one or more ``<responsibility>``
       entries. No other tags at this level.
-    * Each ``<responsibility>`` contains exactly one ``<name>`` and
-      exactly one ``<intent>``. Both must be non-empty after
-      stripping. No other tags inside.
-    * At least one ``<responsibility>`` must be present.
+    * Each ``<responsibility>`` contains exactly one ``<name>``,
+      exactly one ``<intent>``, and exactly one ``<covers>``. No
+      other tags inside.
+    * Each ``<covers>`` contains one or more ``<feat id="..."/>``
+      children. The ``id`` must match a known feature from
+      ``known_feature_ids``. Unknown / missing IDs are parse
+      errors that feed the retry loop.
+    * **Coverage requirement:** every feature in
+      ``known_feature_ids`` must appear in at least one
+      ``<covers>`` block across the full validated set. Missing
+      coverage is a parse error.
 
     Parallel shape to :func:`validate_features`: same general
     layout (one root, a flat list of structured children, each
-    child has a name + intent), different tag vocabulary. Error
-    messages name the offending tag path so the parse-validate
-    retry loop can feed the problem back to the LLM.
+    child has a name + intent), different tag vocabulary. The
+    ``<covers>`` requirement is what distinguishes it from its
+    feature-expansion cousin: the many-to-many edges emitted on
+    approval come from parsing these IDs, so ID validity is
+    enforced here rather than at mint time.
     """
     if tree.tag != "requirements":
         raise ValidationError(
@@ -309,7 +324,7 @@ def validate_requirements(tree: TagNode) -> list[Responsibility]:
 
     result: list[Responsibility] = []
     for index, child in enumerate(tree.children):
-        result.append(_validate_responsibility(child, index))
+        result.append(_validate_responsibility(child, index, known_feature_ids=known_feature_ids))
 
     if not result:
         raise ValidationError(
@@ -317,10 +332,27 @@ def validate_requirements(tree: TagNode) -> list[Responsibility]:
             "Every project must have at least one top-level responsibility."
         )
 
+    # Coverage check: every known feature must be covered by at
+    # least one responsibility. Collect all the covered IDs across
+    # the full output and diff against the known set.
+    covered: set[str] = set()
+    for resp in result:
+        covered.update(resp.covers)
+    missing = sorted(known_feature_ids - covered)
+    if missing:
+        raise ValidationError(
+            "<requirements> block does not cover every feature. "
+            f"The following feature IDs are not listed in any <covers> block: "
+            f"{', '.join(missing)}. Every feature must be implicated by "
+            "at least one responsibility."
+        )
+
     return result
 
 
-def _validate_responsibility(node: TagNode, index: int) -> Responsibility:
+def _validate_responsibility(
+    node: TagNode, index: int, *, known_feature_ids: set[str]
+) -> Responsibility:
     """Validate a single ``<responsibility>`` entry."""
     pos = f"<responsibility> at position {index}"
 
@@ -328,7 +360,7 @@ def _validate_responsibility(node: TagNode, index: int) -> Responsibility:
         if child.tag not in _RESPONSIBILITY_ALLOWED_CHILDREN:
             raise ValidationError(
                 f"{pos} contains an unexpected child <{child.tag}>. "
-                "Only <name> and <intent> are allowed inside a <responsibility>."
+                "Only <name>, <intent>, and <covers> are allowed inside a <responsibility>."
             )
 
     name_children = node.find_all("name")
@@ -352,6 +384,19 @@ def _validate_responsibility(node: TagNode, index: int) -> Responsibility:
             f"{pos} has {len(intent_children)} <intent> children; exactly one is required."
         )
 
+    covers_children = node.find_all("covers")
+    if len(covers_children) == 0:
+        raise ValidationError(
+            f"{pos} is missing a <covers> child. Every responsibility "
+            "must have exactly one <covers> block listing at least one "
+            '<feat id="feat_..."/> child identifying the feature IDs '
+            "it serves."
+        )
+    if len(covers_children) > 1:
+        raise ValidationError(
+            f"{pos} has {len(covers_children)} <covers> children; exactly one is required."
+        )
+
     name_text = name_children[0].text
     if not name_text:
         raise ValidationError(
@@ -366,4 +411,61 @@ def _validate_responsibility(node: TagNode, index: int) -> Responsibility:
             "must be a short paragraph describing the role and scope."
         )
 
-    return Responsibility(name=name_text, intent=intent_text)
+    covers = _validate_covers(covers_children[0], pos, known_feature_ids=known_feature_ids)
+
+    return Responsibility(name=name_text, intent=intent_text, covers=covers)
+
+
+def _validate_covers(
+    node: TagNode, parent_pos: str, *, known_feature_ids: set[str]
+) -> tuple[str, ...]:
+    """Validate a single ``<covers>`` block and return its feature IDs.
+
+    ``parent_pos`` is the position marker of the enclosing
+    responsibility — used in error messages so the retry prompt
+    can direct the LLM to the right responsibility.
+    """
+    # Reject unknown children inside <covers>.
+    for child in node.children:
+        if child.tag not in _COVERS_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{parent_pos} has a <covers> block containing an unexpected "
+                f'child <{child.tag}>. Only <feat id="feat_..."/> entries '
+                "are allowed inside <covers>."
+            )
+
+    feat_nodes = node.find_all("feat")
+    if not feat_nodes:
+        raise ValidationError(
+            f"{parent_pos} has an empty <covers> block. Every responsibility "
+            "must cover at least one feature — list the feature IDs via "
+            '<feat id="feat_..."/> children.'
+        )
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    for i, feat_node in enumerate(feat_nodes):
+        fid = feat_node.attrs.get("id", "").strip()
+        if not fid:
+            raise ValidationError(
+                f"{parent_pos} has a <feat> entry at <covers> position {i} "
+                "with no id attribute. Every <feat> must carry an "
+                'id="feat_..." attribute referencing a known feature.'
+            )
+        if fid in seen:
+            raise ValidationError(
+                f"{parent_pos} has a <feat> entry at <covers> position {i} "
+                f"listing duplicate feature id {fid!r}. Each feature id may "
+                "appear at most once per <covers> block."
+            )
+        seen.add(fid)
+        if fid not in known_feature_ids:
+            raise ValidationError(
+                f"{parent_pos} has a <feat> entry at <covers> position {i} "
+                f"referencing unknown feature id {fid!r}. Valid feature "
+                f"IDs for this project: {', '.join(sorted(known_feature_ids))}. "
+                "Only reference IDs from the feature list provided in the prompt."
+            )
+        ids.append(fid)
+
+    return tuple(ids)

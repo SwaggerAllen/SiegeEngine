@@ -126,6 +126,7 @@ async def generate_requirements(payload: dict) -> None:
         features_summary = format_features_summary(
             [
                 {
+                    "id": f.id,
                     "name": f.name,
                     "content": f.content,
                     "group_label": f.group_label,
@@ -134,6 +135,11 @@ async def generate_requirements(payload: dict) -> None:
                 for f in feature_rows
             ]
         )
+        # The validator needs to check <covers> references against
+        # the actual mint state, not what the prompt happened to
+        # list. Handlers collect these once up front and pass them
+        # through the parse-validate retry loop.
+        known_feature_ids: set[str] = {f.id for f in feature_rows}
 
         project_row = db.get(Project, project_id)
         assert project_row is not None
@@ -156,6 +162,7 @@ async def generate_requirements(payload: dict) -> None:
         prior_pending=prior_pending,
         feedback=feedback,
         cli_timeout_seconds=cli_timeout_seconds,
+        known_feature_ids=known_feature_ids,
     )
 
     # ── Phase 3: persist events + telemetry ─────────────────────────
@@ -214,6 +221,7 @@ async def _generate_with_parse_validate(
     prior_pending: str | None,
     feedback: str | None,
     cli_timeout_seconds: int,
+    known_feature_ids: set[str],
 ):  # type: ignore[no-untyped-def]
     """Run the requirements LLM call with a parse-validate retry loop.
 
@@ -221,6 +229,9 @@ async def _generate_with_parse_validate(
     :func:`backend.graph.handlers.feature_expansion._generate_with_parse_validate`
     but with the requirements prompt and validator. Shares the
     ``MAX_PARSE_RETRIES`` budget so both handlers stay symmetric.
+    Validator checks ``<covers>`` references against
+    ``known_feature_ids`` so unknown / missing / uncovered IDs
+    become parse errors that the LLM can fix on retry.
     """
     attempts: list = []  # list[GenerationResult]
     parse_error: str | None = None
@@ -246,7 +257,7 @@ async def _generate_with_parse_validate(
 
         try:
             tree = extract_tag_tree(result.text, "requirements")
-            validate_requirements(tree)
+            validate_requirements(tree, known_feature_ids=known_feature_ids)
         except (ParseError, ValidationError) as exc:
             parse_error = str(exc)
             logger.warning(

@@ -159,12 +159,25 @@ def client(db, project_with_reqs):
         app.dependency_overrides.clear()
 
 
-def _valid_reqs_xml(label: str = "Default"):
+def _feat_ids_for(db, project_id) -> list[str]:
+    return [
+        fid
+        for (fid,) in db.execute(
+            select(Node.id)
+            .where(Node.project_id == project_id, Node.tier == "feat")
+            .order_by(Node.display_order)
+        ).all()
+    ]
+
+
+def _valid_reqs_xml(feat_ids: list[str], label: str = "Default") -> str:
+    covers = "<covers>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</covers>"
     return (
         "<requirements>"
         "<responsibility>"
         f"<name>{label}</name>"
         f"<intent>Paragraph for {label} responsibility in route tests.</intent>"
+        f"{covers}"
         "</responsibility>"
         "</requirements>"
     )
@@ -251,7 +264,7 @@ class TestApprove:
         self, client, project_with_reqs, db, monkeypatch
     ):
         # Drive the generation handler to produce a real pending draft
-        draft_xml = _valid_reqs_xml()
+        draft_xml = _valid_reqs_xml(_feat_ids_for(db, project_with_reqs.id))
         _patch_cli(monkeypatch, draft_xml)
         asyncio.run(generate_requirements({"project_id": project_with_reqs.id, "feedback": None}))
         draft = db.execute(
@@ -272,7 +285,7 @@ class TestApprove:
 
 class TestDiscard:
     def test_discard_enqueues_new_generation(self, client, project_with_reqs, db, monkeypatch):
-        draft_xml = _valid_reqs_xml()
+        draft_xml = _valid_reqs_xml(_feat_ids_for(db, project_with_reqs.id))
         _patch_cli(monkeypatch, draft_xml)
         asyncio.run(generate_requirements({"project_id": project_with_reqs.id, "feedback": None}))
         draft = db.execute(
