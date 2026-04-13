@@ -44,6 +44,7 @@ class Kind(str, Enum):
     EDGE = "edge"
     EXPANSION = "expansion"
     REQS = "reqs"
+    SUBREQS = "subreqs"
     SYSARCH = "sysarch"
     MANIFEST = "manifest"
     FANIN = "fanin"

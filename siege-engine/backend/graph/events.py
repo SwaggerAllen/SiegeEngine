@@ -32,6 +32,7 @@ NodeTier = Literal[
     "policy",
     "expansion",
     "reqs",
+    "subreqs",
     "sysarch",
     "manifest",
     "fanin",

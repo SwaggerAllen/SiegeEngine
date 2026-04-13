@@ -30,6 +30,7 @@ class TestKindEnum:
             "edge",
             "expansion",
             "reqs",
+            "subreqs",
             "sysarch",
             "manifest",
             "fanin",
