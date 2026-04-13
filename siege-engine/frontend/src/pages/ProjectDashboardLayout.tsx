@@ -1,13 +1,17 @@
 import { useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { ComponentList } from '../components/ComponentList';
 import { DashboardMenu } from '../components/DashboardMenu';
 import { FeatureExpansionPanel } from '../components/FeatureExpansionPanel';
 import { FeatureList } from '../components/FeatureList';
+import { PolicyList } from '../components/PolicyList';
 import { RequirementsPanel } from '../components/RequirementsPanel';
 import { ResponsibilityList } from '../components/ResponsibilityList';
+import { SysarchPanel } from '../components/SysarchPanel';
 import { useExpansion } from '../hooks/queries/useExpansionQueries';
 import { useFeatures } from '../hooks/queries/useFeatureQueries';
 import { useProject } from '../hooks/queries/useProjectQueries';
+import { useResponsibilities } from '../hooks/queries/useRequirementsQueries';
 import { debugLog } from '../lib/debugLog';
 import { describeApiError } from '../lib/describeApiError';
 
@@ -29,6 +33,9 @@ function DashboardShell({ projectId }: { projectId: string }) {
   // job is enqueued.
   const { data: features } = useFeatures(projectId, isExpansionApproved);
   const featuresMinted = (features?.features.length ?? 0) > 0;
+  // Sysarch panel shows up once top-level resps are minted.
+  const { data: responsibilities } = useResponsibilities(projectId, featuresMinted);
+  const respsMinted = (responsibilities?.responsibilities.length ?? 0) > 0;
 
   useEffect(() => {
     debugLog('DashboardLayout.lifecycle', `MOUNT projectId=${projectId}`);
@@ -77,6 +84,13 @@ function DashboardShell({ projectId }: { projectId: string }) {
           <>
             <RequirementsPanel projectId={projectId} />
             <ResponsibilityList projectId={projectId} mintPending={featuresMinted} />
+          </>
+        )}
+        {respsMinted && (
+          <>
+            <SysarchPanel projectId={projectId} />
+            <ComponentList projectId={projectId} mintPending={respsMinted} />
+            <PolicyList projectId={projectId} mintPending={respsMinted} />
           </>
         )}
       </main>
