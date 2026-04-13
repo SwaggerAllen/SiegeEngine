@@ -21,6 +21,19 @@ def canonical_events() -> list[ev._EventBase]:
 
     The sequence is designed so it can be replayed end-to-end without
     any reducer errors. Reused by reducer and debug-route tests.
+
+    Additions tracker — bump the Phase 3 addendum whenever a new
+    event shape lands so reducer round-trip coverage stays honest:
+
+    - Phase 2 core: NodeCreated/Renamed/Reparented/Promoted/Demoted,
+      EdgeCreated/Deleted, FragmentUpdated, DraftGenerated/Edited/
+      Approved/Discarded, NodesMerged, NodeDeleted, ViewRecorded.
+    - Phase 3 stage 2 (sysarch): NodeCreated with tier="sysarch",
+      tier="policy", EdgeCreated with edge_type="decomposition",
+      sysarch techspec FragmentUpdated.
+    - Phase 3 stage 3 (subreqs): NodeCreated with tier="subreqs",
+      NodeCreated with tier="resp" and parent_id=comp (subresp
+      variant), decomposition edge parent_resp → subresp.
     """
     feat_id = "feat_FEAT1111"
     resp_id = "resp_RESP1111"
@@ -31,6 +44,15 @@ def canonical_events() -> list[ev._EventBase]:
     edge_dep = "edge_EDGED111"
     edge_dom = "edge_EDGEM111"
     frag_id = f"{comp_a}_pubapi"
+    # Phase 3 additions
+    sysarch_id = "sysarch_SYSR1111"
+    policy_id = "policy_POLY1111"
+    subreqs_id = "subreqs_SUBR1111"
+    top_resp_id = "resp_TOPR1111"  # top-level resp (parent_id=None)
+    subresp_id = "resp_SUBRP111"  # subresp (parent_id=comp_a)
+    edge_decomp_resp_to_comp = "edge_EDCR1111"
+    edge_decomp_resp_to_sub = "edge_EDCS1111"
+    sysarch_techspec_frag = f"{sysarch_id}_techspec"
 
     return [
         ev.NodeCreated(node_id=feat_id, tier="feat", kind="domain", name="Identity"),
@@ -126,6 +148,69 @@ def canonical_events() -> list[ev._EventBase]:
             dest_name="AuthService",
         ),
         ev.NodeDeleted(node_id=sub_id),
+        # ── Phase 3 stage 2 additions (sysarch, policy, decomposition edges) ──
+        ev.NodeCreated(
+            node_id=sysarch_id,
+            tier="sysarch",
+            kind="domain",
+            parent_id=None,
+            name="System Architecture",
+        ),
+        ev.NodeCreated(
+            node_id=policy_id,
+            tier="policy",
+            kind="domain",
+            parent_id=None,
+            name="LLM Telemetry",
+            content=(
+                "<policy><name>LLM Telemetry</name>"
+                "<trigger>any LLM call</trigger>"
+                "<required>resp_TOPR1111</required>"
+                "<rationale>Audit cost.</rationale></policy>"
+            ),
+        ),
+        ev.NodeCreated(
+            node_id=top_resp_id,
+            tier="resp",
+            kind="domain",
+            parent_id=None,
+            name="SessionManagement",
+            content="Own session state.",
+        ),
+        ev.EdgeCreated(
+            edge_id=edge_decomp_resp_to_comp,
+            edge_type="decomposition",
+            source_id=top_resp_id,
+            target_id=comp_a,
+        ),
+        ev.FragmentUpdated(
+            fragment_id=sysarch_techspec_frag,
+            owner_id=sysarch_id,
+            fragment_kind=ev.FragmentKind.TECHSPEC,
+            new_content="Python + React + PostgreSQL stack.",
+        ),
+        # ── Phase 3 stage 3 additions (subreqs, subresps, decomp edges) ──
+        ev.NodeCreated(
+            node_id=subreqs_id,
+            tier="subreqs",
+            kind="domain",
+            parent_id=comp_a,
+            name="Subrequirements",
+        ),
+        ev.NodeCreated(
+            node_id=subresp_id,
+            tier="resp",
+            kind="domain",
+            parent_id=comp_a,
+            name="Tokenization",
+            content="Convert raw cards to tokens.",
+        ),
+        ev.EdgeCreated(
+            edge_id=edge_decomp_resp_to_sub,
+            edge_type="decomposition",
+            source_id=top_resp_id,
+            target_id=subresp_id,
+        ),
         ev.ViewRecorded(user_id="user_01", batch_id="batch_01", event_offset=10),
     ]
 

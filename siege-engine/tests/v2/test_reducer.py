@@ -329,6 +329,66 @@ class TestRebuild:
                 f"rebuild at offset {offset} diverged from incremental state"
             )
 
+    def test_rebuild_covers_phase_3_event_shapes(self, db, project, canonical_events):
+        """Explicit assertions that sysarch / policy / subreqs / subresp
+        / decomposition edge / sysarch-fragment events all round-trip
+        through reducer + rebuild without loss.
+
+        Guards against a regression where someone adds a new tier or
+        edge type dispatch in the reducer and forgets to update the
+        rebuild path. The ``test_rebuild_at_every_prefix`` test above
+        catches divergence but not "this row was never written" —
+        this test names each Phase 3 row explicitly.
+        """
+        from backend.models.node import Edge, Fragment, Node
+
+        for event in canonical_events:
+            append_event(db, project.id, event)
+        rebuild_projections(db, project.id)
+
+        # Sysarch singleton exists after rebuild
+        sysarch_node = db.get(Node, "sysarch_SYSR1111")
+        assert sysarch_node is not None
+        assert sysarch_node.tier == "sysarch"
+        assert sysarch_node.name == "System Architecture"
+
+        # Policy node exists with its inline blob content
+        policy_node = db.get(Node, "policy_POLY1111")
+        assert policy_node is not None
+        assert policy_node.tier == "policy"
+        assert "<trigger>any LLM call</trigger>" in policy_node.content
+
+        # Top-level resp (parent_id=None) and subresp (parent_id=comp) both exist
+        top_resp = db.get(Node, "resp_TOPR1111")
+        assert top_resp is not None
+        assert top_resp.parent_id is None
+        subresp = db.get(Node, "resp_SUBRP111")
+        assert subresp is not None
+        assert subresp.tier == "resp"
+        assert subresp.parent_id == "comp_CMPA1111"
+
+        # Subreqs node under comp_a
+        subreqs_node = db.get(Node, "subreqs_SUBR1111")
+        assert subreqs_node is not None
+        assert subreqs_node.tier == "subreqs"
+        assert subreqs_node.parent_id == "comp_CMPA1111"
+
+        # Decomposition edges
+        decomp_edges = (
+            db.query(Edge)
+            .filter(Edge.project_id == project.id, Edge.edge_type == "decomposition")
+            .all()
+        )
+        decomp_pairs = {(e.source_id, e.target_id) for e in decomp_edges}
+        assert ("resp_TOPR1111", "comp_CMPA1111") in decomp_pairs
+        assert ("resp_TOPR1111", "resp_SUBRP111") in decomp_pairs
+
+        # Sysarch techspec fragment landed
+        frag = db.get(Fragment, "sysarch_SYSR1111_techspec")
+        assert frag is not None
+        assert frag.owner_id == "sysarch_SYSR1111"
+        assert "Python + React" in frag.content
+
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
