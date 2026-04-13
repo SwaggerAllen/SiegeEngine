@@ -32,6 +32,23 @@ def list_nodes(session: Session, project_id: str) -> list[Node]:
     )
 
 
+def list_features(session: Session, project_id: str) -> list[Node]:
+    """Return the project's ``feat_*`` nodes in document order.
+
+    Document order is the order the features appeared in the
+    approved ``<features>`` block at mint time, captured in
+    ``Node.display_order`` (assigned by the feature-mint handler
+    — see ``backend.graph.handlers.feature_mint``).
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .where(Node.project_id == project_id, Node.tier == "feat")
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
 def list_edges(session: Session, project_id: str) -> list[Edge]:
     return list(
         session.execute(

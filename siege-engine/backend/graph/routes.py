@@ -109,6 +109,21 @@ class DiscardResponse(BaseModel):
     ok: bool
 
 
+# ── Feature list response models ────────────────────────────────────
+
+
+class FeatureSummary(BaseModel):
+    id: str
+    name: str
+    content: str
+    display_order: int
+    updated_at: str
+
+
+class FeatureListResponse(BaseModel):
+    features: list[FeatureSummary]
+
+
 # ── Expansion endpoints ─────────────────────────────────────────────
 
 
@@ -316,3 +331,36 @@ def post_expansion_discard(
     append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
     db.commit()
     return DiscardResponse(ok=True)
+
+
+# ── Feature list endpoint ───────────────────────────────────────────
+
+
+@router.get("/{project_id}/features", response_model=FeatureListResponse)
+def get_features(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeatureListResponse:
+    """List all ``feat_*`` nodes for a project in document order.
+
+    The list is populated by the ``v2.mint_features`` pipeline job
+    after the user approves the feature expansion. Before mint
+    completes, the list is empty. The frontend polls this endpoint
+    while the mint is running; once features appear, it stops
+    polling.
+    """
+    _require_project(db, project_id)
+    features = queries.list_features(db, project_id)
+    return FeatureListResponse(
+        features=[
+            FeatureSummary(
+                id=f.id,
+                name=f.name,
+                content=f.content,
+                display_order=f.display_order,
+                updated_at=f.updated_at.isoformat() if f.updated_at else "",
+            )
+            for f in features
+        ]
+    )

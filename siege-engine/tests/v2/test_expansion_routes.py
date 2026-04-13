@@ -53,7 +53,7 @@ def engine_and_factory(monkeypatch):
     """Shared in-memory engine for route + handler.
 
     Redirects ``backend.database.SessionLocal`` to the same engine so
-    the handler (which opens its own sessions) sees the same data.
+    the handlers (which open their own sessions) see the same data.
     """
     engine = create_engine(
         "sqlite://",
@@ -64,9 +64,11 @@ def engine_and_factory(monkeypatch):
     factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
     import backend.database as _database_mod
+    import backend.graph.handlers.feature_mint as _feature_mint_handler
 
     monkeypatch.setattr(_database_mod, "SessionLocal", factory)
     monkeypatch.setattr(fe_handler, "SessionLocal", factory)
+    monkeypatch.setattr(_feature_mint_handler, "SessionLocal", factory)
     yield engine, factory
     engine.dispose()
 
@@ -429,3 +431,93 @@ class TestDiscard:
         # And the node content is still empty.
         expansion_resp = client.get(f"/api/projects/{project.id}/expansion")
         assert expansion_resp.json()["node"]["content"] == ""
+
+
+class TestApproveEnqueuesMint:
+    """Approving a draft should enqueue the v2.mint_features job.
+
+    The mint job runs on the pipeline worker to parse the now-
+    approved expansion content and mint feat_* nodes.
+    """
+
+    def test_mint_job_enqueued_on_approve(self, client, project, db, monkeypatch):
+        _patch_cli(monkeypatch, _valid_features_xml("MintTest"))
+        asyncio.run(
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
+        )
+        db.expire_all()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
+
+        resp = client.post(
+            f"/api/projects/{project.id}/expansion/approve",
+            json={"draft_id": draft.id},
+        )
+        assert resp.status_code == 200
+
+        db.expire_all()
+        from backend.graph.handlers.feature_mint import MINT_FEATURES_JOB_TYPE
+
+        mint_jobs = list(
+            db.execute(select(Job).where(Job.job_type == MINT_FEATURES_JOB_TYPE)).scalars()
+        )
+        assert len(mint_jobs) == 1
+        assert mint_jobs[0].payload == {"project_id": project.id}
+
+
+class TestFeatureList:
+    """GET /api/projects/{id}/features returns the project's feat_*
+    nodes in document order. Populated by the mint handler after
+    expansion approval.
+    """
+
+    def test_empty_list_when_no_features_yet(self, client, project):
+        resp = client.get(f"/api/projects/{project.id}/features")
+        assert resp.status_code == 200
+        assert resp.json() == {"features": []}
+
+    def test_missing_project_returns_404(self, client):
+        resp = client.get("/api/projects/nonexistent/features")
+        assert resp.status_code == 404
+
+    def test_populated_list_after_mint(self, client, project, db, monkeypatch):
+        # Run the full generate → approve → mint flow end-to-end
+        # via the in-process worker drive.
+        approved = (
+            "<features>"
+            "<feature><name>Billing</name><intent>Users pay for tiers.</intent></feature>"
+            "<feature><name>Auth</name><intent>Users sign in with email.</intent></feature>"
+            "<feature><name>Reports</name><intent>Users see stats.</intent></feature>"
+            "</features>"
+        )
+        _patch_cli(monkeypatch, approved)
+        asyncio.run(
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
+        )
+        db.expire_all()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
+
+        client.post(
+            f"/api/projects/{project.id}/expansion/approve",
+            json={"draft_id": draft.id},
+        )
+
+        # Drive the mint handler inline (the test doesn't run the
+        # pipeline worker loop; the approve route enqueues the
+        # job and we execute it synchronously here).
+        from backend.graph.handlers.feature_mint import mint_features
+
+        asyncio.run(mint_features({"project_id": project.id}))
+
+        resp = client.get(f"/api/projects/{project.id}/features")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["features"]) == 3
+
+        feats = body["features"]
+        assert [f["name"] for f in feats] == ["Billing", "Auth", "Reports"]
+        assert feats[0]["content"] == "Users pay for tiers."
+        assert feats[1]["content"] == "Users sign in with email."
+        assert feats[2]["content"] == "Users see stats."
+        assert [f["display_order"] for f in feats] == [0, 1, 2]
+        assert all(f["id"].startswith("feat_") for f in feats)
+        assert all(f["updated_at"] for f in feats)
