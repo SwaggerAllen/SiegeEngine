@@ -149,6 +149,24 @@ want them named up front so cross-cutting policies can target \
 them later. Cross-cutting responsibilities still need a \
 ``<covers>`` block — list the features whose generation or \
 execution you'd expect to trigger the cross-cutting concern.
+* **Split server-side and user-facing work into sibling \
+responsibilities.** When a feature has both back-end mechanics \
+and a user-facing interaction layer, produce **two separate \
+responsibilities** — one describing the mechanics (what the \
+server does) and one describing the user-facing layer (what \
+the user interacts with). Both ``<covers>`` the same feature. \
+The sysarch pass downstream assigns each responsibility to \
+exactly one component, and presentational components are \
+first-class citizens that need their own responsibilities to \
+own. A single fat "Handle X" responsibility that smears across \
+both concerns forces sysarch into a corner. Example: feature \
+"Accept card payments" should produce siblings \
+"Payment Processing" (tokenize card, call provider, update \
+account state) **and** "Payment Form UX" (render card input, \
+inline validation, error messaging). They both cover the same \
+feat_*. Not every feature needs the split — a purely-backend \
+feature like "Nightly audit sweep" or a purely-UI feature like \
+"Theme switcher" stays as a single responsibility.
 * Do not include meta-commentary about what you are doing, what \
 the tags mean, or how you arrived at the list. Output only the \
 ``<requirements>`` block.

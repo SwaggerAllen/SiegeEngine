@@ -126,6 +126,36 @@ def list_subresponsibilities(session: Session, comp_id: str) -> list[Node]:
     )
 
 
+def domain_parents_of(session: Session, comp_id: str) -> list[Node]:
+    """Return the domain-parent ``comp_*`` nodes for a presentational comp.
+
+    Walks ``domain_parent`` edges where ``source_id == comp_id``
+    and returns the target components. The sysarch mint handler
+    emits these edges with the direction
+    ``presentational → domain``, so the source side is always a
+    presentational component. Callers that call this on a domain
+    component will get an empty list.
+
+    Used by the subreqs generation handler to look up "what
+    domain components does this presentational component
+    present" so the LLM can see the domain parent's already-
+    minted subresps as read-only context when writing UI-side
+    subresps.
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .join(Edge, Edge.target_id == Node.id)
+            .where(
+                Edge.edge_type == "domain_parent",
+                Edge.source_id == comp_id,
+                Node.tier == "comp",
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
 def get_component_context(session: Session, comp_id: str) -> ComponentContext:
     """Return the full context bundle for a single top-level component.
 

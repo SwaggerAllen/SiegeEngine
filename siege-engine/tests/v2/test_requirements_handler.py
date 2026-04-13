@@ -485,3 +485,24 @@ class TestFeaturesInPrompt:
         # IDs are prominent in the rendered feature list
         for fid in seeded_feat_ids:
             assert fid in prompt
+
+
+class TestDomainUiSplitGuidance:
+    """The reqs system prompt tells the LLM to split features with both
+    server-side and user-facing work into sibling responsibilities so
+    sysarch can assign them to separate domain + presentational
+    components later. Guard the guidance text so it can't be silently
+    removed during a prompt rewrite."""
+
+    def test_system_prompt_includes_split_guidance(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+        system_prompt = calls[0]["system_prompt"]
+        # The key phrase — if this assertion fires, the split
+        # guidance has been rewritten or removed.
+        assert "Split server-side and user-facing work" in system_prompt
+        # The worked example is still there
+        assert "Payment Processing" in system_prompt
+        assert "Payment Form UX" in system_prompt

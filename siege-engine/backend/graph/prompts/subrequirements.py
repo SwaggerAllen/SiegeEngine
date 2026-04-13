@@ -119,6 +119,20 @@ component's scope.
 least one subresp.** Before emitting the list, mentally check \
 that each parent resp ID appears in at least one \
 ``<derived-from>`` block. Missing coverage is a parse error.
+* **Domain-parent context (presentational components only).** If \
+this component is presentational and the prompt includes a \
+"# Domain-parent context" section listing subresponsibilities \
+from a domain component this presentational component presents, \
+treat those as **read-only context**. They describe what the \
+domain side does; your subresps should be about what this \
+presentational component does (rendering, interaction, view \
+state) and should *align with* rather than *duplicate* the \
+domain context. **Do not reference any of the domain-parent \
+subresp ids in your ``<derived-from>`` blocks** — cross-component \
+leaks are still forbidden, and the domain-parent subresps \
+belong to a different component's scope. The context exists \
+to help you write UI-side subresps that complement the domain \
+work coherently.
 * **Granularity.** A typical component produces 4 to 12 \
 subresponsibilities. If you're producing 1 or 2, you're \
 probably not decomposing enough. If you're producing 30, \
@@ -135,6 +149,7 @@ def render_user_prompt(
     *,
     component_summary: str,
     parent_resps_summary: str,
+    domain_parent_context: str | None = None,
     prior_approved: str | None,
     prior_pending: str | None,
     feedback: str | None,
@@ -146,8 +161,17 @@ def render_user_prompt(
     intent rendered as prompt-ready text. ``parent_resps_summary``
     is the list of top-level resps assigned to this component,
     each with a stable ID the LLM echoes into ``<derived-from>``
-    blocks. The remaining parameters mirror the other bootstrap
-    prompts.
+    blocks.
+
+    ``domain_parent_context`` is optional and only populated when
+    this component is presentational and one or more of its
+    ``domain_parent`` edge targets already has minted subresps.
+    Rendered as a clearly-labeled read-only block so the LLM can
+    align its UI-side subresps with the domain-side work without
+    duplicating it. Cross-component references remain forbidden by
+    the validator — the context is advisory, not referenceable.
+
+    The remaining parameters mirror the other bootstrap prompts.
     """
     parts: list[str] = []
     parts.append("# Component")
@@ -158,6 +182,22 @@ def render_user_prompt(
     parts.append("")
     parts.append(parent_resps_summary.strip() or "(no responsibilities assigned)")
     parts.append("")
+
+    if domain_parent_context and domain_parent_context.strip():
+        parts.append("# Domain-parent context (read-only)")
+        parts.append("")
+        parts.append(
+            "This presentational component presents the domain components "
+            "below. Their already-minted subresponsibilities are shown so "
+            "you can align your UI-side subresps with the domain-side "
+            "work. **Do not reference any of these resp ids in your "
+            "<derived-from> blocks** — they belong to a different "
+            "component's scope and will be rejected as cross-component "
+            "leaks. This context is advisory only."
+        )
+        parts.append("")
+        parts.append(domain_parent_context.strip())
+        parts.append("")
 
     if prior_approved:
         parts.append("# Previously-approved subrequirements")
@@ -257,3 +297,35 @@ def format_parent_resps_summary(resps: list[dict]) -> str:
         intent = (resp.get("content") or "").strip()
         lines.append(f"- `{rid}` **{name}**: {intent}")
     return "\n".join(lines)
+
+
+def format_domain_parent_context(parents: list[dict]) -> str:
+    """Render domain-parent components + their subresps as prompt context.
+
+    Each entry in ``parents`` must carry ``name`` (component
+    display name) and ``subresps`` (a list of dicts with ``id``,
+    ``name``, ``content``). Components with no minted subresps are
+    skipped — the block only shows up when there's actual context
+    to provide. Returns an empty string if no parents have
+    subresps yet.
+
+    IDs are rendered but the accompanying prose in the prompt
+    system message tells the LLM these are read-only — the
+    validator rejects any ``<derived-from>`` reference that
+    crosses the component boundary, so the IDs are there for
+    comprehension, not for citation.
+    """
+    sections: list[str] = []
+    for parent in parents:
+        subresps = parent.get("subresps") or []
+        if not subresps:
+            continue
+        name = (parent.get("name") or "(unnamed)").strip()
+        lines: list[str] = [f"## {name}", ""]
+        for sub in subresps:
+            sid = sub.get("id", "").strip() or "(unknown-id)"
+            sname = sub.get("name", "").strip() or "(unnamed)"
+            intent = (sub.get("content") or "").strip()
+            lines.append(f"- `{sid}` **{sname}**: {intent}")
+        sections.append("\n".join(lines))
+    return "\n\n".join(sections)
