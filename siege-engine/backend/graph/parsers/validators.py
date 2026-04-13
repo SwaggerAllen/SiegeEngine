@@ -252,3 +252,118 @@ def _validate_feature(node: TagNode, index: int, *, group_label: str | None) -> 
         group_label=group_label,
         is_implicit=is_implicit,
     )
+
+
+# ── Requirements (Phase 3: reqs → resp_*) ────────────────────────────
+
+
+@dataclass(frozen=True)
+class Responsibility:
+    """A single validated responsibility from a ``<requirements>`` block.
+
+    ``name`` is the short identifier (2–5 words, title case
+    expected). ``intent`` is the paragraph-length description of
+    the responsibility's role and scope. Both are non-empty and
+    already whitespace-stripped at their outer edges.
+    """
+
+    name: str
+    intent: str
+
+
+_REQUIREMENTS_ALLOWED_CHILDREN = {"responsibility"}
+_RESPONSIBILITY_ALLOWED_CHILDREN = {"name", "intent"}
+
+
+def validate_requirements(tree: TagNode) -> list[Responsibility]:
+    """Validate a parsed ``<requirements>`` tree and return its entries.
+
+    Shape:
+
+    * ``tree.tag`` must be exactly ``"requirements"``.
+    * ``<requirements>`` contains one or more ``<responsibility>``
+      entries. No other tags at this level.
+    * Each ``<responsibility>`` contains exactly one ``<name>`` and
+      exactly one ``<intent>``. Both must be non-empty after
+      stripping. No other tags inside.
+    * At least one ``<responsibility>`` must be present.
+
+    Parallel shape to :func:`validate_features`: same general
+    layout (one root, a flat list of structured children, each
+    child has a name + intent), different tag vocabulary. Error
+    messages name the offending tag path so the parse-validate
+    retry loop can feed the problem back to the LLM.
+    """
+    if tree.tag != "requirements":
+        raise ValidationError(
+            f"Expected root tag <requirements>, got <{tree.tag}>. "
+            "Wrap the responsibility list in a single <requirements>...</requirements> block."
+        )
+
+    for child in tree.children:
+        if child.tag not in _REQUIREMENTS_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<requirements> contains an unexpected child <{child.tag}>. "
+                "Only <responsibility> entries are allowed at this level."
+            )
+
+    result: list[Responsibility] = []
+    for index, child in enumerate(tree.children):
+        result.append(_validate_responsibility(child, index))
+
+    if not result:
+        raise ValidationError(
+            "<requirements> block contains no <responsibility> entries. "
+            "Every project must have at least one top-level responsibility."
+        )
+
+    return result
+
+
+def _validate_responsibility(node: TagNode, index: int) -> Responsibility:
+    """Validate a single ``<responsibility>`` entry."""
+    pos = f"<responsibility> at position {index}"
+
+    for child in node.children:
+        if child.tag not in _RESPONSIBILITY_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{pos} contains an unexpected child <{child.tag}>. "
+                "Only <name> and <intent> are allowed inside a <responsibility>."
+            )
+
+    name_children = node.find_all("name")
+    if len(name_children) == 0:
+        raise ValidationError(
+            f"{pos} is missing a <name> child. Every responsibility must have exactly one <name>."
+        )
+    if len(name_children) > 1:
+        raise ValidationError(
+            f"{pos} has {len(name_children)} <name> children; exactly one is required."
+        )
+
+    intent_children = node.find_all("intent")
+    if len(intent_children) == 0:
+        raise ValidationError(
+            f"{pos} is missing an <intent> child. Every responsibility "
+            "must have exactly one <intent>."
+        )
+    if len(intent_children) > 1:
+        raise ValidationError(
+            f"{pos} has {len(intent_children)} <intent> children; exactly one is required."
+        )
+
+    name_text = name_children[0].text
+    if not name_text:
+        raise ValidationError(
+            f"{pos} has an empty <name>. The responsibility name "
+            "must be a short identifier, typically 2–5 words in title case."
+        )
+
+    intent_text = intent_children[0].text
+    if not intent_text:
+        raise ValidationError(
+            f"{pos} has an empty <intent>. The responsibility intent "
+            "must be a short paragraph describing the role and scope."
+        )
+
+    return Responsibility(name=name_text, intent=intent_text)

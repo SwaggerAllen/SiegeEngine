@@ -32,7 +32,17 @@ from backend.graph.handlers.feature_expansion import (
     GENERATE_FEATURE_EXPANSION_JOB_TYPE,
 )
 from backend.graph.handlers.feature_mint import MINT_FEATURES_JOB_TYPE
+from backend.graph.handlers.requirements_generation import (
+    GENERATE_REQUIREMENTS_JOB_TYPE,
+)
+from backend.graph.handlers.requirements_mint import MINT_REQUIREMENTS_JOB_TYPE
 from backend.graph.reducer import append_event
+from backend.graph.requirements import (
+    bootstrap_reqs_node,
+    get_reqs_node,
+    pending_reqs_draft,
+)
+from backend.graph.requirements import has_been_approved as reqs_has_been_approved
 from backend.models import Project, User
 from backend.models.node import Draft
 from backend.models.telemetry import GenerationTelemetry
@@ -380,5 +390,256 @@ def get_features(
                 updated_at=f.updated_at.isoformat() if f.updated_at else "",
             )
             for f in features
+        ]
+    )
+
+
+# ── Requirements response models ────────────────────────────────────
+
+
+class ReqsNodeResponse(BaseModel):
+    id: str
+    name: str
+    content: str
+    updated_at: str
+
+
+class ReqsDraftResponse(BaseModel):
+    id: str
+    content: str
+    created_at: str
+
+
+class ReqsResponse(BaseModel):
+    node: ReqsNodeResponse
+    pending_draft: ReqsDraftResponse | None
+    generation_status: queries.GenerationStatus
+    last_error: str | None
+    latest_telemetry: TelemetrySummary | None
+
+
+class ReqsApproveResponse(BaseModel):
+    node: ReqsNodeResponse
+
+
+class ResponsibilitySummary(BaseModel):
+    id: str
+    name: str
+    content: str
+    display_order: int
+    updated_at: str
+
+
+class ResponsibilityListResponse(BaseModel):
+    responsibilities: list[ResponsibilitySummary]
+
+
+def _serialize_reqs_node(node) -> ReqsNodeResponse:
+    return ReqsNodeResponse(
+        id=node.id,
+        name=node.name,
+        content=node.content,
+        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+    )
+
+
+# ── Requirements endpoints ──────────────────────────────────────────
+
+
+@router.get("/{project_id}/requirements", response_model=ReqsResponse)
+def get_requirements(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReqsResponse:
+    """Return the project's reqs node state — same four-state shape
+    as ``GET /{project_id}/expansion``.
+
+    Lazily bootstraps the node and enqueues its initial generation
+    if it's missing, so opening a project whose feature mint
+    finished before the reqs bootstrap (e.g. a replay before Phase
+    3 shipped) still works without a 404.
+    """
+    _require_project(db, project_id)
+    node = get_reqs_node(db, project_id)
+    if node is None:
+        logger.warning("Project %s has no reqs node; lazy-bootstrapping", project_id)
+        bootstrap_reqs_node(db, project_id)
+        db.commit()
+        pipeline_queue.enqueue(
+            db,
+            job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
+            payload={"project_id": project_id, "feedback": None},
+        )
+        node = get_reqs_node(db, project_id)
+        assert node is not None, "bootstrap_reqs_node should have minted one"
+    draft = pending_reqs_draft(db, project_id)
+    status, last_error = queries.latest_generation_status(
+        db, project_id, GENERATE_REQUIREMENTS_JOB_TYPE
+    )
+    return ReqsResponse(
+        node=_serialize_reqs_node(node),
+        pending_draft=(
+            ReqsDraftResponse(
+                id=draft.id,
+                content=draft.content,
+                created_at=draft.created_at.isoformat() if draft.created_at else "",
+            )
+            if draft is not None
+            else None
+        ),
+        generation_status=status,
+        last_error=last_error,
+        latest_telemetry=_latest_telemetry(db, project_id, node.id),
+    )
+
+
+@router.post("/{project_id}/requirements/feedback", response_model=FeedbackResponse)
+def post_requirements_feedback(
+    project_id: str,
+    req: FeedbackRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_project(db, project_id)
+    if get_reqs_node(db, project_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Requirements node missing for project",
+        )
+    # Read-only after approval — further changes land as structural
+    # edits on resp_* nodes (Phase 10), not by re-editing the prose.
+    if reqs_has_been_approved(db, project_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Requirements is read-only after approval; further "
+                "responsibility-layer edits happen on individual "
+                "responsibility nodes."
+            ),
+        )
+    feedback = (req.feedback or "").strip() or None
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": feedback},
+    )
+    return FeedbackResponse(job_id=job_id)
+
+
+@router.post("/{project_id}/requirements/approve", response_model=ReqsApproveResponse)
+def post_requirements_approve(
+    project_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReqsApproveResponse:
+    _require_project(db, project_id)
+    node = get_reqs_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Requirements node missing for project")
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != node.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this project's requirements",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
+    db.commit()
+    db.refresh(node)
+
+    # Approval is destructive at the child level — mint top-level
+    # resp_* nodes from the approved content. Runs on the pipeline
+    # worker; the frontend polls /responsibilities.
+    pipeline_queue.enqueue(
+        db,
+        job_type=MINT_REQUIREMENTS_JOB_TYPE,
+        payload={"project_id": project_id},
+    )
+
+    return ReqsApproveResponse(node=_serialize_reqs_node(node))
+
+
+@router.post("/{project_id}/requirements/discard", response_model=DiscardResponse)
+def post_requirements_discard(
+    project_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    _require_project(db, project_id)
+    node = get_reqs_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Requirements node missing for project")
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != node.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this project's requirements",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
+    db.commit()
+
+    # Mirrors /expansion/discard: reject regenerates from scratch.
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": None},
+    )
+
+    return DiscardResponse(ok=True)
+
+
+# ── Responsibilities list endpoint ──────────────────────────────────
+
+
+@router.get("/{project_id}/responsibilities", response_model=ResponsibilityListResponse)
+def get_responsibilities(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResponsibilityListResponse:
+    """List all top-level ``resp_*`` nodes for a project in document order.
+
+    Top-level responsibilities are the ones minted by the
+    ``v2.mint_requirements`` pipeline job after the user approves
+    the requirements. Subresponsibilities (minted later by per-
+    component subreqs handlers) have a non-null ``parent_id`` and
+    are not included in this list.
+    """
+    _require_project(db, project_id)
+    responsibilities = queries.list_top_level_responsibilities(db, project_id)
+    return ResponsibilityListResponse(
+        responsibilities=[
+            ResponsibilitySummary(
+                id=r.id,
+                name=r.name,
+                content=r.content,
+                display_order=r.display_order,
+                updated_at=r.updated_at.isoformat() if r.updated_at else "",
+            )
+            for r in responsibilities
         ]
     )

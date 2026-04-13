@@ -49,6 +49,28 @@ def list_features(session: Session, project_id: str) -> list[Node]:
     )
 
 
+def list_top_level_responsibilities(session: Session, project_id: str) -> list[Node]:
+    """Return the project's top-level ``resp_*`` nodes in document order.
+
+    Top-level responsibilities are the ones minted by
+    ``v2.mint_requirements`` on approval of the reqs node. They
+    have ``parent_id=None`` — subresponsibilities minted later by
+    per-component subreqs handlers have a non-null ``parent_id``
+    and are not included here.
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.tier == "resp",
+                Node.parent_id.is_(None),
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
 def list_edges(session: Session, project_id: str) -> list[Edge]:
     return list(
         session.execute(
