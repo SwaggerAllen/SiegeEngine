@@ -7,7 +7,7 @@ import {
   useDiscardMutation,
   useFeedbackMutation,
 } from '../hooks/mutations/useExpansionMutations';
-import { XmlBlock } from './XmlBlock';
+import { XmlDocument, featureRenderers } from './xml';
 
 interface Props {
   projectId: string;
@@ -95,7 +95,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
             <span className="text-xs text-gray-400">regenerating…</span>
           )}
         </div>
-        <XmlBlock content={pending_draft.content} />
+        <XmlDocument content={pending_draft.content} renderers={featureRenderers} />
         <div className="space-y-2">
           <label className="block text-xs text-gray-400">
             Feedback for regeneration (optional)
@@ -174,7 +174,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
             Approved · read-only
           </span>
         </div>
-        <XmlBlock content={node.content} />
+        <XmlDocument content={node.content} renderers={featureRenderers} />
         <div className="text-xs text-gray-500 italic">
           Further feature-layer edits happen on individual feature
           nodes once Phase 2 lands.
