@@ -69,54 +69,79 @@ other bootstrap nodes (`reqs_*`, `sysarch_*`) reuse.
 - [ ] UI: feature list view on the dashboard under the (now read-only) expansion
 - [ ] UI: add/delete/edit actions on individual `feat_*` nodes once minted, feeding the pending-change queue
 
-## Phase 3 — Requirements + System architecture (two separate bootstrap nodes)
+## Phase 3 — Cold-start resolver chain (reqs, sysarch, subreqs)
 
-The cold-start resolver chain. Two singleton nodes, each with its
-own handler, its own approval flow, and its own read-only-after-
-approval lifecycle. Implemented as one roadmap phase because the
-two handlers share most of their infrastructure, even though they
-are wholly separate nodes in the model.
+The three-stage cold-start chain. Each stage is a bootstrap node
+with its own handler, its own approval flow, and its own
+read-only-after-approval lifecycle. Implemented as one roadmap
+phase because the three handlers share most of their
+infrastructure (all reuse the expansion draft → feedback →
+approve → mint flow from Phase 1), even though they are wholly
+separate nodes in the model.
 
-- **`reqs_*`** — features → responsibilities. Local reasoning, low
-  cross-talk. Iterated on with prose feedback like the expansion.
-  Approval mints `resp_*` nodes downstream and freezes the `reqs_*`
-  node to read-only.
-- **`sysarch_*`** — responsibilities → components + APIs + dep
-  edges + domain-parent edges + system-level techspec. Single
+- **`reqs_*`** — features → top-level responsibilities. Local
+  reasoning, low cross-talk. Singleton per project. Approval mints
+  top-level `resp_*` nodes and freezes the `reqs_*` node to
+  read-only.
+- **`sysarch_*`** — top-level responsibilities → components + APIs
+  + top-level policies + dep edges + domain-parent edges +
+  system-level techspec. Singleton per project. Single
   joint-reasoning call because these are mutually informing.
-  Approval mints `comp_*` nodes and edges downstream and freezes
-  the `sysarch_*` node to read-only.
+  Approval mints `comp_*` nodes and edges, top-level `policy_*`
+  nodes, **and one `subreqs_*` node per top-level `comp_*`**.
+  Freezes the `sysarch_*` node to read-only.
+- **`subreqs_*`** — per top-level component, minted at sysarch
+  approval. Takes that component's top-level `resp_*` nodes and
+  produces the component's subresponsibilities. Same prose-
+  iterable shape as `reqs_*` but per-component rather than
+  singleton. Approval mints subresp `resp_*` nodes (parented to
+  the component) and freezes the `subreqs_*` to read-only. Phase
+  4's component-arch pass for a given component cannot run until
+  that component's `subreqs_*` is approved.
 
 **Requirements node:**
 - [ ] New singleton `reqs` tier node minted once per project after expansion approval
 - [ ] Cold-start vs incremental-add are distinct prompt templates (one job handler picks which)
-- [ ] Cold-start prompt: approved feature set → responsibilities
+- [ ] Cold-start prompt: approved feature set → top-level responsibilities
 - [ ] Incremental-add prompt: existing `reqs` + one new feature → delta
 - [ ] Handler reuses the expansion flow (draft → feedback → approve → commit)
 - [ ] Generate-parse validation loop (retry-then-escalate)
-- [ ] On `DraftApproved`: mint `resp_*` nodes; flip `reqs_*` to read-only
+- [ ] On `DraftApproved`: mint top-level `resp_*` nodes; flip `reqs_*` to read-only
 - [ ] Routes mirror expansion (`get / feedback / approve / discard`)
 
 **System architecture node:**
 - [ ] New singleton `sysarch` tier node minted once the `reqs_*` node is approved
 - [ ] Cold-start vs incremental-add prompt templates (one job handler picks which)
-- [ ] Cold-start prompt: approved requirements + features → full sysarch (components, APIs, **top-level policies**, dep edges, domain-parent edges, system `techspec`)
+- [ ] Cold-start prompt: approved requirements + features → full sysarch (components, APIs, **top-level policies**, dep edges, domain-parent edges, system `techspec`). **The prompt explicitly requires a foundation component** in the component list, whose manifest territory is the project's root folder minus everything the other top-level components claim (see architecture doc §Foundation components).
 - [ ] Incremental-add prompt: existing `sysarch` + one new responsibility or feature → delta (re-running policy application for affected components only)
-- [ ] Parseable output sections **in order**: system `techspec`, per-component (API intent, responsibilities covered), `<policies>` (top-level policy list referencing `resp_*` by ID), `<dependencies>` (dep edge list — including policy-induced edges), `<domain-parent>` (domain-parent edge list). Policies precede dependencies so policy-induced dep edges land in the same pass.
+- [ ] Parseable output sections **in order**: system `techspec`, per-component (API intent, responsibilities covered), `<policies>` (top-level policy list referencing `resp_*` by ID in `required`), `<dependencies>` (dep edge list — including **role-level speculative policy-induced edges**), `<domain-parent>` (domain-parent edge list). Policies precede dependencies so policy-induced dep edges land in the same pass at the fidelity the sysarch's role-level per-component summaries support.
 - [ ] Generate-parse validation loop (retry-then-escalate) — sysarch output is load-bearing for everything downstream
 - [ ] Handler reuses the expansion flow (draft → feedback → approve → commit)
 - [ ] On `DraftApproved` for the sysarch node: parse structured output and emit:
   - [ ] `NodeCreated` for each new `comp_*` (with API intent stored as the `pubapi` fragment and techspec as `techspec` fragment)
   - [ ] `NodeCreated` for each new `policy_*` (projected from the `<policies>` fragment, referencing `resp_*` for `required`)
-  - [ ] `EdgeCreated` for each `dependency` edge
+  - [ ] `EdgeCreated` for each `dependency` edge (including speculative policy-induced ones)
   - [ ] `EdgeCreated` for each `domain_parent` edge
-  - [ ] Run the **top-level policy application pass**: for each new `policy_*`, walk the component set and emit one `EdgeCreated` per (policy, component) pair where the trigger applies (LLM decision). Use the `policy_application` edge type.
   - [ ] Diff against existing comp / edges — preserve lineage, mark orphans
+  - [ ] **No `policy_application` edges yet.** Top-level policy application is deferred to component-arch time (see Phase 4) — the per-component summaries sysarch has available aren't detailed enough to make application decisions confidently, and forcing application here would either produce wrong edges or push implementation detail into sysarch summaries that we're trying to keep at role-level.
 - [ ] Cycle prevention on dependency edges (DFS from target to source) inside the parser — reject the whole parse on a cycle and loop back to regen with the error
 - [ ] Initial mint is treated as destructive at the child level (gated on explicit approval)
 - [ ] Flip `sysarch_*` to read-only post-approval
+- [ ] **On `DraftApproved` for the sysarch node, also mint one `subreqs_*` node per top-level `comp_*`** (parent_id = the component). The subreqs handler's bootstrap is the same pattern the expansion handler uses at project creation — mint the node and enqueue its initial generation job.
 - [ ] Routes mirror expansion
 - [ ] UI: read-only requirements and system architecture views with the expansion-style four-state panel each
+
+**Subrequirements node (per top-level component):**
+- [ ] New `subreqs` tier node kind minted at sysarch approval, one per top-level `comp_*`. Not a singleton — use the full Crockford suffix. Parent is the owning component.
+- [ ] Cold-start vs incremental-add prompt templates (one job handler picks which)
+- [ ] Cold-start prompt: the owning component's sysarch entry (role + API intent) + its assigned top-level `resp_*` nodes → that component's subresponsibilities as prose
+- [ ] Incremental-add prompt: existing `subreqs_*` for this component + one new top-level `resp_*` (e.g. because the sysarch got regenerated and assigned a new top-level resp to this component) → delta
+- [ ] Handler reuses the expansion flow (draft → feedback → approve → commit)
+- [ ] Generate-parse validation loop (retry-then-escalate)
+- [ ] On `DraftApproved`: parse the prose into structured subresp entries and emit `NodeCreated` for each subresp `resp_*` (parented to the owning component). Flip the `subreqs_*` to read-only. Enqueue this component's component-arch generation job, which blocks on subreqs approval.
+- [ ] Routes mirror expansion, scoped by owning component ID: `get / feedback / approve / discard` for each component's subreqs
+- [ ] UI: read-only subrequirements view per top-level component, with the expansion-style four-state panel
+- [ ] Diff against existing subresps on re-approval: preserve lineage, mark orphans
 
 **Structured edit UIs for feat↔resp, resp↔comp, and dependency / domain-parent edges are NOT part of this phase.** They're layered on top of the minted structure in Phase 10 — every structured UI is a prose-instruction generator feeding the pending-change queue, not a separate generation step.
 
@@ -125,27 +150,35 @@ are wholly separate nodes in the model.
 The biggest single chunk. This is where fragments and section-aware
 propagation start paying off, and this is also where the shared
 diff-aware regen helper lands — built as a primitive from the start,
-not retrofitted later. This is **also** where policies become real:
-policy minting, `policy_application` edge emission, and the
-component-local policy application pass all live here rather than
-in a separate phase.
+not retrofitted later. This is **also** where policies become real
+for the first time: component-local policy minting, plus the
+application pass for **both top-level and component-local policies**,
+all live here rather than in Phase 3. Top-level policies are minted
+by Phase 3 but deliberately have no application edges until this
+phase runs and a component-arch regen resolves them against the
+now-detailed component description.
 
+- [ ] **Blocks on `subreqs_*` approval for this component.** Component-arch generation cannot start until the owning `subreqs_*` is approved and its subresp `resp_*` nodes are minted. The job handler checks this and no-ops (or re-queues with delay) until the precondition holds.
 - [ ] XML section parser for the five required sections in order: `<technical-specification>`, `<public-surface>`, `<private-surface>`, `<policies>`, `<dependencies>`
 - [ ] Generate-parse validation loop with retry-then-escalate
 - [ ] Fragment extraction: on approval, split into `comp_X_techspec`, `comp_X_pubapi`, `comp_X_privapi`, `comp_X_policies`, `comp_X_deps`
 - [ ] Fragment kinds validated as single-token at parser boundary
 - [ ] `FragmentUpdated` event fires per changed fragment
-- [ ] **Shared regen-prompt assembly helper** — one module used by every tier's regen: parent doc + related features + dep `pubapi` fragments + applicable policies (pulled via `policy_application` edges pointing at this component) + neighbor diffs. Phases 5/6/7/8 reuse it rather than reimplementing.
+- [ ] **Shared regen-prompt assembly helper** — one module used by every tier's regen: parent doc + related features + dep `pubapi` fragments + **pre-minted subresponsibilities for this component** (from its approved `subreqs_*`) + **top-level policy candidates** (all top-level `policy_*` nodes, regardless of existing application edges, so the LLM can apply ones that weren't yet resolved against this component) + already-applied policies pulled via existing `policy_application` edges + neighbor diffs. Phases 5/6/7/8 reuse it rather than reimplementing.
 - [ ] Fragment-level diff computation (before/after per fragment) lands here, not in a later consolidation phase
 - [ ] Component regen prompt in dependency topological order, via the shared helper
-- [ ] Prompt input scoping: parent `techspec` + related features + `pubapi` fragments of deps + applicable policies (NOT full dep docs)
+- [ ] Prompt input scoping: parent `techspec` + related features + `pubapi` fragments of deps + pre-minted subresps + top-level policy candidates + already-applied policies (NOT full dep docs)
 - [ ] **Component arch generation produces `<policies>` before `<dependencies>` in the same LLM call**, so policy-induced dep edges land in `<dependencies>` naturally instead of being backfilled
+- [ ] **Foundation subcomponent requirement** — when a component is decomposed into subcomponents, the comparch prompt explicitly requires one of them to be a foundation subcomponent whose manifest territory is the component's root folder minus everything the other subcomponents claim (see architecture doc §Foundation components). Un-fanned-out components do not need a foundation child.
 - [ ] Techspec propagates downward only; child impl changes do not regenerate parent techspec
-- [ ] **Component-local policy minting**: on `DraftApproved`, project each entry in the component's `<policies>` fragment into a `policy_*` node (with `parent_id` = the minting component; `required` = a subresponsibility of this component's subtree). Deleting an entry removes the policy and cascades to its application edges.
-- [ ] **Component-local policy application pass**: after minting, run an LLM pass over each new `policy_*` against the component's subcomponents to emit `policy_application` edges. Bounded to this component's subtree since component-local policies never apply outside it.
+- [ ] **Subresponsibilities are NOT generated here.** The component-arch pass treats its component's subresp `resp_*` nodes as a stable pre-minted input from the `subreqs_*` stage (Phase 3). Comparch output maps subcomponents to those pre-minted subresps, rather than inventing the subresps in the same pass.
+- [ ] **Component-local policy minting**: on `DraftApproved`, project each entry in the component's `<policies>` fragment into a `policy_*` node (with `parent_id` = the minting component; `required` = any `resp_*` that exists at generation time, top-level or this component's pre-minted subresps). Deleting an entry removes the policy and cascades to its application edges.
+- [ ] **Top-level policy application pass**: on each component arch approval, run an LLM pass over the full set of top-level `policy_*` candidates against **this one component's** techspec + subresponsibilities, emit `policy_application` edges for the applicable ones, and remove existing edges the LLM now says don't apply. This is where "does this top-level policy apply to this component" actually gets decided — not at sysarch approval.
+- [ ] **Component-local policy application pass**: same shape, but scoped to the subcomponents the component just minted. Component-local policies only apply within their own subtree.
+- [ ] **Patch missing policy-induced dep edges**: if the LLM determines a top-level policy applies to this component and the corresponding dep edge to the policy's `required` component is missing (sysarch's speculative first pass missed it), the component's own `<dependencies>` section adds it. Straightforward `EdgeCreated` on approval.
 - [ ] **Incremental re-application** on component-set changes within this subtree: `NodeCreated` with tier `comp` + parent in this subtree, `NodeReparented` into/out of this subtree, merge/split of subcomponents — re-run the application pass for just the affected edges.
 - [ ] Structured UI #3: component decomposition graph editor (Cytoscape)
-- [ ] Tests: transclusion drift detection (system arch `pubapi` vs component arch `pubapi`), policy minting round-trip, application-edge emission, depth-cap reducer rejection when a subcomponent would get a subcomponent child
+- [ ] Tests: transclusion drift detection (system arch `pubapi` vs component arch `pubapi`), policy minting round-trip, application-edge emission for both top-level and component-local policies, depth-cap reducer rejection when a subcomponent would get a subcomponent child
 - [ ] Depth-cap invariant wired into the prompt: "if decomposition needs three levels, stop and recommend promoting the middle layer"
 
 ## Phase 5 — Subcomponent architecture docs (leaf tier)

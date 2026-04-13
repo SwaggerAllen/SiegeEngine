@@ -41,6 +41,7 @@ NODE_TIERS = (
     "policy",
     "expansion",
     "reqs",
+    "subreqs",
     "sysarch",
     "manifest",
     "fanin",
