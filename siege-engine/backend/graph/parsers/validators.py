@@ -1115,3 +1115,206 @@ def _detect_dep_cycles(deps: tuple[DepEdge, ...], alias_set: set[str]) -> None:
     for a in adj:
         if color[a] == WHITE:
             _dfs(a)
+
+
+# ── Subrequirements (Phase 3 stage 3: subreqs → subresp resp_*) ────
+
+
+@dataclass(frozen=True)
+class Subresponsibility:
+    """A single validated subresponsibility from a ``<subrequirements>`` block.
+
+    ``derived_from`` is the set of top-level resp IDs this subresp
+    decomposes — must be a non-empty subset of the owning
+    component's assigned top-level resps.
+    """
+
+    name: str
+    intent: str
+    derived_from: tuple[str, ...]
+
+
+_SUBREQUIREMENTS_ALLOWED_CHILDREN = {"subresponsibility"}
+_SUBRESPONSIBILITY_ALLOWED_CHILDREN = {"name", "intent", "derived-from"}
+_DERIVED_FROM_ALLOWED_CHILDREN = {"resp"}
+
+
+def validate_subrequirements(
+    tree: TagNode, *, known_parent_resp_ids: set[str]
+) -> list[Subresponsibility]:
+    """Validate a parsed ``<subrequirements>`` tree.
+
+    Shape parallels ``validate_requirements`` but scoped to a
+    single component. ``known_parent_resp_ids`` is the set of
+    top-level resps assigned to *this* component (via the
+    ``decomposition`` edges minted at sysarch approval). Every
+    ``<resp id=...>`` reference in any ``<derived-from>`` block
+    must be in this set — cross-component leaks are parse errors.
+
+    Coverage check: every known parent resp must appear in at
+    least one ``<derived-from>`` across the full validated set.
+    An uncovered parent resp is a parse error that feeds the
+    retry loop.
+    """
+    if tree.tag != "subrequirements":
+        raise ValidationError(
+            f"Expected root tag <subrequirements>, got <{tree.tag}>. "
+            "Wrap the subresponsibility list in a single "
+            "<subrequirements>...</subrequirements> block."
+        )
+
+    for child in tree.children:
+        if child.tag not in _SUBREQUIREMENTS_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<subrequirements> contains an unexpected child "
+                f"<{child.tag}>. Only <subresponsibility> entries are "
+                "allowed at this level."
+            )
+
+    result: list[Subresponsibility] = []
+    for index, child in enumerate(tree.children):
+        result.append(
+            _validate_subresponsibility(child, index, known_parent_resp_ids=known_parent_resp_ids)
+        )
+
+    if not result:
+        raise ValidationError(
+            "<subrequirements> block contains no <subresponsibility> "
+            "entries. A component with assigned responsibilities must "
+            "have at least one subresponsibility."
+        )
+
+    # Coverage check: every parent resp must be covered.
+    covered: set[str] = set()
+    for subresp in result:
+        covered.update(subresp.derived_from)
+    missing = sorted(known_parent_resp_ids - covered)
+    if missing:
+        raise ValidationError(
+            "<subrequirements> does not cover every parent responsibility "
+            "assigned to this component. Missing: "
+            f"{', '.join(missing)}. Every assigned responsibility must "
+            "appear in at least one <derived-from> block."
+        )
+
+    return result
+
+
+def _validate_subresponsibility(
+    node: TagNode, index: int, *, known_parent_resp_ids: set[str]
+) -> Subresponsibility:
+    """Validate a single ``<subresponsibility>`` entry."""
+    pos = f"<subresponsibility> at position {index}"
+
+    for child in node.children:
+        if child.tag not in _SUBRESPONSIBILITY_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{pos} contains an unexpected child <{child.tag}>. "
+                "Only <name>, <intent>, and <derived-from> are allowed "
+                "inside a <subresponsibility>."
+            )
+
+    name_children = node.find_all("name")
+    if len(name_children) == 0:
+        raise ValidationError(
+            f"{pos} is missing a <name> child. Every subresponsibility "
+            "must have exactly one <name>."
+        )
+    if len(name_children) > 1:
+        raise ValidationError(
+            f"{pos} has {len(name_children)} <name> children; exactly one is required."
+        )
+
+    intent_children = node.find_all("intent")
+    if len(intent_children) == 0:
+        raise ValidationError(
+            f"{pos} is missing an <intent> child. Every subresponsibility "
+            "must have exactly one <intent>."
+        )
+    if len(intent_children) > 1:
+        raise ValidationError(
+            f"{pos} has {len(intent_children)} <intent> children; exactly one is required."
+        )
+
+    derived_children = node.find_all("derived-from")
+    if len(derived_children) == 0:
+        raise ValidationError(
+            f"{pos} is missing a <derived-from> child. Every "
+            "subresponsibility must have exactly one <derived-from> "
+            'block listing at least one <resp id="resp_..."/> child.'
+        )
+    if len(derived_children) > 1:
+        raise ValidationError(
+            f"{pos} has {len(derived_children)} <derived-from> children; exactly one is required."
+        )
+
+    name_text = name_children[0].text
+    if not name_text:
+        raise ValidationError(
+            f"{pos} has an empty <name>. The subresponsibility name "
+            "must be a short identifier, typically 2–5 words in title case."
+        )
+
+    intent_text = intent_children[0].text
+    if not intent_text:
+        raise ValidationError(
+            f"{pos} has an empty <intent>. The intent must be a short "
+            "paragraph describing the role and scope."
+        )
+
+    derived_from = _validate_derived_from(
+        derived_children[0], pos, known_parent_resp_ids=known_parent_resp_ids
+    )
+
+    return Subresponsibility(name=name_text, intent=intent_text, derived_from=derived_from)
+
+
+def _validate_derived_from(
+    node: TagNode, parent_pos: str, *, known_parent_resp_ids: set[str]
+) -> tuple[str, ...]:
+    """Validate a single ``<derived-from>`` block and return its resp IDs."""
+    for child in node.children:
+        if child.tag not in _DERIVED_FROM_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{parent_pos} has a <derived-from> block containing an "
+                f"unexpected child <{child.tag}>. Only "
+                '<resp id="resp_..."/> entries are allowed inside '
+                "<derived-from>."
+            )
+
+    resp_nodes = node.find_all("resp")
+    if not resp_nodes:
+        raise ValidationError(
+            f"{parent_pos} has an empty <derived-from> block. Every "
+            "subresponsibility must derive from at least one parent "
+            'responsibility — list them via <resp id="resp_..."/> children.'
+        )
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    for i, rnode in enumerate(resp_nodes):
+        rid = rnode.attrs.get("id", "").strip()
+        if not rid:
+            raise ValidationError(
+                f"{parent_pos} has a <resp> entry at <derived-from> "
+                f"position {i} with no id attribute. Every <resp> must "
+                'carry an id="resp_..." attribute.'
+            )
+        if rid in seen:
+            raise ValidationError(
+                f"{parent_pos} has a <resp> entry at <derived-from> "
+                f"position {i} listing duplicate id {rid!r}. Each id "
+                "may appear at most once per <derived-from> block."
+            )
+        seen.add(rid)
+        if rid not in known_parent_resp_ids:
+            raise ValidationError(
+                f"{parent_pos} has a <resp> entry at <derived-from> "
+                f"position {i} referencing {rid!r}, which is not one "
+                "of the top-level responsibilities assigned to this "
+                "component. Cross-component leaks are forbidden. Valid "
+                f"IDs for this component: {', '.join(sorted(known_parent_resp_ids))}."
+            )
+        ids.append(rid)
+
+    return tuple(ids)

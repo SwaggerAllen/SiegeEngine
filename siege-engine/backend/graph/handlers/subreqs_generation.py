@@ -1,0 +1,234 @@
+"""Subrequirements generation handler.
+
+Registered on the pipeline job queue as
+``v2.generate_subrequirements``. The payload is
+``{"project_id": str, "component_id": str, "feedback": str | None}``.
+
+Per-component variant of the requirements_generation handler.
+Gathers inputs scoped to the given component:
+
+- The component's sysarch-time metadata (name, role from
+  ``comp_X_techspec`` fragment, api-intent from
+  ``comp_X_pubapi`` fragment).
+- The top-level ``resp_*`` nodes assigned to this component via
+  the ``decomposition`` edges minted at sysarch approval.
+- Prior pending draft for this component's subreqs node (if any).
+
+Validator takes ``known_parent_resp_ids`` — the set of top-level
+resp IDs assigned to this component — and enforces that every
+``<derived-from>`` reference stays within that set. Cross-
+component leaks become parse errors that feed the retry loop.
+
+See ``docs/architecture/v2-roadmap.md`` Phase 3 stage 3 and
+``docs/architecture/v2-rearchitecture.md`` §Subrequirements
+decomposition.
+"""
+
+from __future__ import annotations
+
+import logging
+import secrets
+import uuid
+
+from backend.database import SessionLocal
+from backend.graph import events as ev
+from backend.graph.fragments import FragmentKind, fragment_id
+from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
+from backend.graph.parsers.validators import validate_subrequirements
+from backend.graph.prompts.subrequirements import (
+    SYSTEM_PROMPT,
+    format_component_summary,
+    format_parent_resps_summary,
+    render_user_prompt,
+)
+from backend.graph.queries import top_level_resps_assigned_to
+from backend.graph.reducer import append_event
+from backend.graph.subrequirements import (
+    get_subreqs_node,
+    pending_subreqs_draft,
+)
+from backend.models import Project
+from backend.models.node import Fragment, Node
+from backend.models.telemetry import GenerationTelemetry
+from backend.pipeline import queue as pipeline_queue
+from backend.projects.settings import get_project_settings
+
+logger = logging.getLogger(__name__)
+
+GENERATE_SUBREQS_JOB_TYPE = "v2.generate_subrequirements"
+
+
+class SubreqsHandlerError(RuntimeError):
+    """Raised when the handler cannot proceed."""
+
+
+class SubreqsParseRetryExhausted(RuntimeError):
+    """Raised when parse-validate retries are exhausted."""
+
+
+def _new_draft_id() -> str:
+    return f"draft_{secrets.token_hex(8)}"
+
+
+def _new_batch_id() -> str:
+    return f"batch_{uuid.uuid4().hex[:16]}"
+
+
+async def generate_subreqs(payload: dict) -> None:
+    """Job handler for ``v2.generate_subrequirements``.
+
+    Payload shape: ``{"project_id": str, "component_id": str,
+    "feedback": str | None}``.
+    """
+    project_id = payload.get("project_id")
+    component_id = payload.get("component_id")
+    if not isinstance(project_id, str) or not project_id:
+        raise SubreqsHandlerError("generate_subreqs payload missing project_id")
+    if not isinstance(component_id, str) or not component_id:
+        raise SubreqsHandlerError("generate_subreqs payload missing component_id")
+    feedback: str | None = payload.get("feedback")
+
+    # ── Phase 1: gather inputs ──────────────────────────────────────
+    db = SessionLocal()
+    try:
+        comp_node = db.get(Node, component_id)
+        if comp_node is None or comp_node.project_id != project_id:
+            raise SubreqsHandlerError(
+                f"Component {component_id!r} not found in project {project_id!r}"
+            )
+        if comp_node.tier != "comp":
+            raise SubreqsHandlerError(
+                f"Node {component_id!r} is not a comp_* node (tier={comp_node.tier!r})"
+            )
+
+        subreqs_node = get_subreqs_node(db, project_id, component_id)
+        if subreqs_node is None:
+            raise SubreqsHandlerError(
+                f"Component {component_id!r} has no subreqs node; "
+                "was bootstrap_subreqs_node called at mint_sysarch time?"
+            )
+        subreqs_node_id: str = subreqs_node.id
+        prior_approved: str | None = subreqs_node.content or None
+
+        pending = pending_subreqs_draft(db, project_id, component_id)
+        prior_pending: str | None = pending.content if pending else None
+        prior_pending_id: str | None = pending.id if pending else None
+
+        # Component metadata for the prompt: name + role + api-intent.
+        # Role and api-intent live in fragments written by the
+        # sysarch mint handler.
+        role = _read_fragment(db, component_id, FragmentKind.TECHSPEC) or ""
+        api_intent = _read_fragment(db, component_id, FragmentKind.PUBAPI) or ""
+        component_summary = format_component_summary(
+            name=comp_node.name, role=role, api_intent=api_intent
+        )
+
+        # Parent resps — the top-level resps assigned to this
+        # component via decomposition edges. This is the set the
+        # validator's coverage check enforces.
+        parent_resp_rows = top_level_resps_assigned_to(db, component_id)
+        parent_resps_summary = format_parent_resps_summary(
+            [{"id": r.id, "name": r.name, "content": r.content} for r in parent_resp_rows]
+        )
+        known_parent_resp_ids: set[str] = {r.id for r in parent_resp_rows}
+
+        project_row = db.get(Project, project_id)
+        assert project_row is not None
+        settings = get_project_settings(project_row)
+        cli_timeout_seconds = settings.generation_timeout_seconds
+    finally:
+        db.close()
+
+    # ── Phase 2: LLM call + parse-validate retry loop ───────────────
+    logger.info(
+        "generate_subreqs project=%s comp=%s prior_pending=%s feedback=%s parents=%d",
+        project_id,
+        component_id,
+        bool(prior_pending),
+        bool(feedback),
+        len(parent_resp_rows),
+    )
+
+    def _render(*, prior_pending: str | None, parse_error: str | None) -> str:
+        return render_user_prompt(
+            component_summary=component_summary,
+            parent_resps_summary=parent_resps_summary,
+            prior_approved=prior_approved,
+            prior_pending=prior_pending,
+            feedback=feedback,
+            parse_error=parse_error,
+        )
+
+    def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+        validate_subrequirements(tree, known_parent_resp_ids=known_parent_resp_ids)
+
+    validated_output, attempts = await run_parse_validate_loop(
+        root_tag="subrequirements",
+        system_prompt=SYSTEM_PROMPT,
+        cli_timeout_seconds=cli_timeout_seconds,
+        prior_pending=prior_pending,
+        render_prompt=_render,
+        validate=_validate,
+        exhausted_exception_cls=SubreqsParseRetryExhausted,
+        log_handler_name="generate_subreqs",
+    )
+
+    # ── Phase 3: persist events + telemetry ─────────────────────────
+    db = SessionLocal()
+    try:
+        if prior_pending_id is not None:
+            append_event(
+                db,
+                project_id,
+                ev.DraftDiscarded(draft_id=prior_pending_id),
+            )
+
+        new_draft_id = _new_draft_id()
+        new_batch_id = _new_batch_id()
+        append_event(
+            db,
+            project_id,
+            ev.DraftGenerated(
+                draft_id=new_draft_id,
+                target_type="node",
+                target_id=subreqs_node_id,
+                content=validated_output.text,
+                batch_id=new_batch_id,
+            ),
+        )
+        for attempt in attempts:
+            db.add(
+                GenerationTelemetry(
+                    project_id=project_id,
+                    node_id=subreqs_node_id,
+                    section="subrequirements",
+                    model=attempt.model,
+                    prompt_tokens=attempt.prompt_tokens,
+                    completion_tokens=attempt.completion_tokens,
+                )
+            )
+        db.commit()
+        logger.info(
+            "generate_subreqs project=%s comp=%s draft_id=%s committed "
+            "(attempts=%d final_prompt=%d final_completion=%d)",
+            project_id,
+            component_id,
+            new_draft_id,
+            len(attempts),
+            validated_output.prompt_tokens,
+            validated_output.completion_tokens,
+        )
+    finally:
+        db.close()
+
+
+def _read_fragment(db, owner_id: str, kind: FragmentKind) -> str | None:
+    """Read a fragment's content by (owner, kind), or return None."""
+    fid = fragment_id(owner_id, kind)
+    frag = db.get(Fragment, fid)
+    return frag.content if frag is not None else None
+
+
+def register() -> None:
+    """Register the handler with the pipeline job queue."""
+    pipeline_queue.register_handler(GENERATE_SUBREQS_JOB_TYPE, generate_subreqs)

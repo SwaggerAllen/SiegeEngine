@@ -49,6 +49,53 @@ def list_features(session: Session, project_id: str) -> list[Node]:
     )
 
 
+def top_level_resps_assigned_to(session: Session, comp_id: str) -> list[Node]:
+    """Return the top-level ``resp_*`` nodes assigned to a component.
+
+    Walks the ``decomposition`` edges with ``target_id == comp_id``
+    and returns the source resp nodes (with ``parent_id=None`` to
+    exclude subresps, which shouldn't ever appear as decomposition
+    sources pointing at components but defence-in-depth). Ordered
+    by the resp's display_order to match how they appeared in the
+    original reqs output.
+
+    Used by the subreqs generation handler to build its prompt,
+    and by any route that needs to show "which top-level
+    responsibilities does this component cover".
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .join(Edge, Edge.source_id == Node.id)
+            .where(
+                Edge.edge_type == "decomposition",
+                Edge.target_id == comp_id,
+                Node.tier == "resp",
+                Node.parent_id.is_(None),
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
+def list_subresponsibilities(session: Session, comp_id: str) -> list[Node]:
+    """Return the subresponsibilities under a given component.
+
+    Subresps minted by ``v2.mint_subrequirements`` have
+    ``parent_id=comp_id``. Ordered by display_order.
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .where(
+                Node.tier == "resp",
+                Node.parent_id == comp_id,
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
 def list_top_level_components(session: Session, project_id: str) -> list[Node]:
     """Return the project's top-level ``comp_*`` nodes in document order.
 
