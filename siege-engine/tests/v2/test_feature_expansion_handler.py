@@ -569,6 +569,41 @@ class TestParseValidateRetry:
         assert "missing an <intent>" in retry_prompt
 
 
+class TestProjectSettingsTimeout:
+    """The handler reads ``generation_timeout_seconds`` from the
+    project's settings column and passes it to the CLI invocation.
+    """
+
+    def test_default_timeout_is_900_when_settings_is_null(
+        self, shared_session_factory, seeded_project, monkeypatch
+    ):
+        calls = _patch_cli(monkeypatch)
+        asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
+        assert len(calls) == 1
+        assert calls[0]["timeout"] == 900
+
+    def test_uses_override_when_settings_is_populated(
+        self, shared_session_factory, seeded_project, monkeypatch
+    ):
+        # Set a custom timeout on the project row.
+        factory = shared_session_factory
+        s = factory()
+        try:
+            from backend.models import Project
+
+            project = s.get(Project, seeded_project)
+            assert project is not None
+            project.settings = {"generation_timeout_seconds": 1500}
+            s.commit()
+        finally:
+            s.close()
+
+        calls = _patch_cli(monkeypatch)
+        asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
+        assert len(calls) == 1
+        assert calls[0]["timeout"] == 1500
+
+
 def _patch_cli_mixed(
     monkeypatch,
     outcomes: list,  # list of str | Exception

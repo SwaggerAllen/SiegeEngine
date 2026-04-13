@@ -56,15 +56,16 @@ from backend.graph.prompts.feature_expansion import (
     render_user_prompt,
 )
 from backend.graph.reducer import append_event
+from backend.models import Project
 from backend.models.input_document import InputDocument
 from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
+from backend.projects.settings import get_project_settings
 
 logger = logging.getLogger(__name__)
 
 GENERATE_FEATURE_EXPANSION_JOB_TYPE = "v2.generate_feature_expansion"
 
-CLI_TIMEOUT_SECONDS = 180
 CLI_MAX_BUDGET_USD = 0.50
 # Disable all CLI tools — this is pure text generation, no file I/O.
 CLI_TOOLS = '""'
@@ -141,6 +142,13 @@ async def generate_feature_expansion(payload: dict) -> None:
             .first()
         )
         input_doc = input_doc_row.content if input_doc_row else ""
+
+        # Per-project settings: generation timeout in particular.
+        # Defaults if unset; see backend.projects.settings.
+        project_row = db.get(Project, project_id)
+        assert project_row is not None  # expansion node existed, so does the project
+        settings = get_project_settings(project_row)
+        cli_timeout_seconds = settings.generation_timeout_seconds
     finally:
         db.close()
 
@@ -160,6 +168,7 @@ async def generate_feature_expansion(payload: dict) -> None:
         prior_approved=prior_approved,
         prior_pending=prior_pending,
         feedback=feedback,
+        cli_timeout_seconds=cli_timeout_seconds,
     )
 
     # ── Phase 3: persist events + telemetry ─────────────────────────
@@ -232,7 +241,7 @@ async def _call_cli_with_transient_retry(**kwargs):  # type: ignore[no-untyped-d
     the "never got output at all" failure mode.
 
     ``TimeoutError`` is **not** retried — the CLI already has its own
-    timeout budget and three back-to-back 180s hangs is worse than
+    timeout budget and three back-to-back timeout hangs is worse than
     failing fast. Any other exception type propagates unchanged.
     """
     last_exc: RuntimeError | None = None
@@ -262,6 +271,7 @@ async def _generate_with_parse_validate(
     prior_approved: str | None,
     prior_pending: str | None,
     feedback: str | None,
+    cli_timeout_seconds: int,
 ):  # type: ignore[no-untyped-def]
     """Run the LLM with a parse-validate retry loop.
 
@@ -297,7 +307,7 @@ async def _generate_with_parse_validate(
             prompt=user_prompt,
             system_prompt=SYSTEM_PROMPT,
             tools=CLI_TOOLS,
-            timeout=CLI_TIMEOUT_SECONDS,
+            timeout=cli_timeout_seconds,
             max_budget_usd=CLI_MAX_BUDGET_USD,
         )
         attempts.append(result)

@@ -17,6 +17,7 @@ from backend.projects.schemas import (
     ProjectResponse,
     ProjectUpdate,
 )
+from backend.projects.settings import ProjectSettings, get_project_settings
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,54 @@ def delete_project(
 ):
     if not service.delete_project(db, project_id):
         raise HTTPException(404, "Project not found")
+
+
+# ── Per-project settings ─────────────────────────────────────────────
+
+
+@router.get("/{project_id}/settings", response_model=ProjectSettings)
+def get_settings(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ProjectSettings:
+    """Return the validated settings view for a project.
+
+    Always returns a fully-populated object: defaults are applied
+    for any missing keys, so the frontend can render a form without
+    special-casing "never configured".
+    """
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    return get_project_settings(project)
+
+
+@router.put("/{project_id}/settings", response_model=ProjectSettings)
+def update_settings(
+    project_id: str,
+    req: ProjectSettings,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+) -> ProjectSettings:
+    """Replace the project's settings overrides with the full payload.
+
+    The pydantic model enforces validation (timeout bounds, etc.)
+    and applies defaults for any missing keys, so a PUT of ``{}``
+    resets everything to default. The column stores exactly what
+    the validated model dumps back out, so reads round-trip.
+    """
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "Project not found")
+    # model_dump() reflects validated values including defaults — so
+    # we persist the complete picture, not just the override diff.
+    # That makes reads deterministic and lets us drop unknown keys
+    # from older blobs on every write.
+    project.settings = req.model_dump()
+    db.commit()
+    db.refresh(project)
+    return get_project_settings(project)
 
 
 # ── Remote / GitHub PR endpoints ──
