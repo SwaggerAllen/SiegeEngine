@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 from backend.graph.parsers.xml_sections import TagNode, extract_tag_tree
 
@@ -592,7 +592,6 @@ _POLICIES_ALLOWED_CHILDREN = {"policy"}
 _POLICY_ALLOWED_CHILDREN = {"name", "trigger", "required", "rationale"}
 _DEPENDENCIES_ALLOWED_CHILDREN = {"dep"}
 _DOMAIN_PARENT_ALLOWED_CHILDREN = {"parent"}
-_COMPONENT_KIND_VALUES = {"domain", "presentational"}
 
 
 def validate_sysarch(
@@ -840,16 +839,21 @@ def _validate_component(
             "name must be a short title-case identifier."
         )
 
-    kind_raw = (kind_node.text or "").strip()
-    if kind_raw not in _COMPONENT_KIND_VALUES:
-        raise ValidationError(
-            f"{pos} (alias={alias!r}) has invalid <kind> {kind_raw!r}. "
-            "Must be 'domain' or 'presentational'."
-        )
-    # Runtime check above narrows this at runtime; cast tells mypy
-    # the downstream Component.kind / NodeCreated.kind fields see
-    # the Literal type they want.
-    kind = cast(Literal["domain", "presentational"], kind_raw)
+    # match-case gives mypy proper Literal narrowing without a
+    # cast — the `kind` binding in each arm is typed as the
+    # matched string literal, which lets it flow straight into
+    # the Literal-typed Component.kind field downstream.
+    kind: Literal["domain", "presentational"]
+    match (kind_node.text or "").strip():
+        case "domain":
+            kind = "domain"
+        case "presentational":
+            kind = "presentational"
+        case invalid:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has invalid <kind> {invalid!r}. "
+                "Must be 'domain' or 'presentational'."
+            )
 
     role = (role_node.text or "").strip()
     if not role:
