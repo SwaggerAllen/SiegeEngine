@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useComponents } from '../hooks/queries/useSysarchQueries';
 import { describeApiError } from '../lib/describeApiError';
 
@@ -50,29 +51,34 @@ export function ComponentList({ projectId, mintPending }: Props) {
       </h3>
       <ul className="grid gap-3 md:grid-cols-2">
         {components.map((comp) => (
-          <li
-            key={comp.id}
-            className="bg-gray-800/50 border border-gray-700 rounded p-4 space-y-1"
-          >
-            <div className="flex items-baseline justify-between gap-2">
-              <h5 className="font-semibold text-white">{comp.name}</h5>
-              <div className="flex items-center gap-2">
-                <span
-                  className={
-                    'text-xs uppercase tracking-wider px-1.5 py-0.5 rounded ' +
-                    (comp.kind === 'presentational'
-                      ? 'bg-purple-900/40 text-purple-200'
-                      : 'bg-blue-900/40 text-blue-200')
-                  }
-                >
-                  {comp.kind}
-                </span>
-                <span className="text-xs text-gray-500 tabular-nums">
-                  #{comp.display_order}
-                </span>
+          <li key={comp.id}>
+            <Link
+              to={`/projects/${projectId}/components/${comp.id}/subreqs`}
+              className="block bg-gray-800/50 border border-gray-700 rounded p-4 space-y-1 hover:bg-gray-800 hover:border-gray-600 transition-colors"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <h5 className="font-semibold text-white">{comp.name}</h5>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={
+                      'text-xs uppercase tracking-wider px-1.5 py-0.5 rounded ' +
+                      (comp.kind === 'presentational'
+                        ? 'bg-purple-900/40 text-purple-200'
+                        : 'bg-blue-900/40 text-blue-200')
+                    }
+                  >
+                    {comp.kind}
+                  </span>
+                  <span className="text-xs text-gray-500 tabular-nums">
+                    #{comp.display_order}
+                  </span>
+                </div>
               </div>
-            </div>
-            <div className="text-[10px] font-mono text-gray-500">{comp.id}</div>
+              <div className="text-[10px] font-mono text-gray-500">{comp.id}</div>
+              <div className="text-xs text-blue-300/70">
+                View subrequirements →
+              </div>
+            </Link>
           </li>
         ))}
       </ul>

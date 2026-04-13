@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import { TestQueryWrapper } from '../test/queryWrapper';
 import { ComponentList } from './ComponentList';
 import type { ComponentListResponse } from '../api/sysarch';
@@ -15,7 +16,9 @@ const mockedGet = sysarchApi.getComponents as unknown as ReturnType<typeof vi.fn
 function renderList(mintPending: boolean = false) {
   return render(
     <TestQueryWrapper>
-      <ComponentList projectId="proj_1" mintPending={mintPending} />
+      <MemoryRouter>
+        <ComponentList projectId="proj_1" mintPending={mintPending} />
+      </MemoryRouter>
     </TestQueryWrapper>
   );
 }

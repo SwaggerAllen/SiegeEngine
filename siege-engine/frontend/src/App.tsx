@@ -8,6 +8,7 @@ import { ProjectListPage } from './pages/ProjectListPage';
 import { ProjectCreatePage } from './pages/ProjectCreatePage';
 import { ProjectDashboardLayout } from './pages/ProjectDashboardLayout';
 import { ProjectSettingsPage } from './pages/ProjectSettingsPage';
+import { ComponentSubreqsPage } from './pages/ComponentSubreqsPage';
 import { GitHubCallbackPage } from './pages/GitHubCallbackPage';
 
 function NavigationLogger() {
@@ -79,6 +80,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ProjectSettingsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:id/components/:compId/subreqs"
+          element={
+            <ProtectedRoute>
+              <ComponentSubreqsPage />
             </ProtectedRoute>
           }
         />

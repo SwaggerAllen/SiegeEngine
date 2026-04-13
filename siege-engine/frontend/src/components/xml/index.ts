@@ -18,6 +18,7 @@ export { parseXml } from './parser';
 export { renderUnknownElement } from './defaultRenderers';
 export { featureRenderers } from './featureRenderers';
 export { requirementsRenderers } from './requirementsRenderers';
+export { subreqsRenderers } from './subreqsRenderers';
 export { sysarchRenderers } from './sysarchRenderers';
 export type {
   XmlElement,
