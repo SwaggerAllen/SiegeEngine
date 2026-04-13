@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -79,6 +80,17 @@ class Node(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Optional grouping label, currently used only by feat_* nodes
+    # minted from an approved <features> expansion containing
+    # <group> blocks. Null for ungrouped features and for all
+    # non-feature tiers. See
+    # ``backend.graph.parsers.validators.validate_features``.
+    group_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Whether a feature was marked with <implicit/> in the
+    # expansion — i.e. the LLM inferred it as obviously-necessary
+    # rather than finding it in the user's input doc. Defaults
+    # false and is ignored by non-feature tiers.
+    is_implicit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

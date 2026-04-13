@@ -71,6 +71,14 @@ class NodeCreated(_EventBase):
     # their content at creation time, so rebuild-from-log replays
     # back to the same state.
     content: str = ""
+    # Optional grouping label, used only by feat_* nodes minted
+    # from a <features> expansion that includes <group> blocks.
+    # Null for ungrouped features and for all non-feature tiers.
+    group_label: str | None = None
+    # Whether a feature was marked <implicit/> in the expansion —
+    # inferred as obviously-necessary rather than pulled from the
+    # input doc. Defaults false; non-feature tiers ignore it.
+    is_implicit: bool = False
 
 
 class NodeRenamed(_EventBase):

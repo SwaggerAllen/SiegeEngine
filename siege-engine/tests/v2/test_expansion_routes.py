@@ -432,6 +432,47 @@ class TestDiscard:
         expansion_resp = client.get(f"/api/projects/{project.id}/expansion")
         assert expansion_resp.json()["node"]["content"] == ""
 
+    def test_discard_enqueues_new_generation(self, client, project, db, monkeypatch):
+        """Discarding a draft triggers a fresh generation so the
+        user doesn't have to re-type 'try again' in the feedback
+        box. The 'reject & regenerate' flow is the common case for
+        iterating on the expansion during prompt testing.
+        """
+        _patch_cli(monkeypatch, _valid_features_xml("Rejected"))
+        asyncio.run(
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
+        )
+        db.expire_all()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
+
+        # Baseline: count existing generation jobs (there may be
+        # one enqueued at project creation that's already complete).
+        initial_gen_jobs = list(
+            db.execute(
+                select(Job).where(Job.job_type == fe_handler.GENERATE_FEATURE_EXPANSION_JOB_TYPE)
+            ).scalars()
+        )
+        initial_count = len(initial_gen_jobs)
+
+        client.post(
+            f"/api/projects/{project.id}/expansion/discard",
+            json={"draft_id": draft.id},
+        )
+
+        db.expire_all()
+        gen_jobs = list(
+            db.execute(
+                select(Job).where(Job.job_type == fe_handler.GENERATE_FEATURE_EXPANSION_JOB_TYPE)
+            ).scalars()
+        )
+        # At least one new generation job was enqueued by the
+        # discard endpoint.
+        assert len(gen_jobs) == initial_count + 1
+        # The newest job's payload carries the project id and
+        # null feedback (we're regenerating from scratch).
+        newest = sorted(gen_jobs, key=lambda j: j.created_at)[-1]
+        assert newest.payload == {"project_id": project.id, "feedback": None}
+
 
 class TestApproveEnqueuesMint:
     """Approving a draft should enqueue the v2.mint_features job.
@@ -521,3 +562,52 @@ class TestFeatureList:
         assert [f["display_order"] for f in feats] == [0, 1, 2]
         assert all(f["id"].startswith("feat_") for f in feats)
         assert all(f["updated_at"] for f in feats)
+        # Ungrouped, explicit features default to null group_label
+        # and is_implicit=False.
+        assert all(f["group_label"] is None for f in feats)
+        assert all(f["is_implicit"] is False for f in feats)
+
+    def test_response_includes_group_and_implicit_fields(self, client, project, db, monkeypatch):
+        """Features minted from a grouped expansion surface the
+        group_label and is_implicit fields on the route response.
+        """
+        approved = (
+            "<features>"
+            "<group>"
+            "<name>User Management</name>"
+            "<feature><name>Login</name><intent>Users sign in.</intent></feature>"
+            "<feature>"
+            "<name>Password Reset</name>"
+            "<intent>Users reset via email.</intent>"
+            "<implicit/>"
+            "</feature>"
+            "</group>"
+            "<feature><name>Search</name><intent>Global search.</intent></feature>"
+            "</features>"
+        )
+        _patch_cli(monkeypatch, approved)
+        asyncio.run(
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
+        )
+        db.expire_all()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
+        client.post(
+            f"/api/projects/{project.id}/expansion/approve",
+            json={"draft_id": draft.id},
+        )
+
+        from backend.graph.handlers.feature_mint import mint_features
+
+        asyncio.run(mint_features({"project_id": project.id}))
+
+        resp = client.get(f"/api/projects/{project.id}/features")
+        assert resp.status_code == 200
+        feats = resp.json()["features"]
+        assert len(feats) == 3
+        assert [f["name"] for f in feats] == ["Login", "Password Reset", "Search"]
+        assert [f["group_label"] for f in feats] == [
+            "User Management",
+            "User Management",
+            None,
+        ]
+        assert [f["is_implicit"] for f in feats] == [False, True, False]

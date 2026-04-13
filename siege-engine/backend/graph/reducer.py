@@ -183,6 +183,8 @@ def _apply_node_created(session: Session, project_id: str, event: ev.NodeCreated
             name=event.name,
             display_order=event.display_order,
             content=event.content,
+            group_label=event.group_label,
+            is_implicit=event.is_implicit,
             created_at=now,
             updated_at=now,
         )

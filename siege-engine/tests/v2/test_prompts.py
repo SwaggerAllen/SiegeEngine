@@ -30,6 +30,18 @@ class TestSystemPrompt:
         assert "title case" in SYSTEM_PROMPT or "short" in SYSTEM_PROMPT
         assert "paragraph" in SYSTEM_PROMPT or "sentences" in SYSTEM_PROMPT
 
+    def test_describes_implicit_features(self):
+        # The prompt must explain when to mark features <implicit/>.
+        assert "<implicit" in SYSTEM_PROMPT
+        # Concept: inferred, obviously necessary, not in input doc.
+        assert "obviously" in SYSTEM_PROMPT or "inferred" in SYSTEM_PROMPT
+
+    def test_describes_feature_groups(self):
+        # The prompt must describe the <group> wrapper and its name.
+        assert "<group>" in SYSTEM_PROMPT
+        # Concept: themes, bundling related features.
+        assert "theme" in SYSTEM_PROMPT or "related features" in SYSTEM_PROMPT
+
 
 class TestRenderUserPrompt:
     def test_initial_generation(self):

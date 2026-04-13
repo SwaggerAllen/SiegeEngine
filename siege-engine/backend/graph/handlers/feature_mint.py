@@ -125,10 +125,11 @@ async def mint_features(payload: dict) -> None:
 
         # Mint one feat_* per validated feature, preserving the
         # parse order via display_order. Each feat_* carries its
-        # intent paragraph as content from the moment of creation,
-        # via the content field on NodeCreated — the reducer sets
-        # Node.content at creation time, so rebuild-from-log
-        # replays back to the same state.
+        # intent paragraph as content, its group label (if the
+        # feature was inside a <group> block), and its implicit
+        # flag — all via NodeCreated's optional fields. The
+        # reducer writes them at creation time so rebuild-from-log
+        # replays back to equivalent state.
         minted_ids: list[str] = []
         for index, feature in enumerate(features):
             feat_id = mint(db, Kind.FEAT)
@@ -143,6 +144,8 @@ async def mint_features(payload: dict) -> None:
                     name=feature.name,
                     display_order=index,
                     content=feature.intent,
+                    group_label=feature.group_label,
+                    is_implicit=feature.is_implicit,
                 ),
             )
             minted_ids.append(feat_id)
