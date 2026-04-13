@@ -233,6 +233,32 @@ Knock-on consequences:
 - **Fan-in nodes never nest.** A fan-in synthesizes across one component's direct subcomponents, which is now also the only structural possibility.
 - **Policies have exactly two generation tiers**, matching the two tiers where responsibilities are minted (`reqs_*` mints top-level `resp_*` before sysarch; each `subreqs_*` mints its component's subresp `resp_*` before that component's comparch). Top-level policies live in the sysarch's `<policies>` fragment; component-local policies live in each component's arch-doc `<policies>` fragment. No recursive policy-generation pass is needed.
 
+### Foundation components
+
+Every level of the structural tree has **shared files at its root** — build config, package init, cross-cutting utilities, the top-level entry point — that don't logically belong to any one child. Without a dedicated owner, those files are orphaned by the file manifest (see *Code generation territory*) and by code generation: no impl node produces them, no plan node touches them, and the resulting project isn't buildable.
+
+To fix this by construction, every structural decomposition pass is required to mint a **foundation component** as one of its children:
+
+- **Sysarch** always includes a foundation component in its top-level component list. Its territory in the manifest covers the project's root folder minus whatever the other top-level components claim.
+- **Each comparch pass** that decomposes a component into subcomponents always includes a foundation subcomponent in the subcomponent list. Its territory covers that component's root folder minus whatever the other subcomponents claim.
+
+The foundation component is a normal `comp_*` node in every other respect — it has its own responsibilities, its own `<technical-specification>`, `<public-surface>`, `<private-surface>`, `<policies>`, `<dependencies>`, and it can have subcomponents if it decomposes further (subject to the depth cap). It's not a special tier or a special kind; it's a conventional child that the generation prompts are required to always produce.
+
+What it *owns* depends on the project:
+
+- At the system level: `pyproject.toml`, `alembic.ini`, `Dockerfile`, the project README, top-level env-config loaders, the main entry point (`backend/main.py` or similar), and anything else that lives in the project's root folder without belonging to a specific subsystem.
+- At the component level: `__init__.py`, the component's config module, cross-subcomponent utilities, base classes shared by multiple subcomponents, and anything else that lives in the component's root folder without belonging to a specific subcomponent.
+
+The requirement is an invariant in the sysarch and comparch regen prompts — they're told explicitly that their component/subcomponent list must include a foundation component whose territory is "the root folder of this level minus what the other children claim." The LLM doesn't have to derive this from first principles every time; it's in the prompt template.
+
+Naming: the user is free to pick whatever name fits the project (`Platform`, `Foundation`, `Core`, the specific project's conventional name) and the instruction vocabulary's rename operation works on it like any other component. The LLM's initial suggestion should default to "Foundation" unless a project-specific name makes more sense from the context.
+
+Knock-on consequences:
+
+- **Manifest coverage is guaranteed.** Every file at every level has an owner, because the foundation component's territory is defined as the catch-all remainder.
+- **Code generation can produce a buildable project.** The top-level foundation owns the `pyproject.toml` (or equivalent) and whatever other setup files the language needs, so the first code-gen pass produces a compilable project, not a collection of subcomponent files with no build harness.
+- **Cross-cutting utilities have a home.** Things like "shared types used by multiple subcomponents" naturally land in the foundation component without having to artificially extract them as a standalone top-level component first.
+
 ### Policies
 
 Some content isn't a capability, it's a constraint. "Every LLM call records telemetry." "Every DB write goes through the reducer." "Every route checks the session." These aren't things one component does — they're things every component does, and they need to be both **stated** (so the LLM writing an impl knows about them) and **reviewable** (so a human can confirm a cross-cutting invariant still holds).
@@ -418,9 +444,13 @@ Domain fan-in synthesis nodes are not included in review scoping. Their role is 
 
 ### Read-only generated views + prose feedback + structured UIs
 
-- All generated documents render **read-only**.
-- Every node accepts **prose feedback** as input to regen.
-- A small set of specific UIs handle structural operations that are miserable to do through prose.
+**What "edit" means in this doc.** Throughout v2, the verb "edit" *always* means "submit prose feedback and let the regen pipeline produce a new draft, which the user then approves or discards." It never means inline text modification. Users cannot type characters into a generated document and have those characters become the stored content — there is no write path from the UI directly to a node's content or a fragment's content. Every write to the model goes through the LLM, via feedback → regen → approve. The only things that mutate state without going through regen are the structured UI actions listed below, and those produce *prose instructions* that still flow through the regen pipeline on "Apply changes".
+
+So when an earlier section says something like "edits to individual `feat_*` nodes" or "edit a policy's wording", read that as "submit feedback targeting that node and regenerate its draft". Same mental model, just an unusual one for users coming from WYSIWYG tools.
+
+- All generated documents render **read-only**. There is no edit button that opens a text field on the rendered content.
+- Every node accepts **prose feedback** as input to regen. That's the one way to change what a node says.
+- A small set of specific structured UIs handle structural operations that are miserable to do through prose — drag-drop assignments, graph editors for edges, etc. — but even those produce prose instructions consumed by the regen pipeline, not direct state mutations. See *UI-as-prose-generator* below.
 
 ### Structured UIs
 
@@ -569,6 +599,8 @@ To support both shapes, the project carries a singleton **file manifest** (`mani
 
 **Code generation is territory-limited.** A plan may only list file changes inside its owning impl's territory. A plan that tries to write outside its territory fails parse validation and triggers the retry loop. The territory rule is how we keep per-component code generation from stomping on other components even when they share a folder tree.
 
+**Foundation components are the catch-all for root-level files.** Every level of the structural tree has a foundation component (see *Foundation components*) whose territory is "this level's root folder minus everything the other children claim." That's how files like `pyproject.toml`, top-level `__init__.py`, build config, and shared utilities always have exactly one owner — they belong to whichever foundation's level they sit in. The manifest doesn't need special-case logic for orphaned files; the foundation component's catch-all territory absorbs them by construction.
+
 Properties of the manifest:
 
 - **Singleton per project**, regenerated when the component tree changes (not on every edit — only when components are created, deleted, promoted, demoted, merged, or split).
@@ -646,6 +678,8 @@ Policies and capability extraction compose: telemetry is both a component you ex
 - Shared-fragment transclusion with fragment IDs (`techspec`, `pubapi`, `privapi`, `policies`, `deps`), fragment kinds required to be single-token
 - Section-aware (fragment-level) diffs, implemented as a shared regen helper from the start (not retrofitted)
 - **Subcomponent depth cap** — component tree hard-capped at two structural levels (component → subcomponent → impl). Reducer enforces the invariant on `NodeCreated` / `NodeReparented` / `NodePromoted` / `NodeDemoted` events.
+- **Foundation component requirement** — sysarch and each comparch pass always mints a foundation component/subcomponent whose manifest territory is the catch-all for root-level files at that tier. Enforced as an invariant in the generation prompts, not in the reducer.
+- **Edit = feedback → regen** — no inline text editing anywhere in the system. Every change to a node's content goes through prose feedback → regen → approve. Structured UI actions produce prose instructions that flow through the same pipeline.
 - Implementation nodes (`impl_*`) as separate leaf nodes under every subcomponent and un-fanned-out component, generally mapping to one folder each
 - Always-mint domain fan-in synthesis nodes for every domain component with subcomponents (skipped in review)
 - Plan nodes (`plan_*`) between impl and code — reviewable with prose feedback like other nodes, independently gated, one-live-per-impl, consumed on code generation

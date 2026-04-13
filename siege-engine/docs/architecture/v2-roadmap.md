@@ -112,7 +112,7 @@ separate nodes in the model.
 **System architecture node:**
 - [ ] New singleton `sysarch` tier node minted once the `reqs_*` node is approved
 - [ ] Cold-start vs incremental-add prompt templates (one job handler picks which)
-- [ ] Cold-start prompt: approved requirements + features → full sysarch (components, APIs, **top-level policies**, dep edges, domain-parent edges, system `techspec`)
+- [ ] Cold-start prompt: approved requirements + features → full sysarch (components, APIs, **top-level policies**, dep edges, domain-parent edges, system `techspec`). **The prompt explicitly requires a foundation component** in the component list, whose manifest territory is the project's root folder minus everything the other top-level components claim (see architecture doc §Foundation components).
 - [ ] Incremental-add prompt: existing `sysarch` + one new responsibility or feature → delta (re-running policy application for affected components only)
 - [ ] Parseable output sections **in order**: system `techspec`, per-component (API intent, responsibilities covered), `<policies>` (top-level policy list referencing `resp_*` by ID in `required`), `<dependencies>` (dep edge list — including **role-level speculative policy-induced edges**), `<domain-parent>` (domain-parent edge list). Policies precede dependencies so policy-induced dep edges land in the same pass at the fidelity the sysarch's role-level per-component summaries support.
 - [ ] Generate-parse validation loop (retry-then-escalate) — sysarch output is load-bearing for everything downstream
@@ -169,6 +169,7 @@ now-detailed component description.
 - [ ] Component regen prompt in dependency topological order, via the shared helper
 - [ ] Prompt input scoping: parent `techspec` + related features + `pubapi` fragments of deps + pre-minted subresps + top-level policy candidates + already-applied policies (NOT full dep docs)
 - [ ] **Component arch generation produces `<policies>` before `<dependencies>` in the same LLM call**, so policy-induced dep edges land in `<dependencies>` naturally instead of being backfilled
+- [ ] **Foundation subcomponent requirement** — when a component is decomposed into subcomponents, the comparch prompt explicitly requires one of them to be a foundation subcomponent whose manifest territory is the component's root folder minus everything the other subcomponents claim (see architecture doc §Foundation components). Un-fanned-out components do not need a foundation child.
 - [ ] Techspec propagates downward only; child impl changes do not regenerate parent techspec
 - [ ] **Subresponsibilities are NOT generated here.** The component-arch pass treats its component's subresp `resp_*` nodes as a stable pre-minted input from the `subreqs_*` stage (Phase 3). Comparch output maps subcomponents to those pre-minted subresps, rather than inventing the subresps in the same pass.
 - [ ] **Component-local policy minting**: on `DraftApproved`, project each entry in the component's `<policies>` fragment into a `policy_*` node (with `parent_id` = the minting component; `required` = any `resp_*` that exists at generation time, top-level or this component's pre-minted subresps). Deleting an entry removes the policy and cascades to its application edges.
