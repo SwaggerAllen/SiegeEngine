@@ -10,16 +10,46 @@ phases will add paginated/filtered list APIs for the UI.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from backend.graph.fragments import FragmentKind, fragment_id
 from backend.models.graph_event import GraphEvent
 from backend.models.job import Job
 from backend.models.node import Draft, Edge, Fragment, Node
 
 GenerationStatus = Literal["idle", "running", "failed"]
+
+
+@dataclass(frozen=True)
+class ComponentContext:
+    """The full context a Phase 4 comparch pass needs about one component.
+
+    Bundles everything a comparch-generation handler would otherwise
+    have to re-derive with five separate queries: the component row,
+    its two sysarch-minted fragments (techspec = role paragraph,
+    pubapi = api-intent paragraph), the top-level responsibilities
+    assigned to it (``known_parent_resp_ids`` for validator
+    cross-checks), its already-minted subresponsibilities (useful
+    for comparch to know "what did subreqs land on"), and its
+    dependency neighborhood (outbound and inbound ``dep`` edges
+    resolved to the other end's ``comp_*`` nodes).
+
+    Consumers should treat this as an immutable snapshot — the
+    underlying rows are live ORM objects and mutating them will
+    bypass the reducer. Read only.
+    """
+
+    node: Node
+    techspec: str
+    pubapi: str
+    parent_resps: tuple[Node, ...]
+    subresps: tuple[Node, ...]
+    outbound_deps: tuple[Node, ...]
+    inbound_deps: tuple[Node, ...]
 
 
 def list_nodes(session: Session, project_id: str) -> list[Node]:
@@ -93,6 +123,114 @@ def list_subresponsibilities(session: Session, comp_id: str) -> list[Node]:
             )
             .order_by(Node.display_order.asc(), Node.id.asc())
         ).scalars()
+    )
+
+
+def domain_parents_of(session: Session, comp_id: str) -> list[Node]:
+    """Return the domain-parent ``comp_*`` nodes for a presentational comp.
+
+    Walks ``domain_parent`` edges where ``source_id == comp_id``
+    and returns the target components. The sysarch mint handler
+    emits these edges with the direction
+    ``presentational → domain``, so the source side is always a
+    presentational component. Callers that call this on a domain
+    component will get an empty list.
+
+    Used by the subreqs generation handler to look up "what
+    domain components does this presentational component
+    present" so the LLM can see the domain parent's already-
+    minted subresps as read-only context when writing UI-side
+    subresps.
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .join(Edge, Edge.target_id == Node.id)
+            .where(
+                Edge.edge_type == "domain_parent",
+                Edge.source_id == comp_id,
+                Node.tier == "comp",
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
+def get_component_context(session: Session, comp_id: str) -> ComponentContext:
+    """Return the full context bundle for a single top-level component.
+
+    One-stop fetch for Phase 4 comparch generation: the component
+    itself, its two sysarch-minted fragments (``comp_X_techspec``
+    carries the role paragraph, ``comp_X_pubapi`` carries the
+    api-intent paragraph), the top-level responsibilities assigned
+    to it via ``decomposition`` edges, the subresponsibilities
+    already minted under it (``parent_id=comp_id``), and the
+    dependency neighborhood (resolved to the ``comp_*`` node at
+    the other end of each ``dependency`` edge).
+
+    Missing fragments return empty strings rather than raising —
+    fragments may not exist yet if the caller is inspecting a
+    component whose sysarch-mint ran before comparch landed the
+    full techspec. Missing component raises ``ValueError`` because
+    every caller we anticipate has already validated the comp_id
+    via path parameters or an earlier lookup.
+
+    Single-query strategy for the dep neighborhood: one combined
+    ``SELECT`` with ``OR`` on source/target instead of two round
+    trips. Same for parent_resps and subresps (two queries,
+    since they live under different edge types and node
+    constraints).
+    """
+    node = session.get(Node, comp_id)
+    if node is None:
+        raise ValueError(f"No node with id {comp_id!r}")
+    if node.tier != "comp":
+        raise ValueError(f"Node {comp_id!r} is tier={node.tier!r}, not a component")
+
+    techspec_frag = session.get(Fragment, fragment_id(comp_id, FragmentKind.TECHSPEC))
+    pubapi_frag = session.get(Fragment, fragment_id(comp_id, FragmentKind.PUBAPI))
+    techspec = techspec_frag.content if techspec_frag is not None else ""
+    pubapi = pubapi_frag.content if pubapi_frag is not None else ""
+
+    parent_resps = tuple(top_level_resps_assigned_to(session, comp_id))
+    subresps = tuple(list_subresponsibilities(session, comp_id))
+
+    # Dependency neighborhood: one SELECT that returns every dep
+    # edge touching this component at either end. Split into
+    # outbound (source=comp_id) and inbound (target=comp_id)
+    # after fetch, then resolve the other-end comp_* IDs to
+    # Node rows in a second query. Two queries total for the
+    # dep neighborhood.
+    dep_edges = list(
+        session.execute(
+            select(Edge).where(
+                Edge.edge_type == "dependency",
+                or_(Edge.source_id == comp_id, Edge.target_id == comp_id),
+            )
+        ).scalars()
+    )
+    outbound_ids = [e.target_id for e in dep_edges if e.source_id == comp_id]
+    inbound_ids = [e.source_id for e in dep_edges if e.target_id == comp_id]
+    neighbor_ids = set(outbound_ids) | set(inbound_ids)
+
+    neighbor_nodes: dict[str, Node] = {}
+    if neighbor_ids:
+        rows = session.execute(
+            select(Node).where(Node.id.in_(neighbor_ids), Node.tier == "comp")
+        ).scalars()
+        neighbor_nodes = {n.id: n for n in rows}
+
+    outbound_deps = tuple(neighbor_nodes[i] for i in outbound_ids if i in neighbor_nodes)
+    inbound_deps = tuple(neighbor_nodes[i] for i in inbound_ids if i in neighbor_nodes)
+
+    return ComponentContext(
+        node=node,
+        techspec=techspec,
+        pubapi=pubapi,
+        parent_resps=parent_resps,
+        subresps=subresps,
+        outbound_deps=outbound_deps,
+        inbound_deps=inbound_deps,
     )
 
 

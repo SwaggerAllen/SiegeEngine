@@ -299,6 +299,241 @@ class TestGenerationHappyPath:
         assert "Add backoff" in calls[0]["prompt"]
 
 
+class TestGenerationDomainParentContext:
+    """Coverage for the domain-parent subresps context block.
+
+    The subreqs generation handler walks ``domain_parent`` edges
+    when the owning component is presentational and renders the
+    target domain component's already-minted subresps as a
+    read-only context block so the LLM can write UI-side subresps
+    that align with the domain side.
+    """
+
+    def test_domain_context_absent_for_domain_component(
+        self, shared_session_factory, seeded, monkeypatch
+    ):
+        """A domain component (kind=domain) gets no domain-parent context
+        block even if the codebase has domain_parent edges pointing
+        somewhere."""
+        xml = _valid_subreqs(seeded["parent_ids"])
+        calls = _patch_cli(monkeypatch, xml)
+        asyncio.run(
+            generate_subreqs(
+                {
+                    "project_id": seeded["project_id"],
+                    "component_id": seeded["comp_id"],
+                    "feedback": None,
+                }
+            )
+        )
+        prompt = calls[0]["prompt"]
+        assert "# Domain-parent context" not in prompt
+
+    def test_domain_context_populated_for_presentational_with_minted_parent(
+        self, shared_session_factory, monkeypatch
+    ):
+        """A presentational component whose domain parent has already-
+        minted subresps gets a context block naming each one."""
+        factory = shared_session_factory
+        s = factory()
+        try:
+            project_id = str(uuid.uuid4())
+            s.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
+            s.flush()
+
+            # Two top-level resps: one domain (Payment Processing),
+            # one presentational (Payment Form UX). Shape matches
+            # what the extended reqs prompt would produce.
+            domain_resp = _seed_top_level_resp(s, project_id, "Payment Processing", 0)
+            ui_resp = _seed_top_level_resp(s, project_id, "Payment Form UX", 1)
+
+            # Domain component: billing, assigned the domain resp
+            billing_id = _seed_component(
+                s,
+                project_id,
+                comp_name="Billing Service",
+                role="Handle payment collection.",
+                api_intent="get_billing_state(id).",
+                parent_resp_ids=[domain_resp],
+            )
+
+            # Presentational component: billing_ui, assigned the UI resp
+            billing_ui_id = _seed_component(
+                s,
+                project_id,
+                comp_name="BillingUI",
+                role="Render the payment dashboard.",
+                api_intent="Dashboard view.",
+                parent_resp_ids=[ui_resp],
+            )
+            # Mark billing_ui as presentational by updating its row
+            from backend.models.node import Node as _Node
+
+            billing_ui_row = s.get(_Node, billing_ui_id)
+            assert billing_ui_row is not None
+            billing_ui_row.kind = "presentational"
+
+            # Domain-parent edge: billing_ui -> billing
+            edge_id = mint(s, Kind.EDGE)
+            append_event(
+                s,
+                project_id,
+                ev.EdgeCreated(
+                    edge_id=edge_id,
+                    edge_type="domain_parent",
+                    source_id=billing_ui_id,
+                    target_id=billing_id,
+                ),
+            )
+
+            # Domain parent's subresps (as if subreqs for billing
+            # had already been approved and minted)
+            tokenization_id = mint(s, Kind.RESP)
+            append_event(
+                s,
+                project_id,
+                ev.NodeCreated(
+                    node_id=tokenization_id,
+                    tier="resp",
+                    kind="domain",
+                    parent_id=billing_id,
+                    name="Card Tokenization",
+                    display_order=0,
+                    content="Convert raw cards to opaque tokens at entry.",
+                ),
+            )
+            retry_id = mint(s, Kind.RESP)
+            append_event(
+                s,
+                project_id,
+                ev.NodeCreated(
+                    node_id=retry_id,
+                    tier="resp",
+                    kind="domain",
+                    parent_id=billing_id,
+                    name="Retry Scheduling",
+                    display_order=1,
+                    content="Backoff retries on payment failure.",
+                ),
+            )
+
+            s.commit()
+        finally:
+            s.close()
+
+        # Generate subreqs on the presentational component
+        ui_subreqs = (
+            "<subrequirements>"
+            "<subresponsibility>"
+            "<name>Card Input Rendering</name>"
+            "<intent>Render the card input form.</intent>"
+            + _derived(ui_resp)
+            + "</subresponsibility>"
+            "</subrequirements>"
+        )
+        calls = _patch_cli(monkeypatch, ui_subreqs)
+        asyncio.run(
+            generate_subreqs(
+                {
+                    "project_id": project_id,
+                    "component_id": billing_ui_id,
+                    "feedback": None,
+                }
+            )
+        )
+
+        prompt = calls[0]["prompt"]
+        # The domain-parent context block is present
+        assert "# Domain-parent context" in prompt
+        # The domain parent component is named
+        assert "## Billing Service" in prompt
+        # Both domain subresps appear with their IDs
+        assert tokenization_id in prompt
+        assert "Card Tokenization" in prompt
+        assert retry_id in prompt
+        assert "Retry Scheduling" in prompt
+        # And the warning-not-to-reference prose is there
+        assert "Do not reference" in prompt
+
+    def test_domain_context_absent_when_parent_has_no_subresps(
+        self, shared_session_factory, monkeypatch
+    ):
+        """Presentational component whose domain parent exists but hasn't
+        had subreqs approved yet: no context block."""
+        factory = shared_session_factory
+        s = factory()
+        try:
+            project_id = str(uuid.uuid4())
+            s.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
+            s.flush()
+
+            domain_resp = _seed_top_level_resp(s, project_id, "Payment Processing", 0)
+            ui_resp = _seed_top_level_resp(s, project_id, "Payment Form UX", 1)
+
+            billing_id = _seed_component(
+                s,
+                project_id,
+                comp_name="Billing",
+                role="Handle payments.",
+                api_intent="get_billing_state(id).",
+                parent_resp_ids=[domain_resp],
+            )
+            billing_ui_id = _seed_component(
+                s,
+                project_id,
+                comp_name="BillingUI",
+                role="Render dashboard.",
+                api_intent="view.",
+                parent_resp_ids=[ui_resp],
+            )
+            from backend.models.node import Node as _Node
+
+            billing_ui_row = s.get(_Node, billing_ui_id)
+            assert billing_ui_row is not None
+            billing_ui_row.kind = "presentational"
+
+            edge_id = mint(s, Kind.EDGE)
+            append_event(
+                s,
+                project_id,
+                ev.EdgeCreated(
+                    edge_id=edge_id,
+                    edge_type="domain_parent",
+                    source_id=billing_ui_id,
+                    target_id=billing_id,
+                ),
+            )
+            # Note: no subresps minted under billing. Context
+            # should skip this parent entirely.
+            s.commit()
+        finally:
+            s.close()
+
+        ui_subreqs = (
+            "<subrequirements>"
+            "<subresponsibility>"
+            "<name>Dashboard Render</name>"
+            "<intent>Render the dashboard.</intent>" + _derived(ui_resp) + "</subresponsibility>"
+            "</subrequirements>"
+        )
+        calls = _patch_cli(monkeypatch, ui_subreqs)
+        asyncio.run(
+            generate_subreqs(
+                {
+                    "project_id": project_id,
+                    "component_id": billing_ui_id,
+                    "feedback": None,
+                }
+            )
+        )
+
+        prompt = calls[0]["prompt"]
+        # No context block — the parent exists but has nothing to show
+        assert "# Domain-parent context" not in prompt
+        # The presentational component is still prompted normally
+        assert "BillingUI" in prompt
+
+
 class TestGenerationFailureModes:
     def test_missing_project_id_raises(self, shared_session_factory):
         with pytest.raises(SubreqsHandlerError, match="project_id"):

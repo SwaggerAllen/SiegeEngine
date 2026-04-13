@@ -168,11 +168,17 @@ class CLIManager:
         env = {**os.environ}
         env.pop("CLAUDECODE", None)
         env.pop("ANTHROPIC_API_KEY", None)
-        # Pipeline generations are worth burning extra thinking budget
-        # on — they run once and are cached as approved content. Force
-        # max effort unconditionally so this can't be forgotten in a
-        # deployment env. Parent-process overrides don't apply.
-        env["CLAUDE_CODE_EFFORT_LEVEL"] = "max"
+        # Note: we used to force CLAUDE_CODE_EFFORT_LEVEL=max here
+        # on the theory that pipeline generations are worth burning
+        # extra thinking budget on. In practice that blew past the
+        # flat CLI_MAX_BUDGET_USD budget for decomposition tasks
+        # (requirements, sysarch, subreqs) because max-effort
+        # thinking tokens bill at output rates and eat most of the
+        # budget before the LLM finishes reasoning. Leave the env
+        # var alone so the CLI falls back to its default effort
+        # level. If we want the extra-thinking knob back later we
+        # can either bump per-handler budgets or reintroduce this
+        # override behind a feature flag.
 
         logger.info(
             "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds (using CLI login credentials)",

@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 from backend.graph.parsers.xml_sections import TagNode, extract_tag_tree
 
@@ -592,7 +592,6 @@ _POLICIES_ALLOWED_CHILDREN = {"policy"}
 _POLICY_ALLOWED_CHILDREN = {"name", "trigger", "required", "rationale"}
 _DEPENDENCIES_ALLOWED_CHILDREN = {"dep"}
 _DOMAIN_PARENT_ALLOWED_CHILDREN = {"parent"}
-_COMPONENT_KIND_VALUES = {"domain", "presentational"}
 
 
 def validate_sysarch(
@@ -666,6 +665,16 @@ def validate_sysarch(
 
     # Dep cycle detection on the alias graph before returning.
     _detect_dep_cycles(deps, alias_set)
+
+    # Foundation-dependency rule: every non-foundation component must
+    # have a <dep> edge to the foundation component. Foundation itself
+    # has no deps and no requirement to depend on anything. This makes
+    # "everything depends on foundation" a hard structural invariant
+    # rather than a loose convention, and guarantees the foundation
+    # component's code is reachable from every downstream comparch
+    # pass in Phase 4 without needing to re-derive the rule from the
+    # architecture doc.
+    _enforce_foundation_dependency(components, deps)
 
     return SysarchDoc(
         techspec=techspec,
@@ -830,16 +839,21 @@ def _validate_component(
             "name must be a short title-case identifier."
         )
 
-    kind_raw = (kind_node.text or "").strip()
-    if kind_raw not in _COMPONENT_KIND_VALUES:
-        raise ValidationError(
-            f"{pos} (alias={alias!r}) has invalid <kind> {kind_raw!r}. "
-            "Must be 'domain' or 'presentational'."
-        )
-    # Runtime check above narrows this at runtime; cast tells mypy
-    # the downstream Component.kind / NodeCreated.kind fields see
-    # the Literal type they want.
-    kind = cast(Literal["domain", "presentational"], kind_raw)
+    # match-case gives mypy proper Literal narrowing without a
+    # cast — the `kind` binding in each arm is typed as the
+    # matched string literal, which lets it flow straight into
+    # the Literal-typed Component.kind field downstream.
+    kind: Literal["domain", "presentational"]
+    match (kind_node.text or "").strip():
+        case "domain":
+            kind = "domain"
+        case "presentational":
+            kind = "presentational"
+        case invalid:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has invalid <kind> {invalid!r}. "
+                "Must be 'domain' or 'presentational'."
+            )
 
     role = (role_node.text or "").strip()
     if not role:
@@ -1121,6 +1135,42 @@ def _detect_dep_cycles(deps: tuple[DepEdge, ...], alias_set: set[str]) -> None:
     for a in adj:
         if color[a] == WHITE:
             _dfs(a)
+
+
+def _enforce_foundation_dependency(
+    components: tuple[Component, ...], deps: tuple[DepEdge, ...]
+) -> None:
+    """Enforce that every non-foundation component has a dep edge to foundation.
+
+    Phase 3 stage 2 invariant: every top-level component must depend
+    on the foundation component. Foundation owns the project root
+    (build config, shared utilities, application factory, base types)
+    and every other component's code is expected to reach into it at
+    runtime, so an explicit dependency edge makes the relationship
+    a structural property the rest of the system can rely on.
+
+    The foundation component is identified by the ``<foundation/>``
+    marker; the caller's ``_validate_sysarch_components`` already
+    enforced that exactly one exists, so we can safely pick the
+    single match here.
+
+    Foundation itself is exempt — it has no dependency target (it's
+    the only sink in the dep DAG). All non-foundation components
+    must have at least one ``DepEdge`` with
+    ``from_alias=<their alias>`` and ``to_alias=<foundation alias>``.
+    """
+    foundation_alias = next(c.alias for c in components if c.is_foundation)
+    required_from = {c.alias for c in components if not c.is_foundation}
+    seen: set[str] = {d.from_alias for d in deps if d.to_alias == foundation_alias}
+    missing = sorted(required_from - seen)
+    if missing:
+        raise ValidationError(
+            "Every non-foundation component must have a <dep> edge "
+            f"pointing at the foundation component {foundation_alias!r}. "
+            f"Missing foundation dependency from: {', '.join(missing)}. "
+            'Add <dep from="<alias>" to="' + foundation_alias + '"/> '
+            "for each missing component."
+        )
 
 
 # ── Subrequirements (Phase 3 stage 3: subreqs → subresp resp_*) ────

@@ -353,6 +353,20 @@ class TestParseValidateRetry:
         # Retry prompt mentions the foundation error verbatim
         assert "no foundation component" in calls[1]["prompt"]
 
+    def test_retry_on_missing_foundation_dep(
+        self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
+    ):
+        # First attempt: valid foundation + valid components but
+        # omits the required foundation dep from 'auth'. The
+        # validator catches it and the retry prompt surfaces the
+        # specific missing-alias list.
+        good = _valid_sysarch(seeded_resp_ids)
+        bad = good.replace('<dep from="auth" to="foundation"/>', "")
+        calls = _patch_cli_sequence(monkeypatch, [bad, good])
+        asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
+        assert len(calls) == 2
+        assert "Missing foundation dependency from: auth" in calls[1]["prompt"]
+
     def test_retry_on_dep_cycle(
         self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
     ):

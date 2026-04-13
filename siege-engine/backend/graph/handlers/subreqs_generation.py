@@ -38,10 +38,15 @@ from backend.graph.parsers.validators import validate_subrequirements
 from backend.graph.prompts.subrequirements import (
     SYSTEM_PROMPT,
     format_component_summary,
+    format_domain_parent_context,
     format_parent_resps_summary,
     render_user_prompt,
 )
-from backend.graph.queries import top_level_resps_assigned_to
+from backend.graph.queries import (
+    domain_parents_of,
+    list_subresponsibilities,
+    top_level_resps_assigned_to,
+)
 from backend.graph.reducer import append_event
 from backend.graph.subrequirements import (
     get_subreqs_node,
@@ -132,6 +137,45 @@ async def generate_subreqs(payload: dict) -> None:
         )
         known_parent_resp_ids: set[str] = {r.id for r in parent_resp_rows}
 
+        # Domain-parent context — only populated when this is a
+        # presentational component with domain_parent edges that
+        # point at domain components whose own subreqs have
+        # already been minted. Rendered into the prompt as a
+        # read-only block so the LLM can align UI-side subresps
+        # with the domain side without duplicating. Cross-
+        # component references remain forbidden by the validator;
+        # this is advisory context only.
+        #
+        # If the presentational component's subreqs generation
+        # runs before any of its domain parents have approved
+        # subreqs (possible under the sysarch-mint fan-out
+        # ordering, which doesn't sequence domain before
+        # presentational), the context block is empty and the
+        # LLM falls back to writing subresps from scratch. A
+        # later regen once the domain side is minted will pick
+        # up the context.
+        domain_parent_context: str | None = None
+        if comp_node.kind == "presentational":
+            parent_rows = domain_parents_of(db, component_id)
+            parent_bundles: list[dict] = []
+            for parent in parent_rows:
+                parent_subresps = list_subresponsibilities(db, parent.id)
+                parent_bundles.append(
+                    {
+                        "name": parent.name,
+                        "subresps": [
+                            {
+                                "id": sr.id,
+                                "name": sr.name,
+                                "content": sr.content,
+                            }
+                            for sr in parent_subresps
+                        ],
+                    }
+                )
+            rendered = format_domain_parent_context(parent_bundles)
+            domain_parent_context = rendered or None
+
         project_row = db.get(Project, project_id)
         assert project_row is not None
         settings = get_project_settings(project_row)
@@ -153,6 +197,7 @@ async def generate_subreqs(payload: dict) -> None:
         return render_user_prompt(
             component_summary=component_summary,
             parent_resps_summary=parent_resps_summary,
+            domain_parent_context=domain_parent_context,
             prior_approved=prior_approved,
             prior_pending=prior_pending,
             feedback=feedback,
