@@ -8,10 +8,13 @@ projection ORM models directly.
 Importing this package also registers the v2 job handlers:
   * ``v2.apply_instructions`` (stub — replaced by later slices)
   * ``v2.generate_feature_expansion``
+  * ``v2.mint_features``
 """
 
 from backend.graph import queue as _queue
 from backend.graph.handlers import feature_expansion as _feature_expansion_handler
+from backend.graph.handlers import feature_mint as _feature_mint_handler
 
 _queue.register_stub_handler()
 _feature_expansion_handler.register()
+_feature_mint_handler.register()

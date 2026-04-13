@@ -31,6 +31,7 @@ from backend.graph.expansion import (
 from backend.graph.handlers.feature_expansion import (
     GENERATE_FEATURE_EXPANSION_JOB_TYPE,
 )
+from backend.graph.handlers.feature_mint import MINT_FEATURES_JOB_TYPE
 from backend.graph.reducer import append_event
 from backend.models import Project, User
 from backend.models.node import Draft
@@ -265,6 +266,19 @@ def post_expansion_approve(
     append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
     db.commit()
     db.refresh(node)
+
+    # Approval is destructive at the child level — the content has
+    # been committed to node.content, and now we mint feat_* nodes
+    # from it. The mint handler runs asynchronously on the
+    # pipeline worker; the response returns immediately with the
+    # approved node, and the frontend polls the /features endpoint
+    # to see the minted features.
+    pipeline_queue.enqueue(
+        db,
+        job_type=MINT_FEATURES_JOB_TYPE,
+        payload={"project_id": project_id},
+    )
+
     return ApproveResponse(node=_serialize_node(node))
 
 

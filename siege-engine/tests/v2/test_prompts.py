@@ -14,6 +14,22 @@ class TestSystemPrompt:
         assert len(SYSTEM_PROMPT) > 0
         assert "feature expansion" in SYSTEM_PROMPT
 
+    def test_describes_tagged_output_format(self):
+        # The prompt must instruct the model to emit a <features>
+        # block with <feature>/<name>/<intent> structure — the
+        # format the mint handler's parser-validator expects.
+        assert "<features>" in SYSTEM_PROMPT
+        assert "<feature>" in SYSTEM_PROMPT
+        assert "<name>" in SYSTEM_PROMPT
+        assert "<intent>" in SYSTEM_PROMPT
+
+    def test_describes_name_and_intent_shape(self):
+        # Name is a short identifier, intent is a paragraph. Loose
+        # assertions — we want the prompt to be able to evolve
+        # without breaking tests, but the *concept* has to be there.
+        assert "title case" in SYSTEM_PROMPT or "short" in SYSTEM_PROMPT
+        assert "paragraph" in SYSTEM_PROMPT or "sentences" in SYSTEM_PROMPT
+
 
 class TestRenderUserPrompt:
     def test_initial_generation(self):
@@ -91,3 +107,48 @@ class TestRenderUserPrompt:
             feedback=None,
         )
         assert "(no input document supplied)" in out
+
+
+class TestRenderUserPromptParseErrorRetry:
+    """The mint handler's parse-validate retry loop passes the
+    parse/validation error back into the prompt via ``parse_error``
+    so the LLM can correct its own structural mistakes."""
+
+    def test_parse_error_section_renders(self):
+        out = render_user_prompt(
+            input_doc="A note-taking app.",
+            prior_approved=None,
+            prior_pending="<features>(malformed)</features>",
+            feedback=None,
+            parse_error="<feature> at position 0 is missing a <name> child.",
+        )
+        assert "Previous output failed structural validation" in out
+        assert "<feature> at position 0 is missing a <name> child." in out
+        assert "Re-emit the feature expansion" in out
+
+    def test_parse_error_takes_precedence_over_feedback_task(self):
+        # Even when feedback is also present, the task line on a
+        # retry should be the "re-emit corrected block" variant,
+        # not the normal "revise" one.
+        out = render_user_prompt(
+            input_doc="A CRM.",
+            prior_approved=None,
+            prior_pending="<features>junk</features>",
+            feedback="Add reporting",
+            parse_error="no valid <feature> children",
+        )
+        assert "Re-emit the feature expansion" in out
+        # The feedback is still shown (for context), but the task
+        # line is the retry one.
+        assert "Add reporting" in out
+
+    def test_no_parse_error_means_no_retry_section(self):
+        out = render_user_prompt(
+            input_doc="A note-taking app.",
+            prior_approved=None,
+            prior_pending=None,
+            feedback=None,
+            parse_error=None,
+        )
+        assert "Previous output failed structural validation" not in out
+        assert "Re-emit" not in out

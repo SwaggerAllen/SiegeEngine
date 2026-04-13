@@ -142,6 +142,26 @@ def client(db, project):
         app.dependency_overrides.clear()
 
 
+def _valid_features_xml(label: str = "Default") -> str:
+    """Wrap a single-feature valid <features> block for route tests.
+
+    Route tests don't care about the specific feature set — they
+    just need the expansion handler's parse-validate loop to
+    accept the mocked CLI output as valid. This helper returns a
+    canonical one-feature block whose name label is distinguishable
+    for test-provided identity when we need it.
+    """
+    return (
+        f"<features>"
+        f"<feature>"
+        f"<name>{label}</name>"
+        f"<intent>Paragraph-length intent for the {label} feature "
+        f"used as deterministic mock content in route tests.</intent>"
+        f"</feature>"
+        f"</features>"
+    )
+
+
 def _patch_cli(
     monkeypatch,
     output: str,
@@ -150,7 +170,14 @@ def _patch_cli(
     completion_tokens: int = 50,
     model: str = "claude-sonnet-4-6",
 ):
-    """Patch the CLI manager to return a deterministic GenerationResult."""
+    """Patch the CLI manager to return a deterministic GenerationResult.
+
+    The output is fed through the real parse-validate retry loop,
+    so passing a non-<features> string here will cause the
+    expansion handler to retry up to its budget and then fail.
+    Route tests that just want a successful generation should use
+    :func:`_valid_features_xml` as the output.
+    """
     from backend.cli.manager import GenerationResult
 
     async def fake_generate_with_usage(**kwargs):
@@ -211,7 +238,8 @@ class TestGetExpansion:
         assert persisted.id == body["node"]["id"]
 
     def test_reports_pending_draft(self, client, project, db, monkeypatch):
-        _patch_cli(monkeypatch, "# A plan\n")
+        mock_content = _valid_features_xml("TestPlan")
+        _patch_cli(monkeypatch, mock_content)
         asyncio.run(
             fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
@@ -219,7 +247,7 @@ class TestGetExpansion:
         assert resp.status_code == 200
         body = resp.json()
         assert body["pending_draft"] is not None
-        assert body["pending_draft"]["content"] == "# A plan\n"
+        assert body["pending_draft"]["content"] == mock_content
         # generation_status reflects jobs table; no job row exists here
         # because we drove the handler directly, so it's "idle".
         assert body["generation_status"] == "idle"
@@ -272,7 +300,7 @@ class TestFeedback:
     def test_get_surfaces_latest_telemetry_after_generation(self, client, project, db, monkeypatch):
         _patch_cli(
             monkeypatch,
-            "# some content\n",
+            _valid_features_xml("Telemetry"),
             prompt_tokens=2048,
             completion_tokens=301,
             model="claude-sonnet-4-6",
@@ -305,7 +333,7 @@ class TestFeedback:
         the expansion prose. This test exercises the guard at
         ``post_expansion_feedback``.
         """
-        _patch_cli(monkeypatch, "# Approved content\n")
+        _patch_cli(monkeypatch, _valid_features_xml("ApprovedContent"))
         asyncio.run(
             fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
@@ -330,7 +358,8 @@ class TestFeedback:
 
 class TestApprove:
     def test_commits_draft_to_node(self, client, project, db, monkeypatch):
-        _patch_cli(monkeypatch, "# Final content\n")
+        final_content = _valid_features_xml("FinalContent")
+        _patch_cli(monkeypatch, final_content)
         asyncio.run(
             fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
@@ -343,7 +372,7 @@ class TestApprove:
         )
         assert resp.status_code == 200
         body = resp.json()
-        assert body["node"]["content"] == "# Final content\n"
+        assert body["node"]["content"] == final_content
 
         db.expire_all()
         draft_after = db.get(Draft, draft.id)
@@ -358,7 +387,7 @@ class TestApprove:
         assert resp.status_code == 404
 
     def test_already_approved_returns_409(self, client, project, db, monkeypatch):
-        _patch_cli(monkeypatch, "# content\n")
+        _patch_cli(monkeypatch, _valid_features_xml("AlreadyApproved"))
         asyncio.run(
             fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
@@ -378,7 +407,7 @@ class TestApprove:
 
 class TestDiscard:
     def test_flips_draft_to_discarded(self, client, project, db, monkeypatch):
-        _patch_cli(monkeypatch, "# content\n")
+        _patch_cli(monkeypatch, _valid_features_xml("Discarded"))
         asyncio.run(
             fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
