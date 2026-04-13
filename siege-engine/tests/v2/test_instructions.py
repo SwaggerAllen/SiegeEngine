@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from backend.graph.instructions import (
     AddDependency,
     AddDomainParent,
+    AddPolicyApplication,
     Create,
     Delete,
     Demote,
@@ -16,6 +17,7 @@ from backend.graph.instructions import (
     ReassignMapping,
     RemoveDependency,
     RemoveDomainParent,
+    RemovePolicyApplication,
     Rename,
     Split,
     instruction_from_row,
@@ -124,6 +126,26 @@ _FIXTURES = [
         ),
         '- Remove domain parent: presentational "LoginView" (comp_AAAAAAAA) '
         'unmapped from "Auth" (comp_BBBBBBBB)',
+    ),
+    (
+        AddPolicyApplication(
+            policy_id="policy_AAAAAAAA",
+            policy_name="LLM calls emit telemetry",
+            component_id="comp_BBBBBBBB",
+            component_name="IdentityService",
+        ),
+        '- Apply policy "LLM calls emit telemetry" (policy_AAAAAAAA) '
+        'to component "IdentityService" (comp_BBBBBBBB)',
+    ),
+    (
+        RemovePolicyApplication(
+            policy_id="policy_AAAAAAAA",
+            policy_name="LLM calls emit telemetry",
+            component_id="comp_BBBBBBBB",
+            component_name="IdentityService",
+        ),
+        '- Detach policy "LLM calls emit telemetry" (policy_AAAAAAAA) '
+        'from component "IdentityService" (comp_BBBBBBBB)',
     ),
 ]
 

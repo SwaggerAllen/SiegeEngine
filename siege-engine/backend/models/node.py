@@ -38,6 +38,7 @@ NODE_TIERS = (
     "comp",
     "impl",
     "plan",
+    "policy",
     "expansion",
     "reqs",
     "sysarch",
@@ -45,8 +46,8 @@ NODE_TIERS = (
     "fanin",
 )
 NODE_KINDS = ("domain", "presentational")
-EDGE_TYPES = ("dependency", "domain_parent")
-FRAGMENT_KINDS = ("techspec", "pubapi", "privapi", "deps")
+EDGE_TYPES = ("dependency", "domain_parent", "policy_application")
+FRAGMENT_KINDS = ("techspec", "pubapi", "privapi", "policies", "deps")
 DRAFT_TARGET_TYPES = ("node", "fragment")
 DRAFT_STATUSES = ("pending", "approved", "discarded")
 

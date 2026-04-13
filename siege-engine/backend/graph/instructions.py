@@ -216,6 +216,49 @@ class RemoveDomainParent(_InstructionBase):
         )
 
 
+class AddPolicyApplication(_InstructionBase):
+    """Pin a policy to a component, overriding the LLM application pass.
+
+    Used when the LLM application pass missed a component that the
+    user knows should be subject to a policy. Emits a
+    ``policy_application`` edge from the policy to the component.
+    See ``docs/architecture/v2-rearchitecture.md`` §Policies.
+    """
+
+    instruction_type: Literal["AddPolicyApplication"] = "AddPolicyApplication"
+    policy_id: str
+    policy_name: str
+    component_id: str
+    component_name: str
+
+    def render(self) -> str:
+        return (
+            f'- Apply policy "{self.policy_name}" ({self.policy_id}) '
+            f'to component "{self.component_name}" ({self.component_id})'
+        )
+
+
+class RemovePolicyApplication(_InstructionBase):
+    """Detach a policy from a component, overriding a false positive.
+
+    Used when the LLM application pass marked a component as subject
+    to a policy that doesn't actually apply. Deletes the
+    ``policy_application`` edge from the policy to the component.
+    """
+
+    instruction_type: Literal["RemovePolicyApplication"] = "RemovePolicyApplication"
+    policy_id: str
+    policy_name: str
+    component_id: str
+    component_name: str
+
+    def render(self) -> str:
+        return (
+            f'- Detach policy "{self.policy_name}" ({self.policy_id}) '
+            f'from component "{self.component_name}" ({self.component_id})'
+        )
+
+
 # ── Discriminated union + registry ───────────────────────────────────
 
 Instruction = Annotated[
@@ -232,6 +275,8 @@ Instruction = Annotated[
         RemoveDependency,
         AddDomainParent,
         RemoveDomainParent,
+        AddPolicyApplication,
+        RemovePolicyApplication,
     ],
     Field(discriminator="instruction_type"),
 ]
@@ -250,6 +295,8 @@ _INSTRUCTION_TYPES: dict[str, type[_InstructionBase]] = {
     "RemoveDependency": RemoveDependency,
     "AddDomainParent": AddDomainParent,
     "RemoveDomainParent": RemoveDomainParent,
+    "AddPolicyApplication": AddPolicyApplication,
+    "RemovePolicyApplication": RemovePolicyApplication,
 }
 
 

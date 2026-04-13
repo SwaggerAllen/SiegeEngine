@@ -37,6 +37,7 @@ class FragmentKind(str, Enum):
     TECHSPEC = "techspec"
     PUBAPI = "pubapi"
     PRIVAPI = "privapi"
+    POLICIES = "policies"
     DEPS = "deps"
 
 

@@ -40,6 +40,7 @@ class Kind(str, Enum):
     COMP = "comp"
     IMPL = "impl"
     PLAN = "plan"
+    POLICY = "policy"
     EDGE = "edge"
     EXPANSION = "expansion"
     REQS = "reqs"
