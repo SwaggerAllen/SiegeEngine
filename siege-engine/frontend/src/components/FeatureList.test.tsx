@@ -27,11 +27,18 @@ function makeResponse(
     name: string;
     content: string;
     display_order: number;
+    group_label?: string | null;
+    is_implicit?: boolean;
   }> = []
 ): FeatureListResponse {
   return {
     features: features.map((f) => ({
-      ...f,
+      id: f.id,
+      name: f.name,
+      content: f.content,
+      display_order: f.display_order,
+      group_label: f.group_label ?? null,
+      is_implicit: f.is_implicit ?? false,
       updated_at: '2026-04-12T00:00:00',
     })),
   };
@@ -124,5 +131,98 @@ describe('FeatureList', () => {
     await waitFor(() =>
       expect(screen.getByText(/database offline/i)).toBeInTheDocument()
     );
+  });
+
+  it('renders features under their group headers', async () => {
+    mockedGet.mockResolvedValue(
+      makeResponse([
+        {
+          id: 'feat_1',
+          name: 'Login',
+          content: 'Users sign in.',
+          display_order: 0,
+          group_label: 'User Management',
+        },
+        {
+          id: 'feat_2',
+          name: 'Password Reset',
+          content: 'Users reset via email.',
+          display_order: 1,
+          group_label: 'User Management',
+          is_implicit: true,
+        },
+        {
+          id: 'feat_3',
+          name: 'Posting',
+          content: 'Users create posts.',
+          display_order: 2,
+          group_label: 'Content',
+        },
+      ])
+    );
+    renderList(false);
+    await waitFor(() => expect(screen.getByText('Login')).toBeInTheDocument());
+    // Group headers (use getAllByText since count annotation adds
+    // sibling text inside the same header)
+    expect(screen.getByText('User Management')).toBeInTheDocument();
+    expect(screen.getByText('Content')).toBeInTheDocument();
+    // All three features render
+    expect(screen.getByText('Login')).toBeInTheDocument();
+    expect(screen.getByText('Password Reset')).toBeInTheDocument();
+    expect(screen.getByText('Posting')).toBeInTheDocument();
+  });
+
+  it('renders an implicit badge on inferred features', async () => {
+    mockedGet.mockResolvedValue(
+      makeResponse([
+        {
+          id: 'feat_1',
+          name: 'Login',
+          content: 'Users sign in.',
+          display_order: 0,
+          is_implicit: false,
+        },
+        {
+          id: 'feat_2',
+          name: 'Password Reset',
+          content: 'Users reset via email.',
+          display_order: 1,
+          is_implicit: true,
+        },
+      ])
+    );
+    renderList(false);
+    await waitFor(() =>
+      expect(screen.getByText('Password Reset')).toBeInTheDocument()
+    );
+    // The "inferred" badge renders for the implicit feature only.
+    const inferredBadges = screen.getAllByText(/inferred/i);
+    expect(inferredBadges).toHaveLength(1);
+  });
+
+  it('renders mixed grouped + ungrouped features with an Ungrouped section', async () => {
+    mockedGet.mockResolvedValue(
+      makeResponse([
+        {
+          id: 'feat_1',
+          name: 'Login',
+          content: 'Users sign in.',
+          display_order: 0,
+          group_label: 'User Management',
+        },
+        {
+          id: 'feat_2',
+          name: 'Global Search',
+          content: 'Search everything.',
+          display_order: 1,
+          group_label: null,
+        },
+      ])
+    );
+    renderList(false);
+    await waitFor(() => expect(screen.getByText('Login')).toBeInTheDocument());
+    expect(screen.getByText('User Management')).toBeInTheDocument();
+    expect(screen.getByText('Ungrouped')).toBeInTheDocument();
+    expect(screen.getByText('Global Search')).toBeInTheDocument();
   });
 });
