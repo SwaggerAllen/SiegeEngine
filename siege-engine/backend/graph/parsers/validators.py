@@ -23,7 +23,9 @@ Each caller adds its own ``validate_*`` function here:
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal, cast
 
 from backend.graph.parsers.xml_sections import TagNode, extract_tag_tree
 
@@ -491,7 +493,7 @@ class Component:
 
     alias: str
     name: str
-    kind: str  # "domain" or "presentational"
+    kind: Literal["domain", "presentational"]
     role: str
     api_intent: str
     resp_refs: tuple[str, ...]
@@ -828,12 +830,16 @@ def _validate_component(
             "name must be a short title-case identifier."
         )
 
-    kind = (kind_node.text or "").strip()
-    if kind not in _COMPONENT_KIND_VALUES:
+    kind_raw = (kind_node.text or "").strip()
+    if kind_raw not in _COMPONENT_KIND_VALUES:
         raise ValidationError(
-            f"{pos} (alias={alias!r}) has invalid <kind> {kind!r}. "
+            f"{pos} (alias={alias!r}) has invalid <kind> {kind_raw!r}. "
             "Must be 'domain' or 'presentational'."
         )
+    # Runtime check above narrows this at runtime; cast tells mypy
+    # the downstream Component.kind / NodeCreated.kind fields see
+    # the Literal type they want.
+    kind = cast(Literal["domain", "presentational"], kind_raw)
 
     role = (role_node.text or "").strip()
     if not role:
@@ -1032,7 +1038,7 @@ def _validate_sysarch_dependencies(node: TagNode, alias_set: set[str]) -> tuple[
 
 
 def _validate_sysarch_domain_parent(
-    node: TagNode, alias_kind_map: dict[str, str]
+    node: TagNode, alias_kind_map: Mapping[str, str]
 ) -> tuple[DomainParentEdge, ...]:
     """Validate ``<domain-parent>`` and return a tuple of ``DomainParentEdge``."""
     for child in node.children:
