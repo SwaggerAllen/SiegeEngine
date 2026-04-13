@@ -49,6 +49,45 @@ def list_features(session: Session, project_id: str) -> list[Node]:
     )
 
 
+def list_top_level_components(session: Session, project_id: str) -> list[Node]:
+    """Return the project's top-level ``comp_*`` nodes in document order.
+
+    Top-level components are the ones minted by ``v2.mint_sysarch``
+    on approval of the sysarch node. They have ``parent_id=None``
+    — subcomponents minted by later comparch passes have a
+    non-null ``parent_id`` and are not included here.
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.tier == "comp",
+                Node.parent_id.is_(None),
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
+def list_policies(session: Session, project_id: str) -> list[Node]:
+    """Return the project's ``policy_*`` nodes in document order.
+
+    Includes both top-level policies (minted at sysarch approval)
+    and component-local policies (minted at comparch approval, Phase
+    4). Sysarch-minted policies have ``parent_id=None``; comparch-
+    minted policies have ``parent_id`` = the owning component. For
+    MVP the list surface returns both; UI can filter as needed.
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .where(Node.project_id == project_id, Node.tier == "policy")
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
 def list_top_level_responsibilities(session: Session, project_id: str) -> list[Node]:
     """Return the project's top-level ``resp_*`` nodes in document order.
 
