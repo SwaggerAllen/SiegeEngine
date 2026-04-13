@@ -63,6 +63,14 @@ class NodeCreated(_EventBase):
     parent_id: str | None = None
     name: str
     display_order: int = 0
+    # Initial content for the node. Empty by default — bootstrap
+    # nodes (expansion, reqs, sysarch, subreqs) are minted as
+    # shells and get their content later via DraftApproved.
+    # Nodes minted from an already-approved structured source
+    # (e.g. feat_* nodes minted from an approved expansion) carry
+    # their content at creation time, so rebuild-from-log replays
+    # back to the same state.
+    content: str = ""
 
 
 class NodeRenamed(_EventBase):

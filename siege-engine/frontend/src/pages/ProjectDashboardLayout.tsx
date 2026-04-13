@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { FeatureExpansionPanel } from '../components/FeatureExpansionPanel';
+import { FeatureList } from '../components/FeatureList';
+import { useExpansion } from '../hooks/queries/useExpansionQueries';
 import { useProject } from '../hooks/queries/useProjectQueries';
 import { debugLog } from '../lib/debugLog';
 import { describeApiError } from '../lib/describeApiError';
-import { FeatureExpansionPanel } from '../components/FeatureExpansionPanel';
 
 export function ProjectDashboardLayout() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -13,6 +15,11 @@ export function ProjectDashboardLayout() {
 
 function DashboardShell({ projectId }: { projectId: string }) {
   const { data: currentProject, error: projectError } = useProject(projectId);
+  // The dashboard reads the expansion once to decide whether to
+  // render the FeatureList at all. The FeatureList manages its
+  // own polling when the mint might still be running.
+  const { data: expansion } = useExpansion(projectId);
+  const isExpansionApproved = !!expansion?.node.content;
 
   useEffect(() => {
     debugLog('DashboardLayout.lifecycle', `MOUNT projectId=${projectId}`);
@@ -53,6 +60,9 @@ function DashboardShell({ projectId }: { projectId: string }) {
       </header>
       <main className="flex-1 overflow-auto">
         <FeatureExpansionPanel projectId={projectId} />
+        {isExpansionApproved && (
+          <FeatureList projectId={projectId} mintPending={isExpansionApproved} />
+        )}
       </main>
     </div>
   );

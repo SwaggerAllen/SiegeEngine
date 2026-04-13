@@ -182,7 +182,7 @@ def _apply_node_created(session: Session, project_id: str, event: ev.NodeCreated
             parent_id=event.parent_id,
             name=event.name,
             display_order=event.display_order,
-            content="",
+            content=event.content,
             created_at=now,
             updated_at=now,
         )

@@ -31,6 +31,7 @@ from backend.graph.expansion import (
 from backend.graph.handlers.feature_expansion import (
     GENERATE_FEATURE_EXPANSION_JOB_TYPE,
 )
+from backend.graph.handlers.feature_mint import MINT_FEATURES_JOB_TYPE
 from backend.graph.reducer import append_event
 from backend.models import Project, User
 from backend.models.node import Draft
@@ -106,6 +107,21 @@ class ApproveResponse(BaseModel):
 
 class DiscardResponse(BaseModel):
     ok: bool
+
+
+# ── Feature list response models ────────────────────────────────────
+
+
+class FeatureSummary(BaseModel):
+    id: str
+    name: str
+    content: str
+    display_order: int
+    updated_at: str
+
+
+class FeatureListResponse(BaseModel):
+    features: list[FeatureSummary]
 
 
 # ── Expansion endpoints ─────────────────────────────────────────────
@@ -265,6 +281,19 @@ def post_expansion_approve(
     append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
     db.commit()
     db.refresh(node)
+
+    # Approval is destructive at the child level — the content has
+    # been committed to node.content, and now we mint feat_* nodes
+    # from it. The mint handler runs asynchronously on the
+    # pipeline worker; the response returns immediately with the
+    # approved node, and the frontend polls the /features endpoint
+    # to see the minted features.
+    pipeline_queue.enqueue(
+        db,
+        job_type=MINT_FEATURES_JOB_TYPE,
+        payload={"project_id": project_id},
+    )
+
     return ApproveResponse(node=_serialize_node(node))
 
 
@@ -302,3 +331,36 @@ def post_expansion_discard(
     append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
     db.commit()
     return DiscardResponse(ok=True)
+
+
+# ── Feature list endpoint ───────────────────────────────────────────
+
+
+@router.get("/{project_id}/features", response_model=FeatureListResponse)
+def get_features(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeatureListResponse:
+    """List all ``feat_*`` nodes for a project in document order.
+
+    The list is populated by the ``v2.mint_features`` pipeline job
+    after the user approves the feature expansion. Before mint
+    completes, the list is empty. The frontend polls this endpoint
+    while the mint is running; once features appear, it stops
+    polling.
+    """
+    _require_project(db, project_id)
+    features = queries.list_features(db, project_id)
+    return FeatureListResponse(
+        features=[
+            FeatureSummary(
+                id=f.id,
+                name=f.name,
+                content=f.content,
+                display_order=f.display_order,
+                updated_at=f.updated_at.isoformat() if f.updated_at else "",
+            )
+            for f in features
+        ]
+    )

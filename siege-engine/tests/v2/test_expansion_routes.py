@@ -53,7 +53,7 @@ def engine_and_factory(monkeypatch):
     """Shared in-memory engine for route + handler.
 
     Redirects ``backend.database.SessionLocal`` to the same engine so
-    the handler (which opens its own sessions) sees the same data.
+    the handlers (which open their own sessions) see the same data.
     """
     engine = create_engine(
         "sqlite://",
@@ -64,9 +64,11 @@ def engine_and_factory(monkeypatch):
     factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
     import backend.database as _database_mod
+    import backend.graph.handlers.feature_mint as _feature_mint_handler
 
     monkeypatch.setattr(_database_mod, "SessionLocal", factory)
     monkeypatch.setattr(fe_handler, "SessionLocal", factory)
+    monkeypatch.setattr(_feature_mint_handler, "SessionLocal", factory)
     yield engine, factory
     engine.dispose()
 
@@ -142,6 +144,26 @@ def client(db, project):
         app.dependency_overrides.clear()
 
 
+def _valid_features_xml(label: str = "Default") -> str:
+    """Wrap a single-feature valid <features> block for route tests.
+
+    Route tests don't care about the specific feature set — they
+    just need the expansion handler's parse-validate loop to
+    accept the mocked CLI output as valid. This helper returns a
+    canonical one-feature block whose name label is distinguishable
+    for test-provided identity when we need it.
+    """
+    return (
+        f"<features>"
+        f"<feature>"
+        f"<name>{label}</name>"
+        f"<intent>Paragraph-length intent for the {label} feature "
+        f"used as deterministic mock content in route tests.</intent>"
+        f"</feature>"
+        f"</features>"
+    )
+
+
 def _patch_cli(
     monkeypatch,
     output: str,
@@ -150,7 +172,14 @@ def _patch_cli(
     completion_tokens: int = 50,
     model: str = "claude-sonnet-4-6",
 ):
-    """Patch the CLI manager to return a deterministic GenerationResult."""
+    """Patch the CLI manager to return a deterministic GenerationResult.
+
+    The output is fed through the real parse-validate retry loop,
+    so passing a non-<features> string here will cause the
+    expansion handler to retry up to its budget and then fail.
+    Route tests that just want a successful generation should use
+    :func:`_valid_features_xml` as the output.
+    """
     from backend.cli.manager import GenerationResult
 
     async def fake_generate_with_usage(**kwargs):
@@ -211,7 +240,8 @@ class TestGetExpansion:
         assert persisted.id == body["node"]["id"]
 
     def test_reports_pending_draft(self, client, project, db, monkeypatch):
-        _patch_cli(monkeypatch, "# A plan\n")
+        mock_content = _valid_features_xml("TestPlan")
+        _patch_cli(monkeypatch, mock_content)
         asyncio.run(
             fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
@@ -219,7 +249,7 @@ class TestGetExpansion:
         assert resp.status_code == 200
         body = resp.json()
         assert body["pending_draft"] is not None
-        assert body["pending_draft"]["content"] == "# A plan\n"
+        assert body["pending_draft"]["content"] == mock_content
         # generation_status reflects jobs table; no job row exists here
         # because we drove the handler directly, so it's "idle".
         assert body["generation_status"] == "idle"
@@ -272,7 +302,7 @@ class TestFeedback:
     def test_get_surfaces_latest_telemetry_after_generation(self, client, project, db, monkeypatch):
         _patch_cli(
             monkeypatch,
-            "# some content\n",
+            _valid_features_xml("Telemetry"),
             prompt_tokens=2048,
             completion_tokens=301,
             model="claude-sonnet-4-6",
@@ -305,7 +335,7 @@ class TestFeedback:
         the expansion prose. This test exercises the guard at
         ``post_expansion_feedback``.
         """
-        _patch_cli(monkeypatch, "# Approved content\n")
+        _patch_cli(monkeypatch, _valid_features_xml("ApprovedContent"))
         asyncio.run(
             fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
@@ -330,7 +360,8 @@ class TestFeedback:
 
 class TestApprove:
     def test_commits_draft_to_node(self, client, project, db, monkeypatch):
-        _patch_cli(monkeypatch, "# Final content\n")
+        final_content = _valid_features_xml("FinalContent")
+        _patch_cli(monkeypatch, final_content)
         asyncio.run(
             fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
@@ -343,7 +374,7 @@ class TestApprove:
         )
         assert resp.status_code == 200
         body = resp.json()
-        assert body["node"]["content"] == "# Final content\n"
+        assert body["node"]["content"] == final_content
 
         db.expire_all()
         draft_after = db.get(Draft, draft.id)
@@ -358,7 +389,7 @@ class TestApprove:
         assert resp.status_code == 404
 
     def test_already_approved_returns_409(self, client, project, db, monkeypatch):
-        _patch_cli(monkeypatch, "# content\n")
+        _patch_cli(monkeypatch, _valid_features_xml("AlreadyApproved"))
         asyncio.run(
             fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
@@ -378,7 +409,7 @@ class TestApprove:
 
 class TestDiscard:
     def test_flips_draft_to_discarded(self, client, project, db, monkeypatch):
-        _patch_cli(monkeypatch, "# content\n")
+        _patch_cli(monkeypatch, _valid_features_xml("Discarded"))
         asyncio.run(
             fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
         )
@@ -400,3 +431,93 @@ class TestDiscard:
         # And the node content is still empty.
         expansion_resp = client.get(f"/api/projects/{project.id}/expansion")
         assert expansion_resp.json()["node"]["content"] == ""
+
+
+class TestApproveEnqueuesMint:
+    """Approving a draft should enqueue the v2.mint_features job.
+
+    The mint job runs on the pipeline worker to parse the now-
+    approved expansion content and mint feat_* nodes.
+    """
+
+    def test_mint_job_enqueued_on_approve(self, client, project, db, monkeypatch):
+        _patch_cli(monkeypatch, _valid_features_xml("MintTest"))
+        asyncio.run(
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
+        )
+        db.expire_all()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
+
+        resp = client.post(
+            f"/api/projects/{project.id}/expansion/approve",
+            json={"draft_id": draft.id},
+        )
+        assert resp.status_code == 200
+
+        db.expire_all()
+        from backend.graph.handlers.feature_mint import MINT_FEATURES_JOB_TYPE
+
+        mint_jobs = list(
+            db.execute(select(Job).where(Job.job_type == MINT_FEATURES_JOB_TYPE)).scalars()
+        )
+        assert len(mint_jobs) == 1
+        assert mint_jobs[0].payload == {"project_id": project.id}
+
+
+class TestFeatureList:
+    """GET /api/projects/{id}/features returns the project's feat_*
+    nodes in document order. Populated by the mint handler after
+    expansion approval.
+    """
+
+    def test_empty_list_when_no_features_yet(self, client, project):
+        resp = client.get(f"/api/projects/{project.id}/features")
+        assert resp.status_code == 200
+        assert resp.json() == {"features": []}
+
+    def test_missing_project_returns_404(self, client):
+        resp = client.get("/api/projects/nonexistent/features")
+        assert resp.status_code == 404
+
+    def test_populated_list_after_mint(self, client, project, db, monkeypatch):
+        # Run the full generate → approve → mint flow end-to-end
+        # via the in-process worker drive.
+        approved = (
+            "<features>"
+            "<feature><name>Billing</name><intent>Users pay for tiers.</intent></feature>"
+            "<feature><name>Auth</name><intent>Users sign in with email.</intent></feature>"
+            "<feature><name>Reports</name><intent>Users see stats.</intent></feature>"
+            "</features>"
+        )
+        _patch_cli(monkeypatch, approved)
+        asyncio.run(
+            fe_handler.generate_feature_expansion({"project_id": project.id, "feedback": None})
+        )
+        db.expire_all()
+        draft = db.execute(select(Draft).where(Draft.project_id == project.id)).scalar_one()
+
+        client.post(
+            f"/api/projects/{project.id}/expansion/approve",
+            json={"draft_id": draft.id},
+        )
+
+        # Drive the mint handler inline (the test doesn't run the
+        # pipeline worker loop; the approve route enqueues the
+        # job and we execute it synchronously here).
+        from backend.graph.handlers.feature_mint import mint_features
+
+        asyncio.run(mint_features({"project_id": project.id}))
+
+        resp = client.get(f"/api/projects/{project.id}/features")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["features"]) == 3
+
+        feats = body["features"]
+        assert [f["name"] for f in feats] == ["Billing", "Auth", "Reports"]
+        assert feats[0]["content"] == "Users pay for tiers."
+        assert feats[1]["content"] == "Users sign in with email."
+        assert feats[2]["content"] == "Users see stats."
+        assert [f["display_order"] for f in feats] == [0, 1, 2]
+        assert all(f["id"].startswith("feat_") for f in feats)
+        assert all(f["updated_at"] for f in feats)
