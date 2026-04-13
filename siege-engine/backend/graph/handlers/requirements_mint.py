@@ -50,6 +50,7 @@ from backend.graph.parsers.validators import (
 from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
 from backend.graph.reducer import append_event
 from backend.graph.requirements import get_reqs_node
+from backend.graph.sysarch import bootstrap_sysarch_node, get_sysarch_node
 from backend.models.node import Node
 from backend.pipeline import queue as pipeline_queue
 
@@ -170,7 +171,25 @@ async def mint_requirements(payload: dict) -> None:
                 )
                 minted_edge_ids.append(edge_id)
 
+        # Bootstrap the sysarch node in the same transaction as
+        # the resp mints so either both land or neither does.
+        # Skip if a sysarch node already exists (replay safety).
+        should_enqueue_sysarch_generation = get_sysarch_node(db, project_id) is None
+        if should_enqueue_sysarch_generation:
+            bootstrap_sysarch_node(db, project_id)
+
         db.commit()
+
+        # Enqueue sysarch generation after the commit. Transient
+        # enqueue failure leaves a sysarch bootstrap node without
+        # a job, which the GET /sysarch lazy-bootstrap path heals.
+        if should_enqueue_sysarch_generation:
+            pipeline_queue.enqueue(
+                db,
+                job_type="v2.generate_sysarch",
+                payload={"project_id": project_id, "feedback": None},
+            )
+
         logger.info(
             "mint_requirements project=%s minted %d resp_* nodes and %d decomposition edges",
             project_id,

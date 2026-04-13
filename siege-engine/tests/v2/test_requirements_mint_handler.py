@@ -25,6 +25,7 @@ from backend.graph.handlers.requirements_mint import (
 from backend.graph.reducer import append_event
 from backend.graph.requirements import bootstrap_reqs_node
 from backend.models import Project
+from backend.models.job import Job
 from backend.models.node import Edge, Node
 
 
@@ -320,3 +321,61 @@ class TestFailureModes:
             s.close()
         with pytest.raises(RequirementsMintHandlerError, match="does not cover every feature"):
             asyncio.run(mint_requirements({"project_id": project_id}))
+
+
+class TestSysarchBootstrapFanOut:
+    def test_bootstraps_sysarch_node_and_enqueues_generation(self, shared_session_factory):
+        factory = shared_session_factory
+        s = factory()
+        try:
+            project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
+            content = _reqs_block(feat_ids, ("Auth", "Identify."))
+            _set_reqs_content(s, project_id, content)
+        finally:
+            s.close()
+
+        asyncio.run(mint_requirements({"project_id": project_id}))
+
+        s = factory()
+        try:
+            # Sysarch bootstrap node exists
+            sysarch_nodes = list(
+                s.execute(
+                    select(Node).where(Node.project_id == project_id, Node.tier == "sysarch")
+                ).scalars()
+            )
+            assert len(sysarch_nodes) == 1
+            assert sysarch_nodes[0].id.startswith("sysarch_")
+            # Empty content until the generation handler produces a draft
+            assert sysarch_nodes[0].content == ""
+
+            # v2.generate_sysarch job enqueued
+            jobs = list(
+                s.execute(select(Job).where(Job.job_type == "v2.generate_sysarch")).scalars()
+            )
+            assert any(j.payload.get("project_id") == project_id for j in jobs)
+        finally:
+            s.close()
+
+    def test_does_not_re_bootstrap_on_idempotent_rerun(self, shared_session_factory):
+        factory = shared_session_factory
+        s = factory()
+        try:
+            project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA"])
+            _set_reqs_content(s, project_id, _reqs_block(feat_ids, ("Auth", "Ok.")))
+        finally:
+            s.close()
+
+        asyncio.run(mint_requirements({"project_id": project_id}))
+        asyncio.run(mint_requirements({"project_id": project_id}))
+
+        s = factory()
+        try:
+            sysarch_nodes = list(
+                s.execute(
+                    select(Node).where(Node.project_id == project_id, Node.tier == "sysarch")
+                ).scalars()
+            )
+            assert len(sysarch_nodes) == 1  # not 2
+        finally:
+            s.close()
