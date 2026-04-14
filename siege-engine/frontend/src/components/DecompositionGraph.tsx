@@ -1,4 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import type cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
 import type {
   DecompositionGraphEdge,
@@ -8,6 +10,7 @@ import type {
 
 interface Props {
   graph: DecompositionGraphResponse;
+  projectId: string;
 }
 
 /**
@@ -25,14 +28,94 @@ interface Props {
  * - Domain_parent edges are dotted arrows from presentational
  *   to domain components.
  *
- * No interactivity beyond click-to-select. Editing the graph
- * (create/move/delete) is Phase 11 structural-edit territory
- * and lands in a follow-up phase on top of this view.
+ * Click-to-navigate: clicking a top-level component navigates
+ * to its comparch page. Clicking a subcomponent navigates to
+ * its owning top-level's comparch page. Clicking a resp node
+ * selects it without navigation (no resp detail page exists).
+ * Structural edits (create/move/delete) are Phase 11.
  */
-export function DecompositionGraph({ graph }: Props) {
+export function DecompositionGraph({ graph, projectId }: Props) {
+  const navigate = useNavigate();
+  const cyRef = useRef<cytoscape.Core | null>(null);
+
+  // Resolve a clicked node to the top-level component it belongs
+  // to. For a top-level comp that's the node itself. For a
+  // subcomponent, walk parent_id to the top-level. For a resp,
+  // walk the decomposition edge to its target comp (if any).
+  // Returns null if no navigation target exists.
+  const topLevelCompIdFor = useMemo(() => {
+    const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+    const decompTargetByResp = new Map<string, string>();
+    for (const e of graph.edges) {
+      if (e.edge_type !== 'decomposition') continue;
+      const source = byId.get(e.source_id);
+      if (source?.tier === 'resp' && !source.parent_id) {
+        // top-level resp → target (usually a top-level comp)
+        decompTargetByResp.set(e.source_id, e.target_id);
+      }
+    }
+    return (nodeId: string): string | null => {
+      const node = byId.get(nodeId);
+      if (!node) return null;
+      if (node.tier === 'comp') {
+        // Subcomponent: walk parent_id to find the top-level.
+        let current: DecompositionGraphNode | undefined = node;
+        while (current && current.parent_id) {
+          const parent = byId.get(current.parent_id);
+          if (!parent || parent.tier !== 'comp') break;
+          current = parent;
+        }
+        return current?.id ?? null;
+      }
+      if (node.tier === 'resp') {
+        if (node.parent_id) {
+          // Subresp: parent is a comp, walk up the same way
+          const parent = byId.get(node.parent_id);
+          if (parent?.tier === 'comp') {
+            // Recurse into the comp walker
+            return topLevelCompIdForNode(parent, byId);
+          }
+        }
+        // Top-level resp: follow decomposition edge to its comp
+        const target = decompTargetByResp.get(node.id);
+        if (target) {
+          const targetNode = byId.get(target);
+          if (targetNode?.tier === 'comp') {
+            return topLevelCompIdForNode(targetNode, byId);
+          }
+        }
+      }
+      return null;
+    };
+  }, [graph]);
+
   const elements = useMemo(() => {
     return toCytoscapeElements(graph.nodes, graph.edges);
   }, [graph]);
+
+  // Wire up tap handlers once the Cytoscape instance is ready.
+  // Clicking a node selects it (Cytoscape's built-in behavior)
+  // AND navigates to the resolved top-level component's comparch
+  // page if one exists. Clicking on the background deselects.
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const onTap = (event: cytoscape.EventObject) => {
+      const target = event.target;
+      // event.target is the core itself when tapping the background
+      if (target === cy) return;
+      if (!target.isNode || !target.isNode()) return;
+      const nodeId = target.id();
+      const compId = topLevelCompIdFor(nodeId);
+      if (compId) {
+        navigate(`/projects/${projectId}/components/${compId}/comparch`);
+      }
+    };
+    cy.on('tap', onTap);
+    return () => {
+      cy.off('tap', onTap);
+    };
+  }, [navigate, projectId, topLevelCompIdFor]);
 
   const stylesheet = useMemo<cytoscape.StylesheetCSS[]>(
     () => [
@@ -139,6 +222,21 @@ export function DecompositionGraph({ graph }: Props) {
           'target-arrow-color': '#a855f7',
         },
       },
+      {
+        selector: 'node:selected',
+        css: {
+          'border-color': '#fbbf24',
+          'border-width': 3,
+        },
+      },
+      {
+        selector: 'edge:selected',
+        css: {
+          'line-color': '#fbbf24',
+          'target-arrow-color': '#fbbf24',
+          width: 3,
+        },
+      },
     ],
     []
   );
@@ -156,15 +254,37 @@ export function DecompositionGraph({ graph }: Props) {
   );
 
   return (
-    <div className="w-full h-full">
+    <div className="w-full h-full cursor-pointer">
       <CytoscapeComponent
         elements={elements}
         stylesheet={stylesheet}
         layout={layout}
         style={{ width: '100%', height: '100%' }}
+        cy={(cy) => {
+          cyRef.current = cy;
+        }}
       />
     </div>
   );
+}
+
+/**
+ * Walk from a subcomponent comp_* node up to the top-level
+ * comp_* ancestor (the one with no comp parent). Used by the
+ * click-to-navigate resolver to find which comparch page a
+ * clicked subcomponent belongs to.
+ */
+function topLevelCompIdForNode(
+  start: DecompositionGraphNode,
+  byId: Map<string, DecompositionGraphNode>
+): string | null {
+  let current: DecompositionGraphNode | undefined = start;
+  while (current && current.parent_id) {
+    const parent = byId.get(current.parent_id);
+    if (!parent || parent.tier !== 'comp') break;
+    current = parent;
+  }
+  return current?.id ?? null;
 }
 
 /**
