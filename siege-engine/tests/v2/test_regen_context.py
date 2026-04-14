@@ -24,6 +24,8 @@ from backend.graph.reducer import append_event
 from backend.graph.regen_context import (
     build_regen_context,
     format_regen_context,
+    format_regen_context_for_sub,
+    subcomp_alias_for_name,
 )
 from backend.models import Project
 
@@ -188,6 +190,82 @@ def _seed_subresp(
         ),
     )
     return sid
+
+
+def _seed_subcomponent(
+    session: Session,
+    project_id: str,
+    parent_comp_id: str,
+    name: str,
+    order: int,
+    *,
+    techspec: str = "",
+    pubapi: str = "",
+    privapi: str = "",
+) -> str:
+    """Seed a subcomponent comp_* node under an existing top-level comp."""
+    sub_id = mint(session, Kind.COMP)
+    append_event(
+        session,
+        project_id,
+        ev.NodeCreated(
+            node_id=sub_id,
+            tier="comp",
+            kind="domain",
+            parent_id=parent_comp_id,
+            name=name,
+            display_order=order,
+            content="",
+        ),
+    )
+    for kind, content in (
+        (FragmentKind.TECHSPEC, techspec),
+        (FragmentKind.PUBAPI, pubapi),
+        (FragmentKind.PRIVAPI, privapi),
+    ):
+        if content:
+            append_event(
+                session,
+                project_id,
+                ev.FragmentUpdated(
+                    fragment_id=fragment_id(sub_id, kind),
+                    owner_id=sub_id,
+                    fragment_kind=kind,
+                    new_content=content,
+                ),
+            )
+    return sub_id
+
+
+def _seed_subresp_to_comp_edge(
+    session: Session, project_id: str, resp_id: str, comp_id: str
+) -> None:
+    """Emit a decomposition edge from a (sub)resp to a (sub)component."""
+    edge_id = mint(session, Kind.EDGE)
+    append_event(
+        session,
+        project_id,
+        ev.EdgeCreated(
+            edge_id=edge_id,
+            edge_type="decomposition",
+            source_id=resp_id,
+            target_id=comp_id,
+        ),
+    )
+
+
+def _seed_parent_privapi(session: Session, project_id: str, comp_id: str, privapi: str) -> None:
+    """Seed a private-surface fragment on a top-level comp."""
+    append_event(
+        session,
+        project_id,
+        ev.FragmentUpdated(
+            fragment_id=fragment_id(comp_id, FragmentKind.PRIVAPI),
+            owner_id=comp_id,
+            fragment_kind=FragmentKind.PRIVAPI,
+            new_content=privapi,
+        ),
+    )
 
 
 def _seed_top_level_policy(session: Session, project_id: str, name: str, order: int) -> str:
@@ -535,3 +613,254 @@ class TestFormatRegenContext:
         # one parent resp id
         assert "BillingService" in prompt
         assert seeded["resp_bill"] in prompt
+
+
+class TestSlugifyAlias:
+    def test_basic_snake_case(self):
+        assert subcomp_alias_for_name("SessionStore") == "sessionstore"
+        assert subcomp_alias_for_name("Session Store") == "session_store"
+        assert subcomp_alias_for_name("Credential Gate") == "credential_gate"
+
+    def test_strips_non_alphanumerics(self):
+        assert subcomp_alias_for_name("Token-Bucket!") == "token_bucket"
+        assert subcomp_alias_for_name("Retry/Backoff") == "retry_backoff"
+
+    def test_collapses_underscores(self):
+        assert subcomp_alias_for_name("Foo   Bar") == "foo_bar"
+        assert subcomp_alias_for_name("Foo__Bar") == "foo_bar"
+
+    def test_truncates_to_32_chars(self):
+        alias = subcomp_alias_for_name("X" * 200)
+        assert len(alias) <= 32
+
+    def test_leading_digit_prefixed(self):
+        alias = subcomp_alias_for_name("3DRenderer")
+        assert alias.startswith("sub_")
+        assert alias[0].isalpha()
+
+
+@pytest.fixture()
+def seeded_with_sub(db, seeded):
+    """Extend the seeded fixture with a subcomponent layout under billing.
+
+    Seeds three subcomponents (session_store, credential_gate,
+    foundation) under billing, plus subresp→sub decomposition
+    edges mapping each subresp to one of the subs, and a parent
+    privapi on billing.
+    """
+    project_id = seeded["project_id"]
+    # Give billing a private surface fragment
+    _seed_parent_privapi(
+        db,
+        project_id,
+        seeded["comp_billing"],
+        "Internal: _tokenize(raw) and _rotate_keys(cutoff).",
+    )
+
+    sub_store = _seed_subcomponent(
+        db,
+        project_id,
+        seeded["comp_billing"],
+        "SessionStore",
+        0,
+        techspec="Persist session tokens.",
+        pubapi="create_session(pid) -> Session.",
+    )
+    sub_gate = _seed_subcomponent(
+        db,
+        project_id,
+        seeded["comp_billing"],
+        "CredentialGate",
+        1,
+        techspec="Verify credentials.",
+        pubapi="verify(creds) -> PrincipalId | None.",
+    )
+    sub_found = _seed_subcomponent(
+        db,
+        project_id,
+        seeded["comp_billing"],
+        "Foundation",
+        2,
+        techspec="Own the component root.",
+        pubapi="load_settings(). configure_logging().",
+    )
+
+    # Decomposition edges from the pre-existing subresps to the
+    # subcomponents — mimicking comparch_mint's post-approval
+    # edge emissions.
+    _seed_subresp_to_comp_edge(db, project_id, seeded["sub_token"], sub_store)
+    _seed_subresp_to_comp_edge(db, project_id, seeded["sub_retry"], sub_gate)
+
+    db.commit()
+    return {
+        **seeded,
+        "sub_store": sub_store,
+        "sub_gate": sub_gate,
+        "sub_found": sub_found,
+    }
+
+
+class TestBuildRegenContextForSubcomponent:
+    def test_populates_parent_fields(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        assert ctx.parent_component is not None
+        assert ctx.parent_component.id == seeded_with_sub["comp_billing"]
+        assert "Handles payments" in ctx.parent_techspec
+        assert "get_billing_state" in ctx.parent_pubapi
+        assert "_tokenize" in ctx.parent_privapi
+
+    def test_sibling_subcomps_excludes_self(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        sibling_ids = set(ctx.sibling_subcomp_ids)
+        assert seeded_with_sub["sub_gate"] in sibling_ids
+        assert seeded_with_sub["sub_found"] in sibling_ids
+        assert seeded_with_sub["sub_store"] not in sibling_ids
+
+    def test_sibling_subcomp_pubapi_fragments(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        assert "verify(creds)" in ctx.sibling_subcomp_pubapi_fragments[seeded_with_sub["sub_gate"]]
+        assert "load_settings" in ctx.sibling_subcomp_pubapi_fragments[seeded_with_sub["sub_found"]]
+
+    def test_sibling_comp_ids_are_parents_siblings(self, db, seeded_with_sub):
+        """For a subcomponent, sibling_comp_ids holds the parent's
+        sibling top-level comps, not the sub's same-parent siblings."""
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        # Billing's siblings are auth + foundation
+        assert set(ctx.sibling_comp_ids) == {
+            seeded_with_sub["comp_auth"],
+            seeded_with_sub["comp_foundation"],
+        }
+
+    def test_dep_pubapi_fragments_are_parents_deps(self, db, seeded_with_sub):
+        """For a subcomponent, dep_pubapi_fragments holds the parent's
+        outbound dep pubapis (what the parent already depends on)."""
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        # Billing depends on auth + foundation
+        assert set(ctx.dep_pubapi_fragments.keys()) == {
+            seeded_with_sub["comp_auth"],
+            seeded_with_sub["comp_foundation"],
+        }
+        assert "authenticate" in ctx.dep_pubapi_fragments[seeded_with_sub["comp_auth"]]
+
+    def test_subcomponent_with_no_same_parent_siblings(self, db):
+        project_id = str(uuid.uuid4())
+        db.add(Project(id=project_id, name="Solo", git_repo_path="/tmp/solo"))
+        db.flush()
+        resp = _seed_top_level_resp(db, project_id, "Core", 0)
+        comp = _seed_component(
+            db,
+            project_id,
+            "CoreService",
+            0,
+            [resp],
+            techspec="Only component.",
+            pubapi="run().",
+        )
+        sub = _seed_subcomponent(db, project_id, comp, "OnlySub", 0, techspec="x", pubapi="y")
+        db.commit()
+
+        ctx = build_regen_context(db, sub)
+        assert ctx.sibling_subcomp_ids == ()
+        assert ctx.sibling_subcomps == ()
+        assert ctx.sibling_subcomp_pubapi_fragments == {}
+
+    def test_subcomponent_with_missing_parent_privapi(self, db, seeded_with_sub):
+        """Missing parent privapi → empty string, no error."""
+        # Delete the privapi fragment we seeded
+        from backend.models.node import Fragment
+
+        frag = db.get(
+            Fragment,
+            fragment_id(seeded_with_sub["comp_billing"], FragmentKind.PRIVAPI),
+        )
+        assert frag is not None
+        db.delete(frag)
+        db.commit()
+
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        assert ctx.parent_privapi == ""
+
+    def test_top_level_comp_has_empty_subcomponent_fields(self, db, seeded):
+        """A top-level comp context must have None parent_component
+        and empty sub-specific fields — behavior unchanged from Phase 4."""
+        ctx = build_regen_context(db, seeded["comp_billing"])
+        assert ctx.parent_component is None
+        assert ctx.parent_techspec == ""
+        assert ctx.sibling_subcomp_ids == ()
+
+
+class TestFormatRegenContextForSub:
+    def test_returns_all_expected_keys(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        formatted = format_regen_context_for_sub(ctx)
+        expected = {
+            "subcomponent_summary",
+            "parent_component_summary",
+            "subresps_summary",
+            "sibling_subcomps_summary",
+            "parent_sibling_comps_summary",
+            "dep_pubapi_summary",
+        }
+        assert set(formatted.keys()) == expected
+
+    def test_subcomponent_summary_includes_name_and_role(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        summary = format_regen_context_for_sub(ctx)["subcomponent_summary"]
+        assert "SessionStore" in summary
+        assert "Persist session tokens" in summary
+
+    def test_parent_component_summary_includes_three_fragments(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        summary = format_regen_context_for_sub(ctx)["parent_component_summary"]
+        assert "BillingService" in summary
+        assert "Handles payments" in summary  # techspec
+        assert "get_billing_state" in summary  # pubapi
+        assert "_tokenize" in summary  # privapi
+
+    def test_sibling_subcomps_summary_includes_aliases(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        summary = format_regen_context_for_sub(ctx)["sibling_subcomps_summary"]
+        assert "credentialgate" in summary or "credential_gate" in summary
+        assert "foundation" in summary
+        # The sub's own slug should NOT appear in its own sibling list
+        assert "sessionstore" not in summary and "session_store" not in summary
+
+    def test_parent_sibling_comps_summary_lists_real_ids(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        summary = format_regen_context_for_sub(ctx)["parent_sibling_comps_summary"]
+        assert seeded_with_sub["comp_auth"] in summary
+        assert seeded_with_sub["comp_foundation"] in summary
+        assert seeded_with_sub["comp_billing"] not in summary  # parent excluded
+
+    def test_dep_pubapi_summary_from_parents_deps(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        summary = format_regen_context_for_sub(ctx)["dep_pubapi_summary"]
+        assert "authenticate" in summary or "load_settings" in summary
+
+    def test_subresps_summary_shows_assigned_subresps(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        summary = format_regen_context_for_sub(ctx)["subresps_summary"]
+        # sub_store has sub_token routed to it via decomposition edge
+        assert seeded_with_sub["sub_token"] in summary
+        assert "Tokenization" in summary
+
+    def test_raises_on_top_level_context(self, db, seeded):
+        ctx = build_regen_context(db, seeded["comp_billing"])
+        with pytest.raises(ValueError, match="top-level component context"):
+            format_regen_context_for_sub(ctx)
+
+    def test_plugs_into_subcomparch_render_user_prompt(self, db, seeded_with_sub):
+        from backend.graph.prompts.subcomparch import render_user_prompt
+
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        formatted = format_regen_context_for_sub(ctx)
+        prompt = render_user_prompt(
+            **formatted,
+            prior_approved=None,
+            prior_pending=None,
+            feedback=None,
+            parse_error=None,
+        )
+        assert "SessionStore" in prompt
+        assert "BillingService" in prompt  # parent
+        assert seeded_with_sub["comp_auth"] in prompt  # parent sibling comp id
