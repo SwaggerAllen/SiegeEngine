@@ -9,6 +9,7 @@ import { ProjectCreatePage } from './pages/ProjectCreatePage';
 import { ProjectDashboardLayout } from './pages/ProjectDashboardLayout';
 import { ProjectSettingsPage } from './pages/ProjectSettingsPage';
 import { ComponentSubreqsPage } from './pages/ComponentSubreqsPage';
+import { ComponentComparchPage } from './pages/ComponentComparchPage';
 import { GitHubCallbackPage } from './pages/GitHubCallbackPage';
 
 function NavigationLogger() {
@@ -88,6 +89,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ComponentSubreqsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:id/components/:compId/comparch"
+          element={
+            <ProtectedRoute>
+              <ComponentComparchPage />
             </ProtectedRoute>
           }
         />
