@@ -1961,3 +1961,118 @@ def _enforce_sub_foundation_dependency(
             'Add <dep from="<alias>" to="' + foundation_alias + '"/> '
             "for each missing subcomponent."
         )
+
+
+# ── Policy application pass (Phase 4) ──────────────────────────────
+
+
+@dataclass(frozen=True)
+class PolicyApplicationDecision:
+    """One LLM decision on whether a policy applies to a target.
+
+    ``applies`` is True for ``<applies>`` entries and False for
+    ``<does-not-apply>`` entries. ``rationale`` is the paragraph
+    the LLM wrote justifying the decision — captured in handler
+    logs but not stored in the DB per the Phase 4 stage 9 design
+    call.
+    """
+
+    policy_id: str
+    applies: bool
+    rationale: str
+
+
+_POLICY_APPLICATIONS_ALLOWED_CHILDREN = {"applies", "does-not-apply"}
+
+
+def validate_policy_applications(
+    tree: TagNode, *, known_policy_ids: set[str]
+) -> tuple[PolicyApplicationDecision, ...]:
+    """Validate a parsed ``<policy-applications>`` tree.
+
+    Enforces: every candidate policy in ``known_policy_ids`` is
+    covered exactly once by either an ``<applies>`` or a
+    ``<does-not-apply>`` entry, every ``policy`` attribute
+    references a known policy ID, and every entry has a
+    non-empty ``<rationale>`` child.
+
+    Returns a tuple of :class:`PolicyApplicationDecision` in the
+    order the entries appeared in the XML.
+    """
+    if tree.tag != "policy-applications":
+        raise ValidationError(
+            f"Expected root tag <policy-applications>, got <{tree.tag}>. "
+            "Wrap the application decisions in a single "
+            "<policy-applications>...</policy-applications> block."
+        )
+
+    decisions: list[PolicyApplicationDecision] = []
+    seen: dict[str, str] = {}  # policy_id → which tag it appeared under
+    for index, child in enumerate(tree.children):
+        if child.tag not in _POLICY_APPLICATIONS_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<policy-applications> contains an unexpected child "
+                f"<{child.tag}>. Only <applies> and <does-not-apply> "
+                "entries are allowed."
+            )
+        policy_id = child.attrs.get("policy", "").strip()
+        if not policy_id:
+            raise ValidationError(
+                f"<{child.tag}> at position {index} is missing the policy "
+                "attribute. Every entry must carry "
+                'policy="policy_..." with a known policy ID.'
+            )
+        if policy_id not in known_policy_ids:
+            raise ValidationError(
+                f"<{child.tag}> at position {index} references unknown "
+                f"policy {policy_id!r}. Valid candidate IDs: "
+                f"{sorted(known_policy_ids)}."
+            )
+        if policy_id in seen:
+            raise ValidationError(
+                f"<{child.tag}> at position {index} is a duplicate entry "
+                f"for policy {policy_id!r}. The previous occurrence was "
+                f"inside <{seen[policy_id]}>. Each candidate policy must "
+                "appear exactly once."
+            )
+        seen[policy_id] = child.tag
+
+        rationale_children = child.find_all("rationale")
+        if len(rationale_children) == 0:
+            raise ValidationError(
+                f"<{child.tag} policy={policy_id!r}> is missing a "
+                "<rationale> child. Both applies and does-not-apply "
+                "entries require a rationale paragraph."
+            )
+        if len(rationale_children) > 1:
+            raise ValidationError(
+                f"<{child.tag} policy={policy_id!r}> has "
+                f"{len(rationale_children)} <rationale> children; exactly "
+                "one is required."
+            )
+        rationale_text = (rationale_children[0].text or "").strip()
+        if not rationale_text:
+            raise ValidationError(
+                f"<{child.tag} policy={policy_id!r}> has an empty "
+                "<rationale>. The rationale must explain why the policy "
+                "does (or does not) apply to this target."
+            )
+
+        decisions.append(
+            PolicyApplicationDecision(
+                policy_id=policy_id,
+                applies=(child.tag == "applies"),
+                rationale=rationale_text,
+            )
+        )
+
+    missing = sorted(known_policy_ids - set(seen.keys()))
+    if missing:
+        raise ValidationError(
+            "<policy-applications> does not cover every candidate "
+            f"policy. Missing: {', '.join(missing)}. Every candidate "
+            "policy must appear exactly once as either <applies> or "
+            "<does-not-apply>."
+        )
+
+    return tuple(decisions)
