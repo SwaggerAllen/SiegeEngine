@@ -226,11 +226,144 @@ The **manifest** node (one per project, singleton) is the authoritative mapping 
 
 ## A.2 Flows
 
-*(to be filled in)*
+The system supports four flow types. Only one flow run (or sub-run) may be active per project at a time — see A.7.
+
+### A.2.1 Scaffolding flow
+
+The default cold-start flow. Takes a raw input document and walks the full structured-model generation order (A.3.1) from input expansion down to code, minting every node from scratch.
+
+- **Input expansion** — the `expansion_*` bootstrap produces a prose decomposition of the raw input into features. On approval, `feat_*` nodes are projected.
+- **Requirements** — the `reqs_*` bootstrap takes the approved features and produces top-level responsibilities. On approval, `resp_*` nodes and `feat_* → resp_*` decomposition edges are projected.
+- **System architecture** — the `sysarch_*` bootstrap produces the top-level component graph: components, API intent, top-level policies, dep edges, domain-parent edges, and a system-level techspec. On approval, `comp_*` nodes (including the foundation component), top-level `policy_*` nodes, dep/domain-parent edges, and one `subreqs_*` bootstrap per top-level component are projected.
+- **Subrequirements** — per top-level component, the `subreqs_*` bootstrap decomposes that component's top-level responsibilities into subresponsibilities. On approval, the `resp_*` subresp children and `top_level_resp → subresp` decomposition edges are projected.
+- **Component architectures** — generated in dependency topological order after each component's subreqs is approved. Each produces the component's fragments (techspec, pubapi, privapi, policies, deps), plus subcomponents (with the foundation subcomponent rule), sub-dependencies, and `policy_application` edges from top-level and component-local policies.
+- **Subcomponent architectures** — generated per subcomponent after the parent component's arch doc is approved. Four fragment sections (techspec, pubapi, privapi, deps) — no policies section because subcomponents are leaves.
+- **Implementation nodes** — one per subcomponent and one per un-fanned-out component. Carries the detailed design and build content the arch doc deliberately abstracts away. Maps to a folder on disk via the manifest.
+- **Plan nodes** — per impl, translating impl-level intent into a concrete change list.
+- **Code** — generated as a final leaf pass, plan by plan, in dependency topological order, bounded by each leaf's territory.
+
+Each step produces one or more draft artifacts for human review. Each tier's draft runs through AI self-review first, then lands in the review queue for the assigned owner. Approval at any tier unblocks the immediately-downstream work via the scheduler (A.3.2) — no tier enqueues its successor directly.
+
+### A.2.2 Feature request flow
+
+Input is a prose feature description ("add billing," "let users share documents with external viewers"). The flow does **not** skip straight to minting a new feature — it first runs a **phase-zero expansion** that takes the request and decomposes it into one or more concrete features, because a user request is often really several features that need to be split before the rest of the pipeline can route them correctly.
+
+Phase zero produces a small expansion-doc-style artifact: a structured list of features the request implies, each with a short name and intent. The artifact is reviewable with prose feedback like any other bootstrap output. On approval, the features enter the existing feature → responsibility → component → subcomponent chain as fresh mints, incremental to the already-projected state.
+
+**Change plans at every level.** Alongside the node regen at each tier the request touches, the flow produces a `changeplan_*` node describing what this request means at that tier:
+
+- A system-level change plan: "this request adds a new billing feature, which will spawn two new top-level responsibilities in reqs and affect the sysarch pass by introducing one new top-level component and adding policy applications to existing ones."
+- Per-component change plans for components the request touches: "this component needs a new subresponsibility for invoice rendering; its subcomponents will gain a PDFRenderer subcomponent; its deps will add comp_billing."
+- Per-subcomponent change plans for subs that inherit the change: "this subcomponent's pubapi needs to expose a new method for invoice_render; private helpers are unchanged."
+
+Each change plan goes through the full draft → AI-review → human-review → approve lifecycle. Change plans are **not structural DAG nodes** — nothing depends on them via dependency edges, and they don't project structured children on approval. They are per-flow-run review surfaces that document intent. They persist in the event log as provenance (A.4.3) so that "why did this regen happen, and what was the thinking at each level?" is answerable long after the flow run completes.
+
+The change plan at each tier is consumed as prompt context by the regen at that tier. The upstream change plan is in the downstream's context, so by the time the subcomponent tier runs, the LLM has seen how the whole chain interprets the request.
+
+### A.2.3 Refactor flow
+
+Same shape as the feature request flow, different input semantics. The input is a refactoring objective ("extract the caching layer out of the billing service into its own top-level component," "rename Policy to Rule throughout") rather than a feature description. The same phase-zero expansion runs to produce a list of structural operations the refactor implies, and the same per-tier change plans drive per-tier regens.
+
+Structural operations — reparent, promote, demote, merge, split, delete — are produced as instructions in the change plan and applied at the end of the flow run, because they are destructive and need explicit approval. Non-structural operations (rename, API changes, policy edits) apply immediately as they land through the regen pipeline.
+
+Refactor and feature request share enough machinery that they could collapse to a single flow with a "mode" flag. Keeping them separate in the vocabulary is a UX choice: users have strong mental models about which they're doing, and the lobby (A.6) shows them as distinct flow kinds so queued work is easier to reason about.
+
+### A.2.4 Bug-fix propagation flow
+
+Input is an existing code change — a PR, a commit, a diff — that has already modified the codebase outside Catapult, or that was made manually in parallel with Catapult. The job is to propagate the implications of that code change **upward** through the structured model so that the design graph catches up to reality, and then **sideways** through sibling subtrees that the changes affect.
+
+This flow is genuinely different from every other flow described above. The others walk the generation order *top-down* from some upstream change; this one walks *bottom-up* from many leaves at once.
+
+1. **Leaf identification.** The input diff is mapped back to `impl_*` nodes via the territory manifest (A.1.11). Every file in the diff belongs to exactly one leaf; the full set of affected leaves is the starting set for the flow. A single bug-fix commit may touch multiple leaves in unrelated subtrees, and the flow handles the full set in one run rather than forcing the user to run one flow per leaf.
+2. **Leaf diagnosis.** At each affected leaf, a diagnosis node analyzes what the code change implies about the gap between the documented implementation and the code that actually shipped. Diagnosis is prose: "this change fixed a race condition in the retry scheduler by adding a mutex; the impl doc didn't mention thread-safety requirements, and the plan assumed single-threaded retry execution." The diagnosis is a reviewable change-plan-like artifact at the leaf layer.
+3. **Upward pass with merge-at-parent.** Parent components wait until **all** affected descendants have produced their diagnoses before running their own diagnosis + change plan. Merging at the parent means the parent sees a single coherent picture of everything the change means for it, rather than running N separate regens for N child diagnoses. The change plan at the parent proposes updates to the component's fragments (techspec, pubapi, privapi, policies, deps) and to its subcomponent decomposition if the diagnosis implies structural drift.
+4. **Upward pass continues through the sysarch and optionally through the reqs bootstraps.** If the change implies something new about the project's top-level responsibilities or the system-architecture layout, the phase-0 expansion artifact and the reqs or sysarch node are updated. If not, the upward pass terminates at whatever level stops producing meaningful diagnoses.
+5. **Downward sibling pass.** At every structural-layout node touched during the upward pass (each component, plus sysarch if it was touched), the change plan identifies *other* children that are implicated by the merged changes — not just the ones on the original upward path. A change to the telemetry policy discovered via a leaf fix may require updating every component that has the telemetry trigger. The downward pass is a per-parent fan-out over these identified siblings, each producing their own change plan + regen, recursively until there are no further implications.
+6. **No code is generated by this flow.** The input is already code; the output is design updates that bring the structured model into alignment with what exists. A follow-up feature-request or refactor flow can be scheduled if the diagnosis reveals work that still needs to happen, and the resulting code changes ship through the normal code-generation path.
+
+This flow is how Catapult stays coherent when the codebase moves outside its control. Hotfixes, external contributions, automated dependency bumps, manual edits made directly in the repository — any case where the code has moved and the design memory needs to catch up — route through this flow. If the change was made through the normal Catapult flow, the bug-fix flow is not needed because the design updates already happened upstream before the code did.
+
+
 
 ## A.3 Phases and generation order
 
-*(to be filled in)*
+### A.3.1 Cold-start generation order
+
+The cold-start pipeline runs through a fixed topological order. Each tier has its own prose, its own approvals, its own generation prompt, and its own position in the chain. The sequence is load-bearing because downstream tiers reference upstream IDs that must already be minted and stable at the moment the downstream regen runs.
+
+1. **Input document** — the raw prose the user brings in. The only node the user authors directly.
+2. **Feature expansion (`expansion_*`)** — prose decomposition of the input into features. Approved as a standalone document before any feature nodes exist. On approval, `feat_*` nodes are projected.
+3. **Requirements (`reqs_*`)** — singleton. Decomposes the approved feature set into top-level responsibilities. On approval, top-level `resp_*` nodes plus `feat_* → resp_*` decomposition edges are projected.
+4. **System architecture (`sysarch_*`)** — singleton. Takes the top-level responsibilities and produces the component graph: components (including the foundation), API intent, top-level policies, dep edges (including policy-induced edges), domain-parent edges, and a system-level techspec. Approval mints `comp_*` nodes, top-level `policy_*` nodes, dep/domain-parent edges, and one `subreqs_*` bootstrap per top-level component. Top-level policy application edges are **not** yet emitted — they're resolved against each component at component-architecture time.
+5. **Subrequirements (`subreqs_*`)** — per top-level component, minted at sysarch approval. Decomposes the component's top-level responsibilities into subresponsibilities. On approval, subresp `resp_*` children and `top_level_resp → subresp` decomposition edges are projected. Component-architecture generation for a component cannot run until its subreqs is approved.
+6. **Component architecture docs** — generated in dependency topological order after the owning component's subreqs is approved. Each consumes the sysarch's entry for it (role + API intent), the public surfaces of its dependencies, and the pre-minted subresponsibilities from step 5. Each also produces component-local policies targeting those subresps, and on approval is where top-level and component-local policies are resolved against this component: the LLM reads the now-detailed techspec and subresps and emits `policy_application` edges for the policies that actually apply.
+7. **Subcomponent architecture docs** — generated in dependency topological order within each component. Leaf tier — no further decomposition, no `<policies>` section. Four fragments only: techspec, pubapi, privapi, deps.
+8. **Domain fan-in synthesis nodes (`fanin_*`)** — minted as part of sysarch (and regenerated as subcomponents iterate). Always present for every domain component with subcomponents, regardless of whether a presentational counterpart currently exists.
+9. **Implementation nodes (`impl_*`)** — one per subcomponent and one per un-fanned-out component. Carries the detailed design and build content, distinct from the parent's abstract techspec.
+10. **Plan nodes (`plan_*`)** — per-impl, translating an impl-level intent into a concrete code-change list.
+11. **Code** — generated as a final leaf pass, plan by plan, in dependency topological order, limited to the leaf's territory.
+
+The two-tier decomposition split (reqs/sysarch at the top, subreqs/comparch per component) is what resolves the chicken-and-egg of "component A's regen needs component B's public surface but B hasn't been generated yet." By committing to top-level responsibilities, then API intent, then each component's subresponsibilities up front, dependent components have stable IDs and bounded contracts to reference even before the downstream components have been generated in detail. Component architectures then flesh the intent into full public-surface detail, and the sysarch's API entry for each component is a transcluded fragment of the component arch (A.1.5) so drift is detectable as a fragment diff.
+
+### A.3.2 State-driven scheduling
+
+Generation is **not** chained by emission. A handler that produces an event does not also enqueue the next generation job. Instead, a dedicated **scheduler** watches application state and decides what to run next, and the scheduler is the *only* path into the job queue. Mint handlers and regen handlers commit their events and exit; whatever runs next is the scheduler's decision, computed from the projected state.
+
+The scheduler's logic is a set of queries over the projection, each expressed as "for every node in state X matching condition Y, and for which no job is currently queued or running that would produce Z, enqueue job Z." Examples:
+
+- "For every top-level `comp_*` whose subreqs is approved and whose own content is empty and which has no pending `generate_comparch` job, enqueue `generate_comparch`."
+- "For every subcomponent `comp_*` whose parent's comparch content is non-empty and whose own content is empty and which has no pending `generate_subcomparch` job, enqueue `generate_subcomparch`."
+- "For every `impl_*` whose parent arch doc is approved and whose own content is empty, enqueue `generate_impl`."
+- "For every subtree with pending staleness markers and no active regen, enqueue a regen for the marked nodes in dependency order."
+
+The scheduler is the only place these rules are stated. Adding a new generation tier or a new flow kind means adding new scheduler queries, not hunting through every existing handler to teach it about the new downstream.
+
+**Trigger mechanism.** The scheduler re-runs its queries on two paths. The **fast path** is a pub-sub signal: after every successful reducer commit, a notification is broadcast in-process and the scheduler picks it up and re-runs its queries within milliseconds. The **slow path** is a sweeper that runs on a floor interval (configurable, default 30-60 seconds) and executes the same queries unconditionally, catching anything the fast path missed due to subscriber restart, signal loss, or race conditions. The fast path is the latency ceiling; the sweeper is the consistency floor.
+
+**Concurrency.** The scheduler holds a project-scoped lock while running its queries, so two simultaneous commit signals don't produce duplicate enqueues. Jobs themselves are deduplicated on `(job_type, payload)` at enqueue time, so even if the lock fails for some reason, duplicate-job prevention is layered.
+
+**Why state-driven, not event-driven.** Handlers emitting the "next job" was the old pattern and had two problems: new flow types required teaching every upstream handler about the new downstream, and crash-recovery was fragile (a handler that committed its events but failed to emit the next-job message left a hole in the chain). State-driven scheduling makes both of these go away: new flows just add scheduler queries, and crash recovery reduces to "the scheduler wakes up and re-queries current state," which is the same code path the fast path runs anyway.
+
+### A.3.3 Approval gates only destructive operations
+
+A change to a node propagates to its neighbors immediately, with one carve-out: **operations that would destroy or reshape content downstream are gated on explicit user approval of the originating node.** Everything else propagates without blocking the user.
+
+The reason for the carve-out is asymmetry. Most edits — public-surface changes, implementation tweaks, dependency-edge edits, renames, reparenting, promotion, demotion — are reversible. Content carries forward through regen via lineage references, prior versions live in the event log, and a regen the user doesn't like can be rolled back by walking the log. The worst case of a "wrong" non-destructive cascade is some redundant LLM work and the inconvenience of reviewing the result. No user prose is lost.
+
+Destructive operations are different. They include:
+
+- **Delete** — cascading to children would lose all their content with no recovery short of replaying the event log to a prior offset.
+- **Merge** — reconciling overlapping content forces the LLM to drop or summarize material, and the dropped pieces can be exactly the prose the user has been iterating on.
+- **Split** — distributing one source across multiple destinations has the same loss profile.
+
+These three gate. Everything else runs. The gate exists specifically to prevent unrecoverable content loss, not to make the user babysit every cascade. Without this narrowing the original "gate everything" rule would block even obviously-safe edits and train the user to click through without reading, which defeats the point.
+
+**Corollary: initial mint is destructive at the child level.** When a bootstrap node is approved and projects its children (features from expansion, responsibilities from reqs, components from sysarch, subresponsibilities from subreqs), the mint commits to a particular shape, and if the user wants a different shape, the mint is the moment to catch it. After the mint, edits to the minted children propagate normally.
+
+**Second corollary: the bootstrap nodes (`expansion_*`, `reqs_*`, `sysarch_*`, each `subreqs_*`) become read-only after initial approval.** Ongoing work at each of those layers happens as add / delete / edit on the individual minted children (features, top-level responsibilities, components, subresponsibilities), not by re-editing the bootstrap prose. There is no re-mint, only incremental edits at the child layer. The bootstrap node itself is kept in the event log as a historical reference but isn't a live editing surface.
+
+### A.3.4 Fan-out pauses for review regardless of auto-approval
+
+Fan-out operations — the steps that create new components or new subcomponents from a decomposition pass — always pause for human review, regardless of auto-approval configuration. Structural changes to the tree are too consequential to auto-approve; the reviewer needs to see what was minted, whether it's the right decomposition, and assign ownership to the new children.
+
+This is a hard override on the auto-approval system. Projects configured for full auto-approval will still stop at fan-out boundaries. The carve-out is explicit because the intuition "auto-approve everything" and the intuition "but obviously I should see structural changes" have to be made to coexist without the user having to remember the distinction every time.
+
+### A.3.5 Context assembly strategy
+
+Context assembly uses a **strategy pattern** — different tiers and node types use different methods for gathering context. The context budget is **partitioned by category**, not applied as a single linear queue. Each strategy defines its own budget partitions based on what that node type needs:
+
+- **Architecture nodes (system, component, subcomponent)** — budget weighted toward structural context: parent architecture (always in full), sibling summaries, the expanded input. Smaller allocation for semantic retrieval of distant ancestors.
+- **Plan and impl nodes** — budget weighted toward the parent plan (always in full) plus current code state. Smaller allocation for ancestor architectures.
+- **Fan-out / decomposition nodes** — budget weighted toward summary-level understanding of all children. Parent architecture in full. Minimal distant-ancestor context.
+- **Change plans** — budget split between the user's request (always in full), the current state of the tier being planned for, and the upstream change plan (if any).
+
+Within each partition, the budget-based approach applies: include full documents nearest-first until the partition's budget is exhausted, then retrieve remaining context via semantic similarity from the vector index. The expanded input document and direct parent outputs are always included in full, drawn from the appropriate partition.
+
+No node ever sees the full text of its dependencies — only their public-surface fragments and their diffs. No node ever sees the full implementation of its parent's other children — only what changed. This scoping is what keeps prompts bounded as the project grows.
+
+**Future: intelligent context selection.** Documents are intended to store the complete design decision history of the project — they should never be compacted or summarized destructively. For very large or long-lived projects where documents exceed context budgets even with partitioning, a future version will need a context-building service that goes beyond vector search to select the most relevant portions of a document for a given prompt (structural analysis, recency weighting, decision-chain tracing). This is not needed for MVP but the context-assembly interface is designed to anticipate it.
+
+
 
 ## A.4 Projection sources, bootstrap nodes, and change plans
 
