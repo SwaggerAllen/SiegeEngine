@@ -199,6 +199,46 @@ their own kind, so their arch docs omit the `<policies>` section
 - [ ] Promotion / demotion instructions work across the two tiers without changing IDs (subcomponent ↔ component)
 - [ ] Reducer enforces the depth-cap invariant: any `NodeCreated`/`NodeReparented`/`NodePromoted`/`NodeDemoted` that would create a three-level `comp_*` chain is rejected
 
+## Phase 5.5 — Project vocabulary layer
+
+First-class vocabulary as its own node tier. Addresses silent LLM
+drift toward generic meanings by making project-specific term
+definitions structured, addressable, and always-included in regen
+context. Lands after subcomponent arch docs so the vocabulary
+layer is available for every downstream generation (impl, plan,
+code) without retroactive backfill of Phases 4 and 5 — existing
+approved content keeps its content; new regens after this phase
+lands use vocab-aware context assembly.
+
+Vocab is a node tier, not a fragment, because vocab entries are
+entities with independent lifecycles (edit/review, promotion
+between scopes via reparent, user-creatable outside a flow, and
+eventually `vocab_reference` edges between terms). Scope lives
+on `parent_id`: null means project-level, `feat_*` means
+feature-local, anything else rejected by the reducer.
+
+Content is parseable XML matching the `<vocab-entry>` grammar
+(same family as comparch / subcomparch), stored verbatim on
+`Node.content`, rendered from XML to prose at context-assembly
+time so prompt tokens aren't wasted on raw tags.
+
+- [ ] Alembic migration `b11_vocab_tier` adds `vocab` to `ck_nodes_tier` check constraint via `batch_alter_table`
+- [ ] `backend/models/node.py` NODE_TIERS tuple, `backend/graph/ids.py` `Kind.VOCAB`, `backend/graph/events.py` NodeTier Literal widened — no new event class, existing `NodeCreated` / `NodeRenamed` / `NodeReparented` / `NodeDeleted` handle vocab generically
+- [ ] Reducer invariant on vocab parent: `_enforce_vocab_parent_constraint` rejects any `NodeCreated` or `NodeReparented` whose target tier is `vocab` and whose `parent_id` is set to anything other than a `feat_*` node. Called from `_apply_node_created` and `_apply_node_reparented` when target tier is `vocab`.
+- [ ] New `backend/graph/vocabulary.py` helpers module: `list_project_vocab`, `list_feature_vocab`, `vocab_by_id`, `vocab_by_name`, `reachable_vocab_for_node`. Parity shape with `expansion.py` / `requirements.py` / `subrequirements.py`.
+- [ ] Expansion prompt extended with an optional `<vocabulary>` sibling section containing `<term>` elements. Each `<term>` carries `name` + `scope` (+ `feature-alias` when scope is feature) attributes and a single `<vocab-entry>` inner child with `<definition>` (required) + `<disambiguation>` (optional) + `<see-also>` (optional, `<ref name="..."/>` children). Cold-start prompt rejects `to=` form refs; post-mint edit prompt accepts both.
+- [ ] Validator extended with `VocabEntry` and `VocabRef` dataclasses and a `validate_vocabulary` function. Enforces structural grammar, required fields, scope rules, feature-alias resolution against the parsed feature list, name uniqueness within scope, and the name-only-at-cold-start rule.
+- [ ] `feature_mint` handler extended to project `vocab_*` nodes in the same transaction as `feat_*` nodes. Iteration order matters: features first (populates the alias-to-id map), vocab second (consumes the map to resolve `feature-alias` to `parent_id`). `Node.content` is the raw XML of the `<vocab-entry>` inner block, stored verbatim.
+- [ ] `regen_context.py` adds `project_vocab` and `feature_vocab` fields to `RegenContext`, populated by `build_regen_context` via `vocabulary.reachable_vocab_for_node`. New `vocab_summary: str` key in the output of `format_regen_context` and `format_regen_context_for_sub`, produced by a new XML-to-prose formatter in `vocabulary.py`.
+- [ ] Every tier's `render_user_prompt` accepts and threads a `vocab_summary` kwarg (requirements, sysarch, subrequirements, comparch, subcomparch, policy_application). Feature expansion is excluded — it generates vocabulary rather than consuming it.
+- [ ] Instruction vocabulary adds `CreateVocabEntry(name, content, parent_id)` for direct user creation. Rename / reparent / delete reuse existing `NodeRenamed` / `NodeReparented` / `NodeDeleted` instructions.
+- [ ] Light `generate_vocab_entry` handler for feedback → regen flow on existing vocab entries. Small single-entry prompt, validator, draft emission.
+- [ ] Routes: `GET /api/projects/{id}/vocabulary` (list), `GET /api/projects/{id}/features/{feat_id}/vocabulary` (per-feature), `GET /api/projects/{id}/vocabulary/{vocab_id}` (detail), `POST /api/projects/{id}/vocabulary/create`, and the four-state feedback/approve/discard/delete/reparent handlers.
+- [ ] Full bootstrap chain test extended: stub expansion now emits a `<vocabulary>` section; assertions added that vocab nodes are minted in the correct scope; downstream tier prompts contain vocab context in their assembled prompts.
+- [ ] Frontend: `VocabularyList`, `VocabularyEntry` (using existing XML renderer machinery for `<vocab-entry>` / `<definition>` / `<disambiguation>` / `<see-also>` / `<ref>` with per-element visual treatments), `CreateVocabEntryDialog`, `VocabularyPage` routed at `/projects/:id/vocabulary`. Dashboard gets a "Vocabulary" tab; feature detail page gets a feature-local vocab panel.
+- [ ] ~80 new tests across validator (~30), mint (~10), regen context (~15), handler + routes (~15), frontend components (~10).
+- [ ] Explicitly **out of scope** for this phase: LLM-discovered vocabulary, `vocab_reference` first-class edges (stored cross-references land in the XML from day one; edge emission is a separate one-function follow-up), proliferation guardrails for large vocabularies, automatic linking of term mentions in rendered prose. All straightforward follow-ups.
+
 ## Phase 6 — Presentational nodes + domain-parent edges
 
 Unified DAG: domain and presentational share shape, distinguished by
