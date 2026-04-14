@@ -1524,7 +1524,10 @@ def get_subcomponents(
             SubcomponentSummary(
                 id=s.id,
                 name=s.name,
-                parent_id=s.parent_id,
+                # The query filtered on ``parent_id == comp_id`` so
+                # this is known non-null at runtime; pass comp_id
+                # directly rather than narrowing ``s.parent_id``.
+                parent_id=comp_id,
                 display_order=s.display_order,
                 updated_at=s.updated_at.isoformat() if s.updated_at else "",
             )
