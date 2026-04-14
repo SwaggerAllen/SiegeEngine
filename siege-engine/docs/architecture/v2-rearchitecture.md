@@ -262,9 +262,18 @@ Every level of the structural tree has **shared files at its root** — build co
 To fix this by construction, every structural decomposition pass is required to mint a **foundation component** as one of its children:
 
 - **Sysarch** always includes a foundation component in its top-level component list. Its territory in the manifest covers the project's root folder minus whatever the other top-level components claim.
-- **Each comparch pass** that decomposes a component into subcomponents always includes a foundation subcomponent in the subcomponent list. Its territory covers that component's root folder minus whatever the other subcomponents claim.
+- **Each comparch pass** that decomposes a component into subcomponents includes a foundation subcomponent in the subcomponent list, **unless the component being decomposed is itself a foundation component** (see below).
 
-The foundation component is a normal `comp_*` node in every other respect — it has its own responsibilities, its own `<technical-specification>`, `<public-surface>`, `<private-surface>`, `<policies>`, `<dependencies>`, and it can have subcomponents if it decomposes further (subject to the depth cap). It's not a special tier or a special kind; it's a conventional child that the generation prompts are required to always produce.
+**Foundations don't nest.** When a foundation component — top-level or subcomponent — is itself decomposed by a comparch pass, that pass does **not** mint another foundation subcomponent inside it. Instead, the comparch prompt is told to **divide the foundation's territory exhaustively**: every file the foundation owned must be claimed by one of the concrete subcomponents it mints, with no residual catch-all. The reason is that "foundation" means "catch-all at this level," so a sub-foundation inside a foundation would be the catch-all of the catch-all, which collapses to the original. Nesting the concept would double-count the role and leave the user looking at a tree whose structure doesn't describe anything real.
+
+Concretely:
+
+- **Normal component → decomposes with foundation child.** The normal component's own root folder might hold files that don't fit any minted subcomponent; those files go to the minted foundation subcomponent. The comparch prompt is told "include exactly one foundation subcomponent marked with `<foundation/>`."
+- **Foundation component → decomposes without foundation child.** The foundation is already the catch-all for its parent's level. When it fans out, every file in its territory must land under one of the subcomponents it creates. The comparch prompt is told "you are decomposing a foundation component — divide its territory exhaustively, no foundation subcomponent." The validator skips the "exactly one foundation subcomponent required" check for this case, and the `_enforce_sub_foundation_dependency` check is likewise skipped (there's no foundation subcomponent to depend on).
+
+Whether a comp is a foundation is persisted on the node itself (`Node.is_foundation`), set at mint time by the sysarch and comparch mint handlers based on the parsed `<foundation/>` marker. Downstream passes read it rather than re-parsing upstream arch docs.
+
+The foundation component is a normal `comp_*` node in every other respect — it has its own responsibilities, its own `<technical-specification>`, `<public-surface>`, `<private-surface>`, `<policies>`, `<dependencies>`, and it can have subcomponents if it decomposes further (subject to the depth cap). It's not a special tier or a special kind; it's a conventional child that the generation prompts are required to always produce (with the nesting carve-out above).
 
 What it *owns* depends on the project:
 

@@ -162,6 +162,7 @@ async def mint_comparch(payload: dict) -> None:
                 known_subresp_ids=known_subresp_ids,
                 known_sibling_comp_ids=known_sibling_comp_ids,
                 known_resp_ids_for_policies=known_resp_ids_for_policies,
+                target_is_foundation=bool(comp_node.is_foundation),
             )
         except (ParseError, ValidationError) as exc:
             raise ComparchMintHandlerError(
@@ -198,6 +199,7 @@ async def mint_comparch(payload: dict) -> None:
                     name=subcomp.name,
                     display_order=index,
                     content="",
+                    is_foundation=subcomp.is_foundation,
                 ),
             )
             alias_to_sub_id[subcomp.alias] = sub_id

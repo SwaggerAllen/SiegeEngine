@@ -256,11 +256,18 @@ def _comparch_xml(session, project_id: str) -> str:
         ).scalars()
     )
     assert subresps, f"comparch stub: target {target.id} has no subresps"
+    # Foundations don't nest: when the target comp was minted with
+    # the foundation role, the decomposition must NOT include
+    # another foundation subcomponent. Concrete subcomponents
+    # divide the foundation's territory exhaustively instead.
+    target_is_foundation = bool(target.is_foundation)
     subs: list[str] = []
     for i, r in enumerate(subresps):
         alias = f"sub{i}"
-        is_foundation = i == len(subresps) - 1
-        foundation_tag = "<foundation/>" if is_foundation else ""
+        if target_is_foundation:
+            foundation_tag = ""
+        else:
+            foundation_tag = "<foundation/>" if i == len(subresps) - 1 else ""
         subs.append(
             f'<subcomponent alias="{alias}">'
             f"<name>{target.name}{r.name}</name>"
@@ -270,10 +277,14 @@ def _comparch_xml(session, project_id: str) -> str:
             f"{foundation_tag}"
             f"</subcomponent>"
         )
-    foundation_alias = f"sub{len(subresps) - 1}"
-    sub_deps = "".join(
-        f'<dep from="sub{i}" to="{foundation_alias}"/>' for i in range(len(subresps) - 1)
-    )
+    if target_is_foundation:
+        # No foundation sub → no foundation-dep requirement.
+        sub_deps = ""
+    else:
+        foundation_alias = f"sub{len(subresps) - 1}"
+        sub_deps = "".join(
+            f'<dep from="sub{i}" to="{foundation_alias}"/>' for i in range(len(subresps) - 1)
+        )
     return (
         "<comparch>"
         "<technical-specification>Typical Python stack for this component."
@@ -676,6 +687,27 @@ class TestFullBootstrapChain:
             assert len(subresps) == 6
             # Each comp decomposes into 2 subcomponents → 6 subcomps.
             assert len(subcomps) == 6
+
+            # Foundation persistence: sysarch seeds one top-level
+            # foundation (the last in display order), and comparch
+            # seeds one foundation subcomponent per non-foundation
+            # parent. A foundation top-level's own comparch does
+            # NOT nest another foundation subcomponent — so the
+            # foundation sub count is exactly (top-level comps - 1),
+            # covering only the non-foundation parents.
+            top_foundations = [c for c in top_comps if c.is_foundation]
+            assert len(top_foundations) == 1
+            sub_foundations = [c for c in subcomps if c.is_foundation]
+            assert len(sub_foundations) == len(top_comps) - 1, (
+                f"expected {len(top_comps) - 1} foundation subcomponents "
+                f"(one per non-foundation parent), got {len(sub_foundations)}"
+            )
+            # And every foundation sub's parent is a non-foundation top-level.
+            top_by_id = {c.id: c for c in top_comps}
+            for fsub in sub_foundations:
+                assert fsub.parent_id is not None
+                parent = top_by_id[fsub.parent_id]
+                assert parent.is_foundation is False
 
             # Every top-level comp AND every subcomponent ended
             # with approved arch-doc content — i.e. both comparch

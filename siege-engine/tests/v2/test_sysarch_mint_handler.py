@@ -189,6 +189,14 @@ class TestHappyPath:
             billing_cid = comp_by_name["Billing Service"].id
             foundation_cid = comp_by_name["Foundation"].id
 
+            # The <foundation/> marker in the sysarch XML must be
+            # persisted on the minted comp node so downstream
+            # comparch generation can apply the "foundations don't
+            # nest" carve-out without re-parsing the sysarch output.
+            assert comp_by_name["Foundation"].is_foundation is True
+            assert comp_by_name["Authentication"].is_foundation is False
+            assert comp_by_name["Billing Service"].is_foundation is False
+
             # ── Per-component fragments ──────────────────────
             frags = list(
                 s.execute(select(Fragment).where(Fragment.project_id == project_id)).scalars()

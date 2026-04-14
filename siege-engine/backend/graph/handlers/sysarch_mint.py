@@ -201,6 +201,7 @@ async def mint_sysarch(payload: dict) -> None:
                     name=component.name,
                     display_order=index,
                     content="",
+                    is_foundation=component.is_foundation,
                 ),
             )
             alias_to_comp_id[component.alias] = comp_id

@@ -185,6 +185,7 @@ def _apply_node_created(session: Session, project_id: str, event: ev.NodeCreated
             content=event.content,
             group_label=event.group_label,
             is_implicit=event.is_implicit,
+            is_foundation=event.is_foundation,
             created_at=now,
             updated_at=now,
         )

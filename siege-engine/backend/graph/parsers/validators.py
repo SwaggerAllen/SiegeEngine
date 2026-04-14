@@ -1467,6 +1467,7 @@ def validate_arch_doc(
     known_subresp_ids: set[str],
     known_sibling_comp_ids: set[str],
     known_resp_ids_for_policies: set[str],
+    target_is_foundation: bool = False,
 ) -> ArchDoc:
     """Validate a parsed ``<comparch>`` tree and return an ArchDoc.
 
@@ -1497,6 +1498,17 @@ def validate_arch_doc(
     policies' ``<required>`` field must reference an ID from
     this set — top-level resps owned by OTHER components are
     cross-component leaks.
+
+    ``target_is_foundation`` flips the "foundations don't nest"
+    carve-out: when the component being decomposed is itself a
+    foundation (top-level or sub), the ``<subcomponents>`` block
+    must *not* include another foundation marker, and the
+    "every non-foundation sub depends on the foundation"
+    check is skipped (there's no foundation sub to depend on).
+    Instead, the foundation decomposes exhaustively into concrete
+    subcomponents that collectively own all its territory. See
+    ``docs/architecture/v2-rearchitecture.md`` §Foundation
+    components.
 
     Un-fanned-out is legal: both ``<subcomponents>`` and
     ``<sub-dependencies>`` may be empty. In that case there is
@@ -1547,7 +1559,9 @@ def validate_arch_doc(
         section_map["dependencies"], known_sibling_comp_ids=known_sibling_comp_ids
     )
     subcomponents = _validate_arch_doc_subcomponents(
-        section_map["subcomponents"], known_subresp_ids=known_subresp_ids
+        section_map["subcomponents"],
+        known_subresp_ids=known_subresp_ids,
+        target_is_foundation=target_is_foundation,
     )
 
     sub_alias_set = {s.alias for s in subcomponents}
@@ -1555,10 +1569,14 @@ def validate_arch_doc(
 
     # Sub-dep cycle detection + foundation-dep enforcement — only
     # meaningful when decomposing. Un-fanned-out components have
-    # no sub-alias set so the checks degenerate to no-ops.
+    # no sub-alias set so the checks degenerate to no-ops. When
+    # the target is itself a foundation, there is no foundation
+    # subcomponent to depend on, so the foundation-dep rule is
+    # also skipped (cycle detection still runs).
     if subcomponents:
         _detect_dep_cycles(sub_deps, sub_alias_set)
-        _enforce_sub_foundation_dependency(subcomponents, sub_deps)
+        if not target_is_foundation:
+            _enforce_sub_foundation_dependency(subcomponents, sub_deps)
 
     return ArchDoc(
         techspec=techspec,
@@ -1676,14 +1694,27 @@ def _validate_arch_doc_external_dependencies(
 
 
 def _validate_arch_doc_subcomponents(
-    node: TagNode, *, known_subresp_ids: set[str]
+    node: TagNode,
+    *,
+    known_subresp_ids: set[str],
+    target_is_foundation: bool = False,
 ) -> tuple[Subcomponent, ...]:
     """Validate ``<subcomponents>`` and return a tuple of Subcomponent.
 
     May legitimately be empty (un-fanned-out component). If
     populated: enforces alias syntax + uniqueness, per-subcomponent
-    field completeness, exactly-one-foundation, and coverage of
-    every pre-minted subresp in ``known_subresp_ids``.
+    field completeness, and coverage of every pre-minted subresp
+    in ``known_subresp_ids``.
+
+    The foundation-marker rule depends on ``target_is_foundation``:
+
+    - **Normal component** (default): exactly one subcomponent
+      must carry the ``<foundation/>`` marker. Zero or two+ are
+      rejected.
+    - **Foundation target**: *no* subcomponent may carry the
+      ``<foundation/>`` marker. Foundations don't nest — the
+      decomposition is required to divide the foundation's
+      territory exhaustively without a sub-foundation catch-all.
     """
     for child in node.children:
         if child.tag not in _SUBCOMPONENTS_ALLOWED_CHILDREN:
@@ -1734,23 +1765,39 @@ def _validate_arch_doc_subcomponents(
             assigned_subresp_ids[rid] = sub.alias
         subcomponents.append(sub)
 
-    if len(foundation_aliases) == 0:
-        raise ValidationError(
-            "<subcomponents> has no foundation subcomponent. When a "
-            "component decomposes, exactly one subcomponent must carry "
-            "a self-closing <foundation/> marker — it owns the "
-            "component's root folder territory. Un-fanned-out "
-            "components (empty <subcomponents>) do not need one, but "
-            "once you decompose at all, a foundation is required."
-        )
-    if len(foundation_aliases) > 1:
-        raise ValidationError(
-            f"<subcomponents> has {len(foundation_aliases)} foundation "
-            f"subcomponents ({', '.join(sorted(foundation_aliases))}). "
-            "Exactly one foundation is required; promote the others to "
-            "regular subcomponents or merge them into the single "
-            "foundation."
-        )
+    if target_is_foundation:
+        # Foundations don't nest. The foundation role is "catch-all
+        # at this level"; nesting another foundation inside it would
+        # double-count the role, so the validator rejects any
+        # <foundation/> marker in a foundation's own decomposition.
+        if foundation_aliases:
+            raise ValidationError(
+                "<subcomponents> contains a foundation subcomponent "
+                f"({', '.join(sorted(foundation_aliases))}) but this "
+                "component is itself a foundation. Foundations do not "
+                "nest — decompose the foundation's territory "
+                "exhaustively into concrete subcomponents with no "
+                "sub-foundation catch-all. Remove the <foundation/> "
+                "marker from the listed subcomponent(s)."
+            )
+    else:
+        if len(foundation_aliases) == 0:
+            raise ValidationError(
+                "<subcomponents> has no foundation subcomponent. When a "
+                "component decomposes, exactly one subcomponent must carry "
+                "a self-closing <foundation/> marker — it owns the "
+                "component's root folder territory. Un-fanned-out "
+                "components (empty <subcomponents>) do not need one, but "
+                "once you decompose at all, a foundation is required."
+            )
+        if len(foundation_aliases) > 1:
+            raise ValidationError(
+                f"<subcomponents> has {len(foundation_aliases)} foundation "
+                f"subcomponents ({', '.join(sorted(foundation_aliases))}). "
+                "Exactly one foundation is required; promote the others to "
+                "regular subcomponents or merge them into the single "
+                "foundation."
+            )
 
     missing = sorted(known_subresp_ids - set(assigned_subresp_ids.keys()))
     if missing:
