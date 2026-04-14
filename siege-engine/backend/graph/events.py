@@ -36,6 +36,7 @@ NodeTier = Literal[
     "sysarch",
     "manifest",
     "fanin",
+    "vocab",
 ]
 
 

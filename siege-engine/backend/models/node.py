@@ -46,6 +46,7 @@ NODE_TIERS = (
     "sysarch",
     "manifest",
     "fanin",
+    "vocab",
 )
 NODE_KINDS = ("domain", "presentational")
 EDGE_TYPES = ("dependency", "domain_parent", "policy_application", "decomposition")

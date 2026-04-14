@@ -48,6 +48,7 @@ class Kind(str, Enum):
     SYSARCH = "sysarch"
     MANIFEST = "manifest"
     FANIN = "fanin"
+    VOCAB = "vocab"
 
 
 class InvalidIdError(ValueError):
