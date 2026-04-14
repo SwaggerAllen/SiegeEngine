@@ -91,6 +91,32 @@ def get_project_model(
     return queries.projection_snapshot(db, project_id)
 
 
+@router.get("/{project_id}/debug/skeleton")
+def get_project_skeleton(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Content-stripped projection snapshot for sharing with debuggers.
+
+    Same shape as ``/model`` but every prose field (node content,
+    fragment content, draft content) is replaced with its
+    character length. Node names are kept because they're
+    identifiers, not prose. Also includes a ``recent_jobs``
+    section with the latest job per job_type plus an error tail
+    for failed jobs.
+
+    Use case: paste the JSON into a chat or issue to get help
+    debugging without leaking the project's actual prose content.
+    The IDs, relationships, lengths, and error tails are enough
+    to reason about structure; the prose stays private.
+    """
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return queries.skeleton_snapshot(db, project_id)
+
+
 # ── Expansion request / response models ─────────────────────────────
 
 
@@ -1672,6 +1698,13 @@ def get_decomposition_graph(
             .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
         ).scalars()
     )
+    node_ids: set[str] = {n.id for n in node_rows}
+
+    # Filter edges by edge_type AND by whether both endpoints are
+    # in the returned node set. feat → resp decomposition edges
+    # reference feat_* nodes that we deliberately exclude from
+    # the graph scope; if we returned them anyway, the frontend
+    # Cytoscape component would fail with "nonexistent source".
     edge_rows = list(
         db.execute(
             select(Edge)
@@ -1682,6 +1715,7 @@ def get_decomposition_graph(
             .order_by(Edge.id.asc())
         ).scalars()
     )
+    filtered_edges = [e for e in edge_rows if e.source_id in node_ids and e.target_id in node_ids]
 
     return DecompositionGraphResponse(
         nodes=[
@@ -1702,6 +1736,6 @@ def get_decomposition_graph(
                 source_id=e.source_id,
                 target_id=e.target_id,
             )
-            for e in edge_rows
+            for e in filtered_edges
         ],
     )
