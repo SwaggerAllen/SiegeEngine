@@ -164,7 +164,7 @@ async def generate_sysarch(payload: dict) -> None:
             parse_error=parse_error,
         )
 
-    def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+    def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
         validate_sysarch(tree, known_top_level_resp_ids=known_top_level_resp_ids)
 
     validated_output, attempts = await run_parse_validate_loop(

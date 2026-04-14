@@ -66,7 +66,7 @@ async def run_parse_validate_loop(
     cli_timeout_seconds: int,
     prior_pending: str | None,
     render_prompt: Callable[..., str],
-    validate: Callable[[TagNode], None],
+    validate: Callable[[TagNode, str], None],
     exhausted_exception_cls: type[Exception],
     log_handler_name: str,
 ) -> tuple[GenerationResult, list[GenerationResult]]:
@@ -122,7 +122,7 @@ async def run_parse_validate_loop(
 
         try:
             tree = extract_tag_tree(result.text, root_tag)
-            validate(tree)
+            validate(tree, result.text)
         except (ParseError, ValidationError) as exc:
             parse_error = str(exc)
             logger.warning(

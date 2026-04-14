@@ -157,7 +157,7 @@ async def generate_requirements(payload: dict) -> None:
             parse_error=parse_error,
         )
 
-    def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+    def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
         validate_requirements(tree, known_feature_ids=known_feature_ids)
 
     validated_output, attempts = await run_parse_validate_loop(

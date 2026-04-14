@@ -187,7 +187,7 @@ async def generate_comparch(payload: dict) -> None:
             parse_error=parse_error,
         )
 
-    def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+    def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
         validate_arch_doc(
             tree,
             known_subresp_ids=known_subresp_ids,

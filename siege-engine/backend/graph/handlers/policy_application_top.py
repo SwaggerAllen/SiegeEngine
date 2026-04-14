@@ -213,7 +213,7 @@ async def apply_top_level_policies(payload: dict) -> None:
             parse_error=parse_error,
         )
 
-    def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+    def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
         validate_policy_applications(tree, known_policy_ids=candidate_ids)
 
     validated_output, attempts = await run_parse_validate_loop(
