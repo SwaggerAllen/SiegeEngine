@@ -20,6 +20,7 @@ Importing this package also registers the v2 job handlers:
   * ``v2.apply_top_level_policies``
   * ``v2.apply_component_local_policies``
   * ``v2.generate_subcomparch``
+  * ``v2.mint_subcomparch``
 """
 
 from backend.graph import queue as _queue
@@ -32,6 +33,7 @@ from backend.graph.handlers import policy_application_top as _policy_app_top_han
 from backend.graph.handlers import requirements_generation as _requirements_gen_handler
 from backend.graph.handlers import requirements_mint as _requirements_mint_handler
 from backend.graph.handlers import subcomparch_generation as _subcomparch_gen_handler
+from backend.graph.handlers import subcomparch_mint as _subcomparch_mint_handler
 from backend.graph.handlers import subreqs_generation as _subreqs_gen_handler
 from backend.graph.handlers import subreqs_mint as _subreqs_mint_handler
 from backend.graph.handlers import sysarch_generation as _sysarch_gen_handler
@@ -51,3 +53,4 @@ _comparch_mint_handler.register()
 _policy_app_top_handler.register()
 _policy_app_local_handler.register()
 _subcomparch_gen_handler.register()
+_subcomparch_mint_handler.register()

@@ -79,6 +79,7 @@ MINT_COMPARCH_JOB_TYPE = "v2.mint_comparch"
 # (those modules import validators from the same package).
 _APPLY_TOP_LEVEL_POLICIES_JOB = "v2.apply_top_level_policies"
 _APPLY_COMPONENT_LOCAL_POLICIES_JOB = "v2.apply_component_local_policies"
+_GENERATE_SUBCOMPARCH_JOB = "v2.generate_subcomparch"
 
 
 class ComparchMintHandlerError(RuntimeError):
@@ -203,8 +204,10 @@ async def mint_comparch(payload: dict) -> None:
             minted_sub_ids.append(sub_id)
 
             # Skeletal fragments for the subcomponent seeded from
-            # its role + api-intent. Phase 5 subcomponent arch doc
-            # generation replaces these with real content.
+            # its role + api-intent. The Phase 5 subcomparch
+            # generation handler (enqueued post-commit below) will
+            # replace these with real content once the subcomponent's
+            # own arch doc is drafted and approved.
             _emit_fragment(db, project_id, sub_id, FragmentKind.TECHSPEC, subcomp.role)
             _emit_fragment(db, project_id, sub_id, FragmentKind.PUBAPI, subcomp.api_intent)
 
@@ -284,6 +287,26 @@ async def mint_comparch(payload: dict) -> None:
             job_type=_APPLY_COMPONENT_LOCAL_POLICIES_JOB,
             payload={"project_id": project_id, "component_id": component_id},
         )
+
+        # ── Phase 7: post-commit subcomparch generation fan-out ─
+        # One v2.generate_subcomparch per newly-minted subcomponent.
+        # The subcomparch handler's precondition (parent comparch
+        # approved) is guaranteed at this point since we just
+        # committed the parent's arch doc content. Topological
+        # ordering within the sibling set is a Phase 11 optimization;
+        # for MVP we fan out all siblings at once and let the queue
+        # handle them in arrival order, using skeletal pubapis as
+        # each other's cross-context until subcomparch lands.
+        for sub_id in minted_sub_ids:
+            pipeline_queue.enqueue(
+                db,
+                job_type=_GENERATE_SUBCOMPARCH_JOB,
+                payload={
+                    "project_id": project_id,
+                    "component_id": sub_id,
+                    "feedback": None,
+                },
+            )
 
         logger.info(
             "mint_comparch project=%s comp=%s minted %d subcomponents, "
