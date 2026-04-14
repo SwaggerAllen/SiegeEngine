@@ -145,6 +145,20 @@ def _features_xml() -> str:
         "<feature><name>Billing</name><intent>Users pay for plans.</intent></feature>"
         "<feature><name>Auth</name><intent>Users sign in.</intent></feature>"
         "</features>"
+        "<vocabulary>"
+        '<term name="boulder" scope="project">'
+        "<vocab-entry>"
+        "<definition>A unit of structured work carrying its own processing sub-DAG.</definition>"
+        "<disambiguation>Not a leaf node in the decomposition graph.</disambiguation>"
+        "</vocab-entry>"
+        "</term>"
+        '<term name="tranche" scope="feature" feature-name="Billing">'
+        "<vocab-entry>"
+        "<definition>A time-bounded batch of invoices processed in one "
+        "settlement cycle.</definition>"
+        "</vocab-entry>"
+        "</term>"
+        "</vocabulary>"
     )
 
 
@@ -708,6 +722,31 @@ class TestFullBootstrapChain:
                 assert fsub.parent_id is not None
                 parent = top_by_id[fsub.parent_id]
                 assert parent.is_foundation is False
+
+            # Vocabulary: stage 3 extended feature_mint to also
+            # project vocab_* nodes from the expansion's
+            # <vocabulary> sibling block. The stub emits two
+            # entries — one project-level ("boulder") and one
+            # feature-local under Billing ("tranche"). Verify
+            # both landed at the correct scope.
+            vocab_nodes = list(
+                session.execute(
+                    select(Node).where(
+                        Node.project_id == project_id,
+                        Node.tier == "vocab",
+                    )
+                ).scalars()
+            )
+            assert len(vocab_nodes) == 2
+            boulder = next(v for v in vocab_nodes if v.name == "boulder")
+            tranche = next(v for v in vocab_nodes if v.name == "tranche")
+            # boulder is project-level (parent_id is None)
+            assert boulder.parent_id is None
+            assert "<vocab-entry>" in boulder.content
+            # tranche is feature-local, parented to the Billing feat
+            billing_feat = next(f for f in feats if f.name == "Billing")
+            assert tranche.parent_id == billing_feat.id
+            assert "<vocab-entry>" in tranche.content
 
             # Every top-level comp AND every subcomponent ended
             # with approved arch-doc content — i.e. both comparch
