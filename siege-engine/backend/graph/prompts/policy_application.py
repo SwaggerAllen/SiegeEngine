@@ -113,6 +113,7 @@ def render_user_prompt(
     candidate_policies_summary: str,
     scope: str,
     parse_error: str | None = None,
+    vocab_summary: str = "",
 ) -> str:
     """Build the user prompt for a policy application pass.
 
@@ -132,6 +133,9 @@ def render_user_prompt(
     the decision task is the same either way.
     """
     parts: list[str] = []
+    if vocab_summary and vocab_summary.strip():
+        parts.append(vocab_summary.strip())
+        parts.append("")
     parts.append(f"# Target ({scope})")
     parts.append("")
     parts.append(target_summary.strip())

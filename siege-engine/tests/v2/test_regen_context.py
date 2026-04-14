@@ -520,6 +520,7 @@ class TestFormatRegenContext:
             "dep_pubapi_summary",
             "top_level_policy_candidates_summary",
             "related_features_summary",
+            "vocab_summary",
         }
         assert set(formatted.keys()) == expected_keys
 
@@ -775,6 +776,7 @@ class TestFormatRegenContextForSub:
             "sibling_subcomps_summary",
             "parent_sibling_comps_summary",
             "dep_pubapi_summary",
+            "vocab_summary",
         }
         assert set(formatted.keys()) == expected
 

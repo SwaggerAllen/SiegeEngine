@@ -372,6 +372,7 @@ def render_user_prompt(
     feedback: str | None,
     parse_error: str | None = None,
     target_is_foundation: bool = False,
+    vocab_summary: str = "",
 ) -> str:
     """Build the user prompt for the comparch generator.
 
@@ -433,6 +434,9 @@ def render_user_prompt(
             "the decomposition so every concrete subcomponent "
             "claims a clearly-scoped slice of the territory."
         )
+        parts.append("")
+    if vocab_summary and vocab_summary.strip():
+        parts.append(vocab_summary.strip())
         parts.append("")
     parts.append("# Component")
     parts.append("")

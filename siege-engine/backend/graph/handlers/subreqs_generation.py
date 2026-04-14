@@ -180,6 +180,15 @@ async def generate_subreqs(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+
+        # Project vocabulary scoped to this component's reachable
+        # features via the decomposition walk. The subreqs regen
+        # is scoped to one top-level component, so it only needs
+        # vocab for the features that component's responsibilities
+        # serve, plus project-level vocab.
+        from backend.graph.vocabulary import render_vocab_summary_for_node
+
+        vocab_summary = render_vocab_summary_for_node(db, project_id, component_id)
     finally:
         db.close()
 
@@ -202,6 +211,7 @@ async def generate_subreqs(payload: dict) -> None:
             prior_pending=prior_pending,
             feedback=feedback,
             parse_error=parse_error,
+            vocab_summary=vocab_summary,
         )
 
     def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]

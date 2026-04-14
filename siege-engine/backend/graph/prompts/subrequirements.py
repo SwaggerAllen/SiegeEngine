@@ -154,6 +154,7 @@ def render_user_prompt(
     prior_pending: str | None,
     feedback: str | None,
     parse_error: str | None = None,
+    vocab_summary: str = "",
 ) -> str:
     """Build the user prompt for the subreqs generator.
 
@@ -174,6 +175,9 @@ def render_user_prompt(
     The remaining parameters mirror the other bootstrap prompts.
     """
     parts: list[str] = []
+    if vocab_summary and vocab_summary.strip():
+        parts.append(vocab_summary.strip())
+        parts.append("")
     parts.append("# Component")
     parts.append("")
     parts.append(component_summary.strip() or "(component details missing)")

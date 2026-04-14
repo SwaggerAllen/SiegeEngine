@@ -221,3 +221,150 @@ def reachable_vocab_for_node(session: Session, project_id: str, node_id: str) ->
     for feat_id in sorted(reachable_feat_ids):
         result.extend(list_feature_vocab(session, project_id, feat_id))
     return result
+
+
+# ── Prompt-friendly rendering ────────────────────────────────
+
+
+def render_vocab_summary_for_node(session: Session, project_id: str, node_id: str) -> str:
+    """Build the vocab context string for a regen prompt targeting a single node.
+
+    Pulls every project-level vocab entry plus every feature-
+    local entry reachable from the target via the decomposition
+    walk, then renders them as prompt-friendly prose. Used by
+    the component / subcomponent / subreqs / policy-application
+    tiers where the regen is scoped to a single component
+    subtree.
+    """
+    all_reachable = reachable_vocab_for_node(session, project_id, node_id)
+    project = tuple(n for n in all_reachable if n.parent_id is None)
+    feature = tuple(n for n in all_reachable if n.parent_id is not None)
+    feature_names = _build_feature_name_map(session, feature)
+    return format_vocab_summary(project, feature, feature_names=feature_names)
+
+
+def render_vocab_summary_all(session: Session, project_id: str) -> str:
+    """Build the vocab context string including every vocab entry in the project.
+
+    Used by the top-level resolver tiers (``reqs``, ``sysarch``)
+    where the regen reasons across the entire feature set at
+    once and the LLM should see every defined term, regardless
+    of which feature owns it.
+    """
+    all_nodes = list_all_vocab(session, project_id)
+    project = tuple(n for n in all_nodes if n.parent_id is None)
+    feature = tuple(n for n in all_nodes if n.parent_id is not None)
+    feature_names = _build_feature_name_map(session, feature)
+    return format_vocab_summary(project, feature, feature_names=feature_names)
+
+
+def _build_feature_name_map(session: Session, feature_vocab: tuple[Node, ...]) -> dict[str, str]:
+    """Return ``{feat_id: feature_name}`` for every parent referenced."""
+    parent_ids = {n.parent_id for n in feature_vocab if n.parent_id is not None}
+    result: dict[str, str] = {}
+    for parent_id in parent_ids:
+        parent_node = session.get(Node, parent_id)
+        if parent_node is not None and parent_node.name:
+            result[parent_id] = parent_node.name
+    return result
+
+
+def format_vocab_summary(
+    project_vocab: tuple[Node, ...],
+    feature_vocab: tuple[Node, ...],
+    *,
+    feature_names: dict[str, str] | None = None,
+) -> str:
+    """Transform vocab nodes' stored ``<vocab-entry>`` XML into prompt prose.
+
+    Storage is XML so future additions (cross-reference edge
+    emission, structured UI rendering, new grammar fields) have
+    something to work on. The prompt format is prose because
+    the LLM doesn't need raw tags — prompt tokens are too
+    expensive to spend on markup the model will ignore.
+
+    Output shape:
+
+        # Project vocabulary
+
+        **term-name** (project-level)
+        Definition: ...
+        Disambiguation: ... [if present]
+        See also: term1, term2 [if present]
+
+        # Feature vocabulary
+
+        **local-term** (from feature: Billing)
+        Definition: ...
+
+    Project-level terms render first; feature-local terms follow
+    grouped by owning feature. If both lists are empty, the
+    output is the single line ``(no project vocabulary defined)``.
+    """
+    from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
+
+    if not project_vocab and not feature_vocab:
+        return "(no project vocabulary defined)"
+
+    def _render_one(node: Node, scope_label: str) -> str:
+        content = (node.content or "").strip()
+        definition = content
+        disambiguation: str | None = None
+        see_also_names: list[str] = []
+        try:
+            tree = extract_tag_tree(content, "vocab-entry")
+            for child in tree.children:
+                if child.tag == "definition":
+                    definition = (child.text or "").strip() or definition
+                elif child.tag == "disambiguation":
+                    text = (child.text or "").strip()
+                    if text:
+                        disambiguation = text
+                elif child.tag == "see-also":
+                    for ref in child.children:
+                        if ref.tag != "ref":
+                            continue
+                        ref_name = ref.attrs.get("name", "").strip()
+                        ref_to = ref.attrs.get("to", "").strip()
+                        label = ref_name or ref_to
+                        if label:
+                            see_also_names.append(label)
+        except ParseError:
+            pass
+
+        parts: list[str] = [f"**{node.name}** ({scope_label})"]
+        parts.append(f"Definition: {definition}")
+        if disambiguation:
+            parts.append(f"Disambiguation: {disambiguation}")
+        if see_also_names:
+            parts.append(f"See also: {', '.join(see_also_names)}")
+        return "\n".join(parts)
+
+    sections: list[str] = []
+
+    if project_vocab:
+        lines: list[str] = ["# Project vocabulary", ""]
+        for node in project_vocab:
+            lines.append(_render_one(node, "project-level"))
+            lines.append("")
+        sections.append("\n".join(lines).rstrip())
+
+    if feature_vocab:
+        from collections import defaultdict
+
+        by_parent: dict[str, list[Node]] = defaultdict(list)
+        for node in feature_vocab:
+            if node.parent_id is None:
+                continue
+            by_parent[node.parent_id].append(node)
+
+        lines = ["# Feature vocabulary", ""]
+        names = feature_names or {}
+        for parent_id in sorted(by_parent.keys()):
+            parent_label = names.get(parent_id, parent_id)
+            for node in sorted(by_parent[parent_id], key=lambda n: n.name):
+                lines.append(_render_one(node, f"from feature: {parent_label}"))
+                lines.append("")
+        sections.append("\n".join(lines).rstrip())
+
+    return "\n\n".join(sections)

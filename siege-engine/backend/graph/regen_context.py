@@ -150,6 +150,15 @@ class RegenContext:
     sibling_subcomps: tuple[Node, ...] = ()
     sibling_subcomp_pubapi_fragments: dict[str, str] = field(default_factory=dict)
 
+    # Project vocabulary — Phase 5.5. Every regen at every tier
+    # sees the full project-level vocab plus the feature-local
+    # vocab for every feature reachable from this component's
+    # subtree via the decomposition walk. The stored content on
+    # each vocab node is raw <vocab-entry> XML; the formatter
+    # transforms it to prompt-friendly prose at render time.
+    project_vocab: tuple[Node, ...] = ()
+    feature_vocab: tuple[Node, ...] = ()
+
 
 def build_regen_context(session: Session, comp_id: str) -> RegenContext:
     """Assemble the regen-context bundle for a single comp node.
@@ -291,6 +300,20 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
     # relationship and are handled separately at mint time.
     already_applied = _load_already_applied_policies(session, project_id, comp_id)
 
+    # Project vocabulary: always include every project-level
+    # vocab entry, plus the feature-local vocab for every feature
+    # reachable from this component's subtree. The reachability
+    # walk lives in vocabulary.reachable_vocab_for_node and
+    # returns project-level + reachable-feature-local in one
+    # ordered list. Split it into the two RegenContext fields
+    # (project_vocab vs feature_vocab) so the formatter can
+    # render them with distinct headers.
+    from backend.graph import vocabulary as _vocab_module
+
+    all_reachable_vocab = _vocab_module.reachable_vocab_for_node(session, project_id, comp_id)
+    project_vocab_nodes = tuple(n for n in all_reachable_vocab if n.parent_id is None)
+    feature_vocab_nodes = tuple(n for n in all_reachable_vocab if n.parent_id is not None)
+
     return RegenContext(
         component=component,
         component_techspec=cc.techspec,
@@ -311,6 +334,8 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         sibling_subcomp_ids=sibling_subcomp_ids,
         sibling_subcomps=sibling_subcomps,
         sibling_subcomp_pubapi_fragments=sibling_subcomp_pubapi_fragments,
+        project_vocab=project_vocab_nodes,
+        feature_vocab=feature_vocab_nodes,
     )
 
 
@@ -421,6 +446,7 @@ def format_regen_context(ctx: RegenContext) -> dict[str, str]:
             ctx.related_features,
             empty_fallback="",
         ),
+        "vocab_summary": _render_vocab_summary_from_ctx(ctx),
     }
 
 
@@ -473,7 +499,34 @@ def format_regen_context_for_sub(ctx: RegenContext) -> dict[str, str]:
         "dep_pubapi_summary": _format_dep_pubapi_summary(
             ctx.sibling_comps, ctx.dep_pubapi_fragments
         ),
+        "vocab_summary": _render_vocab_summary_from_ctx(ctx),
     }
+
+
+def _render_vocab_summary_from_ctx(ctx: RegenContext) -> str:
+    """Render the vocab context partition for comparch / subcomparch.
+
+    The RegenContext already carries the reachable vocab nodes in
+    ``project_vocab`` + ``feature_vocab``. Resolving feature names
+    for prompt-friendly rendering needs the bound session, which
+    we get from any node in the context — ``ctx.component`` is
+    always present. Delegates the actual formatting to
+    ``vocabulary.format_vocab_summary`` so comparch / subcomparch
+    / requirements / sysarch / subreqs all share one renderer.
+    """
+    from sqlalchemy.orm import object_session
+
+    from backend.graph import vocabulary
+
+    session = object_session(ctx.component)
+    feature_names: dict[str, str] = {}
+    if session is not None:
+        feature_names = vocabulary._build_feature_name_map(session, ctx.feature_vocab)
+    return vocabulary.format_vocab_summary(
+        ctx.project_vocab,
+        ctx.feature_vocab,
+        feature_names=feature_names,
+    )
 
 
 def _format_subcomponent_summary(ctx: RegenContext) -> str:
