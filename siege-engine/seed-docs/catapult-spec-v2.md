@@ -625,19 +625,152 @@ A project without code generation (design-only projects, hypothetical-future-pro
 
 ## A.11 Prompt and DAG configuration
 
-*(to be filled in)*
+**Design commitment: the structure is data, not code.** Per-tier generation prompts, the generation order itself, validator schemas, projection-source parsers, and the scheduler's query rules are all loadable configuration rather than hardcoded Python/Elixir modules. A project can override any of it, and a bundle — a complete configuration for a particular tech stack or workflow style — can be imported from an external source and applied to a project.
+
+### A.11.1 What is configurable
+
+- **Per-tier prompts.** System message, user-prompt template, context-assembly template, retry-on-parse-error instructions, AI-self-review criteria. Every generation tier (expansion, reqs, sysarch, subreqs, comparch, subcomparch, impl, plan, code) has a prompt bundle. Change plans and diagnosis nodes have their own prompt bundles.
+- **Validator schemas.** The parseable-arch-doc structure is data: section order, allowed children, fragment kinds, foundation rules, and dep-edge scoping are all specified in configuration, not hardcoded in a validator module. Adding a new fragment kind is a configuration edit and a migration, not a code change.
+- **Generation order.** The cold-start topological order (A.3.1) is configurable — a project could insert a new tier, reorder existing tiers, or replace a tier with a different shape.
+- **Scheduler queries.** The state queries that drive the state-driven scheduler (A.3.2) are data. Adding a new kind of regen trigger is a configuration edit, not a code change in the scheduler module.
+- **Edge type vocabulary.** The closed set of edge types (A.1.3) is configurable with appropriate migration support — adding a new edge type is explicit work, but it's possible without modifying the core codebase.
+
+### A.11.2 Bundles
+
+Configuration is packaged as **bundles** — directories (or git-cloneable repositories) containing the full set of prompts, validators, generation order, and scheduler queries for a particular workflow style. Bundle examples: "Elixir/Phoenix scaffolding," "Python FastAPI backend," "React frontend feature request," "Infrastructure-as-code Terraform." A bundle represents a complete configuration; projects inherit from one or more bundles with per-project overrides layered on top.
+
+**Instance-level defaults.** Each Catapult instance has a bundle library with instance-level default templates. New projects inherit from instance defaults, with per-project overrides. Self-hosted deployments configure their own defaults.
+
+**Curation and security.** Bundles are a prompt-injection and supply-chain attack surface — a malicious bundle could embed instructions that exfiltrate model content, inject backdoors into generated code, or manipulate the review flow. Bundles must be curated: instance admins explicitly approve bundles before they're available to projects. The system supports bundle signing and provenance tracking so admins can verify the source and integrity of imported bundles.
+
+### A.11.3 Per-project overrides
+
+A project inherits its full configuration from a bundle (or the instance default) and can override any specific piece at the project level. Override granularity:
+
+- **Per-tier prompt override** — the user edits a specific tier's prompt while inheriting everything else from the bundle.
+- **Per-model override** — the user sets a different model or temperature for a specific tier.
+- **Per-node override** — the user overrides a specific field on a specific node's regen (rare, mostly a debugging tool).
+
+Model and temperature are configurable at three levels with standard "most-specific wins" fallback: project default, per-tier default, per-node override.
+
+### A.11.4 Mechanism — TBD
+
+The specifics of how configuration is stored, how bundles are distributed, how schema migration works when a bundle's vocabulary changes, and how overrides are versioned are **design TBD** — deferred to a dedicated workshop. This section captures the design commitment ("structure is data, not code") and the scope of what's covered ("prompts, validators, generation order, scheduler queries, edge vocabulary") without prescribing the schema or the distribution mechanism. The workshop will decide whether bundles live in Postgres rows, on-disk directories, git repositories, or a hybrid; whether overrides are expressed as JSON patches, key-value dicts, or full replacements; and how the instance-level bundle approval flow works.
 
 ## A.12 Credentials and token tracking
 
-*(to be filled in)*
+### A.12.1 BYO credentials
+
+The system is **BYO LLM credentials** — customers supply their own API keys through the application, not through environment variables. Credentials are stored encrypted at rest using per-instance keys, never in plaintext. The LLM API traffic goes directly from Catapult's sandbox to the provider — the user's credentials pass through Catapult but are not inspected or reused for cross-user requests.
+
+### A.12.2 Scoped credential assignment
+
+Credentials can be assigned at three scopes, with most-specific-wins fallback:
+
+- **Instance scope** — a default credential used by any project that doesn't override.
+- **Project scope** — a project-specific credential that overrides the instance default for work done on that project.
+- **User scope** — a per-user credential that overrides the project scope for work initiated by that user.
+
+A generation call resolves credentials by checking user scope first, then project scope, then instance scope. This lets enterprise admins set a shared project credential for team work while allowing individual users to substitute their own credentials for personal exploration, and it lets single-user self-hosted deployments configure an instance default and forget about it.
+
+Credentials are tied to the LLM provider and the model family — a single project may have multiple credential bindings if it uses multiple providers (for example, a main provider for generation and a smaller/cheaper provider for AI self-review). The credential scheme is provider-agnostic; adding a new provider is a matter of adding a provider adapter, not reworking the credentials layer.
+
+### A.12.3 Token tracking
+
+Token usage is tracked per node, per fragment or section where applicable, per flow run, and per project. Every LLM call records `(node_id, section, model, prompt_tokens, completion_tokens, timestamp)` synchronously as part of the job handler. Missing telemetry is treated as a generation failure for alerting purposes even though it doesn't fail the generation itself.
+
+Telemetry data is **not part of the event log** — it's observability, not state — but it **is** surfaced in the UI alongside the artifacts it belongs to:
+
+- Every node and every parseable section displays its most recent generation's token count in-place.
+- The batched review UI shows aggregate token usage for the whole batch so the user can see "this review pass cost X tokens" at a glance.
+- Per-project, per-component, and per-flow-run rollups are queryable from an admin endpoint.
+
+The point is not cost discipline for the MVP — we have accepted that cost optimization is not an MVP goal. The point is making runaway prompt growth **immediately visible**. A regen that suddenly costs 5× what it cost yesterday is the signal that something is wrong with the prompt — too much sibling context, an uncontrolled dependency fan-out, a prompt template regression — and we want that signal visible at the UI the moment it happens, not after somebody bothers to look at a log.
+
+### A.12.4 Cost projection — deferred
+
+Model identifiers are recorded alongside token counts so that future cost projection can retrofit historical data. Cost projection (converting tokens to dollars for display in the UI) is a post-MVP feature; the tracking infrastructure is in place from day one.
 
 ## A.13 Real-time updates and external integration
 
-*(to be filled in)*
+### A.13.1 Live updates
+
+All connected clients receive live updates when artifacts are generated, statuses change, or flows progress. DAG visualizations, status indicators, review queues, and artifact viewers update in real-time. Updates flow over WebSocket-based push channels scoped per project; a user viewing project A does not receive update traffic for project B unless they're also subscribed to B.
+
+### A.13.2 External webhooks
+
+Catapult emits webhook events for external integrations. Configurable per project, these webhooks notify external systems of significant pipeline events:
+
+- Flow started, paused, completed, or failed
+- Artifact ready for review (human review needed)
+- Review SLA timeout exceeded
+- PR created or merged
+- Run completed with summary (components processed, artifacts generated, token usage)
+
+Webhook payloads include enough context for external systems to take action (Slack notifications, CI dashboard updates, project-management tool integration) without needing to query Catapult's API. Webhook endpoints are configurable per project by admins.
+
+### A.13.3 External API
+
+Catapult exposes a programmatic API for external tooling. The API provides:
+
+- **Read access** to all project state: structured model, flow status, event log, artifact content, review status, lobby contents, token usage.
+- **Write access** to flow operations: propose flows to the lobby, leave deferred feedback, trigger actions permitted by the caller's role.
+
+Authentication uses the same per-user credentials and scoped-role system as the web UI. Every API call is subject to the same permission checks as the equivalent UI action. The API enables custom dashboards, chat bots, project-management integrations (Jira, Linear), CI/CD pipeline queries, and third-party tooling built on Catapult's data model.
 
 ## A.14 Authentication and authorization
 
-*(to be filled in)*
+### A.14.1 Permission atoms
+
+Authorization is **atom-based**, not role-based in the hardcoded sense. The system defines a closed vocabulary of **permission atoms** — discrete actions that can be individually granted or denied. Examples from the vocabulary:
+
+- `flow.start`, `flow.cancel`, `flow.approve`
+- `artifact.approve`, `artifact.reject`, `artifact.comment`, `artifact.defer_feedback`
+- `prompt.edit`, `prompt.override`, `bundle.import`, `bundle.approve`
+- `user.invite`, `user.remove`, `role.define`, `role.assign`
+- `credentials.manage_instance`, `credentials.manage_project`, `credentials.manage_self`
+- `owner.transfer`, `owner.delegate`
+- `admin.prune`, `admin.force_restart`, `admin.reset_all`, `admin.force_sync`
+- `chat.use`, `chat.propose_flow`, `chat.at_mention_david`
+
+The atom vocabulary is extensible — adding a new feature means registering new atoms, not changing the auth model. Every action behind a permission check is gated on a specific atom, not a role. Changing what a role can do is a matter of recomposing atoms, not a code change.
+
+### A.14.2 Roles as named atom sets with optional scope
+
+A **role** is a named set of atoms, optionally scoped to a specific subtree. The system ships with preset roles — `admin`, `member`, `viewer`, `reviewer-only`, `prompt-maintainer`, `owner` — but these are convenience wrappers over the atom vocabulary, not hardcoded categories. Enterprise admins can define their own roles via the `role.define` atom.
+
+**Scoped roles** pin a role assignment to a specific node's subtree. Permission checks against artifacts inside the scope consult the scoped role; artifacts outside the scope do not. The most common use is `owner` scoped to a specific component: the user holds `owner` with scope `comp_abc123`, and the atoms the owner role grants (approve, transfer, delegate, etc.) apply only within that component's subtree.
+
+Scoped roles compose: a user can be `owner` of component A, `reviewer-only` of component B, and `admin` project-wide, all at once. Permission checks resolve by starting at the narrowest applicable scope and walking outward, with the first grant-or-deny decision winning.
+
+### A.14.3 Preset roles
+
+The system ships with these preset roles as convenience defaults. Enterprise admins can customize them or replace them entirely:
+
+- **`admin`** (project scope) — every atom. Can invite users, define roles, approve bundles, manage credentials, run admin tools.
+- **`member`** (project scope) — can start flows, review artifacts, edit prompts, comment, propose flows to the lobby. Cannot define roles, approve bundles, or use admin tools.
+- **`viewer`** (project scope) — read-only plus commenting and deferred feedback. Cannot start flows or approve artifacts.
+- **`reviewer-only`** (project scope) — can review and approve/reject artifacts, but cannot start flows or edit prompts. Useful for external reviewers who shouldn't drive work but should sign off on results.
+- **`prompt-maintainer`** (project scope) — can edit prompts and import/approve bundles, but cannot start flows or approve artifacts. Useful for separating configuration work from operation work.
+- **`owner`** (component scope) — the default reviewer for everything in the component's subtree. Granted via fan-out review or explicit assignment.
+
+### A.14.4 Sessions and identity
+
+- **Invite-based onboarding** with time-limited tokens.
+- **Session management** — configurable session timeout, concurrent session limits, admin-initiated forced logout.
+- **Auth audit log** — all authentication and authorization events logged separately from the pipeline event store: login, logout, failed login attempts, permission changes, role changes, invite creation and redemption, credential updates. Append-only, tamper-evident, queryable by admins.
+
+### A.14.5 SSO and SAML
+
+SSO and SAML are **in scope for the MVP**. Enterprise customers frequently require integration with their existing identity provider and cannot use standalone credentials for production work, so SSO integration ships from day one.
+
+- **SSO flow** — a user authenticating via SSO lands in Catapult with an identity provided by their IdP. Catapult creates or updates the local user record keyed to the IdP-supplied identifier.
+- **SAML assertion handling** — Catapult acts as a SAML Service Provider, consuming assertions from a configured Identity Provider. Assertion parsing includes signature verification and replay protection.
+- **Group-to-role mapping** — IdP groups are mapped to Catapult preset roles (or custom roles) via an admin-configurable mapping table. A user's effective role set is the union of all roles mapped from their IdP group memberships. Group changes in the IdP propagate on next login.
+- **JIT provisioning** — users authenticating via SSO for the first time are auto-provisioned with the role set derived from their IdP groups; no separate invite flow.
+- **Session bridging** — SSO sessions map to local Catapult sessions with their own timeout. Logging out of Catapult invalidates the local session; it does not force SSO logout at the IdP (that's a global concern).
+- **Multiple IdPs per instance** — supported, so a single Catapult instance can serve multiple organizations each with their own IdP.
+- **BYO credentials compose with SSO** — SSO handles identity; BYO LLM credentials (A.12) handle LLM authentication. A user authenticated via SSO still supplies their own LLM credentials if the project is configured for user-scope credentials. The two layers are independent.
 
 ## A.15 Multi-project support
 
