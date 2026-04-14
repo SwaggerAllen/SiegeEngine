@@ -367,11 +367,157 @@ No node ever sees the full text of its dependencies — only their public-surfac
 
 ## A.4 Projection sources, bootstrap nodes, and change plans
 
-*(to be filled in)*
+### A.4.1 Projection sources are the unifying abstraction
+
+Throughout the model, several different constructs share one underlying pattern: **prose authoring surface → parse-and-mint on approval → structured DAG children**. These authoring surfaces are called **projection sources**. Bootstrap nodes, fragments, and change plans are all instances of the pattern, differing only in scope and lifecycle.
+
+- **Bootstrap nodes** (`expansion_*`, `reqs_*`, `sysarch_*`, `subreqs_*`, `manifest_*`) are whole-document projection sources. The LLM writes the entire document, the user reviews it as a unit, and approval projects the content into structured children: `feat_*` nodes from an expansion, `resp_*` nodes plus `decomposition` edges from a reqs node, `comp_*` nodes plus techspec/pubapi fragments plus `policy_*` nodes plus dep edges plus domain-parent edges from a sysarch, subresp `resp_*` nodes plus their own `decomposition` edges from a subreqs, manifest path entries from the manifest.
+- **Fragments** (`techspec`, `pubapi`, `privapi`, `policies`, `deps`) are section-of-document projection sources. They live inside component and subcomponent arch docs as tagged sections of those docs' content. Individual fragments don't have their own drafts — the arch doc is approved as a unit — but on approval, each fragment's content is projected separately: the `<policies>` fragment mints `policy_*` nodes, the `<dependencies>` fragment mints dependency edges, and so on. The arch doc is the approval unit; fragments are the projection units inside it.
+- **Change plans** (`changeplan_*`) are per-flow-run review artifacts. They have the same draft → AI-review → human-review → approve lifecycle as bootstrap nodes but they **do not project structured children on approval** — instead, approval of a change plan at a tier unblocks the regen at that same tier by providing it as prompt context. Change plans are the review surface where the user agrees to *what* a flow will do at each level before the regen commits; the regen is the mechanism that actually does it.
+
+The relationship — authoring surface → parse-and-project on approval — is the same across all three. What differs is scope and lifecycle:
+
+| | Bootstrap nodes | Fragments | Change plans |
+|---|---|---|---|
+| Approval granularity | Whole document | Approved as part of the owning arch doc | Whole document |
+| Storage | `Node.content` (one row per source) | `Fragment.content` (one row per kind per owner) | `Node.content` on the changeplan node |
+| Lifecycle | Write-once; read-only after initial approval | Iterable; re-projected on every arch-doc regen | Write-once per flow run; read-only after approval |
+| Persists in | Event log + projection | Event log + projection | Event log only; projection shows them in flow-run history, not in the live DAG |
+| Projects structured children? | Yes | Yes | No |
+| Addressable by other nodes? | No (bootstrap content is not transcluded) | Yes (fragment IDs are pulled by ID into dependent prompts) | No (no one references a change plan by ID) |
+
+The storage and lifecycle asymmetry is load-bearing: bootstrap nodes don't need transclusion (nothing pulls a section of a reqs doc into another node's regen prompt), arch docs do (a component's `pubapi` fragment is pulled by every dependent's regen prompt), and change plans exist for audit and in-flow review but are not referenced by any permanent structural edge. Forcing either shape onto the others would lose information.
+
+**The mint-handler code shape is identical** across bootstrap nodes and fragments: load inputs, parse the approved content, emit `NodeCreated` / `EdgeCreated` / `FragmentUpdated` events for the derived children, commit in one transaction. Change plans skip the "emit derived children" step — their mint handler records the approval event and the scheduler's queries pick up the downstream regen from there.
+
+### A.4.2 Bootstrap nodes
+
+Each bootstrap node carries one prose document form as a single LLM output, reviewed as a unit, and its content is immutable after first approval. Bootstrap nodes are the system's commitment points: when the user approves a bootstrap, they are approving the shape of everything that gets minted from it.
+
+- `expansion_*` — feature expansion. Reviewed once, mints `feat_*`. Singleton per project.
+- `reqs_*` — top-level requirements. Reviewed once, mints top-level `resp_*` plus `feat → resp` decomposition edges. Singleton per project.
+- `sysarch_*` — system architecture. Reviewed once, mints top-level `comp_*` nodes plus top-level `policy_*` nodes plus dependency edges plus domain-parent edges plus a `subreqs_*` bootstrap per top-level component plus the top-level techspec, pubapi, privapi fragments for each component. Singleton per project.
+- `subreqs_*` — subrequirements, one per top-level component. Reviewed once, mints subresp `resp_*` plus `top_level_resp → subresp` decomposition edges. Not a singleton.
+- `manifest_*` — file territory manifest. Singleton per project. Minted by code-generation passes, regenerated as the component tree reshapes.
+
+**Post-approval, bootstrap nodes are read-only editing surfaces.** Incremental edits happen on the minted children, not by re-editing the bootstrap prose. The bootstrap node stays in the event log as a historical artifact; re-running cold-start is an administrative operation (A.21.4), not a routine edit.
+
+### A.4.3 Change plans
+
+A change plan is a reviewable prose artifact produced by a flow run at every tier the flow touches. Its job is to let the user agree on *what* the flow intends at each level before the regen at that level commits.
+
+**Lifecycle.** Each change plan goes through draft → AI self-review → human review → approved states identical to a bootstrap node. Rejection feedback flows into a regen of the change plan itself. Once approved, the change plan is consumed by the regen pass at its tier as prompt context.
+
+**What it contains.** A prose description of the changes at the tier it's for. For a feature request that touches the sysarch, a system-level change plan says "the billing feature expansion adds two top-level responsibilities; I propose minting one new top-level component (Billing), adding a dependency edge from Auth to Billing, and flagging two existing top-level policies as applicable to the new component." For a component the request touches, a component-level change plan says "this component needs a new subresponsibility for invoice rendering, which I'll add as a new subcomponent alongside the existing ones; its pubapi gains an `invoice_render` method; no new policies are needed."
+
+**What it does not contain.** Code. Structured IDs for things that haven't been minted yet. Anything below prose reasoning. The change plan is the *intent*; the regen is the *mechanism*. The change plan isn't expected to list every byte of the downstream diff — it lists the shape of the changes so a reviewer can decide whether the flow's interpretation matches what they meant.
+
+**Not structural.** A change plan is not a node in the dependency graph. Nothing refers to it by dep edge, no fragment transcludes from it, and it doesn't appear in the live DAG view that shows the component tree. It exists in a parallel review surface attached to the flow run, and it exists in the event log indefinitely as provenance. Users who ask "why did this regen happen, and what did we agree on?" can pull the change plan for that tier at that flow run and read it.
+
+**Persistence.** Change plans persist in the event log forever. They're cheap to keep, they compose with the event log to give a complete answer to "what was the design intent at this moment in history," and deleting them would erase real audit value. The UI for browsing change plans is treated as a separable concern — the initial version may show them only in the context of a specific flow run's detail view, with a cross-project "all change plans" list deferred until there's a concrete use case for it.
+
+**Not in the live DAG view.** The decomposition graph, component tree, and other structural visualizations do not display change plans. They are visible in flow-run detail views and in per-node provenance lookups. This keeps the structural view clean and ensures change plans don't clutter the primary editing surface.
+
+
 
 ## A.5 Review and approval
 
-*(to be filled in)*
+Every artifact produced by the system — bootstrap node, fragment, arch doc, change plan, impl doc, plan node, code diff — goes through review. The system provides two review surfaces, one for **model artifacts** (markdown-style rendering with inline + summary comments, version diffs, feedback panel) and one for **code** (file-level diff, inline review comments, CI status), but both use the same underlying status model and workflow.
+
+### A.5.1 Review paths
+
+**Model artifacts** follow this chain:
+
+1. **AI self-review** — The generating handler produces an output, then runs a short self-review pass against structured criteria (quality score, recommendation, notes). If revision is recommended, the system automatically regenerates incorporating the self-review feedback, up to a configurable loop limit.
+2. **Human review** — After AI self-review, artifacts enter an `awaiting_review` status. Humans review with **inline comments** anchored to specific sections (or specific lines inside a fragment) and **summary feedback** that captures cross-cutting concerns. Rejection feedback — both inline and summary — is included in a subsequent AI revision pass. Location-anchored feedback gives the AI much better signal about what to change than unstructured text alone.
+
+**Code artifacts** (leaf-level PRs and plan-driven code diffs) follow a parallel path:
+
+1. **AI code review** — The AI reviews generated code and posts inline comments tied to file paths and line numbers.
+2. **CI loop** — CI results feed back into the generation loop. CI failure is not treated as "a bug to fix" — it means the system generated incorrect code and should retry with the error output as additional context. This is a first-class concept in the state machine (A.5.5), not an edge case.
+3. **Human code review** — After AI review and CI pass, the PR enters `awaiting_review` for human review via Catapult's code review UI. Code review uses the same inline + summary feedback model as model-artifact review.
+
+### A.5.2 Deferred feedback
+
+Users can leave inline comments and summary feedback on **any node at any time**, not just nodes currently awaiting review. This feedback accumulates as pending and is automatically included in the prompt context the next time that node is regenerated by any flow.
+
+This is the lightweight alternative to kicking off a full flow every time someone notices something. When working deep in the tree reveals that an upstream node should incorporate a new consideration, a user can leave a comment on the upstream node and move on — the comment waits until the next flow touches that node, at which point the regen picks it up automatically. Multiple deferred comments from multiple users can accumulate across any number of nodes. Deferred feedback does not trigger regeneration on its own; it waits until the node is next touched by a flow.
+
+**Comment lifecycle.** All comments — inline review feedback, summary feedback, and deferred feedback — can be edited or deleted by their author after posting. Edits and deletions are recorded in the event log (the original content is preserved in history, not destroyed). Comments that have already been consumed by a regeneration pass are marked as such; deleting a consumed comment does not undo the regen it influenced. Pending (unconsumed) comments can be freely edited or deleted before the next regen picks them up.
+
+**Feedback visibility.** Each node in the DAG visualization displays a pending feedback counter (badge). Counters roll up — a component shows the sum of its own pending feedback plus all its children's. This gives users an at-a-glance view of where feedback has accumulated across the tree, signaling where attention is needed.
+
+### A.5.3 Collaborative discussions
+
+Two conversation modes share the same underlying chat infrastructure (A.19):
+
+- **Private AI chat** — per-user, per-project. A single user conversing with the AI (David) about the project, visible only to that user.
+- **Collaborative discussions** — threaded conversations attached to a specific artifact (model artifact or code PR) during the review workflow. Team-visible — all project members with access to the artifact can read and participate. Messages are attributed to their author. Team members can @mention the AI as **@david** in a discussion thread; David responds in-thread with citations, visible to all participants. Discussion threads can culminate in review actions (approve, reject with feedback, request changes) attributed to the acting user.
+
+Discussions persist alongside the artifact's review history. Unlike private chat, discussions are part of the artifact's provenance trail — future reviewers and the AI itself can reference prior discussion threads to understand why decisions were made.
+
+### A.5.4 Ownership, routing, and review SLA
+
+Review routing consults the scoped-role system (A.14.2). Each artifact sits inside some component's subtree (or, for project-level artifacts like the expansion bootstrap, sits at project scope). Review notifications route to whoever holds the `owner` role at the narrowest scope covering the artifact.
+
+**Review type routing.** Different artifact types can be configured to require additional reviewers beyond the default owner, per project:
+
+- **Architecture docs** → component owner + optionally an architect-role holder
+- **Change plans** → component owner by default
+- **Plans** → component owner
+- **Code PRs** → component owner + optionally any team member with relevant domain expertise
+- **Fan-out approvals** → parent component's owner (the person who owns the level above decides the decomposition and assigns ownership of new children)
+
+A second reviewer can be optionally required per artifact type via project configuration.
+
+**Notifications.** Reviews are the pipeline's bottleneck. Notifications are **batched**: "You have 4 architecture docs ready for review in the Authentication component" is one notification, not four. Channels include in-app at minimum, with webhook support (Slack / Teams / email) configurable per user.
+
+Each user has a **review queue** — a unified view of all artifacts awaiting their review across all projects, with age, priority, and scope indicators.
+
+**SLA and escalation.** Configurable review timeout per project:
+
+1. After the first timeout: reminder notification to the assigned reviewer.
+2. After a second timeout: escalate to the parent component's owner or project admin.
+3. Optionally (off by default): auto-approve with a "flagged for post-hoc review" marker after a third timeout.
+
+**Delegation.** Owners can reassign a specific review to another team member, delegate their entire component scope to someone else (temporary or permanent), or split ownership within their subtree (e.g., "I own this component but delegate the database subcomponent to Bob"). Delegation is represented as scoped-role assignments; the delegating user's role binding is narrowed or transferred as appropriate.
+
+### A.5.5 Status chains
+
+**Model artifacts:**
+
+```
+pending → generating → ai_reviewing → awaiting_review → approved / rejected / stale
+```
+
+**Code artifacts:**
+
+```
+pending → generating → ai_reviewing → ci_validating → awaiting_review → approved / rejected / stale
+```
+
+The `ci_validating` status is specific to code artifacts and represents the CI loop (A.21.7). Nodes cycle between `ci_validating` and `generating` on CI failure until the retry limit is reached. Projects without CI configured skip `ci_validating` entirely.
+
+Rejecting an artifact marks its downstream dependents `stale`, which the scheduler picks up as candidates for regen.
+
+### A.5.6 Review granularity and batching
+
+Review gates are configurable: per-node, per-tier, leaves-only, or fully automatic with the destructive-operation carve-out (A.3.3) as a hard override. The default is sensible ("review fan-out and destructive ops, auto-approve everything else at the node level") but the user controls it.
+
+The intended review workflow is **batched**: a flow run produces N artifacts, pauses for human review of that batch, the reviewer reads and leaves feedback on some or all of them, rejected artifacts and their downstream dependents regenerate as a sub-run incorporating the feedback, and once the sub-run completes, the parent flow resumes and produces the next batch. This produce-review-regenerate cycle repeats through the flow.
+
+### A.5.7 Restart semantics
+
+Flow runs support four restart granularities:
+
+- **Node-level** — Regenerate a single node's output; downstream nodes are marked stale and the scheduler picks them up.
+- **Tier-level** — Restart an entire tier (for example, regenerate every component architecture doc).
+- **Flow-level** — Restart the entire flow from input expansion.
+- **Partial retry** — Retry only failed or rejected nodes within a tier, leaving approved nodes intact.
+
+Each restart option clearly communicates what gets invalidated in the UI so the user knows what they're signing up for.
+
+
 
 ## A.6 Flow lobby
 
