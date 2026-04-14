@@ -774,23 +774,100 @@ SSO and SAML are **in scope for the MVP**. Enterprise customers frequently requi
 
 ## A.15 Multi-project support
 
-*(to be filled in)*
+A single Catapult instance supports multiple independent projects. Each project has its own:
+
+- Structured model, event log, and projections — fully isolated from other projects
+- Repository (or repositories, post-MVP) for code shipping
+- Bundle configuration (inheriting from instance defaults with per-project overrides)
+- User memberships and scoped-role assignments
+- Review queue, lobby, and SLA settings
+- Credential bindings (optionally inheriting from instance-scope credentials)
+
+**One active flow run per project at a time** (A.7); different projects run concurrently. The LLM concurrency limit (A.21.13) applies per-instance, so many parallel projects share the same pool of allowed concurrent LLM calls.
+
+A user can be a member of many projects simultaneously, each with their own scoped role. The review queue UI unifies awaiting-review artifacts across every project the user has access to, with project-name breadcrumbs and priority indicators. The lobby has both a per-project view and a cross-project view (A.6.1) for tech leads who manage multiple projects from a single screen.
+
+Project creation is an admin operation behind the `project.create` atom. A new project starts empty and picks up the instance's default bundle, default credentials, and default role preset list. The admin who creates the project is granted `admin` scope on that project by default.
 
 ## A.16 Bootstrap flow
 
-*(to be filled in)*
+A one-time flow for onboarding an existing codebase that already has design documents in the expected shape. The bootstrap flow takes:
+
+- A codebase with documents matching the scaffolding flow's output shape (expansion, requirements, system architecture, subrequirements, component/subcomponent architecture docs, impl notes, plan artifacts) organized in the expected hierarchy
+- The folder structure that maps each leaf to its territory
+
+and reconstructs the structured model by parsing each incoming document into the same projection sources the cold-start flow would produce. The reducer then emits `NodeCreated` / `EdgeCreated` / `FragmentUpdated` events that populate the projection as if the nodes had been minted by the corresponding bootstrap nodes.
+
+- **Synthesized baseline event** — a `ProjectBootstrapped` event (or equivalent) establishes the initial snapshot from the imported documents, so reconciliation (A.21.11) can rebuild projections from events without special-casing bootstrap.
+- **Destructive to existing project state** — bootstrap can only run on a fresh project; it overwrites any existing model state.
+- **Review records start fresh** from the point of bootstrap; prior review history in the source codebase is not migrated.
+- **After bootstrap**, the project can use any standard flow (scaffolding regen, feature request, refactor, bug-fix propagation) to iterate on the imported model.
+
+The bootstrap flow is how a team adopts Catapult on an existing project without rewriting the design from scratch. It is a one-time operation — once a project has been bootstrapped, incremental code and design changes flow through the normal flows.
 
 ## A.17 AI coding assistant integration
 
-*(to be filled in)*
+The coding portion of leaf execution — plan generation and code generation — is delegated to an AI coding assistant that has direct tool access to the project's repository. The assistant handles "how to change the code" against the actual codebase; the structured model provides "what needs to change."
+
+- **Tool access** — the assistant can read, navigate, and modify files in the leaf's territory (A.1.11), subject to AI sandboxing (A.18). It has the same tools a human developer using an AI coding CLI would have, scoped to the leaf.
+- **No separate code indexing** — the assistant uses its own tools to read code in context; Catapult does not maintain a separate AST index or code search layer. This keeps the code-side tooling decoupled from the design side and lets Catapult integrate with whatever coding assistant the project prefers.
+- **Plan node as input** — the approved plan node is the contract between the design side and the coding assistant. The plan describes what changes are needed and why; the assistant reads the plan and executes it against the real code.
+- **Code-level review feedback** comes back to the plan node as a follow-up if the generated code doesn't match the plan. CI failures (A.21.7) trigger regeneration of the plan or the code depending on the nature of the failure.
+- **Multiple providers supported** — the coding assistant is behind an adapter interface. Claude Code, Cursor, Aider, or other tools can plug in via the adapter layer without changing the core model.
 
 ## A.18 AI sandboxing
 
-*(to be filled in)*
+All AI execution — coding assistants, document generation, chat responses, template prompts — runs in a sandboxed environment. The sandbox enforces:
+
+- **Filesystem scoping** — coding assistants can only access files within the leaf's folder territory (A.1.11). A leaf for `src/auth/` cannot read or write files in `src/payments/`. Generation prompts for non-code artifacts have no filesystem access at all.
+- **No arbitrary network access** — AI execution can reach the configured LLM API endpoint and nothing else. No outbound HTTP to arbitrary URLs, no DNS resolution of external hosts.
+- **No credential access** — the sandbox cannot access stored credentials (LLM API keys, git tokens, user secrets). Credentials are injected by the orchestrator into the specific API calls that need them, never exposed to the AI's tool environment.
+- **Resource limits** — CPU, memory, and execution time are bounded per node execution. A runaway generation cannot consume unbounded resources.
+- **Template isolation** — bundle prompt templates can only access the context categories they are configured for (A.3.5). A template cannot override system-level safety prompts or modify its own execution parameters. This is the primary defense against prompt injection via malicious bundles.
+- **No session persistence** — AI execution environments are reset between nodes; no state leaks from one generation to another beyond what's explicitly passed in via context.
+
+Sandboxing is especially critical because the system runs untrusted LLM output on infrastructure the team controls. A compromised bundle or a maliciously-crafted prompt injection attempt must not be able to exfiltrate data, escalate privileges, or run arbitrary code.
 
 ## A.19 AI chat interface — David
 
-*(to be filled in)*
+A conversational AI assistant named **David** — as in David and Goliath, a small, well-aimed tool that helps small teams take on massive projects — scoped per project. David can answer questions about the codebase and its design graph, but operates in **read-only mode** with respect to the pipeline: it can analyze everything but cannot directly modify state, start flows, or change pipeline configuration. When David identifies issues or opportunities, it proposes flows that go to the flow lobby (A.6) for human prioritization. In collaborative discussions (A.5.3), team members invoke David via **@david**.
+
+### A.19.1 Capabilities
+
+- **Design Q&A** — "Why does the authentication component use session tokens instead of JWTs?" David retrieves relevant architecture docs, plans, and review feedback via the vector index and answers with citations to specific nodes and versions.
+- **Codebase Q&A** — "How does the payment webhook handler work?" David uses the coding assistant's tools (A.17) to read and navigate the actual code, combining what it finds with the design graph context.
+- **Provenance queries** — "Who approved the database schema change and why?" David queries the event log and review history to trace decisions back through their full chain.
+- **Cross-cutting questions** — "Which components would be affected if we changed the user model?" David uses the dependency graph and component architecture docs to identify impact across the tree.
+- **Flow proposals** — "This component's docs don't match the code I just saw." David can propose flows (feature request, refactor, bug-fix propagation) that are sent to the flow lobby for human review and prioritization. David never directly initiates execution.
+
+### A.19.2 Review UI integration
+
+David is context-aware of the user's current review state. When a user is reviewing an artifact, David:
+
+- Knows which artifact is currently being reviewed and can answer questions about it without the user having to describe it
+- Can explain why a particular design decision was made, trace the provenance of a change, or compare the current version against previous versions
+- Can take review actions on behalf of the user — reject with feedback, approve, request changes — when explicitly asked. These are human review actions attributed to the user, not autonomous AI actions.
+- Eliminates the need to copy-paste artifacts into a separate chat context to ask questions about them
+
+### A.19.3 Context and scoping
+
+David is scoped to a single project. It has access to:
+
+- All model state (current versions, with ability to reference historical versions via the event log)
+- The codebase via the coding assistant's tools
+- The event log and review history
+- The current pipeline state (runs, artifacts, lobby contents)
+- The user's current review context (which artifact they're viewing, their position in the review queue)
+
+Context assembly for chat queries uses the same vector retrieval and budget-based approach as pipeline execution (A.3.5), but with a query-driven retrieval strategy rather than a node-type-driven one.
+
+### A.19.4 Conversation history
+
+Private chat conversations are persisted per project, per user. Users can reference prior conversations. Conversations are not part of the event-sourced pipeline — they are a read-only interface over the project's state, stored separately from the pipeline event store.
+
+### A.19.5 David is not proactive
+
+David does not run background analysis, surface issues unprompted, or interrupt the user's workflow with suggestions. It responds to user questions, participates in collaborative discussions when @mentioned, and proposes flows when asked — but it does not watch for problems and raise them on its own. This is a deliberate scope narrowing from the catapult v1 concept: proactive AI suggestions sit uneasily with the "human is in control" commitment, and the review-queue + feedback-counter + lobby combination already gives users enough visibility into where attention is needed without a background daemon deciding what to flag.
 
 ## A.20 Adoption and trust
 
