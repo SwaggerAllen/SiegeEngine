@@ -24,9 +24,10 @@ Flow:
      ``target_id=subresp_id``. This is the resp → subresp edge
      (many-to-many within the component).
 5. Commit.
-
-The handler does **not** enqueue comparch — that's Phase 4's
-trigger.
+6. **Phase 4 hook**: post-commit, enqueue
+   ``v2.generate_comparch`` for this component. The comparch
+   handler's precondition check reads the subreqs node's
+   content to confirm approval happened before running.
 
 See ``docs/architecture/v2-roadmap.md`` Phase 3 stage 3.
 """
@@ -164,8 +165,26 @@ async def mint_subreqs(payload: dict) -> None:
                 minted_edge_ids.append(edge_id)
 
         db.commit()
+
+        # Phase 4 hook: now that subresps are minted, enqueue
+        # comparch generation for this component. The comparch
+        # handler's precondition check reads the subreqs node's
+        # content to verify approval; writing the subresps in
+        # the same commit as the approval makes the precondition
+        # satisfiable by the time the enqueued job runs.
+        pipeline_queue.enqueue(
+            db,
+            job_type="v2.generate_comparch",
+            payload={
+                "project_id": project_id,
+                "component_id": component_id,
+                "feedback": None,
+            },
+        )
+
         logger.info(
-            "mint_subreqs project=%s comp=%s minted %d subresps and %d edges",
+            "mint_subreqs project=%s comp=%s minted %d subresps and %d edges "
+            "(comparch generation enqueued)",
             project_id,
             component_id,
             len(minted_subresp_ids),
