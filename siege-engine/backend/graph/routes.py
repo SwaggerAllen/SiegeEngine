@@ -1615,3 +1615,90 @@ def get_applied_policies(
             for node, edge in rows
         ]
     )
+
+
+# ── Decomposition graph (Phase 4 stage 10) ─────────────────────────
+
+
+class DecompositionGraphNode(BaseModel):
+    id: str
+    name: str
+    tier: str
+    kind: str
+    parent_id: str | None
+    display_order: int
+
+
+class DecompositionGraphEdge(BaseModel):
+    id: str
+    edge_type: str
+    source_id: str
+    target_id: str
+
+
+class DecompositionGraphResponse(BaseModel):
+    nodes: list[DecompositionGraphNode]
+    edges: list[DecompositionGraphEdge]
+
+
+@router.get(
+    "/{project_id}/decomposition-graph",
+    response_model=DecompositionGraphResponse,
+)
+def get_decomposition_graph(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DecompositionGraphResponse:
+    """Return the full decomposition graph for Cytoscape rendering.
+
+    Ships every comp_* (top-level and subcomponent), every resp_*
+    (top-level and subresp), every dependency edge, every
+    decomposition edge, and every domain_parent edge. The frontend
+    graph component decides what to show based on view filters.
+    """
+    _require_project(db, project_id)
+
+    node_rows = list(
+        db.execute(
+            select(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.tier.in_(["comp", "resp"]),
+            )
+            .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+    edge_rows = list(
+        db.execute(
+            select(Edge)
+            .where(
+                Edge.project_id == project_id,
+                Edge.edge_type.in_(["dependency", "decomposition", "domain_parent"]),
+            )
+            .order_by(Edge.id.asc())
+        ).scalars()
+    )
+
+    return DecompositionGraphResponse(
+        nodes=[
+            DecompositionGraphNode(
+                id=n.id,
+                name=n.name,
+                tier=n.tier,
+                kind=n.kind,
+                parent_id=n.parent_id,
+                display_order=n.display_order,
+            )
+            for n in node_rows
+        ],
+        edges=[
+            DecompositionGraphEdge(
+                id=e.id,
+                edge_type=e.edge_type,
+                source_id=e.source_id,
+                target_id=e.target_id,
+            )
+            for e in edge_rows
+        ],
+    )

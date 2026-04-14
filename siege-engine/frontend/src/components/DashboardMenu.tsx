@@ -68,6 +68,14 @@ export function DashboardMenu({ projectId }: Props) {
           className="absolute right-0 mt-1 w-48 bg-gray-800 border border-gray-700 rounded shadow-lg z-20 py-1 text-sm"
         >
           <Link
+            to={`/projects/${projectId}/decomposition`}
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-3 py-2 hover:bg-gray-700 text-gray-200"
+          >
+            Decomposition Graph
+          </Link>
+          <Link
             to={`/projects/${projectId}/settings`}
             role="menuitem"
             onClick={() => setOpen(false)}
