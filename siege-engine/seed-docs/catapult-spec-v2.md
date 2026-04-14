@@ -521,23 +521,107 @@ Each restart option clearly communicates what gets invalidated in the UI so the 
 
 ## A.6 Flow lobby
 
-*(to be filled in)*
+Proposed flows do not execute immediately. They enter a **lobby** where they can be reviewed, prioritized, and queued by the user before execution begins.
+
+### A.6.1 Lobby behavior
+
+- All AI-initiated flows (from chat suggestions made via @david or equivalent) go to the lobby, never straight to execution.
+- User-initiated flows can be sent to the lobby or executed immediately, at the user's choice. The lobby is not just for AI proposals — humans use it to queue up work they want done but not right now.
+- The lobby displays pending flows with their description, estimated scope (which components would be affected), the triggering context (chat conversation, user request), and the proposed flow type (scaffolding, feature, refactor, bug-fix).
+- Users can reorder, approve, reject, or modify proposed flows in the lobby before they are queued for execution.
+- The lobby respects the one-active-flow-per-project constraint (A.7) — approving a flow from the lobby queues it behind any currently running flow.
+- A **cross-project lobby view** shows all pending flows across all projects the user has access to, so a team lead can prioritize work across multiple projects from a single screen.
+
+### A.6.2 AI as read-only proposer
+
+The chat interface (A.19) and any other AI-driven analysis operates in **read-only mode** with respect to the pipeline. It can:
+
+- Read all model state, code, events, and pipeline status
+- Propose flows (which go to the lobby)
+- Answer questions and trace provenance
+
+It cannot:
+
+- Directly start flows, modify model state, or change pipeline state
+- Bypass the lobby to execute changes
+
+This ensures humans remain in control of what work actually happens, while the AI can freely analyze and suggest.
 
 ## A.7 Concurrency and locking
 
-*(to be filled in)*
+The system uses **pessimistic locking** at the project level. Only one flow run or sub-run may be active per project at a time. This dramatically simplifies the concurrency story:
+
+- No two flows can edit the same component simultaneously within a project.
+- Sub-runs pause their parent, so there is no concurrent modification within a single project.
+- Lock acquisition is coarse — per project, not per node — because fine-grained locking introduces deadlocks and adds complexity the current scale doesn't need.
+- Locks are released on run completion, failure, or a configurable timeout.
+- Different projects run concurrently — the single-active-flow constraint is per project, not global.
+
+Within a flow, non-dependent nodes in the same tier can execute in parallel subject to the LLM concurrency limit (A.21.13). Parallelism is managed by the scheduler, which respects the limit when enqueuing jobs.
 
 ## A.8 Resumability and recoverability
 
-*(to be filled in)*
+- If a flow fails at any node, it can resume from the point of failure without re-running completed nodes. Completed nodes are identified by their presence in the event log; resumption is a matter of the scheduler re-querying state and picking up any work that the failure left incomplete.
+- Completed nodes are **idempotent on re-run** — re-running a completed node produces a new version only if the output differs from the current state. Identical output is a no-op at the reducer level (same content → same projection → no new projection delta).
+- All state changes are recorded as events, enabling replay and recovery by design, not as a bolt-on.
+- Locks are automatically released on failure with a configurable timeout.
+- **Reconciliation on startup** (A.21.11) is the mechanism that handles crash recovery at the process level: rebuild projections from the event log, detect orphaned executions, complete zombie runs, cancel stale jobs.
 
 ## A.9 Document storage model
 
-*(to be filled in)*
+**There is no git mirror of model state.** The event log plus the projection tables are the authoritative store for every design entity, every fragment, every draft, every event, every change plan, every comment, every review action. Documents the user sees (architecture pages, diff views, review panels) are **derived views** of the model — computed on demand from the event log and the projections.
+
+This is a deliberate simplification from the catapult v1 model, which mirrored documents into git at review boundaries. The v2 model treats the event log itself as the history: every state change is a recorded event, version diffs are computed by walking the log, "what did this node look like at time T" is a projection query, and there's nothing a git mirror would add that the event log doesn't already provide natively.
+
+Consequences:
+
+- No "commit at review boundary" concept for model artifacts.
+- No run-branch / component-branch / subcomponent-branch hierarchy for documents.
+- No "this node has a markdown file in git" concept. The markdown is rendered from the model.
+- Export is still possible (A.20.1) — an exporter walks the projection and emits markdown files to a directory, producing a fully-formed snapshot of the project's design state at a given point in time. But this is an *export*, not the authoritative store.
+- Full audit history is in the event log, queryable by admins and used by the provenance chain (A.20.6).
+
+**Git is still present in the system for code.** Generated code ships as commits against a real repository. The code side of the git story lives in A.10, and it is meaningfully narrower than catapult v1's git strategy because it only concerns code shipping, not document storage.
 
 ## A.10 Git for code shipping
 
-*(to be filled in)*
+Catapult generates code as a final leaf pass (A.3.1 step 11) and the generated code ships via git commits against a target repository. For the MVP, all leaves within a project target a single repository (monorepo assumption), and the `{repository, folder}` territory mapping (A.1.11) defines which leaf owns which folder. Multi-repo is a post-MVP extension; the data model supports it but the flow orchestration and PR composition assume one repo.
+
+### A.10.1 One commit per leaf
+
+Each `impl_*` leaf produces a single commit per flow run. The commit is scoped to the leaf's territory (folder) and contains only files that belong to that leaf. Cross-leaf changes — files that touch two territories — are a manifest-level error surfaced in the admin tools, because the territory rule is what keeps generation parallelizable and leaf-scoped.
+
+### A.10.2 Configurable PR granularity
+
+PR granularity is configurable per project to one of three levels: **system**, **component**, or **subcomponent**.
+
+- **System level** (default) — One PR for the entire flow run. All leaf commits compose into a single PR against main.
+- **Component level** — One PR per component. Each component's leaf commits compose into a PR against the run branch.
+- **Subcomponent level** — One PR per subcomponent. Each subcomponent's leaf commits compose into a PR against the component branch.
+
+### A.10.3 Branch hierarchy
+
+Flow runs use a **feature branch hierarchy** that mirrors the component tree:
+
+```
+main
+  └── run-branch (flow run)
+       ├── component-a-branch
+       │    ├── subcomponent-a1-branch (leaf commits)
+       │    └── subcomponent-a2-branch (leaf commits)
+       └── component-b-branch
+            └── subcomponent-b1-branch (leaf commits)
+```
+
+Code PRs are created at whichever level the project's PR granularity is configured to. Review flows upward through the branch hierarchy: subcomponent branches merge into component branches, component branches merge into the run branch, and the run branch merges into main. Catapult controls the review order and communicates which branches are ready in what sequence.
+
+### A.10.4 Blocking PR rule
+
+If any outstanding PRs exist for a project from a prior flow run, new flows cannot start. All PRs from the prior run must be merged or closed before a new flow begins. This prevents the model from drifting out of sync with the codebase. Sub-runs are exempt from this rule — they contribute to their parent flow's branch hierarchy and exist precisely to handle mid-flow corrections.
+
+### A.10.5 Git is only for code, not for design
+
+A project without code generation (design-only projects, hypothetical-future-project explorations, documentation-only workloads) does not need a git repository at all. The structured model is the entire artifact. The git layer is optional per project — enable it when you want code shipping, skip it otherwise.
 
 ## A.11 Prompt and DAG configuration
 
