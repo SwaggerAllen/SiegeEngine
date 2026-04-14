@@ -192,3 +192,69 @@ class TestDecompositionGraph:
         node_ids = {n["id"] for n in body["nodes"]}
         assert feat_id not in node_ids
         assert policy_id not in node_ids
+
+    def test_drops_edges_whose_endpoints_arent_in_node_set(self, client, project, db):
+        """Regression: feat → resp decomposition edges reference
+        feat_* nodes that are deliberately excluded from the graph
+        node scope. Previous implementation returned them anyway,
+        which crashed the Cytoscape renderer with "nonexistent source".
+
+        Any edge whose source or target is outside the returned
+        node set must be dropped.
+        """
+        # Top-level resp (in scope)
+        resp_id = mint(db, Kind.RESP)
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id=resp_id,
+                tier="resp",
+                kind="domain",
+                parent_id=None,
+                name="Billing",
+                display_order=0,
+                content="",
+            ),
+        )
+        # Feature (out of scope)
+        feat_id = mint(db, Kind.FEAT)
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id=feat_id,
+                tier="feat",
+                kind="domain",
+                parent_id=None,
+                name="Payments",
+                display_order=0,
+                content="",
+            ),
+        )
+        # feat → resp decomposition edge — source is out of scope
+        leak_edge_id = mint(db, Kind.EDGE)
+        append_event(
+            db,
+            project.id,
+            ev.EdgeCreated(
+                edge_id=leak_edge_id,
+                edge_type="decomposition",
+                source_id=feat_id,
+                target_id=resp_id,
+            ),
+        )
+        db.commit()
+
+        resp = client.get(f"/api/projects/{project.id}/decomposition-graph")
+        body = resp.json()
+        edge_ids = {e["id"] for e in body["edges"]}
+        assert leak_edge_id not in edge_ids, (
+            "feat → resp edge must be filtered out when feat_* nodes "
+            "aren't in the returned node set"
+        )
+        # And every remaining edge's source+target are in the node set
+        node_ids = {n["id"] for n in body["nodes"]}
+        for edge in body["edges"]:
+            assert edge["source_id"] in node_ids
+            assert edge["target_id"] in node_ids
