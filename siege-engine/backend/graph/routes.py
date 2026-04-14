@@ -41,6 +41,10 @@ from backend.graph.handlers.requirements_generation import (
     GENERATE_REQUIREMENTS_JOB_TYPE,
 )
 from backend.graph.handlers.requirements_mint import MINT_REQUIREMENTS_JOB_TYPE
+from backend.graph.handlers.subcomparch_generation import (
+    GENERATE_SUBCOMPARCH_JOB_TYPE,
+)
+from backend.graph.handlers.subcomparch_mint import MINT_SUBCOMPARCH_JOB_TYPE
 from backend.graph.handlers.subreqs_generation import (
     GENERATE_SUBREQS_JOB_TYPE,
 )
@@ -1512,6 +1516,259 @@ def post_comparch_discard(
         payload={
             "project_id": project_id,
             "component_id": comp_id,
+            "feedback": None,
+        },
+    )
+    return DiscardResponse(ok=True)
+
+
+# ── Subcomparch response models (Phase 5) ──────────────────────────
+
+
+class SubcomparchNodeResponse(BaseModel):
+    id: str
+    name: str
+    parent_id: str
+    content: str
+    updated_at: str
+
+
+class SubcomparchDraftResponse(BaseModel):
+    id: str
+    content: str
+    created_at: str
+
+
+class SubcomparchResponse(BaseModel):
+    node: SubcomparchNodeResponse
+    pending_draft: SubcomparchDraftResponse | None
+    generation_status: queries.GenerationStatus
+    last_error: str | None
+    latest_telemetry: TelemetrySummary | None
+
+
+class SubcomparchApproveResponse(BaseModel):
+    node: SubcomparchNodeResponse
+
+
+def _serialize_subcomparch_node(node: Node, parent_comp_id: str) -> SubcomparchNodeResponse:
+    return SubcomparchNodeResponse(
+        id=node.id,
+        name=node.name,
+        # parent_comp_id comes from the URL path and is validated
+        # against ``node.parent_id`` in ``_require_subcomponent``, so
+        # it's the same value but typed as ``str`` (not ``str | None``)
+        # which satisfies Pydantic without a redundant None check.
+        parent_id=parent_comp_id,
+        content=node.content or "",
+        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+    )
+
+
+def _require_subcomponent(db: Session, project_id: str, parent_comp_id: str, sub_id: str) -> Node:
+    """404 unless ``sub_id`` is a subcomponent of ``parent_comp_id``.
+
+    Per-subcomponent routes carry both the parent top-level comp
+    ID and the sub ID in the URL path so the client has a clear
+    navigation trail (``/components/{parent}/subcomponents/{sub}``).
+    This helper validates both:
+
+    - The parent must be a top-level comp in the project.
+    - The sub must be a comp in the project with
+      ``parent_id == parent_comp_id``.
+
+    Raises ``HTTPException(404)`` for any mismatch (unknown
+    parent, unknown sub, parent/sub cross-project confusion,
+    sub whose parent_id doesn't match the URL parent).
+    """
+    _require_top_level_comp(db, project_id, parent_comp_id)
+    sub = db.get(Node, sub_id)
+    if sub is None or sub.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Subcomponent not found")
+    if sub.tier != "comp":
+        raise HTTPException(status_code=404, detail="Not a component")
+    if sub.parent_id != parent_comp_id:
+        raise HTTPException(
+            status_code=404,
+            detail="Subcomponent parent does not match the URL parent component",
+        )
+    return sub
+
+
+# ── Subcomparch endpoints (per-subcomponent scoping) ───────────────
+
+
+@router.get(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/subcomparch",
+    response_model=SubcomparchResponse,
+)
+def get_subcomparch(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> SubcomparchResponse:
+    """Return the subcomparch draft panel state for a single subcomponent.
+
+    Mirror of :func:`get_comparch` at the subcomponent tier. The
+    subcomparch arch doc is stored as content on the subcomponent
+    ``comp_*`` node itself — no separate node kind. The panel
+    reads the sub's current content (approved doc) plus any
+    pending draft targeting it.
+    """
+    _require_project(db, project_id)
+    sub = _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    draft = db.execute(
+        select(Draft).where(
+            Draft.project_id == project_id,
+            Draft.target_type == "node",
+            Draft.target_id == sub_id,
+            Draft.status == "pending",
+        )
+    ).scalar_one_or_none()
+    status, last_error = queries.latest_generation_status(
+        db, project_id, GENERATE_SUBCOMPARCH_JOB_TYPE
+    )
+    return SubcomparchResponse(
+        node=_serialize_subcomparch_node(sub, parent_comp_id),
+        pending_draft=(
+            SubcomparchDraftResponse(
+                id=draft.id,
+                content=draft.content,
+                created_at=draft.created_at.isoformat() if draft.created_at else "",
+            )
+            if draft is not None
+            else None
+        ),
+        generation_status=status,
+        last_error=last_error,
+        latest_telemetry=_latest_telemetry(db, project_id, sub_id),
+    )
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/subcomparch/feedback",
+    response_model=FeedbackResponse,
+)
+def post_subcomparch_feedback(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    req: FeedbackRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_project(db, project_id)
+    sub = _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    # Read-only after approval — same pattern as comparch. Post-
+    # approval regen is Phase 11 structural-edit territory.
+    if (sub.content or "").strip():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Subcomponent architecture is read-only after approval; "
+                "further edits happen via the structural-edit UIs "
+                "coming in Phase 11."
+            ),
+        )
+    feedback = (req.feedback or "").strip() or None
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_SUBCOMPARCH_JOB_TYPE,
+        payload={
+            "project_id": project_id,
+            "component_id": sub_id,
+            "feedback": feedback,
+        },
+    )
+    return FeedbackResponse(job_id=job_id)
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/subcomparch/approve",
+    response_model=SubcomparchApproveResponse,
+)
+def post_subcomparch_approve(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> SubcomparchApproveResponse:
+    _require_project(db, project_id)
+    sub = _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != sub_id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this subcomponent's subcomparch",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
+    db.commit()
+    db.refresh(sub)
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=MINT_SUBCOMPARCH_JOB_TYPE,
+        payload={"project_id": project_id, "component_id": sub_id},
+    )
+
+    return SubcomparchApproveResponse(node=_serialize_subcomparch_node(sub, parent_comp_id))
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/subcomparch/discard",
+    response_model=DiscardResponse,
+)
+def post_subcomparch_discard(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    _require_project(db, project_id)
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != sub_id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this subcomponent's subcomparch",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
+    db.commit()
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_SUBCOMPARCH_JOB_TYPE,
+        payload={
+            "project_id": project_id,
+            "component_id": sub_id,
             "feedback": None,
         },
     )
