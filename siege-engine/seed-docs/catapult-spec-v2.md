@@ -871,11 +871,144 @@ David does not run background analysis, surface issues unprompted, or interrupt 
 
 ## A.20 Adoption and trust
 
-*(to be filled in)*
+These requirements address the concerns of teams evaluating Catapult — particularly midsize engineering organizations that need to justify the investment and manage the risk of adopting a new workflow where an AI touches their design graph and their codebase.
+
+### A.20.1 Portability and no lock-in
+
+All project artifacts — structured model, code, event history — are exportable at any time. The export path walks the projection and emits a directory of markdown files (architecture docs, plans, policies, change plans, review history) alongside the code repository, producing a fully-formed snapshot of the project's design state at a given point in time.
+
+If a team decides to stop using Catapult, they walk away with a set of markdown documents and a working code repository — no proprietary formats, no data trapped in the database. The export is deterministic and repeatable; running export twice against the same event-log offset produces byte-identical output.
+
+### A.20.2 Graduated autonomy
+
+The system supports a spectrum from fully supervised to fully autonomous. A team can start with every single node requiring human approval (treating Catapult as a "suggestion engine") and gradually increase auto-approval as trust builds. The spectrum is continuous — not a cliff between "manual" and "automatic." This is controlled via the auto-approval configuration (A.5.6) and review granularity settings. The destructive-operation carve-out (A.3.3) and the fan-out review rule (A.3.4) are hard overrides that cannot be bypassed by auto-approval — they are always human-gated.
+
+### A.20.3 Human override at any point
+
+At any point in a flow, a human can stop the run, correct course, and resume. The system should never be in a state where the only way forward is "trust the AI." Specific overrides:
+
+- Pause any running flow immediately
+- Reject and provide feedback on any artifact
+- Prune entire subtrees that shouldn't exist (A.21.4)
+- Force restart stuck nodes
+- Manually kick off sub-runs to fix upstream issues
+
+### A.20.4 Dry-run mode
+
+Structural estimation of a flow without making LLM calls or committing anything. Given a flow type and input, the system computes: the shape of the work (which components would be visited, in what order), the number of LLM calls required, the estimated token budget based on configured defaults for context sizes, and which nodes would be created or regenerated. No LLM calls are made — the estimation uses configured defaults. This lets teams evaluate scope and cost before committing budget, and is also useful for testing bundle and configuration changes.
+
+### A.20.5 Diff-first review
+
+The review UI defaults to **diff view**, not full document view. No reviewer should be presented with a 20,000-word document and asked "is this good?" — they see what changed since the last version. Full document view is available but is not the default.
+
+The diff view supports multiple baselines:
+
+- **Diff since last version** — the default. Shows what changed in the most recent generation/revision.
+- **Diff since last view** — accumulated changes since the current user last viewed this artifact. If a reviewer misses two review cycles, they see the total change across both, not just the latest. Per-user view tracking makes this possible.
+- **Diff since event** — changes since a specific event (a particular approval, a flow run completion, a point in time). The user selects the baseline from the event log or version history. This is essential for catching up after an absence or auditing what changed during a specific flow.
+
+This applies to both model-artifact review and code review UIs.
+
+### A.20.6 Provenance chain
+
+Any artifact is traceable back through its full generation chain: this code was generated from this plan, which was generated from this component arch doc, which was approved by Alice on March 3rd with these review comments, which was produced by this flow run, triggered by this feature request, which was proposed by David in response to this chat conversation. The provenance chain is surfaced in the UI — clicking any artifact opens a panel showing its lineage. This is derived from the event log and the structural edges, and it is one of the single most reassuring capabilities for teams auditing an AI-driven workflow.
+
+### A.20.7 Rollback
+
+Reversion to any previous project state is a single action. The event-sourced model makes this possible — rollback appends new events that undo the delta from the target state to the current state, never destroying history. Subtree rollback is supported: revert a node to version N, and the system automatically reverts each descendant to the version it was at immediately after the ancestor reached version N. This uses the event timeline to find the contemporaneous version of each child, so the user picks one point in the ancestor's history and the entire subtree snaps to its state at that moment. This avoids manually reverting descendants one by one and guessing which version corresponds to the ancestor's state.
+
+### A.20.8 Self-hosted deployment
+
+The entire stack (Catapult, PostgreSQL, the code repository host if used) runs on the customer's infrastructure. No data leaves their network. Combined with BYO LLM credentials (A.12), customers control every external dependency — the LLM traffic goes directly from the sandbox to the provider, not through a Catapult-operated proxy. This is essential for teams with security or compliance requirements.
+
+### A.20.9 Cost visibility
+
+Token tracking (A.12.3) is surfaced in the UI at multiple levels: per node, per flow run, per project. Aggregate displays show "this run used X tokens across Y calls, across these models" so teams can understand and predict their API spend. Runaway prompt growth is visible the moment it happens at the node or tier level — a fragment whose regen suddenly costs 5× what it did yesterday surfaces immediately in the review panel, not later in a log.
+
+
 
 ## A.21 Operational invariants
 
-*(to be filled in)*
+These requirements are derived from edge cases, bugs, and hard-won knowledge from Siege Engine's production use. They are non-negotiable.
+
+### A.21.1 Dependency satisfaction
+
+Dependencies are satisfied when a parent artifact has been **generated** (status in `approved`, `awaiting_review`, or `stale`), not only when approved. This allows downstream generation to proceed while upstream is still under human review. Without this, a single slow reviewer blocks the entire pipeline.
+
+### A.21.2 Fan-out always pauses for review
+
+Fan-out stages — the steps that create or modify the component tree structure — must always pause for human review regardless of auto-approval settings. Structural changes are too consequential to auto-approve. This is a hard override on the auto-approval system, not a configurable behavior. See also A.3.4.
+
+### A.21.3 Blocking PR rule
+
+If any outstanding PRs exist for a project from a prior flow run, new flows cannot start. All PRs from the prior run (at whatever granularity level the project is configured to) must be merged or closed before a new flow begins. This prevents the model from drifting out of sync with the codebase. Merge order follows the branch hierarchy (A.10.3). Sub-runs are exempt — they contribute to their parent flow's branch hierarchy and exist precisely to handle mid-flow corrections.
+
+### A.21.4 Debugging and administrative tools
+
+The system provides a set of administrative actions and debugging screens, separate from the normal review workflow.
+
+**Administrative actions** (available to admins — gated on the `admin.*` atom family):
+
+- **Prune** — Remove a node and its entire downstream cascade from the model. For example, a fan-out produced a component that shouldn't exist. Unlike reject (which regenerates), prune deletes. Emits appropriate events for the removal.
+- **Force restart** — Force a stuck or failed node back to pending and re-execute, bypassing normal status transition rules.
+- **Reset all** — Reset every node in the current run back to pending, clearing all generated state.
+- **Force sync / repair** — Rebuild the materialized projection from the event log. Detects and resolves orphaned executions, zombie runs, and stale state.
+
+**Debugging screens** (per project):
+
+- **Snapshot viewer** — the current materialized projection in full, showing the authoritative state of all nodes, runs, and artifacts.
+- **Event log** — the last N events (filterable, pageable), showing what happened and in what order.
+- **Frontend log** — client-side log capturing UI errors, WebSocket connection state, and user actions.
+- **Error panel** — aggregated errors from both frontend and backend for the current project, with timestamps, stack traces, and source labels.
+
+**Error handling UX** (for all users, not just admins). When a node fails, the failure is surfaced inline in the DAG visualization and the review UI — not just a "failed" badge, but the reason: the raw LLM output that failed to parse, the CI error log, the Git error, the timeout details. Users need enough context to decide whether to retry, leave feedback, or escalate to an admin. Notifications for failures follow the same routing as review notifications (to the component owner).
+
+### A.21.5 Cascading readiness re-scan
+
+After the scheduler enqueues or completes any job, it must re-scan all candidate work for newly unblocked tasks — not just the directly affected node. Completing component A's architecture might unblock component B (which depends on A via the dep graph), and B may have already been passed in a linear scan. The scheduler's query pass must loop until no more work is found in a single iteration. This falls out naturally from the state-driven scheduling model (A.3.2) — the scheduler's queries re-run on every reducer commit and every sweeper tick, so missed unblockings are eventually picked up regardless.
+
+### A.21.6 Centralized run completion
+
+Run completion — transitioning a flow run to terminal status — must happen through exactly one codepath. Siege Engine v1 had bugs where run completion logic was scattered across multiple callers, causing zombie runs that stayed in `running` status indefinitely. The single completion point lives in the flow-run supervisor module and is called from the supervisor's terminal-state handler. Handlers and the scheduler never transition flow-run state directly.
+
+### A.21.7 CI integration
+
+CI is an external system that validates generated code. The integration model:
+
+- **Configuration** — CI is configured on the target repository as part of the foundation component's code-generation responsibility. Catapult does not manage CI configuration directly — the foundation's code generation produces CI pipeline files as it would any other infrastructure file.
+- **Status monitoring** — Catapult monitors PR check status via git-host webhooks. When CI completes (pass or fail), the host emits a webhook that Catapult processes.
+- **Failure retry** — CI failure triggers a regeneration cycle: the error output is included as additional context in the next code-generation attempt. The number of CI retry cycles is configurable per project, with a default limit. After exhausting retries, the node is marked `failed` and the failure surfaces in the review UI with the full error context.
+- **Optional** — projects without CI skip the CI loop entirely. The flow proceeds directly from AI code review to human review.
+
+### A.21.8 Phase boundary checks before execution
+
+Stop-point checks (tier boundaries, user-configured pause points) must be evaluated **before** entering a stage's execution, not after. The check acts as a gate: stages past the stop point are never entered. Checking after execution means boundary-crossing stages run before the pause is detected.
+
+### A.21.9 Cross-run execution deduplication
+
+Before creating a new execution for a node, check for existing `running` executions for the same node **across all runs**, not just the current run. Scoping this check to a single run allows duplicate executions when sub-runs or manual triggers overlap. Deduplication at enqueue time (on `(job_type, payload)`) is the first line of defense; the cross-run check is the safety net.
+
+### A.21.10 Retries are sub-runs
+
+Failed executions are not retried in-place. A retry is a sub-run: it pauses the current run, creates a new run scoped to the failed node, executes, and returns control to the parent. This keeps the execution model uniform — there is no special "retry" concept, just the same sub-run machinery used everywhere else. The original failed execution remains in its terminal state in the event log.
+
+### A.21.11 Reconciliation on startup
+
+On server startup, the system must reconcile all projects: rebuild materialized projections from the event log (the event log is always the source of truth), detect and resolve orphaned executions (`running` with no active job → mark `failed`), complete zombie runs (`running` with no active executions → mark `failed`), and cancel stale queued jobs. This is a first-class recovery mechanism, not an afterthought.
+
+**Graceful shutdown.** On planned shutdown (deploys, upgrades), the system drains active work: stop accepting new node executions, let active LLM calls complete within a configurable grace period (default 10 minutes — AI coding assistant runs can take this long), then shut down. If a node doesn't finish within the grace period, it gets killed and reconciliation on the next startup marks it `failed` — the same path as a crash, retryable like any other failure. Draining is simple and predictable; checkpointing mid-LLM-call is not practical because partial responses are meaningless. With conservative concurrency defaults, drain typically waits on 1-3 active calls.
+
+### A.21.12 LLM output parsing resilience
+
+LLM output format is unreliable. All structured output extraction — parseable fragments, feature lists, requirement entries, policy blocks, plan bodies, code file lists — must use multiple parsing strategies with fallbacks. Try strict parsing first, fall back to regex extraction, then to smaller-model re-extraction if configured. Never fail a stage because the LLM returned valid content in an unexpected format. Persistent parse failure after all strategies exhausted escalates to human review with the last failed output and the parse errors visible.
+
+### A.21.13 LLM concurrency limits
+
+Parallel execution within a flow must respect a configurable concurrency limit for LLM calls. Siege Engine v1 hardcoded this to 1 after higher values caused resource exhaustion and rate-limiting cascades. The limit should be configurable per project but default to conservative values (e.g., 2-4 concurrent calls). Exponential backoff on rate-limit errors — typically 3 attempts with 1-second base delay, doubling — and no retries on quota-exhaustion errors (those need human intervention to resolve).
+
+---
+
+
 
 ---
 
