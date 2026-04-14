@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useSubcomponents } from '../hooks/queries/useComparchQueries';
 import { describeApiError } from '../lib/describeApiError';
 
@@ -50,17 +51,22 @@ export function SubcomponentList({ projectId, componentId, mintPending }: Props)
       </h3>
       <ul className="grid gap-3 md:grid-cols-2">
         {subs.map((sub) => (
-          <li
-            key={sub.id}
-            className="bg-gray-800/50 border border-gray-700 rounded p-4 space-y-1"
-          >
-            <div className="flex items-baseline justify-between gap-2">
-              <h5 className="font-semibold text-white">{sub.name}</h5>
-              <span className="text-xs text-gray-500 tabular-nums">
-                #{sub.display_order}
-              </span>
-            </div>
-            <div className="text-[10px] font-mono text-gray-500">{sub.id}</div>
+          <li key={sub.id}>
+            <Link
+              to={`/projects/${projectId}/components/${componentId}/subcomponents/${sub.id}/subcomparch`}
+              className="block bg-gray-800/50 border border-gray-700 hover:border-blue-500/60 hover:bg-gray-800/80 rounded p-4 space-y-1 transition-colors"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <h5 className="font-semibold text-white">{sub.name}</h5>
+                <span className="text-xs text-gray-500 tabular-nums">
+                  #{sub.display_order}
+                </span>
+              </div>
+              <div className="text-[10px] font-mono text-gray-500">{sub.id}</div>
+              <div className="text-[11px] text-blue-400">
+                View subcomponent arch →
+              </div>
+            </Link>
           </li>
         ))}
       </ul>
