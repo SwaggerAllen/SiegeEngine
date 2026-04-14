@@ -1093,4 +1093,55 @@ The git backend's role:
 
 Avoiding a git mirror for documents is one of the largest simplifications relative to catapult v1: no "git commit at review boundary" concept, no run-branch hierarchy for docs, no two-store reconciliation problem, no "what happens if the git commit succeeds and the DB commit fails" failure mode for design state. The event log is the history; git is for code.
 
+## B.7 Phoenix / LiveView
+
+Web framework and real-time UI layer. Phoenix Channels provide WebSocket-based live updates for every client subscribed to a project. LiveView powers the interactive DAG visualizations, artifact viewers, review interfaces, the lobby, change-plan review panels, and David's chat UI. No separate frontend build — the UI is server-rendered with client-side interactivity via LiveView's DOM-patching protocol.
+
+LiveView's process-per-session model fits the real-time update story cleanly: each connected user has one process, that process subscribes to the project's reducer-commit stream, and DOM updates are pushed to the client as state changes. A user viewing a component's review page sees the review-queue counter tick down, the artifact's status transition, and other users' comments appear in-place, without an explicit refresh.
+
+**Where LiveView is not enough.** The Cytoscape-based decomposition graph and the structured drag-drop UIs (feature → responsibility mapping, responsibility → component mapping, subresp → subcomponent mapping, dependency editor, domain-parent editor) use JavaScript components hosted inside LiveView via its JS interop layer. LiveView handles server-authored state; the JS layer handles the graph interaction. Operations the user takes in the graph editor produce prose instructions (A.1.1) that flow back through the regen pipeline — the JS layer does not mutate state directly.
+
+## B.8 AI coding assistant adapter
+
+Leaf-level code generation is delegated to AI coding assistants via an adapter interface (A.17). The adapter abstracts over the specific assistant — Claude Code, Cursor, Aider, or a future alternative — so the core pipeline stays decoupled from any one vendor. Adapters implement a common contract: given a plan node, a territory, and the current repository state, produce a code diff that realizes the plan.
+
+The adapter runs inside the AI sandbox (A.18): filesystem access scoped to the territory, no arbitrary network, no credential access, bounded resource limits, template isolation. The orchestrator injects LLM credentials into the assistant invocation at call time; the assistant never sees the credential store directly.
+
+**Multiple adapters can coexist** per project: a project could use Claude Code for complex refactor tasks and a cheaper/simpler adapter for well-defined plan executions. Per-tier configuration (A.11) controls which adapter runs for which node kind.
+
+## B.9 LLM integration
+
+- **BYO credentials** — customers supply their own API keys, stored encrypted per user/project/instance (A.12).
+- **Multiple providers supported** behind a common interface. The system ships with adapters for the major providers; adding a new provider is an adapter module plus a credential-scheme entry.
+- **Model and temperature** are configurable at the project, tier, and node-override levels (A.11.3).
+- **Token tracking** per call with model identifier recorded alongside token counts (A.12.3). Synchronous with the generating job handler. Missing telemetry is treated as a generation failure for alerting purposes.
+- **Exponential backoff on rate-limit errors**: 3 attempts with a 1-second base delay, doubling. Quota-exhaustion errors do not retry; they escalate to the review UI with the error context visible so the user can either provide different credentials or wait.
+- **Adapter-level prompt injection defenses**: the adapter rejects system-prompt manipulation attempts from within user-supplied context (for example, text that tries to override the template's output format instructions). This is layered on top of template isolation in the sandbox (A.18).
+
+## B.10 Observability
+
+System-level monitoring and observability for operating Catapult in production:
+
+- **Metrics** — Prometheus-compatible metrics: request latency, LLM call success/failure rates, LLM call duration, queue depths, active flow runs per project, git operation latency, database connection pool utilization, vector embedding query performance, scheduler query latency, sweeper iteration latency.
+- **Structured logging** — all log output is structured (JSON) with correlation IDs that trace a request through the full pipeline: Commanded command → event → scheduler query → Oban job → LLM call → git operation → reducer commit. This enables tracing a single node execution across every system component.
+- **Health checks** — liveness and readiness endpoints for the Catapult service, the database, the git backend, and the LLM provider health as reflected in recent success rates. Suitable for orchestrator probes and uptime monitoring.
+- **Scheduler introspection** — admin-visible view of the scheduler's current query results: for each query rule, what rows match right now, which of those already have queued or running jobs, and which would be enqueued on the next scheduler pass. This is the primary debugging surface for "why isn't my flow running?" questions.
+- **Error panel** per project (A.21.4) — aggregated errors from both frontend and backend with timestamps, stack traces, and source labels.
+
+## B.11 Licensing model
+
+Catapult uses a **dual-license model**:
+
+- **AGPL v3** for the public open-source release. Anyone can use, modify, and deploy Catapult freely. Modifications to the core must be published if the modified version is offered as a network service. This closes the SaaS loophole that plain GPL leaves open — cloud providers cannot run a modified Catapult as a managed service without contributing back.
+- **Commercial license** available for organizations whose legal or compliance requirements are incompatible with AGPL. The commercial license permits proprietary modifications, private deployment without source disclosure, and use of proprietary optional dependencies.
+
+**Architectural implications for dual licensing:**
+
+- The core system (pipeline engine, event sourcing, scheduler, reducer, review workflow, LiveView UI, structured-model projections) is AGPL and must not depend on any proprietary libraries.
+- **Oban**: the core depends only on Oban core (Apache 2.0, AGPL-compatible). Oban Pro features (unique jobs, batch processing, web dashboard) are behind an optional module that is not required for core functionality. Commercial licensees may use Oban Pro at their discretion.
+- **Git backend sidecar**: Gitea is AGPL-compatible and communicates over HTTP — a separate process, not a derivative work. No licensing conflict.
+- **Plugin / extension boundary**: third-party tools communicating with Catapult over HTTP/API are not derivative works. Plugins loaded into the Elixir runtime are derivative works under AGPL. This boundary must be documented clearly for integrators.
+- **Contributor License Agreement (CLA)**: required for contributions to the core repository, granting the project the right to distribute contributions under both AGPL and commercial licenses.
+
+Self-hosted AGPL deployments satisfy the entire feature set described in this document without any commercial components. The commercial license is an option for organizations that cannot use AGPL code, not a gate on functionality.
 
