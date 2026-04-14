@@ -1014,4 +1014,83 @@ Parallel execution within a flow must respect a configurable concurrency limit f
 
 # Part B — Architecture
 
-*(to be filled in)*
+## B.1 Elixir / OTP
+
+The application is built in Elixir on the BEAM VM. OTP provides the concurrency primitives, supervision trees, and fault tolerance model that underpin flow execution, real-time updates, process management, and the state-driven scheduler. Supervision trees give us crash-isolation by design: a failed flow run doesn't take down the review UI, a crashed LLM call doesn't take down the reducer, and reconciliation on startup (A.21.11) rebuilds state from the event log regardless of how the system came down.
+
+The BEAM's soft-realtime scheduling is a good fit for a workload dominated by I/O-bound LLM calls and UI push notifications — many concurrent lightweight processes each handling one in-flight request without the thread-per-connection cost.
+
+## B.2 PostgreSQL
+
+Primary data store for all persistent state: the event log (`graph_events`), projection tables (nodes, edges, fragments, drafts, change plans, policies), users, credentials, bundle configuration, per-project overrides, auth audit log, review history, and token usage telemetry.
+
+No second data store for any of this — PostgreSQL is the single operational store. Vector embeddings live in the same database via pgvector (B.5), so there is no separate vector service to operate, monitor, or keep in sync with the primary store.
+
+**Migrations are forward-only.** Downgrade raises. Schema changes land with explicit migrations; the migration history is the audit trail for "when did this column / this edge type / this fragment kind enter the system." Multi-column constraints that SQLite can't represent but Postgres can (partial unique indexes, check constraints with subqueries) are used where they encode real invariants.
+
+## B.3 Commanded (CQRS/ES) and the scheduler
+
+The core domain uses Commanded for command/query responsibility segregation and event sourcing. All state changes to the structured model are expressed as commands that produce events. Events are the source of truth; materialized read models are derived projections; rebuilding from zero must match incremental apply byte-for-byte.
+
+What Commanded gives us for free:
+
+- Complete audit trail of every action as the event log.
+- Time travel and revert by replaying events to a prior offset.
+- Resumability: a partially-completed flow picks up where it left off when the process restarts.
+- Clean separation between "what happened" and "what the current state looks like" — the two are never allowed to drift, because the second is a deterministic function of the first.
+
+Commanded's **aggregates** enforce per-project invariants: pessimistic locking (A.7), status transitions (A.5.5), destructive-operation gating (A.3.3), and the subcomponent depth cap (A.1.7).
+
+### B.3.1 State-driven scheduler module
+
+**The scheduler is a first-class module, not an accidental consequence of Commanded's process managers.** This section specifies it explicitly because it is the most load-bearing deviation from standard CQRS/ES patterns in the system.
+
+Commanded ships with process managers — stateful subscribers that react to events and emit commands. Process managers are **event-triggered**: when an event arrives, the process manager updates its internal state and possibly issues a command. For many workflows this is the right shape, but it is not what the scheduler wants. The scheduler wants to react to *state*, not to *events*: "whenever the current projection satisfies condition X, enqueue job Y." This is closer to a reactive materialized view than to a process manager.
+
+The scheduler module:
+
+- **Subscribes to reducer commits** via an in-process pub-sub channel. Every successful commit triggers the fast path: the scheduler re-runs its "what's ready?" queries against the current projection and enqueues any jobs the queries identify as missing.
+- **Runs a sweeper loop** on a configurable floor interval (default 30-60 seconds) as the consistency guarantee. The sweeper runs the same queries the fast path runs, catching anything the fast path missed due to subscriber restart, dropped signals, or transient races between the commit and the subscriber.
+- **Holds a project-scoped lock** while running its queries for a given project, so two near-simultaneous commit signals don't produce duplicate enqueues.
+- **Queries are data, not code** (A.11) — the rules the scheduler enforces are loaded from the bundle configuration, so adding a new regen trigger is a configuration change, not a scheduler module change.
+- **Is the only path into the job queue.** No other handler calls `Oban.insert` or equivalent. Mint handlers, regen handlers, approval handlers, deferred feedback handlers, and every other state-modifying path commits events and exits; the scheduler reads the new state and decides what runs next.
+
+**Why separate the scheduler from process managers.** Commanded's process managers could be used to implement the fast-path subscription, but the slow-path sweeper doesn't fit the process manager shape at all — the sweeper doesn't react to an event, it polls current state regardless of events. Implementing half the scheduler as a process manager and half as a polling loop would split the "what runs next" logic across two modules with different idioms, and bugs in one half would not be debuggable from the other. One module, one set of queries, two trigger paths (pub-sub + sweeper) keeps the logic auditable.
+
+**Implications for the event stream.** Because handlers don't emit "next job" messages, the event stream is cleaner: every event is a real state change, not a workflow coordination signal. The event stream is the history of the project, not a bus for handler-to-handler messaging.
+
+## B.4 Oban
+
+Background job processing for side-effectful operations that don't fit Commanded's event-driven model: LLM API calls, git operations against the code repository, CI polling, credential refresh, and anything else that needs retries, scheduling, and observability. Oban jobs are enqueued by the scheduler (B.3.1) and, on completion, emit events via Commanded commands back into the domain layer.
+
+Oban sits underneath the scheduler in the architecture stack: the scheduler decides *what* to enqueue, Oban handles *how* to run it reliably — retries on transient failures, exponential backoff on rate limits, scheduled retries on rate-limit exhaustion, concurrency limits per queue.
+
+**Queue shape.** One Oban queue per LLM provider (so provider-specific rate limits can be respected independently), one for git operations, one for CI polling, one for general background tasks. The per-queue concurrency is configurable per project with conservative defaults (A.21.13).
+
+**Oban Pro is optional.** The core system depends only on Oban core (Apache 2.0, AGPL-compatible — see B.11). Features like unique jobs, batch processing, and the web dashboard are behind an optional module that is not required for core functionality; commercial licensees may use Oban Pro at their discretion.
+
+## B.5 pgvector
+
+Vector embeddings stored in PostgreSQL via pgvector for semantic retrieval during context assembly (A.3.5). Document chunks — fragments, implementation prose, responsibility descriptions, change summaries — are embedded and indexed so that deep nodes can retrieve relevant ancestor context by semantic similarity rather than consuming entire documents. The retrieval strategy varies by flow and tier.
+
+Embedding writes are triggered by fragment / node updates via the scheduler's query layer: "for every node or fragment whose content has changed since its last embedding, enqueue a re-embed job." Embedding is a background operation; it does not block the generation path.
+
+Vector search also powers parts of the David chat interface (A.19) when David needs to find relevant nodes for a question that isn't anchored to a specific artifact.
+
+## B.6 Git backend for code shipping
+
+A git backend — Gitea as a local sidecar in self-hosted deployments, or a configured external git host in managed deployments — handles the code-shipping side of the system only (A.10). It is **not** used to store or version design artifacts; the event log plus projections are the authoritative store for all model state (A.9).
+
+The git backend's role:
+
+- **Branch creation** for flow runs (run branch, per-component branches, per-subcomponent branches — see A.10.3).
+- **Commit composition** for leaf-level code changes. Each impl leaf produces one commit per flow run, scoped to the leaf's territory.
+- **PR lifecycle** — creation, review comments, merge operations. The AI posts inline review comments via the git host's PR review API.
+- **Webhook events** for CI status, review submissions, and merge notifications. Catapult subscribes to these webhooks to react to code-side activity.
+- **Merge conflict UI** — for the rare edge cases where conflicts arise despite the folder-per-leaf territory rule and the one-run-at-a-time constraint. The git host's own UI is available as a proxied escape hatch, not the primary workflow.
+
+**For design-only projects**, the git backend is not required — Catapult runs without a configured repository, the code-generation tiers are inert, and the entire value proposition is the structured-model review loop. The git layer becomes relevant only when a project enables code shipping.
+
+Avoiding a git mirror for documents is one of the largest simplifications relative to catapult v1: no "git commit at review boundary" concept, no run-branch hierarchy for docs, no two-store reconciliation problem, no "what happens if the git commit succeeds and the DB commit fails" failure mode for design state. The event log is the history; git is for code.
+
+
