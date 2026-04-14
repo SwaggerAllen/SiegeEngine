@@ -350,6 +350,101 @@ def projection_snapshot(session: Session, project_id: str) -> dict:
     }
 
 
+def skeleton_snapshot(session: Session, project_id: str) -> dict:
+    """Content-stripped projection snapshot for sharing with debuggers.
+
+    Shape mirrors :func:`projection_snapshot` but replaces every
+    content / prose field with its character length. Node names
+    are kept (they're identifiers, not prose). Adds a
+    ``recent_jobs`` section with the latest job per job_type
+    and a short tail of the error string when the job failed,
+    so someone reading the skeleton can see what's broken
+    without needing the full log stream.
+
+    The goal is "paste this to Claude to get help without leaking
+    prose content." Every IDs / relationship / count / status
+    that matters for debugging is preserved; every paragraph of
+    user- or LLM-produced text is stripped to a number.
+    """
+    return {
+        "nodes": [_node_skeleton(n) for n in list_nodes(session, project_id)],
+        "edges": [_edge_dict(e) for e in list_edges(session, project_id)],
+        "fragments": [_fragment_skeleton(f) for f in list_fragments(session, project_id)],
+        "drafts": [_draft_skeleton(d) for d in list_drafts(session, project_id)],
+        "recent_jobs": _recent_jobs_skeleton(session, project_id),
+        "event_count": event_count(session, project_id),
+        "latest_offset": latest_offset(session, project_id),
+    }
+
+
+def _node_skeleton(n: Node) -> dict:
+    return {
+        "id": n.id,
+        "tier": n.tier,
+        "kind": n.kind,
+        "parent_id": n.parent_id,
+        "name": n.name,  # names are identifiers, not prose
+        "display_order": n.display_order,
+        "content_length": len(n.content or ""),
+    }
+
+
+def _fragment_skeleton(f: Fragment) -> dict:
+    return {
+        "id": f.id,
+        "owner_id": f.owner_id,
+        "fragment_kind": f.fragment_kind,
+        "content_length": len(f.content or ""),
+    }
+
+
+def _draft_skeleton(d: Draft) -> dict:
+    return {
+        "id": d.id,
+        "target_type": d.target_type,
+        "target_id": d.target_id,
+        "status": d.status,
+        "batch_id": d.batch_id,
+        "content_length": len(d.content or ""),
+    }
+
+
+def _recent_jobs_skeleton(session: Session, project_id: str) -> list[dict]:
+    """Return the most recent job per job_type with status + error tail.
+
+    Jobs aren't scoped by a project column — filter by
+    ``payload['project_id']`` like :func:`latest_generation_status`
+    does. For each job_type the project has ever seen, return a
+    single entry describing the latest instance. Failed jobs
+    include a trailing slice of the error_message so the caller
+    can see the symptom without the full log stream.
+    """
+    rows = session.execute(select(Job).order_by(Job.created_at.desc())).scalars().all()
+    seen: set[str] = set()
+    out: list[dict] = []
+    for job in rows:
+        if (job.payload or {}).get("project_id") != project_id:
+            continue
+        if job.job_type in seen:
+            continue
+        seen.add(job.job_type)
+        entry: dict = {
+            "job_type": job.job_type,
+            "status": job.status,
+            "retry_count": job.retry_count,
+            "payload_keys": sorted((job.payload or {}).keys()),
+        }
+        if job.status == "failed" and job.error_message:
+            tail = (job.error_message or "").strip()
+            # Keep the last ~400 chars — enough to see the error
+            # message + a bit of stack context without dumping
+            # thousands of lines.
+            entry["error_tail"] = tail[-400:]
+        out.append(entry)
+    out.sort(key=lambda e: e["job_type"])
+    return out
+
+
 # ── Serializers ──────────────────────────────────────────────────────
 
 

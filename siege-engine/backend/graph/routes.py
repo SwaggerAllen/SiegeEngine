@@ -91,6 +91,32 @@ def get_project_model(
     return queries.projection_snapshot(db, project_id)
 
 
+@router.get("/{project_id}/debug/skeleton")
+def get_project_skeleton(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Content-stripped projection snapshot for sharing with debuggers.
+
+    Same shape as ``/model`` but every prose field (node content,
+    fragment content, draft content) is replaced with its
+    character length. Node names are kept because they're
+    identifiers, not prose. Also includes a ``recent_jobs``
+    section with the latest job per job_type plus an error tail
+    for failed jobs.
+
+    Use case: paste the JSON into a chat or issue to get help
+    debugging without leaking the project's actual prose content.
+    The IDs, relationships, lengths, and error tails are enough
+    to reason about structure; the prose stays private.
+    """
+    project = db.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return queries.skeleton_snapshot(db, project_id)
+
+
 # ── Expansion request / response models ─────────────────────────────
 
 
