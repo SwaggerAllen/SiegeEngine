@@ -59,8 +59,8 @@ const SAMPLE_DRAFT =
   '<public-surface>tokenize(raw) -> Token.</public-surface>' +
   '<private-surface>_rotate_keys(cutoff).</private-surface>' +
   '<dependencies>' +
-  '<dep to="foundation"/>' +
-  '<dep to="comp_audit9999"/>' +
+  '<dep to="comp_foundat1"/>' +
+  '<dep to="comp_audit99"/>' +
   '</dependencies>' +
   '</subcomparch>';
 
@@ -79,7 +79,7 @@ describe('SubcomparchPanel', () => {
     );
   });
 
-  it('renders pending draft with four sections and distinct dep styling', async () => {
+  it('renders pending draft with four sections and dep list', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -95,12 +95,10 @@ describe('SubcomparchPanel', () => {
     );
     expect(screen.getByText(/tokenize\(raw\) -> Token/)).toBeInTheDocument();
     expect(screen.getByText(/_rotate_keys\(cutoff\)/)).toBeInTheDocument();
-    // Dep sections render aliases under one subheader and comp_ IDs
-    // under another.
-    expect(screen.getByText('Same-parent siblings')).toBeInTheDocument();
-    expect(screen.getByText('Parent-sibling components')).toBeInTheDocument();
-    expect(screen.getByText('foundation')).toBeInTheDocument();
-    expect(screen.getByText('comp_audit9999')).toBeInTheDocument();
+    // Dep section lists every target by its real comp_* ID — no
+    // alias indirection at this tier.
+    expect(screen.getByText('comp_foundat1')).toBeInTheDocument();
+    expect(screen.getByText('comp_audit99')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument();
   });
 

@@ -9,16 +9,16 @@ import { findChildren, textContent } from './types';
  *     <public-surface>…</public-surface>
  *     <private-surface>…</private-surface>
  *     <dependencies>
- *       <dep to="sibling_sub_alias"/>
- *       <dep to="comp_parent_sibling"/>
+ *       <dep to="comp_sibling12"/>
+ *       <dep to="comp_parentsi"/>
  *     </dependencies>
  *   </subcomparch>
  *
  * Four sections, all fragments. Mirrors comparchRenderers shape
  * for the three fragment sections, and renders <dependencies>
- * with a distinct visual treatment for alias vs real-id targets
- * (alias = local sibling sub, ``comp_`` prefix = parent's
- * sibling top-level comp).
+ * as a flat list of ``comp_*`` targets — the tier no longer
+ * uses local aliases because siblings already have stable IDs
+ * at subcomparch generation time.
  */
 export const subcomparchRenderers: XmlRendererMap = {
   subcomparch: (node, ctx) => (
@@ -72,56 +72,28 @@ export const subcomparchRenderers: XmlRendererMap = {
         </section>
       );
     }
-    const aliasDeps: string[] = [];
-    const compIdDeps: string[] = [];
+    const targets: string[] = [];
     for (const d of deps) {
       const to = d.attributes.to;
       const target = typeof to === 'string' ? to : '';
-      if (!target) continue;
-      if (target.startsWith('comp_')) {
-        compIdDeps.push(target);
-      } else {
-        aliasDeps.push(target);
-      }
+      if (target) targets.push(target);
     }
     return (
-      <section className="space-y-3">
+      <section className="space-y-2">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
           Dependencies
           <span className="ml-2 text-gray-600 font-normal normal-case tracking-normal">
             ({deps.length})
           </span>
         </h2>
-        {aliasDeps.length > 0 && (
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wider text-gray-500">
-              Same-parent siblings
-            </div>
-            <ul className="text-xs font-mono text-gray-400 space-y-0.5 m-0 pl-0 list-none">
-              {aliasDeps.map((alias) => (
-                <li key={`alias-${alias}`}>
-                  <span className="text-gray-500">→ </span>
-                  <span className="text-emerald-300">{alias}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {compIdDeps.length > 0 && (
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wider text-gray-500">
-              Parent-sibling components
-            </div>
-            <ul className="text-xs font-mono text-gray-400 space-y-0.5 m-0 pl-0 list-none">
-              {compIdDeps.map((compId) => (
-                <li key={`id-${compId}`}>
-                  <span className="text-gray-500">→ </span>
-                  <span className="text-blue-300">{compId}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <ul className="text-xs font-mono text-gray-400 space-y-0.5 m-0 pl-0 list-none">
+          {targets.map((target) => (
+            <li key={`dep-${target}`}>
+              <span className="text-gray-500">→ </span>
+              <span className="text-blue-300">{target}</span>
+            </li>
+          ))}
+        </ul>
       </section>
     );
   },

@@ -48,7 +48,6 @@ from backend.graph.reducer import append_event
 from backend.graph.regen_context import (
     build_regen_context,
     format_regen_context_for_sub,
-    subcomp_alias_for_name,
 )
 from backend.models import Project
 from backend.models.node import Draft, Node
@@ -156,13 +155,11 @@ async def generate_subcomparch(payload: dict) -> None:
         context_kwargs = format_regen_context_for_sub(regen_ctx)
 
         # Validator-input ID sets:
-        # - sibling aliases = slugified names of same-parent siblings
+        # - sibling sub IDs = real comp_* IDs of same-parent siblings
         # - parent-sibling comp IDs = ctx.sibling_comp_ids (for a
         #   subcomponent context, this already holds the parent's
         #   sibling top-level comp IDs, not the sub's own siblings)
-        known_sibling_sub_aliases: set[str] = {
-            subcomp_alias_for_name(s.name or "") for s in regen_ctx.sibling_subcomps
-        }
+        known_sibling_sub_ids: set[str] = set(regen_ctx.sibling_subcomp_ids)
         known_parent_sibling_comp_ids: set[str] = set(regen_ctx.sibling_comp_ids)
 
         project_row = db.get(Project, project_id)
@@ -181,7 +178,7 @@ async def generate_subcomparch(payload: dict) -> None:
         parent_node.id,
         bool(prior_pending),
         bool(feedback),
-        len(known_sibling_sub_aliases),
+        len(known_sibling_sub_ids),
         len(known_parent_sibling_comp_ids),
     )
 
@@ -197,7 +194,7 @@ async def generate_subcomparch(payload: dict) -> None:
     def _validate(tree) -> None:  # type: ignore[no-untyped-def]
         validate_sub_arch_doc(
             tree,
-            known_sibling_sub_aliases=known_sibling_sub_aliases,
+            known_sibling_sub_ids=known_sibling_sub_ids,
             known_parent_sibling_comp_ids=known_parent_sibling_comp_ids,
         )
 

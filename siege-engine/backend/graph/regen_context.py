@@ -35,7 +35,6 @@ retrofitted later").
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -48,39 +47,6 @@ from backend.graph.queries import (
     list_top_level_components,
 )
 from backend.models.node import Edge, Fragment, Node
-
-_SLUG_NONALPHANUM_RE = re.compile(r"[^a-z0-9]+")
-_SLUG_COLLAPSE_UNDERSCORES_RE = re.compile(r"_+")
-
-
-def subcomp_alias_for_name(name: str) -> str:
-    """Slugify a subcomponent's display name into a stable local alias.
-
-    Phase 5's subcomparch ``<dependencies>`` section lets the LLM
-    reference same-parent sibling subcomponents by a local alias
-    (since the real ``comp_*`` IDs are opaque and hard to reason
-    about mid-generation). The alias is the subcomponent's display
-    name slugified to ``snake_case``: lowercased, non-alphanumerics
-    replaced with underscores, collapsed, stripped, and trimmed to
-    32 characters so the result always matches the validator's
-    ``^[a-z][a-z0-9_]{0,31}$`` alias regex.
-
-    Collisions are possible in principle (two siblings named
-    ``SessionStore`` and ``Session Store``) but the comparch
-    validator already rejects duplicate ``<name>`` within a
-    component's ``<subcomponents>`` block at generation time, so in
-    practice the slugified form is unique within a parent.
-    """
-    lowered = name.strip().lower()
-    replaced = _SLUG_NONALPHANUM_RE.sub("_", lowered)
-    collapsed = _SLUG_COLLAPSE_UNDERSCORES_RE.sub("_", replaced).strip("_")
-    # Validator requires the first character to be a letter; if
-    # slugification produced something starting with a digit or
-    # emptied the string entirely, prefix with "sub_" to stay
-    # inside the regex.
-    if not collapsed or not collapsed[0].isalpha():
-        collapsed = f"sub_{collapsed}".rstrip("_")
-    return collapsed[:32]
 
 
 @dataclass(frozen=True)
@@ -614,12 +580,14 @@ def _format_sibling_subcomps_summary(
     siblings: tuple[Node, ...],
     pubapi_fragments: dict[str, str],
 ) -> str:
-    """Render same-parent sibling subcomponents as an alias allowlist.
+    """Render same-parent sibling subcomponents as a comp_* ID allowlist.
 
-    Each entry shows the stable alias (slugified from the sibling's
-    display name — this is what the LLM echoes verbatim as
-    ``<dep to="..."/>`` targets), the sibling's display name,
-    and its ``comp_*`` id for cross-referencing.
+    Each entry shows the sibling's real ``comp_*`` ID (the value
+    the LLM echoes verbatim as ``<dep to="..."/>``) and its
+    display name. The alias indirection was removed — sibling
+    subcomponents already have stable IDs at subcomparch
+    generation time because they were minted by the parent's
+    comparch_mint before this generation runs.
 
     Includes the sibling's pubapi fragment as nested context when
     it has content (skeletal seed or full arch doc — either way
@@ -632,8 +600,7 @@ def _format_sibling_subcomps_summary(
     lines: list[str] = []
     for sib in siblings:
         name = (sib.name or "").strip() or "(unnamed)"
-        alias = subcomp_alias_for_name(name)
-        lines.append(f"- alias `{alias}` → **{name}** (`{sib.id}`)")
+        lines.append(f"- `{sib.id}` **{name}**")
         body = (pubapi_fragments.get(sib.id) or "").strip()
         if body:
             # Indent the body so it's clearly nested under the bullet

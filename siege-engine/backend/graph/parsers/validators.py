@@ -1941,18 +1941,16 @@ def _validate_arch_doc_sub_dependencies(node: TagNode, alias_set: set[str]) -> t
 class SubArchDep:
     """A single validated dependency entry from a ``<subcomparch>`` block.
 
-    Subcomparch ``<dependencies>`` entries hold two kinds of
-    target in one section. ``is_alias`` is ``True`` when the
-    target is a local alias referring to a same-parent sibling
-    subcomponent (resolved to a real ``comp_*`` ID at mint time),
-    ``False`` when the target is already a real ``comp_*`` ID for
-    one of the parent's sibling top-level components. The
-    validator disambiguates at parse time based on whether the
-    ``to`` attribute starts with ``comp_``.
+    ``target`` is always a real ``comp_*`` ID — either a
+    same-parent sibling subcomponent (which was minted by the
+    parent's comparch_mint before this subcomparch gen ran) or
+    one of the parent's sibling top-level components. Both kinds
+    already exist as nodes at generation time, so the scheme
+    doesn't need a placeholder indirection; the mint handler
+    uses the target directly when emitting the dependency edge.
     """
 
     target: str
-    is_alias: bool
 
 
 @dataclass(frozen=True)
@@ -1967,9 +1965,10 @@ class SubArchDoc:
     they don't mint new policies.
 
     ``deps`` holds a tuple of :class:`SubArchDep`. The mint
-    handler walks this tuple and resolves alias entries to real
-    ``comp_*`` IDs using the same-parent siblings lookup, then
-    emits ``dependency`` edges for all of them.
+    handler walks this tuple and emits ``dependency`` edges for
+    each entry directly — every target is already a real
+    ``comp_*`` ID (same-parent sibling or parent-sibling
+    top-level), so no alias resolution is needed at mint time.
     """
 
     techspec: str
@@ -2012,7 +2011,7 @@ _SUBCOMPARCH_FORBIDDEN_CHILDREN = {
 def validate_sub_arch_doc(
     tree: TagNode,
     *,
-    known_sibling_sub_aliases: set[str],
+    known_sibling_sub_ids: set[str],
     known_parent_sibling_comp_ids: set[str],
 ) -> SubArchDoc:
     """Validate a parsed ``<subcomparch>`` tree and return a SubArchDoc.
@@ -2021,18 +2020,18 @@ def validate_sub_arch_doc(
     :mod:`backend.graph.prompts.subcomparch`: single root, four
     sections in order, non-empty fragment text for the first three,
     and a ``<dependencies>`` section whose ``<dep to="..."/>``
-    entries resolve as either a local alias (matched against
-    ``known_sibling_sub_aliases``) or a real ``comp_*`` ID
-    (matched against ``known_parent_sibling_comp_ids``).
+    entries are all real ``comp_*`` IDs drawn from one of two
+    allowlists.
 
-    ``known_sibling_sub_aliases`` is the set of slugified display
-    names of same-parent sibling subcomponents (excluding self).
-    Local ``<dep to="alias"/>`` entries must come from this set.
+    ``known_sibling_sub_ids`` is the set of real ``comp_*`` IDs
+    for same-parent sibling subcomponents (excluding self). These
+    were minted by the parent component's comparch_mint before
+    this subcomparch gen ran, so the IDs are stable and the LLM
+    references them directly rather than via a placeholder alias.
 
     ``known_parent_sibling_comp_ids`` is the set of real
     ``comp_*`` IDs for top-level components other than the
-    parent of this subcomponent. Real-id ``<dep to="comp_..."/>``
-    entries must come from this set.
+    parent of this subcomponent.
 
     ``<dependencies>`` may be empty (leaf subcomponent).
     """
@@ -2081,7 +2080,7 @@ def validate_sub_arch_doc(
 
     deps = _validate_sub_arch_doc_dependencies(
         section_map["dependencies"],
-        known_sibling_sub_aliases=known_sibling_sub_aliases,
+        known_sibling_sub_ids=known_sibling_sub_ids,
         known_parent_sibling_comp_ids=known_parent_sibling_comp_ids,
     )
 
@@ -2096,18 +2095,26 @@ def validate_sub_arch_doc(
 def _validate_sub_arch_doc_dependencies(
     node: TagNode,
     *,
-    known_sibling_sub_aliases: set[str],
+    known_sibling_sub_ids: set[str],
     known_parent_sibling_comp_ids: set[str],
 ) -> tuple[SubArchDep, ...]:
     """Validate ``<dependencies>`` at the subcomparch tier.
 
-    Mixed targets: entries starting with ``comp_`` are treated as
-    real sibling-of-parent top-level component IDs, everything
-    else is treated as a local alias of a same-parent sibling
-    subcomponent. Both kinds are cross-checked against their
-    respective allowlists; duplicates (whether alias or id) are
-    rejected; empty ``<dependencies>`` is legal (leaf
-    subcomponent).
+    Every ``<dep to="..."/>`` target must be a real ``comp_*`` ID
+    drawn from the union of two allowlists:
+
+    * ``known_sibling_sub_ids`` — same-parent sibling
+      subcomponents (minted by the parent's comparch_mint before
+      this gen ran).
+    * ``known_parent_sibling_comp_ids`` — top-level components
+      other than this subcomponent's parent.
+
+    The two sets never overlap (a node can't be both a
+    subcomponent of this parent AND a top-level), so a single
+    "unknown target" error is enough. Duplicates are rejected.
+    Non-``comp_`` prefixes are rejected with a clear message
+    (legacy alias scheme — removed). Empty ``<dependencies>`` is
+    legal (leaf subcomponent with no external deps).
     """
     for child in node.children:
         if child.tag not in _DEPENDENCIES_ALLOWED_CHILDREN:
@@ -2118,15 +2125,16 @@ def _validate_sub_arch_doc_dependencies(
     dep_nodes = node.find_all("dep")
     deps: list[SubArchDep] = []
     seen: set[str] = set()
+    allowed_targets = known_sibling_sub_ids | known_parent_sibling_comp_ids
     for index, dnode in enumerate(dep_nodes):
         target = dnode.attrs.get("to", "").strip()
         if not target:
             raise ValidationError(
                 f"<dep> at position {index} is missing the to "
-                'attribute. Every <dep> must carry to="..." with '
-                "either a local alias (for a same-parent sibling "
-                "subcomponent) or a real comp_* ID (for one of the "
-                "parent's sibling top-level components)."
+                'attribute. Every <dep> must carry to="comp_..." '
+                "with the real ID of a same-parent sibling "
+                "subcomponent or a parent-sibling top-level "
+                "component."
             )
         if dnode.attrs.get("from"):
             raise ValidationError(
@@ -2135,6 +2143,16 @@ def _validate_sub_arch_doc_dependencies(
                 "this subcomponent implicitly — do not add "
                 'from="..." to <dep> entries.'
             )
+        if not target.startswith("comp_"):
+            raise ValidationError(
+                f"<dep> at position {index} targets {target!r}, "
+                'which is not a comp_* ID. Use to="comp_XXXXXXXX" '
+                "with the real ID of a same-parent sibling "
+                "subcomponent or a parent-sibling top-level "
+                "component. (The alias scheme was removed in "
+                "favour of direct IDs — siblings already have "
+                "stable IDs at subcomparch generation time.)"
+            )
         if target in seen:
             raise ValidationError(
                 f"<dependencies> lists duplicate target {target!r}. "
@@ -2142,34 +2160,19 @@ def _validate_sub_arch_doc_dependencies(
             )
         seen.add(target)
 
-        if target.startswith("comp_"):
-            # Real parent-sibling comp_* ID
-            if target not in known_parent_sibling_comp_ids:
-                valid_list = sorted(known_parent_sibling_comp_ids) or (
-                    "(none — the parent has no sibling top-level components)"
-                )
-                raise ValidationError(
-                    f"<dep> at position {index} targets {target!r}, "
-                    "which is not in the allowed parent-sibling "
-                    "component set. Valid comp_* targets: "
-                    f"{valid_list}."
-                )
-            deps.append(SubArchDep(target=target, is_alias=False))
-        else:
-            # Local alias of a same-parent sibling subcomponent
-            if target not in known_sibling_sub_aliases:
-                valid_list = sorted(known_sibling_sub_aliases) or (
-                    "(none — this subcomponent has no same-parent siblings)"
-                )
-                raise ValidationError(
-                    f"<dep> at position {index} targets alias "
-                    f"{target!r}, which is not in the allowed "
-                    "same-parent sibling set. Valid aliases: "
-                    f"{valid_list}. (Use a real comp_* ID for "
-                    "parent-sibling targets; local aliases are "
-                    "only for same-parent siblings.)"
-                )
-            deps.append(SubArchDep(target=target, is_alias=True))
+        if target not in allowed_targets:
+            sibling_list = sorted(known_sibling_sub_ids) or ["(no same-parent siblings)"]
+            parent_sibling_list = sorted(known_parent_sibling_comp_ids) or [
+                "(no parent-sibling top-level components)"
+            ]
+            raise ValidationError(
+                f"<dep> at position {index} targets {target!r}, "
+                "which is not in the allowed set. Valid same-"
+                f"parent sibling IDs: {sibling_list}. Valid "
+                f"parent-sibling top-level IDs: {parent_sibling_list}."
+            )
+
+        deps.append(SubArchDep(target=target))
 
     return tuple(deps)
 

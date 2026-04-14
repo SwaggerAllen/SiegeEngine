@@ -3,8 +3,9 @@
 Mint handler is deterministic (no LLM call) and idempotent. Each
 test seeds a project + approved subcomparch draft content on the
 target subcomponent, runs the mint, and asserts the downstream
-events: four fragments updated, dep edges emitted with alias vs
-real-id resolution.
+events: four fragments updated, dep edges emitted for every
+``<dep to="comp_..."/>`` entry (targets are always real comp_*
+IDs at this tier — no alias indirection).
 
 Also includes a TestComparchMintFanOut class that runs the real
 comparch_mint handler end-to-end and asserts it enqueues a
@@ -177,7 +178,7 @@ class TestHappyPath:
             _set_content(
                 s,
                 seeded["sub_store"],
-                _sub_doc(deps='<dep to="foundation"/>'),
+                _sub_doc(deps=f'<dep to="{seeded["sub_found"]}"/>'),
             )
         finally:
             s.close()
@@ -208,12 +209,12 @@ class TestHappyPath:
             assert ts is not None
             assert "Real techspec" in ts.content
             assert "Skeletal" not in ts.content
-            # deps fragment is the serialized XML
+            # deps fragment is the serialized XML with the real sibling id
             deps_frag = s.get(Fragment, fragment_id(seeded["sub_store"], FragmentKind.DEPS))
             assert deps_frag is not None
-            assert "foundation" in deps_frag.content
+            assert seeded["sub_found"] in deps_frag.content
 
-            # One dep edge from sub_store to sub_found (alias resolved)
+            # One dep edge from sub_store to sub_found
             edges = list(
                 s.execute(
                     select(Edge).where(
@@ -228,9 +229,9 @@ class TestHappyPath:
         finally:
             s.close()
 
-    def test_real_comp_id_dep_emitted_verbatim(self, shared_session_factory, seeded):
+    def test_parent_sibling_dep_emitted(self, shared_session_factory, seeded):
         """A <dep to="comp_X"/> pointing at a parent sibling emits
-        a dep edge with the real ID as the target, no alias resolution."""
+        a dep edge with the parent's sibling as the target."""
         factory = shared_session_factory
         s = factory()
         try:
@@ -274,7 +275,9 @@ class TestHappyPath:
             _set_content(
                 s,
                 seeded["sub_store"],
-                _sub_doc(deps=(f'<dep to="foundation"/><dep to="{seeded["comp_auth"]}"/>')),
+                _sub_doc(
+                    deps=(f'<dep to="{seeded["sub_found"]}"/><dep to="{seeded["comp_auth"]}"/>')
+                ),
             )
         finally:
             s.close()
@@ -301,8 +304,8 @@ class TestHappyPath:
             )
             assert len(edges) == 2
             targets = {e.target_id for e in edges}
-            assert seeded["sub_found"] in targets  # alias resolved
-            assert seeded["comp_auth"] in targets  # real id passed through
+            assert seeded["sub_found"] in targets  # same-parent sibling
+            assert seeded["comp_auth"] in targets  # parent's sibling
         finally:
             s.close()
 
@@ -351,7 +354,7 @@ class TestIdempotency:
             _set_content(
                 s,
                 seeded["sub_store"],
-                _sub_doc(deps='<dep to="foundation"/>'),
+                _sub_doc(deps=f'<dep to="{seeded["sub_found"]}"/>'),
             )
         finally:
             s.close()

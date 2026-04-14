@@ -70,12 +70,13 @@ top-level component's metadata (techspec, public surface, private \
 surface), this subcomponent's name + role + API intent from the \
 parent's comparch decomposition, the subresponsibilities \
 assigned to this subcomponent, the list of same-parent sibling \
-subcomponents it may declare local dependencies on (by alias), \
-the list of parent-sibling top-level components it may declare \
-cross-component dependencies on (by real ``comp_*`` ID), the \
-public surfaces of siblings/parent-siblings that are already \
-fully architected, and optionally prior approved / pending \
-drafts, user feedback, and parse-validate errors.
+subcomponents it may declare local dependencies on (each shown \
+with its real ``comp_*`` ID), the list of parent-sibling \
+top-level components it may declare cross-component dependencies \
+on (also shown with real ``comp_*`` IDs), the public surfaces of \
+siblings/parent-siblings that are already fully architected, and \
+optionally prior approved / pending drafts, user feedback, and \
+parse-validate errors.
 
 Your job is to produce a single ``<subcomparch>`` block \
 containing four sections in a fixed order: a role-level technical \
@@ -120,8 +121,8 @@ Example (abbreviated):
     ```
       </private-surface>
       <dependencies>
-        <dep to="session_store"/>
-        <dep to="comp_audit9999"/>
+        <dep to="comp_session9"/>
+        <dep to="comp_audit999"/>
       </dependencies>
     </subcomparch>
 
@@ -164,29 +165,30 @@ convention as the public surface.
 * All three fragment sections must be non-empty. Do not put \
 nested XML tags inside them — only prose and fenced code blocks.
 
-## Dependencies (mixed: sibling subs + parent's sibling comps)
+## Dependencies (real comp_* IDs only)
 
-* ``<dependencies>`` is a single section holding **both kinds of \
-dependency targets** in one list:
-  - **Same-parent sibling subcomponents**, referenced by local \
-    ``alias`` (lowercase snake_case, matches one of the aliases \
-    listed in the input context). Example: \
-    ``<dep to="session_store"/>``.
-  - **Parent's sibling top-level components**, referenced by real \
-    ``comp_*`` ID (matches one of the IDs listed in the input \
-    context). Example: ``<dep to="comp_audit9999"/>``.
-* The validator disambiguates: ``to="..."`` values that start \
-with ``comp_`` are treated as real IDs; everything else is \
-treated as a local alias.
-* At most one ``<dep>`` per target (duplicates rejected), whether \
-it's an alias or a real ID.
-* No self-deps: you may not reference your own slugified alias, \
-nor can you reference yourself via a made-up ``comp_*`` ID.
+* ``<dependencies>`` is a single section holding ``<dep>`` edges \
+from this subcomponent to other components. Every target is a \
+real ``comp_*`` ID — the alias scheme is NOT used at this tier \
+because both kinds of allowed targets already exist as minted \
+nodes when subcomparch is generated.
+* Two allowed target kinds, both written the same way:
+  - **Same-parent sibling subcomponents**: pick from the list of \
+    ``comp_*`` IDs the input context shows under "Same-parent \
+    sibling subcomponents". Example: \
+    ``<dep to="comp_session9"/>``.
+  - **Parent's sibling top-level components**: pick from the \
+    list of ``comp_*`` IDs the input context shows under \
+    "Parent's sibling top-level components". Example: \
+    ``<dep to="comp_audit999"/>``.
+* At most one ``<dep>`` per target (duplicates rejected).
+* No self-deps: you may not reference your own ``comp_*`` ID.
 * ``<dependencies>`` may be **empty** when this subcomponent is a \
 true leaf with no external surface interactions. Emit \
 ``<dependencies></dependencies>``.
-* The validator rejects unknown aliases and unknown comp IDs \
-with an explicit allowlist error on retry.
+* The validator rejects unknown IDs and any ``to`` attribute \
+that is not a ``comp_*`` prefix with an explicit allowlist error \
+on retry.
 
 ## Meta-rules
 
@@ -238,11 +240,11 @@ def render_user_prompt(
     - ``subresps_summary``: the subresponsibilities this
       subcomponent owns (from the comparch decomposition pass).
     - ``sibling_subcomps_summary``: same-parent sibling
-      subcomponents listed by local alias + name + role. Allowed
-      targets for local ``<dep to="alias"/>`` entries.
+      subcomponents listed by real ``comp_*`` ID + name + role.
+      Allowed targets for ``<dep to="comp_..."/>`` entries.
     - ``parent_sibling_comps_summary``: top-level components
       other than this subcomponent's parent, listed by real
-      ``comp_*`` ID + name. Allowed targets for
+      ``comp_*`` ID + name. Also allowed targets for
       ``<dep to="comp_..."/>`` entries.
     - ``dep_pubapi_summary``: public-surface fragments of any
       siblings / parent-siblings whose arch docs are already
@@ -264,11 +266,11 @@ def render_user_prompt(
     parts.append("")
     parts.append(subresps_summary.strip() or "(no subresponsibilities assigned)")
     parts.append("")
-    parts.append("# Same-parent sibling subcomponents (allowed <dep> aliases)")
+    parts.append("# Same-parent sibling subcomponents (allowed <dep> targets)")
     parts.append("")
     parts.append(sibling_subcomps_summary.strip() or "(no same-parent sibling subcomponents)")
     parts.append("")
-    parts.append("# Parent's sibling top-level components (allowed <dep> comp_ IDs)")
+    parts.append("# Parent's sibling top-level components (allowed <dep> targets)")
     parts.append("")
     parts.append(parent_sibling_comps_summary.strip() or "(no parent-sibling top-level components)")
     parts.append("")

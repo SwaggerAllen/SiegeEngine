@@ -25,7 +25,6 @@ from backend.graph.regen_context import (
     build_regen_context,
     format_regen_context,
     format_regen_context_for_sub,
-    subcomp_alias_for_name,
 )
 from backend.models import Project
 
@@ -615,30 +614,6 @@ class TestFormatRegenContext:
         assert seeded["resp_bill"] in prompt
 
 
-class TestSlugifyAlias:
-    def test_basic_snake_case(self):
-        assert subcomp_alias_for_name("SessionStore") == "sessionstore"
-        assert subcomp_alias_for_name("Session Store") == "session_store"
-        assert subcomp_alias_for_name("Credential Gate") == "credential_gate"
-
-    def test_strips_non_alphanumerics(self):
-        assert subcomp_alias_for_name("Token-Bucket!") == "token_bucket"
-        assert subcomp_alias_for_name("Retry/Backoff") == "retry_backoff"
-
-    def test_collapses_underscores(self):
-        assert subcomp_alias_for_name("Foo   Bar") == "foo_bar"
-        assert subcomp_alias_for_name("Foo__Bar") == "foo_bar"
-
-    def test_truncates_to_32_chars(self):
-        alias = subcomp_alias_for_name("X" * 200)
-        assert len(alias) <= 32
-
-    def test_leading_digit_prefixed(self):
-        alias = subcomp_alias_for_name("3DRenderer")
-        assert alias.startswith("sub_")
-        assert alias[0].isalpha()
-
-
 @pytest.fixture()
 def seeded_with_sub(db, seeded):
     """Extend the seeded fixture with a subcomponent layout under billing.
@@ -817,13 +792,18 @@ class TestFormatRegenContextForSub:
         assert "get_billing_state" in summary  # pubapi
         assert "_tokenize" in summary  # privapi
 
-    def test_sibling_subcomps_summary_includes_aliases(self, db, seeded_with_sub):
+    def test_sibling_subcomps_summary_includes_real_ids(self, db, seeded_with_sub):
         ctx = build_regen_context(db, seeded_with_sub["sub_store"])
         summary = format_regen_context_for_sub(ctx)["sibling_subcomps_summary"]
-        assert "credentialgate" in summary or "credential_gate" in summary
-        assert "foundation" in summary
-        # The sub's own slug should NOT appear in its own sibling list
-        assert "sessionstore" not in summary and "session_store" not in summary
+        # Aliases gone — siblings are listed by their real comp_* IDs
+        # so the LLM can reference them directly in <dep to="comp_...">.
+        assert seeded_with_sub["sub_gate"] in summary
+        assert seeded_with_sub["sub_found"] in summary
+        # Names are still shown for LLM readability
+        assert "CredentialGate" in summary
+        assert "Foundation" in summary
+        # The sub's own id should NOT appear in its own sibling list
+        assert seeded_with_sub["sub_store"] not in summary
 
     def test_parent_sibling_comps_summary_lists_real_ids(self, db, seeded_with_sub):
         ctx = build_regen_context(db, seeded_with_sub["sub_store"])

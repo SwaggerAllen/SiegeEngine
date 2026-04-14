@@ -279,7 +279,7 @@ def _patch_cli_sequence(monkeypatch, values: list[str]):
 
 class TestHappyPath:
     def test_generates_pending_draft(self, shared_session_factory, seeded_project, monkeypatch):
-        draft_xml = _valid_subcomparch(deps='<dep to="foundation"/>')
+        draft_xml = _valid_subcomparch(deps=f'<dep to="{seeded_project["sub_found"]}"/>')
         calls = _patch_cli(monkeypatch, draft_xml)
         asyncio.run(
             generate_subcomparch(
@@ -293,10 +293,10 @@ class TestHappyPath:
         assert len(calls) == 1
         prompt = calls[0]["prompt"]
         # Context includes subcomponent name + parent component +
-        # sibling alias and parent's sibling comp id.
+        # sibling real comp_* id and parent's sibling comp id.
         assert "TokenStore" in prompt
         assert "BillingService" in prompt
-        assert "foundation" in prompt  # sibling alias
+        assert seeded_project["sub_found"] in prompt  # sibling real id
         assert seeded_project["comp_auth"] in prompt  # parent-sibling id
 
         session = shared_session_factory()
@@ -313,11 +313,17 @@ class TestHappyPath:
         finally:
             session.close()
 
-    def test_accepts_real_comp_id_dep(self, shared_session_factory, seeded_project, monkeypatch):
-        """A <dep to="comp_*"/> that references the parent's sibling
-        top-level comp validates cleanly."""
+    def test_accepts_mixed_sibling_and_parent_sibling_deps(
+        self, shared_session_factory, seeded_project, monkeypatch
+    ):
+        """A subcomparch doc can list a same-parent sibling and a
+        parent's sibling top-level in the same <dependencies>
+        section — both use real comp_* IDs."""
         draft_xml = _valid_subcomparch(
-            deps=f'<dep to="{seeded_project["comp_auth"]}"/><dep to="foundation"/>'
+            deps=(
+                f'<dep to="{seeded_project["comp_auth"]}"/>'
+                f'<dep to="{seeded_project["sub_found"]}"/>'
+            )
         )
         _patch_cli(monkeypatch, draft_xml)
         asyncio.run(
@@ -370,7 +376,7 @@ class TestHappyPath:
     def test_regen_with_feedback_discards_prior(
         self, shared_session_factory, seeded_project, monkeypatch
     ):
-        first = _valid_subcomparch(deps='<dep to="foundation"/>')
+        first = _valid_subcomparch(deps=f'<dep to="{seeded_project["sub_found"]}"/>')
         _patch_cli(monkeypatch, first)
         asyncio.run(
             generate_subcomparch(
@@ -469,10 +475,10 @@ class TestFailureModes:
 
 
 class TestParseValidateRetry:
-    def test_retry_on_unknown_alias(self, shared_session_factory, seeded_project, monkeypatch):
-        """First attempt targets an unknown sibling alias; second attempt succeeds."""
-        bad = _valid_subcomparch(deps='<dep to="mystery_sib"/>')
-        good = _valid_subcomparch(deps='<dep to="foundation"/>')
+    def test_retry_on_unknown_sibling_id(self, shared_session_factory, seeded_project, monkeypatch):
+        """First attempt targets an unknown sibling comp_ id; second attempt succeeds."""
+        bad = _valid_subcomparch(deps='<dep to="comp_mystery1"/>')
+        good = _valid_subcomparch(deps=f'<dep to="{seeded_project["sub_found"]}"/>')
         calls = _patch_cli_sequence(monkeypatch, [bad, good])
         asyncio.run(
             generate_subcomparch(
@@ -485,7 +491,24 @@ class TestParseValidateRetry:
         )
         assert len(calls) == 2
         # The second call's prompt carries the parse error feedback
-        assert "allowed same-parent sibling set" in calls[1]["prompt"]
+        assert "not in the allowed set" in calls[1]["prompt"]
+
+    def test_retry_on_non_comp_prefix(self, shared_session_factory, seeded_project, monkeypatch):
+        """Legacy alias-style targets are rejected with a clear error."""
+        bad = _valid_subcomparch(deps='<dep to="mystery_sib"/>')
+        good = _valid_subcomparch(deps=f'<dep to="{seeded_project["sub_found"]}"/>')
+        calls = _patch_cli_sequence(monkeypatch, [bad, good])
+        asyncio.run(
+            generate_subcomparch(
+                {
+                    "project_id": seeded_project["project_id"],
+                    "component_id": seeded_project["sub_store"],
+                    "feedback": None,
+                }
+            )
+        )
+        assert len(calls) == 2
+        assert "not a comp_* ID" in calls[1]["prompt"]
 
     def test_retry_on_unknown_parent_sibling_id(
         self, shared_session_factory, seeded_project, monkeypatch
@@ -525,7 +548,7 @@ class TestTelemetry:
     def test_telemetry_row_written_per_attempt(
         self, shared_session_factory, seeded_project, monkeypatch
     ):
-        draft_xml = _valid_subcomparch(deps='<dep to="foundation"/>')
+        draft_xml = _valid_subcomparch(deps=f'<dep to="{seeded_project["sub_found"]}"/>')
         _patch_cli(monkeypatch, draft_xml)
         asyncio.run(
             generate_subcomparch(

@@ -14,10 +14,12 @@ Smaller than :mod:`backend.graph.handlers.comparch_mint`:
    content. The ``deps`` fragment is new at this tier —
    comparch_mint didn't seed it for subcomponents.
 2. ``EdgeCreated(edge_type='dependency')`` per entry in
-   ``<dependencies>``. Targets are a mix of local aliases
-   (resolved to the real ``comp_*`` ID of a same-parent
-   sibling via the slugified-name lookup) and real
-   ``comp_*`` IDs (used directly).
+   ``<dependencies>``. Every target is already a real
+   ``comp_*`` ID — same-parent siblings were minted by the
+   parent's comparch_mint before this subcomparch gen ran,
+   and parent-sibling top-levels existed from sysarch_mint.
+   No alias layer is needed; the mint handler uses the target
+   IDs directly.
 
 No subcomponent minting (subs can't decompose further —
 reducer enforces the two-level depth cap). No policy minting
@@ -48,7 +50,6 @@ from backend.graph import events as ev
 from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
-    SubArchDep,
     SubArchDoc,
     ValidationError,
     validate_sub_arch_doc,
@@ -59,7 +60,6 @@ from backend.graph.queries import (
     list_top_level_components,
 )
 from backend.graph.reducer import append_event
-from backend.graph.regen_context import subcomp_alias_for_name
 from backend.models.node import Fragment, Node
 from backend.pipeline import queue as pipeline_queue
 
@@ -132,11 +132,7 @@ async def mint_subcomparch(payload: dict) -> None:
         # pattern as comparch_mint: read fresh from the DB to
         # catch any drift between generation and approval.
         all_siblings = list_subcomponents_of(db, parent_node.id)
-        sibling_subs = [s for s in all_siblings if s.id != component_id]
-        alias_to_sub_id: dict[str, str] = {
-            subcomp_alias_for_name(s.name or ""): s.id for s in sibling_subs
-        }
-        known_sibling_sub_aliases: set[str] = set(alias_to_sub_id.keys())
+        known_sibling_sub_ids: set[str] = {s.id for s in all_siblings if s.id != component_id}
 
         top_level_comps = list_top_level_components(db, project_id)
         known_parent_sibling_comp_ids: set[str] = {
@@ -147,7 +143,7 @@ async def mint_subcomparch(payload: dict) -> None:
             tree = extract_tag_tree(content, "subcomparch")
             doc = validate_sub_arch_doc(
                 tree,
-                known_sibling_sub_aliases=known_sibling_sub_aliases,
+                known_sibling_sub_ids=known_sibling_sub_ids,
                 known_parent_sibling_comp_ids=known_parent_sibling_comp_ids,
             )
         except (ParseError, ValidationError) as exc:
@@ -164,9 +160,10 @@ async def mint_subcomparch(payload: dict) -> None:
         _emit_fragment(db, project_id, component_id, FragmentKind.DEPS, deps_body)
 
         # ── Phase 2: dependency edge emission ───────────────────
-        resolved_targets: list[str] = []
+        # Every dep target is already a real comp_* ID at this
+        # point — the validator rejects anything else — so there's
+        # no alias resolution step.
         for dep in doc.deps:
-            target_id = _resolve_dep_target(dep, alias_to_sub_id)
             edge_id = mint(db, Kind.EDGE)
             append_event(
                 db,
@@ -175,10 +172,9 @@ async def mint_subcomparch(payload: dict) -> None:
                     edge_id=edge_id,
                     edge_type="dependency",
                     source_id=component_id,
-                    target_id=target_id,
+                    target_id=dep.target,
                 ),
             )
-            resolved_targets.append(target_id)
 
         db.commit()
 
@@ -187,33 +183,10 @@ async def mint_subcomparch(payload: dict) -> None:
             project_id,
             component_id,
             parent_node.id,
-            len(resolved_targets),
+            len(doc.deps),
         )
     finally:
         db.close()
-
-
-def _resolve_dep_target(dep: SubArchDep, alias_to_sub_id: dict[str, str]) -> str:
-    """Resolve a :class:`SubArchDep` to its target ``comp_*`` ID.
-
-    Aliases are resolved via the same-parent siblings lookup
-    (slugified display names). Real IDs pass through unchanged.
-    Missing aliases are a bug — the validator should have
-    rejected the dep before we reach this point — so surface the
-    discrepancy as a mint handler error rather than silently
-    emitting a bad edge.
-    """
-    if dep.is_alias:
-        target = alias_to_sub_id.get(dep.target)
-        if target is None:
-            raise SubcomparchMintHandlerError(
-                f"Dependency alias {dep.target!r} has no matching "
-                "same-parent sibling subcomponent at mint time "
-                "(validator should have caught this earlier). "
-                f"Known aliases: {sorted(alias_to_sub_id.keys())}."
-            )
-        return target
-    return dep.target
 
 
 def _emit_fragment(
@@ -241,10 +214,7 @@ def _serialize_deps_fragment(doc: SubArchDoc) -> str:
 
     Round-trippable format so downstream readers (e.g. Phase 6
     impl generation) can re-parse the fragment directly without
-    walking the edge table. Aliases are serialized verbatim —
-    the reader knows the disambiguation rule (``comp_`` prefix =
-    real ID, everything else = alias) because it mirrors the
-    validator.
+    walking the edge table. Every target is a real ``comp_*`` ID.
     """
     if not doc.deps:
         return "<dependencies></dependencies>"

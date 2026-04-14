@@ -3,9 +3,9 @@
 Parallels test_arch_doc_validator.py's shape for the four-section
 subcomparch tier. Covers structural validation (root + section
 order), fragment section rules (non-empty, no nested tags),
-mixed-target <dependencies> resolution (alias vs real comp_* ID),
-and explicit rejection of forbidden sections (<policies>,
-<subcomponents>, <sub-dependencies>).
+<dependencies> resolution (every target a real comp_* ID drawn
+from one of two allowlists), and explicit rejection of forbidden
+sections (<policies>, <subcomponents>, <sub-dependencies>).
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ def _parse(raw: str) -> TagNode:
     return extract_tag_tree(raw, "subcomparch")
 
 
-KNOWN_SIBLING_ALIASES = {"session_store", "credential_gate", "foundation"}
-KNOWN_PARENT_SIBLINGS = {"comp_audit9999", "comp_foundati1"}
+KNOWN_SIBLING_SUB_IDS = {"comp_session9", "comp_credgt01", "comp_foundsu1"}
+KNOWN_PARENT_SIBLINGS = {"comp_audit999", "comp_foundati"}
 
 
 def _sub_arch_doc(
@@ -48,14 +48,14 @@ def _sub_arch_doc(
 def _validate(
     raw: str,
     *,
-    known_sibling_sub_aliases: set[str] | None = None,
+    known_sibling_sub_ids: set[str] | None = None,
     known_parent_sibling_comp_ids: set[str] | None = None,
 ):
     return validate_sub_arch_doc(
         _parse(raw),
-        known_sibling_sub_aliases=known_sibling_sub_aliases
-        if known_sibling_sub_aliases is not None
-        else KNOWN_SIBLING_ALIASES,
+        known_sibling_sub_ids=known_sibling_sub_ids
+        if known_sibling_sub_ids is not None
+        else KNOWN_SIBLING_SUB_IDS,
         known_parent_sibling_comp_ids=known_parent_sibling_comp_ids
         if known_parent_sibling_comp_ids is not None
         else KNOWN_PARENT_SIBLINGS,
@@ -71,42 +71,43 @@ class TestHappyPath:
         assert doc.privapi == "Internal: _touch(key)."
         assert doc.deps == ()
 
-    def test_with_alias_deps(self):
+    def test_with_sibling_sub_deps(self):
         doc = _validate(
             _sub_arch_doc(
-                dependencies='<dep to="session_store"/><dep to="foundation"/>',
+                dependencies='<dep to="comp_session9"/><dep to="comp_foundsu1"/>',
             )
         )
         assert doc.deps == (
-            SubArchDep(target="session_store", is_alias=True),
-            SubArchDep(target="foundation", is_alias=True),
+            SubArchDep(target="comp_session9"),
+            SubArchDep(target="comp_foundsu1"),
         )
 
-    def test_with_comp_id_deps(self):
+    def test_with_parent_sibling_deps(self):
         doc = _validate(
             _sub_arch_doc(
-                dependencies='<dep to="comp_audit9999"/>',
+                dependencies='<dep to="comp_audit999"/>',
             )
         )
-        assert doc.deps == (SubArchDep(target="comp_audit9999", is_alias=False),)
+        assert doc.deps == (SubArchDep(target="comp_audit999"),)
 
-    def test_mixed_alias_and_comp_id_deps(self):
+    def test_mixed_sibling_and_parent_sibling_deps(self):
         doc = _validate(
             _sub_arch_doc(
                 dependencies=(
-                    '<dep to="session_store"/>'
-                    '<dep to="comp_audit9999"/>'
-                    '<dep to="foundation"/>'
-                    '<dep to="comp_foundati1"/>'
+                    '<dep to="comp_session9"/>'
+                    '<dep to="comp_audit999"/>'
+                    '<dep to="comp_foundsu1"/>'
+                    '<dep to="comp_foundati"/>'
                 ),
             )
         )
         assert len(doc.deps) == 4
-        # Two aliases, two real IDs
-        alias_entries = [d for d in doc.deps if d.is_alias]
-        id_entries = [d for d in doc.deps if not d.is_alias]
-        assert {d.target for d in alias_entries} == {"session_store", "foundation"}
-        assert {d.target for d in id_entries} == {"comp_audit9999", "comp_foundati1"}
+        assert {d.target for d in doc.deps} == {
+            "comp_session9",
+            "comp_audit999",
+            "comp_foundsu1",
+            "comp_foundati",
+        }
 
 
 class TestRootAndSectionOrder:
@@ -115,7 +116,7 @@ class TestRootAndSectionOrder:
         with pytest.raises(ValidationError, match="Expected root tag <subcomparch>"):
             validate_sub_arch_doc(
                 tree,
-                known_sibling_sub_aliases=set(),
+                known_sibling_sub_ids=set(),
                 known_parent_sibling_comp_ids=set(),
             )
 
@@ -223,36 +224,33 @@ class TestDependencies:
             _validate(raw)
 
     def test_from_attribute_rejected(self):
-        raw = _sub_arch_doc(dependencies='<dep from="self" to="session_store"/>')
+        raw = _sub_arch_doc(dependencies='<dep from="self" to="comp_session9"/>')
         with pytest.raises(ValidationError, match="has a from attribute"):
             _validate(raw)
 
-    def test_unknown_alias_rejected(self):
-        raw = _sub_arch_doc(dependencies='<dep to="mystery_sib"/>')
-        with pytest.raises(ValidationError, match="allowed same-parent sibling set"):
+    def test_non_comp_prefix_rejected(self):
+        """Legacy alias scheme is gone — any target without comp_ is rejected."""
+        raw = _sub_arch_doc(dependencies='<dep to="session_store"/>')
+        with pytest.raises(ValidationError, match="not a comp_\\* ID"):
             _validate(raw)
 
-    def test_unknown_comp_id_rejected(self):
-        raw = _sub_arch_doc(dependencies='<dep to="comp_strange99"/>')
-        with pytest.raises(ValidationError, match="allowed parent-sibling component set"):
+    def test_unknown_sibling_sub_id_rejected(self):
+        raw = _sub_arch_doc(dependencies='<dep to="comp_unknown1"/>')
+        with pytest.raises(ValidationError, match="not in the allowed set"):
             _validate(raw)
 
-    def test_duplicate_alias_rejected(self):
-        raw = _sub_arch_doc(dependencies='<dep to="session_store"/><dep to="session_store"/>')
+    def test_unknown_parent_sibling_comp_id_rejected(self):
+        raw = _sub_arch_doc(dependencies='<dep to="comp_strange9"/>')
+        with pytest.raises(ValidationError, match="not in the allowed set"):
+            _validate(raw)
+
+    def test_duplicate_dep_rejected(self):
+        raw = _sub_arch_doc(dependencies='<dep to="comp_session9"/><dep to="comp_session9"/>')
         with pytest.raises(ValidationError, match="duplicate target"):
             _validate(raw)
 
-    def test_duplicate_comp_id_rejected(self):
-        raw = _sub_arch_doc(dependencies='<dep to="comp_audit9999"/><dep to="comp_audit9999"/>')
-        with pytest.raises(ValidationError, match="duplicate target"):
-            _validate(raw)
-
-    def test_duplicate_across_kinds_rejected(self):
-        # Pathological case: a string happens to match both sets.
-        # In practice the comp_ prefix keeps them disjoint, but
-        # the duplicate check runs on the raw target before the
-        # alias-vs-id split so this still fires.
-        raw = _sub_arch_doc(dependencies='<dep to="session_store"/><dep to="session_store"/>')
+    def test_duplicate_parent_sibling_rejected(self):
+        raw = _sub_arch_doc(dependencies='<dep to="comp_audit999"/><dep to="comp_audit999"/>')
         with pytest.raises(ValidationError, match="duplicate target"):
             _validate(raw)
 
@@ -265,34 +263,27 @@ class TestDependencies:
         with pytest.raises(ValidationError, match="<dependencies> contains an unexpected child"):
             _validate(raw)
 
-    def test_alias_disambiguation_is_comp_prefix_based(self):
-        """Non-comp_ strings are always treated as aliases, even if they
-        happen to look like IDs otherwise."""
-        raw = _sub_arch_doc(dependencies='<dep to="foundation"/>')
-        doc = _validate(raw)
-        assert doc.deps == (SubArchDep(target="foundation", is_alias=True),)
-
     def test_empty_allowlists_reject_any_dep(self):
         # Subcomponent with no siblings and no parent-siblings —
         # the only legal <dependencies> shape is empty.
-        raw_with_alias = _sub_arch_doc(dependencies='<dep to="session_store"/>')
-        with pytest.raises(ValidationError, match="allowed same-parent sibling set"):
+        raw_with_sibling = _sub_arch_doc(dependencies='<dep to="comp_session9"/>')
+        with pytest.raises(ValidationError, match="not in the allowed set"):
             _validate(
-                raw_with_alias,
-                known_sibling_sub_aliases=set(),
+                raw_with_sibling,
+                known_sibling_sub_ids=set(),
                 known_parent_sibling_comp_ids=set(),
             )
-        raw_with_id = _sub_arch_doc(dependencies='<dep to="comp_audit9999"/>')
-        with pytest.raises(ValidationError, match="allowed parent-sibling component set"):
+        raw_with_parent_sibling = _sub_arch_doc(dependencies='<dep to="comp_audit999"/>')
+        with pytest.raises(ValidationError, match="not in the allowed set"):
             _validate(
-                raw_with_id,
-                known_sibling_sub_aliases=set(),
+                raw_with_parent_sibling,
+                known_sibling_sub_ids=set(),
                 known_parent_sibling_comp_ids=set(),
             )
         # But empty <dependencies> is fine.
         doc = _validate(
             _sub_arch_doc(),
-            known_sibling_sub_aliases=set(),
+            known_sibling_sub_ids=set(),
             known_parent_sibling_comp_ids=set(),
         )
         assert doc.deps == ()
