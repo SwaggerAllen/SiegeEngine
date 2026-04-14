@@ -19,6 +19,7 @@ export { renderUnknownElement } from './defaultRenderers';
 export { comparchRenderers } from './comparchRenderers';
 export { featureRenderers } from './featureRenderers';
 export { requirementsRenderers } from './requirementsRenderers';
+export { subcomparchRenderers } from './subcomparchRenderers';
 export { subreqsRenderers } from './subreqsRenderers';
 export { sysarchRenderers } from './sysarchRenderers';
 export type {

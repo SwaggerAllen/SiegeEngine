@@ -1937,6 +1937,246 @@ def _validate_arch_doc_sub_dependencies(node: TagNode, alias_set: set[str]) -> t
     return tuple(deps)
 
 
+@dataclass(frozen=True)
+class SubArchDep:
+    """A single validated dependency entry from a ``<subcomparch>`` block.
+
+    ``target`` is always a real ``comp_*`` ID — either a
+    same-parent sibling subcomponent (which was minted by the
+    parent's comparch_mint before this subcomparch gen ran) or
+    one of the parent's sibling top-level components. Both kinds
+    already exist as nodes at generation time, so the scheme
+    doesn't need a placeholder indirection; the mint handler
+    uses the target directly when emitting the dependency edge.
+    """
+
+    target: str
+
+
+@dataclass(frozen=True)
+class SubArchDoc:
+    """The full validated subcomparch output as structured data.
+
+    Fields mirror the four sections of the subcomparch XML. All
+    four are fragment sections (stored verbatim as the persistent,
+    transcluded content of each subcomponent's fragments). There
+    are no mint-time directives at this tier — subcomponents are
+    leaves in the comp tree and cannot decompose further, and
+    they don't mint new policies.
+
+    ``deps`` holds a tuple of :class:`SubArchDep`. The mint
+    handler walks this tuple and emits ``dependency`` edges for
+    each entry directly — every target is already a real
+    ``comp_*`` ID (same-parent sibling or parent-sibling
+    top-level), so no alias resolution is needed at mint time.
+    """
+
+    techspec: str
+    pubapi: str
+    privapi: str
+    deps: tuple[SubArchDep, ...]
+
+
+_SUBCOMPARCH_ALLOWED_CHILDREN = {
+    "technical-specification",
+    "public-surface",
+    "private-surface",
+    "dependencies",
+}
+_SUBCOMPARCH_REQUIRED_ORDER = (
+    "technical-specification",
+    "public-surface",
+    "private-surface",
+    "dependencies",
+)
+_SUBCOMPARCH_FORBIDDEN_CHILDREN = {
+    "policies": (
+        "subcomponents don't have policies — policies live only at the "
+        "top-level comparch tier. If a cross-cutting invariant is "
+        "needed, it belongs on the parent component's arch doc, not "
+        "here."
+    ),
+    "subcomponents": (
+        "subcomponents can't decompose further — the reducer enforces "
+        "a two-level comp_* depth cap. Describe any internal "
+        "structure in <private-surface> prose or code blocks instead."
+    ),
+    "sub-dependencies": (
+        "subcomponents can't decompose further — there are no "
+        "nested sub-sub-components to have dependencies between."
+    ),
+}
+
+
+def validate_sub_arch_doc(
+    tree: TagNode,
+    *,
+    known_sibling_sub_ids: set[str],
+    known_parent_sibling_comp_ids: set[str],
+) -> SubArchDoc:
+    """Validate a parsed ``<subcomparch>`` tree and return a SubArchDoc.
+
+    Enforces the four-section structure described in
+    :mod:`backend.graph.prompts.subcomparch`: single root, four
+    sections in order, non-empty fragment text for the first three,
+    and a ``<dependencies>`` section whose ``<dep to="..."/>``
+    entries are all real ``comp_*`` IDs drawn from one of two
+    allowlists.
+
+    ``known_sibling_sub_ids`` is the set of real ``comp_*`` IDs
+    for same-parent sibling subcomponents (excluding self). These
+    were minted by the parent component's comparch_mint before
+    this subcomparch gen ran, so the IDs are stable and the LLM
+    references them directly rather than via a placeholder alias.
+
+    ``known_parent_sibling_comp_ids`` is the set of real
+    ``comp_*`` IDs for top-level components other than the
+    parent of this subcomponent.
+
+    ``<dependencies>`` may be empty (leaf subcomponent).
+    """
+    if tree.tag != "subcomparch":
+        raise ValidationError(
+            f"Expected root tag <subcomparch>, got <{tree.tag}>. "
+            "Wrap the subcomponent architecture doc in a single "
+            "<subcomparch>...</subcomparch> block."
+        )
+
+    section_map: dict[str, TagNode] = {}
+    for child in tree.children:
+        if child.tag in _SUBCOMPARCH_FORBIDDEN_CHILDREN:
+            reason = _SUBCOMPARCH_FORBIDDEN_CHILDREN[child.tag]
+            raise ValidationError(
+                f"<subcomparch> contains a forbidden <{child.tag}> section: {reason}"
+            )
+        if child.tag not in _SUBCOMPARCH_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<subcomparch> contains an unexpected child "
+                f"<{child.tag}>. Allowed children are: "
+                f"{sorted(_SUBCOMPARCH_ALLOWED_CHILDREN)}."
+            )
+        if child.tag in section_map:
+            raise ValidationError(
+                f"<subcomparch> contains more than one <{child.tag}> "
+                "section; exactly one of each section is required."
+            )
+        section_map[child.tag] = child
+
+    actual_order = [c.tag for c in tree.children if c.tag in _SUBCOMPARCH_REQUIRED_ORDER]
+    if actual_order != list(_SUBCOMPARCH_REQUIRED_ORDER):
+        raise ValidationError(
+            f"<subcomparch> sections are not in the required order. "
+            f"Expected: {list(_SUBCOMPARCH_REQUIRED_ORDER)}. "
+            f"Got: {actual_order}. "
+            "Reorder the children of <subcomparch> to match the "
+            "required sequence."
+        )
+
+    techspec = _validate_fragment_section(
+        section_map["technical-specification"], "technical-specification"
+    )
+    pubapi = _validate_fragment_section(section_map["public-surface"], "public-surface")
+    privapi = _validate_fragment_section(section_map["private-surface"], "private-surface")
+
+    deps = _validate_sub_arch_doc_dependencies(
+        section_map["dependencies"],
+        known_sibling_sub_ids=known_sibling_sub_ids,
+        known_parent_sibling_comp_ids=known_parent_sibling_comp_ids,
+    )
+
+    return SubArchDoc(
+        techspec=techspec,
+        pubapi=pubapi,
+        privapi=privapi,
+        deps=deps,
+    )
+
+
+def _validate_sub_arch_doc_dependencies(
+    node: TagNode,
+    *,
+    known_sibling_sub_ids: set[str],
+    known_parent_sibling_comp_ids: set[str],
+) -> tuple[SubArchDep, ...]:
+    """Validate ``<dependencies>`` at the subcomparch tier.
+
+    Every ``<dep to="..."/>`` target must be a real ``comp_*`` ID
+    drawn from the union of two allowlists:
+
+    * ``known_sibling_sub_ids`` — same-parent sibling
+      subcomponents (minted by the parent's comparch_mint before
+      this gen ran).
+    * ``known_parent_sibling_comp_ids`` — top-level components
+      other than this subcomponent's parent.
+
+    The two sets never overlap (a node can't be both a
+    subcomponent of this parent AND a top-level), so a single
+    "unknown target" error is enough. Duplicates are rejected.
+    Non-``comp_`` prefixes are rejected with a clear message
+    (legacy alias scheme — removed). Empty ``<dependencies>`` is
+    legal (leaf subcomponent with no external deps).
+    """
+    for child in node.children:
+        if child.tag not in _DEPENDENCIES_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<dependencies> contains an unexpected child "
+                f"<{child.tag}>. Only <dep> entries are allowed."
+            )
+    dep_nodes = node.find_all("dep")
+    deps: list[SubArchDep] = []
+    seen: set[str] = set()
+    allowed_targets = known_sibling_sub_ids | known_parent_sibling_comp_ids
+    for index, dnode in enumerate(dep_nodes):
+        target = dnode.attrs.get("to", "").strip()
+        if not target:
+            raise ValidationError(
+                f"<dep> at position {index} is missing the to "
+                'attribute. Every <dep> must carry to="comp_..." '
+                "with the real ID of a same-parent sibling "
+                "subcomponent or a parent-sibling top-level "
+                "component."
+            )
+        if dnode.attrs.get("from"):
+            raise ValidationError(
+                f"<dep> at position {index} has a from attribute. "
+                "Subcomparch <dependencies> entries are always from "
+                "this subcomponent implicitly — do not add "
+                'from="..." to <dep> entries.'
+            )
+        if not target.startswith("comp_"):
+            raise ValidationError(
+                f"<dep> at position {index} targets {target!r}, "
+                'which is not a comp_* ID. Use to="comp_XXXXXXXX" '
+                "with the real ID of a same-parent sibling "
+                "subcomponent or a parent-sibling top-level "
+                "component. (The alias scheme was removed in "
+                "favour of direct IDs — siblings already have "
+                "stable IDs at subcomparch generation time.)"
+            )
+        if target in seen:
+            raise ValidationError(
+                f"<dependencies> lists duplicate target {target!r}. "
+                "Each dependency target may appear at most once."
+            )
+        seen.add(target)
+
+        if target not in allowed_targets:
+            sibling_list = sorted(known_sibling_sub_ids) or ["(no same-parent siblings)"]
+            parent_sibling_list = sorted(known_parent_sibling_comp_ids) or [
+                "(no parent-sibling top-level components)"
+            ]
+            raise ValidationError(
+                f"<dep> at position {index} targets {target!r}, "
+                "which is not in the allowed set. Valid same-"
+                f"parent sibling IDs: {sibling_list}. Valid "
+                f"parent-sibling top-level IDs: {parent_sibling_list}."
+            )
+
+        deps.append(SubArchDep(target=target))
+
+    return tuple(deps)
+
+
 def _enforce_sub_foundation_dependency(
     subcomponents: tuple[Subcomponent, ...], deps: tuple[DepEdge, ...]
 ) -> None:

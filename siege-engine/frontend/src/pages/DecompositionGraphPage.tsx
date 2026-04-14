@@ -99,7 +99,9 @@ function DecompositionGraphShell({ projectId }: { projectId: string }) {
             requirements and system architecture to populate this graph.
           </div>
         )}
-        {graph && graph.nodes.length > 0 && <DecompositionGraph graph={graph} />}
+        {graph && graph.nodes.length > 0 && (
+          <DecompositionGraph graph={graph} projectId={projectId} />
+        )}
       </main>
     </div>
   );

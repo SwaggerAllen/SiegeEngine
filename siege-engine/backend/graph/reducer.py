@@ -281,6 +281,25 @@ def _apply_node_deleted(session: Session, project_id: str, event: ev.NodeDeleted
 
 
 def _apply_edge_created(session: Session, project_id: str, event: ev.EdgeCreated) -> None:
+    # Idempotency: if an edge already exists for this
+    # ``(project_id, edge_type, source_id, target_id)`` tuple, treat
+    # the event as a no-op rather than violating the
+    # ``uq_edges_project_type_source_target`` constraint or raising
+    # on the primary key. This lets mint handlers re-run cleanly on
+    # retry / crash-recovery: the handler re-emits the same logical
+    # edges with fresh ``edge_id`` strings, and the reducer absorbs
+    # the duplicate. The event itself is still recorded in the
+    # graph_events log so replay from zero produces the same state.
+    existing = session.execute(
+        select(Edge.id).where(
+            Edge.project_id == project_id,
+            Edge.edge_type == event.edge_type,
+            Edge.source_id == event.source_id,
+            Edge.target_id == event.target_id,
+        )
+    ).first()
+    if existing is not None:
+        return
     session.add(
         Edge(
             id=event.edge_id,
@@ -323,6 +342,12 @@ def _apply_fragment_updated(session: Session, project_id: str, event: ev.Fragmen
     else:
         if frag.project_id != project_id:
             raise ReducerError(f"Fragment {event.fragment_id!r} belongs to a different project")
+        # Idempotency: if the content is byte-for-byte identical to
+        # the stored fragment, skip the write entirely so a
+        # re-running mint handler doesn't churn ``updated_at`` on
+        # rows that haven't actually changed.
+        if frag.content == event.new_content:
+            return
         frag.content = event.new_content
         frag.updated_at = now
 

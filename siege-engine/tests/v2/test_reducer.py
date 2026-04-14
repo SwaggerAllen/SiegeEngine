@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
 from backend.graph import events as ev
 from backend.graph.reducer import (
@@ -126,6 +127,89 @@ class TestEdgeEvents:
         append_event(db, project.id, ev.EdgeDeleted(edge_id="edge_EEEEEEEE"))
         assert db.get(Edge, "edge_EEEEEEEE") is None
 
+    def test_edge_created_is_idempotent_on_matching_tuple(self, db, project):
+        """A second EdgeCreated with the same (project, type, source, target)
+        is a no-op even though its ``edge_id`` differs.
+
+        This is the reducer-level idempotency guarantee that lets a
+        mint handler re-run cleanly on retry: it regenerates fresh
+        edge IDs but the reducer absorbs the duplicates instead of
+        failing the unique constraint.
+        """
+        _add_two_nodes(db, project.id, "comp_AAAAAAAA", "comp_BBBBBBBB")
+        append_event(
+            db,
+            project.id,
+            ev.EdgeCreated(
+                edge_id="edge_FIRST111",
+                edge_type="dependency",
+                source_id="comp_AAAAAAAA",
+                target_id="comp_BBBBBBBB",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.EdgeCreated(
+                edge_id="edge_SECOND22",
+                edge_type="dependency",
+                source_id="comp_AAAAAAAA",
+                target_id="comp_BBBBBBBB",
+            ),
+        )
+        # Only the first edge exists; the second was a no-op at
+        # projection time (the event is still in the graph_events log).
+        edges = list(
+            db.execute(
+                select(Edge).where(
+                    Edge.project_id == project.id,
+                    Edge.source_id == "comp_AAAAAAAA",
+                    Edge.target_id == "comp_BBBBBBBB",
+                )
+            ).scalars()
+        )
+        assert len(edges) == 1
+        assert edges[0].id == "edge_FIRST111"
+        # The second event still landed in the event log — replay
+        # rebuilds should see both and still produce the same
+        # projection state, not raise.
+        assert db.get(Edge, "edge_SECOND22") is None
+
+    def test_edge_created_still_distinct_across_edge_types(self, db, project):
+        """Idempotency keys include ``edge_type`` — two different edge
+        types between the same nodes are still distinct edges."""
+        _add_two_nodes(db, project.id, "comp_AAAAAAAA", "comp_BBBBBBBB")
+        append_event(
+            db,
+            project.id,
+            ev.EdgeCreated(
+                edge_id="edge_DEP00001",
+                edge_type="dependency",
+                source_id="comp_AAAAAAAA",
+                target_id="comp_BBBBBBBB",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.EdgeCreated(
+                edge_id="edge_DOM00002",
+                edge_type="domain_parent",
+                source_id="comp_AAAAAAAA",
+                target_id="comp_BBBBBBBB",
+            ),
+        )
+        edges = list(
+            db.execute(
+                select(Edge).where(
+                    Edge.project_id == project.id,
+                    Edge.source_id == "comp_AAAAAAAA",
+                    Edge.target_id == "comp_BBBBBBBB",
+                )
+            ).scalars()
+        )
+        assert {e.edge_type for e in edges} == {"dependency", "domain_parent"}
+
 
 class TestFragmentEvents:
     def test_fragment_updated_creates_row_first_time(self, db, project):
@@ -166,6 +250,73 @@ class TestFragmentEvents:
                 ),
             )
         assert db.get(Fragment, "comp_FFFFFFFF_pubapi").content == "second"
+
+    def test_fragment_updated_is_noop_on_identical_content(self, db, project):
+        """Re-applying a FragmentUpdated with byte-identical content
+        does not bump ``updated_at``.
+
+        This is the reducer-level idempotency guarantee: a mint
+        handler re-running after a retry can emit the same fragment
+        events and the reducer absorbs them as no-ops instead of
+        mutating the row pointlessly.
+        """
+        from datetime import timedelta
+
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(node_id="comp_FFFFFFFF", tier="comp", kind="domain", name="F"),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.FragmentUpdated(
+                fragment_id="comp_FFFFFFFF_pubapi",
+                owner_id="comp_FFFFFFFF",
+                fragment_kind=ev.FragmentKind.PUBAPI,
+                new_content="same-content",
+            ),
+        )
+        frag = db.get(Fragment, "comp_FFFFFFFF_pubapi")
+        assert frag is not None
+        first_updated_at = frag.updated_at
+
+        # Second write with identical content — must not bump
+        # ``updated_at``. Sleep to make any accidental bump visible.
+        import time
+
+        time.sleep(0.01)
+        append_event(
+            db,
+            project.id,
+            ev.FragmentUpdated(
+                fragment_id="comp_FFFFFFFF_pubapi",
+                owner_id="comp_FFFFFFFF",
+                fragment_kind=ev.FragmentKind.PUBAPI,
+                new_content="same-content",
+            ),
+        )
+        db.refresh(frag)
+        assert frag.content == "same-content"
+        # Bound check rather than strict equality because SQLite's
+        # datetime precision is coarse — within 0.5 ms of the first
+        # write is "no update happened."
+        assert abs((frag.updated_at - first_updated_at).total_seconds()) < 0.0005
+
+        # Follow-up write with different content still updates.
+        append_event(
+            db,
+            project.id,
+            ev.FragmentUpdated(
+                fragment_id="comp_FFFFFFFF_pubapi",
+                owner_id="comp_FFFFFFFF",
+                fragment_kind=ev.FragmentKind.PUBAPI,
+                new_content="different-content",
+            ),
+        )
+        db.refresh(frag)
+        assert frag.content == "different-content"
+        assert frag.updated_at - first_updated_at > timedelta(microseconds=0)
 
     def test_fragment_id_mismatch_rolls_back(self, db, project):
         append_event(

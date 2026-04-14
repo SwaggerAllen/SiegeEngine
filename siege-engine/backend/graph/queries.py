@@ -234,6 +234,32 @@ def get_component_context(session: Session, comp_id: str) -> ComponentContext:
     )
 
 
+def list_subcomponents_of(session: Session, comp_id: str) -> list[Node]:
+    """Return the subcomponent ``comp_*`` nodes under a top-level comp.
+
+    Subcomponents are ``comp`` tier nodes minted by the comparch
+    mint handler with ``parent_id`` pointing at the owning
+    top-level component. They carry their inherited kind on the
+    row. Ordered by display_order (the comparch mint handler
+    assigns it at decomposition time, one per
+    ``<subcomponent>`` entry).
+
+    Used by the Phase 5 subcomparch regen context to find a
+    subcomponent's same-parent siblings and by the route layer to
+    render the SubcomponentList UI on the comparch page.
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .where(
+                Node.tier == "comp",
+                Node.parent_id == comp_id,
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
 def list_top_level_components(session: Session, project_id: str) -> list[Node]:
     """Return the project's top-level ``comp_*`` nodes in document order.
 
