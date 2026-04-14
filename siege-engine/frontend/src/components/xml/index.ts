@@ -16,6 +16,7 @@
 export { XmlDocument } from './XmlDocument';
 export { parseXml } from './parser';
 export { renderUnknownElement } from './defaultRenderers';
+export { comparchRenderers } from './comparchRenderers';
 export { featureRenderers } from './featureRenderers';
 export { requirementsRenderers } from './requirementsRenderers';
 export { subreqsRenderers } from './subreqsRenderers';

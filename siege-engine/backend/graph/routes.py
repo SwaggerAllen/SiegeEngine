@@ -16,6 +16,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.auth.routes import get_current_user
@@ -28,6 +29,10 @@ from backend.graph.expansion import (
     has_been_approved,
     pending_expansion_draft,
 )
+from backend.graph.handlers.comparch_generation import (
+    GENERATE_COMPARCH_JOB_TYPE,
+)
+from backend.graph.handlers.comparch_mint import MINT_COMPARCH_JOB_TYPE
 from backend.graph.handlers.feature_expansion import (
     GENERATE_FEATURE_EXPANSION_JOB_TYPE,
 )
@@ -62,7 +67,7 @@ from backend.graph.sysarch import (
 )
 from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
-from backend.models.node import Draft, Node
+from backend.models.node import Draft, Edge, Node
 from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
 
@@ -1236,4 +1241,467 @@ def get_subresponsibilities(
             )
             for sr in subresps
         ]
+    )
+
+
+# ── Comparch response models ───────────────────────────────────────
+
+
+class ComparchNodeResponse(BaseModel):
+    id: str
+    name: str
+    content: str
+    updated_at: str
+
+
+class ComparchDraftResponse(BaseModel):
+    id: str
+    content: str
+    created_at: str
+
+
+class ComparchResponse(BaseModel):
+    node: ComparchNodeResponse
+    pending_draft: ComparchDraftResponse | None
+    generation_status: queries.GenerationStatus
+    last_error: str | None
+    latest_telemetry: TelemetrySummary | None
+
+
+class ComparchApproveResponse(BaseModel):
+    node: ComparchNodeResponse
+
+
+class SubcomponentSummary(BaseModel):
+    id: str
+    name: str
+    parent_id: str
+    display_order: int
+    updated_at: str
+
+
+class SubcomponentListResponse(BaseModel):
+    subcomponents: list[SubcomponentSummary]
+
+
+class ComponentLocalPolicySummary(BaseModel):
+    id: str
+    name: str
+    content: str  # inline <policy> blob
+    display_order: int
+    updated_at: str
+
+
+class ComponentLocalPolicyListResponse(BaseModel):
+    policies: list[ComponentLocalPolicySummary]
+
+
+class AppliedPolicySummary(BaseModel):
+    policy_id: str
+    policy_name: str
+    policy_content: str
+    target_id: str
+
+
+class AppliedPolicyListResponse(BaseModel):
+    applied_policies: list[AppliedPolicySummary]
+
+
+def _serialize_comparch_node(node) -> ComparchNodeResponse:
+    return ComparchNodeResponse(
+        id=node.id,
+        name=node.name,
+        content=node.content or "",
+        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+    )
+
+
+# ── Comparch endpoints (per-component scoping) ─────────────────────
+
+
+@router.get(
+    "/{project_id}/components/{comp_id}/comparch",
+    response_model=ComparchResponse,
+)
+def get_comparch(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ComparchResponse:
+    """Return the comparch draft panel state for a single top-level component.
+
+    The comparch arch doc is stored as content on the comp_*
+    node itself — no separate comparch_* node kind. The panel
+    reads the component's current content (approved doc) plus
+    any pending draft targeting it.
+    """
+    _require_project(db, project_id)
+    node = _require_top_level_comp(db, project_id, comp_id)
+    draft = db.execute(
+        select(Draft).where(
+            Draft.project_id == project_id,
+            Draft.target_type == "node",
+            Draft.target_id == comp_id,
+            Draft.status == "pending",
+        )
+    ).scalar_one_or_none()
+    status, last_error = queries.latest_generation_status(
+        db, project_id, GENERATE_COMPARCH_JOB_TYPE
+    )
+    return ComparchResponse(
+        node=_serialize_comparch_node(node),
+        pending_draft=(
+            ComparchDraftResponse(
+                id=draft.id,
+                content=draft.content,
+                created_at=draft.created_at.isoformat() if draft.created_at else "",
+            )
+            if draft is not None
+            else None
+        ),
+        generation_status=status,
+        last_error=last_error,
+        latest_telemetry=_latest_telemetry(db, project_id, comp_id),
+    )
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/comparch/feedback",
+    response_model=FeedbackResponse,
+)
+def post_comparch_feedback(
+    project_id: str,
+    comp_id: str,
+    req: FeedbackRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_project(db, project_id)
+    node = _require_top_level_comp(db, project_id, comp_id)
+    # Read-only after approval: comparch approval is the anchor
+    # for subcomponents + policies downstream, so regen is
+    # deferred to Phase 11 structural-edit UIs.
+    if (node.content or "").strip():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Component architecture is read-only after approval; "
+                "further edits happen via individual comp_* / policy_* "
+                "nodes and the structural-edit UIs coming in Phase 11."
+            ),
+        )
+    feedback = (req.feedback or "").strip() or None
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_COMPARCH_JOB_TYPE,
+        payload={
+            "project_id": project_id,
+            "component_id": comp_id,
+            "feedback": feedback,
+        },
+    )
+    return FeedbackResponse(job_id=job_id)
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/comparch/approve",
+    response_model=ComparchApproveResponse,
+)
+def post_comparch_approve(
+    project_id: str,
+    comp_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ComparchApproveResponse:
+    _require_project(db, project_id)
+    node = _require_top_level_comp(db, project_id, comp_id)
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != comp_id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this component's comparch",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
+    db.commit()
+    db.refresh(node)
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=MINT_COMPARCH_JOB_TYPE,
+        payload={"project_id": project_id, "component_id": comp_id},
+    )
+
+    return ComparchApproveResponse(node=_serialize_comparch_node(node))
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/comparch/discard",
+    response_model=DiscardResponse,
+)
+def post_comparch_discard(
+    project_id: str,
+    comp_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != comp_id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Draft not found for this component's comparch",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+
+    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
+    db.commit()
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_COMPARCH_JOB_TYPE,
+        payload={
+            "project_id": project_id,
+            "component_id": comp_id,
+            "feedback": None,
+        },
+    )
+    return DiscardResponse(ok=True)
+
+
+# ── Subcomponent / policy list endpoints ───────────────────────────
+
+
+@router.get(
+    "/{project_id}/components/{comp_id}/subcomponents",
+    response_model=SubcomponentListResponse,
+)
+def get_subcomponents(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> SubcomponentListResponse:
+    """List the subcomponent ``comp_*`` children under a top-level component."""
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    subs = list(
+        db.execute(
+            select(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.tier == "comp",
+                Node.parent_id == comp_id,
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+    return SubcomponentListResponse(
+        subcomponents=[
+            SubcomponentSummary(
+                id=s.id,
+                name=s.name,
+                # The query filtered on ``parent_id == comp_id`` so
+                # this is known non-null at runtime; pass comp_id
+                # directly rather than narrowing ``s.parent_id``.
+                parent_id=comp_id,
+                display_order=s.display_order,
+                updated_at=s.updated_at.isoformat() if s.updated_at else "",
+            )
+            for s in subs
+        ]
+    )
+
+
+@router.get(
+    "/{project_id}/components/{comp_id}/local-policies",
+    response_model=ComponentLocalPolicyListResponse,
+)
+def get_component_local_policies(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ComponentLocalPolicyListResponse:
+    """List the component-local ``policy_*`` children under a top-level component."""
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    policies = list(
+        db.execute(
+            select(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.tier == "policy",
+                Node.parent_id == comp_id,
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+    return ComponentLocalPolicyListResponse(
+        policies=[
+            ComponentLocalPolicySummary(
+                id=p.id,
+                name=p.name,
+                content=p.content or "",
+                display_order=p.display_order,
+                updated_at=p.updated_at.isoformat() if p.updated_at else "",
+            )
+            for p in policies
+        ]
+    )
+
+
+@router.get(
+    "/{project_id}/components/{comp_id}/applied-policies",
+    response_model=AppliedPolicyListResponse,
+)
+def get_applied_policies(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> AppliedPolicyListResponse:
+    """List the ``policy_application`` edges targeting this component.
+
+    Returns each applied policy with its name and raw inline
+    blob content so the frontend can parse the blob for display.
+    Rationale from the LLM's decision is not included — per the
+    Phase 4 stage 9 design call, rationale stays in handler logs
+    only.
+    """
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    rows = list(
+        db.execute(
+            select(Node, Edge)
+            .join(Edge, Edge.source_id == Node.id)
+            .where(
+                Edge.project_id == project_id,
+                Edge.edge_type == "policy_application",
+                Edge.target_id == comp_id,
+                Node.tier == "policy",
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).all()
+    )
+    return AppliedPolicyListResponse(
+        applied_policies=[
+            AppliedPolicySummary(
+                policy_id=node.id,
+                policy_name=node.name,
+                policy_content=node.content or "",
+                target_id=edge.target_id,
+            )
+            for node, edge in rows
+        ]
+    )
+
+
+# ── Decomposition graph (Phase 4 stage 10) ─────────────────────────
+
+
+class DecompositionGraphNode(BaseModel):
+    id: str
+    name: str
+    tier: str
+    kind: str
+    parent_id: str | None
+    display_order: int
+
+
+class DecompositionGraphEdge(BaseModel):
+    id: str
+    edge_type: str
+    source_id: str
+    target_id: str
+
+
+class DecompositionGraphResponse(BaseModel):
+    nodes: list[DecompositionGraphNode]
+    edges: list[DecompositionGraphEdge]
+
+
+@router.get(
+    "/{project_id}/decomposition-graph",
+    response_model=DecompositionGraphResponse,
+)
+def get_decomposition_graph(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DecompositionGraphResponse:
+    """Return the full decomposition graph for Cytoscape rendering.
+
+    Ships every comp_* (top-level and subcomponent), every resp_*
+    (top-level and subresp), every dependency edge, every
+    decomposition edge, and every domain_parent edge. The frontend
+    graph component decides what to show based on view filters.
+    """
+    _require_project(db, project_id)
+
+    node_rows = list(
+        db.execute(
+            select(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.tier.in_(["comp", "resp"]),
+            )
+            .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+    edge_rows = list(
+        db.execute(
+            select(Edge)
+            .where(
+                Edge.project_id == project_id,
+                Edge.edge_type.in_(["dependency", "decomposition", "domain_parent"]),
+            )
+            .order_by(Edge.id.asc())
+        ).scalars()
+    )
+
+    return DecompositionGraphResponse(
+        nodes=[
+            DecompositionGraphNode(
+                id=n.id,
+                name=n.name,
+                tier=n.tier,
+                kind=n.kind,
+                parent_id=n.parent_id,
+                display_order=n.display_order,
+            )
+            for n in node_rows
+        ],
+        edges=[
+            DecompositionGraphEdge(
+                id=e.id,
+                edge_type=e.edge_type,
+                source_id=e.source_id,
+                target_id=e.target_id,
+            )
+            for e in edge_rows
+        ],
     )

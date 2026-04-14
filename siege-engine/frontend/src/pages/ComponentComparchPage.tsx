@@ -1,33 +1,31 @@
 import { Link, useParams } from 'react-router-dom';
-import { SubreqsPanel } from '../components/SubreqsPanel';
-import { SubresponsibilityList } from '../components/SubresponsibilityList';
-import { useSubreqs } from '../hooks/queries/useSubreqsQueries';
+import { AppliedPolicyList } from '../components/AppliedPolicyList';
+import { ComparchPanel } from '../components/ComparchPanel';
+import { ComponentLocalPolicyList } from '../components/ComponentLocalPolicyList';
+import { SubcomponentList } from '../components/SubcomponentList';
+import { useComparch } from '../hooks/queries/useComparchQueries';
 import { useProject } from '../hooks/queries/useProjectQueries';
 import { describeApiError } from '../lib/describeApiError';
 
 /**
- * Full-page route for a single component's subrequirements.
- *
- * URL: ``/projects/:id/components/:compId/subreqs``
+ * Full-page route for a single top-level component's architecture
+ * doc. URL: ``/projects/:id/components/:compId/comparch``.
  *
  * Layout:
- * - Header with ← Back to dashboard link + project name +
- *   component name.
- * - SubreqsPanel (four-state draft review UI).
- * - SubresponsibilityList (polling while mint might be running).
- *
- * The component metadata (name, role, api-intent) comes from the
- * backend via the subreqs GET endpoint — we use the panel's
- * node.name as a fallback display name until the real component
- * lookup lands in a dedicated endpoint.
+ * - Header with back link to dashboard + project name +
+ *   component link breadcrumb
+ * - ComparchPanel (four-state draft review)
+ * - SubcomponentList (polling while mint might be running)
+ * - ComponentLocalPolicyList
+ * - AppliedPolicyList
  */
-export function ComponentSubreqsPage() {
+export function ComponentComparchPage() {
   const { id: projectId, compId } = useParams<{ id: string; compId: string }>();
   if (!projectId || !compId) return null;
-  return <ComponentSubreqsShell projectId={projectId} compId={compId} />;
+  return <ComponentComparchShell projectId={projectId} compId={compId} />;
 }
 
-function ComponentSubreqsShell({
+function ComponentComparchShell({
   projectId,
   compId,
 }: {
@@ -35,14 +33,16 @@ function ComponentSubreqsShell({
   compId: string;
 }) {
   const { data: project, error: projectError } = useProject(projectId);
-  const { data: subreqs } = useSubreqs(projectId, compId);
-  const isApproved = !!subreqs?.node.content;
+  const { data: comparch } = useComparch(projectId, compId);
+  const isApproved = !!comparch?.node.content;
 
   if (projectError) {
     return (
       <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center text-white">
         <div className="text-center max-w-xl px-6">
-          <h1 className="text-xl font-bold text-red-400 mb-2">Failed to load project</h1>
+          <h1 className="text-xl font-bold text-red-400 mb-2">
+            Failed to load project
+          </h1>
           <p className="text-gray-400 text-sm">
             {describeApiError(projectError, 'Unknown error')}
           </p>
@@ -69,28 +69,38 @@ function ComponentSubreqsShell({
         <div className="flex-1 min-w-0">
           <h1 className="text-sm font-bold truncate">
             {project?.name || 'Loading…'}{' '}
-            <span className="text-gray-500 font-normal">/ Subrequirements</span>
+            <span className="text-gray-500 font-normal">
+              / {comparch?.node.name || compId} / Architecture Doc
+            </span>
           </h1>
         </div>
         <Link
-          to={`/projects/${projectId}/components/${compId}/comparch`}
+          to={`/projects/${projectId}/components/${compId}/subreqs`}
           className="text-sm text-gray-400 hover:text-white"
         >
-          Architecture Doc →
+          ← Subrequirements
         </Link>
       </header>
       <main className="flex-1 overflow-auto">
-        <SubreqsPanel
+        <ComparchPanel
           projectId={projectId}
           componentId={compId}
-          componentName={compId}
+          componentName={comparch?.node.name || compId}
         />
         {isApproved && (
-          <SubresponsibilityList
-            projectId={projectId}
-            componentId={compId}
-            mintPending={isApproved}
-          />
+          <>
+            <SubcomponentList
+              projectId={projectId}
+              componentId={compId}
+              mintPending={isApproved}
+            />
+            <ComponentLocalPolicyList
+              projectId={projectId}
+              componentId={compId}
+              mintPending={isApproved}
+            />
+            <AppliedPolicyList projectId={projectId} componentId={compId} />
+          </>
         )}
       </main>
     </div>
