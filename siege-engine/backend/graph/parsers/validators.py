@@ -130,6 +130,22 @@ def validate_features(tree: TagNode) -> list[Feature]:
             "Every project must have at least one feature."
         )
 
+    # Enforce feature name uniqueness across the whole <features>
+    # block. Downstream passes reference features by name (the
+    # vocabulary layer is the first such consumer), so duplicates
+    # would make references ambiguous.
+    seen_names: set[str] = set()
+    for feature in result:
+        if feature.name in seen_names:
+            raise ValidationError(
+                f"<features> contains two features with the same name "
+                f"{feature.name!r}. Feature names must be unique across "
+                "the entire <features> block — downstream passes "
+                "reference features by name, and duplicates make those "
+                "references ambiguous."
+            )
+        seen_names.add(feature.name)
+
     return result
 
 
@@ -1467,6 +1483,7 @@ def validate_arch_doc(
     known_subresp_ids: set[str],
     known_sibling_comp_ids: set[str],
     known_resp_ids_for_policies: set[str],
+    target_is_foundation: bool = False,
 ) -> ArchDoc:
     """Validate a parsed ``<comparch>`` tree and return an ArchDoc.
 
@@ -1497,6 +1514,17 @@ def validate_arch_doc(
     policies' ``<required>`` field must reference an ID from
     this set — top-level resps owned by OTHER components are
     cross-component leaks.
+
+    ``target_is_foundation`` flips the "foundations don't nest"
+    carve-out: when the component being decomposed is itself a
+    foundation (top-level or sub), the ``<subcomponents>`` block
+    must *not* include another foundation marker, and the
+    "every non-foundation sub depends on the foundation"
+    check is skipped (there's no foundation sub to depend on).
+    Instead, the foundation decomposes exhaustively into concrete
+    subcomponents that collectively own all its territory. See
+    ``docs/architecture/v2-rearchitecture.md`` §Foundation
+    components.
 
     Un-fanned-out is legal: both ``<subcomponents>`` and
     ``<sub-dependencies>`` may be empty. In that case there is
@@ -1547,7 +1575,9 @@ def validate_arch_doc(
         section_map["dependencies"], known_sibling_comp_ids=known_sibling_comp_ids
     )
     subcomponents = _validate_arch_doc_subcomponents(
-        section_map["subcomponents"], known_subresp_ids=known_subresp_ids
+        section_map["subcomponents"],
+        known_subresp_ids=known_subresp_ids,
+        target_is_foundation=target_is_foundation,
     )
 
     sub_alias_set = {s.alias for s in subcomponents}
@@ -1555,10 +1585,14 @@ def validate_arch_doc(
 
     # Sub-dep cycle detection + foundation-dep enforcement — only
     # meaningful when decomposing. Un-fanned-out components have
-    # no sub-alias set so the checks degenerate to no-ops.
+    # no sub-alias set so the checks degenerate to no-ops. When
+    # the target is itself a foundation, there is no foundation
+    # subcomponent to depend on, so the foundation-dep rule is
+    # also skipped (cycle detection still runs).
     if subcomponents:
         _detect_dep_cycles(sub_deps, sub_alias_set)
-        _enforce_sub_foundation_dependency(subcomponents, sub_deps)
+        if not target_is_foundation:
+            _enforce_sub_foundation_dependency(subcomponents, sub_deps)
 
     return ArchDoc(
         techspec=techspec,
@@ -1676,14 +1710,27 @@ def _validate_arch_doc_external_dependencies(
 
 
 def _validate_arch_doc_subcomponents(
-    node: TagNode, *, known_subresp_ids: set[str]
+    node: TagNode,
+    *,
+    known_subresp_ids: set[str],
+    target_is_foundation: bool = False,
 ) -> tuple[Subcomponent, ...]:
     """Validate ``<subcomponents>`` and return a tuple of Subcomponent.
 
     May legitimately be empty (un-fanned-out component). If
     populated: enforces alias syntax + uniqueness, per-subcomponent
-    field completeness, exactly-one-foundation, and coverage of
-    every pre-minted subresp in ``known_subresp_ids``.
+    field completeness, and coverage of every pre-minted subresp
+    in ``known_subresp_ids``.
+
+    The foundation-marker rule depends on ``target_is_foundation``:
+
+    - **Normal component** (default): exactly one subcomponent
+      must carry the ``<foundation/>`` marker. Zero or two+ are
+      rejected.
+    - **Foundation target**: *no* subcomponent may carry the
+      ``<foundation/>`` marker. Foundations don't nest — the
+      decomposition is required to divide the foundation's
+      territory exhaustively without a sub-foundation catch-all.
     """
     for child in node.children:
         if child.tag not in _SUBCOMPONENTS_ALLOWED_CHILDREN:
@@ -1734,23 +1781,39 @@ def _validate_arch_doc_subcomponents(
             assigned_subresp_ids[rid] = sub.alias
         subcomponents.append(sub)
 
-    if len(foundation_aliases) == 0:
-        raise ValidationError(
-            "<subcomponents> has no foundation subcomponent. When a "
-            "component decomposes, exactly one subcomponent must carry "
-            "a self-closing <foundation/> marker — it owns the "
-            "component's root folder territory. Un-fanned-out "
-            "components (empty <subcomponents>) do not need one, but "
-            "once you decompose at all, a foundation is required."
-        )
-    if len(foundation_aliases) > 1:
-        raise ValidationError(
-            f"<subcomponents> has {len(foundation_aliases)} foundation "
-            f"subcomponents ({', '.join(sorted(foundation_aliases))}). "
-            "Exactly one foundation is required; promote the others to "
-            "regular subcomponents or merge them into the single "
-            "foundation."
-        )
+    if target_is_foundation:
+        # Foundations don't nest. The foundation role is "catch-all
+        # at this level"; nesting another foundation inside it would
+        # double-count the role, so the validator rejects any
+        # <foundation/> marker in a foundation's own decomposition.
+        if foundation_aliases:
+            raise ValidationError(
+                "<subcomponents> contains a foundation subcomponent "
+                f"({', '.join(sorted(foundation_aliases))}) but this "
+                "component is itself a foundation. Foundations do not "
+                "nest — decompose the foundation's territory "
+                "exhaustively into concrete subcomponents with no "
+                "sub-foundation catch-all. Remove the <foundation/> "
+                "marker from the listed subcomponent(s)."
+            )
+    else:
+        if len(foundation_aliases) == 0:
+            raise ValidationError(
+                "<subcomponents> has no foundation subcomponent. When a "
+                "component decomposes, exactly one subcomponent must carry "
+                "a self-closing <foundation/> marker — it owns the "
+                "component's root folder territory. Un-fanned-out "
+                "components (empty <subcomponents>) do not need one, but "
+                "once you decompose at all, a foundation is required."
+            )
+        if len(foundation_aliases) > 1:
+            raise ValidationError(
+                f"<subcomponents> has {len(foundation_aliases)} foundation "
+                f"subcomponents ({', '.join(sorted(foundation_aliases))}). "
+                "Exactly one foundation is required; promote the others to "
+                "regular subcomponents or merge them into the single "
+                "foundation."
+            )
 
     missing = sorted(known_subresp_ids - set(assigned_subresp_ids.keys()))
     if missing:
@@ -2316,3 +2379,458 @@ def validate_policy_applications(
         )
 
     return tuple(decisions)
+
+
+# ── Vocabulary ──────────────────────────────────────────────────────
+#
+# Phase 5.5: project vocabulary layer. The expansion output can
+# carry an optional ``<vocabulary>`` sibling section alongside
+# ``<features>``, containing ``<term>`` elements that project
+# into ``vocab_*`` nodes on expansion approval. See
+# ``docs/architecture/v2-rearchitecture.md`` §Project vocabulary.
+
+
+_VOCAB_TERM_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 \-_]{0,63}$")
+_VOCAB_ENTRY_ALLOWED_CHILDREN = {"definition", "disambiguation", "see-also"}
+_VOCAB_ENTRY_REQUIRED_ORDER = ("definition", "disambiguation", "see-also")
+
+
+@dataclass(frozen=True)
+class VocabRef:
+    """A single ``<ref>`` entry inside a ``<see-also>`` block.
+
+    Exactly one of ``name`` or ``to`` is set — the validator
+    rejects entries with both or neither.
+
+    ``name`` form is used at cold-start expansion time, where the
+    referenced target terms are being minted in the same pass and
+    their IDs don't yet exist. ``to`` form uses a real
+    ``vocab_xxxxxxxx`` id and is only accepted post-mint, when
+    existing terms can be referenced directly.
+    """
+
+    name: str | None
+    to: str | None
+
+
+@dataclass(frozen=True)
+class VocabEntry:
+    """A single validated ``<term>`` entry from a ``<vocabulary>`` block.
+
+    Carries both the mint-time metadata (``name``, ``scope``,
+    ``feature_name``) and the parsed inner ``<vocab-entry>``
+    grammar (``definition``, ``disambiguation``, ``see_also_refs``).
+
+    ``raw_content`` is the full ``<vocab-entry>...</vocab-entry>``
+    XML block as authored by the LLM, preserved verbatim so the
+    mint handler can store it as ``Node.content`` without
+    re-serializing. This matches how every other parseable-tier
+    stores its full approved content.
+    """
+
+    name: str
+    scope: Literal["project", "feature"]
+    feature_name: str | None  # None when scope == "project"
+    definition: str
+    disambiguation: str | None
+    see_also_refs: tuple[VocabRef, ...]
+    raw_content: str
+
+
+def validate_vocabulary(
+    tree: TagNode,
+    *,
+    known_feature_names: set[str],
+    allow_id_refs: bool = False,
+) -> tuple[VocabEntry, ...]:
+    """Validate a parsed ``<vocabulary>`` tree and return its entries.
+
+    Shape:
+
+    * ``tree.tag`` must be exactly ``"vocabulary"``.
+    * Children must all be ``<term>`` elements; unknown tags are
+      rejected.
+    * Each ``<term>`` must have:
+      * a ``name=`` attribute matching a simple vocabulary-name
+        regex (alphanumerics, spaces, hyphens, underscores; 1-64
+        chars).
+      * a ``scope=`` attribute equal to ``"project"`` or ``"feature"``.
+      * when ``scope="feature"``, a ``feature-name=`` attribute
+        whose value matches one of ``known_feature_names``.
+    * Each ``<term>`` must contain exactly one ``<vocab-entry>``
+      child, which has the following inner grammar (children in
+      fixed order when present):
+      * ``<definition>`` — required, non-empty, plain text.
+      * ``<disambiguation>`` — optional, non-empty when present,
+        plain text.
+      * ``<see-also>`` — optional. May contain only ``<ref>``
+        children. Each ``<ref>`` carries either ``name=`` (cold-
+        start form) or ``to=`` (post-mint ID form, only accepted
+        when ``allow_id_refs=True``) but not both.
+      * Within a single ``<see-also>``, refs must be unique — no
+        duplicates by name or by to.
+    * Names are unique within a scope: two project-level terms
+      cannot share a name, and two feature-local terms within the
+      same feature (matched by ``feature-name``) cannot share a
+      name. A project-level and feature-local term can share a
+      name.
+    * Empty ``<vocabulary>`` is legal — the function returns an
+      empty tuple.
+
+    ``known_feature_names`` is the set of feature names parsed
+    from the sibling ``<features>`` block; the caller passes it
+    in because validator shares are always explicit.
+
+    ``allow_id_refs`` is ``False`` at cold-start expansion time
+    (the default) and ``True`` at post-mint edit time where the
+    referenced vocab nodes already exist as real DB rows.
+
+    Returns a tuple of :class:`VocabEntry` in document order.
+    Raises :class:`ValidationError` on the first problem found.
+    """
+    if tree.tag != "vocabulary":
+        raise ValidationError(
+            f"Expected root tag <vocabulary>, got <{tree.tag}>. "
+            "Wrap the vocabulary in a single "
+            "<vocabulary>...</vocabulary> block."
+        )
+
+    for child in tree.children:
+        if child.tag != "term":
+            raise ValidationError(
+                f"<vocabulary> contains an unexpected child "
+                f"<{child.tag}>. Only <term> entries are allowed at "
+                "this level."
+            )
+
+    entries: list[VocabEntry] = []
+    seen_project_names: set[str] = set()
+    # Feature-local name uniqueness is (feature_name, term_name).
+    seen_feature_names: set[tuple[str, str]] = set()
+
+    for index, term_node in enumerate(tree.children):
+        entry = _validate_vocab_term(
+            term_node,
+            index=index,
+            known_feature_names=known_feature_names,
+            allow_id_refs=allow_id_refs,
+        )
+
+        if entry.scope == "project":
+            if entry.name in seen_project_names:
+                raise ValidationError(
+                    f"<vocabulary> contains two project-level terms "
+                    f"with the same name {entry.name!r}. Term names "
+                    "must be unique within a scope."
+                )
+            seen_project_names.add(entry.name)
+        else:
+            key = (entry.feature_name or "", entry.name)
+            if key in seen_feature_names:
+                raise ValidationError(
+                    f"<vocabulary> contains two feature-local terms "
+                    f"with the same name {entry.name!r} under feature "
+                    f"{entry.feature_name!r}. Term names must be "
+                    "unique within a (scope, feature) key."
+                )
+            seen_feature_names.add(key)
+
+        entries.append(entry)
+
+    return tuple(entries)
+
+
+def _validate_vocab_term(
+    node: TagNode,
+    *,
+    index: int,
+    known_feature_names: set[str],
+    allow_id_refs: bool,
+) -> VocabEntry:
+    """Validate a single ``<term>`` element and return a VocabEntry."""
+    pos = f"<term> at position {index}"
+
+    name = node.attrs.get("name", "").strip()
+    if not name:
+        raise ValidationError(
+            f"{pos} is missing the name attribute. Every term must "
+            'carry name="..." with the term being defined.'
+        )
+    if not _VOCAB_TERM_NAME_RE.match(name):
+        raise ValidationError(
+            f"{pos} has invalid name {name!r}. Term names must "
+            "match alphanumerics, spaces, hyphens, or underscores, "
+            "1-64 characters, starting with an alphanumeric."
+        )
+
+    scope_attr = node.attrs.get("scope", "").strip()
+    if scope_attr not in {"project", "feature"}:
+        raise ValidationError(
+            f"{pos} (name={name!r}) has invalid scope attribute "
+            f"{scope_attr!r}. Must be exactly 'project' or "
+            "'feature'."
+        )
+    scope: Literal["project", "feature"] = scope_attr  # type: ignore[assignment]
+
+    feature_name: str | None = None
+    if scope == "feature":
+        feature_name = node.attrs.get("feature-name", "").strip() or None
+        if feature_name is None:
+            raise ValidationError(
+                f'{pos} (name={name!r}) has scope="feature" but is '
+                "missing the feature-name attribute. Feature-local "
+                'terms must carry feature-name="..." matching a '
+                "feature in the same <features> block."
+            )
+        if feature_name not in known_feature_names:
+            valid_list = (
+                ", ".join(sorted(known_feature_names))
+                if known_feature_names
+                else "(no features defined)"
+            )
+            raise ValidationError(
+                f"{pos} (name={name!r}) references feature "
+                f"{feature_name!r}, which is not defined in the "
+                f"sibling <features> block. Valid feature names: "
+                f"{valid_list}."
+            )
+
+    # Exactly one <vocab-entry> child, no other tags.
+    for child in node.children:
+        if child.tag != "vocab-entry":
+            raise ValidationError(
+                f"{pos} (name={name!r}) contains an unexpected child "
+                f"<{child.tag}>. A <term> must contain exactly one "
+                "<vocab-entry> child."
+            )
+    ve_children = node.find_all("vocab-entry")
+    if len(ve_children) == 0:
+        raise ValidationError(
+            f"{pos} (name={name!r}) is missing a <vocab-entry> child. "
+            "A <term> must contain exactly one <vocab-entry> with "
+            "the term's definition and optional disambiguation and "
+            "see-also."
+        )
+    if len(ve_children) > 1:
+        raise ValidationError(
+            f"{pos} (name={name!r}) has {len(ve_children)} "
+            "<vocab-entry> children; exactly one is required."
+        )
+    ve_node = ve_children[0]
+
+    # Validate <vocab-entry> inner grammar.
+    definition, disambiguation, refs = _validate_vocab_entry_inner(
+        ve_node,
+        parent_pos=pos,
+        term_name=name,
+        allow_id_refs=allow_id_refs,
+    )
+
+    # Build raw_content: serialize the <vocab-entry> back to a
+    # string form for storage on Node.content. Simple approach:
+    # use the inner-text range if the parser exposes it, else
+    # rebuild a canonical form. The xml_sections parser returns
+    # TagNodes without source-range tracking, so we rebuild from
+    # the parsed structure.
+    raw_content = _serialize_vocab_entry(ve_node)
+
+    return VocabEntry(
+        name=name,
+        scope=scope,
+        feature_name=feature_name,
+        definition=definition,
+        disambiguation=disambiguation,
+        see_also_refs=refs,
+        raw_content=raw_content,
+    )
+
+
+def _validate_vocab_entry_inner(
+    node: TagNode,
+    *,
+    parent_pos: str,
+    term_name: str,
+    allow_id_refs: bool,
+) -> tuple[str, str | None, tuple[VocabRef, ...]]:
+    """Validate the inner children of a ``<vocab-entry>`` element.
+
+    Returns ``(definition, disambiguation_or_none, see_also_refs)``.
+    """
+    for child in node.children:
+        if child.tag not in _VOCAB_ENTRY_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{parent_pos} (name={term_name!r}) <vocab-entry> "
+                f"contains an unexpected child <{child.tag}>. "
+                f"Allowed children are: "
+                f"{sorted(_VOCAB_ENTRY_ALLOWED_CHILDREN)}."
+            )
+
+    # Check for duplicates and enforce the fixed order.
+    seen: dict[str, TagNode] = {}
+    for child in node.children:
+        if child.tag in seen:
+            raise ValidationError(
+                f"{parent_pos} (name={term_name!r}) <vocab-entry> has "
+                f"more than one <{child.tag}> child; at most one is "
+                "allowed."
+            )
+        seen[child.tag] = child
+
+    actual_order = [c.tag for c in node.children if c.tag in _VOCAB_ENTRY_REQUIRED_ORDER]
+    expected_order = [tag for tag in _VOCAB_ENTRY_REQUIRED_ORDER if tag in seen]
+    if actual_order != expected_order:
+        raise ValidationError(
+            f"{parent_pos} (name={term_name!r}) <vocab-entry> "
+            "children are not in the required order. Expected: "
+            f"{expected_order}. Got: {actual_order}. Reorder to "
+            "<definition> → <disambiguation> → <see-also>."
+        )
+
+    # <definition> is required and non-empty plain text.
+    if "definition" not in seen:
+        raise ValidationError(
+            f"{parent_pos} (name={term_name!r}) <vocab-entry> is "
+            "missing the required <definition> child. Every vocab "
+            "entry must have a non-empty definition."
+        )
+    definition_node = seen["definition"]
+    if definition_node.children:
+        raise ValidationError(
+            f"{parent_pos} (name={term_name!r}) <definition> must "
+            "contain plain text only, no nested XML tags."
+        )
+    definition = (definition_node.text or "").strip()
+    if not definition:
+        raise ValidationError(
+            f"{parent_pos} (name={term_name!r}) <definition> is "
+            "empty. The definition must be non-empty prose."
+        )
+
+    # <disambiguation> is optional and non-empty plain text when present.
+    disambiguation: str | None = None
+    if "disambiguation" in seen:
+        dis_node = seen["disambiguation"]
+        if dis_node.children:
+            raise ValidationError(
+                f"{parent_pos} (name={term_name!r}) <disambiguation> "
+                "must contain plain text only, no nested XML tags."
+            )
+        dis_text = (dis_node.text or "").strip()
+        if not dis_text:
+            raise ValidationError(
+                f"{parent_pos} (name={term_name!r}) <disambiguation> "
+                "is present but empty. Remove the tag or provide "
+                "non-empty prose."
+            )
+        disambiguation = dis_text
+
+    # <see-also> is optional; when present contains <ref> children.
+    refs: tuple[VocabRef, ...] = ()
+    if "see-also" in seen:
+        refs = _validate_vocab_see_also(
+            seen["see-also"],
+            parent_pos=parent_pos,
+            term_name=term_name,
+            allow_id_refs=allow_id_refs,
+        )
+
+    return definition, disambiguation, refs
+
+
+def _validate_vocab_see_also(
+    node: TagNode,
+    *,
+    parent_pos: str,
+    term_name: str,
+    allow_id_refs: bool,
+) -> tuple[VocabRef, ...]:
+    """Validate a ``<see-also>`` element and return its refs."""
+    for child in node.children:
+        if child.tag != "ref":
+            raise ValidationError(
+                f"{parent_pos} (name={term_name!r}) <see-also> "
+                f"contains an unexpected child <{child.tag}>. Only "
+                "<ref> elements are allowed."
+            )
+
+    refs: list[VocabRef] = []
+    seen_targets: set[str] = set()
+    for ref_index, ref_node in enumerate(node.children):
+        name_attr = ref_node.attrs.get("name", "").strip() or None
+        to_attr = ref_node.attrs.get("to", "").strip() or None
+
+        if name_attr is None and to_attr is None:
+            raise ValidationError(
+                f"{parent_pos} (name={term_name!r}) <see-also> "
+                f"<ref> at position {ref_index} has neither name "
+                "nor to attribute. Each <ref> must carry exactly "
+                'one of name="..." or to="vocab_xxxxxxxx".'
+            )
+        if name_attr is not None and to_attr is not None:
+            raise ValidationError(
+                f"{parent_pos} (name={term_name!r}) <see-also> "
+                f"<ref> at position {ref_index} has both name and "
+                "to attributes. Each <ref> must carry exactly one "
+                "of the two, not both."
+            )
+        if to_attr is not None and not allow_id_refs:
+            raise ValidationError(
+                f"{parent_pos} (name={term_name!r}) <see-also> "
+                f"<ref> at position {ref_index} uses id form "
+                f'to="{to_attr}". At cold-start expansion time only '
+                "name form is accepted, because the referenced terms "
+                "are being minted in the same pass and their IDs "
+                "don't exist yet. Use name= instead."
+            )
+
+        target_key = name_attr or to_attr or ""  # exactly one is set
+        if target_key in seen_targets:
+            raise ValidationError(
+                f"{parent_pos} (name={term_name!r}) <see-also> has "
+                f"duplicate reference to {target_key!r}. Each term "
+                "can be referenced at most once per see-also list."
+            )
+        seen_targets.add(target_key)
+
+        refs.append(VocabRef(name=name_attr, to=to_attr))
+
+    return tuple(refs)
+
+
+def _serialize_vocab_entry(node: TagNode) -> str:
+    """Rebuild a canonical ``<vocab-entry>...</vocab-entry>`` XML string.
+
+    The xml_sections parser doesn't track source ranges, so we
+    rebuild from the validated structure. The canonical form:
+
+    * Opening ``<vocab-entry>`` tag (no attributes).
+    * For each child in document order:
+      * ``<definition>`` / ``<disambiguation>``: the stripped text
+        wrapped in the tag.
+      * ``<see-also>``: each ``<ref>`` as a self-closing element
+        with its one attribute.
+    * Closing ``</vocab-entry>`` tag.
+
+    Whitespace is normalized (single spaces between tags, newlines
+    between sibling elements). The serialized form is what
+    ``Node.content`` will store; downstream consumers parse it
+    back via ``extract_tag_tree`` and this same validator.
+    """
+    parts: list[str] = ["<vocab-entry>"]
+    for child in node.children:
+        if child.tag == "definition":
+            parts.append(f"  <definition>{(child.text or '').strip()}</definition>")
+        elif child.tag == "disambiguation":
+            parts.append(f"  <disambiguation>{(child.text or '').strip()}</disambiguation>")
+        elif child.tag == "see-also":
+            parts.append("  <see-also>")
+            for ref in child.children:
+                name_attr = ref.attrs.get("name", "").strip() or None
+                to_attr = ref.attrs.get("to", "").strip() or None
+                if name_attr is not None:
+                    parts.append(f'    <ref name="{name_attr}"/>')
+                elif to_attr is not None:
+                    parts.append(f'    <ref to="{to_attr}"/>')
+            parts.append("  </see-also>")
+    parts.append("</vocab-entry>")
+    return "\n".join(parts)

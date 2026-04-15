@@ -36,6 +36,7 @@ NodeTier = Literal[
     "sysarch",
     "manifest",
     "fanin",
+    "vocab",
 ]
 
 
@@ -79,6 +80,12 @@ class NodeCreated(_EventBase):
     # inferred as obviously-necessary rather than pulled from the
     # input doc. Defaults false; non-feature tiers ignore it.
     is_implicit: bool = False
+    # Whether a comp_* node was minted with the foundation role
+    # (from the ``<foundation/>`` marker in the parsed sysarch /
+    # comparch output). Defaults false; non-comp tiers ignore it.
+    # See ``docs/architecture/v2-rearchitecture.md`` §Foundation
+    # components for why this is persisted.
+    is_foundation: bool = False
 
 
 class NodeRenamed(_EventBase):

@@ -34,6 +34,7 @@ class TestKindEnum:
             "sysarch",
             "manifest",
             "fanin",
+            "vocab",
         }
 
 

@@ -141,6 +141,13 @@ async def generate_sysarch(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+
+        # Project vocabulary context — sysarch reasons across the
+        # full component graph, so every defined term should be
+        # in context regardless of feature scope.
+        from backend.graph.vocabulary import render_vocab_summary_all
+
+        vocab_summary = render_vocab_summary_all(db, project_id)
     finally:
         db.close()
 
@@ -162,9 +169,10 @@ async def generate_sysarch(payload: dict) -> None:
             prior_pending=prior_pending,
             feedback=feedback,
             parse_error=parse_error,
+            vocab_summary=vocab_summary,
         )
 
-    def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+    def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
         validate_sysarch(tree, known_top_level_resp_ids=known_top_level_resp_ids)
 
     validated_output, attempts = await run_parse_validate_loop(

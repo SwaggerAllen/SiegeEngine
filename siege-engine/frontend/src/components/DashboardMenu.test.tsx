@@ -43,4 +43,11 @@ describe('DashboardMenu', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: /settings/i }));
     expect(screen.queryByRole('menu')).toBeNull();
   });
+
+  it('shows a Vocabulary link that navigates to the vocab page', () => {
+    renderMenu();
+    fireEvent.click(screen.getByRole('button', { name: /project menu/i }));
+    const link = screen.getByRole('menuitem', { name: /vocabulary/i });
+    expect(link).toHaveAttribute('href', '/projects/proj_1/vocabulary');
+  });
 });

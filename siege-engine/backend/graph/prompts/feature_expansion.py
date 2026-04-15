@@ -142,6 +142,99 @@ the tags mean, or how you arrived at the list. Output only the \
 ``<features>`` block.
 * Unescaped ``&`` and ``<`` in the intent text are fine — the \
 parser tolerates them.
+* **Feature names must be unique** across the entire \
+``<features>`` block. Two features with the same name are \
+rejected. Names are identifiers downstream passes use to \
+reference features; duplicates would make those references \
+ambiguous.
+
+# Vocabulary (optional)
+
+You may optionally include a ``<vocabulary>`` block **after** \
+the ``<features>`` block, at the top level of your output — \
+at the same nesting as ``<features>``, not inside it. Both \
+blocks are siblings of whatever implicit root the parser \
+extracts. The vocabulary block is strongly encouraged for any \
+term the project uses in a project-specific sense — anything \
+where a generic LLM reading the term in isolation would get \
+the meaning subtly wrong.
+
+The grammar:
+
+    <vocabulary>
+      <term name="tranche" scope="feature" feature-name="Billing">
+        <vocab-entry>
+          <definition>
+            A time-bounded batch of invoices processed together \
+    in a single settlement cycle.
+          </definition>
+          <disambiguation>
+            Not a financial instrument — this project's \
+    tranches are operational batches, not debt-security slices.
+          </disambiguation>
+          <see-also>
+            <ref name="settlement window"/>
+            <ref name="invoice batch"/>
+          </see-also>
+        </vocab-entry>
+      </term>
+      <term name="session" scope="project">
+        <vocab-entry>
+          <definition>
+            An authenticated interaction context for a single \
+    user, tracked by an opaque server-side token.
+          </definition>
+          <disambiguation>
+            Not an HTTP session in the cookie sense; these \
+    sessions are first-class entities with their own lifecycle.
+          </disambiguation>
+        </vocab-entry>
+      </term>
+    </vocabulary>
+
+# Vocabulary rules
+
+* ``<vocabulary>`` is optional but strongly encouraged. If you \
+include it, it comes after ``<features>`` in the output, as a \
+sibling block.
+* Each ``<term>`` has a ``name`` attribute (the term being \
+defined) and a ``scope`` attribute that is exactly ``"project"`` \
+or ``"feature"``.
+  * ``scope="project"`` means the term is relevant project-wide \
+    and should be in every regen prompt context at every tier.
+  * ``scope="feature"`` means the term is specific to one \
+    feature's subtree. It also requires a ``feature-name`` \
+    attribute whose value matches an exact feature name in the \
+    same ``<features>`` block.
+* Each ``<term>`` contains exactly one ``<vocab-entry>`` child. \
+The ``<vocab-entry>`` has three possible children in fixed order:
+  * ``<definition>`` — **required**, non-empty prose describing \
+    the term. Plain text or fenced code blocks; no nested XML \
+    tags.
+  * ``<disambiguation>`` — **optional** but strongly encouraged \
+    for any term whose project-specific meaning diverges from a \
+    common meaning. A "not to be confused with" note that \
+    directly counteracts the default generic meaning the LLM \
+    would otherwise assume. Plain text, no nested XML.
+  * ``<see-also>`` — **optional**. A list of ``<ref name="..."/>`` \
+    elements cross-referencing other terms defined in the same \
+    ``<vocabulary>`` block. Do not reference terms that don't \
+    exist yet — this is the cold-start pass, so all references \
+    use the name form (``name=``) not the id form.
+* Term names must be unique within a scope. Two \
+project-level terms cannot share a name. Two feature-local \
+terms within the same feature cannot share a name. A \
+project-level term and a feature-local term *can* share a name \
+— scope disambiguates them.
+* Scan the input doc for terms the user uses in a \
+project-specific sense — "boulder," "tranche," "widget," or \
+any phrase that seems loaded with meaning particular to the \
+project — and extract them as vocabulary entries. Guideline: \
+*if a generic LLM reading the term in isolation would get it \
+subtly wrong, define it in vocabulary*.
+* Vocabulary entries are not features. Don't confuse the two: \
+features describe *what the project does*; vocabulary \
+describes *what words the project uses*.
 """
 
 

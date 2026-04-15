@@ -49,6 +49,7 @@ from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
     ValidationError,
     validate_features,
+    validate_vocabulary,
 )
 from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
 from backend.graph.reducer import append_event
@@ -124,6 +125,28 @@ async def mint_features(payload: dict) -> None:
                 f"approved expansion content: {exc}"
             ) from exc
 
+        # The approved expansion may also carry a <vocabulary>
+        # sibling block — optional, but if present it projects
+        # into vocab_* nodes alongside the feat_* nodes in the
+        # same transaction. Parse it here so the scoped references
+        # (feature-name attributes) resolve against the validated
+        # feature set from the same parse pass.
+        vocab_entries: tuple = ()
+        if "<vocabulary" in content:
+            try:
+                vocab_tree = extract_tag_tree(content, "vocabulary")
+                known_feature_names = {f.name for f in features}
+                vocab_entries = validate_vocabulary(
+                    vocab_tree,
+                    known_feature_names=known_feature_names,
+                    allow_id_refs=False,
+                )
+            except (ParseError, ValidationError) as exc:
+                raise FeatureMintHandlerError(
+                    f"mint_features project={project_id} could not parse "
+                    f"approved vocabulary content: {exc}"
+                ) from exc
+
         # Mint one feat_* per validated feature, preserving the
         # parse order via display_order. Each feat_* carries its
         # intent paragraph as content, its group label (if the
@@ -132,6 +155,7 @@ async def mint_features(payload: dict) -> None:
         # reducer writes them at creation time so rebuild-from-log
         # replays back to equivalent state.
         minted_ids: list[str] = []
+        name_to_feat_id: dict[str, str] = {}
         for index, feature in enumerate(features):
             feat_id = mint(db, Kind.FEAT)
             append_event(
@@ -150,6 +174,38 @@ async def mint_features(payload: dict) -> None:
                 ),
             )
             minted_ids.append(feat_id)
+            name_to_feat_id[feature.name] = feat_id
+
+        # Mint one vocab_* per validated vocab entry in the same
+        # transaction. Project-level entries have parent_id=None;
+        # feature-local entries resolve their feature-name to a
+        # real feat_* id via the map built above (the features
+        # loop populated it). Node.content stores the raw XML
+        # <vocab-entry> block as authored — the structured fields
+        # aren't projected into separate columns because the
+        # grammar is re-derivable by running the validator on
+        # demand.
+        minted_vocab_ids: list[str] = []
+        for vocab_entry in vocab_entries:
+            resolved_parent_id: str | None = None
+            if vocab_entry.scope == "feature":
+                assert vocab_entry.feature_name is not None
+                resolved_parent_id = name_to_feat_id[vocab_entry.feature_name]
+            vocab_id = mint(db, Kind.VOCAB)
+            append_event(
+                db,
+                project_id,
+                ev.NodeCreated(
+                    node_id=vocab_id,
+                    tier="vocab",
+                    kind="domain",
+                    parent_id=resolved_parent_id,
+                    name=vocab_entry.name,
+                    display_order=0,
+                    content=vocab_entry.raw_content,
+                ),
+            )
+            minted_vocab_ids.append(vocab_id)
 
         # Bootstrap the requirements node in the same transaction
         # as the feature mints so either both land or neither does.
@@ -174,10 +230,10 @@ async def mint_features(payload: dict) -> None:
             )
 
         logger.info(
-            "mint_features project=%s minted %d feat_* nodes: %s",
+            "mint_features project=%s minted %d feat_* nodes and %d vocab_* nodes",
             project_id,
             len(minted_ids),
-            minted_ids,
+            len(minted_vocab_ids),
         )
     finally:
         db.close()

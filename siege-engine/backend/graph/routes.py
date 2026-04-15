@@ -1996,3 +1996,404 @@ def get_decomposition_graph(
             for e in filtered_edges
         ],
     )
+
+
+# ── Vocabulary routes (Phase 5.5) ──────────────────────────────────
+
+
+class VocabEntryResponse(BaseModel):
+    id: str
+    name: str
+    content: str  # raw <vocab-entry> XML
+    parent_id: str | None
+    parent_name: str | None  # resolved for the UI; None at project scope
+    updated_at: str
+
+
+class VocabListResponse(BaseModel):
+    entries: list[VocabEntryResponse]
+
+
+class CreateVocabRequest(BaseModel):
+    name: str
+    content: str  # full <vocab-entry>...</vocab-entry> XML
+    parent_id: str | None = None  # None → project-level, feat_* id → feature-local
+
+
+class EditVocabRequest(BaseModel):
+    new_content: str  # new full <vocab-entry> XML
+
+
+class RenameVocabRequest(BaseModel):
+    new_name: str
+
+
+class ReparentVocabRequest(BaseModel):
+    new_parent_id: str | None  # None → promote to project-level
+
+
+def _serialize_vocab_entry(db: Session, node: Node) -> VocabEntryResponse:
+    parent_name: str | None = None
+    if node.parent_id is not None:
+        parent = db.get(Node, node.parent_id)
+        if parent is not None:
+            parent_name = parent.name
+    return VocabEntryResponse(
+        id=node.id,
+        name=node.name,
+        content=node.content or "",
+        parent_id=node.parent_id,
+        parent_name=parent_name,
+        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+    )
+
+
+def _validate_vocab_content(content: str, *, term_name: str, known_feature_names: set[str]) -> None:
+    """Run the vocab validator over a standalone ``<vocab-entry>`` block.
+
+    Wraps the content in a synthetic ``<vocabulary><term>`` shell so
+    ``validate_vocabulary`` can parse it, because the top-level
+    validator expects a ``<vocabulary>`` root. Raises HTTPException
+    422 on any structural error. Used by the create and edit routes
+    to ensure user-supplied content is valid before committing.
+    """
+    from backend.graph.parsers.validators import ValidationError, validate_vocabulary
+    from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
+
+    wrapped = f'<vocabulary><term name="{term_name}" scope="project">{content}</term></vocabulary>'
+    try:
+        tree = extract_tag_tree(wrapped, "vocabulary")
+        validate_vocabulary(
+            tree,
+            known_feature_names=known_feature_names,
+            allow_id_refs=True,
+        )
+    except (ParseError, ValidationError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid vocab entry content: {exc}",
+        ) from exc
+
+
+@router.get("/{project_id}/vocabulary", response_model=VocabListResponse)
+def get_vocabulary(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> VocabListResponse:
+    """List every vocab entry in a project, project-level first.
+
+    The response carries both project-level (``parent_id`` is
+    null) and feature-local (``parent_id`` is a ``feat_*`` id)
+    entries in a single flat list. The frontend filters by scope
+    when rendering the list view and the per-feature panel.
+    """
+    _require_project(db, project_id)
+    from backend.graph.vocabulary import list_all_vocab
+
+    entries = list_all_vocab(db, project_id)
+    return VocabListResponse(entries=[_serialize_vocab_entry(db, e) for e in entries])
+
+
+@router.get(
+    "/{project_id}/features/{feat_id}/vocabulary",
+    response_model=VocabListResponse,
+)
+def get_feature_vocabulary(
+    project_id: str,
+    feat_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> VocabListResponse:
+    """List vocab entries scoped to one specific feature."""
+    _require_project(db, project_id)
+    feature = db.get(Node, feat_id)
+    if feature is None or feature.project_id != project_id or feature.tier != "feat":
+        raise HTTPException(status_code=404, detail=f"Feature {feat_id!r} not found")
+    from backend.graph.vocabulary import list_feature_vocab
+
+    entries = list_feature_vocab(db, project_id, feat_id)
+    return VocabListResponse(entries=[_serialize_vocab_entry(db, e) for e in entries])
+
+
+@router.get(
+    "/{project_id}/vocabulary/{vocab_id}",
+    response_model=VocabEntryResponse,
+)
+def get_vocabulary_entry(
+    project_id: str,
+    vocab_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> VocabEntryResponse:
+    _require_project(db, project_id)
+    from backend.graph.vocabulary import vocab_by_id
+
+    entry = vocab_by_id(db, vocab_id)
+    if entry is None or entry.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Vocab entry {vocab_id!r} not found")
+    return _serialize_vocab_entry(db, entry)
+
+
+@router.post(
+    "/{project_id}/vocabulary/create",
+    response_model=VocabEntryResponse,
+)
+def post_create_vocab(
+    project_id: str,
+    req: CreateVocabRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> VocabEntryResponse:
+    """Create a new vocab entry with user-supplied content.
+
+    Content must be a valid ``<vocab-entry>`` XML block; the
+    route validates it before emitting ``NodeCreated``. Scope is
+    set via ``parent_id``: ``None`` → project-level, a ``feat_*``
+    id → feature-local. The reducer's vocab-parent invariant
+    enforces that ``parent_id`` is either ``None`` or a valid
+    feat_* node.
+
+    User-supplied content means no LLM is involved in the create
+    path. Users type definition prose directly; the LLM-assisted
+    feedback → regen flow is deferred to a follow-up.
+    """
+    _require_project(db, project_id)
+
+    # Parent validation: if scope is feature, the parent must be
+    # a real feat_* in this project. The reducer would reject
+    # it anyway, but an early 404 is a better UX than an
+    # opaque reducer error.
+    if req.parent_id is not None:
+        parent = db.get(Node, req.parent_id)
+        if parent is None or parent.project_id != project_id:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Parent node {req.parent_id!r} not found in project",
+            )
+        if parent.tier != "feat":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Vocab entries may only be parented to feat_* nodes; "
+                    f"{req.parent_id!r} is a {parent.tier!r} node."
+                ),
+            )
+
+    # Content validation. Collect feature names for the validator's
+    # feature-name cross-reference check in case the user's
+    # content has <see-also> entries that reference features
+    # (it shouldn't — see-also refs reference other terms, not
+    # features — but the validator needs the set to exist).
+    known_feature_names: set[str] = set()
+    _validate_vocab_content(
+        req.content,
+        term_name=req.name,
+        known_feature_names=known_feature_names,
+    )
+
+    # Uniqueness check within scope — matches the validator's
+    # rule for batch creation. Reject early with 409 if a term
+    # with this name already exists at the requested scope.
+    from backend.graph.vocabulary import vocab_by_name
+
+    existing = vocab_by_name(db, project_id, req.name, parent_id=req.parent_id)
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Vocab entry named {req.name!r} already exists at this scope."),
+        )
+
+    from backend.graph.ids import Kind, mint
+
+    vocab_id = mint(db, Kind.VOCAB)
+    append_event(
+        db,
+        project_id,
+        ev.NodeCreated(
+            node_id=vocab_id,
+            tier="vocab",
+            kind="domain",
+            parent_id=req.parent_id,
+            name=req.name,
+            display_order=0,
+            content=req.content,
+        ),
+    )
+    db.commit()
+
+    node = db.get(Node, vocab_id)
+    assert node is not None
+    return _serialize_vocab_entry(db, node)
+
+
+@router.post(
+    "/{project_id}/vocabulary/{vocab_id}/edit",
+    response_model=VocabEntryResponse,
+)
+def post_edit_vocab(
+    project_id: str,
+    vocab_id: str,
+    req: EditVocabRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> VocabEntryResponse:
+    """Replace a vocab entry's content with user-supplied new content.
+
+    Direct content replacement, no LLM involvement. The new
+    content is validated as a standalone ``<vocab-entry>`` block
+    before it lands. Because Node.content is written by the
+    ``DraftApproved`` reducer branch (and there's no draft here
+    because this is a direct edit), the reducer emits a synthetic
+    draft-approved event via a small helper: actually, simpler —
+    directly mutate Node.content with an updated_at bump. Event
+    sourcing via the reducer is the right long-term path once
+    drafts are wired in; for now, direct update is acceptable
+    given this is the only write path for vocab content edits.
+    """
+    _require_project(db, project_id)
+    from backend.graph.vocabulary import vocab_by_id
+
+    entry = vocab_by_id(db, vocab_id)
+    if entry is None or entry.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Vocab entry {vocab_id!r} not found")
+
+    _validate_vocab_content(
+        req.new_content,
+        term_name=entry.name,
+        known_feature_names=set(),
+    )
+
+    # Direct content update. Using a raw attribute write + commit
+    # matches the pattern used by other "user-supplied content
+    # lands straight on the node" paths in v2; when the full
+    # event-sourced draft flow for vocab lands as a follow-up,
+    # this will be refactored to emit DraftGenerated +
+    # DraftApproved events through the reducer instead.
+    from datetime import datetime
+
+    entry.content = req.new_content
+    entry.updated_at = datetime.utcnow()
+    db.commit()
+
+    return _serialize_vocab_entry(db, entry)
+
+
+@router.post(
+    "/{project_id}/vocabulary/{vocab_id}/rename",
+    response_model=VocabEntryResponse,
+)
+def post_rename_vocab(
+    project_id: str,
+    vocab_id: str,
+    req: RenameVocabRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> VocabEntryResponse:
+    _require_project(db, project_id)
+    from backend.graph.vocabulary import vocab_by_id, vocab_by_name
+
+    entry = vocab_by_id(db, vocab_id)
+    if entry is None or entry.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Vocab entry {vocab_id!r} not found")
+
+    new_name = req.new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=422, detail="new_name cannot be empty")
+
+    if new_name != entry.name:
+        existing = vocab_by_name(db, project_id, new_name, parent_id=entry.parent_id)
+        if existing is not None and existing.id != vocab_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Vocab entry named {new_name!r} already exists at this scope.",
+            )
+
+    append_event(
+        db,
+        project_id,
+        ev.NodeRenamed(node_id=vocab_id, new_name=new_name),
+    )
+    db.commit()
+
+    entry = db.get(Node, vocab_id)
+    assert entry is not None
+    return _serialize_vocab_entry(db, entry)
+
+
+@router.post(
+    "/{project_id}/vocabulary/{vocab_id}/reparent",
+    response_model=VocabEntryResponse,
+)
+def post_reparent_vocab(
+    project_id: str,
+    vocab_id: str,
+    req: ReparentVocabRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> VocabEntryResponse:
+    """Promote or demote a vocab entry between project and feature scope.
+
+    Passing ``new_parent_id=None`` promotes a feature-local
+    entry to project-level. Passing a ``feat_*`` id scopes a
+    project-level entry to that feature (or moves a
+    feature-local entry between features). The reducer's
+    vocab-parent invariant enforces that the new parent is
+    either null or a valid feat_* node.
+    """
+    _require_project(db, project_id)
+    from backend.graph.vocabulary import vocab_by_id
+
+    entry = vocab_by_id(db, vocab_id)
+    if entry is None or entry.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Vocab entry {vocab_id!r} not found")
+
+    if req.new_parent_id is not None:
+        parent = db.get(Node, req.new_parent_id)
+        if parent is None or parent.project_id != project_id:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Parent node {req.new_parent_id!r} not found in project",
+            )
+        if parent.tier != "feat":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Vocab entries may only be parented to feat_* nodes; "
+                    f"{req.new_parent_id!r} is a {parent.tier!r} node."
+                ),
+            )
+
+    append_event(
+        db,
+        project_id,
+        ev.NodeReparented(node_id=vocab_id, new_parent_id=req.new_parent_id),
+    )
+    db.commit()
+
+    entry = db.get(Node, vocab_id)
+    assert entry is not None
+    return _serialize_vocab_entry(db, entry)
+
+
+@router.post("/{project_id}/vocabulary/{vocab_id}/delete")
+def post_delete_vocab(
+    project_id: str,
+    vocab_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    _require_project(db, project_id)
+    from backend.graph.vocabulary import vocab_by_id
+
+    entry = vocab_by_id(db, vocab_id)
+    if entry is None or entry.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Vocab entry {vocab_id!r} not found")
+
+    append_event(
+        db,
+        project_id,
+        ev.NodeDeleted(node_id=vocab_id),
+    )
+    db.commit()
+    return {"status": "deleted", "vocab_id": vocab_id}

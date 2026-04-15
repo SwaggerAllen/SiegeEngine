@@ -129,6 +129,7 @@ def _validate(
     known_subresp_ids: set[str] | None = None,
     known_sibling_comp_ids: set[str] | None = None,
     known_resp_ids_for_policies: set[str] | None = None,
+    target_is_foundation: bool = False,
 ):
     return validate_arch_doc(
         _parse(raw),
@@ -139,6 +140,7 @@ def _validate(
         known_resp_ids_for_policies=known_resp_ids_for_policies
         if known_resp_ids_for_policies is not None
         else KNOWN_POLICY_RESPS,
+        target_is_foundation=target_is_foundation,
     )
 
 
@@ -557,6 +559,120 @@ class TestFoundationSubcomponent:
         raw = _arch_doc(subcomponents=subs, sub_dependencies="")
         with pytest.raises(ValidationError, match="2 foundation subcomponents"):
             _validate(raw)
+
+
+class TestFoundationDecomposingAFoundation:
+    """Foundations don't nest.
+
+    When the target comp itself carries the foundation role, its
+    own comparch decomposition must *not* include another
+    foundation subcomponent — the foundation concept is already
+    "catch-all at this level" and nesting it would double-count
+    the role. The validator accepts an exhaustive decomposition
+    with no <foundation/> marker, rejects any <foundation/>
+    marker in the subcomponents, and skips the
+    ``_enforce_sub_foundation_dependency`` check because there's
+    no foundation sub to depend on.
+    """
+
+    def _exhaustive_subs_no_foundation(self) -> str:
+        """Three subcomponents covering all known subresps,
+        none of which carry ``<foundation/>``."""
+        return (
+            _sub(
+                "bootstrap",
+                "Bootstrap",
+                "Entry point + DI wiring.",
+                "main() -> None.",
+                ("resp_sub_sess",),
+            )
+            + _sub(
+                "config_loader",
+                "ConfigLoader",
+                "Read and validate project settings.",
+                "load_settings() -> Settings.",
+                ("resp_sub_cred",),
+            )
+            + _sub(
+                "shared_utils",
+                "SharedUtils",
+                "Cross-cutting helpers.",
+                "format_log(record) -> str.",
+                ("resp_sub_found",),
+            )
+        )
+
+    def test_accepts_exhaustive_decomposition(self):
+        """A foundation comp may decompose into subcomponents with
+        no <foundation/> marker, as long as every subresp is
+        covered and sub-deps are acyclic."""
+        raw = _arch_doc(
+            subcomponents=self._exhaustive_subs_no_foundation(),
+            sub_dependencies="",
+        )
+        doc = _validate(raw, target_is_foundation=True)
+        assert len(doc.subcomponents) == 3
+        # None of the minted subs are foundations.
+        assert all(not s.is_foundation for s in doc.subcomponents)
+
+    def test_rejects_nested_foundation_marker(self):
+        """A foundation decomposing into subs with a <foundation/>
+        marker is rejected with a clear error."""
+        subs = (
+            _sub("bootstrap", "B", "x", "x", ("resp_sub_sess",))
+            + _sub("config_loader", "C", "x", "x", ("resp_sub_cred",))
+            + _sub(
+                "shared_utils",
+                "Foundation",
+                "x",
+                "x",
+                ("resp_sub_found",),
+                foundation=True,
+            )
+        )
+        raw = _arch_doc(subcomponents=subs, sub_dependencies="")
+        with pytest.raises(ValidationError, match="Foundations do not nest"):
+            _validate(raw, target_is_foundation=True)
+
+    def test_skips_foundation_dep_rule(self):
+        """The 'every non-foundation sub depends on foundation'
+        rule is skipped when the target is itself a foundation —
+        there's no foundation sub to depend on, so sub-deps are
+        free (as long as they're acyclic)."""
+        raw = _arch_doc(
+            subcomponents=self._exhaustive_subs_no_foundation(),
+            # No foundation-dep edges, which would normally fail
+            # _enforce_sub_foundation_dependency. Passes here.
+            sub_dependencies="",
+        )
+        # Should not raise.
+        _validate(raw, target_is_foundation=True)
+
+    def test_normal_rules_still_reject_empty_foundation_list(self):
+        """Sanity check: target_is_foundation=False still enforces
+        the 'exactly one foundation subcomponent required' rule
+        on decomposition. The carve-out is scoped to foundation
+        targets only."""
+        raw = _arch_doc(
+            subcomponents=self._exhaustive_subs_no_foundation(),
+            sub_dependencies="",
+        )
+        with pytest.raises(ValidationError, match="no foundation subcomponent"):
+            _validate(raw, target_is_foundation=False)
+
+    def test_un_fanned_out_foundation_still_legal(self):
+        """A foundation component that stays un-fanned-out
+        (empty <subcomponents>) is legal under both branches —
+        the carve-out only kicks in when decomposition actually
+        happens."""
+        raw = _arch_doc(subcomponents="", sub_dependencies="")
+        # With no pre-minted subresps, empty <subcomponents> is fine.
+        doc = _validate(
+            raw,
+            known_subresp_ids=set(),
+            target_is_foundation=True,
+        )
+        assert doc.subcomponents == ()
 
 
 class TestSubDependencies:

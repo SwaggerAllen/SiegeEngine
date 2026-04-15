@@ -176,10 +176,11 @@ Kind vocabulary:
 - `subreqs` — **per top-level component** subrequirements node (a top-level component's responsibilities → that component's subresponsibilities). One per top-level `comp_*`, minted at sysarch approval. Not a singleton.
 - `manifest` — the per-project singleton file-territory manifest (see *Code generation territory*)
 - `fanin` — a domain fan-in synthesis node (one per domain component with subcomponents)
+- `vocab` — a vocabulary entry: a project-specific term with definition, optional disambiguation, and optional cross-references (see *Project vocabulary*). Scoped via `parent_id`: null for project-level, a `feat_*` id for feature-local. Not a singleton.
 
 Fragment IDs extend this as described above.
 
-Project-level singletons (`expansion`, `reqs`, `sysarch`, `manifest`) use the `<kind>_<8 chars>` form for consistency even though the suffix is decorative for a one-per-project node. `subreqs_*` and `fanin_*` are *not* singletons — there's one per top-level component for `subreqs`, one per domain component with subcomponents for `fanin` — so the suffix is load-bearing for them and the same form applies uniformly. Uniform IDs mean uniform fragment keys, uniform lookup, no special cases at call sites.
+Project-level singletons (`expansion`, `reqs`, `sysarch`, `manifest`) use the `<kind>_<8 chars>` form for consistency even though the suffix is decorative for a one-per-project node. `subreqs_*`, `fanin_*`, and `vocab_*` are *not* singletons — there's one per top-level component for `subreqs`, one per domain component with subcomponents for `fanin`, and many per project for `vocab` — so the suffix is load-bearing for them and the same form applies uniformly. Uniform IDs mean uniform fragment keys, uniform lookup, no special cases at call sites.
 
 **Bootstrap vs child naming convention.** Bootstrap nodes (`expansion_*`, `reqs_*`, `sysarch_*`, `subreqs_*`) are named after the prose *document form* they carry before approval — "feature expansion", "requirements", "system architecture", "sub-requirements". The structured children each bootstrap mints are named after their *semantic role* in the model — `feat_*` for features, `resp_*` for responsibilities, `comp_*` for components. The two vocabularies are deliberately distinct because they refer to different things: the document form describes the prose artifact the user reviews and approves, while the child kind describes the structured unit in the DAG that results. `reqs_*` minting `resp_*` entries on approval is exactly the same pattern as `expansion_*` minting `feat_*` entries — the document name and the child kind aren't required to match, and usually won't. If you're ever confused about why `reqs` vs `resp`, remember that the `reqs` document is the "requirements document" software-engineering artifact, and approving it commits to a set of `resp`-tier responsibilities that concrete components will be held accountable for. Same for `subreqs`: a per-component "sub-requirements document" whose approved entries become that component's subresponsibilities.
 
@@ -255,6 +256,34 @@ Knock-on consequences:
 - **Fan-in nodes never nest.** A fan-in synthesizes across one component's direct subcomponents, which is now also the only structural possibility.
 - **Policies have exactly two generation tiers**, matching the two tiers where responsibilities are minted (`reqs_*` mints top-level `resp_*` before sysarch; each `subreqs_*` mints its component's subresp `resp_*` before that component's comparch). Top-level policies live in the sysarch's `<policies>` fragment; component-local policies live in each component's arch-doc `<policies>` fragment. No recursive policy-generation pass is needed.
 
+### Project vocabulary
+
+Every project has its own jargon. The LLM's default priors fight project-specific meanings at every regen where the definition isn't fresh in the prompt context, and the substitution is silent — the LLM emits plausible-looking text built on the wrong meaning, and the drift isn't caught until a reviewer notices. With per-node regen and bounded prompts, definitions are forgotten more often than not unless they're made structurally visible.
+
+Vocabulary is modeled as its own node tier: `vocab_*`. Not a fragment, because vocab entries are entities with independent lifecycles — each term has its own edit/review cycle, can participate in edges (the `vocab_reference` edge type is a planned post-MVP addition for "see also" cross-references between terms), can be promoted between scopes via reparent without losing identity, and can be created directly by a user without running a flow via a `CreateVocabEntry` instruction. Fragments are subordinate views of a parent node and can't carry any of that.
+
+**Scope via `parent_id`.** Project-level vocab has `parent_id = null`. Feature-local vocab has `parent_id` set to a `feat_*` id, indicating the term is introduced by and meaningful within that feature's subtree only. The reducer enforces a hard invariant: a `vocab_*` node's parent, if set, must be a `feat_*` — parenting vocab under `comp_*` / `resp_*` / any other tier is rejected at event-apply time. Scoping below the feature layer would leak project-specific terms into arbitrary internal decomposition and defeat the purpose of a coherent project-wide vocabulary.
+
+**Promotion between scopes is reparent.** A feature-local term that turns out to be useful project-wide becomes project-level via `NodeReparented(vocab_id, new_parent_id=None)`. The term keeps its id, content, edit history, and (once they land) its `vocab_reference` edges. Same primitive used for component promotion/demotion; vocab gets it for free.
+
+**Content shape is parseable XML, same family as comparch.** Each `vocab_*` node's `content` field holds a `<vocab-entry>` block with three children in fixed order:
+
+- `<definition>` — required, non-empty. Prose describing the term.
+- `<disambiguation>` — optional. A "not to be confused with" note that directly counteracts the LLM's generic priors. Strongly encouraged for any term whose project-specific meaning diverges from a common meaning.
+- `<see-also>` — optional. Contains `<ref name="..."/>` or `<ref to="vocab_..."/>` elements pointing at other terms. Name form is used at cold-start time (where target terms are being minted in the same pass and IDs don't exist yet); ID form is used at post-mint edit time.
+
+The grammar is parseable and validated at authoring time, but the validator is scoped to "does the content conform to the grammar" — the structured fields aren't projected into separate columns. The full `<vocab-entry>` XML is stored verbatim in `Node.content`, and consumers re-run the validator on demand when they want structured access (the planned `vocab_reference` edge-emission pass is the primary use case). This matches how comparch and subcomparch store their full arch doc content on the node rather than shredding it into per-fragment columns.
+
+**Render-time transformation for prompts.** Storage is XML; prompts are prose. At context-assembly time, a formatter walks each vocab entry's stored XML and renders it as human-readable text: "Definition: … / Disambiguation: … / See also: term1, term2." The LLM sees readable definitions without paying prompt tokens for raw tags. Decoupling storage from prompt format means extending the grammar later (adding `<category>`, `<deprecated-by>`, `<alternate-names>`, or anything else) requires only updating the formatter to include the new fields; no stored-content rewrite.
+
+**Minting.** Vocabulary is projected from the expansion bootstrap. The expansion's output gains an optional `<vocabulary>` section sibling to `<features>`, containing `<term>` elements with `name`, `scope`, and (when scope is feature) `feature-alias` attributes. Each `<term>` contains a single `<vocab-entry>` inner block. On expansion approval, `feat_*` and `vocab_*` nodes are minted in the same transaction; the alias-to-id map built during feature minting resolves `feature-alias` attributes to real `parent_id` values. Feature-request and refactor flows that introduce new terminology also project new vocab entries via the same mechanism.
+
+**Context assembly.** Every regeneration prompt at every tier sees the project vocabulary. Project-level entries are always included; feature-local entries are included for every feature reachable from the regen target via the decomposition walk. The vocabulary partition has its own context-budget allocation separate from parent architecture, sibling pubapis, or change-plan context — vocabulary doesn't compete with architectural content for budget because the cost of forgetting a term once is higher than the cost of including it every time.
+
+**UI surfaces.** Vocabulary is not part of the decomposition graph, the component tree, or any other structural visualization. The UI provides a dedicated "Vocabulary" tab on the project dashboard, a per-feature vocab panel on feature detail views, and eventually inline definition tooltips for known terms that appear in rendered artifact prose. Structural views stay uncluttered; vocabulary gets its own first-class home.
+
+**Out of scope for the initial vocabulary layer:** LLM-discovered vocabulary (where the LLM surfaces candidate definitions unprompted), `vocab_reference` edges as first-class graph entities (stored cross-references exist in XML from day one, edge emission is a follow-up), proliferation guardrails for large vocabularies, and automatic linking of term mentions in rendered prose. All small follow-ups; none are load-bearing for the MVP.
+
 ### Foundation components
 
 Every level of the structural tree has **shared files at its root** — build config, package init, cross-cutting utilities, the top-level entry point — that don't logically belong to any one child. Without a dedicated owner, those files are orphaned by the file manifest (see *Code generation territory*) and by code generation: no impl node produces them, no plan node touches them, and the resulting project isn't buildable.
@@ -262,9 +291,18 @@ Every level of the structural tree has **shared files at its root** — build co
 To fix this by construction, every structural decomposition pass is required to mint a **foundation component** as one of its children:
 
 - **Sysarch** always includes a foundation component in its top-level component list. Its territory in the manifest covers the project's root folder minus whatever the other top-level components claim.
-- **Each comparch pass** that decomposes a component into subcomponents always includes a foundation subcomponent in the subcomponent list. Its territory covers that component's root folder minus whatever the other subcomponents claim.
+- **Each comparch pass** that decomposes a component into subcomponents includes a foundation subcomponent in the subcomponent list, **unless the component being decomposed is itself a foundation component** (see below).
 
-The foundation component is a normal `comp_*` node in every other respect — it has its own responsibilities, its own `<technical-specification>`, `<public-surface>`, `<private-surface>`, `<policies>`, `<dependencies>`, and it can have subcomponents if it decomposes further (subject to the depth cap). It's not a special tier or a special kind; it's a conventional child that the generation prompts are required to always produce.
+**Foundations don't nest.** When a foundation component — top-level or subcomponent — is itself decomposed by a comparch pass, that pass does **not** mint another foundation subcomponent inside it. Instead, the comparch prompt is told to **divide the foundation's territory exhaustively**: every file the foundation owned must be claimed by one of the concrete subcomponents it mints, with no residual catch-all. The reason is that "foundation" means "catch-all at this level," so a sub-foundation inside a foundation would be the catch-all of the catch-all, which collapses to the original. Nesting the concept would double-count the role and leave the user looking at a tree whose structure doesn't describe anything real.
+
+Concretely:
+
+- **Normal component → decomposes with foundation child.** The normal component's own root folder might hold files that don't fit any minted subcomponent; those files go to the minted foundation subcomponent. The comparch prompt is told "include exactly one foundation subcomponent marked with `<foundation/>`."
+- **Foundation component → decomposes without foundation child.** The foundation is already the catch-all for its parent's level. When it fans out, every file in its territory must land under one of the subcomponents it creates. The comparch prompt is told "you are decomposing a foundation component — divide its territory exhaustively, no foundation subcomponent." The validator skips the "exactly one foundation subcomponent required" check for this case, and the `_enforce_sub_foundation_dependency` check is likewise skipped (there's no foundation subcomponent to depend on).
+
+Whether a comp is a foundation is persisted on the node itself (`Node.is_foundation`), set at mint time by the sysarch and comparch mint handlers based on the parsed `<foundation/>` marker. Downstream passes read it rather than re-parsing upstream arch docs.
+
+The foundation component is a normal `comp_*` node in every other respect — it has its own responsibilities, its own `<technical-specification>`, `<public-surface>`, `<private-surface>`, `<policies>`, `<dependencies>`, and it can have subcomponents if it decomposes further (subject to the depth cap). It's not a special tier or a special kind; it's a conventional child that the generation prompts are required to always produce (with the nesting carve-out above).
 
 What it *owns* depends on the project:
 
@@ -398,6 +436,7 @@ A regen prompt for a node sees a fixed, bounded set of inputs:
 - **Related features** — the features that route through this node's subtree. Provides "what is this for, in user terms."
 - **Sibling dependency APIs** — the `pubapi` fragment of every component this node depends on, pulled by fragment ID from those components' parseable architecture docs (see *Architecture documents are parseable* and *Shared fragments*). Not the full sibling docs.
 - **Diffs from neighbors** — deltas from parents, children, sibling dependencies, **and** sibling dependents. Dependents matter even though their APIs are not pulled in: their diff is the signal that downstream consumers care about what this node is doing right now.
+- **Project vocabulary** — project-level `vocab_*` entries in full, plus feature-local vocab entries for every feature reachable from this node's subtree via the decomposition walk. Rendered from stored XML to prose at prompt-assembly time so the LLM sees readable definitions rather than raw tags. Own budget partition that doesn't compete with architectural context. See *Project vocabulary* for the rationale.
 
 Presentational nodes additionally read the domain fan-in (see *Domain fan-in nodes*) as their input from the domain parent — both the spec and the fan-in synthesis, never the raw subtree.
 

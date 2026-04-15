@@ -46,6 +46,7 @@ NODE_TIERS = (
     "sysarch",
     "manifest",
     "fanin",
+    "vocab",
 )
 NODE_KINDS = ("domain", "presentational")
 EDGE_TYPES = ("dependency", "domain_parent", "policy_application", "decomposition")
@@ -91,6 +92,16 @@ class Node(Base):
     # rather than finding it in the user's input doc. Defaults
     # false and is ignored by non-feature tiers.
     is_implicit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Whether a comp_* node was minted with the foundation role.
+    # Set at mint time by sysarch_mint / comparch_mint from the
+    # ``<foundation/>`` marker in the parsed arch doc. Defaults
+    # false and is ignored by non-comp tiers. Persisting the flag
+    # is what lets the comparch-generation pass know whether the
+    # target is itself a foundation and therefore should decompose
+    # exhaustively without nesting another foundation subcomponent
+    # (see ``docs/architecture/v2-rearchitecture.md`` §Foundation
+    # components).
+    is_foundation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

@@ -371,6 +371,8 @@ def render_user_prompt(
     prior_pending: str | None,
     feedback: str | None,
     parse_error: str | None = None,
+    target_is_foundation: bool = False,
+    vocab_summary: str = "",
 ) -> str:
     """Build the user prompt for the comparch generator.
 
@@ -404,8 +406,38 @@ def render_user_prompt(
     - ``prior_approved`` / ``prior_pending`` / ``feedback`` /
       ``parse_error``: standard regen/retry context shared with
       every other bootstrap prompt.
+    - ``target_is_foundation``: true when the component being
+      architected is itself a foundation component (top-level or
+      sub). Flips the "include a foundation subcomponent"
+      invariant — foundations don't nest, so the decomposition
+      must divide the foundation's territory exhaustively
+      without a sub-foundation catch-all.
     """
     parts: list[str] = []
+    if target_is_foundation:
+        parts.append("# Foundation component (special case)")
+        parts.append("")
+        parts.append(
+            "**This component is itself a foundation component.** "
+            "Foundations do not nest: when you decompose a "
+            "foundation, you must NOT include another foundation "
+            "subcomponent in your `<subcomponents>` block. Instead, "
+            "divide the foundation's territory **exhaustively** into "
+            "concrete subcomponents that collectively own every "
+            "file the foundation was responsible for. There is no "
+            "residual catch-all at this level — the foundation "
+            "itself already is the catch-all for its parent's level, "
+            "and nesting another foundation inside it would "
+            "double-count that role. If your decomposition would "
+            "want a sub-foundation, that is the signal to either "
+            "stay un-fanned-out (empty `<subcomponents>`) or reshape "
+            "the decomposition so every concrete subcomponent "
+            "claims a clearly-scoped slice of the territory."
+        )
+        parts.append("")
+    if vocab_summary and vocab_summary.strip():
+        parts.append(vocab_summary.strip())
+        parts.append("")
     parts.append("# Component")
     parts.append("")
     parts.append(component_summary.strip() or "(component details missing)")

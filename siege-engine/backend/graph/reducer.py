@@ -170,8 +170,52 @@ def _enforce_comp_depth_cap(
         )
 
 
+def _enforce_vocab_parent_constraint(
+    session: Session,
+    project_id: str,
+    new_tier: str,
+    new_parent_id: str | None,
+    node_id_for_error: str,
+) -> None:
+    """Reject structural changes that would parent a ``vocab_*`` node under a non-feature.
+
+    Per ``docs/architecture/v2-rearchitecture.md`` §Project vocabulary,
+    vocab entries are scoped via ``parent_id``: ``None`` for
+    project-level, a ``feat_*`` id for feature-local. Anything else —
+    a component, a responsibility, another vocab entry — is rejected,
+    because scoping below the feature layer would leak project-
+    specific terms into arbitrary internal decomposition and defeat
+    the coherent-project-vocabulary purpose.
+
+    Enforced on ``NodeCreated`` and ``NodeReparented`` events whose
+    target tier is ``vocab``.
+    """
+    if new_tier != "vocab":
+        return
+    if new_parent_id is None:
+        return  # Project-level, always allowed.
+    parent = session.get(Node, new_parent_id)
+    if parent is None or parent.project_id != project_id:
+        raise ReducerError(
+            f"Cannot attach vocab node {node_id_for_error!r}: parent "
+            f"{new_parent_id!r} not found in project {project_id!r}"
+        )
+    if parent.tier != "feat":
+        raise ReducerError(
+            f"Cannot attach vocab node {node_id_for_error!r} under "
+            f"parent {new_parent_id!r} (tier={parent.tier!r}). Vocab "
+            "entries may only be scoped to project-level (parent_id "
+            "is None) or feature-local (parent_id is a feat_* node). "
+            "Parenting vocab under components, responsibilities, or "
+            "other tiers is rejected."
+        )
+
+
 def _apply_node_created(session: Session, project_id: str, event: ev.NodeCreated) -> None:
     _enforce_comp_depth_cap(session, project_id, event.tier, event.parent_id, event.node_id)
+    _enforce_vocab_parent_constraint(
+        session, project_id, event.tier, event.parent_id, event.node_id
+    )
     now = datetime.utcnow()
     session.add(
         Node(
@@ -185,6 +229,7 @@ def _apply_node_created(session: Session, project_id: str, event: ev.NodeCreated
             content=event.content,
             group_label=event.group_label,
             is_implicit=event.is_implicit,
+            is_foundation=event.is_foundation,
             created_at=now,
             updated_at=now,
         )
@@ -207,6 +252,9 @@ def _apply_node_renamed(session: Session, project_id: str, event: ev.NodeRenamed
 def _apply_node_reparented(session: Session, project_id: str, event: ev.NodeReparented) -> None:
     node = _require_node(session, project_id, event.node_id)
     _enforce_comp_depth_cap(session, project_id, node.tier, event.new_parent_id, event.node_id)
+    _enforce_vocab_parent_constraint(
+        session, project_id, node.tier, event.new_parent_id, event.node_id
+    )
     node.parent_id = event.new_parent_id
     node.updated_at = datetime.utcnow()
 

@@ -151,6 +151,12 @@ async def generate_comparch(payload: dict) -> None:
             r.id for r in regen_ctx.parent_resps
         } | known_subresp_ids
 
+        # Foundations don't nest: when the target comp was minted
+        # by sysarch with the <foundation/> marker, its own
+        # decomposition must not include another foundation
+        # subcomponent. The validator + prompt handle the carve-out.
+        target_is_foundation: bool = bool(comp_node.is_foundation)
+
         project_row = db.get(Project, project_id)
         assert project_row is not None
         settings = get_project_settings(project_row)
@@ -177,15 +183,17 @@ async def generate_comparch(payload: dict) -> None:
             prior_approved=prior_approved,
             prior_pending=prior_pending,
             feedback=feedback,
+            target_is_foundation=target_is_foundation,
             parse_error=parse_error,
         )
 
-    def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+    def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
         validate_arch_doc(
             tree,
             known_subresp_ids=known_subresp_ids,
             known_sibling_comp_ids=known_sibling_comp_ids,
             known_resp_ids_for_policies=known_resp_ids_for_policies,
+            target_is_foundation=target_is_foundation,
         )
 
     validated_output, attempts = await run_parse_validate_loop(

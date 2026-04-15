@@ -191,6 +191,15 @@ async def apply_top_level_policies(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+
+        # Project vocabulary scoped to this component's reachable
+        # features, same as the subreqs / comparch / subcomparch
+        # tiers. Policy application reasons about one component
+        # at a time, so feature-local vocab is filtered by that
+        # component's reachable subtree.
+        from backend.graph.vocabulary import render_vocab_summary_for_node
+
+        vocab_summary = render_vocab_summary_for_node(db, project_id, component_id)
     finally:
         db.close()
 
@@ -211,9 +220,10 @@ async def apply_top_level_policies(payload: dict) -> None:
             candidate_policies_summary=candidates_summary,
             scope="top-level",
             parse_error=parse_error,
+            vocab_summary=vocab_summary,
         )
 
-    def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+    def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
         validate_policy_applications(tree, known_policy_ids=candidate_ids)
 
     validated_output, attempts = await run_parse_validate_loop(

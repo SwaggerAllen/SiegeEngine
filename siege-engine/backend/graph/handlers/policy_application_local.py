@@ -217,6 +217,15 @@ async def apply_component_local_policies(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+
+        # Project vocabulary scoped to this component's reachable
+        # features. Component-local policy application reasons
+        # about one subcomponent at a time (under the component
+        # the policies were minted under), so feature-local vocab
+        # filters by that parent component's subtree.
+        from backend.graph.vocabulary import render_vocab_summary_for_node
+
+        vocab_summary = render_vocab_summary_for_node(db, project_id, component_id)
     finally:
         db.close()
 
@@ -249,9 +258,10 @@ async def apply_component_local_policies(payload: dict) -> None:
                 candidate_policies_summary=candidates_summary,
                 scope="component-local",
                 parse_error=parse_error,
+                vocab_summary=vocab_summary,
             )
 
-        def _validate(tree) -> None:  # type: ignore[no-untyped-def]
+        def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
             validate_policy_applications(tree, known_policy_ids=candidate_ids)
 
         validated_output, _attempts = await run_parse_validate_loop(

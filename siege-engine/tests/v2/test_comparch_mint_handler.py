@@ -242,6 +242,15 @@ class TestHappyPath:
             )
             assert [sub.name for sub in subs] == ["TokenStore", "Foundation"]
             assert all(sub.kind == "domain" for sub in subs)
+            # The <foundation/> marker in the comparch XML must
+            # be persisted on the minted subcomponent node, same
+            # as sysarch_mint does at the top tier. Phase 5's
+            # subcomparch pass reads this flag to apply the
+            # "foundations don't nest" carve-out if it ever runs
+            # on a foundation subcomponent.
+            sub_by_name = {sub.name: sub for sub in subs}
+            assert sub_by_name["Foundation"].is_foundation is True
+            assert sub_by_name["TokenStore"].is_foundation is False
 
             # Each sub has techspec + pubapi fragments with skeletal content
             for sub in subs:
