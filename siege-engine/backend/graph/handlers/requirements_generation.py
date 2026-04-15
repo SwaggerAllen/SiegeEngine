@@ -54,6 +54,7 @@ from backend.graph.requirements import (
     pending_reqs_draft,
 )
 from backend.models import Project
+from backend.models.input_document import InputDocument
 from backend.models.node import Node
 from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
@@ -140,6 +141,28 @@ async def generate_requirements(payload: dict) -> None:
 
         vocab_summary = render_vocab_summary_all(db, project_id)
 
+        # Project input document — fed unconditionally on every
+        # requirements generation. This handler never runs against
+        # approved state (the route at
+        # ``POST /api/projects/{id}/requirements/generate`` blocks
+        # with 409 once the reqs node is approved — see
+        # ``backend/graph/routes.py``), so every invocation is
+        # either an initial generation or a pre-approval feedback
+        # iteration on a pending draft. Both need the original
+        # framing: the initial pass to shape character from scratch,
+        # later iterations to avoid drifting away from the source
+        # of truth as the user refines the draft.
+        input_doc_row = (
+            db.query(InputDocument)
+            .filter(
+                InputDocument.project_id == project_id,
+                InputDocument.doc_type == "project_doc",
+            )
+            .order_by(InputDocument.created_at.desc())
+            .first()
+        )
+        input_doc = (input_doc_row.content or "") if input_doc_row else ""
+
         project_row = db.get(Project, project_id)
         assert project_row is not None
         settings = get_project_settings(project_row)
@@ -165,6 +188,7 @@ async def generate_requirements(payload: dict) -> None:
             feedback=feedback,
             parse_error=parse_error,
             vocab_summary=vocab_summary,
+            input_doc=input_doc,
         )
 
     def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]

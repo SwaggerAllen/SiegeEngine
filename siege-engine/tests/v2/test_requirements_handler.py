@@ -487,6 +487,134 @@ class TestFeaturesInPrompt:
             assert fid in prompt
 
 
+class TestInputDocInclusion:
+    """The handler feeds the project input document into every
+    requirements generation — initial bootstrap *and* feedback
+    regens on a pending draft. The freeze-on-approval rule at
+    the HTTP route layer (see ``backend/graph/routes.py``, which
+    returns 409 once ``reqs_has_been_approved`` is true)
+    guarantees this handler never runs against approved state,
+    so every invocation is either an initial pass or a pre-
+    approval iteration, and both need the original framing."""
+
+    def test_initial_generation_includes_input_doc(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+        prompt = calls[0]["prompt"]
+        assert "# Project input document" in prompt
+        # Content from the seeded_project fixture's InputDocument.
+        assert "Build a widget tracker." in prompt
+
+    def test_regen_with_feedback_still_includes_input_doc(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        # First generation lands a pending draft.
+        first_calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+        assert "# Project input document" in first_calls[0]["prompt"]
+
+        # Second call with feedback: user is iterating on the
+        # pending draft and needs the LLM to reshape with the
+        # original framing still visible. The doc must stay.
+        second_calls = _patch_cli(monkeypatch, _reqs_xml(seeded_feat_ids, ("Auth", "v2.")))
+        asyncio.run(
+            generate_requirements({"project_id": seeded_project, "feedback": "Tighten it up"})
+        )
+        prompt = second_calls[0]["prompt"]
+        assert "# Project input document" in prompt
+        assert "Build a widget tracker." in prompt
+        # Sanity-check that this is actually the regen path and
+        # not a false pass from the handler short-circuiting
+        # back to the initial code path.
+        assert "Tighten it up" in prompt
+
+    def test_regen_prompt_contains_most_recent_pending_draft(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        # Regression for "is the LLM seeing the draft it's being
+        # asked to refine?". The handler reads pending_reqs_draft
+        # each call (which is guaranteed-unique-per-node by the
+        # pending partial index), so each regen reads the most
+        # recent pending and renders it under "# Current draft
+        # (not yet approved)". Without this test, a future change
+        # to the prompt-render ordering could silently drop the
+        # section and we'd only notice in a quality regression.
+        distinctive_first = _reqs_xml(
+            seeded_feat_ids,
+            ("DraftOneMarker", "A distinctive first-draft intent."),
+        )
+        _patch_cli(monkeypatch, distinctive_first)
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+
+        distinctive_second = _reqs_xml(
+            seeded_feat_ids,
+            ("DraftTwoMarker", "A distinctive second-draft intent."),
+        )
+        second_calls = _patch_cli(monkeypatch, distinctive_second)
+        asyncio.run(
+            generate_requirements({"project_id": seeded_project, "feedback": "Make it more pithy"})
+        )
+        second_prompt = second_calls[0]["prompt"]
+        # The first draft's distinguishing strings must appear in
+        # the second regen's prompt under the "Current draft"
+        # section, so the LLM knows what it's refining.
+        assert "# Current draft (not yet approved)" in second_prompt
+        assert "DraftOneMarker" in second_prompt
+        assert "A distinctive first-draft intent." in second_prompt
+
+        # And the third call's pending is D2, not D1 — proving the
+        # "most recent" part of the contract. D1 was discarded by
+        # the second call's DraftDiscarded event, so the third call
+        # should see D2 (which contains DraftTwoMarker) but not D1.
+        distinctive_third = _reqs_xml(
+            seeded_feat_ids,
+            ("DraftThreeMarker", "A distinctive third-draft intent."),
+        )
+        third_calls = _patch_cli(monkeypatch, distinctive_third)
+        asyncio.run(
+            generate_requirements(
+                {"project_id": seeded_project, "feedback": "Actually, different direction"}
+            )
+        )
+        third_prompt = third_calls[0]["prompt"]
+        assert "DraftTwoMarker" in third_prompt
+        assert "A distinctive second-draft intent." in third_prompt
+        assert "DraftOneMarker" not in third_prompt
+        assert "A distinctive first-draft intent." not in third_prompt
+
+    def test_missing_input_document_row_does_not_crash(self, shared_session_factory, monkeypatch):
+        # Edge case: a project without an InputDocument row (e.g.
+        # created through a legacy path or mid-test). Initial gen
+        # should still succeed; the input doc section is just
+        # omitted.
+        factory = shared_session_factory
+        session: Session = factory()
+        try:
+            pid = str(uuid.uuid4())
+            session.add(Project(id=pid, name="T3", git_repo_path="/tmp/t3"))
+            session.flush()
+            fid = _mint_feature(session, pid, "Auth", "Users sign in.", 0)
+            bootstrap_reqs_node(session, pid)
+            session.commit()
+        finally:
+            session.close()
+
+        calls = _patch_cli(
+            monkeypatch,
+            _reqs_xml(
+                [fid],
+                ("Auth", "Identify callers and make them available downstream."),
+            ),
+        )
+        asyncio.run(generate_requirements({"project_id": pid, "feedback": None}))
+        prompt = calls[0]["prompt"]
+        assert "# Project input document" not in prompt
+        # The rest of the prompt still renders.
+        assert "# Project features" in prompt
+
+
 class TestDomainUiSplitGuidance:
     """The reqs system prompt tells the LLM to split features with both
     server-side and user-facing work into sibling responsibilities so

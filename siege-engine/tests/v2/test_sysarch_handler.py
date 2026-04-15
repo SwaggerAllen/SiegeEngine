@@ -477,3 +477,105 @@ class TestProjectSettingsTimeout:
         calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
         asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
         assert calls[0]["timeout"] == 1500
+
+
+class TestInputDocInclusion:
+    """The handler feeds the project input document into every
+    sysarch generation — initial bootstrap *and* feedback regens
+    on a pending draft. The freeze-on-approval rule at the HTTP
+    route layer (see ``backend/graph/routes.py``, which returns
+    409 once ``sysarch_has_been_approved`` is true) guarantees
+    this handler never runs against approved state, so every
+    invocation is either an initial pass or a pre-approval
+    iteration, and both need the original framing."""
+
+    def test_initial_generation_includes_input_doc(
+        self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
+    ):
+        calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
+        asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
+        prompt = calls[0]["prompt"]
+        assert "# Project input document" in prompt
+        # Content from the seeded_project fixture's InputDocument.
+        assert "A task tracker." in prompt
+
+    def test_regen_with_feedback_still_includes_input_doc(
+        self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
+    ):
+        # First generation lands a pending draft.
+        first_calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
+        asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
+        assert "# Project input document" in first_calls[0]["prompt"]
+
+        # Second call with feedback: user is iterating on the
+        # pending draft and needs the LLM to reshape with the
+        # original framing still visible.
+        second_calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
+        asyncio.run(
+            generate_sysarch(
+                {"project_id": seeded_project, "feedback": "Split billing into two comps"}
+            )
+        )
+        prompt = second_calls[0]["prompt"]
+        assert "# Project input document" in prompt
+        assert "A task tracker." in prompt
+        # Sanity-check that this is actually the regen path.
+        assert "Split billing into two comps" in prompt
+
+    def test_regen_prompt_contains_most_recent_pending_draft(
+        self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
+    ):
+        # Regression for "is the LLM seeing the draft it's being
+        # asked to refine?". Same shape as the matching test in
+        # test_requirements_handler.py.
+        #
+        # We use the same _valid_sysarch() XML both times (there's
+        # only one deterministic valid shape for the seeded resps)
+        # and distinguish drafts by feedback + by the rendered
+        # "# Current draft (not yet approved)" section text, which
+        # must contain the raw XML from the previous generation.
+        first_xml = _valid_sysarch(seeded_resp_ids)
+        _patch_cli(monkeypatch, first_xml)
+        asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
+
+        second_calls = _patch_cli(monkeypatch, first_xml)
+        asyncio.run(
+            generate_sysarch(
+                {"project_id": seeded_project, "feedback": "Reconsider dependency shape"}
+            )
+        )
+        second_prompt = second_calls[0]["prompt"]
+        # The first draft's actual XML must appear inside the
+        # "# Current draft" section so the LLM knows what it's
+        # refining.
+        assert "# Current draft (not yet approved)" in second_prompt
+        assert "<techspec>A typical Python + React stack" in second_prompt
+        assert "Reconsider dependency shape" in second_prompt
+
+    def test_missing_input_document_row_does_not_crash(self, shared_session_factory, monkeypatch):
+        # A project with no InputDocument row. Initial gen should
+        # still succeed; the input doc section is just omitted.
+        factory = shared_session_factory
+        session: Session = factory()
+        try:
+            pid = str(uuid.uuid4())
+            session.add(Project(id=pid, name="T3", git_repo_path="/tmp/t3"))
+            session.flush()
+            _mint_feature(session, pid, "Auth", 0)
+            auth_resp = _mint_top_level_resp(session, pid, "Authentication", "Identify.", 0)
+            billing_resp = _mint_top_level_resp(session, pid, "Billing", "Bill.", 1)
+            foundation_resp = _mint_top_level_resp(session, pid, "Foundation", "Shared.", 2)
+            bootstrap_sysarch_node(session, pid)
+            session.commit()
+        finally:
+            session.close()
+
+        calls = _patch_cli(
+            monkeypatch,
+            _valid_sysarch([auth_resp, billing_resp, foundation_resp]),
+        )
+        asyncio.run(generate_sysarch({"project_id": pid, "feedback": None}))
+        prompt = calls[0]["prompt"]
+        assert "# Project input document" not in prompt
+        # The rest of the prompt still renders.
+        assert "# Project features" in prompt

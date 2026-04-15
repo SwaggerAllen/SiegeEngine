@@ -45,6 +45,7 @@ from backend.graph.prompts.sysarch import (
 from backend.graph.reducer import append_event
 from backend.graph.sysarch import get_sysarch_node, pending_sysarch_draft
 from backend.models import Project
+from backend.models.input_document import InputDocument
 from backend.models.node import Node
 from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
@@ -149,6 +150,24 @@ async def generate_sysarch(payload: dict) -> None:
         from backend.graph.vocabulary import render_vocab_summary_all
 
         vocab_summary = render_vocab_summary_all(db, project_id)
+
+        # Project input document — fed unconditionally on every
+        # sysarch generation. Same reasoning as
+        # ``requirements_generation.py``: the route blocks regen
+        # with 409 once sysarch is approved, so every invocation
+        # is either an initial pass or a pre-approval feedback
+        # iteration, and both benefit from seeing the original
+        # framing.
+        input_doc_row = (
+            db.query(InputDocument)
+            .filter(
+                InputDocument.project_id == project_id,
+                InputDocument.doc_type == "project_doc",
+            )
+            .order_by(InputDocument.created_at.desc())
+            .first()
+        )
+        input_doc = (input_doc_row.content or "") if input_doc_row else ""
     finally:
         db.close()
 
@@ -171,6 +190,7 @@ async def generate_sysarch(payload: dict) -> None:
             feedback=feedback,
             parse_error=parse_error,
             vocab_summary=vocab_summary,
+            input_doc=input_doc,
         )
 
     def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]

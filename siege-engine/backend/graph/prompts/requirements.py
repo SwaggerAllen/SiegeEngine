@@ -204,6 +204,7 @@ def render_user_prompt(
     feedback: str | None,
     parse_error: str | None = None,
     vocab_summary: str = "",
+    input_doc: str = "",
 ) -> str:
     """Build the user prompt for the requirements generator.
 
@@ -215,8 +216,19 @@ def render_user_prompt(
     the feature-expansion prompt: prior approved / pending content
     for regen iteration, user feedback for revision, and an
     optional ``parse_error`` for the parse-validate retry path.
+
+    ``input_doc`` is the raw project input document. The handler
+    passes it on every generation so the LLM sees the original
+    framing for both initial drafts and feedback iterations.
+    This function just renders the section when non-empty and
+    omits it otherwise.
     """
     parts: list[str] = []
+    if input_doc and input_doc.strip():
+        parts.append("# Project input document")
+        parts.append("")
+        parts.append(input_doc.strip())
+        parts.append("")
     if vocab_summary and vocab_summary.strip():
         parts.append(vocab_summary.strip())
         parts.append("")
