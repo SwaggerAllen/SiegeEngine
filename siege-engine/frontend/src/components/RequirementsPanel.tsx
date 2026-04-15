@@ -36,14 +36,15 @@ const LABELS: BootstrapPanelLabels = {
  * The renderer map is built via ``makeRequirementsRenderers`` with
  * a live feature-name map so each ``<responsibility>`` card's
  * "Covers" footer renders ``name (feat_xxxxxxxx)`` for every
- * upstream feature instead of bare IDs. Features are fetched with
- * ``mintPending=true`` so the query runs as soon as the expansion
- * has been approved and downstream features exist — without that
- * gate the query would be disabled and we'd fall back to bare IDs.
+ * upstream feature instead of bare IDs. The features query runs
+ * with no ``mintPending`` gate — requirements generation is
+ * downstream of feature_mint, so by the time a reqs draft exists
+ * the feature list is already minted and a single fetch on mount
+ * populates the name map without polling.
  */
 export function RequirementsPanel({ projectId }: Props) {
   const { data, error, isLoading } = useRequirements(projectId);
-  const { data: featuresData } = useFeatures(projectId, true);
+  const { data: featuresData } = useFeatures(projectId);
   const feedbackMutation = useFeedbackMutation(projectId);
   const approveMutation = useApproveMutation(projectId);
   const discardMutation = useDiscardMutation(projectId);

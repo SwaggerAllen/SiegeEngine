@@ -36,15 +36,15 @@ const LABELS: BootstrapPanelLabels = {
  * live ``resp_*`` → name map from ``useResponsibilities`` so
  * component cards' "Responsibilities" lists and policy "requires"
  * lines render ``name (resp_xxxxxxxx)`` instead of bare IDs. The
- * responsibilities query is fetched with ``mintPending=true`` so
- * it activates as soon as the reqs node has been approved and
- * top-level ``resp_*`` nodes exist — sysarch generation blocks on
- * that step anyway, so by the time the user looks at the sysarch
- * draft, the name map is populated.
+ * responsibilities query runs with no ``mintPending`` gate —
+ * sysarch generation is downstream of reqs_mint, so by the time
+ * a sysarch draft exists the top-level ``resp_*`` set is already
+ * minted and a single fetch on mount populates the name map
+ * without polling.
  */
 export function SysarchPanel({ projectId }: Props) {
   const { data, error, isLoading } = useSysarch(projectId);
-  const { data: respsData } = useResponsibilities(projectId, true);
+  const { data: respsData } = useResponsibilities(projectId);
   const feedbackMutation = useFeedbackMutation(projectId);
   const approveMutation = useApproveMutation(projectId);
   const discardMutation = useDiscardMutation(projectId);
