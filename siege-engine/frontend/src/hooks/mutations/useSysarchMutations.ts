@@ -42,3 +42,21 @@ export function useDiscardMutation(projectId: string) {
     },
   });
 }
+
+export function useCancelGenerationMutation(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['sysarch', 'cancel', projectId],
+    mutationFn: () => sysarchApi.cancelGeneration(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData<SysarchResponse>(
+        sysarchKeys.detail(projectId),
+        (prev) =>
+          prev
+            ? { ...prev, generation_status: 'idle', generation_started_at: null }
+            : prev
+      );
+      queryClient.invalidateQueries({ queryKey: sysarchKeys.detail(projectId) });
+    },
+  });
+}

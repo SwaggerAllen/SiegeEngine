@@ -26,12 +26,14 @@ export const SubreqsResponseSchema = z.object({
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
   latest_telemetry: TelemetrySummarySchema.nullable(),
+  generation_started_at: z.string().nullish().transform((v) => v ?? null),
 });
 export type SubreqsResponse = z.infer<typeof SubreqsResponseSchema>;
 
 const FeedbackResponseSchema = z.object({ job_id: z.string() });
 const ApproveResponseSchema = z.object({ node: SubreqsNodeSchema });
 const DiscardResponseSchema = z.object({ ok: z.boolean() });
+const CancelResponseSchema = z.object({ cancelled: z.boolean() });
 
 // ── Subresponsibilities list ──────────────────────────────────────
 
@@ -97,6 +99,16 @@ export async function discardDraft(
     { draft_id: draftId }
   );
   DiscardResponseSchema.parse(data);
+}
+
+export async function cancelGeneration(
+  projectId: string,
+  componentId: string
+): Promise<boolean> {
+  const { data } = await api.post(
+    `/projects/${projectId}/components/${componentId}/subrequirements/cancel`
+  );
+  return CancelResponseSchema.parse(data).cancelled;
 }
 
 export async function getSubresponsibilities(

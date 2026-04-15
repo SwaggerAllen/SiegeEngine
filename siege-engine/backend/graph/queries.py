@@ -652,30 +652,54 @@ def _draft_dict(d: Draft) -> dict:
 
 
 def latest_generation_status(
-    session: Session, project_id: str, job_type: str
-) -> tuple[GenerationStatus, str | None]:
+    session: Session,
+    project_id: str,
+    job_type: str,
+    payload_filters: dict | None = None,
+) -> tuple[GenerationStatus, str | None, str | None]:
     """Derive a generation status from the latest job of ``job_type``.
 
-    Returns ``("idle", None)`` if no matching job exists, or a project
-    has never had one for this type. Returns ``("running", None)`` if
-    the latest job is ``queued`` or ``running``. Returns
-    ``("failed", error)`` if the latest job is in a terminal-failure
-    state. Completed jobs are reported as ``("idle", None)``.
+    Returns ``(status, last_error, started_at_iso)``:
+
+    * ``("idle", None, None)`` if no matching job exists, or the
+      latest matching job ``completed`` or was ``cancelled`` (we
+      treat cancellation as "back to idle" so the UI can return to
+      the feedback / accept / reject state).
+    * ``("running", None, started_at_iso)`` if the latest job is
+      ``queued`` or ``running``. ``started_at_iso`` is the job's
+      ``created_at`` serialized to ISO-8601 (UTC, naive) so the
+      client can render a duration clock off it.
+    * ``("failed", error, None)`` if the latest job is in a terminal-
+      failure state.
+
+    ``payload_filters`` lets callers scope the lookup to jobs whose
+    payload matches a set of key/value pairs — used by the per-
+    component tiers (subreqs / comparch / subcomparch) so a running
+    job for a different component doesn't bleed into the UI of the
+    one the user is actually viewing.
     """
+    filters = dict(payload_filters or {})
+    filters.setdefault("project_id", project_id)
     rows = (
         session.execute(
-            select(Job).where(Job.job_type == job_type).order_by(Job.created_at.desc()).limit(10)
+            select(Job).where(Job.job_type == job_type).order_by(Job.created_at.desc()).limit(50)
         )
         .scalars()
         .all()
     )
     for job in rows:
-        if job.payload.get("project_id") != project_id:
+        payload = job.payload or {}
+        if any(payload.get(k) != v for k, v in filters.items()):
             continue
         if job.status in ("queued", "running"):
-            return "running", None
-        if job.status in ("failed", "cancelled"):
-            return "failed", job.error_message
+            started = job.created_at.isoformat() if job.created_at else None
+            return "running", None, started
+        if job.status == "failed":
+            return "failed", job.error_message, None
+        if job.status == "cancelled":
+            # Cancelled: fall through to idle so the UI returns to
+            # the draft-review / empty state rather than "failed".
+            return "idle", None, None
         # completed
-        return "idle", None
-    return "idle", None
+        return "idle", None, None
+    return "idle", None, None

@@ -3,6 +3,7 @@ import { useResponsibilities } from '../hooks/queries/useRequirementsQueries';
 import { useComponents, useSysarch } from '../hooks/queries/useSysarchQueries';
 import {
   useApproveMutation,
+  useCancelGenerationMutation,
   useDiscardMutation,
   useFeedbackMutation,
 } from '../hooks/mutations/useSysarchMutations';
@@ -61,9 +62,13 @@ export function SysarchPanel({ projectId }: Props) {
   const feedbackMutation = useFeedbackMutation(projectId);
   const approveMutation = useApproveMutation(projectId);
   const discardMutation = useDiscardMutation(projectId);
+  const cancelMutation = useCancelGenerationMutation(projectId);
 
   const isBusy =
-    feedbackMutation.isPending || approveMutation.isPending || discardMutation.isPending;
+    feedbackMutation.isPending ||
+    approveMutation.isPending ||
+    discardMutation.isPending ||
+    cancelMutation.isPending;
 
   const renderers = useMemo(() => {
     const respNames: Record<string, string> = {};
@@ -90,6 +95,7 @@ export function SysarchPanel({ projectId }: Props) {
         onApprove: (id) => approveMutation.mutate(id),
         onDiscard: (id) => discardMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
+        onCancel: () => cancelMutation.mutate(),
         isBusy,
       }}
       contentRenderers={renderers}

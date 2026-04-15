@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 GENERATE_FEATURE_EXPANSION_JOB_TYPE = "v2.generate_feature_expansion"
 
-CLI_MAX_BUDGET_USD = 0.50
+CLI_MAX_BUDGET_USD = 1.00
 # Disable all CLI tools — this is pure text generation, no file I/O.
 CLI_TOOLS = '""'
 

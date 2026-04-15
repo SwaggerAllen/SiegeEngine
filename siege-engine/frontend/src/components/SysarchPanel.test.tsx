@@ -9,6 +9,7 @@ vi.mock('../api/sysarch', () => ({
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
   discardDraft: vi.fn(),
+  cancelGeneration: vi.fn(),
   getComponents: vi.fn(),
   getPolicies: vi.fn(),
 }));
@@ -40,6 +41,7 @@ function makeResponse(overrides: Partial<SysarchResponse> = {}): SysarchResponse
     generation_status: 'idle',
     last_error: null,
     latest_telemetry: null,
+    generation_started_at: null,
     ...overrides,
   };
 }

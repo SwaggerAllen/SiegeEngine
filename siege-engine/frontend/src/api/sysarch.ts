@@ -28,12 +28,14 @@ export const SysarchResponseSchema = z.object({
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
   latest_telemetry: TelemetrySummarySchema.nullable(),
+  generation_started_at: z.string().nullish().transform((v) => v ?? null),
 });
 export type SysarchResponse = z.infer<typeof SysarchResponseSchema>;
 
 const FeedbackResponseSchema = z.object({ job_id: z.string() });
 const ApproveResponseSchema = z.object({ node: SysarchNodeSchema });
 const DiscardResponseSchema = z.object({ ok: z.boolean() });
+const CancelResponseSchema = z.object({ cancelled: z.boolean() });
 
 // ── Components list ────────────────────────────────────────────────
 
@@ -106,6 +108,11 @@ export async function discardDraft(
     draft_id: draftId,
   });
   DiscardResponseSchema.parse(data);
+}
+
+export async function cancelGeneration(projectId: string): Promise<boolean> {
+  const { data } = await api.post(`/projects/${projectId}/sysarch/cancel`);
+  return CancelResponseSchema.parse(data).cancelled;
 }
 
 export async function getComponents(projectId: string): Promise<ComponentListResponse> {

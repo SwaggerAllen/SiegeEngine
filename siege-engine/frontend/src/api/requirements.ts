@@ -30,12 +30,14 @@ export const ReqsResponseSchema = z.object({
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
   latest_telemetry: TelemetrySummarySchema.nullable(),
+  generation_started_at: z.string().nullish().transform((v) => v ?? null),
 });
 export type ReqsResponse = z.infer<typeof ReqsResponseSchema>;
 
 const FeedbackResponseSchema = z.object({ job_id: z.string() });
 const ApproveResponseSchema = z.object({ node: ReqsNodeSchema });
 const DiscardResponseSchema = z.object({ ok: z.boolean() });
+const CancelResponseSchema = z.object({ cancelled: z.boolean() });
 
 // ── Responsibilities list (minted resp_* nodes) ────────────────────
 
@@ -88,6 +90,11 @@ export async function discardDraft(
     draft_id: draftId,
   });
   DiscardResponseSchema.parse(data);
+}
+
+export async function cancelGeneration(projectId: string): Promise<boolean> {
+  const { data } = await api.post(`/projects/${projectId}/requirements/cancel`);
+  return CancelResponseSchema.parse(data).cancelled;
 }
 
 export async function getResponsibilities(

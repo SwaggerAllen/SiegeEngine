@@ -150,6 +150,11 @@ class ExpansionResponse(BaseModel):
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
+    # ISO-8601 UTC timestamp (naive) of when the currently-running
+    # generation job was enqueued, or ``None`` if no generation is
+    # running. Used by the frontend to render a duration clock / PST
+    # start-time label while an artifact regenerates.
+    generation_started_at: str | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -170,6 +175,20 @@ class ApproveResponse(BaseModel):
 
 class DiscardResponse(BaseModel):
     ok: bool
+
+
+class CancelResponse(BaseModel):
+    """Response shape for the per-tier ``/cancel`` routes.
+
+    ``cancelled`` is True if a queued or running job was found and
+    told to stop; False if no active generation job existed (the
+    user clicked stop after the job had already finished, or at a
+    moment when no job was in flight). Either way the route is a
+    no-op from the client's perspective — the UI just refetches and
+    renders whichever state the server now reports.
+    """
+
+    cancelled: bool
 
 
 # ── Feature list response models ────────────────────────────────────
@@ -257,7 +276,7 @@ def get_expansion(
         node = get_expansion_node(db, project_id)
         assert node is not None, "bootstrap_expansion_node should have minted one"
     draft = pending_expansion_draft(db, project_id)
-    status, last_error = queries.latest_generation_status(
+    status, last_error, started_at = queries.latest_generation_status(
         db, project_id, GENERATE_FEATURE_EXPANSION_JOB_TYPE
     )
     return ExpansionResponse(
@@ -274,6 +293,7 @@ def get_expansion(
         generation_status=status,
         last_error=last_error,
         latest_telemetry=_latest_telemetry(db, project_id, node.id),
+        generation_started_at=started_at,
     )
 
 
@@ -412,6 +432,34 @@ def post_expansion_discard(
     return DiscardResponse(ok=True)
 
 
+@router.post("/{project_id}/expansion/cancel", response_model=CancelResponse)
+def post_expansion_cancel(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    """Stop any queued/running feature-expansion generation for this project.
+
+    Best-effort: returns ``cancelled=False`` if no active job was
+    found (race with completion, or click after the job already
+    finished). The frontend treats either response as "refetch the
+    state and re-render"; the cancelled job transitions to the
+    ``cancelled`` terminal state which the status query reads as
+    ``idle``, so the user is dropped back into the feedback /
+    accept / reject flow over any remaining pending draft.
+    """
+    _require_project(db, project_id)
+    job = pipeline_queue.find_active_job(
+        db,
+        GENERATE_FEATURE_EXPANSION_JOB_TYPE,
+        payload_filters={"project_id": project_id},
+    )
+    if job is None:
+        return CancelResponse(cancelled=False)
+    ok = pipeline_queue.cancel_job(db, job.id)
+    return CancelResponse(cancelled=ok)
+
+
 # ── Feature list endpoint ───────────────────────────────────────────
 
 
@@ -469,6 +517,7 @@ class ReqsResponse(BaseModel):
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
+    generation_started_at: str | None = None
 
 
 class ReqsApproveResponse(BaseModel):
@@ -527,7 +576,7 @@ def get_requirements(
         node = get_reqs_node(db, project_id)
         assert node is not None, "bootstrap_reqs_node should have minted one"
     draft = pending_reqs_draft(db, project_id)
-    status, last_error = queries.latest_generation_status(
+    status, last_error, started_at = queries.latest_generation_status(
         db, project_id, GENERATE_REQUIREMENTS_JOB_TYPE
     )
     return ReqsResponse(
@@ -544,6 +593,7 @@ def get_requirements(
         generation_status=status,
         last_error=last_error,
         latest_telemetry=_latest_telemetry(db, project_id, node.id),
+        generation_started_at=started_at,
     )
 
 
@@ -665,6 +715,25 @@ def post_requirements_discard(
     return DiscardResponse(ok=True)
 
 
+@router.post("/{project_id}/requirements/cancel", response_model=CancelResponse)
+def post_requirements_cancel(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    """Stop any queued/running requirements generation for this project."""
+    _require_project(db, project_id)
+    job = pipeline_queue.find_active_job(
+        db,
+        GENERATE_REQUIREMENTS_JOB_TYPE,
+        payload_filters={"project_id": project_id},
+    )
+    if job is None:
+        return CancelResponse(cancelled=False)
+    ok = pipeline_queue.cancel_job(db, job.id)
+    return CancelResponse(cancelled=ok)
+
+
 # ── Responsibilities list endpoint ──────────────────────────────────
 
 
@@ -720,6 +789,7 @@ class SysarchResponse(BaseModel):
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
+    generation_started_at: str | None = None
 
 
 class SysarchApproveResponse(BaseModel):
@@ -799,7 +869,9 @@ def get_sysarch(
         node = get_sysarch_node(db, project_id)
         assert node is not None, "bootstrap_sysarch_node should have minted one"
     draft = pending_sysarch_draft(db, project_id)
-    status, last_error = queries.latest_generation_status(db, project_id, GENERATE_SYSARCH_JOB_TYPE)
+    status, last_error, started_at = queries.latest_generation_status(
+        db, project_id, GENERATE_SYSARCH_JOB_TYPE
+    )
     return SysarchResponse(
         node=_serialize_sysarch_node(node),
         pending_draft=(
@@ -814,6 +886,7 @@ def get_sysarch(
         generation_status=status,
         last_error=last_error,
         latest_telemetry=_latest_telemetry(db, project_id, node.id),
+        generation_started_at=started_at,
     )
 
 
@@ -932,6 +1005,25 @@ def post_sysarch_discard(
     return DiscardResponse(ok=True)
 
 
+@router.post("/{project_id}/sysarch/cancel", response_model=CancelResponse)
+def post_sysarch_cancel(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    """Stop any queued/running sysarch generation for this project."""
+    _require_project(db, project_id)
+    job = pipeline_queue.find_active_job(
+        db,
+        GENERATE_SYSARCH_JOB_TYPE,
+        payload_filters={"project_id": project_id},
+    )
+    if job is None:
+        return CancelResponse(cancelled=False)
+    ok = pipeline_queue.cancel_job(db, job.id)
+    return CancelResponse(cancelled=ok)
+
+
 # ── Components + policies list endpoints ────────────────────────────
 
 
@@ -1017,6 +1109,7 @@ class SubreqsResponse(BaseModel):
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
+    generation_started_at: str | None = None
 
 
 class SubreqsApproveResponse(BaseModel):
@@ -1105,7 +1198,12 @@ def get_subreqs(
         node = get_subreqs_node(db, project_id, comp_id)
         assert node is not None
     draft = pending_subreqs_draft(db, project_id, comp_id)
-    status, last_error = queries.latest_generation_status(db, project_id, GENERATE_SUBREQS_JOB_TYPE)
+    status, last_error, started_at = queries.latest_generation_status(
+        db,
+        project_id,
+        GENERATE_SUBREQS_JOB_TYPE,
+        payload_filters={"component_id": comp_id},
+    )
     return SubreqsResponse(
         node=_serialize_subreqs_node(node),
         pending_draft=(
@@ -1120,6 +1218,7 @@ def get_subreqs(
         generation_status=status,
         last_error=last_error,
         latest_telemetry=_latest_telemetry(db, project_id, node.id),
+        generation_started_at=started_at,
     )
 
 
@@ -1255,6 +1354,36 @@ def post_subreqs_discard(
     return DiscardResponse(ok=True)
 
 
+@router.post(
+    "/{project_id}/components/{comp_id}/subrequirements/cancel",
+    response_model=CancelResponse,
+)
+def post_subreqs_cancel(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    """Stop any queued/running subreqs generation for this component.
+
+    Scoped by ``component_id`` so stopping one comp's generation
+    doesn't affect sibling comps whose subreqs jobs may be running
+    in parallel (the sysarch mint fan-out enqueues one per top-
+    level comp).
+    """
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    job = pipeline_queue.find_active_job(
+        db,
+        GENERATE_SUBREQS_JOB_TYPE,
+        payload_filters={"project_id": project_id, "component_id": comp_id},
+    )
+    if job is None:
+        return CancelResponse(cancelled=False)
+    ok = pipeline_queue.cancel_job(db, job.id)
+    return CancelResponse(cancelled=ok)
+
+
 @router.get(
     "/{project_id}/components/{comp_id}/subresponsibilities",
     response_model=SubresponsibilityListResponse,
@@ -1305,6 +1434,7 @@ class ComparchResponse(BaseModel):
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
+    generation_started_at: str | None = None
 
 
 class ComparchApproveResponse(BaseModel):
@@ -1385,8 +1515,11 @@ def get_comparch(
             Draft.status == "pending",
         )
     ).scalar_one_or_none()
-    status, last_error = queries.latest_generation_status(
-        db, project_id, GENERATE_COMPARCH_JOB_TYPE
+    status, last_error, started_at = queries.latest_generation_status(
+        db,
+        project_id,
+        GENERATE_COMPARCH_JOB_TYPE,
+        payload_filters={"component_id": comp_id},
     )
     return ComparchResponse(
         node=_serialize_comparch_node(node),
@@ -1402,6 +1535,7 @@ def get_comparch(
         generation_status=status,
         last_error=last_error,
         latest_telemetry=_latest_telemetry(db, project_id, comp_id),
+        generation_started_at=started_at,
     )
 
 
@@ -1531,6 +1665,30 @@ def post_comparch_discard(
     return DiscardResponse(ok=True)
 
 
+@router.post(
+    "/{project_id}/components/{comp_id}/comparch/cancel",
+    response_model=CancelResponse,
+)
+def post_comparch_cancel(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    """Stop any queued/running comparch generation for this component."""
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    job = pipeline_queue.find_active_job(
+        db,
+        GENERATE_COMPARCH_JOB_TYPE,
+        payload_filters={"project_id": project_id, "component_id": comp_id},
+    )
+    if job is None:
+        return CancelResponse(cancelled=False)
+    ok = pipeline_queue.cancel_job(db, job.id)
+    return CancelResponse(cancelled=ok)
+
+
 # ── Subcomparch response models (Phase 5) ──────────────────────────
 
 
@@ -1554,6 +1712,7 @@ class SubcomparchResponse(BaseModel):
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
+    generation_started_at: str | None = None
 
 
 class SubcomparchApproveResponse(BaseModel):
@@ -1636,8 +1795,11 @@ def get_subcomparch(
             Draft.status == "pending",
         )
     ).scalar_one_or_none()
-    status, last_error = queries.latest_generation_status(
-        db, project_id, GENERATE_SUBCOMPARCH_JOB_TYPE
+    status, last_error, started_at = queries.latest_generation_status(
+        db,
+        project_id,
+        GENERATE_SUBCOMPARCH_JOB_TYPE,
+        payload_filters={"component_id": sub_id},
     )
     return SubcomparchResponse(
         node=_serialize_subcomparch_node(sub, parent_comp_id),
@@ -1653,6 +1815,7 @@ def get_subcomparch(
         generation_status=status,
         last_error=last_error,
         latest_telemetry=_latest_telemetry(db, project_id, sub_id),
+        generation_started_at=started_at,
     )
 
 
@@ -1782,6 +1945,31 @@ def post_subcomparch_discard(
         },
     )
     return DiscardResponse(ok=True)
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/subcomparch/cancel",
+    response_model=CancelResponse,
+)
+def post_subcomparch_cancel(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    """Stop any queued/running subcomparch generation for this subcomponent."""
+    _require_project(db, project_id)
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    job = pipeline_queue.find_active_job(
+        db,
+        GENERATE_SUBCOMPARCH_JOB_TYPE,
+        payload_filters={"project_id": project_id, "component_id": sub_id},
+    )
+    if job is None:
+        return CancelResponse(cancelled=False)
+    ok = pipeline_queue.cancel_job(db, job.id)
+    return CancelResponse(cancelled=ok)
 
 
 # ── Subcomponent / policy list endpoints ───────────────────────────

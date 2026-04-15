@@ -9,6 +9,7 @@ vi.mock('../api/subreqs', () => ({
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
   discardDraft: vi.fn(),
+  cancelGeneration: vi.fn(),
   getSubresponsibilities: vi.fn(),
 }));
 
@@ -43,6 +44,7 @@ function makeResponse(overrides: Partial<SubreqsResponse> = {}): SubreqsResponse
     generation_status: 'idle',
     last_error: null,
     latest_telemetry: null,
+    generation_started_at: null,
     ...overrides,
   };
 }

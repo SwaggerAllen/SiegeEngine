@@ -3,6 +3,7 @@ import { useFeatures } from '../hooks/queries/useFeatureQueries';
 import { useRequirements } from '../hooks/queries/useRequirementsQueries';
 import {
   useApproveMutation,
+  useCancelGenerationMutation,
   useDiscardMutation,
   useFeedbackMutation,
 } from '../hooks/mutations/useRequirementsMutations';
@@ -48,9 +49,13 @@ export function RequirementsPanel({ projectId }: Props) {
   const feedbackMutation = useFeedbackMutation(projectId);
   const approveMutation = useApproveMutation(projectId);
   const discardMutation = useDiscardMutation(projectId);
+  const cancelMutation = useCancelGenerationMutation(projectId);
 
   const isBusy =
-    feedbackMutation.isPending || approveMutation.isPending || discardMutation.isPending;
+    feedbackMutation.isPending ||
+    approveMutation.isPending ||
+    discardMutation.isPending ||
+    cancelMutation.isPending;
 
   const renderers = useMemo(() => {
     const featureNames: Record<string, string> = {};
@@ -71,6 +76,7 @@ export function RequirementsPanel({ projectId }: Props) {
         onApprove: (id) => approveMutation.mutate(id),
         onDiscard: (id) => discardMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
+        onCancel: () => cancelMutation.mutate(),
         isBusy,
       }}
       contentRenderers={renderers}

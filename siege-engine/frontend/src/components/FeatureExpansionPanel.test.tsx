@@ -10,6 +10,7 @@ vi.mock('../api/expansion', () => ({
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
   discardDraft: vi.fn(),
+  cancelGeneration: vi.fn(),
 }));
 
 import * as expansionApi from '../api/expansion';
@@ -41,6 +42,7 @@ function makeResponse(overrides: Partial<ExpansionResponse> = {}): ExpansionResp
     generation_status: 'idle',
     last_error: null,
     latest_telemetry: null,
+    generation_started_at: null,
     ...overrides,
   };
 }

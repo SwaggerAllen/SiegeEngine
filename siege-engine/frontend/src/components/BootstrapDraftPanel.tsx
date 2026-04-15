@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
 import { XmlDocument } from './xml';
 import type { XmlRendererMap } from './xml';
@@ -40,6 +40,13 @@ export interface BootstrapPanelData {
   generation_status: BootstrapGenerationStatus;
   last_error: string | null;
   latest_telemetry: BootstrapPanelTelemetry | null;
+  /**
+   * ISO-8601 UTC timestamp (naive) of when the currently-running
+   * generation job was enqueued. ``null`` when no generation is
+   * running. Drives the regeneration duration clock + PST start-
+   * time label the panel renders alongside the Stop button.
+   */
+  generation_started_at: string | null;
 }
 
 /**
@@ -80,6 +87,11 @@ export interface BootstrapPanelCallbacks {
   /** Kick off a fresh generation with no feedback (the
    * failed-state retry path). */
   onRetry: () => void;
+  /** Stop the currently-running generation. The backend cancels
+   * the queued/running job and the status query flips back to
+   * ``idle``, dropping the user back into the feedback / accept /
+   * reject state over any remaining pending draft. */
+  onCancel: () => void;
   /** True while any of the mutations is in-flight. */
   isBusy: boolean;
 }
@@ -105,6 +117,87 @@ function TelemetryLine({ telemetry }: { telemetry: BootstrapPanelTelemetry | nul
       Last gen: {telemetry.prompt_tokens.toLocaleString()} →{' '}
       {telemetry.completion_tokens.toLocaleString()} tokens · {telemetry.model}
     </div>
+  );
+}
+
+/**
+ * Format a duration in seconds as a short human-readable string:
+ * ``45s``, ``2m 05s``, ``1h 03m``. Used by the regeneration
+ * duration clock so the ticking counter stays compact next to
+ * the Stop button.
+ */
+function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return `${m}m ${rs.toString().padStart(2, '0')}s`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return `${h}h ${rm.toString().padStart(2, '0')}m`;
+}
+
+/**
+ * Duration clock + PST start-time label rendered while a
+ * generation is running. Ticks once a second via a
+ * ``setInterval`` local to the component so the rest of the
+ * panel doesn't re-render on every tick.
+ *
+ * ``startedAtIso`` is the backend-reported job created_at (naive
+ * UTC ISO-8601). We parse it as UTC by appending ``Z`` if the
+ * server didn't. If it's absent (e.g. in the regeneration
+ * optimistic path before the first poll lands), we fall back to
+ * an empty label so the UI stays stable.
+ */
+function GenerationClock({
+  startedAtIso,
+  variant = 'inline',
+}: {
+  startedAtIso: string | null;
+  variant?: 'inline' | 'block';
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!startedAtIso) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startedAtIso]);
+
+  if (!startedAtIso) return null;
+
+  // Backend hands us a naive UTC ISO string (``datetime.utcnow``);
+  // append ``Z`` if it's missing a timezone so Date parses it as
+  // UTC rather than local.
+  const iso = /[Zz]|[+-]\d\d:?\d\d$/.test(startedAtIso)
+    ? startedAtIso
+    : `${startedAtIso}Z`;
+  const startMs = Date.parse(iso);
+  if (Number.isNaN(startMs)) return null;
+
+  const elapsed = (now - startMs) / 1000;
+  const duration = formatDuration(elapsed);
+  // PST per the user's request. ``America/Los_Angeles`` follows
+  // DST; label it "PT" to cover both PST/PDT without lying.
+  const startedLabel = new Date(startMs).toLocaleTimeString('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
+
+  if (variant === 'block') {
+    return (
+      <div className="text-xs text-gray-400 text-center" data-testid="generation-clock">
+        <div>Elapsed: {duration}</div>
+        <div className="text-gray-500">started {startedLabel} PT</div>
+      </div>
+    );
+  }
+  return (
+    <span className="text-xs text-gray-400" data-testid="generation-clock">
+      {duration} · started {startedLabel} PT
+    </span>
   );
 }
 
@@ -145,7 +238,14 @@ export function BootstrapDraftPanel({
   }
   if (!data) return null;
 
-  const { node, pending_draft, generation_status, last_error, latest_telemetry } = data;
+  const {
+    node,
+    pending_draft,
+    generation_status,
+    last_error,
+    latest_telemetry,
+    generation_started_at,
+  } = data;
 
   const submitFeedback = () => {
     const trimmed = feedback.trim();
@@ -160,18 +260,43 @@ export function BootstrapDraftPanel({
       <div className="p-6 flex flex-col items-center justify-center gap-3 text-gray-300">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-blue-400" />
         <div className="text-sm">{labels.generatingMessage}</div>
+        <GenerationClock startedAtIso={generation_started_at} variant="block" />
+        <button
+          type="button"
+          onClick={callbacks.onCancel}
+          disabled={callbacks.isBusy}
+          className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
+          title="Stop this generation and return to the previous state"
+          data-testid="generation-stop-button"
+        >
+          Stop
+        </button>
       </div>
     );
   }
 
   // State 2: pending draft present (review mode).
   if (pending_draft) {
+    const isRegenerating = generation_status === 'running';
     return (
       <div className="p-6 space-y-4 max-w-4xl mx-auto">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">{labels.draftHeading}</h2>
-          {generation_status === 'running' && (
-            <span className="text-xs text-gray-400">regenerating…</span>
+          {isRegenerating && (
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">regenerating…</span>
+              <GenerationClock startedAtIso={generation_started_at} />
+              <button
+                type="button"
+                onClick={callbacks.onCancel}
+                disabled={callbacks.isBusy}
+                className="px-3 py-1 text-xs rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
+                title="Stop this regeneration and return to the previous draft"
+                data-testid="generation-stop-button"
+              >
+                Stop
+              </button>
+            </div>
           )}
         </div>
         <XmlDocument content={pending_draft.content} renderers={contentRenderers} />
@@ -184,14 +309,14 @@ export function BootstrapDraftPanel({
             placeholder={labels.feedbackPlaceholder}
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
-            disabled={callbacks.isBusy}
+            disabled={callbacks.isBusy || isRegenerating}
           />
         </div>
         <div className="flex gap-2 flex-wrap">
           <button
             type="button"
             onClick={submitFeedback}
-            disabled={callbacks.isBusy || !feedback.trim()}
+            disabled={callbacks.isBusy || isRegenerating || !feedback.trim()}
             className="px-4 py-2 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
           >
             Regenerate
@@ -199,7 +324,7 @@ export function BootstrapDraftPanel({
           <button
             type="button"
             onClick={() => callbacks.onApprove(pending_draft.id)}
-            disabled={callbacks.isBusy}
+            disabled={callbacks.isBusy || isRegenerating}
             className="px-4 py-2 text-sm rounded bg-green-700 hover:bg-green-600 disabled:opacity-40"
           >
             Approve
@@ -207,7 +332,7 @@ export function BootstrapDraftPanel({
           <button
             type="button"
             onClick={() => callbacks.onDiscard(pending_draft.id)}
-            disabled={callbacks.isBusy}
+            disabled={callbacks.isBusy || isRegenerating}
             className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
             title="Discard this draft and generate a new one from scratch"
           >
@@ -258,14 +383,23 @@ export function BootstrapDraftPanel({
   }
 
   // State 3b: node exists but has no content and no pending draft —
-  // pre-bootstrap empty state (shouldn't normally be reached on the
-  // happy path).
+  // pre-bootstrap empty state. Also the state the user lands in
+  // after stopping an initial generation that had no prior draft,
+  // so we include a "Generate" button to kick a fresh run.
   return (
     <div className="p-6 space-y-4 max-w-4xl mx-auto">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{node.name}</h2>
       </div>
       <div className="text-sm text-gray-400 italic">No approved content yet.</div>
+      <button
+        type="button"
+        onClick={callbacks.onRetry}
+        disabled={callbacks.isBusy}
+        className="px-4 py-2 text-sm rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
+      >
+        Generate
+      </button>
     </div>
   );
 }
