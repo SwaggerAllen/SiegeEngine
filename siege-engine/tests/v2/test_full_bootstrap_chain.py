@@ -52,13 +52,8 @@ from backend.cli.manager import GenerationResult  # noqa: E402
 from backend.database import Base  # noqa: E402
 from backend.graph import events as ev  # noqa: E402
 from backend.graph.expansion import bootstrap_expansion_node  # noqa: E402
-from backend.graph.prompts import comparch as _p_comparch  # noqa: E402
-from backend.graph.prompts import feature_expansion as _p_features  # noqa: E402
 from backend.graph.prompts import policy_application as _p_policy  # noqa: E402
-from backend.graph.prompts import requirements as _p_reqs  # noqa: E402
 from backend.graph.prompts import subcomparch as _p_subcomparch  # noqa: E402
-from backend.graph.prompts import subrequirements as _p_subreqs  # noqa: E402
-from backend.graph.prompts import sysarch as _p_sysarch  # noqa: E402
 from backend.graph.reducer import append_event  # noqa: E402
 from backend.models import InputDocument, Project  # noqa: E402
 from backend.models.job import Job  # noqa: E402
@@ -433,19 +428,37 @@ def stub_cli(monkeypatch, shared_session_factory):
     """
     from backend.cli import manager as _manager_mod
 
-    # Map from the handler's SYSTEM_PROMPT identity to a builder
-    # that returns valid XML for that phase. Identity match keeps
-    # the dispatch unambiguous even though several prompts mention
-    # neighbouring phases' root tags in prose.
-    phase_by_system_prompt: dict[int, str] = {
-        id(_p_features.SYSTEM_PROMPT): "features",
-        id(_p_reqs.SYSTEM_PROMPT): "requirements",
-        id(_p_sysarch.SYSTEM_PROMPT): "sysarch",
-        id(_p_subreqs.SYSTEM_PROMPT): "subrequirements",
-        id(_p_comparch.SYSTEM_PROMPT): "comparch",
+    # Dispatch phase by a distinctive substring in the system
+    # prompt's opening paragraph. The five bootstrap prompts
+    # (feature_expansion, requirements, sysarch, subrequirements,
+    # comparch) are now rendered per-call via
+    # ``render_system_prompt(counts)``, so identity-match no longer
+    # works — each invocation produces a fresh string. Two prompts
+    # (subcomparch, policy_application) still have a module-level
+    # SYSTEM_PROMPT constant and match by identity for historical
+    # reasons; we fall through to substring match if identity
+    # lookup misses. Substrings were chosen from each template's
+    # opening sentence to be unique across tiers.
+    phase_by_identity: dict[int, str] = {
         id(_p_subcomparch.SYSTEM_PROMPT): "subcomparch",
         id(_p_policy.SYSTEM_PROMPT): "policy_application",
     }
+    phase_by_substring: tuple[tuple[str, str], ...] = (
+        ("product architect helping the user brainstorm", "features"),
+        ("senior software architect helping to decompose", "requirements"),
+        ("producing the **system", "sysarch"),
+        ("decomposing a single", "subrequirements"),
+        ("producing the **architecture", "comparch"),
+    )
+
+    def _phase_for(system_prompt: str) -> str | None:
+        hit = phase_by_identity.get(id(system_prompt))
+        if hit is not None:
+            return hit
+        for needle, phase in phase_by_substring:
+            if needle in system_prompt:
+                return phase
+        return None
 
     phases_called: list[str] = []
     # Capture every rendered user prompt per phase so Phase 6
@@ -457,7 +470,7 @@ def stub_cli(monkeypatch, shared_session_factory):
     async def fake_generate(**kwargs) -> GenerationResult:
         system_prompt = kwargs.get("system_prompt", "") or ""
         prompt = kwargs.get("prompt", "") or ""
-        phase = phase_by_system_prompt.get(id(system_prompt))
+        phase = _phase_for(system_prompt)
         if phase is None:
             raise AssertionError(
                 "LLM stub: unrecognised system prompt; dispatch table "

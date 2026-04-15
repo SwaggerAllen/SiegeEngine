@@ -38,8 +38,8 @@ from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
 from backend.graph.parsers.validators import validate_sysarch
 from backend.graph.prompts.requirements import format_features_summary
 from backend.graph.prompts.sysarch import (
-    SYSTEM_PROMPT,
     format_reqs_summary,
+    render_system_prompt,
     render_user_prompt,
 )
 from backend.graph.reducer import append_event
@@ -141,6 +141,7 @@ async def generate_sysarch(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+        system_prompt = render_system_prompt(settings.top_level_components)
 
         # Project vocabulary context — sysarch reasons across the
         # full component graph, so every defined term should be
@@ -177,7 +178,7 @@ async def generate_sysarch(payload: dict) -> None:
 
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="sysarch",
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         cli_timeout_seconds=cli_timeout_seconds,
         prior_pending=prior_pending,
         render_prompt=_render,

@@ -39,7 +39,7 @@ from backend.database import SessionLocal
 from backend.graph import events as ev
 from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
 from backend.graph.parsers.validators import validate_arch_doc
-from backend.graph.prompts.comparch import SYSTEM_PROMPT, render_user_prompt
+from backend.graph.prompts.comparch import render_system_prompt, render_user_prompt
 from backend.graph.reducer import append_event
 from backend.graph.regen_context import build_regen_context, format_regen_context
 from backend.graph.subrequirements import get_subreqs_node
@@ -161,6 +161,7 @@ async def generate_comparch(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+        system_prompt = render_system_prompt(settings.subcomponents_per_component)
     finally:
         db.close()
 
@@ -198,7 +199,7 @@ async def generate_comparch(payload: dict) -> None:
 
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="comparch",
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         cli_timeout_seconds=cli_timeout_seconds,
         prior_pending=prior_pending,
         render_prompt=_render,
