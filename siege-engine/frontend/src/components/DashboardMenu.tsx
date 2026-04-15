@@ -76,6 +76,14 @@ export function DashboardMenu({ projectId }: Props) {
             Decomposition Graph
           </Link>
           <Link
+            to={`/projects/${projectId}/vocabulary`}
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block px-3 py-2 hover:bg-gray-700 text-gray-200"
+          >
+            Vocabulary
+          </Link>
+          <Link
             to={`/projects/${projectId}/settings`}
             role="menuitem"
             onClick={() => setOpen(false)}
