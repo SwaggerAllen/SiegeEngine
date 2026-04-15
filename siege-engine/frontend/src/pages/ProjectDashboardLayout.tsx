@@ -8,6 +8,7 @@ import { PolicyList } from '../components/PolicyList';
 import { RequirementsPanel } from '../components/RequirementsPanel';
 import { ResponsibilityList } from '../components/ResponsibilityList';
 import { SysarchPanel } from '../components/SysarchPanel';
+import { VocabularyList } from '../components/VocabularyList';
 import { useExpansion } from '../hooks/queries/useExpansionQueries';
 import { useFeatures } from '../hooks/queries/useFeatureQueries';
 import { useProject } from '../hooks/queries/useProjectQueries';
@@ -15,7 +16,7 @@ import { useResponsibilities } from '../hooks/queries/useRequirementsQueries';
 import { debugLog } from '../lib/debugLog';
 import { describeApiError } from '../lib/describeApiError';
 
-type DashboardTab = 'expansion' | 'requirements' | 'architecture';
+type DashboardTab = 'expansion' | 'vocabulary' | 'requirements' | 'architecture';
 
 interface TabSpec {
   key: DashboardTab;
@@ -51,6 +52,19 @@ function DashboardShell({ projectId }: { projectId: string }) {
       {
         key: 'expansion',
         label: 'Expansion',
+        enabled: true,
+      },
+      {
+        // Vocabulary is always enabled so users can pre-seed
+        // project-level terms before expansion runs, and so the
+        // terms minted from the expansion's <vocabulary> block
+        // are visible in-flow without leaving the dashboard.
+        // It is not part of the default-tab progression — the
+        // phase-gated tabs (expansion → requirements →
+        // architecture) remain the "where am I in the flow"
+        // narrative and vocabulary is auxiliary.
+        key: 'vocabulary',
+        label: 'Vocabulary',
         enabled: true,
       },
       {
@@ -186,6 +200,19 @@ function DashboardShell({ projectId }: { projectId: string }) {
             {isExpansionApproved && (
               <FeatureList projectId={projectId} mintPending={isExpansionApproved} />
             )}
+          </div>
+        )}
+        {activeTab === 'vocabulary' && (
+          <div
+            role="tabpanel"
+            id="tabpanel-vocabulary"
+            aria-labelledby="tab-vocabulary"
+            className="h-full"
+          >
+            {/* VocabularyList owns its own split-pane scrolling so
+                this wrapper intentionally does NOT set overflow-auto —
+                doing so would produce a double-scroll. */}
+            <VocabularyList projectId={projectId} />
           </div>
         )}
         {activeTab === 'requirements' && (
