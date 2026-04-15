@@ -44,7 +44,8 @@ export function BootstrapSubtabs({
   nodesLabel = 'Nodes',
 }: Props) {
   const [active, setActive] = useState<'document' | 'nodes'>('document');
-  const baseClasses = 'px-3 py-1.5 text-xs border-b-2 -mb-px transition-colors';
+  const baseClasses =
+    'px-3 py-1.5 text-xs border-b-2 -mb-px transition-colors shrink-0 whitespace-nowrap';
   const activeClasses = 'border-blue-500 text-white';
   const idleClasses =
     'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-600 cursor-pointer';
@@ -52,7 +53,7 @@ export function BootstrapSubtabs({
   return (
     <div className="h-full flex flex-col">
       <nav
-        className="border-b border-gray-800 px-3 flex items-center gap-1 shrink-0"
+        className="border-b border-gray-800 px-3 flex items-center gap-1 shrink-0 overflow-x-auto"
         role="tablist"
         aria-label={`${idPrefix} subtabs`}
       >
