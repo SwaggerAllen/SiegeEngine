@@ -119,7 +119,11 @@ class TestPutSettings:
         assert resp.status_code == 200, resp.text
         assert resp.json()["generation_timeout_seconds"] == 1200
         db.refresh(project)
-        assert project.settings == {"generation_timeout_seconds": 1200}
+        # The full validated dump lands in the column (including
+        # the defaulted NodeCountRange fields), not just the override
+        # diff — see the PUT route docstring.
+        assert project.settings["generation_timeout_seconds"] == 1200
+        assert "top_level_components" in project.settings
 
     def test_empty_body_resets_to_defaults(self, client, project, db):
         project.settings = {"generation_timeout_seconds": 2000}
@@ -128,8 +132,11 @@ class TestPutSettings:
         assert resp.status_code == 200
         assert resp.json()["generation_timeout_seconds"] == 900
         db.refresh(project)
-        # The column now holds the fully-validated dump, not None.
-        assert project.settings == {"generation_timeout_seconds": 900}
+        # The column now holds the fully-validated dump, not None —
+        # including default values for every NodeCountRange field.
+        assert project.settings["generation_timeout_seconds"] == 900
+        assert project.settings["features_per_group"]["ceiling"] == 15
+        assert project.settings["top_level_responsibilities"]["typical_max"] == 20
 
     def test_below_minimum_is_rejected(self, client, project):
         resp = client.put(
@@ -151,6 +158,39 @@ class TestPutSettings:
             json={"generation_timeout_seconds": 600},
         )
         assert resp.status_code == 404
+
+    def test_updates_node_count_range(self, client, project, db):
+        resp = client.put(
+            f"/api/projects/{project.id}/settings",
+            json={
+                "top_level_components": {
+                    "floor": 4,
+                    "typical_min": 6,
+                    "typical_max": 10,
+                    "ceiling": 20,
+                },
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["top_level_components"]["floor"] == 4
+        assert body["top_level_components"]["ceiling"] == 20
+        db.refresh(project)
+        assert project.settings["top_level_components"]["typical_max"] == 10
+
+    def test_node_count_range_bad_ordering_rejected(self, client, project):
+        resp = client.put(
+            f"/api/projects/{project.id}/settings",
+            json={
+                "top_level_components": {
+                    "floor": 30,
+                    "typical_min": 5,
+                    "typical_max": 15,
+                    "ceiling": 25,
+                },
+            },
+        )
+        assert resp.status_code == 422
 
     def test_extra_keys_are_dropped(self, client, project, db):
         resp = client.put(

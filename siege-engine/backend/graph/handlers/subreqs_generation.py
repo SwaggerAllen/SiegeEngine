@@ -36,10 +36,10 @@ from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
 from backend.graph.parsers.validators import validate_subrequirements
 from backend.graph.prompts.subrequirements import (
-    SYSTEM_PROMPT,
     format_component_summary,
     format_domain_parent_context,
     format_parent_resps_summary,
+    render_system_prompt,
     render_user_prompt,
 )
 from backend.graph.queries import (
@@ -180,6 +180,7 @@ async def generate_subreqs(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+        system_prompt = render_system_prompt(settings.subresponsibilities_per_component)
 
         # Project vocabulary scoped to this component's reachable
         # features via the decomposition walk. The subreqs regen
@@ -219,7 +220,7 @@ async def generate_subreqs(payload: dict) -> None:
 
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="subrequirements",
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         cli_timeout_seconds=cli_timeout_seconds,
         prior_pending=prior_pending,
         render_prompt=_render,

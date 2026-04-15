@@ -249,6 +249,45 @@ Unified DAG: domain and presentational share shape, distinguished by
 - [ ] Structured UI #6: domain-parent editor (same Cytoscape, different edge type / color)
 - [ ] Regen prompt context for presentational: reads domain `pubapi` AND `domain-parent` sibling specs
 
+## Phase 6.6 — Reference node tier
+
+First-class reference documents as their own node tier. Addresses
+the gap where supplemental content — DSL specs, deployment
+runbooks, cross-component invariants docs — has no structural
+home: too standalone to be a fragment, too shapeless to be a
+component, not a term definition so not vocabulary. Lands after
+the Phase 6 backend slice and before Phase 7 fan-in synthesis.
+Existing approved content keeps its state; new regens after this
+phase lands pick up ref context via the `reference_dep` edge walk.
+
+Ref is a tier, not a fragment, because refs have independent
+lifecycles, participate in edges on both sides, and expose a
+consumption surface (`reference_dep` edges) that declares their
+visibility set explicitly. The reducer enforces `parent_id = null`
+on refs — refs are never scoped to another node the way vocab is
+scoped to features. Content is parseable XML matching the
+`<reference>` grammar, stored verbatim on `Node.content`, and
+rendered from XML to prose at context-assembly time so prompts
+don't pay tokens for raw tags. **Refs are not frozen after
+approval** — `UpdateReference(ref_id, feedback)` works on any ref
+in any state, unlike the bootstrap tiers, because refs don't mint
+children and therefore have no downstream desync to guard.
+
+- [ ] Alembic migration `bXX_ref_tier` widens `ck_nodes_tier` to include `ref` **and** widens `ck_edges_edge_type` to include `reference_dep`, both via `batch_alter_table`. Single migration covers both schema changes.
+- [ ] `backend/models/node.py` `NODE_TIERS` tuple + `backend/graph/ids.py` `Kind.REF` + `backend/graph/events.py` `NodeTier` Literal widened, plus `EDGE_TYPES` tuple widened with `reference_dep`. No new event class — `NodeCreated` / `NodeDeleted` / `FragmentUpdated` / `EdgeCreated` handle refs generically.
+- [ ] Reducer invariant `_enforce_ref_parent_constraint`: `NodeCreated` or `NodeReparented` whose target tier is `ref` and whose `parent_id` is not `None` is rejected at event-apply time. Called from `_apply_node_created` and `_apply_node_reparented` when target tier is `ref`. Mirror of the vocab invariant.
+- [ ] New `backend/graph/references.py` helpers module: `list_project_references`, `reference_by_id`, `reference_by_name`, and `referenced_content_for_node(source_id)` which walks outgoing `reference_dep` edges from *any* node id (ref or non-ref) and dispatches on each target's tier to pull the right chunk (`ref_*` → `Node.content` rendered to prose, `comp_*` → `pubapi` fragment, `policy_*` → rationale, feat/resp → `Node.content`), plus an XML-to-prose formatter matching the style of `vocabulary.py`. Walker is deliberately source-tier-agnostic so comparch, subcomparch, and ref regens share one code path.
+- [ ] New `backend/graph/prompts/reference.py` with a generic generation prompt template that takes `(seed_description, uses_summary, consumed_content_summary, prior_approved, prior_pending, feedback, parse_error)`. The `uses_summary` is a prose rollup of the nodes that will consume this ref (names + one-line role summaries) so the LLM knows who the audience is. The `consumed_content_summary` is the referenced-content partition produced by the shared walker, containing the rendered content of every node this ref has an outgoing `reference_dep` edge to. Generic prompt, not per-tier — refs are tier-agnostic.
+- [ ] New `generate_reference` handler registered as `v2.generate_reference`. Uses the existing `run_parse_validate_loop` helper with a new `validate_reference` validator. `UpdateReference(ref_id, feedback)` triggers regen regardless of the ref's current approved state (no freeze check).
+- [ ] Validator extended with a `Reference` dataclass and `validate_reference` function. Grammar: `<reference>` root, required `<title>` (prose), required `<body>` (opaque markdown inside — validator doesn't parse body content), optional `<see-also>` with `<ref to="ref_..."/>` children. Full `<reference>` XML is stored verbatim on `Node.content`.
+- [ ] `RegenContext` grows a `referenced_content: dict[str, str]` field (target_node_id → rendered content chunk). Key is the *target* of each outgoing `reference_dep` edge, not just ref ids — the walker dispatches on target tier. `build_regen_context` populates it by walking `reference_dep` edges outgoing from the regen target (works for comp / subreqs / ref / any tier). Every tier's `render_user_prompt` that currently accepts `vocab_summary` additionally accepts `referenced_content_summary`, rendered by a new formatter in `references.py` as a "References" section in the prompt. Own budget partition alongside vocab / pubapis / policy context.
+- [ ] Routes: `GET /api/projects/{id}/references` (list), `GET /api/projects/{id}/references/{ref_id}` (detail), `POST /api/projects/{id}/references/create` (accepts `seed_description` + `uses` + `consumes`), and four-state `feedback` / `approve` / `discard` / `delete` handlers per ref. Edge-edit routes fold into one direction-agnostic endpoint: `POST /api/projects/{id}/references/dependencies` takes `(source_id, target_id)` and emits a `reference_dep` edge; `DELETE` the same with matching params removes it. The direction-agnostic shape exposes the generic edge primitive rather than ref-specific in/out routes.
+- [ ] Instruction vocabulary adds `CreateReference(seed_description, uses, consumes)`, `UpdateReference(ref_id, feedback)`, `AddReferenceDependency(source_id, target_id)` (direction-agnostic — works for comp→ref, ref→comp, and ref→ref), `RemoveReferenceDependency(source_id, target_id)`. Deletion reuses `NodeDeleted`. All flow through the pending-change queue.
+- [ ] Frontend: `api/references.ts` with zod schemas + fetchers, `useReferenceQueries` / `useReferenceMutations` hooks, `ReferencesList`, `ReferencePanel` (using the existing XML renderer machinery for `<reference>` / `<title>` / `<body>` / `<see-also>` / `<ref>`), `CreateReferenceDialog` (with `uses` and `consumes` pre-fill from invocation context — both default to the current node when launched from a comp/feature/policy detail page), `ReferencesPage` routed at `/projects/:id/references`. Dashboard gets a "References" tab next to "Vocabulary". Component / feature / policy detail pages grow a "Create reference" affordance. The ReferencePanel shows both edge sets — "consumed by" (incoming) and "reads from" (outgoing) — as two lists with add/remove affordances.
+- [ ] End-to-end bootstrap chain test extended: seed one `ref_*` node attached via `reference_dep` to a top-level comp in both directions (edges `comp → ref` and `ref → comp`). Assert (a) the ref's rendered content lands in that comp's comparch prompt in the "References" section, and (b) when the ref is regenerated via `UpdateReference`, the ref's own regen prompt contains the comp's pubapi in its "References" section. Mirrors the Phase 5.5 vocab-in-prompt assertion but covers both edge directions.
+- [ ] ~70 new tests across validator, handler, reducer invariant, regen context, routes, and frontend components.
+- [ ] Explicitly **out of scope** for this phase: LLM-driven `reference_dep` declaration (comparch LLM emitting ref edges in its arch doc output); project-level "always visible" ref bucket; staleness propagation across `reference_dep` (Phase 9); cross-ref linking in rendered artifact prose; LLM-discovered references; `<see-also>`-to-edge synchronization. All straightforward follow-ups; none load-bearing for the MVP.
+
 ## Phase 7 — Domain fan-in synthesis nodes
 
 Bound the input set to presentational counterparts.

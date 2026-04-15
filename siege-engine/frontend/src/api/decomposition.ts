@@ -11,6 +11,10 @@ export const DecompositionGraphNodeSchema = z.object({
   kind: z.string(),
   parent_id: z.string().nullable(),
   display_order: z.number().int(),
+  // Phase 6 waiting-on-approval indicator. Non-null for comp_*
+  // nodes that have a pending draft the user still has to
+  // approve; always null for resp_* nodes.
+  pending_draft_kind: z.string().nullable().optional(),
 });
 export type DecompositionGraphNode = z.infer<typeof DecompositionGraphNodeSchema>;
 

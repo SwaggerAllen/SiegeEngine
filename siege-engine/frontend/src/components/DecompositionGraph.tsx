@@ -188,6 +188,18 @@ export function DecompositionGraph({ graph, projectId }: Props) {
         },
       },
       {
+        // Phase 6 waiting-on-approval indicator. Any comp_* node
+        // with a pending draft on it (subreqs / comparch /
+        // subcomparch) gets an amber outline that overrides the
+        // kind-specific border color above. Applied via a data
+        // attribute so it stacks with the kind selectors.
+        selector: 'node[pendingDraftKind]',
+        css: {
+          'border-color': '#f59e0b',
+          'border-width': 4,
+        },
+      },
+      {
         selector: 'edge',
         css: {
           width: 1.5,
@@ -311,26 +323,50 @@ function toCytoscapeElements(
     } else {
       type = 'other';
     }
+    // Only emit pendingDraftKind when it's actually set, so the
+    // Cytoscape selector ``node[pendingDraftKind]`` only matches
+    // comp_* nodes with a waiting draft on them.
+    const data: Record<string, string | undefined> = {
+      id: n.id,
+      name: n.name,
+      type,
+      kind: n.kind,
+      parent: n.tier === 'comp' && n.parent_id ? n.parent_id : undefined,
+    };
+    if (n.pending_draft_kind) {
+      data.pendingDraftKind = n.pending_draft_kind;
+    }
+    return { data };
+  });
+
+  // Edge direction convention: arrows always point from a
+  // dependency toward its dependent ("the thing that needs this
+  // is over there"). The backend's canonical source/target encodes
+  // the *semantic* direction — e.g. a ``dependency`` edge has
+  // source=dependent, target=dependency ("billing depends on
+  // foundation" → source=billing, target=foundation), and a
+  // ``domain_parent`` edge has source=presentational, target=domain
+  // ("billing_ui is a primary view into billing" → source=billing_ui,
+  // target=billing). For the DAG view, both of those render more
+  // intuitively when the arrow runs the other way — from the
+  // thing that was built first toward the thing that consumes it.
+  // We swap source/target at render time for those two edge types.
+  // ``decomposition`` edges are kept as-is: they already point
+  // feat→resp / resp→comp, which the user wants preserved.
+  const shouldFlipEdgeDirection = (edgeType: string): boolean =>
+    edgeType === 'dependency' || edgeType === 'domain_parent';
+
+  const edgeElements: cytoscape.ElementDefinition[] = edges.map((e) => {
+    const flipped = shouldFlipEdgeDirection(e.edge_type);
     return {
       data: {
-        id: n.id,
-        name: n.name,
-        type,
-        kind: n.kind,
-        parent:
-          n.tier === 'comp' && n.parent_id ? n.parent_id : undefined,
+        id: e.id,
+        source: flipped ? e.target_id : e.source_id,
+        target: flipped ? e.source_id : e.target_id,
+        edgeType: e.edge_type,
       },
     };
   });
-
-  const edgeElements: cytoscape.ElementDefinition[] = edges.map((e) => ({
-    data: {
-      id: e.id,
-      source: e.source_id,
-      target: e.target_id,
-      edgeType: e.edge_type,
-    },
-  }));
 
   return [...nodeElements, ...edgeElements];
 }

@@ -49,7 +49,7 @@ from backend.graph.expansion import get_expansion_node, pending_expansion_draft
 from backend.graph.parsers.validators import validate_features, validate_vocabulary
 from backend.graph.parsers.xml_sections import extract_tag_tree
 from backend.graph.prompts.feature_expansion import (
-    SYSTEM_PROMPT,
+    render_system_prompt,
     render_user_prompt,
 )
 from backend.graph.reducer import append_event
@@ -146,6 +146,7 @@ async def generate_feature_expansion(payload: dict) -> None:
         assert project_row is not None  # expansion node existed, so does the project
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+        system_prompt = render_system_prompt(settings.features_per_group)
     finally:
         db.close()
 
@@ -196,7 +197,7 @@ async def generate_feature_expansion(payload: dict) -> None:
 
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="features",
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         cli_timeout_seconds=cli_timeout_seconds,
         prior_pending=prior_pending,
         render_prompt=_render,

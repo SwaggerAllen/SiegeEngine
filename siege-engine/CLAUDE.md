@@ -54,24 +54,33 @@ in Phase 4) where a stale cache masked a real type error.
 
 ## Phase status (as of last session)
 
-**Complete:** Phases 0-5 landed. The v2 bootstrap chain runs
-end-to-end: project → expansion → features → requirements → sysarch
-→ subreqs (per top-level comp) → comparch (per top-level comp) →
-policy application → subcomparch (per subcomponent). Frontend has
-per-tier draft panels, dashboard tabs, decomposition graph, and the
-Phase 5 subcomponent comparch page.
+**Complete:** Phases 0-5.5 landed, plus the backend slice of Phase
+6. The v2 bootstrap chain runs end-to-end: project → expansion →
+features → requirements → sysarch → subreqs (per top-level comp) →
+comparch (per top-level comp) → policy application → subcomparch
+(per subcomponent). Frontend has per-tier draft panels, dashboard
+tabs, decomposition graph (with presentational kind styling and
+`domain_parent` edges already rendered), the Phase 5 subcomponent
+comparch page, and the Phase 5.5 vocabulary list + entry pages.
 
-**Next (Phase 6):** Presentational nodes + domain-parent edges.
-Unified DAG where domain and presentational share shape and
-distinguish by `kind` (already in the schema as `domain` /
-`presentational`). Presentational nodes are strictly layered after
-domain and pull context from domain pubapi + domain-parent siblings.
-Roadmap items:
+The Phase 6 backend slice in particular: `RegenContext` carries
+`domain_parents` + `domain_parent_techspecs` + `domain_parent_pubapis`,
+populated for presentational top-levels and inherited by subs of
+presentational parents. `comparch` renders a "# This component
+presents" section; `subcomparch` renders a "# Grandparent domain
+context" section. The end-to-end bootstrap chain test exercises
+the presentational path (BillingUI presentational comp with a
+domain_parent edge to BillingDomain) and asserts both sections
+land in the rendered prompts.
 
-- Presentational variants of feature / responsibility / component prompts
-- `domain_parent` edge type already in schema — add editor support
-- Structured UI #6: domain-parent editor (Cytoscape reuse)
-- Regen prompt context for presentational nodes
+**Next (remaining Phase 6 work):** Structured UI #6 — the
+domain-parent editor. Deferred during the Phase 6 backend slice
+because the pending-change queue HTTP plumbing doesn't exist yet
+(queue storage + `enqueue_instruction` + `AddDomainParent` /
+`RemoveDomainParent` instruction types all exist, but no routes
+expose them). Phase 11 lands the full queue UX alongside the
+other structured edit UIs; #6 is effectively co-scheduled there
+unless someone wants an isolated domain-parent editor first.
 
 Phase 7 is fan-in synthesis, Phase 8 is impl nodes. Don't conflate
 them — in an earlier session I mis-remembered Phase 6 as impl nodes,

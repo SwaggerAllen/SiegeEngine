@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 
 from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.queries import (
+    domain_parents_of,
     get_component_context,
     list_subcomponents_of,
     list_top_level_components,
@@ -158,6 +159,24 @@ class RegenContext:
     # transforms it to prompt-friendly prose at render time.
     project_vocab: tuple[Node, ...] = ()
     feature_vocab: tuple[Node, ...] = ()
+
+    # Domain-parent context — Phase 6. Populated when this
+    # component (or, for a subcomponent, its parent top-level) is
+    # presentational and has one or more ``domain_parent`` edges
+    # to domain components. The comparch / subcomparch prompts
+    # render these as a read-only "what you're presenting" block
+    # so the LLM can align the presentational component's own
+    # public surface with what the domain side already exposes.
+    # For domain components these stay empty and the formatters
+    # collapse to empty strings.
+    #
+    # Subcomponents of a presentational parent inherit the
+    # grandparent-domain context through their parent — i.e. the
+    # sub's regen context carries the same domain-parent bundle
+    # as its presentational owner would.
+    domain_parents: tuple[Node, ...] = ()
+    domain_parent_techspecs: dict[str, str] = field(default_factory=dict)
+    domain_parent_pubapis: dict[str, str] = field(default_factory=dict)
 
 
 def build_regen_context(session: Session, comp_id: str) -> RegenContext:
@@ -314,6 +333,34 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
     project_vocab_nodes = tuple(n for n in all_reachable_vocab if n.parent_id is None)
     feature_vocab_nodes = tuple(n for n in all_reachable_vocab if n.parent_id is not None)
 
+    # Domain-parent context (Phase 6). For a presentational
+    # top-level comp, look up its own domain_parent edges. For a
+    # subcomponent whose parent top-level is presentational,
+    # inherit the parent's domain-parent bundle so the sub sees
+    # the same grandparent-domain context its owner would. For
+    # domain comps at either tier, the bundle stays empty.
+    domain_parent_lookup_source: str | None = None
+    if is_subcomponent:
+        if parent_component is not None and parent_component.kind == "presentational":
+            domain_parent_lookup_source = parent_component.id
+    else:
+        if component.kind == "presentational":
+            domain_parent_lookup_source = comp_id
+
+    domain_parents_tuple: tuple[Node, ...] = ()
+    domain_parent_techspec_map: dict[str, str] = {}
+    domain_parent_pubapi_map: dict[str, str] = {}
+    if domain_parent_lookup_source is not None:
+        parent_rows = domain_parents_of(session, domain_parent_lookup_source)
+        domain_parents_tuple = tuple(parent_rows)
+        for parent in parent_rows:
+            domain_parent_techspec_map[parent.id] = _fragment_content(
+                session, parent.id, FragmentKind.TECHSPEC
+            )
+            domain_parent_pubapi_map[parent.id] = _fragment_content(
+                session, parent.id, FragmentKind.PUBAPI
+            )
+
     return RegenContext(
         component=component,
         component_techspec=cc.techspec,
@@ -336,6 +383,9 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         sibling_subcomp_pubapi_fragments=sibling_subcomp_pubapi_fragments,
         project_vocab=project_vocab_nodes,
         feature_vocab=feature_vocab_nodes,
+        domain_parents=domain_parents_tuple,
+        domain_parent_techspecs=domain_parent_techspec_map,
+        domain_parent_pubapis=domain_parent_pubapi_map,
     )
 
 
@@ -447,7 +497,26 @@ def format_regen_context(ctx: RegenContext) -> dict[str, str]:
             empty_fallback="",
         ),
         "vocab_summary": _render_vocab_summary_from_ctx(ctx),
+        "domain_parent_surface": _render_domain_parent_surface_for_comparch(ctx),
     }
+
+
+def _render_domain_parent_surface_for_comparch(ctx: RegenContext) -> str:
+    """Render the Phase 6 domain-parent context block for comparch.
+
+    Delegates to
+    :func:`backend.graph.prompts.comparch.format_domain_parent_surface`
+    via a local import to keep the import direction
+    ``prompts -> regen_context`` clean (mirrors the
+    ``_render_vocab_summary_from_ctx`` pattern above).
+    """
+    from backend.graph.prompts.comparch import format_domain_parent_surface
+
+    return format_domain_parent_surface(
+        ctx.domain_parents,
+        ctx.domain_parent_techspecs,
+        ctx.domain_parent_pubapis,
+    )
 
 
 def format_regen_context_for_sub(ctx: RegenContext) -> dict[str, str]:
@@ -500,7 +569,26 @@ def format_regen_context_for_sub(ctx: RegenContext) -> dict[str, str]:
             ctx.sibling_comps, ctx.dep_pubapi_fragments
         ),
         "vocab_summary": _render_vocab_summary_from_ctx(ctx),
+        "domain_parent_surface": _render_domain_parent_surface_for_sub(ctx),
     }
+
+
+def _render_domain_parent_surface_for_sub(ctx: RegenContext) -> str:
+    """Render the Phase 6 domain-parent context block for subcomparch.
+
+    Mirrors :func:`_render_domain_parent_surface_for_comparch`, but
+    delegates to the subcomparch-side thin wrapper so the
+    framing-prose side of the rendering stays with the prompt
+    module that owns it. The actual per-parent layout is shared
+    with comparch via the wrapper.
+    """
+    from backend.graph.prompts.subcomparch import format_domain_parent_surface_for_sub
+
+    return format_domain_parent_surface_for_sub(
+        ctx.domain_parents,
+        ctx.domain_parent_techspecs,
+        ctx.domain_parent_pubapis,
+    )
 
 
 def _render_vocab_summary_from_ctx(ctx: RegenContext) -> str:
@@ -538,8 +626,12 @@ def _format_subcomponent_summary(ctx: RegenContext) -> str:
     4 time. On first-run subcomparch these are the skeletal
     seeds; on regen they're whatever the previous subcomparch
     pass wrote into them.
+
+    The header line carries both the human-readable name and the
+    stable ``comp_*`` id — same rationale as
+    :func:`_format_component_summary`.
     """
-    parts: list[str] = [f"**{ctx.component.name}**"]
+    parts: list[str] = [f"**{ctx.component.name}** (`{ctx.component.id}`)"]
     if ctx.component_techspec.strip():
         parts.append("")
         parts.append("*Role (from parent comparch):*")
@@ -670,8 +762,14 @@ def _format_component_summary(ctx: RegenContext) -> str:
     On first-run comparch these are still the sysarch-time
     placeholders; on regen they're whatever the previous comparch
     pass wrote into them.
+
+    The header line carries both the human-readable name and the
+    stable ``comp_*`` id so the LLM can reference the target
+    unambiguously in prose, and so tests and debug tools can
+    locate the "this is the current target" prompt by searching
+    for the id rather than the name.
     """
-    parts: list[str] = [f"**{ctx.component.name}**"]
+    parts: list[str] = [f"**{ctx.component.name}** (`{ctx.component.id}`)"]
     if ctx.component_techspec.strip():
         parts.append("")
         parts.append("*Role / techspec:*")

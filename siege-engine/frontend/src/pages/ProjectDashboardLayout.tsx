@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { BootstrapSubtabs } from '../components/BootstrapSubtabs';
 import { ComponentList } from '../components/ComponentList';
 import { DashboardMenu } from '../components/DashboardMenu';
 import { FeatureExpansionPanel } from '../components/FeatureExpansionPanel';
@@ -8,6 +9,7 @@ import { PolicyList } from '../components/PolicyList';
 import { RequirementsPanel } from '../components/RequirementsPanel';
 import { ResponsibilityList } from '../components/ResponsibilityList';
 import { SysarchPanel } from '../components/SysarchPanel';
+import { VocabularyList } from '../components/VocabularyList';
 import { useExpansion } from '../hooks/queries/useExpansionQueries';
 import { useFeatures } from '../hooks/queries/useFeatureQueries';
 import { useProject } from '../hooks/queries/useProjectQueries';
@@ -15,7 +17,11 @@ import { useResponsibilities } from '../hooks/queries/useRequirementsQueries';
 import { debugLog } from '../lib/debugLog';
 import { describeApiError } from '../lib/describeApiError';
 
-type DashboardTab = 'expansion' | 'requirements' | 'architecture';
+type DashboardTab = 'expansion' | 'vocabulary' | 'requirements' | 'architecture';
+
+function EmptySubtabMessage({ children }: { children: React.ReactNode }) {
+  return <p className="p-6 text-sm italic text-gray-500">{children}</p>;
+}
 
 interface TabSpec {
   key: DashboardTab;
@@ -51,6 +57,19 @@ function DashboardShell({ projectId }: { projectId: string }) {
       {
         key: 'expansion',
         label: 'Expansion',
+        enabled: true,
+      },
+      {
+        // Vocabulary is always enabled so users can pre-seed
+        // project-level terms before expansion runs, and so the
+        // terms minted from the expansion's <vocabulary> block
+        // are visible in-flow without leaving the dashboard.
+        // It is not part of the default-tab progression — the
+        // phase-gated tabs (expansion → requirements →
+        // architecture) remain the "where am I in the flow"
+        // narrative and vocabulary is auxiliary.
+        key: 'vocabulary',
+        label: 'Vocabulary',
         enabled: true,
       },
       {
@@ -180,12 +199,35 @@ function DashboardShell({ projectId }: { projectId: string }) {
             role="tabpanel"
             id="tabpanel-expansion"
             aria-labelledby="tab-expansion"
-            className="h-full overflow-auto"
+            className="h-full"
           >
-            <FeatureExpansionPanel projectId={projectId} />
-            {isExpansionApproved && (
-              <FeatureList projectId={projectId} mintPending={isExpansionApproved} />
-            )}
+            <BootstrapSubtabs
+              idPrefix="expansion"
+              nodesLabel="Features"
+              document={<FeatureExpansionPanel projectId={projectId} />}
+              nodes={
+                isExpansionApproved ? (
+                  <FeatureList projectId={projectId} mintPending={isExpansionApproved} />
+                ) : (
+                  <EmptySubtabMessage>
+                    Features appear here once the expansion is approved and minted.
+                  </EmptySubtabMessage>
+                )
+              }
+            />
+          </div>
+        )}
+        {activeTab === 'vocabulary' && (
+          <div
+            role="tabpanel"
+            id="tabpanel-vocabulary"
+            aria-labelledby="tab-vocabulary"
+            className="h-full"
+          >
+            {/* VocabularyList owns its own split-pane scrolling so
+                this wrapper intentionally does NOT set overflow-auto —
+                doing so would produce a double-scroll. */}
+            <VocabularyList projectId={projectId} />
           </div>
         )}
         {activeTab === 'requirements' && (
@@ -193,10 +235,22 @@ function DashboardShell({ projectId }: { projectId: string }) {
             role="tabpanel"
             id="tabpanel-requirements"
             aria-labelledby="tab-requirements"
-            className="h-full overflow-auto"
+            className="h-full"
           >
-            <RequirementsPanel projectId={projectId} />
-            <ResponsibilityList projectId={projectId} mintPending={featuresMinted} />
+            <BootstrapSubtabs
+              idPrefix="requirements"
+              nodesLabel="Responsibilities"
+              document={<RequirementsPanel projectId={projectId} />}
+              nodes={
+                respsMinted ? (
+                  <ResponsibilityList projectId={projectId} mintPending={featuresMinted} />
+                ) : (
+                  <EmptySubtabMessage>
+                    Responsibilities appear here once the requirements draft is approved and minted.
+                  </EmptySubtabMessage>
+                )
+              }
+            />
           </div>
         )}
         {activeTab === 'architecture' && (
@@ -204,11 +258,25 @@ function DashboardShell({ projectId }: { projectId: string }) {
             role="tabpanel"
             id="tabpanel-architecture"
             aria-labelledby="tab-architecture"
-            className="h-full overflow-auto"
+            className="h-full"
           >
-            <SysarchPanel projectId={projectId} />
-            <ComponentList projectId={projectId} mintPending={respsMinted} />
-            <PolicyList projectId={projectId} mintPending={respsMinted} />
+            <BootstrapSubtabs
+              idPrefix="architecture"
+              nodesLabel="Components & policies"
+              document={<SysarchPanel projectId={projectId} />}
+              nodes={
+                respsMinted ? (
+                  <div className="space-y-0">
+                    <ComponentList projectId={projectId} mintPending={respsMinted} />
+                    <PolicyList projectId={projectId} mintPending={respsMinted} />
+                  </div>
+                ) : (
+                  <EmptySubtabMessage>
+                    Components and policies appear here once the system architecture is approved and minted.
+                  </EmptySubtabMessage>
+                )
+              }
+            />
           </div>
         )}
       </main>

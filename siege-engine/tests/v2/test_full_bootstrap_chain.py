@@ -52,13 +52,8 @@ from backend.cli.manager import GenerationResult  # noqa: E402
 from backend.database import Base  # noqa: E402
 from backend.graph import events as ev  # noqa: E402
 from backend.graph.expansion import bootstrap_expansion_node  # noqa: E402
-from backend.graph.prompts import comparch as _p_comparch  # noqa: E402
-from backend.graph.prompts import feature_expansion as _p_features  # noqa: E402
 from backend.graph.prompts import policy_application as _p_policy  # noqa: E402
-from backend.graph.prompts import requirements as _p_reqs  # noqa: E402
 from backend.graph.prompts import subcomparch as _p_subcomparch  # noqa: E402
-from backend.graph.prompts import subrequirements as _p_subreqs  # noqa: E402
-from backend.graph.prompts import sysarch as _p_sysarch  # noqa: E402
 from backend.graph.reducer import append_event  # noqa: E402
 from backend.models import InputDocument, Project  # noqa: E402
 from backend.models.job import Job  # noqa: E402
@@ -175,6 +170,10 @@ def _requirements_xml(session, project_id: str) -> str:
     entries = [
         ("Authentication", "Identify callers and make them available downstream."),
         ("BillingDomain", "Handle payments and subscription state."),
+        # Presentational responsibility for the Phase 6 slice — the
+        # sysarch stub marks its owning component as presentational
+        # and draws a domain_parent edge back at BillingDomain.
+        ("BillingUI", "Render a dashboard view of billing state."),
         ("Foundation", "Own project root, build config, shared utilities."),
     ]
     inner = "".join(
@@ -196,15 +195,26 @@ def _sysarch_xml(session, project_id: str) -> str:
             .order_by(Node.display_order, Node.id)
         ).scalars()
     )
+    # The presentational slice: the resp named "BillingUI" maps to
+    # a presentational component with a domain_parent edge pointing
+    # at the component that owns "BillingDomain". Both aliases must
+    # exist in the same <components> list for the sysarch validator
+    # to accept the domain_parent edge.
+    presentational_resp_name = "BillingUI"
+    presentational_domain_target = "BillingDomain"
+    resp_name_to_alias: dict[str, str] = {}
     components: list[str] = []
     for i, r in enumerate(resps):
         alias = f"comp{i}"
+        resp_name_to_alias[r.name] = alias
         is_foundation = i == len(resps) - 1
+        is_presentational = r.name == presentational_resp_name
+        kind_label = "presentational" if is_presentational else "domain"
         foundation_tag = "<foundation/>" if is_foundation else ""
         components.append(
             f'<component alias="{alias}">'
             f"<name>{r.name}Service</name>"
-            f"<kind>domain</kind>"
+            f"<kind>{kind_label}</kind>"
             f"<role>Own the {r.name} subsystem.</role>"
             f"<api-intent>public API for {r.name}</api-intent>"
             f'<responsibilities><resp id="{r.id}"/></responsibilities>'
@@ -212,14 +222,25 @@ def _sysarch_xml(session, project_id: str) -> str:
             f"</component>"
         )
     foundation_alias = f"comp{len(resps) - 1}"
+    # Every non-foundation top-level depends on the foundation.
     deps = "".join(f'<dep from="comp{i}" to="{foundation_alias}"/>' for i in range(len(resps) - 1))
+    # The presentational comp presents its sibling domain comp.
+    domain_parent_entries = ""
+    if (
+        presentational_resp_name in resp_name_to_alias
+        and presentational_domain_target in resp_name_to_alias
+    ):
+        domain_parent_entries = (
+            f'<parent from="{resp_name_to_alias[presentational_resp_name]}" '
+            f'to="{resp_name_to_alias[presentational_domain_target]}"/>'
+        )
     return (
         "<sysarch>"
         "<techspec>Python + FastAPI + PostgreSQL event-sourced stack.</techspec>"
         f"<components>{''.join(components)}</components>"
         "<policies></policies>"
         f"<dependencies>{deps}</dependencies>"
-        "<domain-parent></domain-parent>"
+        f"<domain-parent>{domain_parent_entries}</domain-parent>"
         "</sysarch>"
     )
 
@@ -255,9 +276,31 @@ def _subrequirements_xml(prompt: str) -> str:
     )
 
 
-def _comparch_xml(session, project_id: str) -> str:
-    target = _current_target_comp(session, project_id, kind="top")
-    assert target is not None, "comparch stub: no target top-level comp without content"
+def _comparch_xml(session, project_id: str, prompt: str) -> str:
+    # Target discovery: read the first resp_* id out of the
+    # rendered prompt and walk its ``parent_id`` back to the
+    # owning top-level comp. The comparch prompt renders the
+    # target's pre-minted subresps via ``subresps_summary`` as a
+    # bullet list keyed by real resp IDs, so any subresp in the
+    # prompt is unambiguously owned by this comp. This is more
+    # robust than a DB heuristic (which breaks once comparch jobs
+    # are enqueued out of display order — Phase 6's ordering
+    # change makes the presentational comp's comparch fire after
+    # its domain parent's, not in display order).
+    resp_ids = _unique_in_order(_RESP_ID_RE.findall(prompt))
+    target: Node | None = None
+    for rid in resp_ids:
+        resp_node = session.get(Node, rid)
+        if resp_node is None or resp_node.parent_id is None:
+            continue  # top-level resps (parent_id=None) don't resolve to a comp here
+        parent_comp = session.get(Node, resp_node.parent_id)
+        if parent_comp is not None and parent_comp.tier == "comp":
+            target = parent_comp
+            break
+    assert target is not None, (
+        "comparch stub: could not infer target top-level comp from prompt — "
+        "expected at least one subresp id rendered via subresps_summary"
+    )
     subresps = list(
         session.execute(
             select(Node)
@@ -385,32 +428,56 @@ def stub_cli(monkeypatch, shared_session_factory):
     """
     from backend.cli import manager as _manager_mod
 
-    # Map from the handler's SYSTEM_PROMPT identity to a builder
-    # that returns valid XML for that phase. Identity match keeps
-    # the dispatch unambiguous even though several prompts mention
-    # neighbouring phases' root tags in prose.
-    phase_by_system_prompt: dict[int, str] = {
-        id(_p_features.SYSTEM_PROMPT): "features",
-        id(_p_reqs.SYSTEM_PROMPT): "requirements",
-        id(_p_sysarch.SYSTEM_PROMPT): "sysarch",
-        id(_p_subreqs.SYSTEM_PROMPT): "subrequirements",
-        id(_p_comparch.SYSTEM_PROMPT): "comparch",
+    # Dispatch phase by a distinctive substring in the system
+    # prompt's opening paragraph. The five bootstrap prompts
+    # (feature_expansion, requirements, sysarch, subrequirements,
+    # comparch) are now rendered per-call via
+    # ``render_system_prompt(counts)``, so identity-match no longer
+    # works — each invocation produces a fresh string. Two prompts
+    # (subcomparch, policy_application) still have a module-level
+    # SYSTEM_PROMPT constant and match by identity for historical
+    # reasons; we fall through to substring match if identity
+    # lookup misses. Substrings were chosen from each template's
+    # opening sentence to be unique across tiers.
+    phase_by_identity: dict[int, str] = {
         id(_p_subcomparch.SYSTEM_PROMPT): "subcomparch",
         id(_p_policy.SYSTEM_PROMPT): "policy_application",
     }
+    phase_by_substring: tuple[tuple[str, str], ...] = (
+        ("product architect helping the user brainstorm", "features"),
+        ("senior software architect helping to decompose", "requirements"),
+        ("producing the **system", "sysarch"),
+        ("decomposing a single", "subrequirements"),
+        ("producing the **architecture", "comparch"),
+    )
+
+    def _phase_for(system_prompt: str) -> str | None:
+        hit = phase_by_identity.get(id(system_prompt))
+        if hit is not None:
+            return hit
+        for needle, phase in phase_by_substring:
+            if needle in system_prompt:
+                return phase
+        return None
 
     phases_called: list[str] = []
+    # Capture every rendered user prompt per phase so Phase 6
+    # assertions can verify the comparch / subcomparch stubs
+    # actually received the domain-parent block for presentational
+    # targets. One list per phase — order matches ``phases_called``.
+    prompts_by_phase: dict[str, list[str]] = {}
 
     async def fake_generate(**kwargs) -> GenerationResult:
         system_prompt = kwargs.get("system_prompt", "") or ""
         prompt = kwargs.get("prompt", "") or ""
-        phase = phase_by_system_prompt.get(id(system_prompt))
+        phase = _phase_for(system_prompt)
         if phase is None:
             raise AssertionError(
                 "LLM stub: unrecognised system prompt; dispatch table "
                 "needs an entry for this handler"
             )
         phases_called.append(phase)
+        prompts_by_phase.setdefault(phase, []).append(prompt)
 
         session = shared_session_factory()
         try:
@@ -427,7 +494,7 @@ def stub_cli(monkeypatch, shared_session_factory):
             elif phase == "subrequirements":
                 text = _subrequirements_xml(prompt)
             elif phase == "comparch":
-                text = _comparch_xml(session, project_id)
+                text = _comparch_xml(session, project_id, prompt)
             elif phase == "subcomparch":
                 text = _subcomparch_xml()
             elif phase == "policy_application":
@@ -454,7 +521,7 @@ def stub_cli(monkeypatch, shared_session_factory):
         )
 
     monkeypatch.setattr(_manager_mod.cli_manager, "generate_with_usage", fake_generate)
-    return phases_called
+    return {"phases": phases_called, "prompts": prompts_by_phase}
 
 
 # ── Queue-drain + approval helpers ────────────────────────────────────
@@ -695,12 +762,14 @@ class TestFullBootstrapChain:
                 ).scalars()
             )
             assert len(feats) == 2
-            assert len(top_resps) == 3
-            assert len(top_comps) == 3
-            # Each comp has 2 subresps → 6 subresps total.
-            assert len(subresps) == 6
-            # Each comp decomposes into 2 subcomponents → 6 subcomps.
-            assert len(subcomps) == 6
+            # Phase 6 adds a BillingUI resp/comp as the presentational
+            # slice alongside the three pre-existing domain resps.
+            assert len(top_resps) == 4
+            assert len(top_comps) == 4
+            # Each comp has 2 subresps → 8 subresps total.
+            assert len(subresps) == 8
+            # Each comp decomposes into 2 subcomponents → 8 subcomps.
+            assert len(subcomps) == 8
 
             # Foundation persistence: sysarch seeds one top-level
             # foundation (the last in display order), and comparch
@@ -810,7 +879,7 @@ class TestFullBootstrapChain:
             # once. policy_application is EXPECTED to be absent —
             # empty <policies> scopes cause both policy handlers to
             # early-return before reaching the LLM stub.
-            phases = set(stub_cli)
+            phases = set(stub_cli["phases"])
             assert phases == {
                 "features",
                 "requirements",
@@ -819,5 +888,106 @@ class TestFullBootstrapChain:
                 "comparch",
                 "subcomparch",
             }, f"unexpected phases called: {phases}"
+
+            # ── Phase 6: presentational path ──────────────────────
+            # sysarch emitted a presentational comp + domain_parent
+            # edge. Verify the edge landed in the projection.
+            dp_edges = list(
+                session.execute(
+                    select(Edge).where(
+                        Edge.project_id == project_id,
+                        Edge.edge_type == "domain_parent",
+                    )
+                ).scalars()
+            )
+            assert len(dp_edges) == 1, f"expected one domain_parent edge, got {len(dp_edges)}"
+            dp_edge = dp_edges[0]
+            presentational_comp = session.get(Node, dp_edge.source_id)
+            domain_target_comp = session.get(Node, dp_edge.target_id)
+            assert presentational_comp is not None
+            assert domain_target_comp is not None
+            assert presentational_comp.kind == "presentational"
+            assert domain_target_comp.kind == "domain"
+            assert presentational_comp.name == "BillingUIService"
+            assert domain_target_comp.name == "BillingDomainService"
+
+            # The comparch prompt rendered for the presentational
+            # comp must contain the "# This component presents"
+            # block carrying the domain target's id and pubapi
+            # snippet. Exactly one prompt should carry that section
+            # — only BillingUI's own comparch regen runs through
+            # the presentational branch of build_regen_context.
+            # (The presentational comp's *own* id does not appear
+            # in its own prompt because _format_component_summary
+            # prints only the name, not the id. We locate the
+            # prompt by the section header instead.)
+            comparch_prompts = stub_cli["prompts"]["comparch"]
+            prompts_with_presenting = [
+                p for p in comparch_prompts if "# This component presents" in p
+            ]
+            assert len(prompts_with_presenting) == 1, (
+                f"expected exactly one comparch prompt to carry the "
+                f"'# This component presents' section, got "
+                f"{len(prompts_with_presenting)}"
+            )
+            presentational_comparch_prompt = prompts_with_presenting[0]
+            # The presenting section must reference the domain
+            # target by real comp_* id, and carry the pubapi text.
+            assert domain_target_comp.id in presentational_comparch_prompt
+            assert "public API for BillingDomain" in presentational_comparch_prompt
+            # And the prompt's own component_summary should show
+            # the presentational comp's name (but not id — see
+            # comment above).
+            assert "BillingUIService" in presentational_comparch_prompt
+
+            # Ordering proof: domain_parent edges count as a
+            # dependency for comparch regen order, so BillingUI's
+            # comparch must run *after* BillingDomain's comparch
+            # has been approved and comparch_mint has replaced
+            # the skeletal sysarch-time techspec ("Own the
+            # BillingDomain subsystem.") with the comparch-level
+            # techspec ("Typical Python stack for this
+            # component."). If the ordering were still FIFO /
+            # display-order, BillingUI would fire before
+            # BillingDomain's approval and its domain-parent
+            # block would still carry the sysarch seed.
+            assert "Typical Python stack for this component." in (presentational_comparch_prompt), (
+                "presentational comparch prompt still shows the "
+                "sysarch-time techspec seed; domain-parent ordering "
+                "did not take effect"
+            )
+            assert "Own the BillingDomain subsystem." not in (presentational_comparch_prompt), (
+                "presentational comparch prompt still carries the "
+                "sysarch-time role seed instead of the approved "
+                "comparch techspec"
+            )
+
+            # And every subcomparch prompt for a sub OF the
+            # presentational comp must carry the grandparent block.
+            # The presentational comp decomposed into 2 subcomps at
+            # comparch time, so we expect exactly 2 subcomparch
+            # prompts carrying the grandparent section — one per
+            # presentational subcomponent. Subcomparch prompts for
+            # domain subs must NOT carry the section.
+            subcomparch_prompts = stub_cli["prompts"]["subcomparch"]
+            presentational_subcomps = [
+                sub for sub in subcomps if sub.parent_id == presentational_comp.id
+            ]
+            assert len(presentational_subcomps) == 2, (
+                "expected the presentational top-level comp to have "
+                "decomposed into two subcomponents; got "
+                f"{len(presentational_subcomps)}"
+            )
+            prompts_with_grandparent = [
+                p for p in subcomparch_prompts if "# Grandparent domain context" in p
+            ]
+            assert len(prompts_with_grandparent) == len(presentational_subcomps), (
+                f"expected {len(presentational_subcomps)} subcomparch "
+                f"prompts with the grandparent section, got "
+                f"{len(prompts_with_grandparent)}"
+            )
+            for p in prompts_with_grandparent:
+                assert domain_target_comp.id in p
+                assert "public API for BillingDomain" in p
         finally:
             session.close()

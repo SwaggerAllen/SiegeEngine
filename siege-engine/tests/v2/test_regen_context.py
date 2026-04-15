@@ -91,6 +91,7 @@ def _seed_component(
     *,
     techspec: str = "",
     pubapi: str = "",
+    kind: str = "domain",
 ) -> str:
     comp_id = mint(session, Kind.COMP)
     append_event(
@@ -99,7 +100,7 @@ def _seed_component(
         ev.NodeCreated(
             node_id=comp_id,
             tier="comp",
-            kind="domain",
+            kind=kind,
             parent_id=None,
             name=name,
             display_order=order,
@@ -201,6 +202,7 @@ def _seed_subcomponent(
     techspec: str = "",
     pubapi: str = "",
     privapi: str = "",
+    kind: str = "domain",
 ) -> str:
     """Seed a subcomponent comp_* node under an existing top-level comp."""
     sub_id = mint(session, Kind.COMP)
@@ -210,7 +212,7 @@ def _seed_subcomponent(
         ev.NodeCreated(
             node_id=sub_id,
             tier="comp",
-            kind="domain",
+            kind=kind,
             parent_id=parent_comp_id,
             name=name,
             display_order=order,
@@ -521,13 +523,18 @@ class TestFormatRegenContext:
             "top_level_policy_candidates_summary",
             "related_features_summary",
             "vocab_summary",
+            "domain_parent_surface",
         }
         assert set(formatted.keys()) == expected_keys
 
-    def test_component_summary_includes_name_and_fragments(self, db, seeded):
+    def test_component_summary_includes_name_id_and_fragments(self, db, seeded):
         ctx = build_regen_context(db, seeded["comp_billing"])
         summary = format_regen_context(ctx)["component_summary"]
         assert "BillingService" in summary
+        # The header line carries the comp_* id so the LLM (and
+        # debug tools) can locate "this is the current target"
+        # without guessing from the name alone.
+        assert seeded["comp_billing"] in summary
         assert "Handles payments" in summary
         assert "get_billing_state" in summary
 
@@ -777,13 +784,17 @@ class TestFormatRegenContextForSub:
             "parent_sibling_comps_summary",
             "dep_pubapi_summary",
             "vocab_summary",
+            "domain_parent_surface",
         }
         assert set(formatted.keys()) == expected
 
-    def test_subcomponent_summary_includes_name_and_role(self, db, seeded_with_sub):
+    def test_subcomponent_summary_includes_name_id_and_role(self, db, seeded_with_sub):
         ctx = build_regen_context(db, seeded_with_sub["sub_store"])
         summary = format_regen_context_for_sub(ctx)["subcomponent_summary"]
         assert "SessionStore" in summary
+        # The subcomponent's own comp_* id appears in the header
+        # line alongside the name (Phase 6 observability fix).
+        assert seeded_with_sub["sub_store"] in summary
         assert "Persist session tokens" in summary
 
     def test_parent_component_summary_includes_three_fragments(self, db, seeded_with_sub):
@@ -846,3 +857,256 @@ class TestFormatRegenContextForSub:
         assert "SessionStore" in prompt
         assert "BillingService" in prompt  # parent
         assert seeded_with_sub["comp_auth"] in prompt  # parent sibling comp id
+
+
+# ── Phase 6: domain-parent context ───────────────────────────────────
+
+
+def _seed_domain_parent_edge(
+    session: Session, project_id: str, presentational_id: str, domain_id: str
+) -> None:
+    """Emit a ``domain_parent`` edge from presentational → domain."""
+    edge_id = mint(session, Kind.EDGE)
+    append_event(
+        session,
+        project_id,
+        ev.EdgeCreated(
+            edge_id=edge_id,
+            edge_type="domain_parent",
+            source_id=presentational_id,
+            target_id=domain_id,
+        ),
+    )
+
+
+@pytest.fixture()
+def seeded_with_presentational(db, seeded):
+    """Extend the seeded fixture with a presentational top-level comp.
+
+    Adds ``comp_billing_ui`` as a presentational comp with a
+    ``domain_parent`` edge pointing at ``comp_billing``. The
+    presentational comp has no resps of its own (matches the real
+    sysarch pattern where presentational comps often own their
+    own user-facing resps; this fixture keeps the seeded dict
+    shape minimal for the Phase 6 assertions).
+
+    Also seeds a subcomponent ``sub_billing_ui_form`` under the
+    presentational comp, so we can verify that subs of a
+    presentational parent inherit the domain-parent bundle.
+    """
+    project_id = seeded["project_id"]
+
+    comp_billing_ui = _seed_component(
+        db,
+        project_id,
+        "BillingUI",
+        3,
+        [],
+        techspec="React dashboard bound to billing state.",
+        pubapi="BillingPage() component; useBillingState() hook.",
+        kind="presentational",
+    )
+    _seed_domain_parent_edge(db, project_id, comp_billing_ui, seeded["comp_billing"])
+
+    sub_billing_ui_form = _seed_subcomponent(
+        db,
+        project_id,
+        comp_billing_ui,
+        "BillingForm",
+        0,
+        techspec="Card-entry form.",
+        pubapi="<BillingForm /> rendered inside BillingPage.",
+        kind="presentational",
+    )
+
+    db.commit()
+    return {
+        **seeded,
+        "comp_billing_ui": comp_billing_ui,
+        "sub_billing_ui_form": sub_billing_ui_form,
+    }
+
+
+class TestBuildRegenContextDomainParent:
+    def test_domain_comp_has_empty_domain_parent_bundle(self, db, seeded):
+        ctx = build_regen_context(db, seeded["comp_billing"])
+        assert ctx.domain_parents == ()
+        assert ctx.domain_parent_techspecs == {}
+        assert ctx.domain_parent_pubapis == {}
+
+    def test_presentational_top_level_loads_domain_parent_fragments(
+        self, db, seeded_with_presentational
+    ):
+        ctx = build_regen_context(db, seeded_with_presentational["comp_billing_ui"])
+        parent_ids = [p.id for p in ctx.domain_parents]
+        assert parent_ids == [seeded_with_presentational["comp_billing"]]
+        billing_id = seeded_with_presentational["comp_billing"]
+        assert "Handles payments" in ctx.domain_parent_techspecs[billing_id]
+        assert "get_billing_state" in ctx.domain_parent_pubapis[billing_id]
+
+    def test_subcomponent_of_presentational_parent_inherits_bundle(
+        self, db, seeded_with_presentational
+    ):
+        ctx = build_regen_context(db, seeded_with_presentational["sub_billing_ui_form"])
+        parent_ids = [p.id for p in ctx.domain_parents]
+        assert parent_ids == [seeded_with_presentational["comp_billing"]]
+        billing_id = seeded_with_presentational["comp_billing"]
+        assert "Handles payments" in ctx.domain_parent_techspecs[billing_id]
+        assert "get_billing_state" in ctx.domain_parent_pubapis[billing_id]
+
+    def test_subcomponent_of_domain_parent_has_empty_bundle(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        assert ctx.domain_parents == ()
+        assert ctx.domain_parent_techspecs == {}
+        assert ctx.domain_parent_pubapis == {}
+
+
+class TestFormatDomainParentSurface:
+    """Unit tests for the pure formatter in prompts.comparch."""
+
+    def test_empty_parents_returns_empty_string(self):
+        from backend.graph.prompts.comparch import format_domain_parent_surface
+
+        assert format_domain_parent_surface((), {}, {}) == ""
+
+    def test_renders_name_and_id_per_parent(self):
+        from backend.graph.prompts.comparch import format_domain_parent_surface
+
+        class _FakeNode:
+            def __init__(self, node_id, name):
+                self.id = node_id
+                self.name = name
+
+        parents = (_FakeNode("comp_aaa11111", "BillingService"),)
+        out = format_domain_parent_surface(
+            parents,
+            {"comp_aaa11111": "Handles payments."},
+            {"comp_aaa11111": "get_billing_state(id)."},
+        )
+        assert "BillingService" in out
+        assert "comp_aaa11111" in out
+        assert "Handles payments" in out
+        assert "get_billing_state" in out
+        # Fenced blocks keep domain content from being mistaken for
+        # prompt directives.
+        assert "```" in out
+
+    def test_omits_empty_fragment_sections(self):
+        from backend.graph.prompts.comparch import format_domain_parent_surface
+
+        class _FakeNode:
+            def __init__(self, node_id, name):
+                self.id = node_id
+                self.name = name
+
+        parents = (_FakeNode("comp_aaa11111", "Billing"),)
+        # Only pubapi present; techspec is empty and should not add
+        # a "Technical specification" header to the output.
+        out = format_domain_parent_surface(
+            parents,
+            {"comp_aaa11111": ""},
+            {"comp_aaa11111": "get_billing_state(id)."},
+        )
+        assert "Technical specification" not in out
+        assert "Public surface" in out
+
+
+class TestFormatRegenContextDomainParent:
+    def test_domain_comp_yields_empty_surface(self, db, seeded):
+        ctx = build_regen_context(db, seeded["comp_billing"])
+        formatted = format_regen_context(ctx)
+        assert formatted["domain_parent_surface"] == ""
+
+    def test_presentational_comp_populates_surface(self, db, seeded_with_presentational):
+        ctx = build_regen_context(db, seeded_with_presentational["comp_billing_ui"])
+        formatted = format_regen_context(ctx)
+        surface = formatted["domain_parent_surface"]
+        assert "BillingService" in surface
+        assert seeded_with_presentational["comp_billing"] in surface
+        assert "Handles payments" in surface  # domain techspec
+        assert "get_billing_state" in surface  # domain pubapi
+
+    def test_comparch_prompt_includes_presenting_block(self, db, seeded_with_presentational):
+        from backend.graph.prompts.comparch import render_user_prompt
+
+        ctx = build_regen_context(db, seeded_with_presentational["comp_billing_ui"])
+        formatted = format_regen_context(ctx)
+        prompt = render_user_prompt(
+            **formatted,
+            prior_approved=None,
+            prior_pending=None,
+            feedback=None,
+            parse_error=None,
+        )
+        assert "# This component presents" in prompt
+        assert seeded_with_presentational["comp_billing"] in prompt
+        assert "Handles payments" in prompt
+        assert "get_billing_state" in prompt
+
+    def test_comparch_prompt_omits_section_for_domain_comp(self, db, seeded):
+        from backend.graph.prompts.comparch import render_user_prompt
+
+        ctx = build_regen_context(db, seeded["comp_billing"])
+        formatted = format_regen_context(ctx)
+        prompt = render_user_prompt(
+            **formatted,
+            prior_approved=None,
+            prior_pending=None,
+            feedback=None,
+            parse_error=None,
+        )
+        assert "# This component presents" not in prompt
+
+
+class TestFormatRegenContextForSubDomainParent:
+    """Subcomparch receives the grandparent-domain context via its parent."""
+
+    def test_domain_sub_yields_empty_surface(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        formatted = format_regen_context_for_sub(ctx)
+        assert formatted["domain_parent_surface"] == ""
+
+    def test_sub_of_presentational_parent_populates_surface(self, db, seeded_with_presentational):
+        ctx = build_regen_context(db, seeded_with_presentational["sub_billing_ui_form"])
+        formatted = format_regen_context_for_sub(ctx)
+        surface = formatted["domain_parent_surface"]
+        assert "BillingService" in surface
+        assert seeded_with_presentational["comp_billing"] in surface
+        assert "Handles payments" in surface  # domain techspec
+        assert "get_billing_state" in surface  # domain pubapi
+
+    def test_subcomparch_prompt_includes_grandparent_block(self, db, seeded_with_presentational):
+        from backend.graph.prompts.subcomparch import render_user_prompt
+
+        ctx = build_regen_context(db, seeded_with_presentational["sub_billing_ui_form"])
+        formatted = format_regen_context_for_sub(ctx)
+        prompt = render_user_prompt(
+            **formatted,
+            prior_approved=None,
+            prior_pending=None,
+            feedback=None,
+            parse_error=None,
+        )
+        assert "# Grandparent domain context" in prompt
+        assert seeded_with_presentational["comp_billing"] in prompt
+        assert "Handles payments" in prompt
+        assert "get_billing_state" in prompt
+
+    def test_subcomparch_prompt_omits_section_for_domain_sub(self, db, seeded_with_sub):
+        from backend.graph.prompts.subcomparch import render_user_prompt
+
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        formatted = format_regen_context_for_sub(ctx)
+        prompt = render_user_prompt(
+            **formatted,
+            prior_approved=None,
+            prior_pending=None,
+            feedback=None,
+            parse_error=None,
+        )
+        assert "# Grandparent domain context" not in prompt
+
+    def test_format_domain_parent_surface_for_sub_empty(self):
+        from backend.graph.prompts.subcomparch import format_domain_parent_surface_for_sub
+
+        assert format_domain_parent_surface_for_sub((), {}, {}) == ""

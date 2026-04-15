@@ -3,44 +3,83 @@
 from __future__ import annotations
 
 from backend.graph.prompts.feature_expansion import (
-    SYSTEM_PROMPT,
+    render_system_prompt,
     render_user_prompt,
 )
+from backend.projects.settings import NodeCountRange, ProjectSettings
+
+
+def _default_system_prompt() -> str:
+    """Shared helper: render the system prompt with project defaults."""
+    return render_system_prompt(ProjectSettings().features_per_group)
 
 
 class TestSystemPrompt:
     def test_is_nonempty_str(self):
-        assert isinstance(SYSTEM_PROMPT, str)
-        assert len(SYSTEM_PROMPT) > 0
-        assert "feature expansion" in SYSTEM_PROMPT
+        prompt = _default_system_prompt()
+        assert isinstance(prompt, str)
+        assert len(prompt) > 0
+        assert "feature expansion" in prompt
 
     def test_describes_tagged_output_format(self):
         # The prompt must instruct the model to emit a <features>
         # block with <feature>/<name>/<intent> structure — the
         # format the mint handler's parser-validator expects.
-        assert "<features>" in SYSTEM_PROMPT
-        assert "<feature>" in SYSTEM_PROMPT
-        assert "<name>" in SYSTEM_PROMPT
-        assert "<intent>" in SYSTEM_PROMPT
+        prompt = _default_system_prompt()
+        assert "<features>" in prompt
+        assert "<feature>" in prompt
+        assert "<name>" in prompt
+        assert "<intent>" in prompt
 
     def test_describes_name_and_intent_shape(self):
         # Name is a short identifier, intent is a paragraph. Loose
         # assertions — we want the prompt to be able to evolve
         # without breaking tests, but the *concept* has to be there.
-        assert "title case" in SYSTEM_PROMPT or "short" in SYSTEM_PROMPT
-        assert "paragraph" in SYSTEM_PROMPT or "sentences" in SYSTEM_PROMPT
+        prompt = _default_system_prompt()
+        assert "title case" in prompt or "short" in prompt
+        assert "paragraph" in prompt or "sentences" in prompt
 
     def test_describes_implicit_features(self):
         # The prompt must explain when to mark features <implicit/>.
-        assert "<implicit" in SYSTEM_PROMPT
+        prompt = _default_system_prompt()
+        assert "<implicit" in prompt
         # Concept: inferred, obviously necessary, not in input doc.
-        assert "obviously" in SYSTEM_PROMPT or "inferred" in SYSTEM_PROMPT
+        assert "obviously" in prompt or "inferred" in prompt
 
     def test_describes_feature_groups(self):
         # The prompt must describe the <group> wrapper and its name.
-        assert "<group>" in SYSTEM_PROMPT
+        prompt = _default_system_prompt()
+        assert "<group>" in prompt
         # Concept: themes, bundling related features.
-        assert "theme" in SYSTEM_PROMPT or "related features" in SYSTEM_PROMPT
+        assert "theme" in prompt or "related features" in prompt
+
+
+class TestRenderSystemPrompt:
+    """The granularity bullet cites the four features-per-group
+    numbers substituted from :class:`NodeCountRange`."""
+
+    def test_substitutes_default_numbers(self) -> None:
+        # Defaults are floor=2 / typical_min=3 / typical_max=8 /
+        # ceiling=15. All four must appear in the rendered text.
+        prompt = _default_system_prompt()
+        assert "3–8 features per group" in prompt
+        assert "2 or fewer features" in prompt
+        assert "15 or more features" in prompt
+
+    def test_substitutes_custom_numbers(self) -> None:
+        counts = NodeCountRange(floor=7, typical_min=11, typical_max=13, ceiling=17)
+        prompt = render_system_prompt(counts)
+        assert "11–13 features per group" in prompt
+        assert "7 or fewer features" in prompt
+        assert "17 or more features" in prompt
+        # Sanity: none of the default numbers leaked through for
+        # the granularity bullet.
+        assert "3–8 features per group" not in prompt
+
+    def test_no_raw_placeholder_tokens_leak(self) -> None:
+        prompt = _default_system_prompt()
+        for token in ("{{FLOOR}}", "{{TYPICAL_MIN}}", "{{TYPICAL_MAX}}", "{{CEILING}}"):
+            assert token not in prompt
 
 
 class TestRenderUserPrompt:
