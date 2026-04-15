@@ -946,7 +946,218 @@ Primitives not used by this handler (but used by others): `get_node`, `get_fragm
 
 **Verdict.** `feature_mint` expresses cleanly against the primitive set. No escape hatches needed, no new primitives discovered, no operations required beyond the seventeen listed in A.11.6. The spec is roughly 60 lines of YAML-ish content; the corresponding Python handler in v2 is roughly 180 lines. The density difference is the value of the declarative layer: the bundle author writes the *intent* (what to parse, what to mint, what to enqueue), and the engine supplies the *mechanics* (the session lifetime, the event-append-and-commit dance, the separate-transaction enqueue, the alias-map bookkeeping).
 
-`comparch_mint` is the harder validation target — it uses more primitives, has two explicit alias-resolution phases, emits five fragments plus child nodes plus edges plus policies, and enqueues multiple downstream jobs. That walkthrough is a future exercise. If `comparch_mint` also expresses cleanly, the L2 commitment is validated end-to-end against the hardest case in the v2 codebase and catapult's bundle execution engine can be designed against a known-sufficient operation set.
+`comparch_mint` is the harder validation target and is walked through in A.11.10.
+
+### A.11.10 Worked example: expressing comparch_mint in the closed vocabulary
+
+`comparch_mint` is the hardest existing siege-engine v2 handler. It reads several graph queries before validation to build validator input sets, parses a multi-section arch doc, emits five top-level fragments, mints one child component node per subcomponent with two seeded fragments each plus decomposition edges linking pre-existing subresps to the new subcomponents, mints component-local policy nodes with inline-XML blob content, emits external dependency edges against sibling comp IDs, emits internal dependency edges between subcomponents via an alias map built in the same phase, commits, then fans out three separate downstream job types in a separate transaction. If it expresses cleanly, the closed-vocabulary claim in A.11.6 is validated against the worst case in the current codebase.
+
+As in A.11.9, the YAML below is illustrative. The real DSL will be designed in a dedicated workshop.
+
+```yaml
+name: comparch_mint
+tier: comp
+trigger:
+  on_approve:
+    node_kind: comp
+    filter: "parent_id is null"
+
+idempotency:
+  skip_if:
+    query_nodes:
+      tier: comp
+      parent_id: "{{ context.payload.component_id }}"
+      min_count: 1
+
+preconditions:
+  - get_node:
+      id: "{{ context.payload.component_id }}"
+      expect:
+        tier: comp
+        parent_id: null
+        content: not_empty
+      bind: target
+
+  - query_nodes:
+      tier: resp
+      parent_id: "{{ target.id }}"
+      ordered_by: [display_order, created_at]
+      bind: subresps
+
+  - walk_edges:
+      start: "{{ target.id }}"
+      edge_type: decomposition
+      direction: inbound
+      depth: 1
+      filter: "tier == 'resp' and parent_id is null"
+      bind: parent_resps
+
+  - query_nodes:
+      tier: comp
+      parent_id: null
+      project_id: "{{ context.project_id }}"
+      exclude: "{{ target.id }}"
+      bind: sibling_comps
+
+parse:
+  arch_doc:
+    operation: parse_xml
+    source: target.content
+    root_tag: comparch
+    grammar: grammars/comparch.yaml
+    cross_refs:
+      known_subresp_ids: "{{ subresps | map(.id) }}"
+      known_sibling_comp_ids: "{{ sibling_comps | map(.id) }}"
+      known_resp_ids_for_policies: "{{ (parent_resps | map(.id)) + (subresps | map(.id)) }}"
+    validator_params:
+      target_is_foundation: "{{ target.is_foundation }}"
+
+phases:
+  - name: emit_arch_fragments
+    emit:
+      - fragment_updated:
+          owner: "{{ target.id }}"
+          kind: techspec
+          content: "{{ parse.arch_doc.techspec }}"
+      - fragment_updated:
+          owner: "{{ target.id }}"
+          kind: pubapi
+          content: "{{ parse.arch_doc.pubapi }}"
+      - fragment_updated:
+          owner: "{{ target.id }}"
+          kind: privapi
+          content: "{{ parse.arch_doc.privapi }}"
+      - fragment_updated:
+          owner: "{{ target.id }}"
+          kind: policies
+          content:
+            render_template: templates/policies-fragment.xml
+            with:
+              policies: "{{ parse.arch_doc.policies }}"
+      - fragment_updated:
+          owner: "{{ target.id }}"
+          kind: deps
+          content:
+            render_template: templates/deps-fragment.xml
+            with:
+              external_deps: "{{ parse.arch_doc.external_deps }}"
+
+  - name: mint_subcomponents
+    for_each: subcomp in parse.arch_doc.subcomponents
+    emit:
+      - node_created:
+          tier: comp
+          kind: "{{ target.kind }}"        # inherited from owning comp
+          parent_id: "{{ target.id }}"
+          name: "{{ subcomp.name }}"
+          content: ""
+          display_order: "{{ loop.index }}"
+          extras:
+            is_foundation: "{{ subcomp.is_foundation }}"
+          register_alias: "{{ subcomp.alias }}"
+          seed_fragments:
+            techspec: "{{ subcomp.role }}"
+            pubapi: "{{ subcomp.api_intent }}"
+      - for_each: resp_ref in subcomp.resp_refs
+        edge_created:
+          edge_type: decomposition
+          source: "{{ resp_ref }}"
+          target: "{{ resolve_alias(subcomp.alias) }}"
+
+  - name: mint_component_local_policies
+    for_each: policy in parse.arch_doc.policies
+    emit:
+      - node_created:
+          tier: policy
+          kind: domain
+          parent_id: "{{ target.id }}"
+          name: "{{ policy.name }}"
+          content:
+            render_template: templates/policy-blob.xml
+            with:
+              policy: "{{ policy }}"
+          display_order: "{{ loop.index }}"
+
+  - name: external_dependency_edges
+    for_each: target_comp_id in parse.arch_doc.external_deps
+    emit:
+      - edge_created:
+          edge_type: dependency
+          source: "{{ target.id }}"
+          target: "{{ target_comp_id }}"
+
+  - name: sub_dependency_edges
+    for_each: sub_dep in parse.arch_doc.sub_deps
+    emit:
+      - edge_created:
+          edge_type: dependency
+          source: "{{ resolve_alias(sub_dep.from_alias) }}"
+          target: "{{ resolve_alias(sub_dep.to_alias) }}"
+
+post_commit:
+  - enqueue_job:
+      kind: apply_top_level_policies
+      params:
+        project_id: "{{ context.project_id }}"
+        component_id: "{{ target.id }}"
+  - enqueue_job:
+      kind: apply_component_local_policies
+      params:
+        project_id: "{{ context.project_id }}"
+        component_id: "{{ target.id }}"
+  - for_each: sub_id in alias_map.values()
+    enqueue_job:
+      kind: generate_subcomparch
+      params:
+        project_id: "{{ context.project_id }}"
+        component_id: "{{ sub_id }}"
+        feedback: null
+```
+
+**Primitive usage audit.** `comparch_mint` uses 11 of the 17 primitives from A.11.6:
+
+- `get_node` — precondition target lookup.
+- `query_nodes` — idempotency guard plus two precondition queries (subresps, sibling_comps).
+- `walk_edges` — precondition parent_resps lookup via inbound decomposition walk.
+- `parse_xml` — the comparch arch doc parse.
+- `validate_grammar` — implicit, invoked by the grammar + cross_refs + validator_params on the parse step.
+- `build_alias_map` — implicit, invoked by `register_alias:` on the subcomponent minting phase.
+- `resolve_alias` — used twice: once in the decomposition edge emissions within the same phase that builds the alias map, and again in the sub-dependency edges phase that runs later.
+- `render_template` — three times: policies fragment body, deps fragment body, per-policy blob content. All declarative inline-XML serialization.
+- `emit_node_created` — for subcomponents and for component-local policies.
+- `emit_edge_created` — for decomposition edges (nested within subcomp phase), external dependency edges, and sub-dependency edges.
+- `emit_fragment_updated` — five top-level fragments plus two seeded fragments per subcomponent (via `seed_fragments:` sugar on the node_created emission).
+- `enqueue_job` — three post-commit enqueues: apply_top_level_policies, apply_component_local_policies, and one generate_subcomparch per minted subcomponent.
+
+Primitives not used: `get_fragment` (comparch_mint only writes fragments, never reads them), `query_edges` (walk_edges with depth=1 covers the lookups needed here), `edge_exists` (idempotency is node-count based), `emit_draft` (mint handlers don't touch drafts), `bootstrap_singleton_node` (subcomponents don't need a bootstrap node — the subcomponents themselves are the projection targets). All five primitives not used here are used in other handlers (generation handlers for `emit_draft` and `get_fragment`, policy-application handlers for `edge_exists`, `subreqs_mint` for `bootstrap_singleton_node`, and the various place-specific `query_edges` uses across sysarch_mint and regen_context).
+
+**Declarative idioms exercised.** All three.
+
+- **Idempotency guard** — `idempotency.skip_if` at the top, checking for any subcomponent under the target.
+- **Fragment seeding** — the `seed_fragments:` field on the `node_created:` emission in the subcomponent phase. This is its first real use. The DSL sugar desugars to "mint the node, then emit one `fragment_updated` per named kind with content bound from the parsed source, using the just-minted node's ID as the fragment owner." The bundle author never writes the explicit fragment emissions; the idiom handles them.
+- **Post-commit enqueue with fan-out** — the `post_commit` block at the bottom. Three separate enqueue rules: two singleton enqueues for policy application, one iterative enqueue for subcomparch generation. The iterative form uses `alias_map.values()` to iterate every minted subcomponent ID without the author having to track them manually.
+
+**What the walkthrough reveals beyond what feature_mint showed.**
+
+- **Preconditions as a first-class DSL block.** `comparch_mint` runs three graph queries before parsing, and the query results feed into the validator as cross-reference ID sets. The DSL needs a named `preconditions:` section (or similar) that runs queries and binds results to names for later reference in parse cross_refs, phase emissions, and post_commit params. This is a structural feature of the DSL, not a new primitive — every query is still one of the six graph query primitives. But without the structural feature, every mint spec would have to inline its queries into the parse step or the emission bodies, which is noisy. `preconditions:` lets the spec front-load the graph reads cleanly.
+
+- **Nested for_each inside an emit block.** The subcomponent minting phase mints one node per subcomp, and for each of those subcomps, emits one decomposition edge per `resp_ref`. The emit block has to support nested iteration where the inner loop has access to both the outer loop variable and the just-minted node's alias. This is a compositional feature of the DSL, not a new primitive.
+
+- **Alias resolution inside the same phase that built the alias.** In the subcomponent phase, `register_alias:` adds the mapping, and the immediately-following nested edge emission uses `resolve_alias()` to look it up. This requires the alias map to be updated synchronously between sibling emissions within one phase, so the ordering semantics of emissions within a phase have to be defined (the answer is "in listed order, each emission's side effects visible to subsequent emissions in the same block"). Straightforward to define, but worth being explicit about.
+
+- **Inline template rendering on emission content fields.** Two fragment bodies and all component-local policy contents are rendered via `render_template` invoked as the value of a `content:` field. This is a declarative form of the `render_template` primitive — the DSL supports "content is not a literal string, it's a template invocation that returns a string." The grammars + templates directory in the bundle holds the `.xml` template files referenced from the spec. This is how bundles ship their own content-serialization conventions without needing custom code.
+
+- **Inherited attribute values from preconditions.** `kind: "{{ target.kind }}"` on the subcomponent minting emission inherits the kind from the parent comp. This is just template interpolation over precondition-bound data, which was the shape anyway, but it validates that precondition bindings are visible throughout the full spec (parse cross_refs, phase emissions, post_commit params), not scoped to any one section.
+
+- **Fan-out over an alias map in post-commit.** The subcomparch generation enqueue iterates `alias_map.values()` to reach every minted subcomponent. The alias map built during the mint-subcomponents phase is visible to post_commit, which matches how v2 tracks `minted_sub_ids` in a local list and iterates it after commit. The DSL can either make the alias map visible in post_commit (as shown) or require an explicit `bind:` on the phase that collects minted IDs into a named collection; both work, and the alias-map approach is more DRY.
+
+**Verdict.** `comparch_mint` expresses cleanly against the primitive set. No new primitives needed, no escape hatches triggered. The spec is roughly 130 lines of YAML-ish content; the corresponding Python handler in v2 is roughly 370 lines (including helpers). The density improvement (~3×) is the best yet — more than `feature_mint`'s 3× — because `comparch_mint` has more mechanical boilerplate for the bundle author to *not* write.
+
+More importantly, `comparch_mint` is the hardest existing handler, and the five DSL compositional features it surfaces (preconditions block, nested for_each in emit, same-phase alias register + resolve, inline template rendering on content fields, alias-map visibility in post_commit) are all non-controversial structural additions layered on top of the primitives. None of them expand the closed vocabulary; they just make the primitives composable in the ways the existing handlers need.
+
+**End-to-end validation.** With `feature_mint` and `comparch_mint` both expressing cleanly, the closed vocabulary is validated against both the simplest and the hardest existing mint handlers. Every other mint handler in the v2 codebase (`requirements_mint`, `sysarch_mint`, `subreqs_mint`, `subcomparch_mint`) is strictly simpler than `comparch_mint` in its primitive usage, so nothing between these two endpoints is expected to introduce new primitives or new compositional features. The L2 commitment (A.11.4) is validated: bundle authors can write every existing tier as declarative mint specs, and catapult's bundle execution engine can be designed against a known-sufficient operation set and a known-sufficient compositional-feature set.
+
+The generation handlers (`requirements_generation`, `sysarch_generation`, etc.) are a separate class of handler that doesn't emit events at all — they write drafts and telemetry. Their primitive usage is strictly a subset of the mint handlers' (they need the graph queries and the parsing primitives, plus `emit_draft`, and nothing else), so their validation is trivial. The policy application handlers are similar — they run a generation pass then emit edges. Neither case is expected to surface new primitives beyond what the mint handler walkthroughs have already covered.
 
 ## A.12 Credentials and token tracking
 
