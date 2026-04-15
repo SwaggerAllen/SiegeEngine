@@ -33,8 +33,23 @@ import { findChild, findChildText, findChildren, hasChild, textContent } from '.
  * The renderer walks this tree and produces a labeled document
  * view: a techspec paragraph, a grid of component cards, a list
  * of policy cards, and compact arrow lists for edges.
+ *
+ * The factory form lets the owning panel (``SysarchPanel``) close
+ * over a live ``resp_*`` id → name map so each component card's
+ * "Responsibilities" chip list and each policy card's "requires"
+ * line can render ``name (resp_xxxxxxxx)`` instead of bare IDs.
+ * Callers that don't need name resolution can use the default
+ * module-level ``sysarchRenderers`` export (empty map → bare IDs).
  */
-export const sysarchRenderers: XmlRendererMap = {
+export function makeSysarchRenderers(
+  respNames: Record<string, string> = {}
+): XmlRendererMap {
+  const renderRespId = (rid: string) => {
+    const name = respNames[rid];
+    if (!name) return rid;
+    return `${name} (${rid})`;
+  };
+  return {
   sysarch: (node, ctx) => (
     <div className="not-prose space-y-6">{ctx.renderChildren(node.children)}</div>
   ),
@@ -130,16 +145,23 @@ export const sysarchRenderers: XmlRendererMap = {
             <div className="text-[10px] uppercase tracking-wider text-gray-500">
               Responsibilities
             </div>
-            <div className="flex flex-wrap gap-1">
-              {respIds.map((rid) => (
-                <span
-                  key={rid}
-                  className="text-[10px] font-mono bg-gray-900/60 border border-gray-700 rounded px-1.5 py-0.5 text-gray-400"
-                >
-                  {rid}
-                </span>
-              ))}
-            </div>
+            <ul className="text-xs text-gray-400 space-y-0.5 m-0 pl-0 list-none">
+              {respIds.map((rid) => {
+                const name = respNames[rid];
+                return (
+                  <li key={rid} className="font-mono">
+                    {name ? (
+                      <>
+                        <span className="text-gray-200">{name}</span>{' '}
+                        <span className="text-gray-500">({rid})</span>
+                      </>
+                    ) : (
+                      rid
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         )}
       </article>
@@ -180,7 +202,7 @@ export const sysarchRenderers: XmlRendererMap = {
         {required && (
           <div className="text-xs text-gray-400">
             requires{' '}
-            <span className="font-mono text-gray-300">{required}</span>
+            <span className="font-mono text-gray-300">{renderRespId(required)}</span>
           </div>
         )}
         {rationale && (
@@ -238,17 +260,26 @@ export const sysarchRenderers: XmlRendererMap = {
     );
   },
 
-  // Tags consumed by parent renderers — return null at the top level.
-  name: () => null,
-  kind: () => null,
-  role: () => null,
-  'api-intent': () => null,
-  responsibilities: () => null,
-  resp: () => null,
-  foundation: () => null,
-  trigger: () => null,
-  required: () => null,
-  rationale: () => null,
-  dep: () => null,
-  parent: () => null,
-};
+    // Tags consumed by parent renderers — return null at the top level.
+    name: () => null,
+    kind: () => null,
+    role: () => null,
+    'api-intent': () => null,
+    responsibilities: () => null,
+    resp: () => null,
+    foundation: () => null,
+    trigger: () => null,
+    required: () => null,
+    rationale: () => null,
+    dep: () => null,
+    parent: () => null,
+  };
+}
+
+/**
+ * Back-compat module-level export: a renderer map with no
+ * resp-name resolution. Existing callers (tests, non-panel
+ * usages) get bare resp IDs; the dashboard's ``SysarchPanel``
+ * opts into the factory form so component cards can show names.
+ */
+export const sysarchRenderers: XmlRendererMap = makeSysarchRenderers();
