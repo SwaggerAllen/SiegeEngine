@@ -1,7 +1,29 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import * as subcomparchApi from '../../api/subcomparch';
 import type { SubcomparchResponse } from '../../api/subcomparch';
+import { decompositionGraphKeys } from '../queries/useDecompositionGraph';
 import { subcomparchKeys } from '../queries/useSubcomparchQueries';
+import { componentsKeys } from '../queries/useSysarchQueries';
+
+// Approve / discard / feedback all invalidate the components
+// list and decomposition graph queries in addition to the
+// subcomparch detail query, so Phase 6 waiting-on-approval
+// badges in the DAG re-fetch when a subcomparch draft is
+// created or resolved. The sysarch-view badges only surface
+// top-level-comp pending drafts today, so they don't strictly
+// need the invalidation — but keeping the flush symmetric with
+// the other mutation paths avoids a class of "I forgot to wire
+// up view N" bugs later.
+
+function invalidateWaitingIndicators(
+  queryClient: ReturnType<typeof useQueryClient>,
+  projectId: string
+) {
+  queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
+  queryClient.invalidateQueries({
+    queryKey: decompositionGraphKeys.detail(projectId),
+  });
+}
 
 export function useSubcomparchFeedbackMutation(
   projectId: string,
@@ -24,6 +46,7 @@ export function useSubcomparchFeedbackMutation(
       queryClient.invalidateQueries({
         queryKey: subcomparchKeys.detail(projectId, parentCompId, subId),
       });
+      invalidateWaitingIndicators(queryClient, projectId);
     },
   });
 }
@@ -42,6 +65,7 @@ export function useSubcomparchApproveMutation(
       queryClient.invalidateQueries({
         queryKey: subcomparchKeys.detail(projectId, parentCompId, subId),
       });
+      invalidateWaitingIndicators(queryClient, projectId);
     },
   });
 }
@@ -60,6 +84,7 @@ export function useSubcomparchDiscardMutation(
       queryClient.invalidateQueries({
         queryKey: subcomparchKeys.detail(projectId, parentCompId, subId),
       });
+      invalidateWaitingIndicators(queryClient, projectId);
     },
   });
 }

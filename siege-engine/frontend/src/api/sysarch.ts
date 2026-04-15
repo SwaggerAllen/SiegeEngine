@@ -43,6 +43,10 @@ export const ComponentSummarySchema = z.object({
   kind: z.string(),
   display_order: z.number().int(),
   updated_at: z.string(),
+  // Phase 6 waiting-on-approval indicator. Non-null when this
+  // comp has a pending draft the user still has to approve;
+  // ``"subreqs"`` / ``"comparch"`` / ``"subcomparch"``.
+  pending_draft_kind: z.string().nullable().optional(),
 });
 export type ComponentSummary = z.infer<typeof ComponentSummarySchema>;
 

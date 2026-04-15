@@ -307,6 +307,95 @@ def list_subcomponents_of(session: Session, comp_id: str) -> list[Node]:
     )
 
 
+def pending_draft_kinds_by_comp(session: Session, project_id: str) -> dict[str, str]:
+    """Return ``{comp_id: kind}`` for every comp with a pending draft on it.
+
+    "Pending draft on it" is scoped per comp and covers three
+    cases, reported as three distinct kinds so the UI can badge
+    each comp appropriately:
+
+    - ``"subreqs"`` — the comp has a child ``subreqs_*`` node whose
+      pending draft is waiting on user approval. Only top-level
+      comps own a subreqs child, so this kind only appears on
+      top-level comps. Reported under the *owning comp's* id, not
+      the subreqs node's id, because the dashboard surfaces this
+      information per component.
+    - ``"comparch"`` — the comp is top-level and has a pending
+      draft targeting its own ``comp_*`` node. Populated once
+      ``generate_comparch`` has landed a draft and is waiting on
+      user review.
+    - ``"subcomparch"`` — the comp is a subcomponent (``parent_id``
+      points at another ``comp_*``) and has a pending draft
+      targeting its own ``comp_*`` node. Populated once
+      ``generate_subcomparch`` has landed a draft.
+
+    A single comp is never in two states at once under normal
+    bootstrap flow: subreqs approval triggers comparch, which
+    triggers its subcomponents' subcomparch — each step's draft
+    is discarded or approved before the next step's draft lands.
+    If a regen fires in a weird order this function returns the
+    **first** kind in the order ``subreqs > comparch >
+    subcomparch`` for simplicity; callers shouldn't rely on
+    seeing only one.
+
+    Does not aggregate subtree state: a top-level comp whose
+    *subcomponents* have pending subcomparch drafts is NOT marked
+    here. The frontend does the aggregation if it wants
+    "anything-below-me pending" semantics, because it also has
+    the parent/child map handy.
+    """
+    result: dict[str, str] = {}
+
+    # subreqs drafts — target_id is a subreqs_* node, we report
+    # under the owning comp_* (its parent_id).
+    subreqs_rows = session.execute(
+        select(Draft, Node)
+        .join(Node, Draft.target_id == Node.id)
+        .where(
+            Draft.project_id == project_id,
+            Draft.status == "pending",
+            Draft.target_type == "node",
+            Node.tier == "subreqs",
+            Node.parent_id.isnot(None),
+        )
+    ).all()
+    for _draft, subreqs_node in subreqs_rows:
+        if subreqs_node.parent_id is not None:
+            result.setdefault(subreqs_node.parent_id, "subreqs")
+
+    # comparch drafts — target_id is a comp_* node with parent_id IS NULL.
+    comparch_rows = session.execute(
+        select(Node.id)
+        .join(Draft, Draft.target_id == Node.id)
+        .where(
+            Draft.project_id == project_id,
+            Draft.status == "pending",
+            Draft.target_type == "node",
+            Node.tier == "comp",
+            Node.parent_id.is_(None),
+        )
+    ).scalars()
+    for comp_id in comparch_rows:
+        result.setdefault(comp_id, "comparch")
+
+    # subcomparch drafts — target_id is a comp_* node with parent_id NOT NULL.
+    subcomparch_rows = session.execute(
+        select(Node.id)
+        .join(Draft, Draft.target_id == Node.id)
+        .where(
+            Draft.project_id == project_id,
+            Draft.status == "pending",
+            Draft.target_type == "node",
+            Node.tier == "comp",
+            Node.parent_id.isnot(None),
+        )
+    ).scalars()
+    for sub_id in subcomparch_rows:
+        result.setdefault(sub_id, "subcomparch")
+
+    return result
+
+
 def list_top_level_components(session: Session, project_id: str) -> list[Node]:
     """Return the project's top-level ``comp_*`` nodes in document order.
 

@@ -732,6 +732,13 @@ class ComponentSummary(BaseModel):
     kind: str  # "domain" | "presentational"
     display_order: int
     updated_at: str
+    # Phase 6 waiting-on-approval indicator. Non-null when this
+    # comp has a pending draft the user still has to approve —
+    # ``"subreqs"`` / ``"comparch"`` / ``"subcomparch"``. Null
+    # when the comp is fully approved or when no draft has been
+    # generated for it yet. See
+    # :func:`backend.graph.queries.pending_draft_kinds_by_comp`.
+    pending_draft_kind: str | None = None
 
 
 class ComponentListResponse(BaseModel):
@@ -943,6 +950,7 @@ def get_components(
     """
     _require_project(db, project_id)
     components = queries.list_top_level_components(db, project_id)
+    pending_by_comp = queries.pending_draft_kinds_by_comp(db, project_id)
     return ComponentListResponse(
         components=[
             ComponentSummary(
@@ -951,6 +959,7 @@ def get_components(
                 kind=c.kind,
                 display_order=c.display_order,
                 updated_at=c.updated_at.isoformat() if c.updated_at else "",
+                pending_draft_kind=pending_by_comp.get(c.id),
             )
             for c in components
         ]
@@ -1913,6 +1922,13 @@ class DecompositionGraphNode(BaseModel):
     kind: str
     parent_id: str | None
     display_order: int
+    # Phase 6 waiting-on-approval indicator. Non-null for comp_*
+    # nodes that have a pending draft the user still has to
+    # approve; ``"subreqs"`` / ``"comparch"`` / ``"subcomparch"``.
+    # Always null for resp_* nodes (they don't own drafts of
+    # their own — drafts attach to the comp_* or subreqs_* that
+    # generated them).
+    pending_draft_kind: str | None = None
 
 
 class DecompositionGraphEdge(BaseModel):
@@ -1973,6 +1989,7 @@ def get_decomposition_graph(
         ).scalars()
     )
     filtered_edges = [e for e in edge_rows if e.source_id in node_ids and e.target_id in node_ids]
+    pending_by_comp = queries.pending_draft_kinds_by_comp(db, project_id)
 
     return DecompositionGraphResponse(
         nodes=[
@@ -1983,6 +2000,7 @@ def get_decomposition_graph(
                 kind=n.kind,
                 parent_id=n.parent_id,
                 display_order=n.display_order,
+                pending_draft_kind=(pending_by_comp.get(n.id) if n.tier == "comp" else None),
             )
             for n in node_rows
         ],

@@ -35,15 +35,32 @@ import { findChild, findChildText, findChildren, hasChild, textContent } from '.
  * of policy cards, and compact arrow lists for edges.
  *
  * The factory form lets the owning panel (``SysarchPanel``) close
- * over a live ``resp_*`` id → name map so each component card's
- * "Responsibilities" chip list and each policy card's "requires"
- * line can render ``name (resp_xxxxxxxx)`` instead of bare IDs.
- * Callers that don't need name resolution can use the default
- * module-level ``sysarchRenderers`` export (empty map → bare IDs).
+ * over three live maps:
+ *
+ * - ``respNames``: ``resp_*`` id → name, used in each component
+ *   card's "Responsibilities" list and each policy card's
+ *   "requires" line to render ``name (resp_xxxxxxxx)`` instead
+ *   of bare IDs.
+ * - ``pendingByName``: component name → pending-draft kind
+ *   (``"subreqs"`` / ``"comparch"`` / ``"subcomparch"``), used to
+ *   badge component cards with a "waiting on approval" indicator.
+ *   Keyed by name because the sysarch document only contains
+ *   aliases + names; the owning panel resolves name → comp_id via
+ *   the components list query and hands the name-keyed lookup in.
+ *
+ * Callers that don't need either map can use the default
+ * module-level ``sysarchRenderers`` export (empty maps → bare
+ * IDs, no waiting badges).
  */
 export function makeSysarchRenderers(
-  respNames: Record<string, string> = {}
+  respNames: Record<string, string> = {},
+  pendingByName: Record<string, string> = {}
 ): XmlRendererMap {
+  const WAITING_LABELS: Record<string, string> = {
+    subreqs: 'Waiting — subreqs',
+    comparch: 'Waiting — comparch',
+    subcomparch: 'Waiting — subcomparch',
+  };
   const renderRespId = (rid: string) => {
     const name = respNames[rid];
     if (!name) return rid;
@@ -100,8 +117,14 @@ export function makeSysarchRenderers(
           })
           .filter(Boolean)
       : [];
+    const pendingKind = pendingByName[name];
+    const cardBorderClass = pendingKind
+      ? 'border-amber-500/60'
+      : 'border-gray-700';
     return (
-      <article className="bg-gray-800/40 border border-gray-700 rounded p-4 space-y-2">
+      <article
+        className={`bg-gray-800/40 border ${cardBorderClass} rounded p-4 space-y-2`}
+      >
         <header className="space-y-1">
           <div className="flex items-baseline flex-wrap gap-x-2 gap-y-1">
             <h3 className="font-semibold text-white m-0 text-sm">{name}</h3>
@@ -122,6 +145,14 @@ export function makeSysarchRenderers(
                 title="Foundation component — owns the root folder territory"
               >
                 foundation
+              </span>
+            )}
+            {pendingKind && (
+              <span
+                className="text-xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/40"
+                title={`A ${pendingKind} draft for this component is waiting on your approval`}
+              >
+                {WAITING_LABELS[pendingKind] ?? 'Waiting'}
               </span>
             )}
           </div>

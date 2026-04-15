@@ -188,6 +188,18 @@ export function DecompositionGraph({ graph, projectId }: Props) {
         },
       },
       {
+        // Phase 6 waiting-on-approval indicator. Any comp_* node
+        // with a pending draft on it (subreqs / comparch /
+        // subcomparch) gets an amber outline that overrides the
+        // kind-specific border color above. Applied via a data
+        // attribute so it stacks with the kind selectors.
+        selector: 'node[pendingDraftKind]',
+        css: {
+          'border-color': '#f59e0b',
+          'border-width': 4,
+        },
+      },
+      {
         selector: 'edge',
         css: {
           width: 1.5,
@@ -311,16 +323,20 @@ function toCytoscapeElements(
     } else {
       type = 'other';
     }
-    return {
-      data: {
-        id: n.id,
-        name: n.name,
-        type,
-        kind: n.kind,
-        parent:
-          n.tier === 'comp' && n.parent_id ? n.parent_id : undefined,
-      },
+    // Only emit pendingDraftKind when it's actually set, so the
+    // Cytoscape selector ``node[pendingDraftKind]`` only matches
+    // comp_* nodes with a waiting draft on them.
+    const data: Record<string, string | undefined> = {
+      id: n.id,
+      name: n.name,
+      type,
+      kind: n.kind,
+      parent: n.tier === 'comp' && n.parent_id ? n.parent_id : undefined,
     };
+    if (n.pending_draft_kind) {
+      data.pendingDraftKind = n.pending_draft_kind;
+    }
+    return { data };
   });
 
   // Edge direction convention: arrows always point from a
