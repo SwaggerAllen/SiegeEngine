@@ -780,6 +780,7 @@ class TestFormatRegenContextForSub:
             "parent_sibling_comps_summary",
             "dep_pubapi_summary",
             "vocab_summary",
+            "domain_parent_surface",
         }
         assert set(formatted.keys()) == expected
 
@@ -1048,3 +1049,57 @@ class TestFormatRegenContextDomainParent:
             parse_error=None,
         )
         assert "# This component presents" not in prompt
+
+
+class TestFormatRegenContextForSubDomainParent:
+    """Subcomparch receives the grandparent-domain context via its parent."""
+
+    def test_domain_sub_yields_empty_surface(self, db, seeded_with_sub):
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        formatted = format_regen_context_for_sub(ctx)
+        assert formatted["domain_parent_surface"] == ""
+
+    def test_sub_of_presentational_parent_populates_surface(self, db, seeded_with_presentational):
+        ctx = build_regen_context(db, seeded_with_presentational["sub_billing_ui_form"])
+        formatted = format_regen_context_for_sub(ctx)
+        surface = formatted["domain_parent_surface"]
+        assert "BillingService" in surface
+        assert seeded_with_presentational["comp_billing"] in surface
+        assert "Handles payments" in surface  # domain techspec
+        assert "get_billing_state" in surface  # domain pubapi
+
+    def test_subcomparch_prompt_includes_grandparent_block(self, db, seeded_with_presentational):
+        from backend.graph.prompts.subcomparch import render_user_prompt
+
+        ctx = build_regen_context(db, seeded_with_presentational["sub_billing_ui_form"])
+        formatted = format_regen_context_for_sub(ctx)
+        prompt = render_user_prompt(
+            **formatted,
+            prior_approved=None,
+            prior_pending=None,
+            feedback=None,
+            parse_error=None,
+        )
+        assert "# Grandparent domain context" in prompt
+        assert seeded_with_presentational["comp_billing"] in prompt
+        assert "Handles payments" in prompt
+        assert "get_billing_state" in prompt
+
+    def test_subcomparch_prompt_omits_section_for_domain_sub(self, db, seeded_with_sub):
+        from backend.graph.prompts.subcomparch import render_user_prompt
+
+        ctx = build_regen_context(db, seeded_with_sub["sub_store"])
+        formatted = format_regen_context_for_sub(ctx)
+        prompt = render_user_prompt(
+            **formatted,
+            prior_approved=None,
+            prior_pending=None,
+            feedback=None,
+            parse_error=None,
+        )
+        assert "# Grandparent domain context" not in prompt
+
+    def test_format_domain_parent_surface_for_sub_empty(self):
+        from backend.graph.prompts.subcomparch import format_domain_parent_surface_for_sub
+
+        assert format_domain_parent_surface_for_sub((), {}, {}) == ""

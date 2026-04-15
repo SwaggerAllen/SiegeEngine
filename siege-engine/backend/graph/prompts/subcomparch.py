@@ -209,6 +209,27 @@ section as prose or code, not as structural XML.
 """
 
 
+def format_domain_parent_surface_for_sub(
+    parents: tuple,
+    techspecs: dict[str, str],
+    pubapis: dict[str, str],
+) -> str:
+    """Render the Phase 6 "grandparent-domain" context block for a sub.
+
+    Thin wrapper around
+    :func:`backend.graph.prompts.comparch.format_domain_parent_surface`
+    — the per-parent rendering rules are identical; only the
+    framing prose around the block (emitted by ``render_user_prompt``)
+    differs. Subcomponents of a presentational parent inherit the
+    same domain-parent bundle their parent would see at its own
+    comparch regen, so sharing the renderer keeps the two tiers'
+    output identical down to whitespace.
+    """
+    from backend.graph.prompts.comparch import format_domain_parent_surface
+
+    return format_domain_parent_surface(parents, techspecs, pubapis)
+
+
 def render_user_prompt(
     *,
     subcomponent_summary: str,
@@ -222,6 +243,7 @@ def render_user_prompt(
     feedback: str | None,
     parse_error: str | None = None,
     vocab_summary: str = "",
+    domain_parent_surface: str = "",
 ) -> str:
     """Build the user prompt for the subcomparch generator.
 
@@ -278,6 +300,28 @@ def render_user_prompt(
     parts.append("")
     parts.append(parent_sibling_comps_summary.strip() or "(no parent-sibling top-level components)")
     parts.append("")
+
+    if domain_parent_surface and domain_parent_surface.strip():
+        parts.append("# Grandparent domain context (your parent presents)")
+        parts.append("")
+        parts.append(
+            "Your owning parent component is **presentational** and "
+            "carries ``domain_parent`` edges to the domain components "
+            "below. Those edges were drawn at sysarch time to mark "
+            "the parent as a primary view into that domain content. "
+            "Because subcomponents inherit their ``kind`` from the "
+            "parent, this block reaches you through the parent — "
+            "you do not own these edges directly, but you must align "
+            "your own ``<technical-specification>`` and "
+            "``<public-surface>`` with the shapes the domain side "
+            "exposes. If you need behavior that isn't on the domain "
+            "side yet, route through the parent component's own "
+            "``<dependencies>`` (one level up) rather than duplicating "
+            "domain state into this subcomponent."
+        )
+        parts.append("")
+        parts.append(domain_parent_surface.strip())
+        parts.append("")
 
     if dep_pubapi_summary and dep_pubapi_summary.strip():
         parts.append("# Dependency public surfaces")

@@ -569,7 +569,26 @@ def format_regen_context_for_sub(ctx: RegenContext) -> dict[str, str]:
             ctx.sibling_comps, ctx.dep_pubapi_fragments
         ),
         "vocab_summary": _render_vocab_summary_from_ctx(ctx),
+        "domain_parent_surface": _render_domain_parent_surface_for_sub(ctx),
     }
+
+
+def _render_domain_parent_surface_for_sub(ctx: RegenContext) -> str:
+    """Render the Phase 6 domain-parent context block for subcomparch.
+
+    Mirrors :func:`_render_domain_parent_surface_for_comparch`, but
+    delegates to the subcomparch-side thin wrapper so the
+    framing-prose side of the rendering stays with the prompt
+    module that owns it. The actual per-parent layout is shared
+    with comparch via the wrapper.
+    """
+    from backend.graph.prompts.subcomparch import format_domain_parent_surface_for_sub
+
+    return format_domain_parent_surface_for_sub(
+        ctx.domain_parents,
+        ctx.domain_parent_techspecs,
+        ctx.domain_parent_pubapis,
+    )
 
 
 def _render_vocab_summary_from_ctx(ctx: RegenContext) -> str:
