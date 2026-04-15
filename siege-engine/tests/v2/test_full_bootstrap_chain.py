@@ -281,9 +281,31 @@ def _subrequirements_xml(prompt: str) -> str:
     )
 
 
-def _comparch_xml(session, project_id: str) -> str:
-    target = _current_target_comp(session, project_id, kind="top")
-    assert target is not None, "comparch stub: no target top-level comp without content"
+def _comparch_xml(session, project_id: str, prompt: str) -> str:
+    # Target discovery: read the first resp_* id out of the
+    # rendered prompt and walk its ``parent_id`` back to the
+    # owning top-level comp. The comparch prompt renders the
+    # target's pre-minted subresps via ``subresps_summary`` as a
+    # bullet list keyed by real resp IDs, so any subresp in the
+    # prompt is unambiguously owned by this comp. This is more
+    # robust than a DB heuristic (which breaks once comparch jobs
+    # are enqueued out of display order — Phase 6's ordering
+    # change makes the presentational comp's comparch fire after
+    # its domain parent's, not in display order).
+    resp_ids = _unique_in_order(_RESP_ID_RE.findall(prompt))
+    target: Node | None = None
+    for rid in resp_ids:
+        resp_node = session.get(Node, rid)
+        if resp_node is None or resp_node.parent_id is None:
+            continue  # top-level resps (parent_id=None) don't resolve to a comp here
+        parent_comp = session.get(Node, resp_node.parent_id)
+        if parent_comp is not None and parent_comp.tier == "comp":
+            target = parent_comp
+            break
+    assert target is not None, (
+        "comparch stub: could not infer target top-level comp from prompt — "
+        "expected at least one subresp id rendered via subresps_summary"
+    )
     subresps = list(
         session.execute(
             select(Node)
@@ -459,7 +481,7 @@ def stub_cli(monkeypatch, shared_session_factory):
             elif phase == "subrequirements":
                 text = _subrequirements_xml(prompt)
             elif phase == "comparch":
-                text = _comparch_xml(session, project_id)
+                text = _comparch_xml(session, project_id, prompt)
             elif phase == "subcomparch":
                 text = _subcomparch_xml()
             elif phase == "policy_application":
@@ -897,14 +919,35 @@ class TestFullBootstrapChain:
             )
             presentational_comparch_prompt = prompts_with_presenting[0]
             # The presenting section must reference the domain
-            # target by real comp_* id, and carry the api-intent
-            # text sysarch_mint seeded onto its pubapi fragment.
+            # target by real comp_* id, and carry the pubapi text.
             assert domain_target_comp.id in presentational_comparch_prompt
             assert "public API for BillingDomain" in presentational_comparch_prompt
             # And the prompt's own component_summary should show
             # the presentational comp's name (but not id — see
             # comment above).
             assert "BillingUIService" in presentational_comparch_prompt
+
+            # Ordering proof: domain_parent edges count as a
+            # dependency for comparch regen order, so BillingUI's
+            # comparch must run *after* BillingDomain's comparch
+            # has been approved and comparch_mint has replaced
+            # the skeletal sysarch-time techspec ("Own the
+            # BillingDomain subsystem.") with the comparch-level
+            # techspec ("Typical Python stack for this
+            # component."). If the ordering were still FIFO /
+            # display-order, BillingUI would fire before
+            # BillingDomain's approval and its domain-parent
+            # block would still carry the sysarch seed.
+            assert "Typical Python stack for this component." in (presentational_comparch_prompt), (
+                "presentational comparch prompt still shows the "
+                "sysarch-time techspec seed; domain-parent ordering "
+                "did not take effect"
+            )
+            assert "Own the BillingDomain subsystem." not in (presentational_comparch_prompt), (
+                "presentational comparch prompt still carries the "
+                "sysarch-time role seed instead of the approved "
+                "comparch techspec"
+            )
 
             # And every subcomparch prompt for a sub OF the
             # presentational comp must carry the grandparent block.

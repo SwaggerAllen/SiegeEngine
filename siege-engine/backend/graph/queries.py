@@ -156,6 +156,53 @@ def domain_parents_of(session: Session, comp_id: str) -> list[Node]:
     )
 
 
+def presentational_children_of(session: Session, comp_id: str) -> list[Node]:
+    """Return the presentational comps that declare ``comp_id`` as a domain parent.
+
+    Inverse of :func:`domain_parents_of`. Walks ``domain_parent``
+    edges where ``target_id == comp_id`` and returns the source
+    components. Used by the comparch mint handler to discover
+    which presentational comps are potentially unblocked by the
+    approval of this domain comp's arch doc — each of those
+    presentationals gets a readiness check afterwards and, if
+    ready, its own comparch generation is enqueued.
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .join(Edge, Edge.source_id == Node.id)
+            .where(
+                Edge.edge_type == "domain_parent",
+                Edge.target_id == comp_id,
+                Node.tier == "comp",
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
+def all_domain_parents_have_approved_comparch(session: Session, comp_id: str) -> bool:
+    """True iff every ``domain_parent`` target of ``comp_id`` has approved comparch content.
+
+    Treats ``domain_parent`` edges as dependency-equivalent for
+    comparch regen ordering: a presentational component's comparch
+    must see its domain parents' approved arch docs so that its
+    own public surface can be aligned with the real shapes the
+    domain side exposes, not the skeletal sysarch-time seeds.
+
+    Returns ``True`` unconditionally for any comp that has no
+    ``domain_parent`` edges (including every domain comp), so this
+    is safe to call on any tier without a prior ``kind`` check.
+    "Approved comparch" is defined as "the comp's ``content`` field
+    is non-empty" — comparch_mint writes the approved arch doc
+    body into ``Node.content`` at approval time.
+    """
+    parents = domain_parents_of(session, comp_id)
+    if not parents:
+        return True
+    return all((p.content or "").strip() for p in parents)
+
+
 def get_component_context(session: Session, comp_id: str) -> ComponentContext:
     """Return the full context bundle for a single top-level component.
 

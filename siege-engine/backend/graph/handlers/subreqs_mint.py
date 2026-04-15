@@ -44,7 +44,10 @@ from backend.graph.parsers.validators import (
     validate_subrequirements,
 )
 from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
-from backend.graph.queries import top_level_resps_assigned_to
+from backend.graph.queries import (
+    all_domain_parents_have_approved_comparch,
+    top_level_resps_assigned_to,
+)
 from backend.graph.reducer import append_event
 from backend.graph.subrequirements import get_subreqs_node
 from backend.models.node import Node
@@ -172,24 +175,44 @@ async def mint_subreqs(payload: dict) -> None:
         # content to verify approval; writing the subresps in
         # the same commit as the approval makes the precondition
         # satisfiable by the time the enqueued job runs.
-        pipeline_queue.enqueue(
-            db,
-            job_type="v2.generate_comparch",
-            payload={
-                "project_id": project_id,
-                "component_id": component_id,
-                "feedback": None,
-            },
-        )
-
-        logger.info(
-            "mint_subreqs project=%s comp=%s minted %d subresps and %d edges "
-            "(comparch generation enqueued)",
-            project_id,
-            component_id,
-            len(minted_subresp_ids),
-            len(minted_edge_ids),
-        )
+        #
+        # Phase 6 ordering: domain_parent edges count as a
+        # dependency in regen order. If this component is
+        # presentational and any of its domain parents has not
+        # yet had its own comparch approved (i.e. its
+        # ``Node.content`` is still empty), defer the enqueue.
+        # The last domain parent's comparch_mint will re-check
+        # presentational children and enqueue those that are now
+        # ready. Domain comps and presentational comps with no
+        # domain_parent edges are unaffected — the readiness
+        # helper returns True for them.
+        if all_domain_parents_have_approved_comparch(db, component_id):
+            pipeline_queue.enqueue(
+                db,
+                job_type="v2.generate_comparch",
+                payload={
+                    "project_id": project_id,
+                    "component_id": component_id,
+                    "feedback": None,
+                },
+            )
+            logger.info(
+                "mint_subreqs project=%s comp=%s minted %d subresps and %d edges "
+                "(comparch generation enqueued)",
+                project_id,
+                component_id,
+                len(minted_subresp_ids),
+                len(minted_edge_ids),
+            )
+        else:
+            logger.info(
+                "mint_subreqs project=%s comp=%s minted %d subresps and %d edges "
+                "(comparch generation deferred — waiting on domain parents)",
+                project_id,
+                component_id,
+                len(minted_subresp_ids),
+                len(minted_edge_ids),
+            )
     finally:
         db.close()
 

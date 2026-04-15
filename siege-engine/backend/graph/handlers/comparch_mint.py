@@ -62,11 +62,14 @@ from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import ValidationError, validate_arch_doc
 from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
 from backend.graph.queries import (
+    all_domain_parents_have_approved_comparch,
     list_subresponsibilities,
     list_top_level_components,
+    presentational_children_of,
     top_level_resps_assigned_to,
 )
 from backend.graph.reducer import append_event
+from backend.graph.subrequirements import get_subreqs_node
 from backend.models.node import Node
 from backend.pipeline import queue as pipeline_queue
 
@@ -309,6 +312,56 @@ async def mint_comparch(payload: dict) -> None:
                     "feedback": None,
                 },
             )
+
+        # ── Phase 6 ordering: unblock presentational children ──
+        # ``domain_parent`` edges count as dependency edges for
+        # comparch regen ordering. When a presentational comp's
+        # subreqs is approved, subreqs_mint checks whether every
+        # one of its domain parents already has approved comparch
+        # content; if not, it defers the presentational's comparch
+        # enqueue. This block is the "defer → resume" mechanism:
+        # now that this (domain) comp's comparch content is
+        # committed, walk every presentational child declared via
+        # a domain_parent edge and enqueue its comparch if it is
+        # now ready. "Ready" means (a) its subreqs node carries
+        # approved content, AND (b) every one of its domain
+        # parents (including this one) has approved comparch
+        # content. Each presentational gets enqueued at most once
+        # because the deferral + unblock paths are mutually
+        # exclusive: subreqs_mint enqueues iff all domain parents
+        # were already approved, otherwise this block enqueues
+        # when the last unfinished domain parent's comparch lands.
+        comp_kind = comp_node.kind
+        if comp_kind == "domain":
+            presentational_children = presentational_children_of(db, component_id)
+            for child in presentational_children:
+                child_subreqs = get_subreqs_node(db, project_id, child.id)
+                if child_subreqs is None or not (child_subreqs.content or "").strip():
+                    # Child's subreqs not approved yet — its own
+                    # subreqs_mint will handle the enqueue when
+                    # it runs, at which point this (domain) comp
+                    # will already have approved comparch and the
+                    # readiness check will pass.
+                    continue
+                if not all_domain_parents_have_approved_comparch(db, child.id):
+                    # Child has other domain parents still waiting.
+                    continue
+                pipeline_queue.enqueue(
+                    db,
+                    job_type="v2.generate_comparch",
+                    payload={
+                        "project_id": project_id,
+                        "component_id": child.id,
+                        "feedback": None,
+                    },
+                )
+                logger.info(
+                    "mint_comparch project=%s comp=%s unblocked "
+                    "presentational child %s — enqueued its comparch",
+                    project_id,
+                    component_id,
+                    child.id,
+                )
 
         logger.info(
             "mint_comparch project=%s comp=%s minted %d subcomponents, "
