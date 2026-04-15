@@ -12,11 +12,11 @@ For teams, this means onboarding becomes reading the graph. Architectural disput
 
 ---
 
-Catapult is the industrial-strength successor to Siege Engine. It is an AI-powered design and code generation system that takes a project description and produces a complete structured model of the system and the code that implements it, through a reviewable pipeline.
+Catapult is an AI-powered design and code generation system that takes a project description and produces a complete structured model of the system and the code that implements it, through a reviewable pipeline.
 
 The central design commitment: the **structured model is the source of truth**. Documents are *derived views* of the model. Users never edit document text directly — every write goes through the LLM via prose feedback, regeneration, and approval. The model is event-sourced; the current state is a projection of that event log; rebuilding the projection from the log must reproduce the same state byte-for-byte.
 
-This specification is divided into two parts: **A. Requirements** (what the system does) and **B. Architecture** (what technologies are used and how). It describes the target design; it does not describe migration from any particular current state.
+This specification is divided into two parts: **A. Requirements** (what the system does) and **B. Architecture** (what technologies are used and how).
 
 ---
 
@@ -32,7 +32,7 @@ Users do not edit nodes directly. There is no text field anywhere in the UI that
 
 All writes go through a single reducer entrypoint that validates the event, appends it to the log, and applies the projection delta in one transaction. There are no duplicate-status fields on parallel tables that can drift out of sync with the event log — the projection is the only place state lives, and reverting a node is "append events that undo the prior delta," never "reach into a table and change a row."
 
-Documents, diffs, rendered architecture pages, review artifacts — everything the user sees — are **derived views** of the model. They are re-computable from the event log at any point in history. This is the single biggest philosophical shift from v1: the document was never the real artifact; it was always just a way of looking at the underlying decisions.
+Documents, diffs, rendered architecture pages, review artifacts — everything the user sees — are **derived views** of the model. They are re-computable from the event log at any point in history. The document was never the real artifact; it is always a way of looking at the underlying decisions.
 
 ### A.1.2 Node tier vocabulary
 
@@ -597,7 +597,7 @@ Within a flow, non-dependent nodes in the same tier can execute in parallel subj
 
 **There is no git mirror of model state.** The event log plus the projection tables are the authoritative store for every design entity, every fragment, every draft, every event, every change plan, every comment, every review action. Documents the user sees (architecture pages, diff views, review panels) are **derived views** of the model — computed on demand from the event log and the projections.
 
-This is a deliberate simplification from the catapult v1 model, which mirrored documents into git at review boundaries. The v2 model treats the event log itself as the history: every state change is a recorded event, version diffs are computed by walking the log, "what did this node look like at time T" is a projection query, and there's nothing a git mirror would add that the event log doesn't already provide natively.
+The event log itself is the history: every state change is a recorded event, version diffs are computed by walking the log, and "what did this node look like at time T" is a projection query. A git mirror of documents adds nothing the event log doesn't already provide natively, and introduces a two-store reconciliation problem ("what happens if the git commit succeeds and the DB commit fails") that a single authoritative store eliminates.
 
 Consequences:
 
@@ -607,7 +607,7 @@ Consequences:
 - Export is still possible (A.20.1) — an exporter walks the projection and emits markdown files to a directory, producing a fully-formed snapshot of the project's design state at a given point in time. But this is an *export*, not the authoritative store.
 - Full audit history is in the event log, queryable by admins and used by the provenance chain (A.20.6).
 
-**Git is still present in the system for code.** Generated code ships as commits against a real repository. The code side of the git story lives in A.10, and it is meaningfully narrower than catapult v1's git strategy because it only concerns code shipping, not document storage.
+**Git is still present in the system for code.** Generated code ships as commits against a real repository. The code side of the git story lives in A.10, scoped strictly to code shipping rather than document storage.
 
 ## A.10 Git for code shipping
 
@@ -686,7 +686,7 @@ A project without code generation (design-only projects, hypothetical-future-pro
 
 ## A.11 Prompt and DAG configuration
 
-**Design commitment: the structure is data, not code.** Per-tier generation prompts, the generation order itself, validator schemas, projection-source parsers, and the scheduler's query rules are all loadable configuration rather than hardcoded Python/Elixir modules. A project can override any of it, and a bundle — a complete configuration for a particular tech stack or workflow style — can be imported from an external source and applied to a project.
+**Design commitment: the structure is data, not code.** Per-tier generation prompts, the generation order itself, validator schemas, projection-source parsers, and the scheduler's query rules are all loadable configuration rather than hardcoded engine modules. A project can override any of it, and a bundle — a complete configuration for a particular tech stack or workflow style — can be imported from an external source and applied to a project.
 
 ### A.11.1 What is configurable
 
@@ -714,21 +714,23 @@ A project inherits its full configuration from a bundle (or the instance default
 
 Model and temperature are configurable at three levels with standard "most-specific wins" fallback: project default, per-tier default, per-node override.
 
+Overrides operate at the bundle's declared level or below (A.11.4). A project on a Level 1 bundle can override prompts (L0) and grammars (L1) but cannot introduce new tiers (L2) without first upgrading the project's bundle to Level 2. This protects the inheritance chain: a project author can't drop into a level the bundle author didn't sign up for.
+
+Override storage is project-scoped: overrides live as event-sourced configuration entries in the project's event log, so they are versioned, reviewable, and replayable just like every other piece of project state. Reverting an override is a normal event-stream operation, not a separate config-rollback path.
+
 ### A.11.4 Levels of abstraction
 
-Bundles span a wide range of ambition, from "swap the prompts on the default flow" all the way to "describe a completely different design system on top of the same engine." Trying to design for the most ambitious case from day one would force every bundle author to make decisions they don't have context for; trying to lock in only the simplest case would paint the engine into a corner. The bundle system is therefore organized into **four levels of abstraction**, each strictly extending the previous one and each making explicit which engine guarantees the bundle inherits and which it must take responsibility for.
+Bundles span a range of ambition, from "swap the prompts on the default flow" to "describe a completely different layered design system on the same engine." The bundle system organizes this range into **four levels of abstraction**, each strictly extending the previous one and each making explicit which engine guarantees the bundle inherits and which it must own. A bundle declares its level; higher levels are higher-risk and the instance approval flow (A.11.2) treats them accordingly.
 
-A bundle declares its level. The instance approval flow (A.11.2) treats higher levels as higher-risk: a Level 0 bundle only changes prose, a Level 3 bundle can introduce a totally new tier hierarchy with its own propagation rules.
+**Level 0 — prompt overrides only.** The bundle ships replacement prompt templates for existing tiers. Tier vocabulary, edge types, validators, generation order, scheduler queries, depth caps, foundation rules, and the approval-gate model all come from the engine's defaults.
 
-**Level 0 — prompt overrides only.** The bundle ships replacement prompt templates for the existing tiers. Tier vocabulary, edge types, validators, generation order, scheduler queries, depth caps, foundation rules, and the approval-gate model all come from the engine's defaults unchanged. A Level 0 bundle is the right shape for "we want to use the default v2 flow, but tune the tone and emphasis for our team's tech stack." The author writes prose and inherits everything else.
+**Level 1 — prompts + grammars.** Adds the ability to redefine the parseable-arch-doc grammar for any tier — section order, allowed children, fragment kinds — by shipping a validator schema alongside the prompt templates. The engine still owns the tier vocabulary, the cold-start order, the foundation rule (A.1.6), the depth cap (A.1.7), and the propagation model.
 
-**Level 1 — prompts + grammars.** Adds the ability to redefine the parseable-arch-doc grammar for any tier — section order, allowed children, fragment kinds — by shipping a validator schema alongside the prompt templates. The engine still owns the tier vocabulary, the cold-start order, the foundation rule, the depth cap, and the propagation model. A Level 1 bundle is the right shape for "we want a different shape of architecture document at the comparch tier, but the tier still means what it means." Existing Phase 4/5 carve-outs (foundation components don't decompose, two-level cap on subcomponent depth) are still enforced by the engine, so a Level 1 bundle author cannot accidentally break them.
-
-**Level 2 — prompts + grammars + declarative mint specs.** Adds the ability to redefine how a tier's mint handler reads its source content and emits events. The mint logic is expressed as a small declarative pipeline (walk this XML structure, emit one `NodeCreated` per matching element with these attributes, emit one `EdgeCreated` per cross-reference, populate the alias→id map this way) rather than as Python code. The engine still owns the event vocabulary, the reducer invariants, the approval gates, and the scheduler. A Level 2 bundle can introduce a new tier name, point its prompts at the new validator, and have the mint handler do the right thing without writing any handler code. The bundle author is responsible for the bundle's own internal consistency, but cannot violate engine-level invariants because the reducer rejects events that would.
+**Level 2 — prompts + grammars + declarative mint specs.** Adds the ability to define how a tier's mint handler reads its source content and emits events. The mint logic is expressed as a small declarative pipeline (walk this structure, emit one node per matching element with these attributes, emit one edge per cross-reference, populate the alias→id map this way) rather than as code. The engine still owns the event vocabulary, the reducer invariants, the approval gates, and the scheduler. A Level 2 bundle can introduce a new tier name, point its prompts at a new validator, and have the mint handler do the right thing without writing any handler code. The bundle author is responsible for the bundle's internal consistency but cannot violate engine-level invariants because the reducer rejects events that would.
 
 **Level 3 — fully data-driven tier hierarchies.** Adds the ability to redefine the cold-start generation order, the scheduler queries, and the propagation rules. A Level 3 bundle can describe a completely different layered design system — narrative writing with character / setting / scene tiers, hardware design with subsystem / component / interconnect tiers, anything with the right shape — and ship it as a single configuration object. The engine still owns event sourcing, the reducer-projection model, the change-plan loop, and the review/approval flow, but the *structure* of the DAG is up to the bundle.
 
-**Inheritance promises** (these are the contract the engine makes to bundle authors at each level):
+**Inheritance promises** — the contract the engine makes to bundle authors at each level:
 
 | Promise | L0 | L1 | L2 | L3 |
 |---|---|---|---|---|
@@ -742,422 +744,90 @@ A bundle declares its level. The instance approval flow (A.11.2) treats higher l
 | Change plans for structural edits | ✓ | ✓ | ✓ | ✓ |
 | Review/feedback/regen loop | ✓ | ✓ | ✓ | ✓ |
 
-Promises that survive across all four levels are **engine-level invariants** — they are properties of the Catapult execution model itself, not of any particular design system. Promises that move from "enforced" at L0/L1 to "bundle-owned" at L3 are **default-system invariants** — they are properties of the v2 catapult-spec design system, hard-won by workshopping, but not properties of every possible layered design system.
+Promises that survive all four levels are **engine-level invariants** — properties of the execution model itself. Promises that move from enforced at L0/L1/L2 to bundle-owned at L3 are **default-system invariants** — properties of the default design system, not of every possible layered design system.
 
-**MVP commitment: Level 2.** The difference between a tool and a platform is whether a bundle author can introduce a new tier without filing a platform feature request, and that capability lives at Level 2. L0 and L1 are useful intermediate stepping stones during implementation — the code refactor naturally lands L0 first (prompts become data), then L1 (grammars become data), then L2 (mint specs become data) — but v1 ships with the L2 contract committed to. Level 3 remains a long-term north star; it requires the scheduler and propagation rules themselves to become data, which is a much larger investment and one we should only pay once enough L2 bundles are in the wild to know what L3 actually needs to express. Shipping L2 at v1 also pins the refactor scope: the engine's existing handlers get restructured into the closed operation vocabulary (A.11.6) so that the default flow and any L2 bundle share the same execution substrate.
+**MVP commitment: Level 2.** The difference between a tool and a platform is whether a bundle author can introduce a new tier without filing a platform feature request, and that capability lives at Level 2. v1 ships with the L2 contract. Level 3 remains a long-term north star; it requires the scheduler and propagation rules themselves to become data, which is a much larger investment and worth deferring until enough L2 bundles are in the wild to reveal what L3 needs to express.
 
-One thing L2 **does not** unlock, and which stays engine-owned at all levels below L3: the scheduler queries that drive state-driven generation (A.3.2). L2 bundles define *what* a tier is and *how* it mints nodes; they do not get to define *when* a tier fires. New tiers introduced by an L2 bundle ride the same propagation primitives as the default flow — draft approved triggers downstream regen, fragment changed marks dependents stale, and so on — and the bundle author's job is to declare which of those triggers their tier cares about. This is a useful constraint, not a limitation: it forces new tiers to fit the propagation model, which keeps bundles from drifting into bespoke scheduling logic that the engine can't reason about.
+One thing L2 does **not** unlock, and which stays engine-owned until L3: the scheduler queries that drive state-driven generation (A.3.2). L2 bundles define *what* a tier is and *how* it mints nodes; they do not define *when* a tier fires. New tiers introduced by an L2 bundle ride the same propagation primitives as the default flow — draft approved triggers downstream regen, fragment changed marks dependents stale — and the bundle author declares which triggers their tier cares about. This is a useful constraint: it forces new tiers to fit the propagation model and keeps bundles from drifting into bespoke scheduling logic the engine can't reason about.
 
 ### A.11.5 Distribution and storage
 
-Bundles are distributed as **git repositories**, stored in the **instance's gitea substrate** (A.10.1), and resolved to specific commits when a project picks a version. A bundle is a directory of YAML/JSON/text files (prompts as text, grammars as YAML, mint specs as YAML, scheduler queries as YAML at L3) plus a manifest declaring the bundle's level, name, version, and dependencies. The instance's bundle library is a gitea namespace (for example, `bundles/fastapi-backend`, `bundles/react-frontend`), and each namespace entry is a gitea mirror of the bundle author's upstream repository.
+Bundles are distributed as **git repositories** and stored in the instance's gitea substrate (A.10.1). A bundle is a directory of YAML/JSON/text files (prompts as text, grammars and mint specs as YAML, scheduler queries as YAML at L3) plus a manifest declaring the bundle's level, name, version, and dependencies. The instance's bundle library is a gitea namespace (for example, `bundles/fastapi-backend`, `bundles/react-frontend`), and each namespace entry is a gitea mirror of the bundle's upstream git repository.
 
-**Why gitea-as-substrate rather than git-clone-anywhere.** Catapult already runs a gitea sidecar for code shipping (A.10.1). Reusing it for bundle storage means one substrate, one code path, one backup story, and one operational model — no second-class registry or filesystem-cache layer to build and maintain. The properties we get for free by routing bundles through gitea are substantial:
+Reusing the existing gitea substrate for bundle storage — rather than building a separate registry or cache layer — means bundle storage inherits the substrate's properties for free:
 
-- **Instance bundle library = gitea namespace.** The set of bundles available to projects is literally the set of repositories in the `bundles/*` gitea namespace. No separate approvals table, no separate admin UI, no separate state machine. Admins manage the library with the gitea admin UI they already use for code repositories.
-- **Approval = mirror.** Importing a bundle into the library is creating a gitea mirror of the upstream. Revoking a bundle is deleting the mirror. Version bumps are admin-initiated fetch-upstream operations followed by explicit tag approval. This is exactly the primitive gitea is built for, and it gives admins a one-screen workflow for the full lifecycle.
-- **Version pinning is commit SHAs.** A project declares "I'm on bundle `fastapi-backend@v1.2.3`" and that resolves to a specific commit in the instance gitea. That commit is guaranteed to remain resolvable for the life of the instance, because the instance owns the mirror. Upstream rewrites, force-pushes, or repository deletions cannot invalidate a project's pinned version.
-- **Supply-chain auditing is automatic.** Every bundle version a project has ever used is an immutable commit in the instance gitea. Security review of what generated a given flow run is a git log walk against the instance gitea, not a race against external forge history.
-- **Offline and airgapped deployments work.** Once bundles are mirrored into the instance gitea, the instance does not need outbound network access to resolve, load, or apply them. Air-gapped environments import bundles via tarball → local gitea repository, and the rest of the system works unchanged.
-- **Caching and latency.** Bundle loads hit a local gitea, not a remote forge. Nothing in the hot path of project creation or flow execution waits on external network I/O.
+- **Library = gitea namespace.** The set of bundles available to projects is the set of repositories in the `bundles/*` namespace. Admins manage the library with the gitea admin UI they already use for code repositories.
+- **Approval = mirror.** Importing a bundle creates a gitea mirror of the upstream. Revoking a bundle deletes the mirror. Version bumps are admin-initiated fetch-upstream operations followed by explicit tag approval.
+- **Version pinning = commit SHA.** A project declaring `fastapi-backend@v1.2.3` resolves to a specific commit in the instance gitea, guaranteed to remain resolvable for the life of the instance. Upstream rewrites, force-pushes, or repository deletions cannot invalidate a pinned version.
+- **Supply-chain auditing.** Every bundle version a project has ever used is an immutable commit in the instance gitea. Security review of a flow run is a git log walk.
+- **Offline and airgapped operation.** Once bundles are mirrored, the instance does not need outbound network access to resolve, load, or apply them. Airgapped environments import bundles via tarball.
+- **No external network in the hot path.** Bundle loads hit a local gitea, not a remote forge.
 
-**Bundle authors publish wherever they want.** The upstream source of a bundle can be GitHub, Codeberg, a self-hosted gitea, a tarball on a webserver, or an internal git forge at a customer's organization. The instance admin imports by specifying the upstream URL when creating the mirror, and gitea handles the rest (`POST /repos/migrate` with `mirror=true`). There is no requirement that bundle authors use any particular hosting, only that the bundle be reachable by git clone when the admin imports it.
+Bundle authors publish wherever they want — the upstream source can be GitHub, Codeberg, a self-hosted gitea, a tarball on a webserver, or an internal forge. The instance admin imports by specifying the upstream URL when creating the mirror; gitea handles the rest via its migration endpoint.
 
-**Internal authorship.** Many bundles will be authored *inside* the instance rather than imported from an external source — a team develops a bundle that encodes their org's coding conventions, another team forks an existing bundle to tune it for a different stack, a platform group maintains a private family of bundles for internal use. These cases don't need external hosting at all, because the instance's own gitea is already a git server. The in-house flow is:
+**Internal authorship.** Bundles can also be authored inside the instance rather than imported from an external source. The bundle team develops in a gitea development namespace (for example, `dev/acme-fastapi-bundle`) with whatever permissions the org wants, using gitea's normal workflows. When a bundle version is ready for production, the instance admin promotes it to the `bundles/` namespace, either as a mirror of the dev repo or as a fresh import of the tagged commit. Projects pin to `bundles/*`, not `dev/*`: the dev namespace is the development surface, the `bundles/` namespace is the production surface. A bundle upstream is any git repository reachable from the instance gitea's migration endpoint, and the instance gitea itself is one such source — which means a self-hosted Catapult deployment can run with zero outbound network access, using only in-house bundles.
 
-1. The bundle team creates a development namespace in the instance gitea (for example, `dev/acme-fastapi-bundle`). This is a regular gitea repository with whatever permissions the org wants — the bundle team can collaborate, branch, review pull requests, and tag releases using gitea's normal workflows.
-2. When a bundle version is ready for production, the instance admin promotes it to the `bundles/` namespace, either by mirroring the dev repository (preserving a link back to the dev source for future updates) or by fresh-importing the tagged commit (for bundles that are stable and no longer being actively iterated). Both options are supported; the choice is a governance decision, not a technical one.
-3. Projects pin to the `bundles/` namespace entry, not the dev namespace. The dev repository continues to be the development surface; the `bundles/` namespace is the production surface. Changes land in dev, get reviewed in dev, and get promoted to `bundles/` as a deliberate admin action.
+**Out of scope for v1:**
 
-This flow collapses the distinction between external and internal authorship cleanly: **a bundle upstream is any git repository reachable from the instance gitea's migration endpoint**, and the instance gitea itself is one such reachable source. An org that wants to mix — develop some bundles in-house and also mirror some open-source bundles — uses the same `bundles/` namespace for both, and projects pick from whichever entries are approved.
-
-The internal authorship story means a self-hosted instance can be a fully functional catapult deployment with zero outbound network access: the bundled gitea holds the default bundle from first boot, any in-house bundles live in dev namespaces in the same gitea, and the `bundles/` library contains whatever promotions the admin has approved. Outbound network is only needed when an admin chooses to mirror an external upstream, and even then only at mirror-creation and fetch-upstream time.
-
-**What is still explicitly out of scope** for the bundle system MVP, even with the gitea substrate in place:
-
-- **Cross-instance discovery.** Within an instance, discovery is the gitea bundle namespace — users can browse it and see everything approved. Cross-instance discovery ("which bundles are good and who uses them") is a community problem (curated lists, blog posts, shared instance snapshots) rather than a platform one. An opt-in public registry of bundle upstreams can be layered on later without changing the storage mechanism.
-- **Composition.** A project inherits from exactly one bundle with per-project overrides on top. There is no support for combining two bundles into one (no "Python FastAPI backend" + "React frontend" merge). Composition requires conflict resolution between two bundles that override the same tier's prompt, and the right design is unclear without real-world examples to test against. Multi-bundle projects can be revisited once single-bundle projects are working.
-- **Runtime patching.** Once a project has imported a bundle, schema changes to that bundle (new tiers, new fragment kinds, new edge types) require a project-level migration. There is no auto-migration of in-flight projects when a bundle's grammar evolves. The engine surfaces a schema-version mismatch as an explicit error, and the project owner runs a migration handler.
+- **Cross-instance discovery.** Within an instance, discovery is the gitea bundle namespace. Cross-instance discovery is a community problem (curated lists, blog posts), not a platform one. An opt-in public registry of bundle upstreams can be layered on later without changing the storage mechanism.
+- **Composition.** A project inherits from exactly one bundle with per-project overrides on top. No combining two bundles into one. Composition requires conflict resolution between bundles that override the same tier's prompt, and the right design is unclear without real-world examples to test against.
+- **Runtime patching.** Schema changes to a bundle (new tiers, new fragment kinds, new edge types) require a project-level migration. No auto-migration of in-flight projects when a bundle's grammar evolves — the engine surfaces schema-version mismatch as an explicit error and the project owner runs a migration handler.
 
 ### A.11.6 The closed vocabulary of operations
 
-A key insight from designing the four levels: **the engine's existing handlers can be written entirely in terms of a small closed vocabulary of operations.** A full audit of the siege-engine v2 handlers (cold-start expansion through comparch, subcomparch, and both policy-application tiers) produces seventeen primitive operations across five categories. Every existing mint handler, generation handler, context-assembly helper, and scheduler trigger in v2 is expressible as a declarative composition of these primitives. Nothing in the v2 code requires arbitrary Turing-complete logic.
+The bundle DSL exposes a closed vocabulary of **seventeen primitive operations** across five categories. Every prompt, grammar, and mint spec a bundle ships is expressed as a declarative composition of these primitives. The vocabulary is deliberately small: it is learnable in an afternoon, bounded in surface area, and sufficient for the handler shapes the default design system needs. Nothing in a bundle requires arbitrary Turing-complete logic.
 
-**Graph queries (6).** The read surface. Projection tables are the target; queries are composable filters that return nodes, edges, or fragments.
+**Graph queries (6).** The read surface over projection tables.
 
 - `get_node(id)` — single node by ID.
 - `get_fragment(owner_id, kind)` — single fragment by composite key.
-- `query_nodes(filters...)` — filter on tier, parent_id, project_id, kind, is_foundation, with ordering by display_order and created_at.
+- `query_nodes(filters...)` — filter on tier, parent_id, project_id, kind, is_foundation; ordered by display_order and created_at.
 - `query_edges(filters...)` — filter on edge_type, source_id, target_id, project_id.
-- `walk_edges(start, edge_type, direction, depth?)` — single-hop at depth=1, transitive closure at depth=∞; covers every subtree walk, sibling lookup, and reachability query in the v2 code.
+- `walk_edges(start, edge_type, direction, depth?)` — single-hop at depth=1, transitive closure at depth=∞; covers subtree walks, sibling lookups, and reachability queries.
 - `edge_exists(edge_type, source, target)` — existence check for idempotency guards and conditional emissions.
 
-**Content parsing (2).** The grammar surface. Every structured content blob (prose with XML sections) goes through the same two primitives regardless of tier.
+**Content parsing (2).** Every structured content blob (prose with tagged sections) goes through the same two primitives.
 
 - `parse_xml(raw_text, root_tag)` — extract a parse-tree from structured content.
 - `validate_grammar(tree, grammar, cross_refs)` — check a tree against a declared grammar plus known-ID sets for cross-reference validation.
 
-**Cross-reference helpers (3).** The scaffolding for LLM-authored aliases that need resolving to real IDs before edge emission.
+**Cross-reference helpers (3).** Scaffolding for resolving LLM-authored aliases to real IDs before edge emission.
 
 - `build_alias_map(collection, key_fn, id_fn)` — construct an alias→ID map during minting.
 - `resolve_alias(map, alias)` — look up, returning an ID or raising on miss.
 - `render_template(text, context)` — text templating for prompt rendering and inline-XML blob serialization.
 
-**Event emission (4).** The write surface. All persistence goes through the reducer as events; the mint-spec DSL composes these.
+**Event emission (4).** The write surface. All persistence goes through the reducer as events.
 
-- `emit_node_created(tier, parent_id, kind?, name, content, display_order, extras...)` — extras covers `group_label`, `is_implicit`, `is_foundation`, and any future optional fields.
+- `emit_node_created(tier, parent_id, kind?, name, content, display_order, extras...)` — `extras` covers optional fields like `group_label`, `is_implicit`, `is_foundation`.
 - `emit_edge_created(edge_type, source, target)`
 - `emit_fragment_updated(owner, kind, content)`
-- `emit_draft(action, target, content?, batch_id?)` — covers `DraftGenerated`, `DraftDiscarded`, and `GenerationTelemetry` as lifecycle operations on a single draft object.
+- `emit_draft(action, target, content?, batch_id?)` — covers the full draft lifecycle (`DraftGenerated`, `DraftDiscarded`, `GenerationTelemetry`) as operations on a single draft object.
 
-**Scheduler / control flow (2).** The cross-handler glue.
+**Scheduler / control flow (2).** Cross-handler glue.
 
 - `enqueue_job(kind, params)` — post-commit enqueue for fan-out and downstream generation. Always runs in a separate transaction from the emitting commit so transient enqueue failures don't roll back the mint.
 - `bootstrap_singleton_node(tier, parent_id?)` — check-or-create for bootstrap nodes (reqs, sysarch, subreqs) that downstream tiers expect to exist. Desugars to `query_nodes(...).count == 0 ? emit_node_created(...) : noop`.
 
-**Declarative idioms layered on the primitives.** Three patterns appear in every mint handler and are exposed as first-class shorthand in the mint-spec DSL rather than requiring bundle authors to express them from primitives every time:
+**Declarative idioms layered on the primitives.** Three patterns are exposed as first-class shorthand in the mint-spec DSL rather than requiring bundle authors to express them from primitives every time:
 
-- **Idempotency guards.** Every mint handler begins with "if the tier's work is already done, halt." The DSL makes this a named field on the mint spec (`idempotency.skip_if: query_nodes(...)`), not a manual first-line check in every spec.
-- **Fragment seeding + overwrite.** Many mint handlers write skeletal fragments at NodeCreated time that are overwritten by downstream tiers on approval. The DSL supports declaring the seed content inline on the `NodeCreated` emission and lets downstream tiers declare their overwrite contract, so the bundle author never has to track the seed-then-replace pattern manually.
-- **Post-commit enqueue and singleton bootstrap.** The last step of every mint handler is some combination of bootstrapping a singleton node for the next tier and enqueueing its generation in a separate transaction. The DSL treats these as declared properties of the tier (`post_commit: [bootstrap, enqueue]`), not manual lines in each mint spec.
+- **Idempotency guards.** Every mint begins with "if the tier's work is already done, halt." The DSL makes this a named field (`idempotency.skip_if: query_nodes(...)`).
+- **Fragment seeding + overwrite.** Some tiers write skeletal fragments at node creation time that downstream tiers overwrite on approval. The DSL supports declaring the seed content inline on the emission; downstream tiers declare their overwrite contract.
+- **Post-commit enqueue and singleton bootstrap.** Mint handlers end by bootstrapping a singleton for the next tier and enqueueing its generation. The DSL treats these as declared properties of the tier (`post_commit: [bootstrap, enqueue]`).
 
-These idioms are sugar — they desugar into primitive operations — but they are load-bearing for ergonomics. A DSL that exposes only the primitives and forces authors to re-derive the idioms every time will produce bundles that are tedious to write and easy to get wrong. A DSL that exposes the idioms as first-class forces bundle authors to think about the *contract* of the tier (when is it done, what does it seed, what runs next) rather than the *mechanics* of expressing it.
+These idioms desugar into primitive operations but are load-bearing for ergonomics. Exposing only the raw primitives and forcing authors to re-derive the idioms every time produces bundles that are tedious to write and easy to get wrong.
 
-**Escape hatches** are bounded and explicit. A bundle that needs a custom validation invariant beyond what the grammar layer can express ships a small named function the engine knows how to call by name; the function lives in a per-instance allowlist and the instance admin signs off on it during bundle approval. Bundles that need cross-event coordination (deferred fan-out, custom edge propagation) declare named handlers in the same allowlist. The escape hatches are **not** "ship arbitrary Python or Elixir in the bundle" — that would erase the security and reviewability benefits of declarative bundles. They are "ship a name; the engine looks up the name in an instance-controlled registry of approved code." This keeps bundle authoring in the data domain while still letting bundles reach for engine-level capabilities when the declarative layer falls short.
+**Escape hatches** are bounded and explicit. A bundle that needs a custom validation invariant beyond what the grammar layer can express ships a small **named** function the engine calls by name; the function lives in a per-instance allowlist and the instance admin signs off on it during bundle approval. Bundles that need cross-event coordination (deferred fan-out, custom edge propagation) declare named handlers in the same allowlist. The escape hatches are **not** arbitrary code in the bundle — they are a name the engine looks up in an instance-controlled registry of approved code. This keeps bundle authoring in the data domain while still letting bundles reach for engine-level capabilities when the declarative layer falls short.
 
-### A.11.7 Per-project overrides revisited
+### A.11.7 What is still TBD
 
-With the level model in mind, per-project overrides (A.11.3) become more precise. A project inherits a bundle at some level L; per-project overrides operate at the same level or below. A project on a Level 1 bundle can override prompts (Level 0 operation) and grammars (Level 1 operation), but cannot introduce new tiers (Level 2 operation) without first upgrading the project's bundle to Level 2. This protects the inheritance chain — a project author can't accidentally drop into a level the bundle author didn't sign up for.
+Even with the L2 commitment, the gitea substrate, and the instance library locked in for v1, a small number of mechanics are deferred to dedicated workshops:
 
-Override storage is project-scoped: overrides live as event-sourced configuration entries in the project's event log, so they are versioned, reviewable, and replayable just like every other piece of project state. Reverting a per-project override is a normal event-stream operation, not a separate "config rollback" path.
+- **Schema migration language.** When a bundle's grammar changes between versions, projects on the old version need a migration path. The migration runs as a normal event-sourced operation (emit corrective events that bring projection state to the new shape), but the *language* bundle authors use to describe the migration is not yet specified. The first few migrations can be hand-written as one-off handlers; the declarative migration language is deferred until there are enough examples to generalize from.
+- **Override expression syntax.** Per-project overrides could be expressed as JSON patches, full file replacements, key-value dicts, or a small templating language. The choice depends on what overrides actually look like in practice; deferred until L0 overrides are in use.
+- **Bundle signing beyond mirror-based trust.** A.11.2's mirror-based approval model gives instance admins a manual trust decision without requiring cryptographic signing: the mirror is the approval, and it holds an immutable copy that cannot be rewritten by upstream. Cryptographic signing (sigstore, in-tree GPG, instance-managed key rings) makes trust decisions cheaper to propagate between instances and gives admins a machine-checkable provenance trail. Deferred until there are enough instances sharing bundles that manual trust decisions become the bottleneck.
 
-### A.11.8 What is still TBD
-
-Even with the L2 commitment, the gitea substrate, and the instance library all locked in for v1, a small number of mechanics are deferred to dedicated workshops:
-
-- **Schema migration language.** When a bundle's grammar changes between versions, projects on the old version need a migration path. The migration runs as a normal event-sourced operation (emit corrective events that bring projection state to the new shape), but the *language* bundle authors use to describe the migration in the bundle itself is not yet specified. The first few migrations can be hand-written as one-off handlers; the declarative migration language is deferred until there are enough examples to generalize from.
-- **Override expression syntax.** Per-project overrides could be expressed as JSON patches, full file replacements, key-value dicts, or a small templating language. The choice depends on what overrides actually look like in practice; deferred until L0 overrides are in use and we can see the shapes.
-- **Bundle signing beyond mirror-based trust.** A.11.2's mirror-based approval model gives instance admins a manual trust decision without requiring cryptographic signing: the act of mirroring an upstream into the instance bundle namespace *is* the approval, and the mirror holds an immutable copy that cannot be rewritten by upstream. Cryptographic signing (sigstore, in-tree GPG, instance-managed key rings) makes the trust decision cheaper to propagate between instances and gives admins a machine-checkable provenance trail — valuable but not blocking for v1. Deferred until there are enough instances sharing bundles that manual trust decisions per instance become the bottleneck.
-
-These TBD items are deliberately scoped *below* the level model, the gitea substrate, and the instance library, because those three are the promises bundle authors and instance admins reason about. The deferred items are implementation refinements that can land incrementally without invalidating bundles already in the wild, as long as the level boundaries, the storage model, and the inheritance contract stay stable.
-
-### A.11.9 Worked example: expressing feature_mint in the closed vocabulary
-
-This subsection validates the closed-vocabulary claim (A.11.6) by walking through how the siege-engine v2 `feature_mint` handler would be expressed as a declarative mint spec against the primitive operations. **The YAML-ish syntax shown below is purely illustrative** — catapult's actual bundle DSL will be designed in a dedicated workshop and will almost certainly be generated dogfoodingly by the first bundle author (likely siege-engine itself, once the bundle-execution engine is built). The point of this walkthrough is not to propose a grammar, but to prove that no operation in `feature_mint` requires capabilities beyond the primitives in A.11.6.
-
-`feature_mint` is chosen because it's the simplest non-trivial mint handler: it parses two sibling XML sections, validates cross-references between them, mints two different node tiers (feat and vocab), builds an alias map between phases, emits a bootstrap singleton for the downstream tier, and enqueues the next generation in a separate transaction. If this handler expresses cleanly, every simpler handler does too. The harder case (`comparch_mint`, which uses nearly every primitive) is a separate validation exercise.
-
-```yaml
-name: feature_mint
-tier: feat
-trigger:
-  on_approve:
-    node: expansion
-
-idempotency:
-  skip_if:
-    query_nodes:
-      tier: feat
-      project_id: "{{ context.project_id }}"
-      min_count: 1
-
-parse:
-  features:
-    operation: parse_xml
-    source: trigger.node.content
-    root_tag: features
-    grammar: grammars/features.yaml
-  vocabulary:
-    operation: parse_xml
-    source: trigger.node.content
-    root_tag: vocabulary
-    grammar: grammars/vocabulary.yaml
-    optional: true
-    cross_refs:
-      known_feature_names: "{{ parse.features.children | map(.name) }}"
-
-phases:
-  - name: mint_features
-    for_each: feature in parse.features.children
-    emit:
-      - node_created:
-          tier: feat
-          kind: domain
-          parent_id: null
-          name: "{{ feature.name }}"
-          content: "{{ feature.intent }}"
-          display_order: "{{ loop.index }}"
-          extras:
-            group_label: "{{ feature.group_label }}"
-            is_implicit: "{{ feature.is_implicit }}"
-          register_alias: "{{ feature.name }}"
-
-  - name: mint_vocabulary
-    when: parse.vocabulary is not null
-    for_each: entry in parse.vocabulary.children
-    emit:
-      - node_created:
-          tier: vocab
-          kind: domain
-          parent_id:
-            if: "{{ entry.scope == 'project' }}"
-            then: null
-            else: "{{ resolve_alias(entry.feature_name) }}"
-          name: "{{ entry.name }}"
-          content: "{{ entry.raw_content }}"
-          display_order: 0
-
-post_commit:
-  - bootstrap_singleton_node:
-      tier: reqs
-      parent_id: null
-    then_enqueue:
-      kind: generate_requirements
-      params:
-        project_id: "{{ context.project_id }}"
-        feedback: null
-```
-
-**Primitive usage audit.** This spec uses the following primitives from A.11.6:
-
-- `query_nodes` — idempotency guard.
-- `parse_xml` — twice, once for features and once for vocabulary.
-- `validate_grammar` — implicit, invoked by the `grammar:` field on each parse step.
-- `build_alias_map` — implicit, invoked by `register_alias:` on the features phase.
-- `resolve_alias` — in the vocab phase's conditional parent_id expression.
-- `emit_node_created` — twice, once per phase.
-- `bootstrap_singleton_node` — in post_commit, guarded by its own internal check.
-- `enqueue_job` — chained after bootstrap via `then_enqueue:`, runs in a separate transaction.
-- `render_template` — implicit, used by every `"{{ ... }}"` expression.
-
-Primitives not used by this handler (but used by others): `get_node`, `get_fragment`, `query_edges`, `walk_edges`, `edge_exists`, `emit_edge_created`, `emit_fragment_updated`, `emit_draft`. None are needed for `feature_mint` specifically; all appear in later handlers, and `comparch_mint` uses the full set.
-
-**Declarative idioms exercised.**
-
-- **Idempotency guard** — the `idempotency.skip_if` field at the top. The v2 code uses a tier-specific count check (`count(feat_* nodes in project)`); the DSL expresses this as a generic query-with-min-count.
-- **Fragment seeding** — not used by `feature_mint` (it writes no fragments), but present in the idiom list because `sysarch_mint` and `comparch_mint` rely on it. This walkthrough confirms the other primitives are in place for when those handlers are written.
-- **Post-commit enqueue with singleton bootstrap** — the `post_commit` block at the bottom, combining `bootstrap_singleton_node` with a chained `then_enqueue:` that runs after the main commit. The v2 handler's "separate-transaction-for-enqueue" safety property is preserved by declaring the chain as post-commit, not as another phase.
-
-**What the walkthrough reveals.**
-
-- The mint spec needs **declarative conditional emission**. The vocab phase's `parent_id` can be `null` or a resolved alias depending on a parsed field. This is not a primitive; it's an expression-language feature the DSL must support. The expression language is intentionally under-specified here — catapult's eventual DSL will pick one (CEL, minijinja-compatible, or a custom minimal expression grammar), but the choice is downstream of proving the primitives are sufficient.
-- The `register_alias:` field on `emit_node_created` is sugar for "after emitting this node, add (value → minted_id) to the current alias map." This is `build_alias_map` invoked declaratively rather than as an explicit step. Phases in the mint spec share a single alias map, so cross-phase alias resolution works without the bundle author writing the map-building step by hand.
-- The `trigger.on_approve.node: expansion` field binds this mint spec to the approval event of a specific projection source. The engine's scheduler watches for that event and runs the mint spec when it fires. This is not a mint-spec primitive — it's the tier's *declaration* of when it runs, which lives alongside the spec but is interpreted by the scheduler. Bundle authors declare this once per tier; the scheduler consumes it.
-
-**Verdict.** `feature_mint` expresses cleanly against the primitive set. No escape hatches needed, no new primitives discovered, no operations required beyond the seventeen listed in A.11.6. The spec is roughly 60 lines of YAML-ish content; the corresponding Python handler in v2 is roughly 180 lines. The density difference is the value of the declarative layer: the bundle author writes the *intent* (what to parse, what to mint, what to enqueue), and the engine supplies the *mechanics* (the session lifetime, the event-append-and-commit dance, the separate-transaction enqueue, the alias-map bookkeeping).
-
-`comparch_mint` is the harder validation target and is walked through in A.11.10.
-
-### A.11.10 Worked example: expressing comparch_mint in the closed vocabulary
-
-`comparch_mint` is the hardest existing siege-engine v2 handler. It reads several graph queries before validation to build validator input sets, parses a multi-section arch doc, emits five top-level fragments, mints one child component node per subcomponent with two seeded fragments each plus decomposition edges linking pre-existing subresps to the new subcomponents, mints component-local policy nodes with inline-XML blob content, emits external dependency edges against sibling comp IDs, emits internal dependency edges between subcomponents via an alias map built in the same phase, commits, then fans out three separate downstream job types in a separate transaction. If it expresses cleanly, the closed-vocabulary claim in A.11.6 is validated against the worst case in the current codebase.
-
-As in A.11.9, the YAML below is illustrative. The real DSL will be designed in a dedicated workshop.
-
-```yaml
-name: comparch_mint
-tier: comp
-trigger:
-  on_approve:
-    node_kind: comp
-    filter: "parent_id is null"
-
-idempotency:
-  skip_if:
-    query_nodes:
-      tier: comp
-      parent_id: "{{ context.payload.component_id }}"
-      min_count: 1
-
-preconditions:
-  - get_node:
-      id: "{{ context.payload.component_id }}"
-      expect:
-        tier: comp
-        parent_id: null
-        content: not_empty
-      bind: target
-
-  - query_nodes:
-      tier: resp
-      parent_id: "{{ target.id }}"
-      ordered_by: [display_order, created_at]
-      bind: subresps
-
-  - walk_edges:
-      start: "{{ target.id }}"
-      edge_type: decomposition
-      direction: inbound
-      depth: 1
-      filter: "tier == 'resp' and parent_id is null"
-      bind: parent_resps
-
-  - query_nodes:
-      tier: comp
-      parent_id: null
-      project_id: "{{ context.project_id }}"
-      exclude: "{{ target.id }}"
-      bind: sibling_comps
-
-parse:
-  arch_doc:
-    operation: parse_xml
-    source: target.content
-    root_tag: comparch
-    grammar: grammars/comparch.yaml
-    cross_refs:
-      known_subresp_ids: "{{ subresps | map(.id) }}"
-      known_sibling_comp_ids: "{{ sibling_comps | map(.id) }}"
-      known_resp_ids_for_policies: "{{ (parent_resps | map(.id)) + (subresps | map(.id)) }}"
-    validator_params:
-      target_is_foundation: "{{ target.is_foundation }}"
-
-phases:
-  - name: emit_arch_fragments
-    emit:
-      - fragment_updated:
-          owner: "{{ target.id }}"
-          kind: techspec
-          content: "{{ parse.arch_doc.techspec }}"
-      - fragment_updated:
-          owner: "{{ target.id }}"
-          kind: pubapi
-          content: "{{ parse.arch_doc.pubapi }}"
-      - fragment_updated:
-          owner: "{{ target.id }}"
-          kind: privapi
-          content: "{{ parse.arch_doc.privapi }}"
-      - fragment_updated:
-          owner: "{{ target.id }}"
-          kind: policies
-          content:
-            render_template: templates/policies-fragment.xml
-            with:
-              policies: "{{ parse.arch_doc.policies }}"
-      - fragment_updated:
-          owner: "{{ target.id }}"
-          kind: deps
-          content:
-            render_template: templates/deps-fragment.xml
-            with:
-              external_deps: "{{ parse.arch_doc.external_deps }}"
-
-  - name: mint_subcomponents
-    for_each: subcomp in parse.arch_doc.subcomponents
-    emit:
-      - node_created:
-          tier: comp
-          kind: "{{ target.kind }}"        # inherited from owning comp
-          parent_id: "{{ target.id }}"
-          name: "{{ subcomp.name }}"
-          content: ""
-          display_order: "{{ loop.index }}"
-          extras:
-            is_foundation: "{{ subcomp.is_foundation }}"
-          register_alias: "{{ subcomp.alias }}"
-          seed_fragments:
-            techspec: "{{ subcomp.role }}"
-            pubapi: "{{ subcomp.api_intent }}"
-      - for_each: resp_ref in subcomp.resp_refs
-        edge_created:
-          edge_type: decomposition
-          source: "{{ resp_ref }}"
-          target: "{{ resolve_alias(subcomp.alias) }}"
-
-  - name: mint_component_local_policies
-    for_each: policy in parse.arch_doc.policies
-    emit:
-      - node_created:
-          tier: policy
-          kind: domain
-          parent_id: "{{ target.id }}"
-          name: "{{ policy.name }}"
-          content:
-            render_template: templates/policy-blob.xml
-            with:
-              policy: "{{ policy }}"
-          display_order: "{{ loop.index }}"
-
-  - name: external_dependency_edges
-    for_each: target_comp_id in parse.arch_doc.external_deps
-    emit:
-      - edge_created:
-          edge_type: dependency
-          source: "{{ target.id }}"
-          target: "{{ target_comp_id }}"
-
-  - name: sub_dependency_edges
-    for_each: sub_dep in parse.arch_doc.sub_deps
-    emit:
-      - edge_created:
-          edge_type: dependency
-          source: "{{ resolve_alias(sub_dep.from_alias) }}"
-          target: "{{ resolve_alias(sub_dep.to_alias) }}"
-
-post_commit:
-  - enqueue_job:
-      kind: apply_top_level_policies
-      params:
-        project_id: "{{ context.project_id }}"
-        component_id: "{{ target.id }}"
-  - enqueue_job:
-      kind: apply_component_local_policies
-      params:
-        project_id: "{{ context.project_id }}"
-        component_id: "{{ target.id }}"
-  - for_each: sub_id in alias_map.values()
-    enqueue_job:
-      kind: generate_subcomparch
-      params:
-        project_id: "{{ context.project_id }}"
-        component_id: "{{ sub_id }}"
-        feedback: null
-```
-
-**Primitive usage audit.** `comparch_mint` uses 11 of the 17 primitives from A.11.6:
-
-- `get_node` — precondition target lookup.
-- `query_nodes` — idempotency guard plus two precondition queries (subresps, sibling_comps).
-- `walk_edges` — precondition parent_resps lookup via inbound decomposition walk.
-- `parse_xml` — the comparch arch doc parse.
-- `validate_grammar` — implicit, invoked by the grammar + cross_refs + validator_params on the parse step.
-- `build_alias_map` — implicit, invoked by `register_alias:` on the subcomponent minting phase.
-- `resolve_alias` — used twice: once in the decomposition edge emissions within the same phase that builds the alias map, and again in the sub-dependency edges phase that runs later.
-- `render_template` — three times: policies fragment body, deps fragment body, per-policy blob content. All declarative inline-XML serialization.
-- `emit_node_created` — for subcomponents and for component-local policies.
-- `emit_edge_created` — for decomposition edges (nested within subcomp phase), external dependency edges, and sub-dependency edges.
-- `emit_fragment_updated` — five top-level fragments plus two seeded fragments per subcomponent (via `seed_fragments:` sugar on the node_created emission).
-- `enqueue_job` — three post-commit enqueues: apply_top_level_policies, apply_component_local_policies, and one generate_subcomparch per minted subcomponent.
-
-Primitives not used: `get_fragment` (comparch_mint only writes fragments, never reads them), `query_edges` (walk_edges with depth=1 covers the lookups needed here), `edge_exists` (idempotency is node-count based), `emit_draft` (mint handlers don't touch drafts), `bootstrap_singleton_node` (subcomponents don't need a bootstrap node — the subcomponents themselves are the projection targets). All five primitives not used here are used in other handlers (generation handlers for `emit_draft` and `get_fragment`, policy-application handlers for `edge_exists`, `subreqs_mint` for `bootstrap_singleton_node`, and the various place-specific `query_edges` uses across sysarch_mint and regen_context).
-
-**Declarative idioms exercised.** All three.
-
-- **Idempotency guard** — `idempotency.skip_if` at the top, checking for any subcomponent under the target.
-- **Fragment seeding** — the `seed_fragments:` field on the `node_created:` emission in the subcomponent phase. This is its first real use. The DSL sugar desugars to "mint the node, then emit one `fragment_updated` per named kind with content bound from the parsed source, using the just-minted node's ID as the fragment owner." The bundle author never writes the explicit fragment emissions; the idiom handles them.
-- **Post-commit enqueue with fan-out** — the `post_commit` block at the bottom. Three separate enqueue rules: two singleton enqueues for policy application, one iterative enqueue for subcomparch generation. The iterative form uses `alias_map.values()` to iterate every minted subcomponent ID without the author having to track them manually.
-
-**What the walkthrough reveals beyond what feature_mint showed.**
-
-- **Preconditions as a first-class DSL block.** `comparch_mint` runs three graph queries before parsing, and the query results feed into the validator as cross-reference ID sets. The DSL needs a named `preconditions:` section (or similar) that runs queries and binds results to names for later reference in parse cross_refs, phase emissions, and post_commit params. This is a structural feature of the DSL, not a new primitive — every query is still one of the six graph query primitives. But without the structural feature, every mint spec would have to inline its queries into the parse step or the emission bodies, which is noisy. `preconditions:` lets the spec front-load the graph reads cleanly.
-
-- **Nested for_each inside an emit block.** The subcomponent minting phase mints one node per subcomp, and for each of those subcomps, emits one decomposition edge per `resp_ref`. The emit block has to support nested iteration where the inner loop has access to both the outer loop variable and the just-minted node's alias. This is a compositional feature of the DSL, not a new primitive.
-
-- **Alias resolution inside the same phase that built the alias.** In the subcomponent phase, `register_alias:` adds the mapping, and the immediately-following nested edge emission uses `resolve_alias()` to look it up. This requires the alias map to be updated synchronously between sibling emissions within one phase, so the ordering semantics of emissions within a phase have to be defined (the answer is "in listed order, each emission's side effects visible to subsequent emissions in the same block"). Straightforward to define, but worth being explicit about.
-
-- **Inline template rendering on emission content fields.** Two fragment bodies and all component-local policy contents are rendered via `render_template` invoked as the value of a `content:` field. This is a declarative form of the `render_template` primitive — the DSL supports "content is not a literal string, it's a template invocation that returns a string." The grammars + templates directory in the bundle holds the `.xml` template files referenced from the spec. This is how bundles ship their own content-serialization conventions without needing custom code.
-
-- **Inherited attribute values from preconditions.** `kind: "{{ target.kind }}"` on the subcomponent minting emission inherits the kind from the parent comp. This is just template interpolation over precondition-bound data, which was the shape anyway, but it validates that precondition bindings are visible throughout the full spec (parse cross_refs, phase emissions, post_commit params), not scoped to any one section.
-
-- **Fan-out over an alias map in post-commit.** The subcomparch generation enqueue iterates `alias_map.values()` to reach every minted subcomponent. The alias map built during the mint-subcomponents phase is visible to post_commit, which matches how v2 tracks `minted_sub_ids` in a local list and iterates it after commit. The DSL can either make the alias map visible in post_commit (as shown) or require an explicit `bind:` on the phase that collects minted IDs into a named collection; both work, and the alias-map approach is more DRY.
-
-**Verdict.** `comparch_mint` expresses cleanly against the primitive set. No new primitives needed, no escape hatches triggered. The spec is roughly 130 lines of YAML-ish content; the corresponding Python handler in v2 is roughly 370 lines (including helpers). The density improvement (~3×) is the best yet — more than `feature_mint`'s 3× — because `comparch_mint` has more mechanical boilerplate for the bundle author to *not* write.
-
-More importantly, `comparch_mint` is the hardest existing handler, and the five DSL compositional features it surfaces (preconditions block, nested for_each in emit, same-phase alias register + resolve, inline template rendering on content fields, alias-map visibility in post_commit) are all non-controversial structural additions layered on top of the primitives. None of them expand the closed vocabulary; they just make the primitives composable in the ways the existing handlers need.
-
-**End-to-end validation.** With `feature_mint` and `comparch_mint` both expressing cleanly, the closed vocabulary is validated against both the simplest and the hardest existing mint handlers. Every other mint handler in the v2 codebase (`requirements_mint`, `sysarch_mint`, `subreqs_mint`, `subcomparch_mint`) is strictly simpler than `comparch_mint` in its primitive usage, so nothing between these two endpoints is expected to introduce new primitives or new compositional features. The L2 commitment (A.11.4) is validated: bundle authors can write every existing tier as declarative mint specs, and catapult's bundle execution engine can be designed against a known-sufficient operation set and a known-sufficient compositional-feature set.
-
-The generation handlers (`requirements_generation`, `sysarch_generation`, etc.) are a separate class of handler that doesn't emit events at all — they write drafts and telemetry. Their primitive usage is strictly a subset of the mint handlers' (they need the graph queries and the parsing primitives, plus `emit_draft`, and nothing else), so their validation is trivial. The policy application handlers are similar — they run a generation pass then emit edges. Neither case is expected to surface new primitives beyond what the mint handler walkthroughs have already covered.
+These items are scoped *below* the level model, the gitea substrate, and the instance library, which are the load-bearing promises bundle authors and instance admins reason about. The deferred items are implementation refinements that can land incrementally without invalidating bundles already in the wild.
 
 ## A.12 Credentials and token tracking
 
@@ -1369,11 +1039,11 @@ Private chat conversations are persisted per project, per user. Users can refere
 
 ### A.19.5 David is not proactive
 
-David does not run background analysis, surface issues unprompted, or interrupt the user's workflow with suggestions. It responds to user questions, participates in collaborative discussions when @mentioned, and proposes flows when asked — but it does not watch for problems and raise them on its own. This is a deliberate scope narrowing from the catapult v1 concept: proactive AI suggestions sit uneasily with the "human is in control" commitment, and the review-queue + feedback-counter + lobby combination already gives users enough visibility into where attention is needed without a background daemon deciding what to flag.
+David does not run background analysis, surface issues unprompted, or interrupt the user's workflow with suggestions. It responds to user questions, participates in collaborative discussions when @mentioned, and proposes flows when asked — but it does not watch for problems and raise them on its own. Proactive AI suggestions sit uneasily with the "human is in control" commitment, and the review-queue + feedback-counter + lobby combination already gives users enough visibility into where attention is needed without a background daemon deciding what to flag.
 
 ## A.20 Adoption and trust
 
-These requirements address the concerns of teams evaluating Catapult — particularly midsize engineering organizations that need to justify the investment and manage the risk of adopting a new workflow where an AI touches their design graph and their codebase.
+These requirements address the concerns of teams adopting Catapult into workflows where an AI touches their design graph and their codebase.
 
 ### A.20.1 Portability and no lock-in
 
@@ -1413,7 +1083,7 @@ This applies to both model-artifact review and code review UIs.
 
 ### A.20.6 Provenance chain
 
-Any artifact is traceable back through its full generation chain: this code was generated from this plan, which was generated from this component arch doc, which was approved by Alice on March 3rd with these review comments, which was produced by this flow run, triggered by this feature request, which was proposed by David in response to this chat conversation. The provenance chain is surfaced in the UI — clicking any artifact opens a panel showing its lineage. This is derived from the event log and the structural edges, and it is one of the single most reassuring capabilities for teams auditing an AI-driven workflow.
+Any artifact is traceable back through its full generation chain: this code was generated from this plan, which was generated from this component arch doc, which was approved by Alice on March 3rd with these review comments, which was produced by this flow run, triggered by this feature request, which was proposed by David in response to this chat conversation. The provenance chain is surfaced in the UI — clicking any artifact opens a panel showing its lineage — and is derived entirely from the event log and the structural edges.
 
 ### A.20.7 Rollback
 
@@ -1431,7 +1101,7 @@ Token tracking (A.12.3) is surfaced in the UI at multiple levels: per node, per 
 
 ## A.21 Operational invariants
 
-These requirements are derived from edge cases, bugs, and hard-won knowledge from Siege Engine's production use. They are non-negotiable.
+These requirements are derived from edge cases and bugs surfaced by production use of earlier systems in this space. They are non-negotiable.
 
 ### A.21.1 Dependency satisfaction
 
@@ -1471,7 +1141,7 @@ After the scheduler enqueues or completes any job, it must re-scan all candidate
 
 ### A.21.6 Centralized run completion
 
-Run completion — transitioning a flow run to terminal status — must happen through exactly one codepath. Siege Engine v1 had bugs where run completion logic was scattered across multiple callers, causing zombie runs that stayed in `running` status indefinitely. The single completion point lives in the flow-run supervisor module and is called from the supervisor's terminal-state handler. Handlers and the scheduler never transition flow-run state directly.
+Run completion — transitioning a flow run to terminal status — must happen through exactly one codepath. Scattering completion logic across multiple callers causes zombie runs that stay in `running` status indefinitely. The single completion point lives in the flow-run supervisor module and is called from the supervisor's terminal-state handler. Handlers and the scheduler never transition flow-run state directly.
 
 ### A.21.7 CI integration
 
@@ -1506,11 +1176,7 @@ LLM output format is unreliable. All structured output extraction — parseable 
 
 ### A.21.13 LLM concurrency limits
 
-Parallel execution within a flow must respect a configurable concurrency limit for LLM calls. Siege Engine v1 hardcoded this to 1 after higher values caused resource exhaustion and rate-limiting cascades. The limit should be configurable per project but default to conservative values (e.g., 2-4 concurrent calls). Exponential backoff on rate-limit errors — typically 3 attempts with 1-second base delay, doubling — and no retries on quota-exhaustion errors (those need human intervention to resolve).
-
----
-
-
+Parallel execution within a flow must respect a configurable concurrency limit for LLM calls. Unbounded parallelism causes resource exhaustion and rate-limiting cascades; the limit should be configurable per project with a conservative default (2-4 concurrent calls). Exponential backoff on rate-limit errors — 3 attempts with 1-second base delay, doubling — and no retries on quota-exhaustion errors (those need human intervention).
 
 ---
 
@@ -1604,7 +1270,7 @@ Bundled adapters for MVP: **gitea** (trivial, identity-ish since the substrate i
 
 **For design-only projects**, the code-shipping layer is inert — the local gitea still runs (because bundle storage uses it), but no code repository is registered under the project's name and the code-generation tiers never fire. The entire value proposition for design-only projects is the structured-model review loop.
 
-Avoiding a git mirror for documents is one of the largest simplifications relative to catapult v1: no "git commit at review boundary" concept, no run-branch hierarchy for docs, no two-store reconciliation problem, no "what happens if the git commit succeeds and the DB commit fails" failure mode for design state. The event log is the history; git is for code and bundle storage.
+Avoiding a git mirror for documents is a major simplification: no "git commit at review boundary" concept, no run-branch hierarchy for docs, no two-store reconciliation problem, no "what happens if the git commit succeeds and the DB commit fails" failure mode for design state. The event log is the history; git is for code and bundle storage.
 
 ## B.7 Phoenix / LiveView
 
