@@ -781,11 +781,49 @@ The internal authorship story means a self-hosted instance can be a fully functi
 
 ### A.11.6 The closed vocabulary of operations
 
-A key insight from designing the four levels: **the engine's existing handlers can be written entirely in terms of a small closed vocabulary of operations.** Walking a node's subtree, walking edges of a particular type, emitting a `NodeCreated` event, emitting an `EdgeCreated` event, building a name→id alias map, cross-referencing two collections by alias, rendering a template with a context dictionary, querying nodes by tier and parent — these eight or so operations cover every existing mint handler, every regen-context builder, and every scheduler trigger. Nothing in the v2 code (as of Phase 5.5) requires arbitrary Turing-complete logic.
+A key insight from designing the four levels: **the engine's existing handlers can be written entirely in terms of a small closed vocabulary of operations.** A full audit of the siege-engine v2 handlers (cold-start expansion through comparch, subcomparch, and both policy-application tiers) produces seventeen primitive operations across five categories. Every existing mint handler, generation handler, context-assembly helper, and scheduler trigger in v2 is expressible as a declarative composition of these primitives. Nothing in the v2 code requires arbitrary Turing-complete logic.
 
-This is what makes Levels 1 and 2 tractable: the bundle author isn't writing code, they're declaring *which* of these operations to apply, *to which* part of the parsed source content, *producing which* events. The DSL grammars at each level are small because the operation vocabulary is small. When the engine needs to grow a new operation (because some real-world bundle hits a wall), the operation is added to the closed vocabulary and every level above the change inherits it for free.
+**Graph queries (6).** The read surface. Projection tables are the target; queries are composable filters that return nodes, edges, or fragments.
 
-**Escape hatches** are bounded and explicit. A bundle that needs a custom validation invariant beyond what the grammar layer can express ships a small named function the engine knows how to call by name; the function lives in a per-instance allowlist and the instance admin signs off on it during bundle approval. Bundles that need cross-event coordination (deferred fan-out, custom edge propagation) declare named handlers in the same allowlist. The escape hatches are **not** "ship arbitrary Python in the bundle" — that would erase the security and reviewability benefits of declarative bundles. They are "ship a name; the engine looks up the name in an instance-controlled registry of approved code." This keeps bundle authoring in the data domain while still letting bundles reach for engine-level capabilities when the declarative layer falls short.
+- `get_node(id)` — single node by ID.
+- `get_fragment(owner_id, kind)` — single fragment by composite key.
+- `query_nodes(filters...)` — filter on tier, parent_id, project_id, kind, is_foundation, with ordering by display_order and created_at.
+- `query_edges(filters...)` — filter on edge_type, source_id, target_id, project_id.
+- `walk_edges(start, edge_type, direction, depth?)` — single-hop at depth=1, transitive closure at depth=∞; covers every subtree walk, sibling lookup, and reachability query in the v2 code.
+- `edge_exists(edge_type, source, target)` — existence check for idempotency guards and conditional emissions.
+
+**Content parsing (2).** The grammar surface. Every structured content blob (prose with XML sections) goes through the same two primitives regardless of tier.
+
+- `parse_xml(raw_text, root_tag)` — extract a parse-tree from structured content.
+- `validate_grammar(tree, grammar, cross_refs)` — check a tree against a declared grammar plus known-ID sets for cross-reference validation.
+
+**Cross-reference helpers (3).** The scaffolding for LLM-authored aliases that need resolving to real IDs before edge emission.
+
+- `build_alias_map(collection, key_fn, id_fn)` — construct an alias→ID map during minting.
+- `resolve_alias(map, alias)` — look up, returning an ID or raising on miss.
+- `render_template(text, context)` — text templating for prompt rendering and inline-XML blob serialization.
+
+**Event emission (4).** The write surface. All persistence goes through the reducer as events; the mint-spec DSL composes these.
+
+- `emit_node_created(tier, parent_id, kind?, name, content, display_order, extras...)` — extras covers `group_label`, `is_implicit`, `is_foundation`, and any future optional fields.
+- `emit_edge_created(edge_type, source, target)`
+- `emit_fragment_updated(owner, kind, content)`
+- `emit_draft(action, target, content?, batch_id?)` — covers `DraftGenerated`, `DraftDiscarded`, and `GenerationTelemetry` as lifecycle operations on a single draft object.
+
+**Scheduler / control flow (2).** The cross-handler glue.
+
+- `enqueue_job(kind, params)` — post-commit enqueue for fan-out and downstream generation. Always runs in a separate transaction from the emitting commit so transient enqueue failures don't roll back the mint.
+- `bootstrap_singleton_node(tier, parent_id?)` — check-or-create for bootstrap nodes (reqs, sysarch, subreqs) that downstream tiers expect to exist. Desugars to `query_nodes(...).count == 0 ? emit_node_created(...) : noop`.
+
+**Declarative idioms layered on the primitives.** Three patterns appear in every mint handler and are exposed as first-class shorthand in the mint-spec DSL rather than requiring bundle authors to express them from primitives every time:
+
+- **Idempotency guards.** Every mint handler begins with "if the tier's work is already done, halt." The DSL makes this a named field on the mint spec (`idempotency.skip_if: query_nodes(...)`), not a manual first-line check in every spec.
+- **Fragment seeding + overwrite.** Many mint handlers write skeletal fragments at NodeCreated time that are overwritten by downstream tiers on approval. The DSL supports declaring the seed content inline on the `NodeCreated` emission and lets downstream tiers declare their overwrite contract, so the bundle author never has to track the seed-then-replace pattern manually.
+- **Post-commit enqueue and singleton bootstrap.** The last step of every mint handler is some combination of bootstrapping a singleton node for the next tier and enqueueing its generation in a separate transaction. The DSL treats these as declared properties of the tier (`post_commit: [bootstrap, enqueue]`), not manual lines in each mint spec.
+
+These idioms are sugar — they desugar into primitive operations — but they are load-bearing for ergonomics. A DSL that exposes only the primitives and forces authors to re-derive the idioms every time will produce bundles that are tedious to write and easy to get wrong. A DSL that exposes the idioms as first-class forces bundle authors to think about the *contract* of the tier (when is it done, what does it seed, what runs next) rather than the *mechanics* of expressing it.
+
+**Escape hatches** are bounded and explicit. A bundle that needs a custom validation invariant beyond what the grammar layer can express ships a small named function the engine knows how to call by name; the function lives in a per-instance allowlist and the instance admin signs off on it during bundle approval. Bundles that need cross-event coordination (deferred fan-out, custom edge propagation) declare named handlers in the same allowlist. The escape hatches are **not** "ship arbitrary Python or Elixir in the bundle" — that would erase the security and reviewability benefits of declarative bundles. They are "ship a name; the engine looks up the name in an instance-controlled registry of approved code." This keeps bundle authoring in the data domain while still letting bundles reach for engine-level capabilities when the declarative layer falls short.
 
 ### A.11.7 Per-project overrides revisited
 
@@ -802,6 +840,113 @@ Even with the L2 commitment, the gitea substrate, and the instance library all l
 - **Bundle signing beyond mirror-based trust.** A.11.2's mirror-based approval model gives instance admins a manual trust decision without requiring cryptographic signing: the act of mirroring an upstream into the instance bundle namespace *is* the approval, and the mirror holds an immutable copy that cannot be rewritten by upstream. Cryptographic signing (sigstore, in-tree GPG, instance-managed key rings) makes the trust decision cheaper to propagate between instances and gives admins a machine-checkable provenance trail — valuable but not blocking for v1. Deferred until there are enough instances sharing bundles that manual trust decisions per instance become the bottleneck.
 
 These TBD items are deliberately scoped *below* the level model, the gitea substrate, and the instance library, because those three are the promises bundle authors and instance admins reason about. The deferred items are implementation refinements that can land incrementally without invalidating bundles already in the wild, as long as the level boundaries, the storage model, and the inheritance contract stay stable.
+
+### A.11.9 Worked example: expressing feature_mint in the closed vocabulary
+
+This subsection validates the closed-vocabulary claim (A.11.6) by walking through how the siege-engine v2 `feature_mint` handler would be expressed as a declarative mint spec against the primitive operations. **The YAML-ish syntax shown below is purely illustrative** — catapult's actual bundle DSL will be designed in a dedicated workshop and will almost certainly be generated dogfoodingly by the first bundle author (likely siege-engine itself, once the bundle-execution engine is built). The point of this walkthrough is not to propose a grammar, but to prove that no operation in `feature_mint` requires capabilities beyond the primitives in A.11.6.
+
+`feature_mint` is chosen because it's the simplest non-trivial mint handler: it parses two sibling XML sections, validates cross-references between them, mints two different node tiers (feat and vocab), builds an alias map between phases, emits a bootstrap singleton for the downstream tier, and enqueues the next generation in a separate transaction. If this handler expresses cleanly, every simpler handler does too. The harder case (`comparch_mint`, which uses nearly every primitive) is a separate validation exercise.
+
+```yaml
+name: feature_mint
+tier: feat
+trigger:
+  on_approve:
+    node: expansion
+
+idempotency:
+  skip_if:
+    query_nodes:
+      tier: feat
+      project_id: "{{ context.project_id }}"
+      min_count: 1
+
+parse:
+  features:
+    operation: parse_xml
+    source: trigger.node.content
+    root_tag: features
+    grammar: grammars/features.yaml
+  vocabulary:
+    operation: parse_xml
+    source: trigger.node.content
+    root_tag: vocabulary
+    grammar: grammars/vocabulary.yaml
+    optional: true
+    cross_refs:
+      known_feature_names: "{{ parse.features.children | map(.name) }}"
+
+phases:
+  - name: mint_features
+    for_each: feature in parse.features.children
+    emit:
+      - node_created:
+          tier: feat
+          kind: domain
+          parent_id: null
+          name: "{{ feature.name }}"
+          content: "{{ feature.intent }}"
+          display_order: "{{ loop.index }}"
+          extras:
+            group_label: "{{ feature.group_label }}"
+            is_implicit: "{{ feature.is_implicit }}"
+          register_alias: "{{ feature.name }}"
+
+  - name: mint_vocabulary
+    when: parse.vocabulary is not null
+    for_each: entry in parse.vocabulary.children
+    emit:
+      - node_created:
+          tier: vocab
+          kind: domain
+          parent_id:
+            if: "{{ entry.scope == 'project' }}"
+            then: null
+            else: "{{ resolve_alias(entry.feature_name) }}"
+          name: "{{ entry.name }}"
+          content: "{{ entry.raw_content }}"
+          display_order: 0
+
+post_commit:
+  - bootstrap_singleton_node:
+      tier: reqs
+      parent_id: null
+    then_enqueue:
+      kind: generate_requirements
+      params:
+        project_id: "{{ context.project_id }}"
+        feedback: null
+```
+
+**Primitive usage audit.** This spec uses the following primitives from A.11.6:
+
+- `query_nodes` — idempotency guard.
+- `parse_xml` — twice, once for features and once for vocabulary.
+- `validate_grammar` — implicit, invoked by the `grammar:` field on each parse step.
+- `build_alias_map` — implicit, invoked by `register_alias:` on the features phase.
+- `resolve_alias` — in the vocab phase's conditional parent_id expression.
+- `emit_node_created` — twice, once per phase.
+- `bootstrap_singleton_node` — in post_commit, guarded by its own internal check.
+- `enqueue_job` — chained after bootstrap via `then_enqueue:`, runs in a separate transaction.
+- `render_template` — implicit, used by every `"{{ ... }}"` expression.
+
+Primitives not used by this handler (but used by others): `get_node`, `get_fragment`, `query_edges`, `walk_edges`, `edge_exists`, `emit_edge_created`, `emit_fragment_updated`, `emit_draft`. None are needed for `feature_mint` specifically; all appear in later handlers, and `comparch_mint` uses the full set.
+
+**Declarative idioms exercised.**
+
+- **Idempotency guard** — the `idempotency.skip_if` field at the top. The v2 code uses a tier-specific count check (`count(feat_* nodes in project)`); the DSL expresses this as a generic query-with-min-count.
+- **Fragment seeding** — not used by `feature_mint` (it writes no fragments), but present in the idiom list because `sysarch_mint` and `comparch_mint` rely on it. This walkthrough confirms the other primitives are in place for when those handlers are written.
+- **Post-commit enqueue with singleton bootstrap** — the `post_commit` block at the bottom, combining `bootstrap_singleton_node` with a chained `then_enqueue:` that runs after the main commit. The v2 handler's "separate-transaction-for-enqueue" safety property is preserved by declaring the chain as post-commit, not as another phase.
+
+**What the walkthrough reveals.**
+
+- The mint spec needs **declarative conditional emission**. The vocab phase's `parent_id` can be `null` or a resolved alias depending on a parsed field. This is not a primitive; it's an expression-language feature the DSL must support. The expression language is intentionally under-specified here — catapult's eventual DSL will pick one (CEL, minijinja-compatible, or a custom minimal expression grammar), but the choice is downstream of proving the primitives are sufficient.
+- The `register_alias:` field on `emit_node_created` is sugar for "after emitting this node, add (value → minted_id) to the current alias map." This is `build_alias_map` invoked declaratively rather than as an explicit step. Phases in the mint spec share a single alias map, so cross-phase alias resolution works without the bundle author writing the map-building step by hand.
+- The `trigger.on_approve.node: expansion` field binds this mint spec to the approval event of a specific projection source. The engine's scheduler watches for that event and runs the mint spec when it fires. This is not a mint-spec primitive — it's the tier's *declaration* of when it runs, which lives alongside the spec but is interpreted by the scheduler. Bundle authors declare this once per tier; the scheduler consumes it.
+
+**Verdict.** `feature_mint` expresses cleanly against the primitive set. No escape hatches needed, no new primitives discovered, no operations required beyond the seventeen listed in A.11.6. The spec is roughly 60 lines of YAML-ish content; the corresponding Python handler in v2 is roughly 180 lines. The density difference is the value of the declarative layer: the bundle author writes the *intent* (what to parse, what to mint, what to enqueue), and the engine supplies the *mechanics* (the session lifetime, the event-append-and-commit dance, the separate-transaction enqueue, the alias-map bookkeeping).
+
+`comparch_mint` is the harder validation target — it uses more primitives, has two explicit alias-resolution phases, emits five fragments plus child nodes plus edges plus policies, and enqueues multiple downstream jobs. That walkthrough is a future exercise. If `comparch_mint` also expresses cleanly, the L2 commitment is validated end-to-end against the hardest case in the v2 codebase and catapult's bundle execution engine can be designed against a known-sufficient operation set.
 
 ## A.12 Credentials and token tracking
 
