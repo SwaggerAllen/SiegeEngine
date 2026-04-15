@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { BootstrapSubtabs } from '../components/BootstrapSubtabs';
 import { ComponentList } from '../components/ComponentList';
 import { DashboardMenu } from '../components/DashboardMenu';
 import { FeatureExpansionPanel } from '../components/FeatureExpansionPanel';
@@ -17,6 +18,10 @@ import { debugLog } from '../lib/debugLog';
 import { describeApiError } from '../lib/describeApiError';
 
 type DashboardTab = 'expansion' | 'vocabulary' | 'requirements' | 'architecture';
+
+function EmptySubtabMessage({ children }: { children: React.ReactNode }) {
+  return <p className="p-6 text-sm italic text-gray-500">{children}</p>;
+}
 
 interface TabSpec {
   key: DashboardTab;
@@ -194,12 +199,22 @@ function DashboardShell({ projectId }: { projectId: string }) {
             role="tabpanel"
             id="tabpanel-expansion"
             aria-labelledby="tab-expansion"
-            className="h-full overflow-auto"
+            className="h-full"
           >
-            <FeatureExpansionPanel projectId={projectId} />
-            {isExpansionApproved && (
-              <FeatureList projectId={projectId} mintPending={isExpansionApproved} />
-            )}
+            <BootstrapSubtabs
+              idPrefix="expansion"
+              nodesLabel="Features"
+              document={<FeatureExpansionPanel projectId={projectId} />}
+              nodes={
+                isExpansionApproved ? (
+                  <FeatureList projectId={projectId} mintPending={isExpansionApproved} />
+                ) : (
+                  <EmptySubtabMessage>
+                    Features appear here once the expansion is approved and minted.
+                  </EmptySubtabMessage>
+                )
+              }
+            />
           </div>
         )}
         {activeTab === 'vocabulary' && (
@@ -220,10 +235,22 @@ function DashboardShell({ projectId }: { projectId: string }) {
             role="tabpanel"
             id="tabpanel-requirements"
             aria-labelledby="tab-requirements"
-            className="h-full overflow-auto"
+            className="h-full"
           >
-            <RequirementsPanel projectId={projectId} />
-            <ResponsibilityList projectId={projectId} mintPending={featuresMinted} />
+            <BootstrapSubtabs
+              idPrefix="requirements"
+              nodesLabel="Responsibilities"
+              document={<RequirementsPanel projectId={projectId} />}
+              nodes={
+                respsMinted ? (
+                  <ResponsibilityList projectId={projectId} mintPending={featuresMinted} />
+                ) : (
+                  <EmptySubtabMessage>
+                    Responsibilities appear here once the requirements draft is approved and minted.
+                  </EmptySubtabMessage>
+                )
+              }
+            />
           </div>
         )}
         {activeTab === 'architecture' && (
@@ -231,11 +258,25 @@ function DashboardShell({ projectId }: { projectId: string }) {
             role="tabpanel"
             id="tabpanel-architecture"
             aria-labelledby="tab-architecture"
-            className="h-full overflow-auto"
+            className="h-full"
           >
-            <SysarchPanel projectId={projectId} />
-            <ComponentList projectId={projectId} mintPending={respsMinted} />
-            <PolicyList projectId={projectId} mintPending={respsMinted} />
+            <BootstrapSubtabs
+              idPrefix="architecture"
+              nodesLabel="Components & policies"
+              document={<SysarchPanel projectId={projectId} />}
+              nodes={
+                respsMinted ? (
+                  <div className="space-y-0">
+                    <ComponentList projectId={projectId} mintPending={respsMinted} />
+                    <PolicyList projectId={projectId} mintPending={respsMinted} />
+                  </div>
+                ) : (
+                  <EmptySubtabMessage>
+                    Components and policies appear here once the system architecture is approved and minted.
+                  </EmptySubtabMessage>
+                )
+              }
+            />
           </div>
         )}
       </main>
