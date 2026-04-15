@@ -523,6 +523,7 @@ class TestFormatRegenContext:
             "top_level_policy_candidates_summary",
             "related_features_summary",
             "vocab_summary",
+            "domain_parent_surface",
         }
         assert set(formatted.keys()) == expected_keys
 
@@ -950,3 +951,100 @@ class TestBuildRegenContextDomainParent:
         assert ctx.domain_parents == ()
         assert ctx.domain_parent_techspecs == {}
         assert ctx.domain_parent_pubapis == {}
+
+
+class TestFormatDomainParentSurface:
+    """Unit tests for the pure formatter in prompts.comparch."""
+
+    def test_empty_parents_returns_empty_string(self):
+        from backend.graph.prompts.comparch import format_domain_parent_surface
+
+        assert format_domain_parent_surface((), {}, {}) == ""
+
+    def test_renders_name_and_id_per_parent(self):
+        from backend.graph.prompts.comparch import format_domain_parent_surface
+
+        class _FakeNode:
+            def __init__(self, node_id, name):
+                self.id = node_id
+                self.name = name
+
+        parents = (_FakeNode("comp_aaa11111", "BillingService"),)
+        out = format_domain_parent_surface(
+            parents,
+            {"comp_aaa11111": "Handles payments."},
+            {"comp_aaa11111": "get_billing_state(id)."},
+        )
+        assert "BillingService" in out
+        assert "comp_aaa11111" in out
+        assert "Handles payments" in out
+        assert "get_billing_state" in out
+        # Fenced blocks keep domain content from being mistaken for
+        # prompt directives.
+        assert "```" in out
+
+    def test_omits_empty_fragment_sections(self):
+        from backend.graph.prompts.comparch import format_domain_parent_surface
+
+        class _FakeNode:
+            def __init__(self, node_id, name):
+                self.id = node_id
+                self.name = name
+
+        parents = (_FakeNode("comp_aaa11111", "Billing"),)
+        # Only pubapi present; techspec is empty and should not add
+        # a "Technical specification" header to the output.
+        out = format_domain_parent_surface(
+            parents,
+            {"comp_aaa11111": ""},
+            {"comp_aaa11111": "get_billing_state(id)."},
+        )
+        assert "Technical specification" not in out
+        assert "Public surface" in out
+
+
+class TestFormatRegenContextDomainParent:
+    def test_domain_comp_yields_empty_surface(self, db, seeded):
+        ctx = build_regen_context(db, seeded["comp_billing"])
+        formatted = format_regen_context(ctx)
+        assert formatted["domain_parent_surface"] == ""
+
+    def test_presentational_comp_populates_surface(self, db, seeded_with_presentational):
+        ctx = build_regen_context(db, seeded_with_presentational["comp_billing_ui"])
+        formatted = format_regen_context(ctx)
+        surface = formatted["domain_parent_surface"]
+        assert "BillingService" in surface
+        assert seeded_with_presentational["comp_billing"] in surface
+        assert "Handles payments" in surface  # domain techspec
+        assert "get_billing_state" in surface  # domain pubapi
+
+    def test_comparch_prompt_includes_presenting_block(self, db, seeded_with_presentational):
+        from backend.graph.prompts.comparch import render_user_prompt
+
+        ctx = build_regen_context(db, seeded_with_presentational["comp_billing_ui"])
+        formatted = format_regen_context(ctx)
+        prompt = render_user_prompt(
+            **formatted,
+            prior_approved=None,
+            prior_pending=None,
+            feedback=None,
+            parse_error=None,
+        )
+        assert "# This component presents" in prompt
+        assert seeded_with_presentational["comp_billing"] in prompt
+        assert "Handles payments" in prompt
+        assert "get_billing_state" in prompt
+
+    def test_comparch_prompt_omits_section_for_domain_comp(self, db, seeded):
+        from backend.graph.prompts.comparch import render_user_prompt
+
+        ctx = build_regen_context(db, seeded["comp_billing"])
+        formatted = format_regen_context(ctx)
+        prompt = render_user_prompt(
+            **formatted,
+            prior_approved=None,
+            prior_pending=None,
+            feedback=None,
+            parse_error=None,
+        )
+        assert "# This component presents" not in prompt

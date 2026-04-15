@@ -497,7 +497,26 @@ def format_regen_context(ctx: RegenContext) -> dict[str, str]:
             empty_fallback="",
         ),
         "vocab_summary": _render_vocab_summary_from_ctx(ctx),
+        "domain_parent_surface": _render_domain_parent_surface_for_comparch(ctx),
     }
+
+
+def _render_domain_parent_surface_for_comparch(ctx: RegenContext) -> str:
+    """Render the Phase 6 domain-parent context block for comparch.
+
+    Delegates to
+    :func:`backend.graph.prompts.comparch.format_domain_parent_surface`
+    via a local import to keep the import direction
+    ``prompts -> regen_context`` clean (mirrors the
+    ``_render_vocab_summary_from_ctx`` pattern above).
+    """
+    from backend.graph.prompts.comparch import format_domain_parent_surface
+
+    return format_domain_parent_surface(
+        ctx.domain_parents,
+        ctx.domain_parent_techspecs,
+        ctx.domain_parent_pubapis,
+    )
 
 
 def format_regen_context_for_sub(ctx: RegenContext) -> dict[str, str]:

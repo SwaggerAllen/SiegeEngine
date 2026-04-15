@@ -358,6 +358,59 @@ the XML tags themselves) are tolerated by the parser.
 """
 
 
+def format_domain_parent_surface(
+    parents: tuple,
+    techspecs: dict[str, str],
+    pubapis: dict[str, str],
+) -> str:
+    """Render the Phase 6 "what you're presenting" context block.
+
+    ``parents`` is a tuple of domain ``comp_*`` Node rows reached
+    by the ``domain_parent`` edges this (presentational) comparch
+    target points at. ``techspecs`` and ``pubapis`` map each
+    parent's ``comp_*`` id to the content of its corresponding
+    fragment; missing or empty fragments collapse to omitted
+    sections. When ``parents`` is empty the helper returns ``""``
+    and the prompt omits the whole block — which is what happens
+    for every domain component and for presentational components
+    whose ``domain_parent`` edges haven't been drawn yet.
+
+    The output is markdown with one ``## <name> (`comp_id`)``
+    subsection per parent, each carrying at most two fenced
+    blocks (one for the techspec, one for the pubapi). The
+    fencing keeps the rendered fragments from being mistaken for
+    prompt directives by the LLM; the calling ``render_user_prompt``
+    wraps the whole thing in a ``# This component presents`` section
+    header with framing prose that tells the LLM how to use the
+    material.
+    """
+    if not parents:
+        return ""
+    lines: list[str] = []
+    for parent in parents:
+        name = getattr(parent, "name", "") or "(unnamed)"
+        pid = getattr(parent, "id", "")
+        lines.append(f"## {name} (`{pid}`)")
+        techspec = (techspecs.get(pid, "") or "").strip()
+        pubapi = (pubapis.get(pid, "") or "").strip()
+        if techspec:
+            lines.append("")
+            lines.append("*Technical specification (domain side):*")
+            lines.append("")
+            lines.append("```")
+            lines.append(techspec)
+            lines.append("```")
+        if pubapi:
+            lines.append("")
+            lines.append("*Public surface (domain side):*")
+            lines.append("")
+            lines.append("```")
+            lines.append(pubapi)
+            lines.append("```")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 def render_user_prompt(
     *,
     component_summary: str,
@@ -373,6 +426,7 @@ def render_user_prompt(
     parse_error: str | None = None,
     target_is_foundation: bool = False,
     vocab_summary: str = "",
+    domain_parent_surface: str = "",
 ) -> str:
     """Build the user prompt for the comparch generator.
 
@@ -454,6 +508,27 @@ def render_user_prompt(
     parts.append("")
     parts.append(sibling_comps_summary.strip() or "(no siblings)")
     parts.append("")
+
+    if domain_parent_surface and domain_parent_surface.strip():
+        parts.append("# This component presents")
+        parts.append("")
+        parts.append(
+            "This is a **presentational** component. The domain "
+            "components below are what it presents — the "
+            "``domain_parent`` edges drawn at sysarch time say this "
+            "component is a primary view into their content. Treat "
+            "their technical specifications and public surfaces as "
+            "read-only context: align your own ``<technical-"
+            "specification>`` and ``<public-surface>`` with the "
+            "shapes they already expose, and do not re-derive "
+            "domain logic. If you need behavior that isn't on the "
+            "domain side yet, declare a ``<dependency>`` on the "
+            "domain component and lean on its public surface rather "
+            "than duplicating its state into this layer."
+        )
+        parts.append("")
+        parts.append(domain_parent_surface.strip())
+        parts.append("")
 
     if dep_pubapi_summary and dep_pubapi_summary.strip():
         parts.append("# Dependency public surfaces")
