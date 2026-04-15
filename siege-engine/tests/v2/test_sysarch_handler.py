@@ -477,3 +477,94 @@ class TestProjectSettingsTimeout:
         calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
         asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
         assert calls[0]["timeout"] == 1500
+
+
+class TestInputDocBootstrapInclusion:
+    """On the **initial** sysarch generation the handler feeds the
+    project input document into the user prompt so the LLM sees
+    the original framing before choosing components. Once there's
+    any approved or pending sysarch content, the input doc is
+    dropped — the approved component graph itself carries the
+    project's character from then on. See the matching test class
+    in ``test_requirements_handler.py``."""
+
+    def test_initial_generation_includes_input_doc(
+        self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
+    ):
+        calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
+        asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
+        prompt = calls[0]["prompt"]
+        assert "# Project input document" in prompt
+        # Content from the seeded_project fixture's InputDocument.
+        assert "A task tracker." in prompt
+
+    def test_regen_with_feedback_skips_input_doc(
+        self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
+    ):
+        first_calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
+        asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
+        assert "# Project input document" in first_calls[0]["prompt"]
+
+        second_calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
+        asyncio.run(
+            generate_sysarch(
+                {"project_id": seeded_project, "feedback": "Split billing into two comps"}
+            )
+        )
+        prompt = second_calls[0]["prompt"]
+        assert "# Project input document" not in prompt
+        assert "A task tracker." not in prompt
+
+    def test_regen_after_approval_skips_input_doc(
+        self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
+    ):
+        _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
+        asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
+
+        session = shared_session_factory()
+        try:
+            draft = session.execute(
+                select(Draft).where(Draft.project_id == seeded_project, Draft.status == "pending")
+            ).scalar_one()
+            append_event(
+                session,
+                seeded_project,
+                ev.DraftApproved(draft_id=draft.id),
+            )
+            session.commit()
+        finally:
+            session.close()
+
+        calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
+        asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
+        prompt = calls[0]["prompt"]
+        assert "# Project input document" not in prompt
+        assert "A task tracker." not in prompt
+
+    def test_missing_input_document_row_does_not_crash(self, shared_session_factory, monkeypatch):
+        # A project with no InputDocument row. Initial gen should
+        # still succeed; the input doc section is just omitted.
+        factory = shared_session_factory
+        session: Session = factory()
+        try:
+            pid = str(uuid.uuid4())
+            session.add(Project(id=pid, name="T3", git_repo_path="/tmp/t3"))
+            session.flush()
+            _mint_feature(session, pid, "Auth", 0)
+            auth_resp = _mint_top_level_resp(session, pid, "Authentication", "Identify.", 0)
+            billing_resp = _mint_top_level_resp(session, pid, "Billing", "Bill.", 1)
+            foundation_resp = _mint_top_level_resp(session, pid, "Foundation", "Shared.", 2)
+            bootstrap_sysarch_node(session, pid)
+            session.commit()
+        finally:
+            session.close()
+
+        calls = _patch_cli(
+            monkeypatch,
+            _valid_sysarch([auth_resp, billing_resp, foundation_resp]),
+        )
+        asyncio.run(generate_sysarch({"project_id": pid, "feedback": None}))
+        prompt = calls[0]["prompt"]
+        assert "# Project input document" not in prompt
+        # The rest of the prompt still renders.
+        assert "# Project features" in prompt

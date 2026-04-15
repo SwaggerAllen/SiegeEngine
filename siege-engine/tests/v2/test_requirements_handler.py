@@ -487,6 +487,106 @@ class TestFeaturesInPrompt:
             assert fid in prompt
 
 
+class TestInputDocBootstrapInclusion:
+    """On the **initial** requirements generation the handler feeds
+    the project input document into the user prompt so the LLM can
+    see the original framing the features were derived from. Once
+    there's any approved or pending content, the input doc is
+    dropped — the approved resp names and intents themselves carry
+    the project's character from then on, and re-feeding the raw
+    doc is both token-expensive and a source of drift. See the
+    "character injected once, propagates through approved content"
+    principle."""
+
+    def test_initial_generation_includes_input_doc(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+        prompt = calls[0]["prompt"]
+        assert "# Project input document" in prompt
+        # Content from the seeded_project fixture's InputDocument.
+        assert "Build a widget tracker." in prompt
+
+    def test_regen_with_feedback_skips_input_doc(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        # First generation lands a pending draft. Input doc *should*
+        # appear here (initial gen).
+        first_calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+        assert "# Project input document" in first_calls[0]["prompt"]
+
+        # Second call: the pending draft makes this a regen, so the
+        # input doc must be dropped.
+        second_calls = _patch_cli(monkeypatch, _reqs_xml(seeded_feat_ids, ("Auth", "v2.")))
+        asyncio.run(
+            generate_requirements({"project_id": seeded_project, "feedback": "Tighten it up"})
+        )
+        prompt = second_calls[0]["prompt"]
+        assert "# Project input document" not in prompt
+        assert "Build a widget tracker." not in prompt
+
+    def test_regen_after_approval_skips_input_doc(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        # Generate + approve so there's approved content on the reqs
+        # node, then kick a second generation. Because prior_approved
+        # is non-None, the input doc must not re-appear.
+        _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+
+        session = shared_session_factory()
+        try:
+            draft = session.execute(
+                select(Draft).where(Draft.project_id == seeded_project, Draft.status == "pending")
+            ).scalar_one()
+            append_event(
+                session,
+                seeded_project,
+                ev.DraftApproved(draft_id=draft.id),
+            )
+            session.commit()
+        finally:
+            session.close()
+
+        calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+        prompt = calls[0]["prompt"]
+        assert "# Project input document" not in prompt
+        assert "Build a widget tracker." not in prompt
+
+    def test_missing_input_document_row_does_not_crash(self, shared_session_factory, monkeypatch):
+        # Edge case: a project without an InputDocument row (e.g.
+        # created through a legacy path or mid-test). Initial gen
+        # should still succeed; the input doc section is just
+        # omitted.
+        factory = shared_session_factory
+        session: Session = factory()
+        try:
+            pid = str(uuid.uuid4())
+            session.add(Project(id=pid, name="T3", git_repo_path="/tmp/t3"))
+            session.flush()
+            fid = _mint_feature(session, pid, "Auth", "Users sign in.", 0)
+            bootstrap_reqs_node(session, pid)
+            session.commit()
+        finally:
+            session.close()
+
+        calls = _patch_cli(
+            monkeypatch,
+            _reqs_xml(
+                [fid],
+                ("Auth", "Identify callers and make them available downstream."),
+            ),
+        )
+        asyncio.run(generate_requirements({"project_id": pid, "feedback": None}))
+        prompt = calls[0]["prompt"]
+        assert "# Project input document" not in prompt
+        # The rest of the prompt still renders.
+        assert "# Project features" in prompt
+
+
 class TestDomainUiSplitGuidance:
     """The reqs system prompt tells the LLM to split features with both
     server-side and user-facing work into sibling responsibilities so

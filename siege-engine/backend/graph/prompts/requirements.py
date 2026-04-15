@@ -204,6 +204,7 @@ def render_user_prompt(
     feedback: str | None,
     parse_error: str | None = None,
     vocab_summary: str = "",
+    input_doc: str = "",
 ) -> str:
     """Build the user prompt for the requirements generator.
 
@@ -215,8 +216,21 @@ def render_user_prompt(
     the feature-expansion prompt: prior approved / pending content
     for regen iteration, user feedback for revision, and an
     optional ``parse_error`` for the parse-validate retry path.
+
+    ``input_doc`` is the raw project input document. It's passed
+    through **only on the initial bootstrap call** — once there's
+    any approved or pending requirements content, the approved
+    resp names/intents themselves carry the character framing and
+    feeding the doc again is both expensive and a source of drift.
+    The handler decides; this function just honors what it's
+    given and renders the section when non-empty.
     """
     parts: list[str] = []
+    if input_doc and input_doc.strip():
+        parts.append("# Project input document")
+        parts.append("")
+        parts.append(input_doc.strip())
+        parts.append("")
     if vocab_summary and vocab_summary.strip():
         parts.append(vocab_summary.strip())
         parts.append("")
