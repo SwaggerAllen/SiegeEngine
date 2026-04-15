@@ -323,14 +323,34 @@ function toCytoscapeElements(
     };
   });
 
-  const edgeElements: cytoscape.ElementDefinition[] = edges.map((e) => ({
-    data: {
-      id: e.id,
-      source: e.source_id,
-      target: e.target_id,
-      edgeType: e.edge_type,
-    },
-  }));
+  // Edge direction convention: arrows always point from a
+  // dependency toward its dependent ("the thing that needs this
+  // is over there"). The backend's canonical source/target encodes
+  // the *semantic* direction — e.g. a ``dependency`` edge has
+  // source=dependent, target=dependency ("billing depends on
+  // foundation" → source=billing, target=foundation), and a
+  // ``domain_parent`` edge has source=presentational, target=domain
+  // ("billing_ui is a primary view into billing" → source=billing_ui,
+  // target=billing). For the DAG view, both of those render more
+  // intuitively when the arrow runs the other way — from the
+  // thing that was built first toward the thing that consumes it.
+  // We swap source/target at render time for those two edge types.
+  // ``decomposition`` edges are kept as-is: they already point
+  // feat→resp / resp→comp, which the user wants preserved.
+  const shouldFlipEdgeDirection = (edgeType: string): boolean =>
+    edgeType === 'dependency' || edgeType === 'domain_parent';
+
+  const edgeElements: cytoscape.ElementDefinition[] = edges.map((e) => {
+    const flipped = shouldFlipEdgeDirection(e.edge_type);
+    return {
+      data: {
+        id: e.id,
+        source: flipped ? e.target_id : e.source_id,
+        target: flipped ? e.source_id : e.target_id,
+        edgeType: e.edge_type,
+      },
+    };
+  });
 
   return [...nodeElements, ...edgeElements];
 }
