@@ -611,13 +611,48 @@ Consequences:
 
 ## A.10 Git for code shipping
 
-Catapult generates code as a final leaf pass (A.3.1 step 11) and the generated code ships via git commits against a target repository. For the MVP, all leaves within a project target a single repository (monorepo assumption), and the `{repository, folder}` territory mapping (A.1.11) defines which leaf owns which folder. Multi-repo is a post-MVP extension; the data model supports it but the flow orchestration and PR composition assume one repo.
+Catapult generates code as a final leaf pass (A.3.1 step 11) and the generated code ships via git commits against a target repository. Every Catapult instance includes a **bundled gitea sidecar** that serves as the local git substrate — catapult always commits to gitea, and an optional **external forge plugin layer** pushes approved branches to wherever the user's team actually reviews code (GitHub, GitLab, a self-hosted gitea, or any other supported forge). For the MVP, all leaves within a project target a single repository (monorepo assumption), and the `{repository, folder}` territory mapping (A.1.11) defines which leaf owns which folder. Multi-repo is a post-MVP extension; the data model supports it but the flow orchestration and PR composition assume one repo.
 
-### A.10.1 One commit per leaf
+### A.10.1 Local git substrate: bundled gitea
+
+Every Catapult instance runs a gitea sidecar that holds the authoritative local copy of every project's code repository, every flow run's branch hierarchy, and every approved leaf commit. The gitea sidecar is bundled: in a hosted deployment it's a sidecar container, in a self-hosted install it's a service running alongside the catapult application. A catapult instance is never without its gitea — there is no "bring your own local git" mode.
+
+This commitment exists for three reasons:
+
+- **Thread safety and correctness.** The git CLI is not thread-safe, and native Elixir git libraries are immature. Gitea exposes a stable HTTP API that is thread-safe by design and battle-tested under concurrent load. Routing every write through gitea's API means catapult's git-touching code never has to reason about working-tree locks, index corruption, or race conditions between concurrent branch operations.
+- **Single source of truth for what catapult did.** Gitea holds an immutable, event-ordered record of every commit catapult ever authored, including commits from flow runs that were rolled back, discarded, or superseded. This is the git analog of the event log — it can be replayed, audited, or diffed against any prior state. If an external forge rewrites or removes history, the local gitea copy is still authoritative for "what catapult actually generated."
+- **Offline and airgapped operation.** An instance with no outbound network access is a fully functional catapult instance as long as its local gitea is reachable. Code shipping degrades to "commits land in local gitea and wait for an external forge push when connectivity returns"; everything else works unchanged. This matters for enterprise self-hosted deployments where the common case is restricted network egress.
+
+Catapult's git-touching code is written against gitea's API, not against local git commands. There is no `git` subprocess anywhere in the hot path. Bundle import (A.11.5) reuses the same gitea substrate for the same reasons — one substrate, one code path, one set of operational concerns.
+
+### A.10.2 External forge integration via plugin adapters
+
+Users who want their code to land on an external forge (GitHub, GitLab, a different self-hosted gitea, Bitbucket, raw git-over-ssh, etc.) configure a **forge adapter** at the project or instance scope. The adapter is a small plugin with a fixed contract: push a branch, create a PR, update a PR's status, read inbound webhooks. That's the full surface — roughly five methods. Adapters do not touch local repository state, do not run git commands, and do not implement their own commit authoring logic. All of that lives in the gitea substrate.
+
+The adapter contract is narrow on purpose. A project using the GitHub adapter works as follows:
+
+1. Catapult generates code and commits it to the local gitea. The local gitea is the source of truth for what catapult generated.
+2. When a flow run's leaf commits are approved, catapult invokes the adapter's `push_branch` method to mirror the branch from local gitea to GitHub.
+3. When a PR is ready for review, catapult invokes `create_pr` on the adapter, passing the branch names and PR metadata. The PR lives on GitHub; reviews and merges happen there.
+4. GitHub webhooks notify catapult of merges, closes, and status changes via the adapter's `read_webhooks` method. Catapult reflects the state changes in its event log.
+
+A project with **no forge adapter configured** still works end-to-end. Leaf commits land in the local gitea, PRs are created on the local gitea, reviews happen in the local gitea's UI, and merges land on local gitea branches. Users who don't care about external forges get a complete product without touching the adapter layer.
+
+**Adapter surface, explicit contract:**
+
+- `push_branch(source_ref, target_branch_name)` — mirror a branch from local gitea to the external forge.
+- `create_pr(source_branch, target_branch, title, body)` — create a pull request on the external forge.
+- `update_pr(pr_id, status, body?)` — update PR metadata (for example, mark ready-for-review or append a comment).
+- `read_webhooks()` — consume inbound webhook events (merge, close, review-requested, check-failed) and emit catapult-shaped state-change events.
+- `delete_branch(branch_name)` — clean up branches after merges.
+
+That's the whole contract. A new adapter is ~200 lines of Elixir, tested against a mock external forge, with no entanglement in catapult's local git logic. Bundled adapters for MVP: **gitea** (trivial, since the substrate is already gitea) and **GitHub**. GitLab and others are post-MVP but unblocked by the architecture.
+
+### A.10.3 One commit per leaf
 
 Each `impl_*` leaf produces a single commit per flow run. The commit is scoped to the leaf's territory (folder) and contains only files that belong to that leaf. Cross-leaf changes — files that touch two territories — are a manifest-level error surfaced in the admin tools, because the territory rule is what keeps generation parallelizable and leaf-scoped.
 
-### A.10.2 Configurable PR granularity
+### A.10.4 Configurable PR granularity
 
 PR granularity is configurable per project to one of three levels: **system**, **component**, or **subcomponent**.
 
@@ -625,7 +660,7 @@ PR granularity is configurable per project to one of three levels: **system**, *
 - **Component level** — One PR per component. Each component's leaf commits compose into a PR against the run branch.
 - **Subcomponent level** — One PR per subcomponent. Each subcomponent's leaf commits compose into a PR against the component branch.
 
-### A.10.3 Branch hierarchy
+### A.10.5 Branch hierarchy
 
 Flow runs use a **feature branch hierarchy** that mirrors the component tree:
 
@@ -639,15 +674,15 @@ main
             └── subcomponent-b1-branch (leaf commits)
 ```
 
-Code PRs are created at whichever level the project's PR granularity is configured to. Review flows upward through the branch hierarchy: subcomponent branches merge into component branches, component branches merge into the run branch, and the run branch merges into main. Catapult controls the review order and communicates which branches are ready in what sequence.
+Code PRs are created at whichever level the project's PR granularity is configured to. Review flows upward through the branch hierarchy: subcomponent branches merge into component branches, component branches merge into the run branch, and the run branch merges into main. Catapult controls the review order and communicates which branches are ready in what sequence. The branch hierarchy lives in the local gitea substrate; external forge adapters mirror whichever branches the project's PR granularity requires.
 
-### A.10.4 Blocking PR rule
+### A.10.6 Blocking PR rule
 
 If any outstanding PRs exist for a project from a prior flow run, new flows cannot start. All PRs from the prior run must be merged or closed before a new flow begins. This prevents the model from drifting out of sync with the codebase. Sub-runs are exempt from this rule — they contribute to their parent flow's branch hierarchy and exist precisely to handle mid-flow corrections.
 
-### A.10.5 Git is only for code, not for design
+### A.10.7 Git is only for code, not for design
 
-A project without code generation (design-only projects, hypothetical-future-project explorations, documentation-only workloads) does not need a git repository at all. The structured model is the entire artifact. The git layer is optional per project — enable it when you want code shipping, skip it otherwise.
+A project without code generation (design-only projects, hypothetical-future-project explorations, documentation-only workloads) does not need a code repository at all. The structured model is the entire artifact. The code-shipping layer is optional per project — enable it when you want code shipping, skip it otherwise. The local gitea substrate is still used for bundle storage (A.11.5) even in design-only projects; a design-only project simply has no code repository registered under its name.
 
 ## A.11 Prompt and DAG configuration
 
@@ -663,11 +698,11 @@ A project without code generation (design-only projects, hypothetical-future-pro
 
 ### A.11.2 Bundles
 
-Configuration is packaged as **bundles** — directories (or git-cloneable repositories) containing the full set of prompts, validators, generation order, and scheduler queries for a particular workflow style. Bundle examples: "Elixir/Phoenix scaffolding," "Python FastAPI backend," "React frontend feature request," "Infrastructure-as-code Terraform." A bundle represents a complete configuration; projects inherit from one or more bundles with per-project overrides layered on top.
+Configuration is packaged as **bundles** — git repositories containing the full set of prompts, validators, generation order, and scheduler queries for a particular workflow style, plus a manifest declaring the bundle's level, name, and version. Bundle examples: "Elixir/Phoenix scaffolding," "Python FastAPI backend," "React frontend feature request," "Infrastructure-as-code Terraform." A bundle represents a complete configuration; projects inherit from a single bundle with per-project overrides layered on top.
 
-**Instance-level defaults.** Each Catapult instance has a bundle library with instance-level default templates. New projects inherit from instance defaults, with per-project overrides. Self-hosted deployments configure their own defaults.
+**Instance-level bundle library.** Each Catapult instance ships with a bundle library — a gitea namespace containing every bundle approved for use on the instance. The library is part of the v1 commitment: instance admins curate the library, and projects choose their bundle from the library rather than importing one ad-hoc per project. Self-hosted deployments curate their own library; hosted deployments start from a vendor-maintained default set. New projects inherit from the instance default bundle (configurable per-instance) unless the project owner explicitly chooses a different library bundle at project creation.
 
-**Curation and security.** Bundles are a prompt-injection and supply-chain attack surface — a malicious bundle could embed instructions that exfiltrate model content, inject backdoors into generated code, or manipulate the review flow. Bundles must be curated: instance admins explicitly approve bundles before they're available to projects. The system supports bundle signing and provenance tracking so admins can verify the source and integrity of imported bundles.
+**Curation and security.** Bundles are a prompt-injection and supply-chain attack surface — a malicious bundle could embed instructions that exfiltrate model content, inject backdoors into generated code, or manipulate the review flow. Curation is therefore mandatory, and the mechanism is **mirror-based approval**: admins import a bundle by mirroring its upstream git repository into the instance gitea's bundle namespace, and the mirror's existence is the approval. Revocation is deleting the mirror. Version bumps are admin-initiated fetches against the upstream, with explicit approval of the new tag before projects can bump. This reuses gitea primitives (fork, mirror, fetch-upstream) rather than inventing a parallel approvals subsystem; the instance admin UI for bundles is the gitea admin UI, with a thin catapult-side view that reads the namespace and surfaces manifest metadata.
 
 ### A.11.3 Per-project overrides
 
@@ -709,19 +744,30 @@ A bundle declares its level. The instance approval flow (A.11.2) treats higher l
 
 Promises that survive across all four levels are **engine-level invariants** — they are properties of the Catapult execution model itself, not of any particular design system. Promises that move from "enforced" at L0/L1 to "bundle-owned" at L3 are **default-system invariants** — they are properties of the v2 catapult-spec design system, hard-won by workshopping, but not properties of every possible layered design system.
 
-The pragmatic implication: **start at L1, plan for L2, treat L3 as a long-term north star.** Levels 0 and 1 are buildable on top of the existing v2 code with modest refactoring (separate prompt strings from prompt-rendering functions, separate validator schemas from validator code). Level 2 requires the mint-handler-as-DSL work, which is real but bounded. Level 3 requires the scheduler and propagation rules to themselves become data, which is a much larger investment and one we should only pay once we have enough Level 2 bundles in the wild to know what L3 actually needs to express.
+**MVP commitment: Level 2.** The difference between a tool and a platform is whether a bundle author can introduce a new tier without filing a platform feature request, and that capability lives at Level 2. L0 and L1 are useful intermediate stepping stones during implementation — the code refactor naturally lands L0 first (prompts become data), then L1 (grammars become data), then L2 (mint specs become data) — but v1 ships with the L2 contract committed to. Level 3 remains a long-term north star; it requires the scheduler and propagation rules themselves to become data, which is a much larger investment and one we should only pay once enough L2 bundles are in the wild to know what L3 actually needs to express. Shipping L2 at v1 also pins the refactor scope: the engine's existing handlers get restructured into the closed operation vocabulary (A.11.6) so that the default flow and any L2 bundle share the same execution substrate.
 
-### A.11.5 Distribution layer
+One thing L2 **does not** unlock, and which stays engine-owned at all levels below L3: the scheduler queries that drive state-driven generation (A.3.2). L2 bundles define *what* a tier is and *how* it mints nodes; they do not get to define *when* a tier fires. New tiers introduced by an L2 bundle ride the same propagation primitives as the default flow — draft approved triggers downstream regen, fragment changed marks dependents stale, and so on — and the bundle author's job is to declare which of those triggers their tier cares about. This is a useful constraint, not a limitation: it forces new tiers to fit the propagation model, which keeps bundles from drifting into bespoke scheduling logic that the engine can't reason about.
 
-Bundles are distributed as **git repositories**. A bundle is a directory of YAML/JSON/text files (prompts as text, grammars as YAML, mint specs as YAML, scheduler queries as YAML at L3) plus a manifest declaring the bundle's level, its name, its version, and its dependencies on other bundles. Importing a bundle into a Catapult instance is `git clone` plus instance-admin approval. Updating a bundle is `git pull` plus a re-approval gate.
+### A.11.5 Distribution and storage
 
-Git is the right distribution layer because the engine's commitments are textual: prompts are prose, grammars are declarative, mint specs are small data structures. Git already solves versioning, diffing, signing, branching, and merging for textual content, and bundle authors who edit prompts day-to-day will reach for the same review and history tools they use for code. Avoiding a custom registry also avoids a centralization point — bundles can be hosted on any git forge, distributed through any forking model, and audited the same way any open-source dependency is audited.
+Bundles are distributed as **git repositories**, stored in the **instance's gitea substrate** (A.10.1), and resolved to specific commits when a project picks a version. A bundle is a directory of YAML/JSON/text files (prompts as text, grammars as YAML, mint specs as YAML, scheduler queries as YAML at L3) plus a manifest declaring the bundle's level, name, version, and dependencies. The instance's bundle library is a gitea namespace (for example, `bundles/fastapi-backend`, `bundles/react-frontend`), and each namespace entry is a gitea mirror of the bundle author's upstream repository.
 
-What git does **not** give us, and what is therefore explicitly out of scope for the bundle system MVP:
+**Why gitea-as-substrate rather than git-clone-anywhere.** Catapult already runs a gitea sidecar for code shipping (A.10.1). Reusing it for bundle storage means one substrate, one code path, one backup story, and one operational model — no second-class registry or filesystem-cache layer to build and maintain. The properties we get for free by routing bundles through gitea are substantial:
 
-- **Discovery / search.** There is no central bundle registry. Finding bundles is a community problem (curated lists, blog posts, instance-admin folklore) rather than a platform problem. If discovery becomes a bottleneck later, an opt-in registry that indexes published bundles can be layered on without changing the distribution mechanism.
-- **Composition.** A project inherits from exactly one bundle, with per-project overrides on top. There is no support for combining two bundles into one (no "Python FastAPI backend" + "React frontend" merge). Composition is genuinely hard — it requires conflict resolution rules between two bundles that override the same tier's prompt — and the right design is unclear without real-world examples to test against. Multi-bundle projects can be revisited once single-bundle projects are working.
-- **Runtime patching.** Once a project has imported a bundle, schema changes to that bundle (new tiers, new fragment kinds, new edge types) require a project-level migration. There is no auto-migration of in-flight projects when a bundle's grammar evolves. The engine surfaces a schema-version mismatch as an explicit error and the project owner runs a migration handler.
+- **Instance bundle library = gitea namespace.** The set of bundles available to projects is literally the set of repositories in the `bundles/*` gitea namespace. No separate approvals table, no separate admin UI, no separate state machine. Admins manage the library with the gitea admin UI they already use for code repositories.
+- **Approval = mirror.** Importing a bundle into the library is creating a gitea mirror of the upstream. Revoking a bundle is deleting the mirror. Version bumps are admin-initiated fetch-upstream operations followed by explicit tag approval. This is exactly the primitive gitea is built for, and it gives admins a one-screen workflow for the full lifecycle.
+- **Version pinning is commit SHAs.** A project declares "I'm on bundle `fastapi-backend@v1.2.3`" and that resolves to a specific commit in the instance gitea. That commit is guaranteed to remain resolvable for the life of the instance, because the instance owns the mirror. Upstream rewrites, force-pushes, or repository deletions cannot invalidate a project's pinned version.
+- **Supply-chain auditing is automatic.** Every bundle version a project has ever used is an immutable commit in the instance gitea. Security review of what generated a given flow run is a git log walk against the instance gitea, not a race against external forge history.
+- **Offline and airgapped deployments work.** Once bundles are mirrored into the instance gitea, the instance does not need outbound network access to resolve, load, or apply them. Air-gapped environments import bundles via tarball → local gitea repository, and the rest of the system works unchanged.
+- **Caching and latency.** Bundle loads hit a local gitea, not a remote forge. Nothing in the hot path of project creation or flow execution waits on external network I/O.
+
+**Bundle authors publish wherever they want.** The upstream source of a bundle can be GitHub, Codeberg, a self-hosted gitea, a tarball on a webserver, or an internal git forge at a customer's organization. The instance admin imports by specifying the upstream URL when creating the mirror, and gitea handles the rest (`POST /repos/migrate` with `mirror=true`). There is no requirement that bundle authors use any particular hosting, only that the bundle be reachable by git clone when the admin imports it.
+
+**What is still explicitly out of scope** for the bundle system MVP, even with the gitea substrate in place:
+
+- **Cross-instance discovery.** Within an instance, discovery is the gitea bundle namespace — users can browse it and see everything approved. Cross-instance discovery ("which bundles are good and who uses them") is a community problem (curated lists, blog posts, shared instance snapshots) rather than a platform one. An opt-in public registry of bundle upstreams can be layered on later without changing the storage mechanism.
+- **Composition.** A project inherits from exactly one bundle with per-project overrides on top. There is no support for combining two bundles into one (no "Python FastAPI backend" + "React frontend" merge). Composition requires conflict resolution between two bundles that override the same tier's prompt, and the right design is unclear without real-world examples to test against. Multi-bundle projects can be revisited once single-bundle projects are working.
+- **Runtime patching.** Once a project has imported a bundle, schema changes to that bundle (new tiers, new fragment kinds, new edge types) require a project-level migration. There is no auto-migration of in-flight projects when a bundle's grammar evolves. The engine surfaces a schema-version mismatch as an explicit error, and the project owner runs a migration handler.
 
 ### A.11.6 The closed vocabulary of operations
 
@@ -739,14 +785,13 @@ Override storage is project-scoped: overrides live as event-sourced configuratio
 
 ### A.11.8 What is still TBD
 
-Even with the level model committed to, several mechanics are deferred to dedicated workshops:
+Even with the L2 commitment, the gitea substrate, and the instance library all locked in for v1, a small number of mechanics are deferred to dedicated workshops:
 
-- **Bundle manifest schema.** The exact YAML/JSON shape of the manifest file (level declaration, dependency declarations, version semantics) needs a dedicated workshop with at least one real bundle in hand to validate against.
-- **Schema migration when a bundle evolves.** When a Level 1 bundle's grammar changes between versions, projects on the old version need a migration path. The migration runs as a normal event-sourced operation (emit corrective events that bring projection state to the new shape), but the migration *language* — how a bundle author describes the migration in the bundle itself — is not yet specified.
-- **Override expression syntax.** Per-project overrides could be expressed as JSON patches, full file replacements, key-value dicts, or a small templating language. The choice depends on what overrides actually look like in practice; deferred until Level 0 bundles are in use and we can see the override shapes.
-- **Bundle signing and provenance.** A.11.2 commits to bundle signing in principle. The exact signing scheme (sigstore? in-tree GPG signatures? instance-managed key rings?) is deferred; the right choice depends on how bundles end up being distributed in the wild.
+- **Schema migration language.** When a bundle's grammar changes between versions, projects on the old version need a migration path. The migration runs as a normal event-sourced operation (emit corrective events that bring projection state to the new shape), but the *language* bundle authors use to describe the migration in the bundle itself is not yet specified. The first few migrations can be hand-written as one-off handlers; the declarative migration language is deferred until there are enough examples to generalize from.
+- **Override expression syntax.** Per-project overrides could be expressed as JSON patches, full file replacements, key-value dicts, or a small templating language. The choice depends on what overrides actually look like in practice; deferred until L0 overrides are in use and we can see the shapes.
+- **Bundle signing beyond mirror-based trust.** A.11.2's mirror-based approval model gives instance admins a manual trust decision without requiring cryptographic signing: the act of mirroring an upstream into the instance bundle namespace *is* the approval, and the mirror holds an immutable copy that cannot be rewritten by upstream. Cryptographic signing (sigstore, in-tree GPG, instance-managed key rings) makes the trust decision cheaper to propagate between instances and gives admins a machine-checkable provenance trail — valuable but not blocking for v1. Deferred until there are enough instances sharing bundles that manual trust decisions per instance become the bottleneck.
 
-These TBD items are deliberately scoped *below* the level model and the inheritance promises, because the level model and the promises are what bundle authors and instance admins reason about. The TBD items are implementation choices that can land incrementally without invalidating bundles already in the wild, as long as the level boundaries and the inheritance contract stay stable.
+These TBD items are deliberately scoped *below* the level model, the gitea substrate, and the instance library, because those three are the promises bundle authors and instance admins reason about. The deferred items are implementation refinements that can land incrementally without invalidating bundles already in the wild, as long as the level boundaries, the storage model, and the inheritance contract stay stable.
 
 ## A.12 Credentials and token tracking
 
@@ -1032,7 +1077,7 @@ Fan-out stages — the steps that create or modify the component tree structure 
 
 ### A.21.3 Blocking PR rule
 
-If any outstanding PRs exist for a project from a prior flow run, new flows cannot start. All PRs from the prior run (at whatever granularity level the project is configured to) must be merged or closed before a new flow begins. This prevents the model from drifting out of sync with the codebase. Merge order follows the branch hierarchy (A.10.3). Sub-runs are exempt — they contribute to their parent flow's branch hierarchy and exist precisely to handle mid-flow corrections.
+If any outstanding PRs exist for a project from a prior flow run, new flows cannot start. All PRs from the prior run (at whatever granularity level the project is configured to) must be merged or closed before a new flow begins. This prevents the model from drifting out of sync with the codebase. Merge order follows the branch hierarchy (A.10.5). Sub-runs are exempt — they contribute to their parent flow's branch hierarchy and exist precisely to handle mid-flow corrections.
 
 ### A.21.4 Debugging and administrative tools
 
@@ -1172,19 +1217,28 @@ Vector search also powers parts of the David chat interface (A.19) when David ne
 
 ## B.6 Git backend for code shipping
 
-A git backend — Gitea as a local sidecar in self-hosted deployments, or a configured external git host in managed deployments — handles the code-shipping side of the system only (A.10). It is **not** used to store or version design artifacts; the event log plus projections are the authoritative store for all model state (A.9).
+Every Catapult instance includes a **bundled gitea sidecar** that is the authoritative local git substrate (A.10.1). Gitea holds every project's code repository, every flow run's branch hierarchy, every approved leaf commit, and every imported bundle in the instance bundle library (A.11.5). External git hosts (GitHub, GitLab, other gitea instances, etc.) are reached only through the **forge adapter plugin layer** (A.10.2), which pushes approved branches and creates PRs on the external forge but does not touch local repository state. The git backend is **not** used to store or version design artifacts; the event log plus projections are the authoritative store for all model state (A.9).
 
-The git backend's role:
+The local gitea substrate's role:
 
-- **Branch creation** for flow runs (run branch, per-component branches, per-subcomponent branches — see A.10.3).
-- **Commit composition** for leaf-level code changes. Each impl leaf produces one commit per flow run, scoped to the leaf's territory.
-- **PR lifecycle** — creation, review comments, merge operations. The AI posts inline review comments via the git host's PR review API.
-- **Webhook events** for CI status, review submissions, and merge notifications. Catapult subscribes to these webhooks to react to code-side activity.
-- **Merge conflict UI** — for the rare edge cases where conflicts arise despite the folder-per-leaf territory rule and the one-run-at-a-time constraint. The git host's own UI is available as a proxied escape hatch, not the primary workflow.
+- **Branch creation** for flow runs (run branch, per-component branches, per-subcomponent branches — see A.10.5). All branch operations land in local gitea first.
+- **Commit composition** for leaf-level code changes. Each impl leaf produces one commit per flow run, scoped to the leaf's territory. Commits are authored directly via gitea's HTTP API; no git CLI subprocess lives anywhere in the hot path.
+- **PR lifecycle** on local branches — creation, review comments, merge operations. Projects with no forge adapter configured review and merge entirely against local gitea; projects with an adapter mirror branches and PRs to the external forge via `push_branch` / `create_pr`.
+- **Bundle storage** — the instance's bundle library is a gitea namespace (`bundles/*`), with each entry a mirror of the bundle author's upstream. Bundle import, approval, version pinning, and airgapped operation all reuse the same substrate.
+- **Thread-safe concurrent access.** Gitea's API is thread-safe by design, avoiding the git CLI's concurrency problems and the immaturity of native Elixir git libraries.
 
-**For design-only projects**, the git backend is not required — Catapult runs without a configured repository, the code-generation tiers are inert, and the entire value proposition is the structured-model review loop. The git layer becomes relevant only when a project enables code shipping.
+The external forge plugin layer's role (when configured):
 
-Avoiding a git mirror for documents is one of the largest simplifications relative to catapult v1: no "git commit at review boundary" concept, no run-branch hierarchy for docs, no two-store reconciliation problem, no "what happens if the git commit succeeds and the DB commit fails" failure mode for design state. The event log is the history; git is for code.
+- **`push_branch`** — mirror a branch from local gitea to the external forge after leaf commits are approved.
+- **`create_pr`** / **`update_pr`** — lifecycle management of pull requests on the external forge.
+- **`read_webhooks`** — consume inbound webhook events (merge, close, review-requested, check-failed) and translate them into catapult-shaped state-change events.
+- **`delete_branch`** — clean up branches after merges.
+
+Bundled adapters for MVP: **gitea** (trivial, identity-ish since the substrate is gitea) and **GitHub**. New adapters are ~200 lines of Elixir against a fixed contract and do not reach into local repository state.
+
+**For design-only projects**, the code-shipping layer is inert — the local gitea still runs (because bundle storage uses it), but no code repository is registered under the project's name and the code-generation tiers never fire. The entire value proposition for design-only projects is the structured-model review loop.
+
+Avoiding a git mirror for documents is one of the largest simplifications relative to catapult v1: no "git commit at review boundary" concept, no run-branch hierarchy for docs, no two-store reconciliation problem, no "what happens if the git commit succeeds and the DB commit fails" failure mode for design state. The event log is the history; git is for code and bundle storage.
 
 ## B.7 Phoenix / LiveView
 
