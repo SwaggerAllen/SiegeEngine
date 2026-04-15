@@ -679,9 +679,74 @@ A project inherits its full configuration from a bundle (or the instance default
 
 Model and temperature are configurable at three levels with standard "most-specific wins" fallback: project default, per-tier default, per-node override.
 
-### A.11.4 Mechanism — TBD
+### A.11.4 Levels of abstraction
 
-The specifics of how configuration is stored, how bundles are distributed, how schema migration works when a bundle's vocabulary changes, and how overrides are versioned are **design TBD** — deferred to a dedicated workshop. This section captures the design commitment ("structure is data, not code") and the scope of what's covered ("prompts, validators, generation order, scheduler queries, edge vocabulary") without prescribing the schema or the distribution mechanism. The workshop will decide whether bundles live in Postgres rows, on-disk directories, git repositories, or a hybrid; whether overrides are expressed as JSON patches, key-value dicts, or full replacements; and how the instance-level bundle approval flow works.
+Bundles span a wide range of ambition, from "swap the prompts on the default flow" all the way to "describe a completely different design system on top of the same engine." Trying to design for the most ambitious case from day one would force every bundle author to make decisions they don't have context for; trying to lock in only the simplest case would paint the engine into a corner. The bundle system is therefore organized into **four levels of abstraction**, each strictly extending the previous one and each making explicit which engine guarantees the bundle inherits and which it must take responsibility for.
+
+A bundle declares its level. The instance approval flow (A.11.2) treats higher levels as higher-risk: a Level 0 bundle only changes prose, a Level 3 bundle can introduce a totally new tier hierarchy with its own propagation rules.
+
+**Level 0 — prompt overrides only.** The bundle ships replacement prompt templates for the existing tiers. Tier vocabulary, edge types, validators, generation order, scheduler queries, depth caps, foundation rules, and the approval-gate model all come from the engine's defaults unchanged. A Level 0 bundle is the right shape for "we want to use the default v2 flow, but tune the tone and emphasis for our team's tech stack." The author writes prose and inherits everything else.
+
+**Level 1 — prompts + grammars.** Adds the ability to redefine the parseable-arch-doc grammar for any tier — section order, allowed children, fragment kinds — by shipping a validator schema alongside the prompt templates. The engine still owns the tier vocabulary, the cold-start order, the foundation rule, the depth cap, and the propagation model. A Level 1 bundle is the right shape for "we want a different shape of architecture document at the comparch tier, but the tier still means what it means." Existing Phase 4/5 carve-outs (foundation components don't decompose, two-level cap on subcomponent depth) are still enforced by the engine, so a Level 1 bundle author cannot accidentally break them.
+
+**Level 2 — prompts + grammars + declarative mint specs.** Adds the ability to redefine how a tier's mint handler reads its source content and emits events. The mint logic is expressed as a small declarative pipeline (walk this XML structure, emit one `NodeCreated` per matching element with these attributes, emit one `EdgeCreated` per cross-reference, populate the alias→id map this way) rather than as Python code. The engine still owns the event vocabulary, the reducer invariants, the approval gates, and the scheduler. A Level 2 bundle can introduce a new tier name, point its prompts at the new validator, and have the mint handler do the right thing without writing any handler code. The bundle author is responsible for the bundle's own internal consistency, but cannot violate engine-level invariants because the reducer rejects events that would.
+
+**Level 3 — fully data-driven tier hierarchies.** Adds the ability to redefine the cold-start generation order, the scheduler queries, and the propagation rules. A Level 3 bundle can describe a completely different layered design system — narrative writing with character / setting / scene tiers, hardware design with subsystem / component / interconnect tiers, anything with the right shape — and ship it as a single configuration object. The engine still owns event sourcing, the reducer-projection model, the change-plan loop, and the review/approval flow, but the *structure* of the DAG is up to the bundle.
+
+**Inheritance promises** (these are the contract the engine makes to bundle authors at each level):
+
+| Promise | L0 | L1 | L2 | L3 |
+|---|---|---|---|---|
+| Tier vocabulary fixed | ✓ | ✓ | extends | replaces |
+| Edge type vocabulary fixed | ✓ | ✓ | extends | replaces |
+| Foundation-don't-nest rule enforced | ✓ | ✓ | ✓ | bundle-owned |
+| Subcomponent depth cap enforced | ✓ | ✓ | ✓ | bundle-owned |
+| 1:1 leaf:resp:component mapping | ✓ | ✓ | ✓ | bundle-owned |
+| Approval gates on destructive ops | ✓ | ✓ | ✓ | ✓ |
+| Event sourcing + reducer model | ✓ | ✓ | ✓ | ✓ |
+| Change plans for structural edits | ✓ | ✓ | ✓ | ✓ |
+| Review/feedback/regen loop | ✓ | ✓ | ✓ | ✓ |
+
+Promises that survive across all four levels are **engine-level invariants** — they are properties of the Catapult execution model itself, not of any particular design system. Promises that move from "enforced" at L0/L1 to "bundle-owned" at L3 are **default-system invariants** — they are properties of the v2 catapult-spec design system, hard-won by workshopping, but not properties of every possible layered design system.
+
+The pragmatic implication: **start at L1, plan for L2, treat L3 as a long-term north star.** Levels 0 and 1 are buildable on top of the existing v2 code with modest refactoring (separate prompt strings from prompt-rendering functions, separate validator schemas from validator code). Level 2 requires the mint-handler-as-DSL work, which is real but bounded. Level 3 requires the scheduler and propagation rules to themselves become data, which is a much larger investment and one we should only pay once we have enough Level 2 bundles in the wild to know what L3 actually needs to express.
+
+### A.11.5 Distribution layer
+
+Bundles are distributed as **git repositories**. A bundle is a directory of YAML/JSON/text files (prompts as text, grammars as YAML, mint specs as YAML, scheduler queries as YAML at L3) plus a manifest declaring the bundle's level, its name, its version, and its dependencies on other bundles. Importing a bundle into a Catapult instance is `git clone` plus instance-admin approval. Updating a bundle is `git pull` plus a re-approval gate.
+
+Git is the right distribution layer because the engine's commitments are textual: prompts are prose, grammars are declarative, mint specs are small data structures. Git already solves versioning, diffing, signing, branching, and merging for textual content, and bundle authors who edit prompts day-to-day will reach for the same review and history tools they use for code. Avoiding a custom registry also avoids a centralization point — bundles can be hosted on any git forge, distributed through any forking model, and audited the same way any open-source dependency is audited.
+
+What git does **not** give us, and what is therefore explicitly out of scope for the bundle system MVP:
+
+- **Discovery / search.** There is no central bundle registry. Finding bundles is a community problem (curated lists, blog posts, instance-admin folklore) rather than a platform problem. If discovery becomes a bottleneck later, an opt-in registry that indexes published bundles can be layered on without changing the distribution mechanism.
+- **Composition.** A project inherits from exactly one bundle, with per-project overrides on top. There is no support for combining two bundles into one (no "Python FastAPI backend" + "React frontend" merge). Composition is genuinely hard — it requires conflict resolution rules between two bundles that override the same tier's prompt — and the right design is unclear without real-world examples to test against. Multi-bundle projects can be revisited once single-bundle projects are working.
+- **Runtime patching.** Once a project has imported a bundle, schema changes to that bundle (new tiers, new fragment kinds, new edge types) require a project-level migration. There is no auto-migration of in-flight projects when a bundle's grammar evolves. The engine surfaces a schema-version mismatch as an explicit error and the project owner runs a migration handler.
+
+### A.11.6 The closed vocabulary of operations
+
+A key insight from designing the four levels: **the engine's existing handlers can be written entirely in terms of a small closed vocabulary of operations.** Walking a node's subtree, walking edges of a particular type, emitting a `NodeCreated` event, emitting an `EdgeCreated` event, building a name→id alias map, cross-referencing two collections by alias, rendering a template with a context dictionary, querying nodes by tier and parent — these eight or so operations cover every existing mint handler, every regen-context builder, and every scheduler trigger. Nothing in the v2 code (as of Phase 5.5) requires arbitrary Turing-complete logic.
+
+This is what makes Levels 1 and 2 tractable: the bundle author isn't writing code, they're declaring *which* of these operations to apply, *to which* part of the parsed source content, *producing which* events. The DSL grammars at each level are small because the operation vocabulary is small. When the engine needs to grow a new operation (because some real-world bundle hits a wall), the operation is added to the closed vocabulary and every level above the change inherits it for free.
+
+**Escape hatches** are bounded and explicit. A bundle that needs a custom validation invariant beyond what the grammar layer can express ships a small named function the engine knows how to call by name; the function lives in a per-instance allowlist and the instance admin signs off on it during bundle approval. Bundles that need cross-event coordination (deferred fan-out, custom edge propagation) declare named handlers in the same allowlist. The escape hatches are **not** "ship arbitrary Python in the bundle" — that would erase the security and reviewability benefits of declarative bundles. They are "ship a name; the engine looks up the name in an instance-controlled registry of approved code." This keeps bundle authoring in the data domain while still letting bundles reach for engine-level capabilities when the declarative layer falls short.
+
+### A.11.7 Per-project overrides revisited
+
+With the level model in mind, per-project overrides (A.11.3) become more precise. A project inherits a bundle at some level L; per-project overrides operate at the same level or below. A project on a Level 1 bundle can override prompts (Level 0 operation) and grammars (Level 1 operation), but cannot introduce new tiers (Level 2 operation) without first upgrading the project's bundle to Level 2. This protects the inheritance chain — a project author can't accidentally drop into a level the bundle author didn't sign up for.
+
+Override storage is project-scoped: overrides live as event-sourced configuration entries in the project's event log, so they are versioned, reviewable, and replayable just like every other piece of project state. Reverting a per-project override is a normal event-stream operation, not a separate "config rollback" path.
+
+### A.11.8 What is still TBD
+
+Even with the level model committed to, several mechanics are deferred to dedicated workshops:
+
+- **Bundle manifest schema.** The exact YAML/JSON shape of the manifest file (level declaration, dependency declarations, version semantics) needs a dedicated workshop with at least one real bundle in hand to validate against.
+- **Schema migration when a bundle evolves.** When a Level 1 bundle's grammar changes between versions, projects on the old version need a migration path. The migration runs as a normal event-sourced operation (emit corrective events that bring projection state to the new shape), but the migration *language* — how a bundle author describes the migration in the bundle itself — is not yet specified.
+- **Override expression syntax.** Per-project overrides could be expressed as JSON patches, full file replacements, key-value dicts, or a small templating language. The choice depends on what overrides actually look like in practice; deferred until Level 0 bundles are in use and we can see the override shapes.
+- **Bundle signing and provenance.** A.11.2 commits to bundle signing in principle. The exact signing scheme (sigstore? in-tree GPG signatures? instance-managed key rings?) is deferred; the right choice depends on how bundles end up being distributed in the wild.
+
+These TBD items are deliberately scoped *below* the level model and the inheritance promises, because the level model and the promises are what bundle authors and instance admins reason about. The TBD items are implementation choices that can land incrementally without invalidating bundles already in the wild, as long as the level boundaries and the inheritance contract stay stable.
 
 ## A.12 Credentials and token tracking
 
