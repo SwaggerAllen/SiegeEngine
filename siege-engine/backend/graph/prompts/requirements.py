@@ -217,13 +217,11 @@ def render_user_prompt(
     for regen iteration, user feedback for revision, and an
     optional ``parse_error`` for the parse-validate retry path.
 
-    ``input_doc`` is the raw project input document. It's passed
-    through **only on the initial bootstrap call** — once there's
-    any approved or pending requirements content, the approved
-    resp names/intents themselves carry the character framing and
-    feeding the doc again is both expensive and a source of drift.
-    The handler decides; this function just honors what it's
-    given and renders the section when non-empty.
+    ``input_doc`` is the raw project input document. The handler
+    passes it on every generation so the LLM sees the original
+    framing for both initial drafts and feedback iterations.
+    This function just renders the section when non-empty and
+    omits it otherwise.
     """
     parts: list[str] = []
     if input_doc and input_doc.strip():

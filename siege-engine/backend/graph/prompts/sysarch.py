@@ -358,9 +358,9 @@ def render_user_prompt(
     for the parse-validate retry path.
 
     ``input_doc`` is the raw project input document. The handler
-    passes it **only on the initial bootstrap call**; subsequent
-    regens rely on the approved component / responsibility graph
-    itself to carry character. See the matching comment in
+    passes it on every generation so the LLM sees the original
+    framing for both initial drafts and feedback iterations. See
+    the matching comment in
     :mod:`backend.graph.prompts.requirements`.
     """
     parts: list[str] = []

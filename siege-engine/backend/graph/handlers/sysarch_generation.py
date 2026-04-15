@@ -151,28 +151,23 @@ async def generate_sysarch(payload: dict) -> None:
 
         vocab_summary = render_vocab_summary_all(db, project_id)
 
-        # Project input document — fed into the prompt **only on
-        # the initial bootstrap** generation. Once there's any
-        # approved or pending sysarch content, the component graph
-        # itself carries the project's framing via component
-        # names, roles, api-intents, and techspec. Re-feeding the
-        # raw doc every regen is both expensive (Catapult-scale
-        # docs can exceed 15k tokens) and a source of drift. See
-        # the matching logic in requirements_generation.py.
-        is_initial_generation = prior_approved is None and prior_pending is None
-        input_doc = ""
-        if is_initial_generation:
-            input_doc_row = (
-                db.query(InputDocument)
-                .filter(
-                    InputDocument.project_id == project_id,
-                    InputDocument.doc_type == "project_doc",
-                )
-                .order_by(InputDocument.created_at.desc())
-                .first()
+        # Project input document — fed unconditionally on every
+        # sysarch generation. Same reasoning as
+        # ``requirements_generation.py``: the route blocks regen
+        # with 409 once sysarch is approved, so every invocation
+        # is either an initial pass or a pre-approval feedback
+        # iteration, and both benefit from seeing the original
+        # framing.
+        input_doc_row = (
+            db.query(InputDocument)
+            .filter(
+                InputDocument.project_id == project_id,
+                InputDocument.doc_type == "project_doc",
             )
-            if input_doc_row is not None:
-                input_doc = input_doc_row.content or ""
+            .order_by(InputDocument.created_at.desc())
+            .first()
+        )
+        input_doc = (input_doc_row.content or "") if input_doc_row else ""
     finally:
         db.close()
 

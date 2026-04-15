@@ -141,31 +141,27 @@ async def generate_requirements(payload: dict) -> None:
 
         vocab_summary = render_vocab_summary_all(db, project_id)
 
-        # Project input document — loaded eagerly but only fed into
-        # the prompt on the **initial bootstrap** generation. After
-        # that, the approved resp names and intents themselves
-        # carry the project's framing and character, and re-feeding
-        # the raw input doc is both expensive (Catapult-scale docs
-        # can exceed 15k tokens) and a source of drift (the user
-        # may have refined the requirements away from the original
-        # framing via feedback, and we don't want the doc pulling
-        # them back). See the "character injected once, propagates
-        # through approved content" principle discussed alongside
-        # the NodeCountRange work.
-        is_initial_generation = prior_approved is None and prior_pending is None
-        input_doc = ""
-        if is_initial_generation:
-            input_doc_row = (
-                db.query(InputDocument)
-                .filter(
-                    InputDocument.project_id == project_id,
-                    InputDocument.doc_type == "project_doc",
-                )
-                .order_by(InputDocument.created_at.desc())
-                .first()
+        # Project input document — fed unconditionally on every
+        # requirements generation. This handler never runs against
+        # approved state (the route at
+        # ``POST /api/projects/{id}/requirements/generate`` blocks
+        # with 409 once the reqs node is approved — see
+        # ``backend/graph/routes.py``), so every invocation is
+        # either an initial generation or a pre-approval feedback
+        # iteration on a pending draft. Both need the original
+        # framing: the initial pass to shape character from scratch,
+        # later iterations to avoid drifting away from the source
+        # of truth as the user refines the draft.
+        input_doc_row = (
+            db.query(InputDocument)
+            .filter(
+                InputDocument.project_id == project_id,
+                InputDocument.doc_type == "project_doc",
             )
-            if input_doc_row is not None:
-                input_doc = input_doc_row.content or ""
+            .order_by(InputDocument.created_at.desc())
+            .first()
+        )
+        input_doc = (input_doc_row.content or "") if input_doc_row else ""
 
         project_row = db.get(Project, project_id)
         assert project_row is not None
