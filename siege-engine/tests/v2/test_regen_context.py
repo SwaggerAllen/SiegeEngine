@@ -527,10 +527,14 @@ class TestFormatRegenContext:
         }
         assert set(formatted.keys()) == expected_keys
 
-    def test_component_summary_includes_name_and_fragments(self, db, seeded):
+    def test_component_summary_includes_name_id_and_fragments(self, db, seeded):
         ctx = build_regen_context(db, seeded["comp_billing"])
         summary = format_regen_context(ctx)["component_summary"]
         assert "BillingService" in summary
+        # The header line carries the comp_* id so the LLM (and
+        # debug tools) can locate "this is the current target"
+        # without guessing from the name alone.
+        assert seeded["comp_billing"] in summary
         assert "Handles payments" in summary
         assert "get_billing_state" in summary
 
@@ -784,10 +788,13 @@ class TestFormatRegenContextForSub:
         }
         assert set(formatted.keys()) == expected
 
-    def test_subcomponent_summary_includes_name_and_role(self, db, seeded_with_sub):
+    def test_subcomponent_summary_includes_name_id_and_role(self, db, seeded_with_sub):
         ctx = build_regen_context(db, seeded_with_sub["sub_store"])
         summary = format_regen_context_for_sub(ctx)["subcomponent_summary"]
         assert "SessionStore" in summary
+        # The subcomponent's own comp_* id appears in the header
+        # line alongside the name (Phase 6 observability fix).
+        assert seeded_with_sub["sub_store"] in summary
         assert "Persist session tokens" in summary
 
     def test_parent_component_summary_includes_three_fragments(self, db, seeded_with_sub):

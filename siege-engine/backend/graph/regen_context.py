@@ -626,8 +626,12 @@ def _format_subcomponent_summary(ctx: RegenContext) -> str:
     4 time. On first-run subcomparch these are the skeletal
     seeds; on regen they're whatever the previous subcomparch
     pass wrote into them.
+
+    The header line carries both the human-readable name and the
+    stable ``comp_*`` id — same rationale as
+    :func:`_format_component_summary`.
     """
-    parts: list[str] = [f"**{ctx.component.name}**"]
+    parts: list[str] = [f"**{ctx.component.name}** (`{ctx.component.id}`)"]
     if ctx.component_techspec.strip():
         parts.append("")
         parts.append("*Role (from parent comparch):*")
@@ -758,8 +762,14 @@ def _format_component_summary(ctx: RegenContext) -> str:
     On first-run comparch these are still the sysarch-time
     placeholders; on regen they're whatever the previous comparch
     pass wrote into them.
+
+    The header line carries both the human-readable name and the
+    stable ``comp_*`` id so the LLM can reference the target
+    unambiguously in prose, and so tests and debug tools can
+    locate the "this is the current target" prompt by searching
+    for the id rather than the name.
     """
-    parts: list[str] = [f"**{ctx.component.name}**"]
+    parts: list[str] = [f"**{ctx.component.name}** (`{ctx.component.id}`)"]
     if ctx.component_techspec.strip():
         parts.append("")
         parts.append("*Role / techspec:*")
