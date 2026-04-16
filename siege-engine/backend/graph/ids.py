@@ -49,6 +49,7 @@ class Kind(str, Enum):
     MANIFEST = "manifest"
     FANIN = "fanin"
     VOCAB = "vocab"
+    REF = "ref"
 
 
 class InvalidIdError(ValueError):

@@ -131,6 +131,13 @@ async def generate_requirements(payload: dict) -> None:
 
         vocab_summary = render_vocab_summary_all(db, project_id)
 
+        # Referenced content — any ``reference`` edges the reqs node
+        # has pointing outward. Empty in the common case; plumbed so
+        # users can attach standalone refs to the reqs tier.
+        from backend.graph.references import render_referenced_content_summary
+
+        referenced_content_summary = render_referenced_content_summary(db, project_id, reqs_node_id)
+
         # Project input document — fed unconditionally on every
         # requirements generation. This handler never runs against
         # approved state (the route at
@@ -179,6 +186,7 @@ async def generate_requirements(payload: dict) -> None:
             parse_error=parse_error,
             vocab_summary=vocab_summary,
             input_doc=input_doc,
+            referenced_content_summary=referenced_content_summary,
         )
 
     def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]

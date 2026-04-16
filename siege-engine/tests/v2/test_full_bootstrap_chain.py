@@ -257,13 +257,9 @@ def _sysarch_xml(session, project_id: str) -> str:
     )
     # The presentational comp presents its sibling domain comp.
     domain_parent_entries = ""
-    if (
-        pres_alias is not None
-        and presentational_domain_target in resp_name_to_alias
-    ):
+    if pres_alias is not None and presentational_domain_target in resp_name_to_alias:
         domain_parent_entries = (
-            f'<parent from="{pres_alias}" '
-            f'to="{resp_name_to_alias[presentational_domain_target]}"/>'
+            f'<parent from="{pres_alias}" to="{resp_name_to_alias[presentational_domain_target]}"/>'
         )
     return (
         "<sysarch>"
@@ -1020,5 +1016,128 @@ class TestFullBootstrapChain:
             for p in prompts_with_grandparent:
                 assert domain_target_comp.id in p
                 assert "public API for BillingDomain" in p
+        finally:
+            session.close()
+
+    def test_reference_tier_integrates_into_regen_context(self, shared_session_factory, stub_cli):
+        """Phase 6.6 integration check.
+
+        After the main bootstrap chain converges, seed a ``ref_*``
+        node attached via a ``reference`` edge to a top-level comp,
+        and verify:
+
+        (a) ``build_regen_context`` on that comp populates
+            ``referenced_content`` and the rendered
+            ``referenced_content_summary`` carries the ref's body.
+
+        (b) For the reverse walk (ref → comp), the ref's own
+            ``referenced_content_for_node`` pulls the comp's
+            ``pubapi`` fragment.
+
+        This is the end-to-end integration the Phase 6.6 plan calls
+        out — both directions of the walker dispatch, with live
+        state produced by the actual bootstrap chain.
+        """
+        from backend.graph import events as ev
+        from backend.graph.ids import Kind, mint
+        from backend.graph.reducer import append_event
+        from backend.graph.references import (
+            format_referenced_content_summary,
+            referenced_content_for_node,
+        )
+        from backend.graph.regen_context import (
+            build_regen_context,
+            format_regen_context,
+        )
+
+        factory = shared_session_factory
+        project_id = _seed_project(factory)
+        _kickoff_bootstrap(factory, project_id)
+        asyncio.run(_drive_full_chain(factory, project_id))
+
+        session = factory()
+        try:
+            top_comps = list(
+                session.execute(
+                    select(Node).where(
+                        Node.project_id == project_id,
+                        Node.tier == "comp",
+                        Node.parent_id.is_(None),
+                    )
+                ).scalars()
+            )
+            assert top_comps, "bootstrap chain should have minted top-level comps"
+            billing_domain = next(c for c in top_comps if c.name == "BillingDomainService")
+
+            # Seed a ref node
+            ref_id = mint(session, Kind.REF)
+            ref_content = (
+                "<reference>"
+                "<title>Deployment Runbook</title>"
+                "<body>Run kubectl apply. Then verify pods are healthy.</body>"
+                "</reference>"
+            )
+            append_event(
+                session,
+                project_id,
+                ev.NodeCreated(
+                    node_id=ref_id,
+                    tier="ref",
+                    kind="domain",
+                    parent_id=None,
+                    name="Deployment Runbook",
+                    content=ref_content,
+                ),
+            )
+            # Direction 1: billing_domain --reference--> ref
+            comp_to_ref_edge = mint(session, Kind.EDGE)
+            append_event(
+                session,
+                project_id,
+                ev.EdgeCreated(
+                    edge_id=comp_to_ref_edge,
+                    edge_type="reference",
+                    source_id=billing_domain.id,
+                    target_id=ref_id,
+                ),
+            )
+            # Direction 2: ref --reference--> billing_domain (for the
+            # reverse-walk assertion; the walker is source-tier-
+            # agnostic so this works either direction).
+            ref_to_comp_edge = mint(session, Kind.EDGE)
+            append_event(
+                session,
+                project_id,
+                ev.EdgeCreated(
+                    edge_id=ref_to_comp_edge,
+                    edge_type="reference",
+                    source_id=ref_id,
+                    target_id=billing_domain.id,
+                ),
+            )
+            session.commit()
+
+            # (a) comp's build_regen_context sees the ref's content
+            ctx = build_regen_context(session, billing_domain.id)
+            assert ref_id in ctx.referenced_content
+            assert "kubectl apply" in ctx.referenced_content[ref_id]
+            formatted = format_regen_context(ctx)
+            assert "# References" in formatted["referenced_content_summary"]
+            assert ref_id in formatted["referenced_content_summary"]
+            assert "kubectl apply" in formatted["referenced_content_summary"]
+
+            # (b) ref's walker pulls the comp's pubapi fragment, not
+            # the node content (which is the raw comparch XML).
+            reverse = referenced_content_for_node(session, project_id, ref_id)
+            assert billing_domain.id in reverse
+            # The comp's pubapi fragment was written by the comparch
+            # pass; its content is the body of the <public-surface>
+            # section the stub emitted. Assert it's the fragment
+            # content and not the full node content (which would
+            # start with "<comparch>").
+            rendered = reverse[billing_domain.id]
+            assert not rendered.lstrip().startswith("<comparch>")
+            summary = format_referenced_content_summary(reverse)
+            assert billing_domain.id in summary
         finally:
             session.close()

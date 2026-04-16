@@ -18,6 +18,7 @@ export { parseXml } from './parser';
 export { renderUnknownElement } from './defaultRenderers';
 export { comparchRenderers } from './comparchRenderers';
 export { featureRenderers } from './featureRenderers';
+export { referencesRenderers } from './referencesRenderers';
 export {
   makeRequirementsRenderers,
   requirementsRenderers,

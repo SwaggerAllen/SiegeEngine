@@ -50,6 +50,7 @@ from backend.graph.handlers.feature_expansion import (
     GENERATE_FEATURE_EXPANSION_JOB_TYPE,
 )
 from backend.graph.handlers.feature_mint import MINT_FEATURES_JOB_TYPE
+from backend.graph.handlers.generate_reference import GENERATE_REFERENCE_JOB_TYPE
 from backend.graph.handlers.requirements_generation import (
     GENERATE_REQUIREMENTS_JOB_TYPE,
 )
@@ -95,6 +96,7 @@ from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
 from backend.models.node import Draft, Edge, Node
 from backend.models.telemetry import GenerationTelemetry
+from backend.pipeline import queue as pipeline_queue
 
 logger = logging.getLogger(__name__)
 
@@ -2478,3 +2480,490 @@ def post_delete_vocab(
     )
     db.commit()
     return {"status": "deleted", "vocab_id": vocab_id}
+
+
+# ── Reference routes (Phase 6.6) ──────────────────────────────────
+
+
+class ReferenceDraftResponse(BaseModel):
+    id: str
+    content: str
+    created_at: str
+
+
+class ReferenceEdgeResponse(BaseModel):
+    edge_id: str
+    source_id: str
+    target_id: str
+
+
+class ReferenceDetailResponse(BaseModel):
+    id: str
+    name: str
+    content: str  # raw <reference> XML (empty before first approval)
+    updated_at: str
+    pending_draft: ReferenceDraftResponse | None
+    generation_status: queries.GenerationStatus
+    last_error: str | None
+    latest_telemetry: TelemetrySummary | None
+    generation_started_at: str | None = None
+    outgoing_edges: list[ReferenceEdgeResponse]
+    incoming_edges: list[ReferenceEdgeResponse]
+
+
+class ReferenceSummary(BaseModel):
+    id: str
+    name: str
+    has_content: bool
+    updated_at: str
+
+
+class ReferenceListResponse(BaseModel):
+    references: list[ReferenceSummary]
+
+
+class CreateReferenceRequest(BaseModel):
+    name: str
+    seed_description: str
+    related_nodes: list[str] = []
+
+
+class CreateReferenceResponse(BaseModel):
+    ref_id: str
+    job_id: str
+
+
+class UpdateReferenceRequest(BaseModel):
+    feedback: str | None = None
+
+
+class AddReferenceEdgeRequest(BaseModel):
+    source_id: str
+    target_id: str
+
+
+class RemoveReferenceEdgeRequest(BaseModel):
+    source_id: str
+    target_id: str
+
+
+def _serialize_reference_summary(node: Node) -> ReferenceSummary:
+    return ReferenceSummary(
+        id=node.id,
+        name=node.name,
+        has_content=bool(node.content),
+        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+    )
+
+
+def _serialize_ref_edge(edge: Edge) -> ReferenceEdgeResponse:
+    return ReferenceEdgeResponse(
+        edge_id=edge.id,
+        source_id=edge.source_id,
+        target_id=edge.target_id,
+    )
+
+
+def _pending_reference_draft(db: Session, project_id: str, ref_id: str) -> Draft | None:
+    return db.execute(
+        select(Draft).where(
+            Draft.project_id == project_id,
+            Draft.target_type == "node",
+            Draft.target_id == ref_id,
+            Draft.status == "pending",
+        )
+    ).scalar_one_or_none()
+
+
+@router.get("/{project_id}/references", response_model=ReferenceListResponse)
+def get_references(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReferenceListResponse:
+    """List every reference in a project, ordered by name."""
+    _require_project(db, project_id)
+    from backend.graph.references import list_project_references
+
+    entries = list_project_references(db, project_id)
+    return ReferenceListResponse(references=[_serialize_reference_summary(e) for e in entries])
+
+
+@router.get(
+    "/{project_id}/references/{ref_id}",
+    response_model=ReferenceDetailResponse,
+)
+def get_reference(
+    project_id: str,
+    ref_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReferenceDetailResponse:
+    """Return one ref's full detail plus its draft / status state."""
+    _require_project(db, project_id)
+    from backend.graph.references import (
+        incoming_reference_edges,
+        outgoing_reference_edges,
+        reference_by_id,
+    )
+
+    node = reference_by_id(db, ref_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
+    draft = _pending_reference_draft(db, project_id, ref_id)
+    status, last_error, started_at = queries.latest_generation_status(
+        db, project_id, GENERATE_REFERENCE_JOB_TYPE
+    )
+    outgoing = [_serialize_ref_edge(e) for e in outgoing_reference_edges(db, project_id, ref_id)]
+    incoming = [_serialize_ref_edge(e) for e in incoming_reference_edges(db, project_id, ref_id)]
+    return ReferenceDetailResponse(
+        id=node.id,
+        name=node.name,
+        content=node.content or "",
+        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+        pending_draft=(
+            ReferenceDraftResponse(
+                id=draft.id,
+                content=draft.content,
+                created_at=draft.created_at.isoformat() if draft.created_at else "",
+            )
+            if draft is not None
+            else None
+        ),
+        generation_status=status,
+        last_error=last_error,
+        latest_telemetry=_latest_telemetry(db, project_id, node.id),
+        generation_started_at=started_at,
+        outgoing_edges=outgoing,
+        incoming_edges=incoming,
+    )
+
+
+@router.post(
+    "/{project_id}/references/create",
+    response_model=CreateReferenceResponse,
+)
+def post_create_reference(
+    project_id: str,
+    req: CreateReferenceRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CreateReferenceResponse:
+    """Mint a new ref node and enqueue its initial generation.
+
+    Unlike vocab (direct-CRUD), refs are LLM-generated: the route
+    mints an empty ``ref_*`` node, wires up ``reference`` edges to
+    the caller-supplied ``related_nodes``, and enqueues a
+    ``v2.generate_reference`` job. The draft lifecycle + approval
+    flow mirrors every other bootstrap tier.
+    """
+    _require_project(db, project_id)
+
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="name cannot be empty")
+    if not req.seed_description.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="seed_description cannot be empty",
+        )
+
+    from backend.graph.references import reference_by_name
+
+    existing = reference_by_name(db, project_id, name)
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Reference named {name!r} already exists in this project.",
+        )
+
+    # Validate any related_nodes exist in the project before minting
+    # so partial state isn't emitted on a bad request.
+    for related_id in req.related_nodes:
+        related = db.get(Node, related_id)
+        if related is None or related.project_id != project_id:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Related node {related_id!r} not found in project",
+            )
+
+    from backend.graph.ids import Kind, mint
+
+    ref_id = mint(db, Kind.REF)
+    append_event(
+        db,
+        project_id,
+        ev.NodeCreated(
+            node_id=ref_id,
+            tier="ref",
+            kind="domain",
+            parent_id=None,
+            name=name,
+        ),
+    )
+    for related_id in req.related_nodes:
+        edge_id = mint(db, Kind.EDGE)
+        append_event(
+            db,
+            project_id,
+            ev.EdgeCreated(
+                edge_id=edge_id,
+                edge_type="reference",
+                source_id=ref_id,
+                target_id=related_id,
+            ),
+        )
+    db.commit()
+
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_REFERENCE_JOB_TYPE,
+        payload={
+            "project_id": project_id,
+            "ref_id": ref_id,
+            "seed_description": req.seed_description,
+            "feedback": None,
+        },
+    )
+    return CreateReferenceResponse(ref_id=ref_id, job_id=job_id)
+
+
+@router.post(
+    "/{project_id}/references/{ref_id}/feedback",
+    response_model=FeedbackResponse,
+)
+def post_reference_feedback(
+    project_id: str,
+    ref_id: str,
+    req: UpdateReferenceRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    """Regenerate a reference with optional prose feedback.
+
+    References are **not** frozen after approval — this route
+    accepts feedback regardless of the ref's current approval
+    state, unlike the bootstrap tiers. Rationale: refs don't mint
+    children, so there's no downstream desync to guard.
+    """
+    _require_project(db, project_id)
+    from backend.graph.references import reference_by_id
+
+    node = reference_by_id(db, ref_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
+    feedback = (req.feedback or "").strip() or None
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_REFERENCE_JOB_TYPE,
+        payload={
+            "project_id": project_id,
+            "ref_id": ref_id,
+            "seed_description": node.name,
+            "feedback": feedback,
+        },
+    )
+    return FeedbackResponse(job_id=job_id)
+
+
+@router.post(
+    "/{project_id}/references/{ref_id}/approve",
+    response_model=DiscardResponse,
+)
+def post_reference_approve(
+    project_id: str,
+    ref_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    """Approve a pending ref draft, committing its content to Node.content."""
+    _require_project(db, project_id)
+    from backend.graph.references import reference_by_id
+
+    node = reference_by_id(db, ref_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != ref_id
+    ):
+        raise HTTPException(status_code=404, detail="Draft not found for this reference")
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
+    db.commit()
+    return DiscardResponse(ok=True)
+
+
+@router.post(
+    "/{project_id}/references/{ref_id}/discard",
+    response_model=DiscardResponse,
+)
+def post_reference_discard(
+    project_id: str,
+    ref_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    """Discard a pending ref draft without approving it.
+
+    Unlike the expansion's discard route, this does NOT auto-enqueue
+    a fresh generation — the user can re-request one via the
+    feedback route when ready. Refs are lower-urgency than the
+    bootstrap chain, so a stale discard doesn't block downstream
+    work.
+    """
+    _require_project(db, project_id)
+    from backend.graph.references import reference_by_id
+
+    node = reference_by_id(db, ref_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
+    draft = db.get(Draft, req.draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != ref_id
+    ):
+        raise HTTPException(status_code=404, detail="Draft not found for this reference")
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
+    db.commit()
+    return DiscardResponse(ok=True)
+
+
+@router.post("/{project_id}/references/{ref_id}/delete")
+def post_reference_delete(
+    project_id: str,
+    ref_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Delete a ref node (and cascade-delete its reference edges).
+
+    The reducer's ``NodeDeleted`` branch removes the node; the
+    DB's FK cascade on the ``edges`` table removes any incoming or
+    outgoing edges that referenced it (both ``reference`` and any
+    other edge type that happened to hit it).
+    """
+    _require_project(db, project_id)
+    from backend.graph.references import reference_by_id
+
+    node = reference_by_id(db, ref_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
+    append_event(db, project_id, ev.NodeDeleted(node_id=ref_id))
+    db.commit()
+    return {"status": "deleted", "ref_id": ref_id}
+
+
+@router.post(
+    "/{project_id}/edges/reference",
+    response_model=ReferenceEdgeResponse,
+)
+def post_add_reference_edge(
+    project_id: str,
+    req: AddReferenceEdgeRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReferenceEdgeResponse:
+    """Add a ``reference`` edge from ``source_id`` to ``target_id``.
+
+    Either endpoint can be any node in the project — the edge type
+    is general-purpose advisory context, not specific to refs.
+    Refuses to create a duplicate edge (409) and refuses dangling
+    references (404).
+    """
+    _require_project(db, project_id)
+    if req.source_id == req.target_id:
+        raise HTTPException(
+            status_code=422,
+            detail="source_id and target_id must differ",
+        )
+    source = db.get(Node, req.source_id)
+    if source is None or source.project_id != project_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Source node {req.source_id!r} not found in project",
+        )
+    target = db.get(Node, req.target_id)
+    if target is None or target.project_id != project_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Target node {req.target_id!r} not found in project",
+        )
+    existing = db.execute(
+        select(Edge).where(
+            Edge.project_id == project_id,
+            Edge.edge_type == "reference",
+            Edge.source_id == req.source_id,
+            Edge.target_id == req.target_id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A reference edge between these nodes already exists",
+        )
+    from backend.graph.ids import Kind, mint
+
+    edge_id = mint(db, Kind.EDGE)
+    append_event(
+        db,
+        project_id,
+        ev.EdgeCreated(
+            edge_id=edge_id,
+            edge_type="reference",
+            source_id=req.source_id,
+            target_id=req.target_id,
+        ),
+    )
+    db.commit()
+    return ReferenceEdgeResponse(
+        edge_id=edge_id,
+        source_id=req.source_id,
+        target_id=req.target_id,
+    )
+
+
+@router.delete(
+    "/{project_id}/edges/reference",
+    response_model=DiscardResponse,
+)
+def post_remove_reference_edge(
+    project_id: str,
+    req: RemoveReferenceEdgeRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    """Delete the ``reference`` edge between two nodes."""
+    _require_project(db, project_id)
+    edge = db.execute(
+        select(Edge).where(
+            Edge.project_id == project_id,
+            Edge.edge_type == "reference",
+            Edge.source_id == req.source_id,
+            Edge.target_id == req.target_id,
+        )
+    ).scalar_one_or_none()
+    if edge is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(f"No reference edge between {req.source_id!r} and {req.target_id!r}"),
+        )
+    append_event(db, project_id, ev.EdgeDeleted(edge_id=edge.id))
+    db.commit()
+    return DiscardResponse(ok=True)

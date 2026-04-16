@@ -226,6 +226,15 @@ async def apply_component_local_policies(payload: dict) -> None:
         from backend.graph.vocabulary import render_vocab_summary_for_node
 
         vocab_summary = render_vocab_summary_for_node(db, project_id, component_id)
+
+        # Referenced content — per sub target. Each sub may have
+        # its own outgoing ``reference`` edges.
+        from backend.graph.references import render_referenced_content_summary
+
+        referenced_content_by_sub: dict[str, str] = {
+            sub.id: render_referenced_content_summary(db, project_id, sub.id)
+            for sub, _ts, _pa, _rs in targets_to_process
+        }
     finally:
         db.close()
 
@@ -241,6 +250,8 @@ async def apply_component_local_policies(payload: dict) -> None:
     for sub, sub_techspec, sub_pubapi, sub_resp_summary in targets_to_process:
         target_summary = f"**{sub.name}** (`{sub.id}`) — subcomponent of {component_id}"
 
+        sub_referenced_content = referenced_content_by_sub.get(sub.id, "")
+
         def _render(
             *,
             prior_pending,
@@ -249,6 +260,7 @@ async def apply_component_local_policies(payload: dict) -> None:
             _sub_pubapi=sub_pubapi,
             _resp_summary=sub_resp_summary,
             _target_summary=target_summary,
+            _sub_refs=sub_referenced_content,
         ):
             return render_user_prompt(
                 target_summary=_target_summary,
@@ -259,6 +271,7 @@ async def apply_component_local_policies(payload: dict) -> None:
                 scope="component-local",
                 parse_error=parse_error,
                 vocab_summary=vocab_summary,
+                referenced_content_summary=_sub_refs,
             )
 
         def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]

@@ -524,6 +524,7 @@ class TestFormatRegenContext:
             "related_features_summary",
             "vocab_summary",
             "domain_parent_surface",
+            "referenced_content_summary",
         }
         assert set(formatted.keys()) == expected_keys
 
@@ -785,6 +786,7 @@ class TestFormatRegenContextForSub:
             "dep_pubapi_summary",
             "vocab_summary",
             "domain_parent_surface",
+            "referenced_content_summary",
         }
         assert set(formatted.keys()) == expected
 

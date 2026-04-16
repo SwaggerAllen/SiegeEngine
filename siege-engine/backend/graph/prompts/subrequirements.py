@@ -167,6 +167,7 @@ def render_user_prompt(
     feedback: str | None,
     parse_error: str | None = None,
     vocab_summary: str = "",
+    referenced_content_summary: str = "",
 ) -> str:
     """Build the user prompt for the subreqs generator.
 
@@ -189,6 +190,13 @@ def render_user_prompt(
     parts: list[str] = []
     if vocab_summary and vocab_summary.strip():
         parts.append(vocab_summary.strip())
+        parts.append("")
+    if (
+        referenced_content_summary
+        and referenced_content_summary.strip()
+        and referenced_content_summary.strip() != "(no external references)"
+    ):
+        parts.append(referenced_content_summary.strip())
         parts.append("")
     parts.append("# Component")
     parts.append("")

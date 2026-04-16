@@ -2866,3 +2866,235 @@ def _serialize_vocab_entry(node: TagNode) -> str:
             parts.append("  </see-also>")
     parts.append("</vocab-entry>")
     return "\n".join(parts)
+
+
+# ── References (Phase 6.6: ref_* node tier + reference edge type) ────
+#
+# Refs are first-class supplemental documents. Each ref's stored
+# content is a parseable ``<reference>`` XML block with a required
+# ``<title>``, a required ``<body>`` (opaque markdown, validator
+# doesn't parse its contents), and an optional ``<see-also>``
+# carrying ``<ref to="ref_..."/>`` children. See
+# ``docs/architecture/v2-rearchitecture.md`` §Project references.
+
+
+_REF_ID_RE = re.compile(r"^ref_[0-9A-HJKMNP-TV-Z]{8}$")
+_REFERENCE_ALLOWED_CHILDREN = {"title", "body", "see-also"}
+_REFERENCE_REQUIRED_ORDER = ("title", "body", "see-also")
+
+
+@dataclass(frozen=True)
+class ReferenceRef:
+    """A single ``<ref>`` entry inside a reference's ``<see-also>`` block.
+
+    Unlike vocab refs (which carry either ``name`` or ``to``),
+    reference refs always use the id form — refs are minted up
+    front and their IDs are stable by the time any ``<see-also>``
+    that mentions them is authored.
+    """
+
+    to: str
+
+
+@dataclass(frozen=True)
+class ReferenceEntry:
+    """A single validated ``<reference>`` block.
+
+    Carries the parsed grammar (``title``, ``body``,
+    ``see_also_refs``) plus ``raw_content`` — the full
+    ``<reference>...</reference>`` XML as authored, preserved
+    verbatim so the handler can store it on ``Node.content``
+    without re-serializing.
+    """
+
+    title: str
+    body: str
+    see_also_refs: tuple[ReferenceRef, ...]
+    raw_content: str
+
+
+def validate_reference(tree: TagNode, *, raw_content: str) -> ReferenceEntry:
+    """Validate a parsed ``<reference>`` tree and return its entry.
+
+    Grammar:
+
+    * ``tree.tag`` must be exactly ``"reference"``.
+    * Children must all be one of ``<title>`` / ``<body>`` /
+      ``<see-also>``; unknown tags are rejected.
+    * ``<title>`` is required, exactly one, plain text, non-empty.
+    * ``<body>`` is required, exactly one, non-empty. The body is
+      opaque — the validator does not parse its contents; nested
+      markup, markdown, and prose are all allowed as-is.
+    * ``<see-also>`` is optional, at most one. When present it
+      contains only ``<ref to="ref_..."/>`` children. ``to=`` must
+      match the ``ref_xxxxxxxx`` ID form. Duplicates within a
+      single ``<see-also>`` are rejected.
+    * Children must appear in the fixed order
+      ``<title>`` → ``<body>`` → ``<see-also>`` when present.
+
+    ``raw_content`` is the original full string the tree was
+    parsed from; the validator stores a reference to it on the
+    returned entry so the caller can persist it verbatim.
+
+    Returns a single :class:`ReferenceEntry`. Raises
+    :class:`ValidationError` on the first problem found.
+    """
+    if tree.tag != "reference":
+        raise ValidationError(
+            f"Expected root tag <reference>, got <{tree.tag}>. "
+            "Wrap the reference content in a single "
+            "<reference>...</reference> block."
+        )
+
+    for child in tree.children:
+        if child.tag not in _REFERENCE_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<reference> contains an unexpected child "
+                f"<{child.tag}>. Allowed children are: "
+                f"{sorted(_REFERENCE_ALLOWED_CHILDREN)}."
+            )
+
+    # Check for duplicates and enforce the fixed order.
+    seen: dict[str, TagNode] = {}
+    for child in tree.children:
+        if child.tag in seen:
+            raise ValidationError(
+                f"<reference> has more than one <{child.tag}> child; at most one is allowed."
+            )
+        seen[child.tag] = child
+
+    actual_order = [c.tag for c in tree.children if c.tag in _REFERENCE_REQUIRED_ORDER]
+    expected_order = [tag for tag in _REFERENCE_REQUIRED_ORDER if tag in seen]
+    if actual_order != expected_order:
+        raise ValidationError(
+            "<reference> children are not in the required order. "
+            f"Expected: {expected_order}. Got: {actual_order}. "
+            "Reorder to <title> → <body> → <see-also>."
+        )
+
+    # <title> is required, non-empty plain text.
+    if "title" not in seen:
+        raise ValidationError(
+            "<reference> is missing the required <title> child. "
+            "Every reference must have a non-empty title."
+        )
+    title_node = seen["title"]
+    if title_node.children:
+        raise ValidationError(
+            "<reference> <title> must contain plain text only, no nested XML tags."
+        )
+    title = (title_node.text or "").strip()
+    if not title:
+        raise ValidationError("<reference> <title> is empty. The title must be non-empty prose.")
+
+    # <body> is required, non-empty; contents are opaque.
+    if "body" not in seen:
+        raise ValidationError(
+            "<reference> is missing the required <body> child. "
+            "Every reference must have a non-empty body."
+        )
+    body_node = seen["body"]
+    body = _serialize_body_content(body_node)
+    if not body:
+        raise ValidationError(
+            "<reference> <body> is empty. The body must be non-empty markdown or prose."
+        )
+
+    # <see-also> is optional; when present contains <ref to="..."/> children.
+    refs: tuple[ReferenceRef, ...] = ()
+    if "see-also" in seen:
+        refs = _validate_reference_see_also(seen["see-also"])
+
+    return ReferenceEntry(
+        title=title,
+        body=body,
+        see_also_refs=refs,
+        raw_content=raw_content,
+    )
+
+
+def _serialize_body_content(node: TagNode) -> str:
+    """Collect the opaque content of a ``<body>`` element.
+
+    Body is opaque — it may contain markdown, prose, or even nested
+    XML/HTML that we choose not to parse. We join the direct text
+    plus any nested children's flattened text, stripped.
+    """
+    parts: list[str] = []
+    if node.text:
+        parts.append(node.text)
+    for child in node.children:
+        fragment = _flatten_text(child)
+        if fragment:
+            parts.append(fragment)
+    return "\n\n".join(p.strip() for p in parts if p.strip())
+
+
+def _flatten_text(node: TagNode) -> str:
+    """Recursively flatten a TagNode into plain text."""
+    chunks: list[str] = []
+    if node.text:
+        chunks.append(node.text)
+    for child in node.children:
+        chunks.append(_flatten_text(child))
+    return " ".join(c for c in chunks if c)
+
+
+def _validate_reference_see_also(node: TagNode) -> tuple[ReferenceRef, ...]:
+    """Validate a reference's ``<see-also>`` and return its refs."""
+    for child in node.children:
+        if child.tag != "ref":
+            raise ValidationError(
+                f"<reference> <see-also> contains an unexpected "
+                f"child <{child.tag}>. Only <ref to='ref_...'/> "
+                "elements are allowed."
+            )
+
+    refs: list[ReferenceRef] = []
+    seen_targets: set[str] = set()
+    for ref_index, ref_node in enumerate(node.children):
+        to_attr = ref_node.attrs.get("to", "").strip()
+        name_attr = ref_node.attrs.get("name", "").strip()
+        if name_attr:
+            raise ValidationError(
+                f"<reference> <see-also> <ref> at position "
+                f"{ref_index} uses name= form. Reference refs must "
+                'use to="ref_xxxxxxxx" — refs are minted before any '
+                "see-also references them."
+            )
+        if not to_attr:
+            raise ValidationError(
+                f"<reference> <see-also> <ref> at position "
+                f"{ref_index} is missing the to attribute. Each "
+                '<ref> must carry to="ref_xxxxxxxx".'
+            )
+        if not _REF_ID_RE.match(to_attr):
+            raise ValidationError(
+                f"<reference> <see-also> <ref> at position "
+                f"{ref_index} has to={to_attr!r}, which is not a "
+                "valid ref ID. Expected ref_ followed by 8 "
+                "Crockford base32 characters."
+            )
+        if to_attr in seen_targets:
+            raise ValidationError(
+                "<reference> <see-also> has duplicate reference to "
+                f"{to_attr!r}. Each target can be referenced at "
+                "most once per see-also list."
+            )
+        seen_targets.add(to_attr)
+        refs.append(ReferenceRef(to=to_attr))
+
+    return tuple(refs)
+
+
+def parse_and_validate_reference(raw: str) -> ReferenceEntry:
+    """Convenience helper: parse ``raw`` and validate in one call.
+
+    Raises :class:`ParseError` if the ``<reference>`` root tag is
+    missing (via ``extract_tag_tree``), or :class:`ValidationError`
+    if the grammar check fails. Used by the generate_reference
+    handler's parse-validate loop and by the route-level
+    authoring-time content check.
+    """
+    tree = extract_tag_tree(raw, "reference")
+    return validate_reference(tree, raw_content=raw)

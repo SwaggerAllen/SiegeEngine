@@ -464,6 +464,7 @@ def render_user_prompt(
     target_is_foundation: bool = False,
     vocab_summary: str = "",
     domain_parent_surface: str = "",
+    referenced_content_summary: str = "",
 ) -> str:
     """Build the user prompt for the comparch generator.
 
@@ -528,6 +529,13 @@ def render_user_prompt(
         parts.append("")
     if vocab_summary and vocab_summary.strip():
         parts.append(vocab_summary.strip())
+        parts.append("")
+    if (
+        referenced_content_summary
+        and referenced_content_summary.strip()
+        and referenced_content_summary.strip() != "(no external references)"
+    ):
+        parts.append(referenced_content_summary.strip())
         parts.append("")
     parts.append("# Component")
     parts.append("")

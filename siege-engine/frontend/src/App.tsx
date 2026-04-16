@@ -13,6 +13,7 @@ import { ComponentComparchPage } from './pages/ComponentComparchPage';
 import { SubcomponentComparchPage } from './pages/SubcomponentComparchPage';
 import { DecompositionGraphPage } from './pages/DecompositionGraphPage';
 import { VocabularyPage } from './pages/VocabularyPage';
+import { ReferencesPage } from './pages/ReferencesPage';
 import { GitHubCallbackPage } from './pages/GitHubCallbackPage';
 
 function NavigationLogger() {
@@ -124,6 +125,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <VocabularyPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:id/references"
+          element={
+            <ProtectedRoute>
+              <ReferencesPage />
             </ProtectedRoute>
           }
         />
