@@ -1,75 +1,21 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import * as expansionApi from '../../api/expansion';
-import type { ExpansionResponse } from '../../api/expansion';
+import * as api from '../../api/expansion';
+import { makeBootstrapMutations } from '../useBootstrapHooks';
 import { expansionKeys } from '../queries/useExpansionQueries';
 
-export function useFeedbackMutation(projectId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationKey: ['expansion', 'feedback', projectId],
-    mutationFn: (feedback: string) => expansionApi.postFeedback(projectId, feedback),
-    onSuccess: () => {
-      // Optimistically mark the query as running so polling kicks in
-      // immediately, without waiting for the next server round-trip.
-      queryClient.setQueryData<ExpansionResponse>(
-        expansionKeys.detail(projectId),
-        (prev) =>
-          prev
-            ? { ...prev, generation_status: 'running', last_error: null }
-            : prev
-      );
-      queryClient.invalidateQueries({ queryKey: expansionKeys.detail(projectId) });
-    },
-  });
-}
+const m = makeBootstrapMutations(
+  'expansion',
+  {
+    postFeedback: (pid, fb) => api.postFeedback(pid, fb),
+    approveDraft: (pid, did) => api.approveDraft(pid, did),
+    discardDraft: (pid, did) => api.discardDraft(pid, did),
+    cancelGeneration: (pid) => api.cancelGeneration(pid),
+    resetTier: (pid) => api.resetExpansion(pid),
+  },
+  expansionKeys
+);
 
-export function useApproveMutation(projectId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationKey: ['expansion', 'approve', projectId],
-    mutationFn: (draftId: string) => expansionApi.approveDraft(projectId, draftId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: expansionKeys.detail(projectId) });
-    },
-  });
-}
-
-export function useDiscardMutation(projectId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationKey: ['expansion', 'discard', projectId],
-    mutationFn: (draftId: string) => expansionApi.discardDraft(projectId, draftId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: expansionKeys.detail(projectId) });
-    },
-  });
-}
-
-export function useCancelGenerationMutation(projectId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationKey: ['expansion', 'cancel', projectId],
-    mutationFn: () => expansionApi.cancelGeneration(projectId),
-    onSuccess: () => {
-      queryClient.setQueryData<ExpansionResponse>(
-        expansionKeys.detail(projectId),
-        (prev) =>
-          prev
-            ? { ...prev, generation_status: 'idle', generation_started_at: null }
-            : prev
-      );
-      queryClient.invalidateQueries({ queryKey: expansionKeys.detail(projectId) });
-    },
-  });
-}
-
-export function useResetMutation(projectId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationKey: ['expansion', 'reset', projectId],
-    mutationFn: () => expansionApi.resetExpansion(projectId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: expansionKeys.all });
-    },
-  });
-}
+export const useFeedbackMutation = m.useFeedbackMutation;
+export const useApproveMutation = m.useApproveMutation;
+export const useDiscardMutation = m.useDiscardMutation;
+export const useCancelGenerationMutation = m.useCancelGenerationMutation;
+export const useResetMutation = m.useResetMutation;

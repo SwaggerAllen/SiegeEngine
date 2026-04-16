@@ -1,11 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import * as subreqsApi from '../../api/subreqs';
+import { makeBootstrapKeys } from '../useBootstrapHooks';
 
-export const subreqsKeys = {
-  all: ['subreqs'] as const,
-  detail: (projectId: string, compId: string) =>
-    [...subreqsKeys.all, projectId, compId] as const,
-};
+export const subreqsKeys = makeBootstrapKeys('subreqs');
 
 export const subresponsibilitiesKeys = {
   all: ['subresponsibilities'] as const,
@@ -13,10 +10,6 @@ export const subresponsibilitiesKeys = {
     [...subresponsibilitiesKeys.all, 'list', projectId, compId] as const,
 };
 
-/**
- * Fetch a single component's subreqs node — the four-state panel
- * reads through this. Polls every 2s while generation is running.
- */
 export function useSubreqs(projectId: string, componentId: string) {
   return useQuery({
     queryKey: subreqsKeys.detail(projectId, componentId),
@@ -27,11 +20,6 @@ export function useSubreqs(projectId: string, componentId: string) {
   });
 }
 
-/**
- * Fetch the subresponsibilities minted under a given component.
- *
- * Same ``mintPending`` polling pattern as the other list hooks.
- */
 export function useSubresponsibilities(
   projectId: string,
   componentId: string,
