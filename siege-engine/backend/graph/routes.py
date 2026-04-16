@@ -95,7 +95,6 @@ from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
 from backend.models.node import Draft, Edge, Node
 from backend.models.telemetry import GenerationTelemetry
-from backend.pipeline import queue as pipeline_queue
 
 logger = logging.getLogger(__name__)
 
@@ -1215,6 +1214,24 @@ def _require_top_level_comp(db: Session, project_id: str, comp_id: str) -> Node:
 # ── Subreqs endpoints (per-component scoping) ───────────────────────
 
 
+SUBREQS_CONFIG = BootstrapTierConfig(
+    tier_name="Subrequirements",
+    get_node=get_subreqs_node,
+    get_pending_draft=pending_subreqs_draft,
+    has_been_approved=subreqs_has_been_approved,
+    bootstrap_node=bootstrap_subreqs_node,
+    generate_job_type=GENERATE_SUBREQS_JOB_TYPE,
+    mint_job_type=MINT_SUBREQS_JOB_TYPE,
+    serialize_node=_node_to_dict,
+    serialize_draft=_draft_to_dict,
+    feedback_readonly_detail=(
+        "Subrequirements is read-only after approval; further "
+        "subresponsibility-layer edits happen via individual "
+        "subresp nodes and structural edit UIs."
+    ),
+)
+
+
 @router.get(
     "/{project_id}/components/{comp_id}/subrequirements",
     response_model=SubreqsResponse,
@@ -1225,54 +1242,15 @@ def get_subreqs(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> SubreqsResponse:
-    """Return the subreqs node state for a single component.
-
-    Same four-state shape as ``/sysarch``, scoped by ``comp_id``.
-    Lazy-bootstraps the subreqs node if missing — handles the
-    "component exists but its subreqs node wasn't minted" edge
-    case (e.g. sysarch-mint fan-out partially failed and a later
-    component was missed).
-    """
-    _require_project(db, project_id)
     _require_top_level_comp(db, project_id, comp_id)
-    node = get_subreqs_node(db, project_id, comp_id)
-    if node is None:
-        logger.warning("Component %s has no subreqs node; lazy-bootstrapping", comp_id)
-        bootstrap_subreqs_node(db, project_id, comp_id)
-        db.commit()
-        pipeline_queue.enqueue(
-            db,
-            job_type=GENERATE_SUBREQS_JOB_TYPE,
-            payload={
-                "project_id": project_id,
-                "component_id": comp_id,
-                "feedback": None,
-            },
-        )
-        node = get_subreqs_node(db, project_id, comp_id)
-        assert node is not None
-    draft = pending_subreqs_draft(db, project_id, comp_id)
-    status, last_error, started_at = queries.latest_generation_status(
-        db,
-        project_id,
-        GENERATE_SUBREQS_JOB_TYPE,
-        payload_filters={"component_id": comp_id},
-    )
     return SubreqsResponse(
-        node=_serialize_subreqs_node(node),
-        pending_draft=(
-            SubreqsDraftResponse(
-                id=draft.id,
-                content=draft.content,
-                created_at=draft.created_at.isoformat() if draft.created_at else "",
-            )
-            if draft is not None
-            else None
-        ),
-        generation_status=status,
-        last_error=last_error,
-        latest_telemetry=_latest_telemetry(db, project_id, node.id),
-        generation_started_at=started_at,
+        **bootstrap_get_state(
+            db,
+            project_id,
+            (comp_id,),
+            SUBREQS_CONFIG,
+            _require_project,
+        )
     )
 
 
@@ -1287,30 +1265,17 @@ def post_subreqs_feedback(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
-    _require_project(db, project_id)
     _require_top_level_comp(db, project_id, comp_id)
-    if get_subreqs_node(db, project_id, comp_id) is None:
-        raise HTTPException(status_code=404, detail="Subreqs node missing for this component")
-    if subreqs_has_been_approved(db, project_id, comp_id):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Subrequirements is read-only after approval; further "
-                "subresponsibility-layer edits happen via individual "
-                "subresp nodes and structural edit UIs."
-            ),
+    return FeedbackResponse(
+        **bootstrap_feedback(
+            db,
+            project_id,
+            (comp_id,),
+            req.feedback,
+            SUBREQS_CONFIG,
+            _require_project,
         )
-    feedback = (req.feedback or "").strip() or None
-    job_id = pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_SUBREQS_JOB_TYPE,
-        payload={
-            "project_id": project_id,
-            "component_id": comp_id,
-            "feedback": feedback,
-        },
     )
-    return FeedbackResponse(job_id=job_id)
 
 
 @router.post(
@@ -1324,39 +1289,16 @@ def post_subreqs_approve(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> SubreqsApproveResponse:
-    _require_project(db, project_id)
     _require_top_level_comp(db, project_id, comp_id)
-    node = get_subreqs_node(db, project_id, comp_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="Subreqs node missing for this component")
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != node.id
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Draft not found for this component's subreqs",
-        )
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-
-    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
-    db.commit()
-    db.refresh(node)
-
-    pipeline_queue.enqueue(
+    result = bootstrap_approve(
         db,
-        job_type=MINT_SUBREQS_JOB_TYPE,
-        payload={"project_id": project_id, "component_id": comp_id},
+        project_id,
+        (comp_id,),
+        req.draft_id,
+        SUBREQS_CONFIG,
+        _require_project,
     )
-
-    return SubreqsApproveResponse(node=_serialize_subreqs_node(node))
+    return SubreqsApproveResponse(node=SubreqsNodeResponse(**result["node"]))
 
 
 @router.post(
@@ -1370,42 +1312,17 @@ def post_subreqs_discard(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> DiscardResponse:
-    _require_project(db, project_id)
     _require_top_level_comp(db, project_id, comp_id)
-    node = get_subreqs_node(db, project_id, comp_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="Subreqs node missing for this component")
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != node.id
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Draft not found for this component's subreqs",
+    return DiscardResponse(
+        **bootstrap_discard(
+            db,
+            project_id,
+            (comp_id,),
+            req.draft_id,
+            SUBREQS_CONFIG,
+            _require_project,
         )
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-
-    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
-    db.commit()
-
-    pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_SUBREQS_JOB_TYPE,
-        payload={
-            "project_id": project_id,
-            "component_id": comp_id,
-            "feedback": None,
-        },
     )
-
-    return DiscardResponse(ok=True)
 
 
 @router.post(
@@ -1418,24 +1335,16 @@ def post_subreqs_cancel(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> CancelResponse:
-    """Stop any queued/running subreqs generation for this component.
-
-    Scoped by ``component_id`` so stopping one comp's generation
-    doesn't affect sibling comps whose subreqs jobs may be running
-    in parallel (the sysarch mint fan-out enqueues one per top-
-    level comp).
-    """
-    _require_project(db, project_id)
     _require_top_level_comp(db, project_id, comp_id)
-    job = pipeline_queue.find_active_job(
-        db,
-        GENERATE_SUBREQS_JOB_TYPE,
-        payload_filters={"project_id": project_id, "component_id": comp_id},
+    return CancelResponse(
+        **bootstrap_cancel(
+            db,
+            project_id,
+            (comp_id,),
+            SUBREQS_CONFIG,
+            _require_project,
+        )
     )
-    if job is None:
-        return CancelResponse(cancelled=False)
-    ok = pipeline_queue.cancel_job(db, job.id)
-    return CancelResponse(cancelled=ok)
 
 
 @router.get(
@@ -1542,6 +1451,43 @@ def _serialize_comparch_node(node) -> ComparchNodeResponse:
 # ── Comparch endpoints (per-component scoping) ─────────────────────
 
 
+def _get_comp_node(db: Session, project_id: str, comp_id: str) -> Node | None:
+    return _require_top_level_comp(db, project_id, comp_id)
+
+
+def _pending_comparch_draft(db: Session, project_id: str, comp_id: str) -> Draft | None:
+    return db.execute(
+        select(Draft).where(
+            Draft.project_id == project_id,
+            Draft.target_type == "node",
+            Draft.target_id == comp_id,
+            Draft.status == "pending",
+        )
+    ).scalar_one_or_none()
+
+
+def _comparch_approved(db: Session, project_id: str, comp_id: str) -> bool:
+    node = db.get(Node, comp_id)
+    return bool(node and (node.content or "").strip())
+
+
+COMPARCH_CONFIG = BootstrapTierConfig(
+    tier_name="Component architecture",
+    get_node=_get_comp_node,
+    get_pending_draft=_pending_comparch_draft,
+    has_been_approved=_comparch_approved,
+    generate_job_type=GENERATE_COMPARCH_JOB_TYPE,
+    mint_job_type=MINT_COMPARCH_JOB_TYPE,
+    serialize_node=_node_to_dict,
+    serialize_draft=_draft_to_dict,
+    feedback_readonly_detail=(
+        "Component architecture is read-only after approval; "
+        "further edits happen via individual comp_* / policy_* "
+        "nodes and the structural-edit UIs coming in Phase 11."
+    ),
+)
+
+
 @router.get(
     "/{project_id}/components/{comp_id}/comparch",
     response_model=ComparchResponse,
@@ -1552,44 +1498,14 @@ def get_comparch(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ComparchResponse:
-    """Return the comparch draft panel state for a single top-level component.
-
-    The comparch arch doc is stored as content on the comp_*
-    node itself — no separate comparch_* node kind. The panel
-    reads the component's current content (approved doc) plus
-    any pending draft targeting it.
-    """
-    _require_project(db, project_id)
-    node = _require_top_level_comp(db, project_id, comp_id)
-    draft = db.execute(
-        select(Draft).where(
-            Draft.project_id == project_id,
-            Draft.target_type == "node",
-            Draft.target_id == comp_id,
-            Draft.status == "pending",
-        )
-    ).scalar_one_or_none()
-    status, last_error, started_at = queries.latest_generation_status(
-        db,
-        project_id,
-        GENERATE_COMPARCH_JOB_TYPE,
-        payload_filters={"component_id": comp_id},
-    )
     return ComparchResponse(
-        node=_serialize_comparch_node(node),
-        pending_draft=(
-            ComparchDraftResponse(
-                id=draft.id,
-                content=draft.content,
-                created_at=draft.created_at.isoformat() if draft.created_at else "",
-            )
-            if draft is not None
-            else None
-        ),
-        generation_status=status,
-        last_error=last_error,
-        latest_telemetry=_latest_telemetry(db, project_id, comp_id),
-        generation_started_at=started_at,
+        **bootstrap_get_state(
+            db,
+            project_id,
+            (comp_id,),
+            COMPARCH_CONFIG,
+            _require_project,
+        )
     )
 
 
@@ -1604,31 +1520,16 @@ def post_comparch_feedback(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
-    _require_project(db, project_id)
-    node = _require_top_level_comp(db, project_id, comp_id)
-    # Read-only after approval: comparch approval is the anchor
-    # for subcomponents + policies downstream, so regen is
-    # deferred to Phase 11 structural-edit UIs.
-    if (node.content or "").strip():
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Component architecture is read-only after approval; "
-                "further edits happen via individual comp_* / policy_* "
-                "nodes and the structural-edit UIs coming in Phase 11."
-            ),
+    return FeedbackResponse(
+        **bootstrap_feedback(
+            db,
+            project_id,
+            (comp_id,),
+            req.feedback,
+            COMPARCH_CONFIG,
+            _require_project,
         )
-    feedback = (req.feedback or "").strip() or None
-    job_id = pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_COMPARCH_JOB_TYPE,
-        payload={
-            "project_id": project_id,
-            "component_id": comp_id,
-            "feedback": feedback,
-        },
     )
-    return FeedbackResponse(job_id=job_id)
 
 
 @router.post(
@@ -1642,36 +1543,15 @@ def post_comparch_approve(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ComparchApproveResponse:
-    _require_project(db, project_id)
-    node = _require_top_level_comp(db, project_id, comp_id)
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != comp_id
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Draft not found for this component's comparch",
-        )
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-
-    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
-    db.commit()
-    db.refresh(node)
-
-    pipeline_queue.enqueue(
+    result = bootstrap_approve(
         db,
-        job_type=MINT_COMPARCH_JOB_TYPE,
-        payload={"project_id": project_id, "component_id": comp_id},
+        project_id,
+        (comp_id,),
+        req.draft_id,
+        COMPARCH_CONFIG,
+        _require_project,
     )
-
-    return ComparchApproveResponse(node=_serialize_comparch_node(node))
+    return ComparchApproveResponse(node=ComparchNodeResponse(**result["node"]))
 
 
 @router.post(
@@ -1685,38 +1565,16 @@ def post_comparch_discard(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> DiscardResponse:
-    _require_project(db, project_id)
-    _require_top_level_comp(db, project_id, comp_id)
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != comp_id
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Draft not found for this component's comparch",
+    return DiscardResponse(
+        **bootstrap_discard(
+            db,
+            project_id,
+            (comp_id,),
+            req.draft_id,
+            COMPARCH_CONFIG,
+            _require_project,
         )
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-
-    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
-    db.commit()
-
-    pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_COMPARCH_JOB_TYPE,
-        payload={
-            "project_id": project_id,
-            "component_id": comp_id,
-            "feedback": None,
-        },
     )
-    return DiscardResponse(ok=True)
 
 
 @router.post(
@@ -1729,18 +1587,15 @@ def post_comparch_cancel(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> CancelResponse:
-    """Stop any queued/running comparch generation for this component."""
-    _require_project(db, project_id)
-    _require_top_level_comp(db, project_id, comp_id)
-    job = pipeline_queue.find_active_job(
-        db,
-        GENERATE_COMPARCH_JOB_TYPE,
-        payload_filters={"project_id": project_id, "component_id": comp_id},
+    return CancelResponse(
+        **bootstrap_cancel(
+            db,
+            project_id,
+            (comp_id,),
+            COMPARCH_CONFIG,
+            _require_project,
+        )
     )
-    if job is None:
-        return CancelResponse(cancelled=False)
-    ok = pipeline_queue.cancel_job(db, job.id)
-    return CancelResponse(cancelled=ok)
 
 
 # ── Subcomparch response models (Phase 5) ──────────────────────────
@@ -1820,6 +1675,56 @@ def _require_subcomponent(db: Session, project_id: str, parent_comp_id: str, sub
 # ── Subcomparch endpoints (per-subcomponent scoping) ───────────────
 
 
+def _node_to_dict_with_parent(node) -> dict:
+    d = _node_to_dict(node)
+    d["parent_id"] = node.parent_id or ""
+    return d
+
+
+def _get_sub_node(db: Session, project_id: str, sub_id: str) -> Node | None:
+    sub = db.get(Node, sub_id)
+    if sub is None or sub.project_id != project_id or sub.tier != "comp":
+        return None
+    return sub
+
+
+def _pending_subcomparch_draft(
+    db: Session,
+    project_id: str,
+    sub_id: str,
+) -> Draft | None:
+    return db.execute(
+        select(Draft).where(
+            Draft.project_id == project_id,
+            Draft.target_type == "node",
+            Draft.target_id == sub_id,
+            Draft.status == "pending",
+        )
+    ).scalar_one_or_none()
+
+
+def _subcomparch_approved(db: Session, project_id: str, sub_id: str) -> bool:
+    node = db.get(Node, sub_id)
+    return bool(node and (node.content or "").strip())
+
+
+SUBCOMPARCH_CONFIG = BootstrapTierConfig(
+    tier_name="Subcomponent architecture",
+    get_node=_get_sub_node,
+    get_pending_draft=_pending_subcomparch_draft,
+    has_been_approved=_subcomparch_approved,
+    generate_job_type=GENERATE_SUBCOMPARCH_JOB_TYPE,
+    mint_job_type=MINT_SUBCOMPARCH_JOB_TYPE,
+    serialize_node=_node_to_dict_with_parent,
+    serialize_draft=_draft_to_dict,
+    feedback_readonly_detail=(
+        "Subcomponent architecture is read-only after approval; "
+        "further edits happen via the structural-edit UIs "
+        "coming in Phase 11."
+    ),
+)
+
+
 @router.get(
     "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/subcomparch",
     response_model=SubcomparchResponse,
@@ -1831,45 +1736,15 @@ def get_subcomparch(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> SubcomparchResponse:
-    """Return the subcomparch draft panel state for a single subcomponent.
-
-    Mirror of :func:`get_comparch` at the subcomponent tier. The
-    subcomparch arch doc is stored as content on the subcomponent
-    ``comp_*`` node itself — no separate node kind. The panel
-    reads the sub's current content (approved doc) plus any
-    pending draft targeting it.
-    """
-    _require_project(db, project_id)
-    sub = _require_subcomponent(db, project_id, parent_comp_id, sub_id)
-    draft = db.execute(
-        select(Draft).where(
-            Draft.project_id == project_id,
-            Draft.target_type == "node",
-            Draft.target_id == sub_id,
-            Draft.status == "pending",
-        )
-    ).scalar_one_or_none()
-    status, last_error, started_at = queries.latest_generation_status(
-        db,
-        project_id,
-        GENERATE_SUBCOMPARCH_JOB_TYPE,
-        payload_filters={"component_id": sub_id},
-    )
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
     return SubcomparchResponse(
-        node=_serialize_subcomparch_node(sub, parent_comp_id),
-        pending_draft=(
-            SubcomparchDraftResponse(
-                id=draft.id,
-                content=draft.content,
-                created_at=draft.created_at.isoformat() if draft.created_at else "",
-            )
-            if draft is not None
-            else None
-        ),
-        generation_status=status,
-        last_error=last_error,
-        latest_telemetry=_latest_telemetry(db, project_id, sub_id),
-        generation_started_at=started_at,
+        **bootstrap_get_state(
+            db,
+            project_id,
+            (sub_id,),
+            SUBCOMPARCH_CONFIG,
+            _require_project,
+        )
     )
 
 
@@ -1885,30 +1760,17 @@ def post_subcomparch_feedback(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
-    _require_project(db, project_id)
-    sub = _require_subcomponent(db, project_id, parent_comp_id, sub_id)
-    # Read-only after approval — same pattern as comparch. Post-
-    # approval regen is Phase 11 structural-edit territory.
-    if (sub.content or "").strip():
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Subcomponent architecture is read-only after approval; "
-                "further edits happen via the structural-edit UIs "
-                "coming in Phase 11."
-            ),
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return FeedbackResponse(
+        **bootstrap_feedback(
+            db,
+            project_id,
+            (sub_id,),
+            req.feedback,
+            SUBCOMPARCH_CONFIG,
+            _require_project,
         )
-    feedback = (req.feedback or "").strip() or None
-    job_id = pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_SUBCOMPARCH_JOB_TYPE,
-        payload={
-            "project_id": project_id,
-            "component_id": sub_id,
-            "feedback": feedback,
-        },
     )
-    return FeedbackResponse(job_id=job_id)
 
 
 @router.post(
@@ -1923,36 +1785,18 @@ def post_subcomparch_approve(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> SubcomparchApproveResponse:
-    _require_project(db, project_id)
-    sub = _require_subcomponent(db, project_id, parent_comp_id, sub_id)
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != sub_id
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Draft not found for this subcomponent's subcomparch",
-        )
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-
-    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
-    db.commit()
-    db.refresh(sub)
-
-    pipeline_queue.enqueue(
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    result = bootstrap_approve(
         db,
-        job_type=MINT_SUBCOMPARCH_JOB_TYPE,
-        payload={"project_id": project_id, "component_id": sub_id},
+        project_id,
+        (sub_id,),
+        req.draft_id,
+        SUBCOMPARCH_CONFIG,
+        _require_project,
     )
-
-    return SubcomparchApproveResponse(node=_serialize_subcomparch_node(sub, parent_comp_id))
+    node_dict = result["node"]
+    node_dict["parent_id"] = parent_comp_id
+    return SubcomparchApproveResponse(node=SubcomparchNodeResponse(**node_dict))
 
 
 @router.post(
@@ -1967,38 +1811,17 @@ def post_subcomparch_discard(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> DiscardResponse:
-    _require_project(db, project_id)
     _require_subcomponent(db, project_id, parent_comp_id, sub_id)
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != sub_id
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Draft not found for this subcomponent's subcomparch",
+    return DiscardResponse(
+        **bootstrap_discard(
+            db,
+            project_id,
+            (sub_id,),
+            req.draft_id,
+            SUBCOMPARCH_CONFIG,
+            _require_project,
         )
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-
-    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
-    db.commit()
-
-    pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_SUBCOMPARCH_JOB_TYPE,
-        payload={
-            "project_id": project_id,
-            "component_id": sub_id,
-            "feedback": None,
-        },
     )
-    return DiscardResponse(ok=True)
 
 
 @router.post(
@@ -2012,18 +1835,16 @@ def post_subcomparch_cancel(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> CancelResponse:
-    """Stop any queued/running subcomparch generation for this subcomponent."""
-    _require_project(db, project_id)
     _require_subcomponent(db, project_id, parent_comp_id, sub_id)
-    job = pipeline_queue.find_active_job(
-        db,
-        GENERATE_SUBCOMPARCH_JOB_TYPE,
-        payload_filters={"project_id": project_id, "component_id": sub_id},
+    return CancelResponse(
+        **bootstrap_cancel(
+            db,
+            project_id,
+            (sub_id,),
+            SUBCOMPARCH_CONFIG,
+            _require_project,
+        )
     )
-    if job is None:
-        return CancelResponse(cancelled=False)
-    ok = pipeline_queue.cancel_job(db, job.id)
-    return CancelResponse(cancelled=ok)
 
 
 # ── Subcomponent / policy list endpoints ───────────────────────────
