@@ -1432,16 +1432,16 @@ def post_expansion_reset(
     # Also clear reqs and sysarch singleton content.
     reqs_node = get_reqs_node(db, project_id)
     sysarch_node = get_sysarch_node(db, project_id)
-    reqs_pending = pending_reqs_draft(db, project_id) if reqs_node else None
-    sysarch_pending = pending_sysarch_draft(db, project_id) if sysarch_node else None
+    reqs_pending: Draft | None = pending_reqs_draft(db, project_id) if reqs_node else None
+    sysarch_pending: Draft | None = pending_sysarch_draft(db, project_id) if sysarch_node else None
 
     drafts_discarded = 0
     for draft in pending_drafts:
         append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
         drafts_discarded += 1
-    for draft in [own_pending, reqs_pending, sysarch_pending]:
-        if draft is not None:
-            append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+    for maybe_draft in [own_pending, reqs_pending, sysarch_pending]:
+        if maybe_draft is not None:
+            append_event(db, project_id, ev.DraftDiscarded(draft_id=maybe_draft.id))
             drafts_discarded += 1
     for dn in downstream_nodes:
         append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
@@ -1510,15 +1510,15 @@ def post_reqs_reset(
     own_pending = pending_reqs_draft(db, project_id)
 
     sysarch_node = get_sysarch_node(db, project_id)
-    sysarch_pending = pending_sysarch_draft(db, project_id) if sysarch_node else None
+    sysarch_pending: Draft | None = pending_sysarch_draft(db, project_id) if sysarch_node else None
 
     drafts_discarded = 0
     for draft in pending_drafts:
         append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
         drafts_discarded += 1
-    for draft in [own_pending, sysarch_pending]:
-        if draft is not None:
-            append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+    for maybe_draft in [own_pending, sysarch_pending]:
+        if maybe_draft is not None:
+            append_event(db, project_id, ev.DraftDiscarded(draft_id=maybe_draft.id))
             drafts_discarded += 1
     for dn in downstream_nodes:
         append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
