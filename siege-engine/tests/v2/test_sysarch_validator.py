@@ -496,10 +496,7 @@ class TestRespAssignmentCoverage:
         )
         raw = _sysarch(
             components=comps,
-            dependencies=(
-                _DEFAULT_DEPS
-                + '<dep from="ui_billing" to="foundation"/>'
-            ),
+            dependencies=(_DEFAULT_DEPS + '<dep from="ui_billing" to="foundation"/>'),
             domain_parent='<parent from="ui_billing" to="billing"/>',
         )
         doc = validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)

@@ -257,13 +257,9 @@ def _sysarch_xml(session, project_id: str) -> str:
     )
     # The presentational comp presents its sibling domain comp.
     domain_parent_entries = ""
-    if (
-        pres_alias is not None
-        and presentational_domain_target in resp_name_to_alias
-    ):
+    if pres_alias is not None and presentational_domain_target in resp_name_to_alias:
         domain_parent_entries = (
-            f'<parent from="{pres_alias}" '
-            f'to="{resp_name_to_alias[presentational_domain_target]}"/>'
+            f'<parent from="{pres_alias}" to="{resp_name_to_alias[presentational_domain_target]}"/>'
         )
     return (
         "<sysarch>"
