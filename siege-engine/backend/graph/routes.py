@@ -96,6 +96,7 @@ from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
 from backend.models.node import Draft, Edge, Node
 from backend.models.telemetry import GenerationTelemetry
+from backend.pipeline import queue as pipeline_queue
 
 logger = logging.getLogger(__name__)
 
