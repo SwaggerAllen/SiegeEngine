@@ -69,8 +69,6 @@ Component, and §Edge type vocabulary.
 
 from __future__ import annotations
 
-from backend.projects.settings import NodeCountRange
-
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are producing the **system architecture** for a software \
 project. The entire downstream generation chain — \
@@ -308,8 +306,14 @@ vague handle.
 * ``<responsibilities>`` contains one or more ``<resp \
 id="resp_..."/>`` children. Each ``id`` must reference a \
 top-level responsibility from the input list, verbatim. **Every \
-top-level responsibility in the input must be assigned to \
-exactly one component** — orphans and duplicates are \
+top-level responsibility must be assigned to exactly one domain \
+component.** A responsibility may additionally appear in one \
+presentational component's ``<responsibilities>`` block, but \
+only if that presentational component has a ``<domain-parent>`` \
+edge to the domain component that owns the responsibility. This \
+means a responsibility appears in either 1 component (domain \
+only) or 2 components (domain + its presentational counterpart). \
+Orphans and assignments to multiple domain components are \
 structural errors.
 * **Group responsibilities by shared data ownership and shared \
 failure modes, not by shared category.** Two responsibilities \
@@ -407,17 +411,15 @@ to a domain component.
 parents. Domain components may be referenced by multiple \
 presentationals.
 
-## Granularity and coverage
+## Coverage
 
-* Top-level component count: typically {{TYPICAL_MIN}} to \
-{{TYPICAL_MAX}} for a normal project, not counting the \
-foundation. If you're at {{FLOOR}} or fewer, you're probably \
-glossing over decomposition; if you're at {{CEILING}} or more, \
-you're reaching into subcomponent territory that belongs in \
-Phase 4 component arch docs.
 * Every top-level responsibility from the input list must be \
-assigned to exactly one component's ``<responsibilities>`` \
-block. Missing assignments are a structural error.
+assigned to exactly one **domain** component's \
+``<responsibilities>`` block. A responsibility may additionally \
+appear in one presentational component if that presentational \
+component is the domain parent's counterpart (has a \
+``<domain-parent>`` edge to it). Missing assignments and \
+assignments to multiple domain components are structural errors.
 
 ## Meta-rules
 
@@ -429,17 +431,9 @@ tolerates them.
 """
 
 
-def render_system_prompt(counts: NodeCountRange) -> str:
-    """Return the sysarch system prompt with top-level component
-    count tokens filled. Handler calls this with
-    ``ProjectSettings.top_level_components``.
-    """
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{{FLOOR}}", str(counts.floor))
-        .replace("{{TYPICAL_MIN}}", str(counts.typical_min))
-        .replace("{{TYPICAL_MAX}}", str(counts.typical_max))
-        .replace("{{CEILING}}", str(counts.ceiling))
-    )
+def render_system_prompt() -> str:
+    """Return the sysarch system prompt."""
+    return _SYSTEM_PROMPT_TEMPLATE
 
 
 def render_user_prompt(
@@ -490,16 +484,11 @@ def render_user_prompt(
     parts.append(reqs_summary.strip() or "(no responsibilities minted yet)")
     parts.append("")
 
-    if prior_approved:
-        parts.append("# Previously-approved system architecture")
+    prior = prior_pending or prior_approved
+    if prior:
+        parts.append("# Current version")
         parts.append("")
-        parts.append(prior_approved.strip())
-        parts.append("")
-
-    if prior_pending:
-        parts.append("# Current draft (not yet approved)")
-        parts.append("")
-        parts.append(prior_pending.strip())
+        parts.append(prior.strip())
         parts.append("")
 
     if feedback:
@@ -534,18 +523,19 @@ def render_user_prompt(
             "block addressing the structural error above. Output only "
             "the corrected <sysarch> block."
         )
-    elif feedback and (prior_pending or prior_approved):
+    elif feedback and prior:
         parts.append(
             "Revise the system architecture to address the user "
             "feedback above. Preserve the component + policy + edge "
             "set where the feedback does not require a change. Output "
             "only the revised <sysarch> block."
         )
-    elif prior_pending or prior_approved:
+    elif prior:
         parts.append(
-            "Regenerate the system architecture from scratch based on "
-            "the features and responsibilities above. Output only the "
-            "<sysarch> block."
+            "Improve the system architecture above. Fix any issues you "
+            "notice with component boundaries, handle quality, "
+            "responsibility assignments, or dependency structure. "
+            "Output only the revised <sysarch> block."
         )
     else:
         parts.append(

@@ -1,0 +1,463 @@
+"""Generic route handlers for bootstrap-tier CRUD operations.
+
+Every bootstrap tier (expansion, requirements, sysarch, subreqs,
+comparch, subcomparch) follows the same five-operation lifecycle:
+GET state, POST feedback, POST approve, POST discard, POST cancel.
+Some tiers additionally support POST reset and POST prompt-preview.
+
+This module provides generic implementations of each operation,
+parameterized by a :class:`BootstrapTierConfig` that captures
+the per-tier variation (node getter, draft getter, job types,
+serializer, etc.). The ``routes.py`` module registers the concrete
+FastAPI endpoints — it still owns the ``@router`` decorators
+(needed for FastAPI path-param inspection) — but each endpoint is
+a one-liner that delegates here.
+
+The goal is that adding a new bootstrap tier requires adding one
+:class:`BootstrapTierConfig` instance and a handful of route
+decorators, not copy-pasting 200 lines of handler logic.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from backend.graph import events as ev
+from backend.graph import queries
+from backend.graph.reducer import append_event
+from backend.models.node import Draft
+from backend.pipeline import queue as pipeline_queue
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BootstrapTierConfig:
+    """Per-tier configuration for the generic bootstrap route handlers.
+
+    Each bootstrap tier registers one of these with its specific
+    functions and constants. The generic handlers read these to
+    dispatch the right DB queries, job types, and serializers.
+    """
+
+    tier_name: str
+
+    # ── Node resolution ────────────────────────────────────────────
+    # Returns the tier's node, or None if it doesn't exist.
+    # Signature: (db, project_id, *scope_ids) -> Node | None
+    get_node: Callable[..., Any]
+
+    # ── Draft resolution ───────────────────────────────────────────
+    # Returns the pending draft for this tier, or None.
+    # Signature: (db, project_id, *scope_ids) -> Draft | None
+    get_pending_draft: Callable[..., Any]
+
+    # ── Approval check ─────────────────────────────────────────────
+    # Returns True if the tier's node has approved content. Used to
+    # gate feedback (bootstrap tiers are read-only after approval).
+    # None means the tier doesn't have an approval gate (comparch/
+    # subcomparch can always be regenerated).
+    # Signature: (db, project_id, *scope_ids) -> bool
+    has_been_approved: Callable[..., bool] | None = None
+
+    # ── Lazy bootstrap ─────────────────────────────────────────────
+    # If the node doesn't exist on GET, call this to mint one.
+    # None means no lazy bootstrap (404 instead).
+    # Signature: (db, project_id, *scope_ids) -> str  (returns node_id)
+    bootstrap_node: Callable[..., str] | None = None
+
+    # ── Job types ──────────────────────────────────────────────────
+    generate_job_type: str = ""
+    mint_job_type: str = ""
+
+    # ── Serializers ────────────────────────────────────────────────
+    # Converts a Node to the response dict shape.
+    serialize_node: Callable[..., Any] = lambda n: None
+    # Converts a Draft to the response draft dict shape.
+    serialize_draft: Callable[..., Any] = lambda d: None
+
+    # ── Feedback read-only message ─────────────────────────────────
+    feedback_readonly_detail: str = ""
+
+    # ── Reset support ──────────────────────────────────────────────
+    # If set, the tier supports destructive reset.
+    collect_downstream_nodes: Callable[..., list] | None = None
+    collect_pending_drafts_for_nodes: Callable[..., list] | None = None
+    downstream_job_types: tuple[str, ...] = ()
+    # Additional singleton nodes whose content should be cleared
+    # on reset (e.g. expansion reset clears reqs + sysarch content).
+    additional_nodes_to_clear: Callable[..., list] | None = None
+    # Additional singleton pending drafts to discard on reset.
+    additional_drafts_to_discard: Callable[..., list] | None = None
+
+    # ── Prompt preview ─────────────────────────────────────────────
+    # Gathers context and renders system + user prompts.
+    # Signature: (db, project_id, *scope_ids, feedback) -> (sys, user)
+    render_prompt_preview: Callable[..., tuple[str, str]] | None = None
+
+
+def build_job_payload(
+    project_id: str,
+    scope_ids: tuple[str, ...],
+    feedback: str | None = None,
+) -> dict[str, Any]:
+    """Build a job payload dict with the right scope keys."""
+    payload: dict[str, Any] = {"project_id": project_id, "feedback": feedback}
+    if len(scope_ids) >= 1:
+        payload["component_id"] = scope_ids[0]
+    if len(scope_ids) >= 2:
+        payload["sub_id"] = scope_ids[1]
+    return payload
+
+
+def bootstrap_get_state(
+    db: Session,
+    project_id: str,
+    scope_ids: tuple[str, ...],
+    config: BootstrapTierConfig,
+    require_project: Callable,
+) -> dict[str, Any]:
+    """Generic GET state handler for any bootstrap tier."""
+    require_project(db, project_id)
+    node = config.get_node(db, project_id, *scope_ids)
+    if node is None:
+        if config.bootstrap_node is not None:
+            logger.warning(
+                "%s node missing for project %s; lazy-bootstrapping",
+                config.tier_name,
+                project_id,
+            )
+            config.bootstrap_node(db, project_id, *scope_ids)
+            db.commit()
+            pipeline_queue.enqueue(
+                db,
+                job_type=config.generate_job_type,
+                payload=build_job_payload(project_id, scope_ids),
+            )
+            node = config.get_node(db, project_id, *scope_ids)
+            assert node is not None
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"{config.tier_name} node missing",
+            )
+    draft = config.get_pending_draft(db, project_id, *scope_ids)
+    payload_filters = {}
+    if len(scope_ids) >= 1:
+        payload_filters["component_id"] = scope_ids[0]
+    if len(scope_ids) >= 2:
+        payload_filters["sub_id"] = scope_ids[1]
+    status, last_error, started_at = queries.latest_generation_status(
+        db,
+        project_id,
+        config.generate_job_type,
+        payload_filters=payload_filters if payload_filters else None,
+    )
+    telemetry = _latest_telemetry(db, project_id, node.id)
+    return {
+        "node": config.serialize_node(node),
+        "pending_draft": config.serialize_draft(draft) if draft else None,
+        "generation_status": status,
+        "last_error": last_error,
+        "latest_telemetry": telemetry,
+        "generation_started_at": started_at,
+    }
+
+
+def bootstrap_feedback(
+    db: Session,
+    project_id: str,
+    scope_ids: tuple[str, ...],
+    feedback_text: str,
+    config: BootstrapTierConfig,
+    require_project: Callable,
+) -> dict[str, str]:
+    """Generic POST feedback handler."""
+    require_project(db, project_id)
+    node = config.get_node(db, project_id, *scope_ids)
+    if node is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{config.tier_name} node missing",
+        )
+    if config.has_been_approved is not None and config.has_been_approved(
+        db, project_id, *scope_ids
+    ):
+        raise HTTPException(status_code=409, detail=config.feedback_readonly_detail)
+    feedback = (feedback_text or "").strip() or None
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=config.generate_job_type,
+        payload=build_job_payload(project_id, scope_ids, feedback),
+    )
+    return {"job_id": job_id}
+
+
+def bootstrap_approve(
+    db: Session,
+    project_id: str,
+    scope_ids: tuple[str, ...],
+    draft_id: str,
+    config: BootstrapTierConfig,
+    require_project: Callable,
+) -> dict[str, Any]:
+    """Generic POST approve handler."""
+    require_project(db, project_id)
+    node = config.get_node(db, project_id, *scope_ids)
+    if node is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{config.tier_name} node missing",
+        )
+    draft = db.get(Draft, draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != node.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Draft not found for {config.tier_name}",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+    append_event(db, project_id, ev.DraftApproved(draft_id=draft_id))
+    db.commit()
+    db.refresh(node)
+    if config.mint_job_type:
+        mint_payload: dict[str, Any] = {"project_id": project_id}
+        if len(scope_ids) >= 1:
+            mint_payload["component_id"] = scope_ids[0]
+        if len(scope_ids) >= 2:
+            mint_payload["sub_id"] = scope_ids[1]
+        pipeline_queue.enqueue(
+            db,
+            job_type=config.mint_job_type,
+            payload=mint_payload,
+        )
+    return {"node": config.serialize_node(node)}
+
+
+def bootstrap_discard(
+    db: Session,
+    project_id: str,
+    scope_ids: tuple[str, ...],
+    draft_id: str,
+    config: BootstrapTierConfig,
+    require_project: Callable,
+) -> dict[str, bool]:
+    """Generic POST discard handler."""
+    require_project(db, project_id)
+    node = config.get_node(db, project_id, *scope_ids)
+    if node is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{config.tier_name} node missing",
+        )
+    draft = db.get(Draft, draft_id)
+    if (
+        draft is None
+        or draft.project_id != project_id
+        or draft.target_type != "node"
+        or draft.target_id != node.id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Draft not found for {config.tier_name}",
+        )
+    if draft.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Draft is {draft.status!r}, not pending",
+        )
+    append_event(db, project_id, ev.DraftDiscarded(draft_id=draft_id))
+    db.commit()
+    pipeline_queue.enqueue(
+        db,
+        job_type=config.generate_job_type,
+        payload=build_job_payload(project_id, scope_ids),
+    )
+    return {"ok": True}
+
+
+def bootstrap_cancel(
+    db: Session,
+    project_id: str,
+    scope_ids: tuple[str, ...],
+    config: BootstrapTierConfig,
+    require_project: Callable,
+) -> dict[str, bool]:
+    """Generic POST cancel handler."""
+    require_project(db, project_id)
+    payload_filters: dict[str, Any] = {"project_id": project_id}
+    if len(scope_ids) >= 1:
+        payload_filters["component_id"] = scope_ids[0]
+    job = pipeline_queue.find_active_job(
+        db,
+        config.generate_job_type,
+        payload_filters=payload_filters,
+    )
+    if job is None:
+        return {"cancelled": False}
+    ok = pipeline_queue.cancel_job(db, job.id)
+    return {"cancelled": ok}
+
+
+def bootstrap_reset(
+    db: Session,
+    project_id: str,
+    scope_ids: tuple[str, ...],
+    config: BootstrapTierConfig,
+    require_project: Callable,
+) -> dict[str, Any]:
+    """Generic POST reset handler."""
+    if config.collect_downstream_nodes is None:
+        raise HTTPException(status_code=501, detail="Reset not supported for this tier")
+    require_project(db, project_id)
+    node = config.get_node(db, project_id, *scope_ids)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"{config.tier_name} node missing")
+    if config.has_been_approved is not None:
+        if not config.has_been_approved(db, project_id, *scope_ids):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{config.tier_name} is not in approved state",
+            )
+
+    jobs_cancelled = 0
+    for jt in config.downstream_job_types:
+        jobs_cancelled += pipeline_queue.cancel_jobs_by_type(
+            db,
+            jt,
+            project_id=project_id,
+        )
+
+    downstream_nodes = config.collect_downstream_nodes(db, project_id)
+    downstream_ids = [n.id for n in downstream_nodes]
+    assert config.collect_pending_drafts_for_nodes is not None
+    pending_drafts = config.collect_pending_drafts_for_nodes(
+        db,
+        project_id,
+        downstream_ids,
+    )
+    own_pending = config.get_pending_draft(db, project_id, *scope_ids)
+
+    drafts_discarded = 0
+    for draft in pending_drafts:
+        append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+        drafts_discarded += 1
+    if own_pending is not None:
+        append_event(db, project_id, ev.DraftDiscarded(draft_id=own_pending.id))
+        drafts_discarded += 1
+
+    additional_drafts = (
+        config.additional_drafts_to_discard(db, project_id)
+        if config.additional_drafts_to_discard
+        else []
+    )
+    for maybe_draft in additional_drafts:
+        if maybe_draft is not None:
+            append_event(db, project_id, ev.DraftDiscarded(draft_id=maybe_draft.id))
+            drafts_discarded += 1
+
+    for dn in downstream_nodes:
+        append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
+
+    additional_to_clear = (
+        config.additional_nodes_to_clear(db, project_id) if config.additional_nodes_to_clear else []
+    )
+    for clear_node in additional_to_clear:
+        if clear_node is not None and clear_node.content:
+            append_event(
+                db,
+                project_id,
+                ev.BootstrapNodeContentCleared(node_id=clear_node.id),
+            )
+
+    append_event(
+        db,
+        project_id,
+        ev.BootstrapNodeContentCleared(node_id=node.id),
+    )
+    db.commit()
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=config.generate_job_type,
+        payload=build_job_payload(project_id, scope_ids),
+    )
+    return {
+        "ok": True,
+        "nodes_deleted": len(downstream_nodes),
+        "drafts_discarded": drafts_discarded,
+        "jobs_cancelled": jobs_cancelled,
+    }
+
+
+def bootstrap_prompt_preview(
+    db: Session,
+    project_id: str,
+    scope_ids: tuple[str, ...],
+    feedback_text: str,
+    config: BootstrapTierConfig,
+    require_project: Callable,
+) -> dict[str, str]:
+    """Generic POST prompt-preview handler."""
+    if config.render_prompt_preview is None:
+        raise HTTPException(
+            status_code=501,
+            detail="Prompt preview not supported for this tier",
+        )
+    require_project(db, project_id)
+    node = config.get_node(db, project_id, *scope_ids)
+    if node is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{config.tier_name} node missing",
+        )
+    sys_prompt, user_prompt = config.render_prompt_preview(
+        db,
+        project_id,
+        *scope_ids,
+        feedback_text,
+    )
+    return {"system_prompt": sys_prompt, "user_prompt": user_prompt}
+
+
+# ── Shared helpers ───────────────────────────────────────────────────
+
+
+def _latest_telemetry(
+    db: Session,
+    project_id: str,
+    node_id: str,
+) -> dict[str, Any] | None:
+    """Return the most recent telemetry row for a node, or None."""
+    from backend.models.telemetry import GenerationTelemetry
+
+    row = (
+        db.query(GenerationTelemetry)
+        .filter(
+            GenerationTelemetry.project_id == project_id,
+            GenerationTelemetry.node_id == node_id,
+        )
+        .order_by(GenerationTelemetry.created_at.desc())
+        .first()
+    )
+    if row is None:
+        return None
+    return {
+        "prompt_tokens": row.prompt_tokens,
+        "completion_tokens": row.completion_tokens,
+        "model": row.model,
+        "created_at": row.created_at.isoformat() if row.created_at else "",
+    }

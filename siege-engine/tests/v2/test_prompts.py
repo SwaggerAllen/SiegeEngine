@@ -6,12 +6,11 @@ from backend.graph.prompts.feature_expansion import (
     render_system_prompt,
     render_user_prompt,
 )
-from backend.projects.settings import NodeCountRange, ProjectSettings
 
 
 def _default_system_prompt() -> str:
-    """Shared helper: render the system prompt with project defaults."""
-    return render_system_prompt(ProjectSettings().features_per_group)
+    """Shared helper: render the system prompt."""
+    return render_system_prompt()
 
 
 class TestSystemPrompt:
@@ -54,34 +53,6 @@ class TestSystemPrompt:
         assert "theme" in prompt or "related features" in prompt
 
 
-class TestRenderSystemPrompt:
-    """The granularity bullet cites the four features-per-group
-    numbers substituted from :class:`NodeCountRange`."""
-
-    def test_substitutes_default_numbers(self) -> None:
-        # Defaults are floor=2 / typical_min=3 / typical_max=8 /
-        # ceiling=15. All four must appear in the rendered text.
-        prompt = _default_system_prompt()
-        assert "3–8 features per group" in prompt
-        assert "2 or fewer features" in prompt
-        assert "15 or more features" in prompt
-
-    def test_substitutes_custom_numbers(self) -> None:
-        counts = NodeCountRange(floor=7, typical_min=11, typical_max=13, ceiling=17)
-        prompt = render_system_prompt(counts)
-        assert "11–13 features per group" in prompt
-        assert "7 or fewer features" in prompt
-        assert "17 or more features" in prompt
-        # Sanity: none of the default numbers leaked through for
-        # the granularity bullet.
-        assert "3–8 features per group" not in prompt
-
-    def test_no_raw_placeholder_tokens_leak(self) -> None:
-        prompt = _default_system_prompt()
-        for token in ("{{FLOOR}}", "{{TYPICAL_MIN}}", "{{TYPICAL_MAX}}", "{{CEILING}}"):
-            assert token not in prompt
-
-
 class TestRenderUserPrompt:
     def test_initial_generation(self):
         out = render_user_prompt(
@@ -121,10 +92,9 @@ class TestRenderUserPrompt:
             prior_pending="## Contacts\n- CRUD",
             feedback=None,
         )
-        assert "# Current draft" in out
+        assert "# Current version" in out
         assert "## Contacts" in out
-        assert "Regenerate the feature expansion from scratch" in out
-        assert "Previously-approved" not in out
+        assert "Improve the feature expansion above" in out
 
     def test_feedback_with_prior_pending(self):
         out = render_user_prompt(
@@ -133,7 +103,7 @@ class TestRenderUserPrompt:
             prior_pending="## Contacts\n- CRUD",
             feedback="Also cover pipeline management.",
         )
-        assert "# Current draft" in out
+        assert "# Current version" in out
         assert "# User feedback" in out
         assert "Also cover pipeline management." in out
         assert "Revise the feature expansion" in out
@@ -145,7 +115,7 @@ class TestRenderUserPrompt:
             prior_pending=None,
             feedback="Add reporting.",
         )
-        assert "# Previously-approved feature expansion" in out
+        assert "# Current version" in out
         assert "## Contacts approved" in out
         assert "# User feedback" in out
         assert "Revise the feature expansion" in out

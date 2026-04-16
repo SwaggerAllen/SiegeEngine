@@ -44,7 +44,6 @@ import uuid
 
 from backend.cli.manager import cli_manager
 from backend.database import SessionLocal
-from backend.graph import events as ev
 from backend.graph.expansion import get_expansion_node, pending_expansion_draft
 from backend.graph.parsers.validators import validate_features, validate_vocabulary
 from backend.graph.parsers.xml_sections import extract_tag_tree
@@ -52,10 +51,8 @@ from backend.graph.prompts.feature_expansion import (
     render_system_prompt,
     render_user_prompt,
 )
-from backend.graph.reducer import append_event
 from backend.models import Project
 from backend.models.input_document import InputDocument
-from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
 from backend.projects.settings import get_project_settings
 
@@ -146,7 +143,7 @@ async def generate_feature_expansion(payload: dict) -> None:
         assert project_row is not None  # expansion node existed, so does the project
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
-        system_prompt = render_system_prompt(settings.features_per_group)
+        system_prompt = render_system_prompt()
     finally:
         db.close()
 
@@ -193,7 +190,10 @@ async def generate_feature_expansion(payload: dict) -> None:
             allow_id_refs=False,
         )
 
-    from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
+    from backend.graph.handlers._bootstrap_generation import (
+        persist_draft,
+        run_parse_validate_loop,
+    )
 
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="features",
@@ -206,59 +206,15 @@ async def generate_feature_expansion(payload: dict) -> None:
         log_handler_name="generate_feature_expansion",
     )
 
-    # ── Phase 3: persist events + telemetry ─────────────────────────
-    db = SessionLocal()
-    try:
-        if prior_pending_id is not None:
-            # DraftDiscarded must land *before* DraftGenerated to clear
-            # the partial unique index on (target_type, target_id)
-            # where status='pending'.
-            append_event(
-                db,
-                project_id,
-                ev.DraftDiscarded(draft_id=prior_pending_id),
-            )
-
-        new_draft_id = _new_draft_id()
-        new_batch_id = _new_batch_id()
-        append_event(
-            db,
-            project_id,
-            ev.DraftGenerated(
-                draft_id=new_draft_id,
-                target_type="node",
-                target_id=exp_node_id,
-                content=validated_output.text,
-                batch_id=new_batch_id,
-            ),
-        )
-        # Telemetry: one row per LLM call, including any retries.
-        # All writes are in the same transaction as the event so
-        # either all land or none land.
-        for attempt in attempts:
-            db.add(
-                GenerationTelemetry(
-                    project_id=project_id,
-                    node_id=exp_node_id,
-                    section="expansion",
-                    model=attempt.model,
-                    prompt_tokens=attempt.prompt_tokens,
-                    completion_tokens=attempt.completion_tokens,
-                )
-            )
-        db.commit()
-        logger.info(
-            "generate_feature_expansion project=%s draft_id=%s committed "
-            "(attempts=%d final_prompt=%d final_completion=%d model=%s)",
-            project_id,
-            new_draft_id,
-            len(attempts),
-            validated_output.prompt_tokens,
-            validated_output.completion_tokens,
-            validated_output.model,
-        )
-    finally:
-        db.close()
+    persist_draft(
+        project_id=project_id,
+        node_id=exp_node_id,
+        section="expansion",
+        validated_output=validated_output,
+        attempts=attempts,
+        prior_pending_id=prior_pending_id,
+        log_handler_name="generate_feature_expansion",
+    )
 
 
 async def _call_cli_with_transient_retry(**kwargs):  # type: ignore[no-untyped-def]

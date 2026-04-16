@@ -1,10 +1,8 @@
 import { z } from 'zod';
-import api from './client';
+import { subcomparchApi } from './bootstrapApi';
 import { GenerationStatusSchema, TelemetrySummarySchema } from './expansion';
 
-// Per-subcomponent scoping: every request takes
-// projectId + parentCompId + subId. Parallel to api/comparch.ts
-// with the Phase 5 subcomparch routes nested one level deeper.
+export { GenerationStatusSchema, TelemetrySummarySchema };
 
 export const SubcomparchNodeSchema = z.object({
   id: z.string(),
@@ -32,73 +30,24 @@ export const SubcomparchResponseSchema = z.object({
 });
 export type SubcomparchResponse = z.infer<typeof SubcomparchResponseSchema>;
 
-const FeedbackResponseSchema = z.object({ job_id: z.string() });
-const ApproveResponseSchema = z.object({ node: SubcomparchNodeSchema });
-const DiscardResponseSchema = z.object({ ok: z.boolean() });
-const CancelResponseSchema = z.object({ cancelled: z.boolean() });
+// ── Bootstrap CRUD (delegated to shared API) ───────────────────────
 
-function _base(projectId: string, parentCompId: string, subId: string): string {
-  return (
-    `/projects/${projectId}/components/${parentCompId}` +
-    `/subcomponents/${subId}/subcomparch`
-  );
-}
+export const getSubcomparch = (
+  projectId: string, parentCompId: string, subId: string,
+) => subcomparchApi.getState(projectId, parentCompId, subId);
 
-export async function getSubcomparch(
-  projectId: string,
-  parentCompId: string,
-  subId: string
-): Promise<SubcomparchResponse> {
-  const { data } = await api.get(_base(projectId, parentCompId, subId));
-  return SubcomparchResponseSchema.parse(data);
-}
+export const postFeedback = (
+  projectId: string, parentCompId: string, subId: string, feedback: string,
+) => subcomparchApi.postFeedback(projectId, parentCompId, subId, feedback);
 
-export async function postFeedback(
-  projectId: string,
-  parentCompId: string,
-  subId: string,
-  feedback: string
-): Promise<{ job_id: string }> {
-  const { data } = await api.post(
-    `${_base(projectId, parentCompId, subId)}/feedback`,
-    { feedback }
-  );
-  return FeedbackResponseSchema.parse(data);
-}
+export const approveDraft = (
+  projectId: string, parentCompId: string, subId: string, draftId: string,
+) => subcomparchApi.approveDraft(projectId, parentCompId, subId, draftId);
 
-export async function approveDraft(
-  projectId: string,
-  parentCompId: string,
-  subId: string,
-  draftId: string
-): Promise<SubcomparchNode> {
-  const { data } = await api.post(
-    `${_base(projectId, parentCompId, subId)}/approve`,
-    { draft_id: draftId }
-  );
-  return ApproveResponseSchema.parse(data).node;
-}
+export const discardDraft = (
+  projectId: string, parentCompId: string, subId: string, draftId: string,
+) => subcomparchApi.discardDraft(projectId, parentCompId, subId, draftId);
 
-export async function discardDraft(
-  projectId: string,
-  parentCompId: string,
-  subId: string,
-  draftId: string
-): Promise<void> {
-  const { data } = await api.post(
-    `${_base(projectId, parentCompId, subId)}/discard`,
-    { draft_id: draftId }
-  );
-  DiscardResponseSchema.parse(data);
-}
-
-export async function cancelGeneration(
-  projectId: string,
-  parentCompId: string,
-  subId: string
-): Promise<boolean> {
-  const { data } = await api.post(
-    `${_base(projectId, parentCompId, subId)}/cancel`
-  );
-  return CancelResponseSchema.parse(data).cancelled;
-}
+export const cancelGeneration = (
+  projectId: string, parentCompId: string, subId: string,
+) => subcomparchApi.cancelGeneration(projectId, parentCompId, subId);

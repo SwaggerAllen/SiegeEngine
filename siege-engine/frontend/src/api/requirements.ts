@@ -1,50 +1,18 @@
 import { z } from 'zod';
 import api from './client';
+import { requirementsApi } from './bootstrapApi';
 import { GenerationStatusSchema, TelemetrySummarySchema } from './expansion';
 
-// Parallel shape to the expansion API (Phase 1): one singleton
-// bootstrap node per project, a pending draft if any, a generation
-// status derived from the latest pipeline job, optional last_error,
-// and a latest_telemetry summary. The schemas diverge from the
-// expansion ones only in name so each module can evolve
-// independently.
+export type {
+  BootstrapResponse as ReqsResponse,
+  BootstrapNode as ReqsNode,
+  BootstrapDraft as ReqsDraft,
+  ResetResult,
+  PromptPreview,
+} from './bootstrapApi';
 
-export const ReqsNodeSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  content: z.string(),
-  updated_at: z.string(),
-});
-export type ReqsNode = z.infer<typeof ReqsNodeSchema>;
-
-export const ReqsDraftSchema = z.object({
-  id: z.string(),
-  content: z.string(),
-  created_at: z.string(),
-});
-export type ReqsDraft = z.infer<typeof ReqsDraftSchema>;
-
-export const ReqsResponseSchema = z.object({
-  node: ReqsNodeSchema,
-  pending_draft: ReqsDraftSchema.nullable(),
-  generation_status: GenerationStatusSchema,
-  last_error: z.string().nullable(),
-  latest_telemetry: TelemetrySummarySchema.nullable(),
-  generation_started_at: z.string().nullish().transform((v) => v ?? null),
-});
-export type ReqsResponse = z.infer<typeof ReqsResponseSchema>;
-
-const FeedbackResponseSchema = z.object({ job_id: z.string() });
-const ApproveResponseSchema = z.object({ node: ReqsNodeSchema });
-const DiscardResponseSchema = z.object({ ok: z.boolean() });
-const CancelResponseSchema = z.object({ cancelled: z.boolean() });
-const ResetResponseSchema = z.object({
-  ok: z.boolean(),
-  nodes_deleted: z.number().int(),
-  drafts_discarded: z.number().int(),
-  jobs_cancelled: z.number().int(),
-});
-export type ResetResult = z.infer<typeof ResetResponseSchema>;
+// Re-export for backward compat (other API files import these)
+export { GenerationStatusSchema, TelemetrySummarySchema };
 
 // ── Responsibilities list (minted resp_* nodes) ────────────────────
 
@@ -62,68 +30,30 @@ export const ResponsibilityListResponseSchema = z.object({
 });
 export type ResponsibilityListResponse = z.infer<typeof ResponsibilityListResponseSchema>;
 
-// ── Request functions ──────────────────────────────────────────────
+// ── Bootstrap CRUD (delegated to shared API) ───────────────────────
 
-export async function getRequirements(projectId: string): Promise<ReqsResponse> {
-  const { data } = await api.get(`/projects/${projectId}/requirements`);
-  return ReqsResponseSchema.parse(data);
-}
+export const getRequirements = (projectId: string) =>
+  requirementsApi.getState(projectId);
 
-export async function postFeedback(
-  projectId: string,
-  feedback: string
-): Promise<{ job_id: string }> {
-  const { data } = await api.post(`/projects/${projectId}/requirements/feedback`, {
-    feedback,
-  });
-  return FeedbackResponseSchema.parse(data);
-}
+export const postFeedback = (projectId: string, feedback: string) =>
+  requirementsApi.postFeedback(projectId, feedback);
 
-export async function approveDraft(
-  projectId: string,
-  draftId: string
-): Promise<ReqsNode> {
-  const { data } = await api.post(`/projects/${projectId}/requirements/approve`, {
-    draft_id: draftId,
-  });
-  return ApproveResponseSchema.parse(data).node;
-}
+export const approveDraft = (projectId: string, draftId: string) =>
+  requirementsApi.approveDraft(projectId, draftId);
 
-export async function discardDraft(
-  projectId: string,
-  draftId: string
-): Promise<void> {
-  const { data } = await api.post(`/projects/${projectId}/requirements/discard`, {
-    draft_id: draftId,
-  });
-  DiscardResponseSchema.parse(data);
-}
+export const discardDraft = (projectId: string, draftId: string) =>
+  requirementsApi.discardDraft(projectId, draftId);
 
-export async function cancelGeneration(projectId: string): Promise<boolean> {
-  const { data } = await api.post(`/projects/${projectId}/requirements/cancel`);
-  return CancelResponseSchema.parse(data).cancelled;
-}
+export const cancelGeneration = (projectId: string) =>
+  requirementsApi.cancelGeneration(projectId);
 
-export async function resetRequirements(projectId: string): Promise<ResetResult> {
-  const { data } = await api.post(`/projects/${projectId}/requirements/reset`);
-  return ResetResponseSchema.parse(data);
-}
+export const resetRequirements = (projectId: string) =>
+  requirementsApi.resetTier(projectId);
 
-const PromptPreviewSchema = z.object({
-  system_prompt: z.string(),
-  user_prompt: z.string(),
-});
-export type PromptPreview = z.infer<typeof PromptPreviewSchema>;
+export const getPromptPreview = (projectId: string, feedback: string) =>
+  requirementsApi.getPromptPreview(projectId, feedback);
 
-export async function getPromptPreview(
-  projectId: string,
-  feedback: string
-): Promise<PromptPreview> {
-  const { data } = await api.post(`/projects/${projectId}/requirements/prompt-preview`, {
-    feedback,
-  });
-  return PromptPreviewSchema.parse(data);
-}
+// ── Tier-specific list endpoint ────────────────────────────────────
 
 export async function getResponsibilities(
   projectId: string

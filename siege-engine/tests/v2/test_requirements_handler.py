@@ -560,7 +560,7 @@ class TestInputDocInclusion:
         # The first draft's distinguishing strings must appear in
         # the second regen's prompt under the "Current draft"
         # section, so the LLM knows what it's refining.
-        assert "# Current draft (not yet approved)" in second_prompt
+        assert "# Current version" in second_prompt
         assert "DraftOneMarker" in second_prompt
         assert "A distinctive first-draft intent." in second_prompt
 
@@ -616,21 +616,16 @@ class TestInputDocInclusion:
 
 
 class TestDomainUiSplitGuidance:
-    """The reqs system prompt tells the LLM to split features with both
-    server-side and user-facing work into sibling responsibilities so
-    sysarch can assign them to separate domain + presentational
-    components later. Guard the guidance text so it can't be silently
+    """The reqs system prompt tells the LLM NOT to split features into
+    domain/presentational sibling responsibilities — that split is
+    sysarch's job. Guard the guidance text so it can't be silently
     removed during a prompt rewrite."""
 
-    def test_system_prompt_includes_split_guidance(
+    def test_system_prompt_includes_no_split_guidance(
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
         calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         system_prompt = calls[0]["system_prompt"]
-        # The key phrase — if this assertion fires, the split
-        # guidance has been rewritten or removed.
-        assert "Split server-side and user-facing work" in system_prompt
-        # The worked example is still there
-        assert "Payment Processing" in system_prompt
-        assert "Payment Form UX" in system_prompt
+        assert "not UI/backend splits" in system_prompt
+        assert "sysarch pass makes" in system_prompt

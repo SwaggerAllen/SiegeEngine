@@ -352,16 +352,11 @@ def render_user_prompt(
         parts.append(dep_pubapi_summary.strip())
         parts.append("")
 
-    if prior_approved:
-        parts.append("# Previously-approved subcomponent architecture doc")
+    prior = prior_pending or prior_approved
+    if prior:
+        parts.append("# Current version")
         parts.append("")
-        parts.append(prior_approved.strip())
-        parts.append("")
-
-    if prior_pending:
-        parts.append("# Current draft (not yet approved)")
-        parts.append("")
-        parts.append(prior_pending.strip())
+        parts.append(prior.strip())
         parts.append("")
 
     if feedback:
@@ -396,18 +391,19 @@ def render_user_prompt(
             "<subcomparch> block addressing the structural error "
             "above. Output only the corrected <subcomparch> block."
         )
-    elif feedback and (prior_pending or prior_approved):
+    elif feedback and prior:
         parts.append(
             "Revise the subcomponent architecture doc to address "
             "the user feedback above. Preserve the design where "
             "the feedback does not require a change. Output only "
             "the revised <subcomparch> block."
         )
-    elif prior_pending or prior_approved:
+    elif prior:
         parts.append(
-            "Regenerate the subcomponent architecture doc from "
-            "scratch based on the context above. Output only the "
-            "<subcomparch> block."
+            "Improve the subcomponent architecture doc above. Fix "
+            "any issues you notice with the techspec, public surface, "
+            "private surface, or dependencies. Output only the "
+            "revised <subcomparch> block."
         )
     else:
         parts.append(

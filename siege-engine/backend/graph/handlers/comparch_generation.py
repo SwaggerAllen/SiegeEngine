@@ -30,22 +30,20 @@ See ``docs/architecture/v2-roadmap.md`` Phase 4.
 from __future__ import annotations
 
 import logging
-import secrets
-import uuid
 
 from sqlalchemy import select
 
 from backend.database import SessionLocal
-from backend.graph import events as ev
-from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
+from backend.graph.handlers._bootstrap_generation import (
+    persist_draft,
+    run_parse_validate_loop,
+)
 from backend.graph.parsers.validators import validate_arch_doc
 from backend.graph.prompts.comparch import render_system_prompt, render_user_prompt
-from backend.graph.reducer import append_event
 from backend.graph.regen_context import build_regen_context, format_regen_context
 from backend.graph.subrequirements import get_subreqs_node
 from backend.models import Project
 from backend.models.node import Draft, Node
-from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
 from backend.projects.settings import get_project_settings
 
@@ -64,14 +62,6 @@ class ComparchPreconditionError(ComparchHandlerError):
 
 class ComparchParseRetryExhausted(RuntimeError):
     """Raised when parse-validate retries are exhausted without success."""
-
-
-def _new_draft_id() -> str:
-    return f"draft_{secrets.token_hex(8)}"
-
-
-def _new_batch_id() -> str:
-    return f"batch_{uuid.uuid4().hex[:16]}"
 
 
 async def generate_comparch(payload: dict) -> None:
@@ -161,7 +151,7 @@ async def generate_comparch(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
-        system_prompt = render_system_prompt(settings.subcomponents_per_component)
+        system_prompt = render_system_prompt()
     finally:
         db.close()
 
@@ -208,53 +198,15 @@ async def generate_comparch(payload: dict) -> None:
         log_handler_name="generate_comparch",
     )
 
-    # ── Phase 3: persist events + telemetry ─────────────────────────
-    db = SessionLocal()
-    try:
-        if prior_pending_id is not None:
-            append_event(
-                db,
-                project_id,
-                ev.DraftDiscarded(draft_id=prior_pending_id),
-            )
-
-        new_draft_id = _new_draft_id()
-        new_batch_id = _new_batch_id()
-        append_event(
-            db,
-            project_id,
-            ev.DraftGenerated(
-                draft_id=new_draft_id,
-                target_type="node",
-                target_id=component_id,
-                content=validated_output.text,
-                batch_id=new_batch_id,
-            ),
-        )
-        for attempt in attempts:
-            db.add(
-                GenerationTelemetry(
-                    project_id=project_id,
-                    node_id=component_id,
-                    section="comparch",
-                    model=attempt.model,
-                    prompt_tokens=attempt.prompt_tokens,
-                    completion_tokens=attempt.completion_tokens,
-                )
-            )
-        db.commit()
-        logger.info(
-            "generate_comparch project=%s comp=%s draft_id=%s committed "
-            "(attempts=%d final_prompt=%d final_completion=%d)",
-            project_id,
-            component_id,
-            new_draft_id,
-            len(attempts),
-            validated_output.prompt_tokens,
-            validated_output.completion_tokens,
-        )
-    finally:
-        db.close()
+    persist_draft(
+        project_id=project_id,
+        node_id=component_id,
+        section="comparch",
+        validated_output=validated_output,
+        attempts=attempts,
+        prior_pending_id=prior_pending_id,
+        log_handler_name="generate_comparch",
+    )
 
 
 def register() -> None:
