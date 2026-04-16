@@ -455,9 +455,9 @@ One consequence of the projection-source framing: when we talk about "the `<poli
 - Users do not edit documents directly. All writes to the model go through the LLM.
 - This is the single biggest philosophical shift from v1.
 
-### The system as a meaning engine
+### The default bundle as a meaning engine
 
-The generation chain is a **meaning engine**: a machine that takes an arbitrarily large problem description and produces a tree of compressed handles at each tier, where each handle carries enough meaning that the next tier down can make correct structural decisions from the handle alone without re-reading upstream content. The implementation falls out at the bottom because by that point the system has very specific ideas that only have so many correct ways of existing.
+The engine itself is tier-agnostic — it traverses a graph of generation stages whose prompts, grammars, mint specs, and scheduling rules are supplied by the active bundle. The **default bundle's** generation chain is designed as a **meaning engine**: a machine that takes an arbitrarily large problem description and produces a tree of compressed handles at each tier, where each handle carries enough meaning that the next tier down can make correct structural decisions from the handle alone without re-reading upstream content. The implementation falls out at the bottom because by that point the system has very specific ideas that only have so many correct ways of existing. The meaning-engine model is a design philosophy of the default bundle's prompt suite, not an engine-level constraint — a custom bundle could organize its tiers around a different philosophy — but the default prompts enforce it, and the architectural decisions below (context scoping, fragment transclusion, the extraction/propagation split) assume it.
 
 Every tier transition is either **compression** (many inputs → fewer, richer handles), **expansion** (one input → many specialized outputs within a bounded scope), or **rotation** (re-indexing the same problem space along a different axis). The chain alternates these:
 
