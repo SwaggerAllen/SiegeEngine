@@ -102,3 +102,37 @@ def has_been_approved(session: Session, project_id: str) -> bool:
     if node is None:
         return False
     return bool(node.content)
+
+
+_DOWNSTREAM_OF_EXPANSION_TIERS: tuple[str, ...] = (
+    "feat",
+    "vocab",
+    "resp",
+    "comp",
+    "policy",
+    "subreqs",
+    "impl",
+    "plan",
+    "manifest",
+    "fanin",
+)
+
+
+def collect_downstream_nodes(session: Session, project_id: str) -> list[Node]:
+    """Return every node downstream of the expansion approval.
+
+    This is everything the expansion minted (features, vocab) plus
+    everything the subsequent tiers minted (resps, comps, policies,
+    etc.). The reqs and sysarch singleton *nodes* are NOT deleted —
+    their content is cleared separately via BootstrapNodeContentCleared.
+    """
+    return list(
+        session.execute(
+            select(Node).where(
+                Node.project_id == project_id,
+                Node.tier.in_(_DOWNSTREAM_OF_EXPANSION_TIERS),
+            )
+        )
+        .scalars()
+        .all()
+    )

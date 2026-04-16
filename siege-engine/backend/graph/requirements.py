@@ -95,3 +95,35 @@ def has_been_approved(session: Session, project_id: str) -> bool:
     if node is None:
         return False
     return bool(node.content)
+
+
+_DOWNSTREAM_OF_REQS_TIERS: tuple[str, ...] = (
+    "resp",
+    "comp",
+    "policy",
+    "subreqs",
+    "impl",
+    "plan",
+    "manifest",
+    "fanin",
+)
+
+
+def collect_downstream_nodes(session: Session, project_id: str) -> list[Node]:
+    """Return every node downstream of the requirements approval.
+
+    This includes all resps (top-level and sub), plus everything
+    sysarch minted (comps, policies, subreqs nodes, etc.). The
+    sysarch singleton *node* is NOT deleted — its content is
+    cleared separately via BootstrapNodeContentCleared.
+    """
+    return list(
+        session.execute(
+            select(Node).where(
+                Node.project_id == project_id,
+                Node.tier.in_(_DOWNSTREAM_OF_REQS_TIERS),
+            )
+        )
+        .scalars()
+        .all()
+    )

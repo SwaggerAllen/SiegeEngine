@@ -64,3 +64,14 @@ export function useCancelGenerationMutation(projectId: string) {
     },
   });
 }
+
+export function useResetMutation(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['requirements', 'reset', projectId],
+    mutationFn: () => reqsApi.resetRequirements(projectId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: requirementsKeys.all });
+    },
+  });
+}

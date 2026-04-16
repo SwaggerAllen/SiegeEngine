@@ -29,6 +29,9 @@ from backend.graph.expansion import (
     has_been_approved,
     pending_expansion_draft,
 )
+from backend.graph.expansion import (
+    collect_downstream_nodes as expansion_collect_downstream_nodes,
+)
 from backend.graph.handlers.comparch_generation import (
     GENERATE_COMPARCH_JOB_TYPE,
 )
@@ -56,6 +59,9 @@ from backend.graph.requirements import (
     bootstrap_reqs_node,
     get_reqs_node,
     pending_reqs_draft,
+)
+from backend.graph.requirements import (
+    collect_downstream_nodes as reqs_collect_downstream_nodes,
 )
 from backend.graph.requirements import has_been_approved as reqs_has_been_approved
 from backend.graph.subrequirements import (
@@ -1169,6 +1175,159 @@ def post_sysarch_reset(
 # same list and spot-check the cancel behaviour without repeating
 # the names.
 _SYSARCH_RESET_CANCEL_JOB_TYPES: tuple[str, ...] = (
+    "v2.generate_sysarch",
+    "v2.mint_sysarch",
+    "v2.generate_subrequirements",
+    "v2.mint_subrequirements",
+    "v2.generate_comparch",
+    "v2.mint_comparch",
+    "v2.generate_subcomparch",
+    "v2.mint_subcomparch",
+    "v2.apply_top_level_policies",
+    "v2.apply_component_local_policies",
+)
+
+
+# ── Expansion reset ──────────────────────────────────────────────────
+
+
+@router.post("/{project_id}/expansion/reset", response_model=ResetResponse)
+def post_expansion_reset(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    """Destructively reset the expansion and all downstream state."""
+    _require_project(db, project_id)
+    node = get_expansion_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Expansion node missing for project")
+    if not has_been_approved(db, project_id):
+        raise HTTPException(status_code=409, detail="Expansion is not in approved state")
+
+    jobs_cancelled = 0
+    for jt in _EXPANSION_RESET_CANCEL_JOB_TYPES:
+        jobs_cancelled += pipeline_queue.cancel_jobs_by_type(db, jt, project_id=project_id)
+
+    downstream_nodes = expansion_collect_downstream_nodes(db, project_id)
+    downstream_ids = [n.id for n in downstream_nodes]
+    pending_drafts = sysarch_collect_pending_drafts_for_nodes(db, project_id, downstream_ids)
+    own_pending = pending_expansion_draft(db, project_id)
+
+    # Also clear reqs and sysarch singleton content.
+    reqs_node = get_reqs_node(db, project_id)
+    sysarch_node = get_sysarch_node(db, project_id)
+    reqs_pending = pending_reqs_draft(db, project_id) if reqs_node else None
+    sysarch_pending = pending_sysarch_draft(db, project_id) if sysarch_node else None
+
+    drafts_discarded = 0
+    for draft in pending_drafts:
+        append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+        drafts_discarded += 1
+    for draft in [own_pending, reqs_pending, sysarch_pending]:
+        if draft is not None:
+            append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+            drafts_discarded += 1
+    for dn in downstream_nodes:
+        append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
+    if sysarch_node and sysarch_node.content:
+        append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=sysarch_node.id))
+    if reqs_node and reqs_node.content:
+        append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=reqs_node.id))
+    append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=node.id))
+    db.commit()
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_FEATURE_EXPANSION_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": None},
+    )
+    return ResetResponse(
+        ok=True,
+        nodes_deleted=len(downstream_nodes),
+        drafts_discarded=drafts_discarded,
+        jobs_cancelled=jobs_cancelled,
+    )
+
+
+_EXPANSION_RESET_CANCEL_JOB_TYPES: tuple[str, ...] = (
+    "v2.generate_feature_expansion",
+    "v2.mint_features",
+    "v2.generate_requirements",
+    "v2.mint_requirements",
+    "v2.generate_sysarch",
+    "v2.mint_sysarch",
+    "v2.generate_subrequirements",
+    "v2.mint_subrequirements",
+    "v2.generate_comparch",
+    "v2.mint_comparch",
+    "v2.generate_subcomparch",
+    "v2.mint_subcomparch",
+    "v2.apply_top_level_policies",
+    "v2.apply_component_local_policies",
+)
+
+
+# ── Requirements reset ───────────────────────────────────────────────
+
+
+@router.post("/{project_id}/requirements/reset", response_model=ResetResponse)
+def post_reqs_reset(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    """Destructively reset requirements and all downstream state."""
+    _require_project(db, project_id)
+    node = get_reqs_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Requirements node missing for project")
+    if not reqs_has_been_approved(db, project_id):
+        raise HTTPException(status_code=409, detail="Requirements is not in approved state")
+
+    jobs_cancelled = 0
+    for jt in _REQS_RESET_CANCEL_JOB_TYPES:
+        jobs_cancelled += pipeline_queue.cancel_jobs_by_type(db, jt, project_id=project_id)
+
+    downstream_nodes = reqs_collect_downstream_nodes(db, project_id)
+    downstream_ids = [n.id for n in downstream_nodes]
+    pending_drafts = sysarch_collect_pending_drafts_for_nodes(db, project_id, downstream_ids)
+    own_pending = pending_reqs_draft(db, project_id)
+
+    sysarch_node = get_sysarch_node(db, project_id)
+    sysarch_pending = pending_sysarch_draft(db, project_id) if sysarch_node else None
+
+    drafts_discarded = 0
+    for draft in pending_drafts:
+        append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+        drafts_discarded += 1
+    for draft in [own_pending, sysarch_pending]:
+        if draft is not None:
+            append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+            drafts_discarded += 1
+    for dn in downstream_nodes:
+        append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
+    if sysarch_node and sysarch_node.content:
+        append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=sysarch_node.id))
+    append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=node.id))
+    db.commit()
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": None},
+    )
+    return ResetResponse(
+        ok=True,
+        nodes_deleted=len(downstream_nodes),
+        drafts_discarded=drafts_discarded,
+        jobs_cancelled=jobs_cancelled,
+    )
+
+
+_REQS_RESET_CANCEL_JOB_TYPES: tuple[str, ...] = (
+    "v2.generate_requirements",
+    "v2.mint_requirements",
     "v2.generate_sysarch",
     "v2.mint_sysarch",
     "v2.generate_subrequirements",

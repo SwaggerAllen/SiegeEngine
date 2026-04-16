@@ -3,6 +3,7 @@ import {
   useApproveMutation,
   useCancelGenerationMutation,
   useFeedbackMutation,
+  useResetMutation,
 } from '../hooks/mutations/useExpansionMutations';
 import {
   BootstrapDraftPanel,
@@ -29,11 +30,13 @@ export function FeatureExpansionPanel({ projectId }: Props) {
   const feedbackMutation = useFeedbackMutation(projectId);
   const approveMutation = useApproveMutation(projectId);
   const cancelMutation = useCancelGenerationMutation(projectId);
+  const resetMutation = useResetMutation(projectId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    cancelMutation.isPending;
+    cancelMutation.isPending ||
+    resetMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -46,6 +49,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
+        onReset: () => resetMutation.mutate(),
         isBusy,
       }}
       contentRenderers={featureRenderers}
