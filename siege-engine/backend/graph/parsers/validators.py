@@ -679,6 +679,58 @@ def validate_sysarch(
     deps = _validate_sysarch_dependencies(section_map["dependencies"], alias_set)
     domain_parents = _validate_sysarch_domain_parent(section_map["domain-parent"], alias_kind_map)
 
+    # Responsibility assignment validation: each resp must be assigned
+    # to exactly one domain component, and may optionally also appear
+    # in one presentational component that has a domain-parent edge to
+    # the domain component that owns it.
+    domain_parent_set = {(dp.from_alias, dp.to_alias) for dp in domain_parents}
+    domain_assignments: dict[str, str] = {}
+    pres_assignments: dict[str, str] = {}
+    for comp in components:
+        for rid in comp.resp_refs:
+            if comp.kind == "domain":
+                if rid in domain_assignments:
+                    raise ValidationError(
+                        f"Responsibility {rid!r} is assigned to domain components "
+                        f"{domain_assignments[rid]!r} and {comp.alias!r}. Each "
+                        "responsibility must be assigned to exactly one domain "
+                        "component."
+                    )
+                domain_assignments[rid] = comp.alias
+            else:
+                if rid in pres_assignments:
+                    raise ValidationError(
+                        f"Responsibility {rid!r} is assigned to presentational "
+                        f"components {pres_assignments[rid]!r} and {comp.alias!r}. "
+                        "Each responsibility may appear in at most one "
+                        "presentational component."
+                    )
+                pres_assignments[rid] = comp.alias
+    for rid, pres_alias in pres_assignments.items():
+        if rid not in domain_assignments:
+            raise ValidationError(
+                f"Responsibility {rid!r} is assigned to presentational component "
+                f"{pres_alias!r} but not to any domain component. A responsibility "
+                "must first be assigned to a domain component before it can "
+                "additionally appear in a presentational counterpart."
+            )
+        domain_alias = domain_assignments[rid]
+        if (pres_alias, domain_alias) not in domain_parent_set:
+            raise ValidationError(
+                f"Responsibility {rid!r} is assigned to both domain component "
+                f"{domain_alias!r} and presentational component {pres_alias!r}, "
+                f"but {pres_alias!r} does not have a <domain-parent> edge to "
+                f"{domain_alias!r}. A responsibility can only appear in a "
+                "presentational component that is the domain parent's counterpart."
+            )
+    all_assigned = set(domain_assignments.keys())
+    missing = sorted(known_top_level_resp_ids - all_assigned)
+    if missing:
+        raise ValidationError(
+            "<sysarch> does not assign every top-level responsibility to a "
+            f"domain component. Missing: {', '.join(missing)}."
+        )
+
     # Dep cycle detection on the alias graph before returning.
     _detect_dep_cycles(deps, alias_set)
 
@@ -740,7 +792,6 @@ def _validate_sysarch_components(
 
     components: list[Component] = []
     seen_aliases: set[str] = set()
-    assigned_resp_ids: dict[str, str] = {}  # resp_id → alias that assigned it
     foundation_aliases: list[str] = []
 
     for index, cnode in enumerate(component_nodes):
@@ -758,15 +809,6 @@ def _validate_sysarch_components(
         seen_aliases.add(comp.alias)
         if comp.is_foundation:
             foundation_aliases.append(comp.alias)
-        for rid in comp.resp_refs:
-            if rid in assigned_resp_ids:
-                raise ValidationError(
-                    f"Responsibility {rid!r} is assigned to both "
-                    f"{assigned_resp_ids[rid]!r} and {comp.alias!r}. Each "
-                    "top-level responsibility must be assigned to exactly one "
-                    "component."
-                )
-            assigned_resp_ids[rid] = comp.alias
         components.append(comp)
 
     # Foundation requirement: exactly one component must carry the marker.
@@ -784,16 +826,6 @@ def _validate_sysarch_components(
             f"({', '.join(sorted(foundation_aliases))}). Exactly one foundation "
             "component is required; promote the others to regular domain "
             "components or merge them into the single foundation."
-        )
-
-    # Coverage check: every known top-level resp must be assigned.
-    missing = sorted(known_top_level_resp_ids - set(assigned_resp_ids.keys()))
-    if missing:
-        raise ValidationError(
-            "<sysarch> does not assign every top-level responsibility to a "
-            f"component. Missing: {', '.join(missing)}. Every responsibility "
-            "in the input list must appear in exactly one component's "
-            "<responsibilities> block."
         )
 
     return tuple(components)

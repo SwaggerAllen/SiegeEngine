@@ -548,7 +548,7 @@ class TestInputDocInclusion:
         # The first draft's actual XML must appear inside the
         # "# Current draft" section so the LLM knows what it's
         # refining.
-        assert "# Current draft (not yet approved)" in second_prompt
+        assert "# Current version" in second_prompt
         assert "<techspec>A typical Python + React stack" in second_prompt
         assert "Reconsider dependency shape" in second_prompt
 

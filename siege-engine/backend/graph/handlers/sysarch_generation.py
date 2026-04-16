@@ -29,12 +29,12 @@ See ``docs/architecture/v2-roadmap.md`` Phase 3 stage 2 and
 from __future__ import annotations
 
 import logging
-import secrets
-import uuid
 
 from backend.database import SessionLocal
-from backend.graph import events as ev
-from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
+from backend.graph.handlers._bootstrap_generation import (
+    persist_draft,
+    run_parse_validate_loop,
+)
 from backend.graph.parsers.validators import validate_sysarch
 from backend.graph.prompts.requirements import format_features_summary
 from backend.graph.prompts.sysarch import (
@@ -42,12 +42,10 @@ from backend.graph.prompts.sysarch import (
     render_system_prompt,
     render_user_prompt,
 )
-from backend.graph.reducer import append_event
 from backend.graph.sysarch import get_sysarch_node, pending_sysarch_draft
 from backend.models import Project
 from backend.models.input_document import InputDocument
 from backend.models.node import Node
-from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
 from backend.projects.settings import get_project_settings
 
@@ -62,14 +60,6 @@ class SysarchHandlerError(RuntimeError):
 
 class SysarchParseRetryExhausted(RuntimeError):
     """Raised when parse-validate retries are exhausted without success."""
-
-
-def _new_draft_id() -> str:
-    return f"draft_{secrets.token_hex(8)}"
-
-
-def _new_batch_id() -> str:
-    return f"batch_{uuid.uuid4().hex[:16]}"
 
 
 async def generate_sysarch(payload: dict) -> None:
@@ -142,7 +132,7 @@ async def generate_sysarch(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
-        system_prompt = render_system_prompt(settings.top_level_components)
+        system_prompt = render_system_prompt()
 
         # Project vocabulary context — sysarch reasons across the
         # full component graph, so every defined term should be
@@ -217,53 +207,15 @@ async def generate_sysarch(payload: dict) -> None:
         log_handler_name="generate_sysarch",
     )
 
-    # ── Phase 3: persist events + telemetry ─────────────────────────
-    db = SessionLocal()
-    try:
-        if prior_pending_id is not None:
-            append_event(
-                db,
-                project_id,
-                ev.DraftDiscarded(draft_id=prior_pending_id),
-            )
-
-        new_draft_id = _new_draft_id()
-        new_batch_id = _new_batch_id()
-        append_event(
-            db,
-            project_id,
-            ev.DraftGenerated(
-                draft_id=new_draft_id,
-                target_type="node",
-                target_id=sysarch_node_id,
-                content=validated_output.text,
-                batch_id=new_batch_id,
-            ),
-        )
-        for attempt in attempts:
-            db.add(
-                GenerationTelemetry(
-                    project_id=project_id,
-                    node_id=sysarch_node_id,
-                    section="sysarch",
-                    model=attempt.model,
-                    prompt_tokens=attempt.prompt_tokens,
-                    completion_tokens=attempt.completion_tokens,
-                )
-            )
-        db.commit()
-        logger.info(
-            "generate_sysarch project=%s draft_id=%s committed "
-            "(attempts=%d final_prompt=%d final_completion=%d model=%s)",
-            project_id,
-            new_draft_id,
-            len(attempts),
-            validated_output.prompt_tokens,
-            validated_output.completion_tokens,
-            validated_output.model,
-        )
-    finally:
-        db.close()
+    persist_draft(
+        project_id=project_id,
+        node_id=sysarch_node_id,
+        section="sysarch",
+        validated_output=validated_output,
+        attempts=attempts,
+        prior_pending_id=prior_pending_id,
+        log_handler_name="generate_sysarch",
+    )
 
 
 def register() -> None:

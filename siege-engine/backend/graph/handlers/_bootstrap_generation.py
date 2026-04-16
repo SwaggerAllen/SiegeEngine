@@ -142,3 +142,76 @@ async def run_parse_validate_loop(
         f"{log_handler_name} failed parse-validate after "
         f"{MAX_PARSE_RETRIES + 1} attempts. Final error: {parse_error}"
     )
+
+
+def persist_draft(
+    project_id: str,
+    node_id: str,
+    section: str,
+    validated_output: "GenerationResult",
+    attempts: list["GenerationResult"],
+    prior_pending_id: str | None,
+    log_handler_name: str,
+) -> None:
+    """Phase 3: persist the validated draft + telemetry in one transaction.
+
+    Shared by all generation handlers — the only variation is the
+    ``section`` tag for telemetry rows and the ``node_id`` /
+    ``log_handler_name`` for logging.
+    """
+    import secrets
+
+    from backend.database import SessionLocal
+    from backend.graph import events as ev
+    from backend.graph.reducer import append_event
+    from backend.models.telemetry import GenerationTelemetry
+
+    db = SessionLocal()
+    try:
+        if prior_pending_id is not None:
+            append_event(
+                db,
+                project_id,
+                ev.DraftDiscarded(draft_id=prior_pending_id),
+            )
+
+        new_draft_id = f"draft_{secrets.token_hex(8)}"
+        import uuid
+
+        new_batch_id = f"batch_{uuid.uuid4().hex[:16]}"
+        append_event(
+            db,
+            project_id,
+            ev.DraftGenerated(
+                draft_id=new_draft_id,
+                target_type="node",
+                target_id=node_id,
+                content=validated_output.text,
+                batch_id=new_batch_id,
+            ),
+        )
+        for attempt in attempts:
+            db.add(
+                GenerationTelemetry(
+                    project_id=project_id,
+                    node_id=node_id,
+                    section=section,
+                    model=attempt.model,
+                    prompt_tokens=attempt.prompt_tokens,
+                    completion_tokens=attempt.completion_tokens,
+                )
+            )
+        db.commit()
+        logger.info(
+            "%s project=%s draft_id=%s committed "
+            "(attempts=%d final_prompt=%d final_completion=%d model=%s)",
+            log_handler_name,
+            project_id,
+            new_draft_id,
+            len(attempts),
+            validated_output.prompt_tokens,
+            validated_output.completion_tokens,
+            validated_output.model,
+        )
+    finally:
+        db.close()

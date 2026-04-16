@@ -74,8 +74,6 @@ documents are parseable, §Policies, §Foundation components, and
 
 from __future__ import annotations
 
-from backend.projects.settings import NodeCountRange
-
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are producing the **architecture document** for a single \
 component. This is the **last compression step** before \
@@ -381,16 +379,6 @@ every other subcomponent's code reaches into it at runtime. \
 This is enforced by the validator and mirrors the analogous \
 rule for top-level components at the sysarch layer.
 
-## Granularity
-
-* Subcomponent count (when decomposing): typically \
-{{TYPICAL_MIN}} to {{TYPICAL_MAX}} per component, including the \
-foundation. {{FLOOR}} or fewer subcomponents usually means \
-"un-fanned-out would be cleaner" — the component doesn't have \
-enough internal structure to justify the decomposition hop. \
-{{CEILING}} or more usually means you're reaching into \
-implementation detail that belongs in the subcomponent's own \
-Phase 5 arch doc or in individual ``impl_*`` nodes.
 
 ## Meta-rules
 
@@ -402,17 +390,9 @@ the XML tags themselves) are tolerated by the parser.
 """
 
 
-def render_system_prompt(counts: NodeCountRange) -> str:
-    """Return the comparch system prompt with subcomponent count
-    tokens filled. Handler calls this with
-    ``ProjectSettings.subcomponents_per_component``.
-    """
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{{FLOOR}}", str(counts.floor))
-        .replace("{{TYPICAL_MIN}}", str(counts.typical_min))
-        .replace("{{TYPICAL_MAX}}", str(counts.typical_max))
-        .replace("{{CEILING}}", str(counts.ceiling))
-    )
+def render_system_prompt() -> str:
+    """Return the comparch system prompt."""
+    return _SYSTEM_PROMPT_TEMPLATE
 
 
 def format_domain_parent_surface(
@@ -639,16 +619,11 @@ def render_user_prompt(
         parts.append(top_level_policy_candidates_summary.strip())
         parts.append("")
 
-    if prior_approved:
-        parts.append("# Previously-approved architecture doc")
+    prior = prior_pending or prior_approved
+    if prior:
+        parts.append("# Current version")
         parts.append("")
-        parts.append(prior_approved.strip())
-        parts.append("")
-
-    if prior_pending:
-        parts.append("# Current draft (not yet approved)")
-        parts.append("")
-        parts.append(prior_pending.strip())
+        parts.append(prior.strip())
         parts.append("")
 
     if feedback:
@@ -683,18 +658,19 @@ def render_user_prompt(
             "block addressing the structural error above. Output only "
             "the corrected <comparch> block."
         )
-    elif feedback and (prior_pending or prior_approved):
+    elif feedback and prior:
         parts.append(
             "Revise the architecture doc to address the user feedback "
             "above. Preserve the decomposition where the feedback "
             "does not require a change. Output only the revised "
             "<comparch> block."
         )
-    elif prior_pending or prior_approved:
+    elif prior:
         parts.append(
-            "Regenerate the architecture doc from scratch based on "
-            "the component context above. Output only the <comparch> "
-            "block."
+            "Improve the architecture doc above. Fix any issues you "
+            "notice with the techspec, public surface, subcomponent "
+            "decomposition, or dependency structure. Output only the "
+            "revised <comparch> block."
         )
     else:
         parts.append(

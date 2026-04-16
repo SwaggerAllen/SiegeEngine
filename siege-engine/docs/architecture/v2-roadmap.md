@@ -441,6 +441,19 @@ the model directly — every action produces prose instructions.**
 Review pass = component. MVP ships a simple per-component walk; the
 polished combined-navigable-diff UI is post-MVP.
 
+- [ ] **AI self-review pass.** Every generated draft runs through an
+  AI review step before landing in the human review queue. The status
+  chain becomes `generating → ai_reviewing → awaiting_review`. The
+  self-review LLM call reads the draft + its regen context and
+  produces structured feedback (quality score, recommendation,
+  notes). If the score is below a configurable threshold, the draft
+  is automatically regenerated with the self-review feedback
+  injected — up to a configurable loop limit (default 1 retry).
+  Drafts that pass self-review land in `awaiting_review` for human
+  review. Drafts that exhaust the retry budget land in
+  `awaiting_review` anyway but carry a "self-review flagged" marker
+  so the reviewer knows the AI wasn't satisfied. Self-review
+  criteria are bundle-configurable per tier.
 - [ ] `ViewRecorded` event is already in the vocabulary — use it
 - [ ] Pin event offset on first review open per batch
 - [ ] Point-in-time reconstruction via `rebuild_projections(up_to_offset=...)`

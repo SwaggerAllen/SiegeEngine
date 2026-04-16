@@ -1,115 +1,34 @@
-import { z } from 'zod';
-import api from './client';
+import { expansionApi } from './bootstrapApi';
 
-export const GenerationStatusSchema = z.enum(['idle', 'running', 'failed']);
-export type GenerationStatus = z.infer<typeof GenerationStatusSchema>;
+export {
+  GenerationStatusSchema,
+  TelemetrySummarySchema,
+  type GenerationStatus,
+  type TelemetrySummary,
+  type BootstrapResponse as ExpansionResponse,
+  type BootstrapNode as ExpansionNode,
+  type BootstrapDraft as ExpansionDraft,
+  type ResetResult,
+  type PromptPreview,
+} from './bootstrapApi';
 
-export const ExpansionNodeSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  content: z.string(),
-  updated_at: z.string(),
-});
-export type ExpansionNode = z.infer<typeof ExpansionNodeSchema>;
+export const getExpansion = (projectId: string) =>
+  expansionApi.getState(projectId);
 
-export const ExpansionDraftSchema = z.object({
-  id: z.string(),
-  content: z.string(),
-  created_at: z.string(),
-});
-export type ExpansionDraft = z.infer<typeof ExpansionDraftSchema>;
+export const postFeedback = (projectId: string, feedback: string) =>
+  expansionApi.postFeedback(projectId, feedback);
 
-export const TelemetrySummarySchema = z.object({
-  prompt_tokens: z.number().int(),
-  completion_tokens: z.number().int(),
-  model: z.string(),
-  created_at: z.string(),
-});
-export type TelemetrySummary = z.infer<typeof TelemetrySummarySchema>;
+export const approveDraft = (projectId: string, draftId: string) =>
+  expansionApi.approveDraft(projectId, draftId);
 
-export const ExpansionResponseSchema = z.object({
-  node: ExpansionNodeSchema,
-  pending_draft: ExpansionDraftSchema.nullable(),
-  generation_status: GenerationStatusSchema,
-  last_error: z.string().nullable(),
-  latest_telemetry: TelemetrySummarySchema.nullable(),
-  // ISO-8601 UTC timestamp when the running job was enqueued, or
-  // null when no generation is in flight. Server default is null,
-  // so nullish() here accepts both null and a missing field for
-  // forward-compatibility with older backends.
-  generation_started_at: z.string().nullish().transform((v) => v ?? null),
-});
-export type ExpansionResponse = z.infer<typeof ExpansionResponseSchema>;
+export const discardDraft = (projectId: string, draftId: string) =>
+  expansionApi.discardDraft(projectId, draftId);
 
-const FeedbackResponseSchema = z.object({ job_id: z.string() });
-const ApproveResponseSchema = z.object({ node: ExpansionNodeSchema });
-const DiscardResponseSchema = z.object({ ok: z.boolean() });
-const CancelResponseSchema = z.object({ cancelled: z.boolean() });
-const ResetResponseSchema = z.object({
-  ok: z.boolean(),
-  nodes_deleted: z.number().int(),
-  drafts_discarded: z.number().int(),
-  jobs_cancelled: z.number().int(),
-});
-export type ResetResult = z.infer<typeof ResetResponseSchema>;
+export const cancelGeneration = (projectId: string) =>
+  expansionApi.cancelGeneration(projectId);
 
-export async function getExpansion(projectId: string): Promise<ExpansionResponse> {
-  const { data } = await api.get(`/projects/${projectId}/expansion`);
-  return ExpansionResponseSchema.parse(data);
-}
+export const resetExpansion = (projectId: string) =>
+  expansionApi.resetTier(projectId);
 
-export async function postFeedback(
-  projectId: string,
-  feedback: string
-): Promise<{ job_id: string }> {
-  const { data } = await api.post(`/projects/${projectId}/expansion/feedback`, {
-    feedback,
-  });
-  return FeedbackResponseSchema.parse(data);
-}
-
-export async function approveDraft(
-  projectId: string,
-  draftId: string
-): Promise<ExpansionNode> {
-  const { data } = await api.post(`/projects/${projectId}/expansion/approve`, {
-    draft_id: draftId,
-  });
-  return ApproveResponseSchema.parse(data).node;
-}
-
-export async function discardDraft(
-  projectId: string,
-  draftId: string
-): Promise<void> {
-  const { data } = await api.post(`/projects/${projectId}/expansion/discard`, {
-    draft_id: draftId,
-  });
-  DiscardResponseSchema.parse(data);
-}
-
-export async function cancelGeneration(projectId: string): Promise<boolean> {
-  const { data } = await api.post(`/projects/${projectId}/expansion/cancel`);
-  return CancelResponseSchema.parse(data).cancelled;
-}
-
-export async function resetExpansion(projectId: string): Promise<ResetResult> {
-  const { data } = await api.post(`/projects/${projectId}/expansion/reset`);
-  return ResetResponseSchema.parse(data);
-}
-
-const PromptPreviewSchema = z.object({
-  system_prompt: z.string(),
-  user_prompt: z.string(),
-});
-export type PromptPreview = z.infer<typeof PromptPreviewSchema>;
-
-export async function getPromptPreview(
-  projectId: string,
-  feedback: string
-): Promise<PromptPreview> {
-  const { data } = await api.post(`/projects/${projectId}/expansion/prompt-preview`, {
-    feedback,
-  });
-  return PromptPreviewSchema.parse(data);
-}
+export const getPromptPreview = (projectId: string, feedback: string) =>
+  expansionApi.getPromptPreview(projectId, feedback);

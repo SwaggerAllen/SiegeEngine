@@ -1,10 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import * as expansionApi from '../../api/expansion';
+import { makeBootstrapKeys } from '../useBootstrapHooks';
 
-export const expansionKeys = {
-  all: ['expansion'] as const,
-  detail: (projectId: string) => [...expansionKeys.all, projectId] as const,
-};
+export const expansionKeys = makeBootstrapKeys('expansion');
 
 export function useExpansion(projectId: string) {
   return useQuery({

@@ -36,8 +36,6 @@ decomposition and §Feature → Responsibility → Component.
 
 from __future__ import annotations
 
-from backend.projects.settings import NodeCountRange
-
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are **rotating** the problem from user-facing capabilities \
 to system-level guarantees. The features you are given describe \
@@ -168,12 +166,8 @@ responsibility.** Before emitting the list, mentally check that \
 each input feature ID appears in at least one ``<covers>`` block. \
 Missing coverage is a parse error that gets fed back to you.
 * **Granularity.** Aim for a responsibility list that's coarser \
-than the feature list but finer than the project description. A \
-typical project produces {{TYPICAL_MIN}}–{{TYPICAL_MAX}} top-level \
-responsibilities. If you're at {{CEILING}} or more, you're \
-reaching into implementation territory; if you're at {{FLOOR}} \
-or fewer, you're probably glossing over real decomposition \
-work. Err on the side of fewer, coarser responsibilities — \
+than the feature list but finer than the project description. \
+Err on the side of fewer, coarser responsibilities — \
 sub-decomposition happens in a later pass per component.
 * **Cross-cutting concerns are responsibilities too.** Logging, \
 telemetry, health checks, background job scheduling, rate \
@@ -200,24 +194,14 @@ user-facing feature. Sysarch will cluster resps into components \
 along these same lines, so the closer your responsibility \
 boundaries match data-ownership boundaries, the cleaner \
 sysarch's component assignments will be.
-* **Split server-side and user-facing work into sibling \
-responsibilities.** When a feature has both back-end mechanics \
-and a user-facing interaction layer, produce **two separate \
-responsibilities** — one describing the mechanics (what the \
-server does) and one describing the user-facing layer (what \
-the user interacts with). Both ``<covers>`` the same feature. \
-The sysarch pass downstream assigns each responsibility to \
-exactly one component, and presentational components are \
-first-class citizens that need their own responsibilities to \
-own. A single fat "Handle X" responsibility that smears across \
-both concerns forces sysarch into a corner. Example: feature \
-"Accept card payments" should produce siblings \
-"Payment Processing" (tokenize card, call provider, update \
-account state) **and** "Payment Form UX" (render card input, \
-inline validation, error messaging). They both cover the same \
-feat_*. Not every feature needs the split — a purely-backend \
-feature like "Nightly audit sweep" or a purely-UI feature like \
-"Theme switcher" stays as a single responsibility.
+* **Responsibilities are system-level guarantees, not UI/backend \
+splits.** Do not split a feature into "backend mechanics" and \
+"user-facing layer" as separate responsibilities — that split \
+is a structural decision the sysarch pass makes when it assigns \
+responsibilities to domain and presentational components. A \
+single responsibility like "Payment Collection" covers both the \
+backend mechanics and whatever UI surface presents it; sysarch \
+decides which components handle which side.
 * Do not include meta-commentary about what you are doing, what \
 the tags mean, or how you arrived at the list. Output only the \
 ``<requirements>`` block.
@@ -226,22 +210,9 @@ parser tolerates them.
 """
 
 
-def render_system_prompt(counts: NodeCountRange) -> str:
-    """Return the requirements system prompt with count tokens filled.
-
-    The template cites four numbers for the top-level
-    responsibility count — typical min/max plus a floor and a
-    ceiling for the "you're under-decomposing / over-decomposing"
-    warnings. The handler pulls the configured
-    ``top_level_responsibilities`` range off ``ProjectSettings``
-    and passes it here.
-    """
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{{FLOOR}}", str(counts.floor))
-        .replace("{{TYPICAL_MIN}}", str(counts.typical_min))
-        .replace("{{TYPICAL_MAX}}", str(counts.typical_max))
-        .replace("{{CEILING}}", str(counts.ceiling))
-    )
+def render_system_prompt() -> str:
+    """Return the requirements system prompt."""
+    return _SYSTEM_PROMPT_TEMPLATE
 
 
 def render_user_prompt(
@@ -293,16 +264,11 @@ def render_user_prompt(
     parts.append(features_summary.strip() or "(no features minted yet)")
     parts.append("")
 
-    if prior_approved:
-        parts.append("# Previously-approved requirements")
+    prior = prior_pending or prior_approved
+    if prior:
+        parts.append("# Current version")
         parts.append("")
-        parts.append(prior_approved.strip())
-        parts.append("")
-
-    if prior_pending:
-        parts.append("# Current draft (not yet approved)")
-        parts.append("")
-        parts.append(prior_pending.strip())
+        parts.append(prior.strip())
         parts.append("")
 
     if feedback:
@@ -336,16 +302,18 @@ def render_user_prompt(
             "addressing the structural error above. Output only the "
             "corrected <requirements> block."
         )
-    elif feedback and (prior_pending or prior_approved):
+    elif feedback and prior:
         parts.append(
             "Revise the requirements to address the user feedback above. "
             "Preserve structure where the feedback does not request "
             "changes. Output only the revised <requirements> block."
         )
-    elif prior_pending or prior_approved:
+    elif prior:
         parts.append(
-            "Regenerate the requirements from scratch based on the "
-            "features above. Output only the <requirements> block."
+            "Improve the requirements above. Fix any issues you notice "
+            "with responsibility boundaries, coverage, specificity, or "
+            "the axis rotation from features to system-level guarantees. "
+            "Output only the revised <requirements> block."
         )
     else:
         parts.append(

@@ -1,11 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import * as comparchApi from '../../api/comparch';
+import { makeBootstrapKeys } from '../useBootstrapHooks';
 
-export const comparchKeys = {
-  all: ['comparch'] as const,
-  detail: (projectId: string, compId: string) =>
-    [...comparchKeys.all, projectId, compId] as const,
-};
+export const comparchKeys = makeBootstrapKeys('comparch');
 
 export const subcomponentsKeys = {
   all: ['subcomponents'] as const,
@@ -25,11 +22,6 @@ export const appliedPoliciesKeys = {
     [...appliedPoliciesKeys.all, 'list', projectId, compId] as const,
 };
 
-/**
- * Fetch a single component's comparch draft state — four-state
- * panel reads through this. Polls every 2s while generation is
- * running.
- */
 export function useComparch(projectId: string, componentId: string) {
   return useQuery({
     queryKey: comparchKeys.detail(projectId, componentId),
@@ -40,10 +32,6 @@ export function useComparch(projectId: string, componentId: string) {
   });
 }
 
-/**
- * Fetch the subcomponents minted under a component. Polls every
- * 2s while mintPending is true and the list is still empty.
- */
 export function useSubcomponents(
   projectId: string,
   componentId: string,
@@ -61,7 +49,6 @@ export function useSubcomponents(
   });
 }
 
-/** Fetch component-local policies minted under a component. */
 export function useComponentLocalPolicies(
   projectId: string,
   componentId: string,
@@ -79,12 +66,6 @@ export function useComponentLocalPolicies(
   });
 }
 
-/**
- * Fetch policies already applied to a component (via
- * policy_application edges). Includes both top-level and
- * component-local applications once the stage 5/6 handlers have
- * run.
- */
 export function useAppliedPolicies(projectId: string, componentId: string) {
   return useQuery({
     queryKey: appliedPoliciesKeys.list(projectId, componentId),

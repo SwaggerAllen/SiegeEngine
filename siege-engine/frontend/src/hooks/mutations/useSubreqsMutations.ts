@@ -1,99 +1,27 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import * as subreqsApi from '../../api/subreqs';
-import type { SubreqsResponse } from '../../api/subreqs';
+import * as api from '../../api/subreqs';
+import { makeBootstrapMutations } from '../useBootstrapHooks';
 import { decompositionGraphKeys } from '../queries/useDecompositionGraph';
 import { componentsKeys } from '../queries/useSysarchQueries';
 import { subreqsKeys } from '../queries/useSubreqsQueries';
 
-// Per-component mutations — each takes componentId at creation
-// time so call sites stay clean (thin panel wrappers).
-//
-// Approve / discard / feedback all invalidate the components list
-// and decomposition graph queries in addition to the subreqs
-// detail query: the components list carries the waiting-on-
-// approval badges rendered in the sysarch view, and the
-// decomposition graph carries the same badges on comp_* nodes
-// in the DAG view (Phase 6 waiting indicators). A mutation here
-// creates or resolves a pending subreqs draft and the badge
-// state flips, so the dependent queries need to re-fetch.
+const m = makeBootstrapMutations(
+  'subreqs',
+  {
+    postFeedback: (pid, cid, fb) => api.postFeedback(pid, cid, fb),
+    approveDraft: (pid, cid, did) => api.approveDraft(pid, cid, did),
+    discardDraft: (pid, cid, did) => api.discardDraft(pid, cid, did),
+    cancelGeneration: (pid, cid) => api.cancelGeneration(pid, cid),
+  },
+  subreqsKeys,
+  (queryClient, projectId) => {
+    queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
+    queryClient.invalidateQueries({
+      queryKey: decompositionGraphKeys.detail(projectId),
+    });
+  }
+);
 
-function invalidateWaitingIndicators(
-  queryClient: ReturnType<typeof useQueryClient>,
-  projectId: string
-) {
-  queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
-  queryClient.invalidateQueries({
-    queryKey: decompositionGraphKeys.detail(projectId),
-  });
-}
-
-export function useFeedbackMutation(projectId: string, componentId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationKey: ['subreqs', 'feedback', projectId, componentId],
-    mutationFn: (feedback: string) =>
-      subreqsApi.postFeedback(projectId, componentId, feedback),
-    onSuccess: () => {
-      queryClient.setQueryData<SubreqsResponse>(
-        subreqsKeys.detail(projectId, componentId),
-        (prev) =>
-          prev ? { ...prev, generation_status: 'running', last_error: null } : prev
-      );
-      queryClient.invalidateQueries({
-        queryKey: subreqsKeys.detail(projectId, componentId),
-      });
-      invalidateWaitingIndicators(queryClient, projectId);
-    },
-  });
-}
-
-export function useApproveMutation(projectId: string, componentId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationKey: ['subreqs', 'approve', projectId, componentId],
-    mutationFn: (draftId: string) =>
-      subreqsApi.approveDraft(projectId, componentId, draftId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: subreqsKeys.detail(projectId, componentId),
-      });
-      invalidateWaitingIndicators(queryClient, projectId);
-    },
-  });
-}
-
-export function useDiscardMutation(projectId: string, componentId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationKey: ['subreqs', 'discard', projectId, componentId],
-    mutationFn: (draftId: string) =>
-      subreqsApi.discardDraft(projectId, componentId, draftId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: subreqsKeys.detail(projectId, componentId),
-      });
-      invalidateWaitingIndicators(queryClient, projectId);
-    },
-  });
-}
-
-export function useCancelGenerationMutation(projectId: string, componentId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationKey: ['subreqs', 'cancel', projectId, componentId],
-    mutationFn: () => subreqsApi.cancelGeneration(projectId, componentId),
-    onSuccess: () => {
-      queryClient.setQueryData<SubreqsResponse>(
-        subreqsKeys.detail(projectId, componentId),
-        (prev) =>
-          prev
-            ? { ...prev, generation_status: 'idle', generation_started_at: null }
-            : prev
-      );
-      queryClient.invalidateQueries({
-        queryKey: subreqsKeys.detail(projectId, componentId),
-      });
-      invalidateWaitingIndicators(queryClient, projectId);
-    },
-  });
-}
+export const useFeedbackMutation = m.useFeedbackMutation;
+export const useApproveMutation = m.useApproveMutation;
+export const useDiscardMutation = m.useDiscardMutation;
+export const useCancelGenerationMutation = m.useCancelGenerationMutation;

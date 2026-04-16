@@ -37,8 +37,6 @@ decomposition and ``docs/architecture/v2-roadmap.md`` Phase 3.
 
 from __future__ import annotations
 
-from backend.projects.settings import NodeCountRange
-
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are expanding a single component's top-level \
 responsibilities into finer-grained **subresponsibilities**, \
@@ -147,12 +145,6 @@ leaks are still forbidden, and the domain-parent subresps \
 belong to a different component's scope. The context exists \
 to help you write UI-side subresps that complement the domain \
 work coherently.
-* **Granularity.** A typical component produces {{TYPICAL_MIN}} \
-to {{TYPICAL_MAX}} subresponsibilities. If you're producing \
-{{FLOOR}} or fewer, you're probably not decomposing enough. If \
-you're producing {{CEILING}} or more, you're reaching into \
-implementation detail that belongs in the component arch doc \
-(Phase 4) or in individual impl nodes.
 * Do not include meta-commentary about what you are doing. \
 Output only the ``<subrequirements>`` block.
 * Unescaped ``&`` and ``<`` in intent text are fine — the parser \
@@ -160,17 +152,9 @@ tolerates them.
 """
 
 
-def render_system_prompt(counts: NodeCountRange) -> str:
-    """Return the subrequirements system prompt with count tokens
-    filled. Handler calls this with
-    ``ProjectSettings.subresponsibilities_per_component``.
-    """
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{{FLOOR}}", str(counts.floor))
-        .replace("{{TYPICAL_MIN}}", str(counts.typical_min))
-        .replace("{{TYPICAL_MAX}}", str(counts.typical_max))
-        .replace("{{CEILING}}", str(counts.ceiling))
-    )
+def render_system_prompt() -> str:
+    """Return the subrequirements system prompt."""
+    return _SYSTEM_PROMPT_TEMPLATE
 
 
 def render_user_prompt(
@@ -239,16 +223,11 @@ def render_user_prompt(
         parts.append(domain_parent_context.strip())
         parts.append("")
 
-    if prior_approved:
-        parts.append("# Previously-approved subrequirements")
+    prior = prior_pending or prior_approved
+    if prior:
+        parts.append("# Current version")
         parts.append("")
-        parts.append(prior_approved.strip())
-        parts.append("")
-
-    if prior_pending:
-        parts.append("# Current draft (not yet approved)")
-        parts.append("")
-        parts.append(prior_pending.strip())
+        parts.append(prior.strip())
         parts.append("")
 
     if feedback:
@@ -283,18 +262,19 @@ def render_user_prompt(
             "block addressing the structural error above. Output only "
             "the corrected block."
         )
-    elif feedback and (prior_pending or prior_approved):
+    elif feedback and prior:
         parts.append(
             "Revise the subrequirements to address the user feedback "
             "above. Preserve structure where the feedback does not "
             "require a change. Output only the revised "
             "<subrequirements> block."
         )
-    elif prior_pending or prior_approved:
+    elif prior:
         parts.append(
-            "Regenerate the subrequirements from scratch based on "
-            "the component and its top-level responsibilities above. "
-            "Output only the <subrequirements> block."
+            "Improve the subrequirements above. Fix any issues you "
+            "notice with granularity, specificity, or coverage of the "
+            "parent responsibilities. Output only the revised "
+            "<subrequirements> block."
         )
     else:
         parts.append(
