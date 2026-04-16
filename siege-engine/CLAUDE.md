@@ -86,14 +86,12 @@ Phase 7 is fan-in synthesis, Phase 8 is impl nodes. Don't conflate
 them — in an earlier session I mis-remembered Phase 6 as impl nodes,
 which was wrong.
 
-## Meaning-engine model (default bundle)
+## Meaning-engine model
 
-The engine itself is tier-agnostic (it traverses a graph of
-prompt stages supplied by the active bundle). The **default
-bundle's** generation chain is designed as a meaning engine —
-each tier produces compressed handles (names, roles, API intents,
-pubapi fragments) that downstream tiers reason from directly.
-The chain alternates compression, expansion, and rotation:
+The generation chain is a meaning engine — each tier produces
+compressed handles (names, roles, API intents, pubapi fragments)
+that downstream tiers reason from directly. The chain alternates
+compression, expansion, and rotation:
 
 - **Feature expansion** — extraction from raw input
 - **Requirements** — rotation (user-facing → system-level axis)
@@ -110,9 +108,9 @@ not in passing more context downstream. The input doc only feeds
 extraction tiers (expansion, reqs, sysarch); propagation tiers
 (comparch, subcomparch, impl) work from handles only.
 
-See `docs/architecture/v2-rearchitecture.md` §The default bundle
-as a meaning engine and `seed-docs/catapult-spec-v2.md` §A.3.1a
-for the full treatment.
+See `docs/architecture/v2-rearchitecture.md` §The system as a
+meaning engine and `seed-docs/catapult-spec-v2.md` §A.3.1a for
+the full treatment.
 
 ## Known design debt (not urgent, worth tracking)
 
