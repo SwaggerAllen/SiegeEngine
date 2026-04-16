@@ -40,8 +40,20 @@ from __future__ import annotations
 from backend.projects.settings import NodeCountRange
 
 _SYSTEM_PROMPT_TEMPLATE = """\
-You are a senior software architect decomposing a single \
-component's top-level responsibilities into subresponsibilities. \
+You are expanding a single component's top-level \
+responsibilities into finer-grained **subresponsibilities**, \
+bounded to this component's territory. Your downstream reader \
+is the **comparch pass**, which will decompose this component \
+into subcomponents and assign each subresponsibility to exactly \
+one subcomponent. Write subresponsibility handles specific \
+enough that comparch can draw clean code-territory boundaries \
+around them — name the data each subresp owns, the operations \
+it performs, and how it differs from sibling subresps within \
+this same component. A subresp whose intent is a restatement of \
+the parent responsibility in slightly different words adds zero \
+information for comparch — it can't assign what it can't \
+distinguish.
+
 You will be given:
 
 1. The component's name, role, and API intent (from the approved \
@@ -49,18 +61,9 @@ system architecture).
 2. The list of top-level responsibilities assigned to this \
 component, each with a stable ``resp_*`` ID.
 
-Your job is to produce a ``<subrequirements>`` block that lists \
-the subresponsibilities — the finer-grained work units that \
-this component's subcomponents (Phase 4) will be held \
-accountable for. Each subresponsibility names which of the \
-component's top-level responsibilities it decomposes, via a \
-``<derived-from>`` block.
-
-A subresponsibility is a **role** at a finer granularity than \
-the top-level responsibility it derives from. "Card \
-Tokenization" under "Payment Collection". "Session Refresh" \
-under "Authentication". "Retry Scheduling" under both "Payment \
-Collection" and "Invoicing" when the same mechanism serves both.
+Each subresponsibility names which of the component's top-level \
+responsibilities it decomposes, via a ``<derived-from>`` block. \
+The relationship is many-to-many within this component's scope.
 
 # Output format
 
@@ -98,12 +101,21 @@ retries and invoice delivery retries.</intent>
 has exactly one ``<name>``, exactly one ``<intent>``, and exactly \
 one ``<derived-from>`` block. No other tags inside.
 * ``<name>`` is a short identifier — typically 2 to 5 words, \
-title case. Think "Card Tokenization", "Session Refresh", \
-"Retry Scheduling".
-* ``<intent>`` is a paragraph — typically 2 to 5 sentences. \
-Describe what this subresponsibility covers, at a finer \
-granularity than its parent responsibility, and what it does \
-not cover.
+title case. Name the specific slice of work, not a restatement \
+of the parent. "Card Tokenization" under "Payment Collection" \
+names what this subresp specifically does; "Handle Payments" \
+would just echo the parent. "Session Refresh" under \
+"Authentication" names a distinct operation; "Manage Sessions" \
+would be too broad for comparch to place.
+* ``<intent>`` is a paragraph — typically 2 to 5 sentences. The \
+comparch pass will read this intent to decide which subcomponent \
+owns this subresponsibility. Name specific data, specific \
+operations, specific failure modes. Describe what this \
+subresponsibility covers at a finer granularity than its parent, \
+and what it does not cover. Each subresp should name something \
+the parent responsibility's intent doesn't already say — if \
+comparch can't tell what code territory this subresp lives in, \
+it's not pulling its weight.
 * ``<derived-from>`` is **required** and must contain **at \
 least one** ``<resp>`` child per subresponsibility. Each \
 ``<resp>`` carries an ``id`` attribute matching exactly one of \

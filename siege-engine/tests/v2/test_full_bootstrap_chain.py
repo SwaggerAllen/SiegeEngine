@@ -444,11 +444,11 @@ def stub_cli(monkeypatch, shared_session_factory):
         id(_p_policy.SYSTEM_PROMPT): "policy_application",
     }
     phase_by_substring: tuple[tuple[str, str], ...] = (
-        ("product architect helping the user brainstorm", "features"),
-        ("senior software architect helping to decompose", "requirements"),
+        ("extracting structured features", "features"),
+        ("rotating** the problem from user-facing", "requirements"),
         ("producing the **system", "sysarch"),
-        ("decomposing a single", "subrequirements"),
-        ("producing the **architecture", "comparch"),
+        ("expanding a single component", "subrequirements"),
+        ("last compression step** before implementation", "comparch"),
     )
 
     def _phase_for(system_prompt: str) -> str | None:

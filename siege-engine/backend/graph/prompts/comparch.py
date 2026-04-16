@@ -77,11 +77,22 @@ from __future__ import annotations
 from backend.projects.settings import NodeCountRange
 
 _SYSTEM_PROMPT_TEMPLATE = """\
-You are a senior software architect producing the **architecture \
-document** for a single component in a software project. You will \
-be given the component's metadata from the system-architecture \
-pass (name, role paragraph, intended API), the top-level \
-responsibilities assigned to it, its pre-minted \
+You are producing the **architecture document** for a single \
+component. This is the **last compression step** before \
+implementation. Your ``<public-surface>`` fragment is the only \
+thing dependent components will ever read about this component \
+— if it's vague, every dependent must guess interface contracts, \
+and guesses compound when multiple components depend on the same \
+vague handle. Your ``<technical-specification>`` is what \
+subcomponent arch docs (Phase 5) will inherit and narrow, and \
+what implementation nodes will read to choose libraries and \
+patterns. Vagueness at this tier gets multiplied across every \
+impl file under this component. The pressure on handle quality \
+is highest here.
+
+You will be given the component's metadata from the \
+system-architecture pass (name, role paragraph, intended API), \
+the top-level responsibilities assigned to it, its pre-minted \
 subresponsibilities (which you will map to subcomponents below), \
 the list of sibling components it may declare dependencies on, \
 the public surfaces of any of those siblings that are already \
@@ -208,19 +219,34 @@ sections are a structural error.
 
 * ``<technical-specification>`` is a **role-level** paragraph \
 describing the component's technology and architecture choices. \
-**No** per-subcomponent sequencing, no implementation walkthroughs. \
-The techspec propagates downward only — it's what the \
-subcomponent arch docs in Phase 5 will inherit and narrow, and \
-it does not get regenerated when child impls iterate.
-* ``<public-surface>`` is the API dependents see. Types, \
-function signatures, method signatures, events. Code-shaped \
-content lives in fenced code blocks; the parser does not \
-inspect the code so any language is fine. Only surface that \
-sibling components will call; internal helpers belong in \
+Subcomponent arch docs (Phase 5) will inherit and narrow this \
+techspec. Implementation nodes downstream will read it to choose \
+the specific libraries, patterns, and configuration shapes they \
+use. Be specific: the concurrency model, the persistence \
+pattern, the error-handling strategy, the testing approach for \
+this component. A techspec that says "Python on FastAPI" tells \
+impl nothing about whether to use async handlers or sync, \
+SQLAlchemy sessions or raw queries, exception handlers or result \
+types. **No** per-subcomponent sequencing, no implementation \
+walkthroughs. The techspec propagates downward only and does not \
+get regenerated when child impls iterate.
+* ``<public-surface>`` is the **only surface dependent components \
+will ever read** about this component. Types, function \
+signatures, method signatures, events. Code-shaped content lives \
+in fenced code blocks; any language is fine. Dependents need: \
+call shapes with approximate signatures, return types, error \
+modes (what can fail and how the caller learns), side-effect \
+boundaries (what state changes), and event contracts (what this \
+component publishes that others might subscribe to). A public \
+surface that says "exposes CRUD operations" forces every \
+dependent to guess the actual shapes. Only surface that sibling \
+components will call; internal helpers belong in \
 ``<private-surface>``.
 * ``<private-surface>`` is internal types and helpers visible \
 to this component's own subcomponents during their Phase 5 \
-regen, but not to sibling dependents. Same fenced-code-block \
+regen, but **not** to sibling dependents. This is what \
+subcomponent arch docs will use to understand the internal \
+infrastructure they build on top of. Same fenced-code-block \
 convention as the public surface.
 * All three fragment sections must be non-empty. Do not put \
 nested XML tags inside them — only prose and fenced code blocks.
@@ -270,11 +296,25 @@ underscores, 1-32 characters; regex \
 block. Subcomponents **inherit the kind** (domain / \
 presentational) of the owning component and do NOT have their \
 own ``<kind>`` tag — do not add one.
-* ``<role>`` is a paragraph describing what the subcomponent \
-does within this component. ``<api-intent>`` is a paragraph \
-describing the shape of its intended API. Full public-surface \
-detail comes later when Phase 5 generates the subcomponent's \
-own arch doc.
+* ``<name>`` is a short identifier — title case. Name the \
+subcomponent project-specifically. "SessionStore" is sharper \
+than "DataLayer"; "CredentialGate" is sharper than "Validator". \
+If two unrelated components could plausibly have a subcomponent \
+with this name, it's too generic.
+* ``<role>`` is the primary handle the subcomparch pass (Phase 5) \
+will use to reason about this subcomponent. It will read **only** \
+this paragraph, the ``<api-intent>``, and the assigned \
+subresponsibilities to produce the subcomponent's architecture \
+doc. Write it so Phase 5 can work without re-reading the parent \
+comparch. Name what data this subcomponent owns, what operations \
+it performs, what it explicitly does not touch.
+* ``<api-intent>`` is the handle sibling subcomponents and \
+external dependents read to decide how to call this one. Name \
+rough call shapes, return types, error modes, and side-effect \
+boundaries. Full public-surface detail comes later when Phase 5 \
+generates the subcomponent's own arch doc, but the intent should \
+be specific enough that siblings can code against it without \
+guessing.
 * ``<responsibilities>`` contains one or more ``<resp \
 id="resp_..."/>`` children. **Every resp ID must match one of \
 this component's pre-minted subresponsibilities** shown in the \
