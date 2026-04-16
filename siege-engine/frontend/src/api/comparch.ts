@@ -1,39 +1,15 @@
 import { z } from 'zod';
 import api from './client';
+import { comparchApi } from './bootstrapApi';
 import { GenerationStatusSchema, TelemetrySummarySchema } from './expansion';
 
-// Per-component scoping: every request takes projectId + componentId.
-// Parallel to api/subreqs.ts with the Phase 4 comparch routes.
+export type {
+  BootstrapResponse as ComparchResponse,
+  BootstrapNode as ComparchNode,
+  BootstrapDraft as ComparchDraft,
+} from './bootstrapApi';
 
-export const ComparchNodeSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  content: z.string(),
-  updated_at: z.string(),
-});
-export type ComparchNode = z.infer<typeof ComparchNodeSchema>;
-
-export const ComparchDraftSchema = z.object({
-  id: z.string(),
-  content: z.string(),
-  created_at: z.string(),
-});
-export type ComparchDraft = z.infer<typeof ComparchDraftSchema>;
-
-export const ComparchResponseSchema = z.object({
-  node: ComparchNodeSchema,
-  pending_draft: ComparchDraftSchema.nullable(),
-  generation_status: GenerationStatusSchema,
-  last_error: z.string().nullable(),
-  latest_telemetry: TelemetrySummarySchema.nullable(),
-  generation_started_at: z.string().nullish().transform((v) => v ?? null),
-});
-export type ComparchResponse = z.infer<typeof ComparchResponseSchema>;
-
-const FeedbackResponseSchema = z.object({ job_id: z.string() });
-const ApproveResponseSchema = z.object({ node: ComparchNodeSchema });
-const DiscardResponseSchema = z.object({ ok: z.boolean() });
-const CancelResponseSchema = z.object({ cancelled: z.boolean() });
+export { GenerationStatusSchema, TelemetrySummarySchema };
 
 // ── Subcomponent list ─────────────────────────────────────────────
 
@@ -88,63 +64,24 @@ export type AppliedPolicyListResponse = z.infer<
   typeof AppliedPolicyListResponseSchema
 >;
 
-// ── Request functions ─────────────────────────────────────────────
+// ── Bootstrap CRUD (delegated to shared API) ───────────────────────
 
-export async function getComparch(
-  projectId: string,
-  componentId: string
-): Promise<ComparchResponse> {
-  const { data } = await api.get(
-    `/projects/${projectId}/components/${componentId}/comparch`
-  );
-  return ComparchResponseSchema.parse(data);
-}
+export const getComparch = (projectId: string, componentId: string) =>
+  comparchApi.getState(projectId, componentId);
 
-export async function postFeedback(
-  projectId: string,
-  componentId: string,
-  feedback: string
-): Promise<{ job_id: string }> {
-  const { data } = await api.post(
-    `/projects/${projectId}/components/${componentId}/comparch/feedback`,
-    { feedback }
-  );
-  return FeedbackResponseSchema.parse(data);
-}
+export const postFeedback = (projectId: string, componentId: string, feedback: string) =>
+  comparchApi.postFeedback(projectId, componentId, feedback);
 
-export async function approveDraft(
-  projectId: string,
-  componentId: string,
-  draftId: string
-): Promise<ComparchNode> {
-  const { data } = await api.post(
-    `/projects/${projectId}/components/${componentId}/comparch/approve`,
-    { draft_id: draftId }
-  );
-  return ApproveResponseSchema.parse(data).node;
-}
+export const approveDraft = (projectId: string, componentId: string, draftId: string) =>
+  comparchApi.approveDraft(projectId, componentId, draftId);
 
-export async function discardDraft(
-  projectId: string,
-  componentId: string,
-  draftId: string
-): Promise<void> {
-  const { data } = await api.post(
-    `/projects/${projectId}/components/${componentId}/comparch/discard`,
-    { draft_id: draftId }
-  );
-  DiscardResponseSchema.parse(data);
-}
+export const discardDraft = (projectId: string, componentId: string, draftId: string) =>
+  comparchApi.discardDraft(projectId, componentId, draftId);
 
-export async function cancelGeneration(
-  projectId: string,
-  componentId: string
-): Promise<boolean> {
-  const { data } = await api.post(
-    `/projects/${projectId}/components/${componentId}/comparch/cancel`
-  );
-  return CancelResponseSchema.parse(data).cancelled;
-}
+export const cancelGeneration = (projectId: string, componentId: string) =>
+  comparchApi.cancelGeneration(projectId, componentId);
+
+// ── Tier-specific list endpoints ───────────────────────────────────
 
 export async function getSubcomponents(
   projectId: string,
