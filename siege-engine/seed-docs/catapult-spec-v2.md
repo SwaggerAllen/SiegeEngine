@@ -653,6 +653,8 @@ It cannot:
 
 This ensures humans remain in control of what work actually happens, while the AI can freely analyze and suggest.
 
+**License boundary.** The per-project lobby and all lobby operations are free. The cross-project lobby view (aggregating pending flows across all user-accessible projects) is a commercial feature — see §A.22.
+
 ## A.7 Concurrency and locking
 
 The system uses **pessimistic locking** at the project level. Only one flow run or sub-run may be active per project at a time. This dramatically simplifies the concurrency story:
@@ -911,6 +913,10 @@ Even with the L2 commitment, the gitea substrate, and the instance library locke
 
 These items are scoped *below* the level model, the gitea substrate, and the instance library, which are the load-bearing promises bundle authors and instance admins reason about. The deferred items are implementation refinements that can land incrementally without invalidating bundles already in the wild.
 
+**License boundary.** Bundle authoring and usage at all levels (L0 through L3) is free. Bundle scanning for injection risks is free. What is commercial: organizational bundle administration — multi-approver approval workflows, automated CI scanning policy enforcement, and alerts on upstream bundle changes. An individual or small team writing and using their own L3 bundle pays nothing. An enterprise that needs governance workflows around bundle approvals does — see §A.22.
+
+**Bundle vulnerability scanning.** Bundle prompt templates are a prompt-injection and supply-chain attack surface. The AGPL release includes scanning capability that analyzes a bundle's prompt templates for injection risks (system-prompt overrides, exfiltration patterns, instruction-hiding techniques). This is a free individual capability. The commercial tier adds *management*: automated scanning triggered on bundle import via CI, policy rules ("reject any bundle that fails the injection scan"), and alerting when an upstream bundle the instance mirrors pushes an update that changes scan results.
+
 ## A.12 Credentials and token tracking
 
 ### A.12.1 BYO credentials
@@ -945,6 +951,8 @@ The point is not cost discipline for the MVP — we have accepted that cost opti
 
 Model identifiers are recorded alongside token counts so that future cost projection can retrofit historical data. Cost projection (converting tokens to dollars for display in the UI) is a post-MVP feature; the tracking infrastructure is in place from day one.
 
+**License boundary.** Per-call token tracking, per-node telemetry summaries, and the per-project telemetry view are free. Advanced telemetry dashboards — cost projection, per-team rollups, and historical trend analysis — are commercial features. See §A.22.
+
 ## A.13 Real-time updates and external integration
 
 ### A.13.1 Live updates
@@ -971,6 +979,8 @@ Catapult exposes a programmatic API for external tooling. The API provides:
 - **Write access** to flow operations: propose flows to the lobby, leave deferred feedback, trigger actions permitted by the caller's role.
 
 Authentication uses the same per-user credentials and scoped-role system as the web UI. Every API call is subject to the same permission checks as the equivalent UI action. The API enables custom dashboards, chat bots, project-management integrations (Jira, Linear), CI/CD pipeline queries, and third-party tooling built on Catapult's data model.
+
+**License boundary and pluggable integration surface.** The webhook endpoint and the REST API are free — they are the integration surface. Specific integrations (Jira, Slack, Teams, Linear, etc.) are community-contributed via the webhook + API surface, not core features. The commercial tier adds integration *management*: delivery health monitoring, retry dashboards, and a managed connector library with support commitments. See §A.22.
 
 ## A.14 Authentication and authorization
 
@@ -1026,6 +1036,8 @@ SSO and SAML are **in scope for the MVP**. Enterprise customers frequently requi
 - **Multiple IdPs per instance** — supported, so a single Catapult instance can serve multiple organizations each with their own IdP.
 - **BYO credentials compose with SSO** — SSO handles identity; BYO LLM credentials (A.12) handle LLM authentication. A user authenticated via SSO still supplies their own LLM credentials if the project is configured for user-scope credentials. The two layers are independent.
 
+**License boundary.** Local authentication (username + password, invite-based onboarding, password reset, preset roles) is free. SSO/SAML, JIT provisioning, multi-IdP, custom role definitions via `role.define`, and scoped roles with narrowest-scope-first resolution are commercial features. See §A.22.
+
 ## A.15 Multi-project support
 
 A single Catapult instance supports multiple independent projects. Each project has its own:
@@ -1042,6 +1054,10 @@ A single Catapult instance supports multiple independent projects. Each project 
 A user can be a member of many projects simultaneously, each with their own scoped role. The review queue UI unifies awaiting-review artifacts across every project the user has access to, with project-name breadcrumbs and priority indicators. The lobby has both a per-project view and a cross-project view (A.6.1) for tech leads who manage multiple projects from a single screen.
 
 Project creation is an admin operation behind the `project.create` atom. A new project starts empty and picks up the instance's default bundle, default credentials, and default role preset list. The admin who creates the project is granted `admin` scope on that project by default.
+
+**Cross-project API publishing.** A project can export its pubapi surfaces as `ref_*` nodes that other projects consume. The export is a snapshot — not a live link — written as a ref node in the consuming project. Version bumps are explicit: the publishing project tags a new snapshot, the consuming project imports it and reviews the diff. Manual snapshot export/import via ref nodes is free; automated sync workflows (publish triggers propagation to all consumers with review gates) are commercial. See §A.22.
+
+**License boundary.** Multiple projects per instance and all per-project capabilities are free. Multi-project dashboards, the cross-project lobby view, and cross-project review queues are commercial features. See §A.22.
 
 ## A.16 Bootstrap flow
 
@@ -1259,6 +1275,63 @@ LLM output format is unreliable. All structured output extraction — parseable 
 ### A.21.13 LLM concurrency limits
 
 Parallel execution within a flow must respect a configurable concurrency limit for LLM calls. Unbounded parallelism causes resource exhaustion and rate-limiting cascades; the limit should be configurable per project with a conservative default (2-4 concurrent calls). Exponential backoff on rate-limit errors — 3 attempts with 1-second base delay, doubling — and no retries on quota-exhaustion errors (those need human intervention).
+
+## A.22 Open-source / commercial license boundary
+
+Catapult is dual-licensed AGPL v3 + commercial. The AGPL release is a complete, production-capable system — not a crippled trial. The principle governing the split: **individual capability is free, organizational process is commercial.**
+
+### A.22.1 Free (AGPL)
+
+Everything an individual engineer or a small team needs to run a project end-to-end:
+
+- Full generation chain with the default bundle
+- All flow types: scaffolding, feature request, refactor, bug-fix propagation, downward propagation, upward propagation
+- All review, approval, and feedback flows including deferred feedback, collaborative discussions, and David chat
+- Decomposition graph and all structural visualizations
+- All node tiers: features, responsibilities, components, policies, vocabulary, references, implementation, plan
+- Bundle authoring and usage at **all** levels (L0 through L3). If you can write a bundle, you can use it. No capability gating by abstraction level.
+- Bundle scanning for injection risks (the capability itself)
+- Bundle publishing and sharing
+- Webhooks and the external REST API (the integration surface)
+- Local gitea substrate + one external forge adapter (GitHub ships with the AGPL release; gitea is always available)
+- Local authentication (username + password, invite-based onboarding, password reset)
+- Multiple projects per instance (project count is not gated)
+- Cross-project coordination via git (bundle sharing, API snapshot export/import as ref nodes)
+- Graduated autonomy controls (auto-approval thresholds, flow-specific overrides, hard overrides for destructive operations)
+- Prompt overrides and per-project configuration
+
+### A.22.2 Commercial license
+
+Organizational controls that teams larger than a handful of engineers need. Everything below requires a commercial license:
+
+- **Enterprise authentication.** SSO/SAML with JIT provisioning, multi-IdP support, group-to-role mapping, session bridging between SSO and local sessions.
+- **Scoped roles and custom permissions.** Permission atoms, scoped roles with narrowest-scope-first resolution, custom role definitions beyond the preset roles. The preset roles (admin, member, viewer, reviewer-only, prompt-maintainer, owner) are available in the AGPL release; custom role composition via the `role.define` atom is commercial.
+- **Multi-project management.** Cross-project dashboards, the cross-project lobby view, cross-project review queues. Per-project views are free; the aggregated organizational views are commercial.
+- **Bundle administration.** Multi-approver approval workflows, role-based approval chains, change-request tracking for bundle version bumps, automated policy enforcement on bundle imports. Writing, using, and sharing bundles is free; the organizational governance workflows are commercial.
+- **Bundle security scanning management.** Automated CI-integrated scanning on bundle import, policy enforcement ("no bundle enters this instance without passing these checks"), alerts when an upstream bundle pushes a suspicious update. The scanning capability itself is free; the automated management pipeline is commercial.
+- **Audit and compliance.** Audit log export in machine-readable formats, compliance reporting, tamper-evidence verification tools.
+- **Integration management.** Integration health monitoring, delivery retry dashboards, and managed connector library ("we support these N integrations and will fix them if they break"). The webhook and API surface is free; the operational tooling around integrations is commercial.
+- **Advanced telemetry.** Cost projection, per-team token usage rollups, historical trend dashboards. Per-call token tracking and per-node telemetry are free.
+- **Cross-project API publishing.** The automated sync workflow where a published API surface from one project propagates to consuming projects as versioned ref nodes with review gates. Manual snapshot export/import via ref nodes is free.
+- **Priority support and SLA guarantees.**
+
+### A.22.3 Explicitly not gated
+
+These are permanently free regardless of license tier. The temptation to gate them for revenue must be resisted because gating them destroys the adoption funnel or the trust model:
+
+- Any generation tier or prompt quality feature
+- Any review or feedback mechanism
+- David in any form
+- Security scanning capability
+- Project count
+- Any single-project capability
+- Bundle capability at any abstraction level (L0–L3)
+
+### A.22.4 Deferred decisions
+
+These will be resolved based on observed user behavior after initial adoption, not pre-decided:
+
+- **Forge adapter count.** Ship GitHub + gitea free. Whether additional forge adapters (GitLab, Bitbucket, Azure DevOps) are free or commercial depends on whether adapter authorship comes from the community or requires core team maintenance.
 
 ---
 
