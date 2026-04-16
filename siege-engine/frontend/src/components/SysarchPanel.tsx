@@ -7,7 +7,6 @@ import {
   useFeedbackMutation,
   useResetMutation,
 } from '../hooks/mutations/useSysarchMutations';
-import { getPromptPreview } from '../api/sysarch';
 import {
   BootstrapDraftPanel,
   type BootstrapPanelLabels,
@@ -100,7 +99,6 @@ export function SysarchPanel({ projectId }: Props) {
         isBusy,
       }}
       contentRenderers={renderers}
-      getPromptPreview={(fb) => getPromptPreview(projectId, fb)}
     />
   );
 }

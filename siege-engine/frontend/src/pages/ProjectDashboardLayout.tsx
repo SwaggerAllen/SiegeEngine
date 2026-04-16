@@ -6,10 +6,14 @@ import { DashboardMenu } from '../components/DashboardMenu';
 import { FeatureExpansionPanel } from '../components/FeatureExpansionPanel';
 import { FeatureList } from '../components/FeatureList';
 import { PolicyList } from '../components/PolicyList';
+import { PromptPreviewPanel } from '../components/PromptPreviewPanel';
 import { RequirementsPanel } from '../components/RequirementsPanel';
 import { ResponsibilityList } from '../components/ResponsibilityList';
 import { SysarchPanel } from '../components/SysarchPanel';
 import { VocabularyList } from '../components/VocabularyList';
+import { getPromptPreview as getExpansionPrompt } from '../api/expansion';
+import { getPromptPreview as getReqsPrompt } from '../api/requirements';
+import { getPromptPreview as getSysarchPrompt } from '../api/sysarch';
 import { useExpansion } from '../hooks/queries/useExpansionQueries';
 import { useFeatures } from '../hooks/queries/useFeatureQueries';
 import { useProject } from '../hooks/queries/useProjectQueries';
@@ -214,6 +218,12 @@ function DashboardShell({ projectId }: { projectId: string }) {
                   </EmptySubtabMessage>
                 )
               }
+              prompt={
+                <PromptPreviewPanel
+                  projectId={projectId}
+                  getPromptPreview={(fb) => getExpansionPrompt(projectId, fb)}
+                />
+              }
             />
           </div>
         )}
@@ -250,6 +260,12 @@ function DashboardShell({ projectId }: { projectId: string }) {
                   </EmptySubtabMessage>
                 )
               }
+              prompt={
+                <PromptPreviewPanel
+                  projectId={projectId}
+                  getPromptPreview={(fb) => getReqsPrompt(projectId, fb)}
+                />
+              }
             />
           </div>
         )}
@@ -275,6 +291,12 @@ function DashboardShell({ projectId }: { projectId: string }) {
                     Components and policies appear here once the system architecture is approved and minted.
                   </EmptySubtabMessage>
                 )
+              }
+              prompt={
+                <PromptPreviewPanel
+                  projectId={projectId}
+                  getPromptPreview={(fb) => getSysarchPrompt(projectId, fb)}
+                />
               }
             />
           </div>
