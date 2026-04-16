@@ -342,6 +342,38 @@ This flow is genuinely different from every other flow described above. The othe
 
 This flow is how Catapult stays coherent when the codebase moves outside its control. Hotfixes, external contributions, automated dependency bumps, manual edits made directly in the repository — any case where the code has moved and the design memory needs to catch up — route through this flow. If the change was made through the normal Catapult flow, the bug-fix flow is not needed because the design updates already happened upstream before the code did.
 
+### A.2.5 Downward propagation flow
+
+Input is one or more nodes with accumulated deferred feedback (A.5.2). The flow regenerates those nodes incorporating their pending feedback, then propagates the changes **downward** through the tree to every descendant affected by the regen.
+
+This is the natural flow for design-level refinement: a reviewer leaves feedback on a component's architecture doc ("the pubapi should expose a batch endpoint, not one-at-a-time"), the feedback accumulates, and when the user is ready they kick a downward propagation that regenerates the comparch, cascades the updated pubapi to dependent components, regenerates affected subcomponent arch docs, and pushes the changes through impl and plan nodes to code. Each tier produces change plans describing how the upstream feedback manifests at that level, same as the feature request flow.
+
+The flow can target a single node or a batch of nodes with pending feedback. When targeting multiple nodes, the flow processes them in topological order — feedback on a parent is consumed before the regen cascades through children, so children see the updated parent rather than the stale version.
+
+**Scope control.** The user can bound the propagation depth: "propagate through comparch and subcomparch but stop before impl" is a valid scope for a refinement pass that only needs to update the design layer. Full-depth propagation (down to code) is the default.
+
+### A.2.6 Upward propagation flow
+
+Input is one or more nodes with accumulated deferred feedback. The flow regenerates those nodes incorporating their pending feedback, then propagates the implications **upward** through the tree — the inverse of the downward flow.
+
+This addresses the case where working at a low tier reveals something about the design above. A reviewer examining a subcomponent's arch doc realizes the parent component's role paragraph is misleading, or that a top-level responsibility was scoped too broadly. They leave deferred feedback on the parent or on the sysarch node and kick an upward propagation.
+
+The flow works bottom-up: regenerate the target node with its feedback, produce a diagnosis at each ancestor tier describing what the downstream change implies, merge diagnoses at each parent (same merge-at-parent semantics as the bug-fix propagation flow in A.2.4), and regenerate each ancestor that the diagnosis indicates needs updating. At each touched ancestor, a downward sibling pass identifies other children affected by the ancestor's update and regenerates them — same sideways cascade as bug-fix propagation.
+
+**Relationship to bug-fix propagation.** The upward propagation flow is structurally similar to the bug-fix flow (A.2.4) but with a different trigger: bug-fix starts from external code changes and propagates design updates to match reality; upward propagation starts from design-level feedback and propagates design refinements through the tree. Both walk bottom-up with merge-at-parent, both fan out sideways at each ancestor. The difference is input shape (deferred feedback vs. code diff) and the fact that upward propagation may optionally continue downward after the upward pass completes, to push the refinement all the way to code.
+
+### A.2.7 Relationship between flows and deferred feedback
+
+Deferred feedback (A.5.2) is the accumulation mechanism; flows are the consumption mechanism. Feedback does not trigger regeneration on its own — it waits. The five flow types that consume feedback are:
+
+- **Scaffolding** — consumes feedback left on bootstrap nodes during the initial cold-start walkthrough.
+- **Feature request / refactor** — consumes feedback on any node the flow touches during its per-tier regen pass.
+- **Bug-fix propagation** — consumes feedback on leaves and ancestors as the upward pass reaches them.
+- **Downward propagation** — the explicit "consume this feedback and push changes down" flow.
+- **Upward propagation** — the explicit "consume this feedback and push implications up" flow.
+
+The downward and upward propagation flows exist specifically so that accumulated feedback has a dedicated consumption path. Without them, feedback left between flows would only be consumed incidentally — the next time some other flow happens to touch that node. The propagation flows let users say "I'm done leaving feedback, go reconcile" without manufacturing a feature request or refactor as a pretextual trigger.
+
 
 
 ## A.3 Phases and generation order
@@ -515,7 +547,7 @@ Every artifact produced by the system — bootstrap node, fragment, arch doc, ch
 
 Users can leave inline comments and summary feedback on **any node at any time**, not just nodes currently awaiting review. This feedback accumulates as pending and is automatically included in the prompt context the next time that node is regenerated by any flow.
 
-This is the lightweight alternative to kicking off a full flow every time someone notices something. When working deep in the tree reveals that an upstream node should incorporate a new consideration, a user can leave a comment on the upstream node and move on — the comment waits until the next flow touches that node, at which point the regen picks it up automatically. Multiple deferred comments from multiple users can accumulate across any number of nodes. Deferred feedback does not trigger regeneration on its own; it waits until the node is next touched by a flow.
+This is the lightweight alternative to kicking off a full flow every time someone notices something. When working deep in the tree reveals that an upstream node should incorporate a new consideration, a user can leave a comment on the upstream node and move on — the comment waits until the next flow touches that node, at which point the regen picks it up automatically. Multiple deferred comments from multiple users can accumulate across any number of nodes. Deferred feedback does not trigger regeneration on its own; it waits until consumed by a flow. The dedicated consumption paths are the downward propagation flow (A.2.5) and the upward propagation flow (A.2.6); any other flow that touches a node with pending feedback also consumes it incidentally. See A.2.7 for the full relationship.
 
 **Comment lifecycle.** All comments — inline review feedback, summary feedback, and deferred feedback — can be edited or deleted by their author after posting. Edits and deletions are recorded in the event log (the original content is preserved in history, not destroyed). Comments that have already been consumed by a regeneration pass are marked as such; deleting a consumed comment does not undo the regen it influenced. Pending (unconsumed) comments can be freely edited or deleted before the next regen picks them up.
 
