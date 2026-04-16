@@ -3,11 +3,7 @@ import { useResponsibilities } from '../hooks/queries/useRequirementsQueries';
 import { useComponents, useSysarch } from '../hooks/queries/useSysarchQueries';
 import {
   useApproveMutation,
-<<<<<<< HEAD
   useCancelGenerationMutation,
-  useDiscardMutation,
-=======
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
   useFeedbackMutation,
   useResetMutation,
 } from '../hooks/mutations/useSysarchMutations';
@@ -65,22 +61,14 @@ export function SysarchPanel({ projectId }: Props) {
   const { data: componentsData } = useComponents(projectId);
   const feedbackMutation = useFeedbackMutation(projectId);
   const approveMutation = useApproveMutation(projectId);
-<<<<<<< HEAD
-  const discardMutation = useDiscardMutation(projectId);
   const cancelMutation = useCancelGenerationMutation(projectId);
-=======
   const resetMutation = useResetMutation(projectId);
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-<<<<<<< HEAD
-    discardMutation.isPending ||
-    cancelMutation.isPending;
-=======
+    cancelMutation.isPending ||
     resetMutation.isPending;
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 
   const renderers = useMemo(() => {
     const respNames: Record<string, string> = {};
@@ -106,11 +94,8 @@ export function SysarchPanel({ projectId }: Props) {
         onFeedback: (f) => feedbackMutation.mutate(f),
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
-<<<<<<< HEAD
         onCancel: () => cancelMutation.mutate(),
-=======
         onReset: () => resetMutation.mutate(),
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
         isBusy,
       }}
       contentRenderers={renderers}

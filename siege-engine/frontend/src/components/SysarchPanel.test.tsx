@@ -4,17 +4,6 @@ import { TestQueryWrapper } from '../test/queryWrapper';
 import { SysarchPanel } from './SysarchPanel';
 import type { SysarchResponse } from '../api/sysarch';
 
-<<<<<<< HEAD
-vi.mock('../api/sysarch', () => ({
-  getSysarch: vi.fn(),
-  postFeedback: vi.fn(),
-  approveDraft: vi.fn(),
-  discardDraft: vi.fn(),
-  cancelGeneration: vi.fn(),
-  getComponents: vi.fn(),
-  getPolicies: vi.fn(),
-}));
-=======
 vi.mock('../api/sysarch', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../api/sysarch')>();
@@ -23,12 +12,12 @@ vi.mock('../api/sysarch', async (importOriginal) => {
     getSysarch: vi.fn(),
     postFeedback: vi.fn(),
     approveDraft: vi.fn(),
+    cancelGeneration: vi.fn(),
     resetSysarch: vi.fn(),
     getComponents: vi.fn(),
     getPolicies: vi.fn(),
   };
 });
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 
 import * as sysarchApi from '../api/sysarch';
 

@@ -88,13 +88,11 @@ export interface BootstrapPanelCallbacks {
   /** Kick off a fresh generation with no feedback (the
    * failed-state retry path). */
   onRetry: () => void;
-<<<<<<< HEAD
   /** Stop the currently-running generation. The backend cancels
    * the queued/running job and the status query flips back to
    * ``idle``, dropping the user back into the feedback / accept /
    * reject state over any remaining pending draft. */
   onCancel: () => void;
-=======
   /**
    * Destructively reset an **approved** bootstrap node — nuke all
    * downstream state it minted and re-enqueue a fresh generation.
@@ -104,7 +102,6 @@ export interface BootstrapPanelCallbacks {
    * historical behavior for tiers that can't be reset yet.
    */
   onReset?: () => void;
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
   /** True while any of the mutations is in-flight. */
   isBusy: boolean;
 }
@@ -134,7 +131,6 @@ function TelemetryLine({ telemetry }: { telemetry: BootstrapPanelTelemetry | nul
 }
 
 /**
-<<<<<<< HEAD
  * Format a duration in seconds as a short human-readable string:
  * ``45s``, ``2m 05s``, ``1h 03m``. Used by the regeneration
  * duration clock so the ticking counter stays compact next to
@@ -212,7 +208,10 @@ function GenerationClock({
     <span className="text-xs text-gray-400" data-testid="generation-clock">
       {duration} · started {startedLabel} PT
     </span>
-=======
+  );
+}
+
+/**
  * Two-click confirm for the destructive reset action on the
  * approved-state panel. First click flips the button into "Are
  * you sure?" mode; a second click within that mode calls through
@@ -277,7 +276,6 @@ function ResetApprovedStateControl({
         </>
       )}
     </div>
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
   );
 }
 
@@ -401,17 +399,6 @@ export function BootstrapDraftPanel({
         <div className="flex gap-2 flex-wrap">
           <button
             type="button"
-<<<<<<< HEAD
-            onClick={submitFeedback}
-            disabled={callbacks.isBusy || isRegenerating || !feedback.trim()}
-            className="px-4 py-2 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
-          >
-            Regenerate
-          </button>
-          <button
-            type="button"
-=======
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
             onClick={() => callbacks.onApprove(pending_draft.id)}
             disabled={callbacks.isBusy || isRegenerating}
             className="px-4 py-2 text-sm rounded bg-green-700 hover:bg-green-600 disabled:opacity-40"
@@ -420,13 +407,8 @@ export function BootstrapDraftPanel({
           </button>
           <button
             type="button"
-<<<<<<< HEAD
-            onClick={() => callbacks.onDiscard(pending_draft.id)}
-            disabled={callbacks.isBusy || isRegenerating}
-=======
             onClick={submitFeedback}
-            disabled={callbacks.isBusy}
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
+            disabled={callbacks.isBusy || isRegenerating}
             className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
             title={
               feedback.trim()

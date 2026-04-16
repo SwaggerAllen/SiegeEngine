@@ -8,11 +8,7 @@ vi.mock('../api/subcomparch', () => ({
   getSubcomparch: vi.fn(),
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
-<<<<<<< HEAD
-  discardDraft: vi.fn(),
   cancelGeneration: vi.fn(),
-=======
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 }));
 
 import * as subcomparchApi from '../api/subcomparch';

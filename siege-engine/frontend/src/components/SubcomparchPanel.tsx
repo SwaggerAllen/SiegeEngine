@@ -1,11 +1,7 @@
 import { useSubcomparch } from '../hooks/queries/useSubcomparchQueries';
 import {
   useSubcomparchApproveMutation,
-<<<<<<< HEAD
   useSubcomparchCancelGenerationMutation,
-  useSubcomparchDiscardMutation,
-=======
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
   useSubcomparchFeedbackMutation,
 } from '../hooks/mutations/useSubcomparchMutations';
 import {
@@ -59,12 +55,6 @@ export function SubcomparchPanel({
     parentCompId,
     subId
   );
-<<<<<<< HEAD
-  const discardMutation = useSubcomparchDiscardMutation(
-    projectId,
-    parentCompId,
-    subId
-  );
   const cancelMutation = useSubcomparchCancelGenerationMutation(
     projectId,
     parentCompId,
@@ -74,12 +64,7 @@ export function SubcomparchPanel({
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    discardMutation.isPending ||
     cancelMutation.isPending;
-=======
-
-  const isBusy = feedbackMutation.isPending || approveMutation.isPending;
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 
   return (
     <BootstrapDraftPanel

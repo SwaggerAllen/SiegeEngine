@@ -1,11 +1,7 @@
 import { useExpansion } from '../hooks/queries/useExpansionQueries';
 import {
   useApproveMutation,
-<<<<<<< HEAD
   useCancelGenerationMutation,
-  useDiscardMutation,
-=======
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
   useFeedbackMutation,
 } from '../hooks/mutations/useExpansionMutations';
 import {
@@ -32,19 +28,12 @@ export function FeatureExpansionPanel({ projectId }: Props) {
   const { data, error, isLoading } = useExpansion(projectId);
   const feedbackMutation = useFeedbackMutation(projectId);
   const approveMutation = useApproveMutation(projectId);
-<<<<<<< HEAD
-  const discardMutation = useDiscardMutation(projectId);
   const cancelMutation = useCancelGenerationMutation(projectId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    discardMutation.isPending ||
     cancelMutation.isPending;
-=======
-
-  const isBusy = feedbackMutation.isPending || approveMutation.isPending;
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 
   return (
     <BootstrapDraftPanel

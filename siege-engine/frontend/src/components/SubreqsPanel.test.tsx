@@ -8,11 +8,7 @@ vi.mock('../api/subreqs', () => ({
   getSubreqs: vi.fn(),
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
-<<<<<<< HEAD
-  discardDraft: vi.fn(),
   cancelGeneration: vi.fn(),
-=======
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
   getSubresponsibilities: vi.fn(),
 }));
 

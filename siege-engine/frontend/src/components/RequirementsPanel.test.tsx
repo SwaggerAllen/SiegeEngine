@@ -9,11 +9,7 @@ vi.mock('../api/requirements', () => ({
   getRequirements: vi.fn(),
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
-<<<<<<< HEAD
-  discardDraft: vi.fn(),
   cancelGeneration: vi.fn(),
-=======
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
   getResponsibilities: vi.fn(),
 }));
 

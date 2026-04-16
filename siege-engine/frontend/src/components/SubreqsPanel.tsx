@@ -1,11 +1,7 @@
 import { useSubreqs } from '../hooks/queries/useSubreqsQueries';
 import {
   useApproveMutation,
-<<<<<<< HEAD
   useCancelGenerationMutation,
-  useDiscardMutation,
-=======
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
   useFeedbackMutation,
 } from '../hooks/mutations/useSubreqsMutations';
 import {
@@ -43,19 +39,12 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
   const { data, error, isLoading } = useSubreqs(projectId, componentId);
   const feedbackMutation = useFeedbackMutation(projectId, componentId);
   const approveMutation = useApproveMutation(projectId, componentId);
-<<<<<<< HEAD
-  const discardMutation = useDiscardMutation(projectId, componentId);
   const cancelMutation = useCancelGenerationMutation(projectId, componentId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    discardMutation.isPending ||
     cancelMutation.isPending;
-=======
-
-  const isBusy = feedbackMutation.isPending || approveMutation.isPending;
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 
   return (
     <BootstrapDraftPanel

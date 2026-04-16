@@ -47,7 +47,6 @@ export function useDiscardMutation(projectId: string) {
   });
 }
 
-<<<<<<< HEAD
 export function useCancelGenerationMutation(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -62,7 +61,10 @@ export function useCancelGenerationMutation(projectId: string) {
             : prev
       );
       queryClient.invalidateQueries({ queryKey: sysarchKeys.detail(projectId) });
-=======
+    },
+  });
+}
+
 export function useResetMutation(projectId: string) {
   // Destructive reset of an approved sysarch node. Unlike the other
   // mutations this one invalidates a much broader set of query keys
@@ -81,7 +83,6 @@ export function useResetMutation(projectId: string) {
       // back to the empty pre-mint state on the next poll.
       queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
       queryClient.invalidateQueries({ queryKey: policiesKeys.list(projectId) });
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
     },
   });
 }

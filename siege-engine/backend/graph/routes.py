@@ -1027,7 +1027,6 @@ def post_sysarch_discard(
     return DiscardResponse(ok=True)
 
 
-<<<<<<< HEAD
 @router.post("/{project_id}/sysarch/cancel", response_model=CancelResponse)
 def post_sysarch_cancel(
     project_id: str,
@@ -1045,7 +1044,8 @@ def post_sysarch_cancel(
         return CancelResponse(cancelled=False)
     ok = pipeline_queue.cancel_job(db, job.id)
     return CancelResponse(cancelled=ok)
-=======
+
+
 @router.post("/{project_id}/sysarch/reset", response_model=ResetResponse)
 def post_sysarch_reset(
     project_id: str,
@@ -1180,7 +1180,6 @@ _SYSARCH_RESET_CANCEL_JOB_TYPES: tuple[str, ...] = (
     "v2.apply_top_level_policies",
     "v2.apply_component_local_policies",
 )
->>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 
 
 # ── Components + policies list endpoints ────────────────────────────
