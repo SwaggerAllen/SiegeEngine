@@ -195,43 +195,74 @@ def _sysarch_xml(session, project_id: str) -> str:
             .order_by(Node.display_order, Node.id)
         ).scalars()
     )
-    # The presentational slice: the resp named "BillingUI" maps to
-    # a presentational component with a domain_parent edge pointing
-    # at the component that owns "BillingDomain". Both aliases must
-    # exist in the same <components> list for the sysarch validator
-    # to accept the domain_parent edge.
+    # The presentational slice: the resp named "BillingUI" is owned
+    # by the domain component that also owns "BillingDomain". The
+    # presentational component mirrors its domain parent's resp
+    # (resp_BillingUI) — presentational components can no longer
+    # have unique resps, they must share resps assigned to a domain
+    # component via a domain_parent edge.
     presentational_resp_name = "BillingUI"
     presentational_domain_target = "BillingDomain"
+    resp_by_name: dict[str, Node] = {r.name: r for r in resps}
+    # Build a mapping: each domain component's alias → list of resp IDs.
+    # The BillingDomain domain component also absorbs the BillingUI resp
+    # so the coverage rule is satisfied. The presentational comp then
+    # mirrors that resp via a domain_parent edge.
+    domain_resps = [r for r in resps if r.name != presentational_resp_name]
     resp_name_to_alias: dict[str, str] = {}
     components: list[str] = []
-    for i, r in enumerate(resps):
+    for i, r in enumerate(domain_resps):
         alias = f"comp{i}"
         resp_name_to_alias[r.name] = alias
-        is_foundation = i == len(resps) - 1
-        is_presentational = r.name == presentational_resp_name
-        kind_label = "presentational" if is_presentational else "domain"
+        is_foundation = i == len(domain_resps) - 1
         foundation_tag = "<foundation/>" if is_foundation else ""
+        # If this domain comp is the BillingDomain target, it also
+        # owns the BillingUI resp.
+        resp_ids = [r.id]
+        if r.name == presentational_domain_target and presentational_resp_name in resp_by_name:
+            resp_ids.append(resp_by_name[presentational_resp_name].id)
+        resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
         components.append(
             f'<component alias="{alias}">'
             f"<name>{r.name}Service</name>"
-            f"<kind>{kind_label}</kind>"
+            f"<kind>domain</kind>"
             f"<role>Own the {r.name} subsystem.</role>"
             f"<api-intent>public API for {r.name}</api-intent>"
-            f'<responsibilities><resp id="{r.id}"/></responsibilities>'
+            f"<responsibilities>{resp_xml}</responsibilities>"
             f"{foundation_tag}"
             f"</component>"
         )
-    foundation_alias = f"comp{len(resps) - 1}"
+    # Add the presentational component mirroring BillingUI resp.
+    pres_resp = resp_by_name.get(presentational_resp_name)
+    pres_alias: str | None = None
+    if pres_resp is not None:
+        pres_alias = f"comp{len(domain_resps)}"
+        resp_name_to_alias[presentational_resp_name] = pres_alias
+        components.append(
+            f'<component alias="{pres_alias}">'
+            f"<name>{presentational_resp_name}Service</name>"
+            f"<kind>presentational</kind>"
+            f"<role>Own the {presentational_resp_name} subsystem.</role>"
+            f"<api-intent>public API for {presentational_resp_name}</api-intent>"
+            f'<responsibilities><resp id="{pres_resp.id}"/></responsibilities>'
+            f"</component>"
+        )
+    foundation_alias = f"comp{len(domain_resps) - 1}"
+    total_comps = len(domain_resps) + (1 if pres_alias else 0)
     # Every non-foundation top-level depends on the foundation.
-    deps = "".join(f'<dep from="comp{i}" to="{foundation_alias}"/>' for i in range(len(resps) - 1))
+    deps = "".join(
+        f'<dep from="comp{i}" to="{foundation_alias}"/>'
+        for i in range(total_comps)
+        if f"comp{i}" != foundation_alias
+    )
     # The presentational comp presents its sibling domain comp.
     domain_parent_entries = ""
     if (
-        presentational_resp_name in resp_name_to_alias
+        pres_alias is not None
         and presentational_domain_target in resp_name_to_alias
     ):
         domain_parent_entries = (
-            f'<parent from="{resp_name_to_alias[presentational_resp_name]}" '
+            f'<parent from="{pres_alias}" '
             f'to="{resp_name_to_alias[presentational_domain_target]}"/>'
         )
     return (

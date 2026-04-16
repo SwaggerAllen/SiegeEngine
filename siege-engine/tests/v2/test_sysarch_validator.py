@@ -157,9 +157,10 @@ class TestHappyPath:
             ),
             "",  # remove foundation
         )
-        # Rebuild with a UI component that has its own resp. Use a
-        # four-resp known set for this test.
-        known = {"resp_auth00001", "resp_billing001", "resp_config001", "resp_ui00001"}
+        # Rebuild with a UI component that mirrors its domain parent's
+        # resp. Presentational components can no longer have unique
+        # resps — they must share resps with their domain parent.
+        known = {"resp_auth00001", "resp_billing001", "resp_config001"}
         components = (
             _comp(
                 "auth",
@@ -192,7 +193,7 @@ class TestHappyPath:
                 "presentational",
                 "Render the billing dashboard.",
                 "BillingDashboard view.",
-                ("resp_ui00001",),
+                ("resp_billing001",),
             )
         )
         xml = _sysarch(
@@ -460,7 +461,8 @@ class TestRespAssignmentCoverage:
         with pytest.raises(ValidationError, match="does not assign every"):
             validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
 
-    def test_double_assigned_resp_rejected(self):
+    def test_double_assigned_resp_in_two_domains_rejected(self):
+        """A resp assigned to two domain components is rejected."""
         comps = (
             _comp("auth", "A", "domain", "x", "x", ("resp_auth00001", "resp_billing001"))
             + _comp(
@@ -469,13 +471,39 @@ class TestRespAssignmentCoverage:
                 "domain",
                 "x",
                 "x",
-                ("resp_billing001",),  # also billing
+                ("resp_billing001",),  # also in auth — two domain owners
             )
             + _comp("foundation", "F", "domain", "x", "x", ("resp_config001",), foundation=True)
         )
         raw = _sysarch(components=comps)
-        with pytest.raises(ValidationError, match="assigned to both"):
+        with pytest.raises(ValidationError, match="assigned to domain components"):
             validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+
+    def test_domain_plus_presentational_mirror_accepted(self):
+        """A resp in one domain + one presentational (with domain_parent) is OK."""
+        comps = (
+            _comp("auth", "A", "domain", "x", "x", ("resp_auth00001",))
+            + _comp("billing", "B", "domain", "x", "x", ("resp_billing001",))
+            + _comp("foundation", "F", "domain", "x", "x", ("resp_config001",), foundation=True)
+            + _comp(
+                "ui_billing",
+                "BillingUI",
+                "presentational",
+                "Render billing.",
+                "Dashboard view.",
+                ("resp_billing001",),  # mirrors domain parent's resp
+            )
+        )
+        raw = _sysarch(
+            components=comps,
+            dependencies=(
+                _DEFAULT_DEPS
+                + '<dep from="ui_billing" to="foundation"/>'
+            ),
+            domain_parent='<parent from="ui_billing" to="billing"/>',
+        )
+        doc = validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+        assert len(doc.components) == 4
 
     def test_unknown_resp_id_rejected(self):
         comps = (
@@ -595,21 +623,20 @@ class TestDependencyEdges:
 
 class TestDomainParentEdges:
     def test_presentational_to_domain_accepted(self):
-        known = KNOWN_RESPS | {"resp_ui00001"}
         comps = _default_components() + _comp(
             "ui_billing",
             "Billing UI",
             "presentational",
             "Render billing dashboard.",
             "Dashboard view.",
-            ("resp_ui00001",),
+            ("resp_billing001",),  # mirrors domain parent's resp
         )
         raw = _sysarch(
             components=comps,
             dependencies=(_DEFAULT_DEPS + '<dep from="ui_billing" to="foundation"/>'),
             domain_parent='<parent from="ui_billing" to="billing"/>',
         )
-        doc = validate_sysarch(_parse(raw), known_top_level_resp_ids=known)
+        doc = validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
         assert len(doc.domain_parents) == 1
 
     def test_from_domain_rejected(self):
@@ -622,14 +649,13 @@ class TestDomainParentEdges:
             validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
 
     def test_to_presentational_rejected(self):
-        known = KNOWN_RESPS | {"resp_ui00001"}
         comps = _default_components() + _comp(
             "ui_billing",
             "Billing UI",
             "presentational",
             "Render billing dashboard.",
             "Dashboard view.",
-            ("resp_ui00001",),
+            ("resp_billing001",),  # mirrors domain parent's resp
         )
         raw = _sysarch(
             components=comps,
@@ -638,7 +664,7 @@ class TestDomainParentEdges:
             domain_parent='<parent from="ui_billing" to="ui_billing"/>',
         )
         with pytest.raises(ValidationError, match="must be a domain"):
-            validate_sysarch(_parse(raw), known_top_level_resp_ids=known)
+            validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
 
 
 class TestFoundationDependency:
@@ -698,18 +724,18 @@ class TestFoundationDependency:
     def test_presentational_component_also_requires_foundation_dep(self):
         # The foundation-dep rule applies to presentational components
         # too, not just domain components.
-        known = KNOWN_RESPS | {"resp_ui00001"}
         comps = _default_components() + _comp(
             "ui_billing",
             "Billing UI",
             "presentational",
             "Render billing.",
             "Dashboard view.",
-            ("resp_ui00001",),
+            ("resp_billing001",),  # mirrors domain parent's resp
         )
         raw = _sysarch(
             components=comps,
             dependencies=_DEFAULT_DEPS,  # no ui_billing → foundation
+            domain_parent='<parent from="ui_billing" to="billing"/>',
         )
         with pytest.raises(ValidationError, match="Missing foundation dependency from: ui_billing"):
-            validate_sysarch(_parse(raw), known_top_level_resp_ids=known)
+            validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)

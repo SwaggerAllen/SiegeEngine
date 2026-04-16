@@ -306,8 +306,14 @@ vague handle.
 * ``<responsibilities>`` contains one or more ``<resp \
 id="resp_..."/>`` children. Each ``id`` must reference a \
 top-level responsibility from the input list, verbatim. **Every \
-top-level responsibility in the input must be assigned to \
-exactly one component** — orphans and duplicates are \
+top-level responsibility must be assigned to exactly one domain \
+component.** A responsibility may additionally appear in one \
+presentational component's ``<responsibilities>`` block, but \
+only if that presentational component has a ``<domain-parent>`` \
+edge to the domain component that owns the responsibility. This \
+means a responsibility appears in either 1 component (domain \
+only) or 2 components (domain + its presentational counterpart). \
+Orphans and assignments to multiple domain components are \
 structural errors.
 * **Group responsibilities by shared data ownership and shared \
 failure modes, not by shared category.** Two responsibilities \
@@ -408,8 +414,12 @@ presentationals.
 ## Coverage
 
 * Every top-level responsibility from the input list must be \
-assigned to exactly one component's ``<responsibilities>`` \
-block. Missing assignments are a structural error.
+assigned to exactly one **domain** component's \
+``<responsibilities>`` block. A responsibility may additionally \
+appear in one presentational component if that presentational \
+component is the domain parent's counterpart (has a \
+``<domain-parent>`` edge to it). Missing assignments and \
+assignments to multiple domain components are structural errors.
 
 ## Meta-rules
 
