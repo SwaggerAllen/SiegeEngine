@@ -455,6 +455,23 @@ One consequence of the projection-source framing: when we talk about "the `<poli
 - Users do not edit documents directly. All writes to the model go through the LLM.
 - This is the single biggest philosophical shift from v1.
 
+### The system as a meaning engine
+
+The generation chain is a **meaning engine**: a machine that takes an arbitrarily large problem description and produces a tree of compressed handles at each tier, where each handle carries enough meaning that the next tier down can make correct structural decisions from the handle alone without re-reading upstream content. The implementation falls out at the bottom because by that point the system has very specific ideas that only have so many correct ways of existing.
+
+Every tier transition is either **compression** (many inputs → fewer, richer handles), **expansion** (one input → many specialized outputs within a bounded scope), or **rotation** (re-indexing the same problem space along a different axis). The chain alternates these:
+
+1. **Feature expansion** — *extraction*. Imposes structure on the raw input doc. Produces the first set of handles. Downstream reader: requirements.
+2. **Requirements** — *rotation*. Redistributes user-facing features into system-level responsibilities along a different axis (user concerns → system guarantees). Not compression, not expansion — the input and output counts aren't predictably related. Downstream reader: sysarch.
+3. **Sysarch** — *compression*. Collapses many responsibilities into fewer components, each with a role + API intent that fuses the meaning of multiple resps. The biggest single compression step. Downstream readers: subreqs, comparch.
+4. **Subrequirements** — *scope-bounded expansion*. Expands a single component's responsibilities into finer-grained subresponsibilities, bounded to that component's territory. Downstream reader: comparch.
+5. **Comparch** — *last compression*. The final articulation layer before implementation. Pubapi fragments are the only thing dependents ever read. Vagueness here multiplies across every impl file. Downstream readers: subcomparch, impl, dependents.
+6. **Subcomparch** — *leaf articulation*. No more tiers to correct it. The impl node will build against this directly.
+
+**The god-document instinct is wrong.** Passing the input doc to downstream tiers is the equivalent of refusing to trust the handles, which is the equivalent of saying the handles aren't doing their job — in which case the fix is upstream, not downstream. The input doc feeds the extraction tiers (feature expansion, requirements, sysarch) where handles are still being forged; the propagation tiers (comparch, subcomparch, impl) work from handles only. If a comparch can't reason about what lives inside a component from the sysarch's role and API intent, that's a sysarch quality bug, not a data flow bug.
+
+**Handle quality is the load-bearing property.** The data flow is correct — the right information reaches the right tier. The hard problem is making sure each handle carries enough meaning-per-token that downstream tiers can make correct decisions from it. "This component handles user-facing billing concerns" is structurally valid and useless; "Maintain subscription state, collect payment via provider API, schedule retries on failure, suspend accounts when retries exhaust" carries enough specificity for comparch to reason about what subcomponents live inside. The failure mode for the meaning engine is not structural — it's articulacy. Every generation prompt names its downstream reader and pushes against category-speak for this reason.
+
 ---
 
 ## Propagation model

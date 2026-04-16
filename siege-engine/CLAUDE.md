@@ -86,6 +86,32 @@ Phase 7 is fan-in synthesis, Phase 8 is impl nodes. Don't conflate
 them — in an earlier session I mis-remembered Phase 6 as impl nodes,
 which was wrong.
 
+## Meaning-engine model
+
+The generation chain is a meaning engine — each tier produces
+compressed handles (names, roles, API intents, pubapi fragments)
+that downstream tiers reason from directly. The chain alternates
+compression, expansion, and rotation:
+
+- **Feature expansion** — extraction from raw input
+- **Requirements** — rotation (user-facing → system-level axis)
+- **Sysarch** — compression (resps → components)
+- **Subreqs** — scope-bounded expansion
+- **Comparch** — last compression before impl
+- **Subcomparch** — leaf articulation, no more tiers to correct
+
+Every prompt names its downstream reader, pushes against
+category-speak, and frames the tier's transformation type.
+Handle quality (meaning-per-token) is the load-bearing property
+— if a tier's output is vague, the fix is in that tier's prompt,
+not in passing more context downstream. The input doc only feeds
+extraction tiers (expansion, reqs, sysarch); propagation tiers
+(comparch, subcomparch, impl) work from handles only.
+
+See `docs/architecture/v2-rearchitecture.md` §The system as a
+meaning engine and `seed-docs/catapult-spec-v2.md` §A.3.1a for
+the full treatment.
+
 ## Known design debt (not urgent, worth tracking)
 
 - **Topological dispatch within a parent comp's subcomparch batch.**
