@@ -284,9 +284,10 @@ def render_user_prompt(
         )
     elif prior_pending or prior_approved:
         parts.append(
-            "Regenerate the subrequirements from scratch based on "
-            "the component and its top-level responsibilities above. "
-            "Output only the <subrequirements> block."
+            "Improve the subrequirements above. Fix any issues you "
+            "notice with granularity, specificity, or coverage of the "
+            "parent responsibilities. Output only the revised "
+            "<subrequirements> block."
         )
     else:
         parts.append(

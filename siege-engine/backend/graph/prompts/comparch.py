@@ -684,9 +684,10 @@ def render_user_prompt(
         )
     elif prior_pending or prior_approved:
         parts.append(
-            "Regenerate the architecture doc from scratch based on "
-            "the component context above. Output only the <comparch> "
-            "block."
+            "Improve the architecture doc above. Fix any issues you "
+            "notice with the techspec, public surface, subcomponent "
+            "decomposition, or dependency structure. Output only the "
+            "revised <comparch> block."
         )
     else:
         parts.append(

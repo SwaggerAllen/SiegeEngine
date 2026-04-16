@@ -123,7 +123,7 @@ class TestRenderUserPrompt:
         )
         assert "# Current draft" in out
         assert "## Contacts" in out
-        assert "Regenerate the feature expansion from scratch" in out
+        assert "Improve the feature expansion above" in out
         assert "Previously-approved" not in out
 
     def test_feedback_with_prior_pending(self):

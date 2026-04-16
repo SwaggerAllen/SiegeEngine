@@ -543,9 +543,10 @@ def render_user_prompt(
         )
     elif prior_pending or prior_approved:
         parts.append(
-            "Regenerate the system architecture from scratch based on "
-            "the features and responsibilities above. Output only the "
-            "<sysarch> block."
+            "Improve the system architecture above. Fix any issues you "
+            "notice with component boundaries, handle quality, "
+            "responsibility assignments, or dependency structure. "
+            "Output only the revised <sysarch> block."
         )
     else:
         parts.append(

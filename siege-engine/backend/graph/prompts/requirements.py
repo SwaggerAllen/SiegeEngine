@@ -336,8 +336,10 @@ def render_user_prompt(
         )
     elif prior_pending or prior_approved:
         parts.append(
-            "Regenerate the requirements from scratch based on the "
-            "features above. Output only the <requirements> block."
+            "Improve the requirements above. Fix any issues you notice "
+            "with responsibility boundaries, coverage, specificity, or "
+            "the axis rotation from features to system-level guarantees. "
+            "Output only the revised <requirements> block."
         )
     else:
         parts.append(

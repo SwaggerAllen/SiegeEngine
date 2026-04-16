@@ -358,8 +358,9 @@ def render_user_prompt(
         )
     elif prior_pending or prior_approved:
         parts.append(
-            "Regenerate the feature expansion from scratch based on the "
-            "input document. Output only the <features> block."
+            "Improve the feature expansion above. Fix any issues you "
+            "notice with coverage, specificity, or structure. Output "
+            "only the revised <features> block."
         )
     else:
         parts.append(
