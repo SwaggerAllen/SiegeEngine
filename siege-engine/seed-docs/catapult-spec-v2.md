@@ -22,6 +22,10 @@ This specification is divided into two parts: **A. Requirements** (what the syst
 
 # Part A — Requirements
 
+**A note on what is engine vs. what is configuration.** Catapult is a **graph-of-prompts engine**. It traverses a directed graph of generation stages — each stage has a prompt template, a validation grammar, a mint specification, and scheduling rules — and the engine itself is tier-agnostic. It does not know what a "component" or a "responsibility" is; it knows how to run a prompt, validate the output, mint children from approved content, and schedule the next stage based on projected state.
+
+Everything in this specification that describes specific tiers (features, responsibilities, components, subcomponents), specific flows (scaffolding, feature request, refactor), specific generation order (the cold-start sequence in §A.3.1), or specific prompt strategies (the meaning-engine model in §A.3.1a) describes the **default bundle** — the built-in configuration that ships with Catapult and covers the common case. The bundle system (§A.11) allows all of this to be reconfigured at four abstraction levels, from simple prompt overrides (L0) through fully data-driven tier hierarchies (L3, post-MVP). A reader should understand the sections below as "this is what Catapult does out of the box" rather than "this is what Catapult is hardwired to do."
+
 ## A.1 Core concepts
 
 ### A.1.1 Structured model as source of truth
@@ -345,7 +349,7 @@ This flow is how Catapult stays coherent when the codebase moves outside its con
 
 ### A.3.1 Cold-start generation order
 
-The cold-start pipeline runs through a fixed topological order. Each tier has its own prose, its own approvals, its own generation prompt, and its own position in the chain. The sequence is load-bearing because downstream tiers reference upstream IDs that must already be minted and stable at the moment the downstream regen runs.
+The engine traverses a directed graph of generation stages, where each stage's prompt template, validation grammar, mint specification, and scheduling rules are supplied by the active bundle (§A.11). The **default bundle** ships with the following cold-start sequence. The sequence is load-bearing because downstream tiers reference upstream IDs that must already be minted and stable at the moment the downstream regen runs — but a custom bundle can add, remove, or reorder stages as long as the ID-stability invariant holds.
 
 1. **Input document** — the raw prose the user brings in. The only node the user authors directly.
 2. **Feature expansion (`expansion_*`)** — prose decomposition of the input into features. Approved as a standalone document before any feature nodes exist. On approval, `feat_*` nodes are projected.
@@ -360,6 +364,20 @@ The cold-start pipeline runs through a fixed topological order. Each tier has it
 11. **Code** — generated as a final leaf pass, plan by plan, in dependency topological order, limited to the leaf's territory.
 
 The two-tier decomposition split (reqs/sysarch at the top, subreqs/comparch per component) is what resolves the chicken-and-egg of "component A's regen needs component B's public surface but B hasn't been generated yet." By committing to top-level responsibilities, then API intent, then each component's subresponsibilities up front, dependent components have stable IDs and bounded contracts to reference even before the downstream components have been generated in detail. Component architectures then flesh the intent into full public-surface detail, and the sysarch's API entry for each component is a transcluded fragment of the component arch (A.1.5) so drift is detectable as a fragment diff.
+
+### A.3.1a The default bundle as a meaning engine
+
+The default bundle's tier sequence above is not just a topological dependency chain — it is designed as a **meaning engine**. Each tier produces compressed handles (component names, role paragraphs, API intents, pubapi fragments) that carry enough meaning for the next tier to make correct structural decisions without re-reading upstream content. The implementation falls out at the bottom because by that point the handles are specific enough that there are only so many correct ways to build them. The meaning-engine model is a design philosophy of the default bundle's prompt suite, not an engine-level constraint — a custom bundle could organize its tiers around a different philosophy — but the default bundle's prompts are written to enforce it, and the architectural decisions below (context scoping, fragment transclusion, the extraction/propagation split) assume it.
+
+**In the default bundle, each tier transition is one of three operations:**
+
+- **Compression** — many inputs collapse into fewer, richer handles. Sysarch is the biggest compression step: N responsibilities become fewer components, each carrying a role + API intent that fuses the meaning of several responsibilities. Comparch is the last compression step: everything downstream reads its pubapi fragments and nothing else.
+- **Expansion** — one input expands into many specialized outputs within a bounded scope. Subrequirements expand a single component's top-level responsibilities into finer subresponsibilities, bounded to that component's territory.
+- **Rotation** — the problem space is re-indexed along a different axis. Requirements rotates from user-facing capabilities (features) to system-level guarantees (responsibilities). This is not compression and not expansion — the input and output counts aren't predictably related — but it is the step that breaks feature boundaries so sysarch can cluster by data ownership and failure modes instead of by user-facing category.
+
+**The god-document instinct is wrong.** Passing the raw input document to every tier would be the equivalent of saying the handles at each tier aren't carrying enough meaning — and the fix for that is improving handle quality upstream, not bypassing the handles downstream. In the default bundle, the input document feeds the extraction phase (feature expansion, requirements, sysarch) where handles are still being forged from raw text. The propagation phase (comparch, subcomparch, impl) works from handles only. If comparch can't figure out what lives inside a component from the sysarch's role and API intent, that's a sysarch quality bug, not a data flow bug. A custom bundle that adds a new tier between sysarch and comparch would need to decide for itself which phase that tier belongs to — but the principle holds: context should flow through handles, not around them.
+
+**Handle quality is the load-bearing property.** The data flow is correct — the right information reaches the right tier at the right time. The hard problem is ensuring each handle carries enough meaning-per-token that downstream tiers can make correct decisions from it alone. "This component handles billing" is structurally valid and useless; "Maintain subscription state, collect payment via provider API, schedule retries on failure, suspend accounts when retries exhaust" carries enough specificity for comparch to decompose into subcomponents without guessing. The failure mode is not structural — it is articulacy. The default bundle's generation prompts all name their downstream reader and push against vague category-speak for this reason. The pressure on handle quality is highest at the last compression step before implementation (comparch in the default bundle), because everything below it is tactics, and tactics multiply any upstream vagueness. Custom bundles that define their own tier graph inherit this pressure at whatever tier is their last articulation layer before code.
 
 ### A.3.2 State-driven scheduling
 
