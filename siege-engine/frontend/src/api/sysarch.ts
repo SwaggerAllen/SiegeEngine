@@ -132,6 +132,22 @@ export async function resetSysarch(projectId: string): Promise<ResetResult> {
   return ResetResponseSchema.parse(data);
 }
 
+const PromptPreviewSchema = z.object({
+  system_prompt: z.string(),
+  user_prompt: z.string(),
+});
+export type PromptPreview = z.infer<typeof PromptPreviewSchema>;
+
+export async function getPromptPreview(
+  projectId: string,
+  feedback: string
+): Promise<PromptPreview> {
+  const { data } = await api.post(`/projects/${projectId}/sysarch/prompt-preview`, {
+    feedback,
+  });
+  return PromptPreviewSchema.parse(data);
+}
+
 export async function getComponents(projectId: string): Promise<ComponentListResponse> {
   const { data } = await api.get(`/projects/${projectId}/components`);
   return ComponentListResponseSchema.parse(data);

@@ -219,6 +219,18 @@ class ResetResponse(BaseModel):
     jobs_cancelled: int
 
 
+class PromptPreviewResponse(BaseModel):
+    """Rendered system + user prompts for a bootstrap tier.
+
+    Returned by the ``/prompt-preview`` endpoints so the user can
+    see exactly what the LLM would receive before hitting
+    Reject & Regenerate.
+    """
+
+    system_prompt: str
+    user_prompt: str
+
+
 # ── Feature list response models ────────────────────────────────────
 
 
@@ -1186,6 +1198,209 @@ _SYSARCH_RESET_CANCEL_JOB_TYPES: tuple[str, ...] = (
     "v2.apply_top_level_policies",
     "v2.apply_component_local_policies",
 )
+
+
+# ── Prompt preview endpoints ─────────────────────────────────────────
+
+
+class PromptPreviewRequest(BaseModel):
+    feedback: str = ""
+
+
+@router.post("/{project_id}/expansion/prompt-preview", response_model=PromptPreviewResponse)
+def post_expansion_prompt_preview(
+    project_id: str,
+    req: PromptPreviewRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> PromptPreviewResponse:
+    """Render the expansion prompt as the LLM would see it."""
+    _require_project(db, project_id)
+    node = get_expansion_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Expansion node missing")
+
+    from backend.graph.prompts.feature_expansion import (
+        render_system_prompt as fe_render_system,
+    )
+    from backend.graph.prompts.feature_expansion import (
+        render_user_prompt as fe_render_user,
+    )
+    from backend.models.input_document import InputDocument
+    from backend.projects.settings import get_project_settings
+
+    pending = pending_expansion_draft(db, project_id)
+    input_doc_row = (
+        db.query(InputDocument)
+        .filter(InputDocument.project_id == project_id, InputDocument.doc_type == "project_doc")
+        .order_by(InputDocument.created_at.desc())
+        .first()
+    )
+    project_row = db.get(Project, project_id)
+    assert project_row is not None
+    settings = get_project_settings(project_row)
+    feedback = req.feedback.strip() or None
+
+    return PromptPreviewResponse(
+        system_prompt=fe_render_system(settings.features_per_group),
+        user_prompt=fe_render_user(
+            input_doc=(input_doc_row.content or "") if input_doc_row else "",
+            prior_approved=node.content or None,
+            prior_pending=pending.content if pending else None,
+            feedback=feedback,
+        ),
+    )
+
+
+@router.post("/{project_id}/requirements/prompt-preview", response_model=PromptPreviewResponse)
+def post_reqs_prompt_preview(
+    project_id: str,
+    req: PromptPreviewRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> PromptPreviewResponse:
+    """Render the requirements prompt as the LLM would see it."""
+    _require_project(db, project_id)
+    node = get_reqs_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Requirements node missing")
+
+    from backend.graph.prompts.requirements import (
+        format_features_summary,
+    )
+    from backend.graph.prompts.requirements import (
+        render_system_prompt as reqs_render_system,
+    )
+    from backend.graph.prompts.requirements import (
+        render_user_prompt as reqs_render_user,
+    )
+    from backend.graph.vocabulary import render_vocab_summary_all
+    from backend.models.input_document import InputDocument
+    from backend.projects.settings import get_project_settings
+
+    pending = pending_reqs_draft(db, project_id)
+    feature_rows = (
+        db.query(Node)
+        .filter(Node.project_id == project_id, Node.tier == "feat")
+        .order_by(Node.display_order, Node.created_at)
+        .all()
+    )
+    features_summary = format_features_summary(
+        [
+            {
+                "id": f.id,
+                "name": f.name,
+                "content": f.content,
+                "group_label": f.group_label,
+                "is_implicit": f.is_implicit,
+            }
+            for f in feature_rows
+        ]
+    )
+    vocab_summary = render_vocab_summary_all(db, project_id)
+    input_doc_row = (
+        db.query(InputDocument)
+        .filter(InputDocument.project_id == project_id, InputDocument.doc_type == "project_doc")
+        .order_by(InputDocument.created_at.desc())
+        .first()
+    )
+    project_row = db.get(Project, project_id)
+    assert project_row is not None
+    settings = get_project_settings(project_row)
+    feedback = req.feedback.strip() or None
+
+    return PromptPreviewResponse(
+        system_prompt=reqs_render_system(settings.top_level_responsibilities),
+        user_prompt=reqs_render_user(
+            features_summary=features_summary,
+            prior_approved=node.content or None,
+            prior_pending=pending.content if pending else None,
+            feedback=feedback,
+            vocab_summary=vocab_summary,
+            input_doc=(input_doc_row.content or "") if input_doc_row else "",
+        ),
+    )
+
+
+@router.post("/{project_id}/sysarch/prompt-preview", response_model=PromptPreviewResponse)
+def post_sysarch_prompt_preview(
+    project_id: str,
+    req: PromptPreviewRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> PromptPreviewResponse:
+    """Render the sysarch prompt as the LLM would see it."""
+    _require_project(db, project_id)
+    node = get_sysarch_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Sysarch node missing")
+
+    from backend.graph.prompts.requirements import format_features_summary
+    from backend.graph.prompts.sysarch import (
+        format_reqs_summary,
+    )
+    from backend.graph.prompts.sysarch import (
+        render_system_prompt as sa_render_system,
+    )
+    from backend.graph.prompts.sysarch import (
+        render_user_prompt as sa_render_user,
+    )
+    from backend.graph.vocabulary import render_vocab_summary_all
+    from backend.models.input_document import InputDocument
+    from backend.projects.settings import get_project_settings
+
+    pending = pending_sysarch_draft(db, project_id)
+    feature_rows = (
+        db.query(Node)
+        .filter(Node.project_id == project_id, Node.tier == "feat")
+        .order_by(Node.display_order, Node.created_at)
+        .all()
+    )
+    features_summary = format_features_summary(
+        [
+            {
+                "id": f.id,
+                "name": f.name,
+                "content": f.content,
+                "group_label": f.group_label,
+                "is_implicit": f.is_implicit,
+            }
+            for f in feature_rows
+        ]
+    )
+    resp_rows = (
+        db.query(Node)
+        .filter(Node.project_id == project_id, Node.tier == "resp", Node.parent_id.is_(None))
+        .order_by(Node.display_order, Node.created_at)
+        .all()
+    )
+    reqs_summary = format_reqs_summary(
+        [{"id": r.id, "name": r.name, "content": r.content} for r in resp_rows]
+    )
+    vocab_summary = render_vocab_summary_all(db, project_id)
+    input_doc_row = (
+        db.query(InputDocument)
+        .filter(InputDocument.project_id == project_id, InputDocument.doc_type == "project_doc")
+        .order_by(InputDocument.created_at.desc())
+        .first()
+    )
+    project_row = db.get(Project, project_id)
+    assert project_row is not None
+    settings = get_project_settings(project_row)
+    feedback = req.feedback.strip() or None
+
+    return PromptPreviewResponse(
+        system_prompt=sa_render_system(settings.top_level_components),
+        user_prompt=sa_render_user(
+            features_summary=features_summary,
+            reqs_summary=reqs_summary,
+            prior_approved=node.content or None,
+            prior_pending=pending.content if pending else None,
+            feedback=feedback,
+            vocab_summary=vocab_summary,
+            input_doc=(input_doc_row.content or "") if input_doc_row else "",
+        ),
+    )
 
 
 # ── Expansion reset ──────────────────────────────────────────────────

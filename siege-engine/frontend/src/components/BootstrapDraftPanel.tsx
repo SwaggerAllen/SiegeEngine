@@ -132,12 +132,8 @@ interface Props {
   error: unknown;
   labels: BootstrapPanelLabels;
   callbacks: BootstrapPanelCallbacks;
-  /**
-   * XML renderer map for the bootstrap doc's schema. See
-   * ``components/xml/featureRenderers.tsx`` for the Phase 2
-   * example — every phase ships its own map and passes it in.
-   */
   contentRenderers: XmlRendererMap;
+  getPromptPreview?: (feedback: string) => Promise<{ system_prompt: string; user_prompt: string }>;
 }
 
 function TelemetryLine({ telemetry }: { telemetry: BootstrapPanelTelemetry | null }) {
@@ -321,8 +317,26 @@ export function BootstrapDraftPanel({
   labels,
   callbacks,
   contentRenderers,
+  getPromptPreview,
 }: Props) {
   const [feedback, setFeedback] = useState('');
+  const [showPromptPreview, setShowPromptPreview] = useState(false);
+  const [promptPreview, setPromptPreview] = useState<{
+    system_prompt: string;
+    user_prompt: string;
+  } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const fetchPreview = useCallback(() => {
+    if (!getPromptPreview) return;
+    setPreviewLoading(true);
+    getPromptPreview(feedback.trim())
+      .then((result) => {
+        setPromptPreview(result);
+        setShowPromptPreview(true);
+      })
+      .finally(() => setPreviewLoading(false));
+  }, [getPromptPreview, feedback]);
 
   if (isLoading) {
     return <div className="p-6 text-gray-400 text-sm">{labels.loadingMessage}</div>;
@@ -441,7 +455,29 @@ export function BootstrapDraftPanel({
               Reject &amp; Regenerate
             </button>
             <CopyButton content={pending_draft.content} />
+            {getPromptPreview && (
+              <button
+                type="button"
+                onClick={showPromptPreview ? () => setShowPromptPreview(false) : fetchPreview}
+                disabled={previewLoading}
+                className="px-3 py-1 text-xs rounded border border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-40"
+              >
+                {previewLoading ? 'Loading…' : showPromptPreview ? 'Hide Prompt' : 'Preview Prompt'}
+              </button>
+            )}
           </div>
+          {showPromptPreview && promptPreview && (
+            <div className="max-h-96 overflow-y-auto bg-gray-900 border border-gray-700 rounded p-3 text-xs font-mono whitespace-pre-wrap space-y-4">
+              <div>
+                <div className="text-gray-500 font-semibold mb-1 font-sans text-xs uppercase tracking-wide">System Prompt</div>
+                <div className="text-gray-300">{promptPreview.system_prompt}</div>
+              </div>
+              <div className="border-t border-gray-700 pt-3">
+                <div className="text-gray-500 font-semibold mb-1 font-sans text-xs uppercase tracking-wide">User Prompt</div>
+                <div className="text-gray-300">{promptPreview.user_prompt}</div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

@@ -7,6 +7,7 @@ import {
   useFeedbackMutation,
   useResetMutation,
 } from '../hooks/mutations/useRequirementsMutations';
+import { getPromptPreview } from '../api/requirements';
 import {
   BootstrapDraftPanel,
   type BootstrapPanelLabels,
@@ -80,6 +81,7 @@ export function RequirementsPanel({ projectId }: Props) {
         isBusy,
       }}
       contentRenderers={renderers}
+      getPromptPreview={(fb) => getPromptPreview(projectId, fb)}
     />
   );
 }

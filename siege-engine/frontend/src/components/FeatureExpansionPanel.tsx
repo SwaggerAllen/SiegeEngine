@@ -5,6 +5,7 @@ import {
   useFeedbackMutation,
   useResetMutation,
 } from '../hooks/mutations/useExpansionMutations';
+import { getPromptPreview } from '../api/expansion';
 import {
   BootstrapDraftPanel,
   type BootstrapPanelLabels,
@@ -53,6 +54,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
         isBusy,
       }}
       contentRenderers={featureRenderers}
+      getPromptPreview={(fb) => getPromptPreview(projectId, fb)}
     />
   );
 }

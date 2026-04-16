@@ -109,6 +109,22 @@ export async function resetRequirements(projectId: string): Promise<ResetResult>
   return ResetResponseSchema.parse(data);
 }
 
+const PromptPreviewSchema = z.object({
+  system_prompt: z.string(),
+  user_prompt: z.string(),
+});
+export type PromptPreview = z.infer<typeof PromptPreviewSchema>;
+
+export async function getPromptPreview(
+  projectId: string,
+  feedback: string
+): Promise<PromptPreview> {
+  const { data } = await api.post(`/projects/${projectId}/requirements/prompt-preview`, {
+    feedback,
+  });
+  return PromptPreviewSchema.parse(data);
+}
+
 export async function getResponsibilities(
   projectId: string
 ): Promise<ResponsibilityListResponse> {

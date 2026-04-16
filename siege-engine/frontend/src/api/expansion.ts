@@ -97,3 +97,19 @@ export async function resetExpansion(projectId: string): Promise<ResetResult> {
   const { data } = await api.post(`/projects/${projectId}/expansion/reset`);
   return ResetResponseSchema.parse(data);
 }
+
+const PromptPreviewSchema = z.object({
+  system_prompt: z.string(),
+  user_prompt: z.string(),
+});
+export type PromptPreview = z.infer<typeof PromptPreviewSchema>;
+
+export async function getPromptPreview(
+  projectId: string,
+  feedback: string
+): Promise<PromptPreview> {
+  const { data } = await api.post(`/projects/${projectId}/expansion/prompt-preview`, {
+    feedback,
+  });
+  return PromptPreviewSchema.parse(data);
+}
