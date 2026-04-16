@@ -560,7 +560,7 @@ class TestInputDocInclusion:
         # The first draft's distinguishing strings must appear in
         # the second regen's prompt under the "Current draft"
         # section, so the LLM knows what it's refining.
-        assert "# Current draft (not yet approved)" in second_prompt
+        assert "# Current version" in second_prompt
         assert "DraftOneMarker" in second_prompt
         assert "A distinctive first-draft intent." in second_prompt
 

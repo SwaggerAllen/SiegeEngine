@@ -121,10 +121,9 @@ class TestRenderUserPrompt:
             prior_pending="## Contacts\n- CRUD",
             feedback=None,
         )
-        assert "# Current draft" in out
+        assert "# Current version" in out
         assert "## Contacts" in out
         assert "Improve the feature expansion above" in out
-        assert "Previously-approved" not in out
 
     def test_feedback_with_prior_pending(self):
         out = render_user_prompt(
@@ -133,7 +132,7 @@ class TestRenderUserPrompt:
             prior_pending="## Contacts\n- CRUD",
             feedback="Also cover pipeline management.",
         )
-        assert "# Current draft" in out
+        assert "# Current version" in out
         assert "# User feedback" in out
         assert "Also cover pipeline management." in out
         assert "Revise the feature expansion" in out
@@ -145,7 +144,7 @@ class TestRenderUserPrompt:
             prior_pending=None,
             feedback="Add reporting.",
         )
-        assert "# Previously-approved feature expansion" in out
+        assert "# Current version" in out
         assert "## Contacts approved" in out
         assert "# User feedback" in out
         assert "Revise the feature expansion" in out

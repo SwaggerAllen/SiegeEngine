@@ -490,16 +490,11 @@ def render_user_prompt(
     parts.append(reqs_summary.strip() or "(no responsibilities minted yet)")
     parts.append("")
 
-    if prior_approved:
-        parts.append("# Previously-approved system architecture")
+    prior = prior_pending or prior_approved
+    if prior:
+        parts.append("# Current version")
         parts.append("")
-        parts.append(prior_approved.strip())
-        parts.append("")
-
-    if prior_pending:
-        parts.append("# Current draft (not yet approved)")
-        parts.append("")
-        parts.append(prior_pending.strip())
+        parts.append(prior.strip())
         parts.append("")
 
     if feedback:
@@ -534,14 +529,14 @@ def render_user_prompt(
             "block addressing the structural error above. Output only "
             "the corrected <sysarch> block."
         )
-    elif feedback and (prior_pending or prior_approved):
+    elif feedback and prior:
         parts.append(
             "Revise the system architecture to address the user "
             "feedback above. Preserve the component + policy + edge "
             "set where the feedback does not require a change. Output "
             "only the revised <sysarch> block."
         )
-    elif prior_pending or prior_approved:
+    elif prior:
         parts.append(
             "Improve the system architecture above. Fix any issues you "
             "notice with component boundaries, handle quality, "

@@ -307,16 +307,11 @@ def render_user_prompt(
     parts.append(input_doc.strip() or "(no input document supplied)")
     parts.append("")
 
-    if prior_approved:
-        parts.append("# Previously-approved feature expansion")
+    prior = prior_pending or prior_approved
+    if prior:
+        parts.append("# Current version")
         parts.append("")
-        parts.append(prior_approved.strip())
-        parts.append("")
-
-    if prior_pending:
-        parts.append("# Current draft (not yet approved)")
-        parts.append("")
-        parts.append(prior_pending.strip())
+        parts.append(prior.strip())
         parts.append("")
 
     if feedback:
@@ -350,13 +345,13 @@ def render_user_prompt(
             "addressing the structural error above. Output only the "
             "corrected <features> block."
         )
-    elif feedback and (prior_pending or prior_approved):
+    elif feedback and prior:
         parts.append(
             "Revise the feature expansion to address the user feedback "
             "above. Preserve structure where the feedback does not "
             "request changes. Output only the revised <features> block."
         )
-    elif prior_pending or prior_approved:
+    elif prior:
         parts.append(
             "Improve the feature expansion above. Fix any issues you "
             "notice with coverage, specificity, or structure. Output "

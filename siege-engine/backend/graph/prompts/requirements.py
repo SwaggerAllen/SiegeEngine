@@ -285,16 +285,11 @@ def render_user_prompt(
     parts.append(features_summary.strip() or "(no features minted yet)")
     parts.append("")
 
-    if prior_approved:
-        parts.append("# Previously-approved requirements")
+    prior = prior_pending or prior_approved
+    if prior:
+        parts.append("# Current version")
         parts.append("")
-        parts.append(prior_approved.strip())
-        parts.append("")
-
-    if prior_pending:
-        parts.append("# Current draft (not yet approved)")
-        parts.append("")
-        parts.append(prior_pending.strip())
+        parts.append(prior.strip())
         parts.append("")
 
     if feedback:
@@ -328,13 +323,13 @@ def render_user_prompt(
             "addressing the structural error above. Output only the "
             "corrected <requirements> block."
         )
-    elif feedback and (prior_pending or prior_approved):
+    elif feedback and prior:
         parts.append(
             "Revise the requirements to address the user feedback above. "
             "Preserve structure where the feedback does not request "
             "changes. Output only the revised <requirements> block."
         )
-    elif prior_pending or prior_approved:
+    elif prior:
         parts.append(
             "Improve the requirements above. Fix any issues you notice "
             "with responsibility boundaries, coverage, specificity, or "
