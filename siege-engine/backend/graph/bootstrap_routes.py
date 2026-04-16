@@ -234,10 +234,15 @@ def bootstrap_approve(
     db.commit()
     db.refresh(node)
     if config.mint_job_type:
+        mint_payload: dict[str, Any] = {"project_id": project_id}
+        if len(scope_ids) >= 1:
+            mint_payload["component_id"] = scope_ids[0]
+        if len(scope_ids) >= 2:
+            mint_payload["sub_id"] = scope_ids[1]
         pipeline_queue.enqueue(
             db,
             job_type=config.mint_job_type,
-            payload=build_job_payload(project_id, scope_ids),
+            payload=mint_payload,
         )
     return {"node": config.serialize_node(node)}
 
@@ -276,6 +281,11 @@ def bootstrap_discard(
         )
     append_event(db, project_id, ev.DraftDiscarded(draft_id=draft_id))
     db.commit()
+    pipeline_queue.enqueue(
+        db,
+        job_type=config.generate_job_type,
+        payload=build_job_payload(project_id, scope_ids),
+    )
     return {"ok": True}
 
 
@@ -288,13 +298,18 @@ def bootstrap_cancel(
 ) -> dict[str, bool]:
     """Generic POST cancel handler."""
     require_project(db, project_id)
-    cancelled = pipeline_queue.cancel_jobs_by_type(
+    payload_filters: dict[str, Any] = {"project_id": project_id}
+    if len(scope_ids) >= 1:
+        payload_filters["component_id"] = scope_ids[0]
+    job = pipeline_queue.find_active_job(
         db,
         config.generate_job_type,
-        project_id=project_id,
-        **({"component_id": scope_ids[0]} if scope_ids else {}),
+        payload_filters=payload_filters,
     )
-    return {"cancelled": cancelled > 0}
+    if job is None:
+        return {"cancelled": False}
+    ok = pipeline_queue.cancel_job(db, job.id)
+    return {"cancelled": ok}
 
 
 def bootstrap_reset(

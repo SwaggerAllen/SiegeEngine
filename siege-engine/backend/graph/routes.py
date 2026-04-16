@@ -23,6 +23,16 @@ from backend.auth.routes import get_current_user
 from backend.database import get_db
 from backend.graph import events as ev
 from backend.graph import queries
+from backend.graph.bootstrap_routes import (
+    BootstrapTierConfig,
+    bootstrap_approve,
+    bootstrap_cancel,
+    bootstrap_discard,
+    bootstrap_feedback,
+    bootstrap_get_state,
+    bootstrap_prompt_preview,
+    bootstrap_reset,
+)
 from backend.graph.expansion import (
     bootstrap_expansion_node,
     get_expansion_node,
@@ -83,16 +93,6 @@ from backend.graph.sysarch import (
 )
 from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
-from backend.graph.bootstrap_routes import (
-    BootstrapTierConfig,
-    bootstrap_approve,
-    bootstrap_cancel,
-    bootstrap_discard,
-    bootstrap_feedback,
-    bootstrap_get_state,
-    bootstrap_prompt_preview,
-    bootstrap_reset,
-)
 from backend.models.node import Draft, Edge, Node
 from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
@@ -300,50 +300,67 @@ def _latest_telemetry(db: Session, project_id: str, node_id: str) -> TelemetrySu
     )
 
 
+def _node_to_dict(node) -> dict:
+    return {
+        "id": node.id,
+        "name": node.name,
+        "content": node.content,
+        "updated_at": node.updated_at.isoformat() if node.updated_at else "",
+    }
+
+
+def _draft_to_dict(draft) -> dict:
+    return {
+        "id": draft.id,
+        "content": draft.content,
+        "created_at": draft.created_at.isoformat() if draft.created_at else "",
+    }
+
+
+EXPANSION_CONFIG = BootstrapTierConfig(
+    tier_name="Feature expansion",
+    get_node=get_expansion_node,
+    get_pending_draft=pending_expansion_draft,
+    has_been_approved=has_been_approved,
+    bootstrap_node=bootstrap_expansion_node,
+    generate_job_type=GENERATE_FEATURE_EXPANSION_JOB_TYPE,
+    mint_job_type=MINT_FEATURES_JOB_TYPE,
+    serialize_node=_node_to_dict,
+    serialize_draft=_draft_to_dict,
+    feedback_readonly_detail=(
+        "Feature expansion is read-only after approval; "
+        "further feature-layer edits happen on individual feature nodes."
+    ),
+    collect_downstream_nodes=expansion_collect_downstream_nodes,
+    collect_pending_drafts_for_nodes=sysarch_collect_pending_drafts_for_nodes,
+    downstream_job_types=(
+        "v2.generate_feature_expansion", "v2.mint_features",
+        "v2.generate_requirements", "v2.mint_requirements",
+        "v2.generate_sysarch", "v2.mint_sysarch",
+        "v2.generate_subrequirements", "v2.mint_subrequirements",
+        "v2.generate_comparch", "v2.mint_comparch",
+        "v2.generate_subcomparch", "v2.mint_subcomparch",
+        "v2.apply_top_level_policies", "v2.apply_component_local_policies",
+    ),
+    additional_nodes_to_clear=lambda db, pid: [
+        get_reqs_node(db, pid),
+        get_sysarch_node(db, pid),
+    ],
+    additional_drafts_to_discard=lambda db, pid: [
+        pending_reqs_draft(db, pid),
+        pending_sysarch_draft(db, pid),
+    ],
+)
+
+
 @router.get("/{project_id}/expansion", response_model=ExpansionResponse)
 def get_expansion(
     project_id: str,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ExpansionResponse:
-    _require_project(db, project_id)
-    node = get_expansion_node(db, project_id)
-    if node is None:
-        # Legacy projects created before the ``expansion`` tier shipped
-        # don't have a bootstrap node. Lazily mint one on first open
-        # and kick off an initial generation, so "open old project"
-        # Just Works instead of surfacing a raw 404 on the dashboard.
-        # This also covers any future migration or crash that leaves
-        # a project in a pre-bootstrap state.
-        logger.warning("Project %s has no expansion node; lazy-bootstrapping", project_id)
-        bootstrap_expansion_node(db, project_id)
-        db.commit()
-        pipeline_queue.enqueue(
-            db,
-            job_type=GENERATE_FEATURE_EXPANSION_JOB_TYPE,
-            payload={"project_id": project_id, "feedback": None},
-        )
-        node = get_expansion_node(db, project_id)
-        assert node is not None, "bootstrap_expansion_node should have minted one"
-    draft = pending_expansion_draft(db, project_id)
-    status, last_error, started_at = queries.latest_generation_status(
-        db, project_id, GENERATE_FEATURE_EXPANSION_JOB_TYPE
-    )
     return ExpansionResponse(
-        node=_serialize_node(node),
-        pending_draft=(
-            ExpansionDraftResponse(
-                id=draft.id,
-                content=draft.content,
-                created_at=draft.created_at.isoformat() if draft.created_at else "",
-            )
-            if draft is not None
-            else None
-        ),
-        generation_status=status,
-        last_error=last_error,
-        latest_telemetry=_latest_telemetry(db, project_id, node.id),
-        generation_started_at=started_at,
+        **bootstrap_get_state(db, project_id, (), EXPANSION_CONFIG, _require_project)
     )
 
 
@@ -354,32 +371,9 @@ def post_expansion_feedback(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
-    _require_project(db, project_id)
-    if get_expansion_node(db, project_id) is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Feature expansion node missing for project",
-        )
-    # v2 bootstrap nodes are read-only after approval: feature-layer
-    # edits after that point land on individual feat_* nodes, not by
-    # re-editing the expansion prose. See docs/architecture/
-    # v2-rearchitecture.md §Core principle (second corollary).
-    if has_been_approved(db, project_id):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Feature expansion is read-only after approval; "
-                "further feature-layer edits happen on individual "
-                "feature nodes."
-            ),
-        )
-    feedback = (req.feedback or "").strip() or None
-    job_id = pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_FEATURE_EXPANSION_JOB_TYPE,
-        payload={"project_id": project_id, "feedback": feedback},
+    return FeedbackResponse(
+        **bootstrap_feedback(db, project_id, (), req.feedback, EXPANSION_CONFIG, _require_project)
     )
-    return FeedbackResponse(job_id=job_id)
 
 
 @router.post("/{project_id}/expansion/approve", response_model=ApproveResponse)
@@ -389,47 +383,10 @@ def post_expansion_approve(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ApproveResponse:
-    _require_project(db, project_id)
-    node = get_expansion_node(db, project_id)
-    if node is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Feature expansion node missing for project",
-        )
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != node.id
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Draft not found for this project's expansion",
-        )
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-
-    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
-    db.commit()
-    db.refresh(node)
-
-    # Approval is destructive at the child level — the content has
-    # been committed to node.content, and now we mint feat_* nodes
-    # from it. The mint handler runs asynchronously on the
-    # pipeline worker; the response returns immediately with the
-    # approved node, and the frontend polls the /features endpoint
-    # to see the minted features.
-    pipeline_queue.enqueue(
-        db,
-        job_type=MINT_FEATURES_JOB_TYPE,
-        payload={"project_id": project_id},
+    result = bootstrap_approve(
+        db, project_id, (), req.draft_id, EXPANSION_CONFIG, _require_project
     )
-
-    return ApproveResponse(node=_serialize_node(node))
+    return ApproveResponse(node=ExpansionNodeResponse(**result["node"]))
 
 
 @router.post("/{project_id}/expansion/discard", response_model=DiscardResponse)
@@ -439,47 +396,9 @@ def post_expansion_discard(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> DiscardResponse:
-    _require_project(db, project_id)
-    node = get_expansion_node(db, project_id)
-    if node is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Feature expansion node missing for project",
-        )
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != node.id
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Draft not found for this project's expansion",
-        )
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-
-    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
-    db.commit()
-
-    # Rejecting a draft is usually a step in an iteration loop, not
-    # a "give up" signal. Enqueue a fresh generation so the user
-    # gets a new draft to react to without having to type "try
-    # again" into the feedback box. The generation handler runs
-    # without prior_pending (we just discarded it) and without
-    # explicit feedback, so it regenerates from scratch against
-    # the input doc.
-    pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_FEATURE_EXPANSION_JOB_TYPE,
-        payload={"project_id": project_id, "feedback": None},
+    return DiscardResponse(
+        **bootstrap_discard(db, project_id, (), req.draft_id, EXPANSION_CONFIG, _require_project)
     )
-
-    return DiscardResponse(ok=True)
 
 
 @router.post("/{project_id}/expansion/cancel", response_model=CancelResponse)
@@ -488,26 +407,9 @@ def post_expansion_cancel(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> CancelResponse:
-    """Stop any queued/running feature-expansion generation for this project.
-
-    Best-effort: returns ``cancelled=False`` if no active job was
-    found (race with completion, or click after the job already
-    finished). The frontend treats either response as "refetch the
-    state and re-render"; the cancelled job transitions to the
-    ``cancelled`` terminal state which the status query reads as
-    ``idle``, so the user is dropped back into the feedback /
-    accept / reject flow over any remaining pending draft.
-    """
-    _require_project(db, project_id)
-    job = pipeline_queue.find_active_job(
-        db,
-        GENERATE_FEATURE_EXPANSION_JOB_TYPE,
-        payload_filters={"project_id": project_id},
+    return CancelResponse(
+        **bootstrap_cancel(db, project_id, (), EXPANSION_CONFIG, _require_project)
     )
-    if job is None:
-        return CancelResponse(cancelled=False)
-    ok = pipeline_queue.cancel_job(db, job.id)
-    return CancelResponse(cancelled=ok)
 
 
 # ── Feature list endpoint ───────────────────────────────────────────
@@ -1217,27 +1119,13 @@ class PromptPreviewRequest(BaseModel):
     feedback: str = ""
 
 
-@router.post("/{project_id}/expansion/prompt-preview", response_model=PromptPreviewResponse)
-def post_expansion_prompt_preview(
-    project_id: str,
-    req: PromptPreviewRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> PromptPreviewResponse:
-    """Render the expansion prompt as the LLM would see it."""
-    _require_project(db, project_id)
-    node = get_expansion_node(db, project_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="Expansion node missing")
-
-    from backend.graph.prompts.feature_expansion import (
-        render_system_prompt as fe_render_system,
-    )
-    from backend.graph.prompts.feature_expansion import (
-        render_user_prompt as fe_render_user,
-    )
+def _expansion_prompt_preview(
+    db: Session, project_id: str, feedback: str,
+) -> tuple[str, str]:
+    from backend.graph.prompts.feature_expansion import render_system_prompt, render_user_prompt
     from backend.models.input_document import InputDocument
 
+    node = get_expansion_node(db, project_id)
     pending = pending_expansion_draft(db, project_id)
     input_doc_row = (
         db.query(InputDocument)
@@ -1245,16 +1133,32 @@ def post_expansion_prompt_preview(
         .order_by(InputDocument.created_at.desc())
         .first()
     )
-    feedback = req.feedback.strip() or None
-
-    return PromptPreviewResponse(
-        system_prompt=fe_render_system(),
-        user_prompt=fe_render_user(
+    fb = feedback.strip() or None
+    return (
+        render_system_prompt(),
+        render_user_prompt(
             input_doc=(input_doc_row.content or "") if input_doc_row else "",
-            prior_approved=node.content or None,
+            prior_approved=node.content or None if node else None,
             prior_pending=pending.content if pending else None,
-            feedback=feedback,
+            feedback=fb,
         ),
+    )
+
+
+EXPANSION_CONFIG.render_prompt_preview = _expansion_prompt_preview
+
+
+@router.post("/{project_id}/expansion/prompt-preview", response_model=PromptPreviewResponse)
+def post_expansion_prompt_preview(
+    project_id: str,
+    req: PromptPreviewRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> PromptPreviewResponse:
+    return PromptPreviewResponse(
+        **bootstrap_prompt_preview(
+            db, project_id, (), req.feedback, EXPANSION_CONFIG, _require_project,
+        )
     )
 
 
@@ -1410,56 +1314,8 @@ def post_expansion_reset(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ResetResponse:
-    """Destructively reset the expansion and all downstream state."""
-    _require_project(db, project_id)
-    node = get_expansion_node(db, project_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="Expansion node missing for project")
-    if not has_been_approved(db, project_id):
-        raise HTTPException(status_code=409, detail="Expansion is not in approved state")
-
-    jobs_cancelled = 0
-    for jt in _EXPANSION_RESET_CANCEL_JOB_TYPES:
-        jobs_cancelled += pipeline_queue.cancel_jobs_by_type(db, jt, project_id=project_id)
-
-    downstream_nodes = expansion_collect_downstream_nodes(db, project_id)
-    downstream_ids = [n.id for n in downstream_nodes]
-    pending_drafts = sysarch_collect_pending_drafts_for_nodes(db, project_id, downstream_ids)
-    own_pending = pending_expansion_draft(db, project_id)
-
-    # Also clear reqs and sysarch singleton content.
-    reqs_node = get_reqs_node(db, project_id)
-    sysarch_node = get_sysarch_node(db, project_id)
-    reqs_pending: Draft | None = pending_reqs_draft(db, project_id) if reqs_node else None
-    sysarch_pending: Draft | None = pending_sysarch_draft(db, project_id) if sysarch_node else None
-
-    drafts_discarded = 0
-    for draft in pending_drafts:
-        append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
-        drafts_discarded += 1
-    for maybe_draft in [own_pending, reqs_pending, sysarch_pending]:
-        if maybe_draft is not None:
-            append_event(db, project_id, ev.DraftDiscarded(draft_id=maybe_draft.id))
-            drafts_discarded += 1
-    for dn in downstream_nodes:
-        append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
-    if sysarch_node and sysarch_node.content:
-        append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=sysarch_node.id))
-    if reqs_node and reqs_node.content:
-        append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=reqs_node.id))
-    append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=node.id))
-    db.commit()
-
-    pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_FEATURE_EXPANSION_JOB_TYPE,
-        payload={"project_id": project_id, "feedback": None},
-    )
     return ResetResponse(
-        ok=True,
-        nodes_deleted=len(downstream_nodes),
-        drafts_discarded=drafts_discarded,
-        jobs_cancelled=jobs_cancelled,
+        **bootstrap_reset(db, project_id, (), EXPANSION_CONFIG, _require_project)
     )
 
 
