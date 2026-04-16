@@ -1,7 +1,27 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
 import { XmlDocument } from './xml';
 import type { XmlRendererMap } from './xml';
+
+function CopyButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [content]);
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="px-3 py-1 text-xs rounded border border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+      title="Copy raw content to clipboard"
+    >
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
 
 // ── Shared type shapes ─────────────────────────────────────────────
 
@@ -398,7 +418,7 @@ export function BootstrapDraftPanel({
             onChange={(e) => setFeedback(e.target.value)}
             disabled={callbacks.isBusy || isRegenerating}
           />
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
             <button
               type="button"
               onClick={() => callbacks.onApprove(pending_draft.id)}
@@ -420,6 +440,7 @@ export function BootstrapDraftPanel({
             >
               Reject &amp; Regenerate
             </button>
+            <CopyButton content={pending_draft.content} />
           </div>
         </div>
       </div>
@@ -459,7 +480,10 @@ export function BootstrapDraftPanel({
         </div>
         <XmlDocument content={node.content} renderers={contentRenderers} />
         <div className="text-xs text-gray-500 italic">{labels.readOnlyExplanation}</div>
-        <TelemetryLine telemetry={latest_telemetry} />
+        <div className="flex items-center gap-3">
+          <CopyButton content={node.content} />
+          <TelemetryLine telemetry={latest_telemetry} />
+        </div>
         {callbacks.onReset && (
           <ResetApprovedStateControl
             onReset={callbacks.onReset}
