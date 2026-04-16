@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import * as refsApi from '../../api/references';
+import { makeReferencesApi } from '../../api/references';
 
 export const referenceKeys = {
   all: ['references'] as const,
@@ -15,14 +15,14 @@ export const referenceKeys = {
 export function useProjectReferences(projectId: string) {
   return useQuery({
     queryKey: referenceKeys.project(projectId),
-    queryFn: () => refsApi.getReferences(projectId),
+    queryFn: () => makeReferencesApi(projectId).list(),
     enabled: !!projectId,
   });
 }
 
 /**
- * Fetch one reference's full detail plus its pending draft and
- * outgoing / incoming edges.
+ * Fetch one reference's standard bootstrap-tier state plus its
+ * outgoing / incoming reference edges.
  *
  * Polls while a generation is in flight so the UI reflects the
  * pending-draft transition without a manual refetch.
@@ -33,7 +33,7 @@ export function useReferenceDetail(
 ) {
   return useQuery({
     queryKey: referenceKeys.detail(projectId, refId ?? ''),
-    queryFn: () => refsApi.getReference(projectId, refId as string),
+    queryFn: () => makeReferencesApi(projectId).getDetail(refId as string),
     enabled: !!projectId && !!refId,
     refetchInterval: (query) => {
       const data = query.state.data;

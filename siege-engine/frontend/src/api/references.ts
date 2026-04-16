@@ -1,18 +1,17 @@
 import { z } from 'zod';
 import api from './client';
+import type { BootstrapResponse, GenerationStatus, TelemetrySummary } from './bootstrapApi';
+import { makeBootstrapApi } from './bootstrapApi';
 
 // Phase 6.6: project references layer. Refs are first-class
 // supplemental documents (DSL specs, deployment runbooks,
 // cross-component invariants) that any other node can pull
 // into its regen context via an outgoing `reference` edge.
-// Content is raw `<reference>` XML on the server; the frontend
-// submits user-supplied seed descriptions and iterates via the
-// LLM draft lifecycle, not direct content edits.
 //
-// Unlike vocab (direct-CRUD), refs use the expansion-style
-// four-state flow: pending draft → feedback → approve. Unlike
-// other bootstrap tiers, refs are NOT frozen after approval —
-// `UpdateReference` re-enters draft state regardless.
+// Lifecycle ops (get state, feedback, approve, discard, cancel)
+// reuse the standard bootstrap-tier API the other tiers share.
+// The list / create / delete / edge endpoints are ref-specific
+// and live alongside.
 
 export const ReferenceEdgeSchema = z.object({
   edge_id: z.string(),
@@ -29,36 +28,6 @@ export const ReferenceSummarySchema = z.object({
 });
 export type ReferenceSummary = z.infer<typeof ReferenceSummarySchema>;
 
-export const ReferenceDraftSchema = z.object({
-  id: z.string(),
-  content: z.string(),
-  created_at: z.string(),
-});
-export type ReferenceDraft = z.infer<typeof ReferenceDraftSchema>;
-
-export const TelemetrySummarySchema = z.object({
-  prompt_tokens: z.number(),
-  completion_tokens: z.number(),
-  model: z.string(),
-  created_at: z.string(),
-});
-export type TelemetrySummary = z.infer<typeof TelemetrySummarySchema>;
-
-export const ReferenceDetailSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  content: z.string(),
-  updated_at: z.string(),
-  pending_draft: ReferenceDraftSchema.nullable(),
-  generation_status: z.enum(['idle', 'running', 'failed']),
-  last_error: z.string().nullable(),
-  latest_telemetry: TelemetrySummarySchema.nullable(),
-  generation_started_at: z.string().nullable(),
-  outgoing_edges: z.array(ReferenceEdgeSchema),
-  incoming_edges: z.array(ReferenceEdgeSchema),
-});
-export type ReferenceDetail = z.infer<typeof ReferenceDetailSchema>;
-
 export const ReferenceListResponseSchema = z.object({
   references: z.array(ReferenceSummarySchema),
 });
@@ -70,93 +39,103 @@ export const CreateReferenceResponseSchema = z.object({
 });
 export type CreateReferenceResponse = z.infer<typeof CreateReferenceResponseSchema>;
 
-export async function getReferences(projectId: string): Promise<ReferenceListResponse> {
-  const { data } = await api.get(`/projects/${projectId}/references`);
-  return ReferenceListResponseSchema.parse(data);
+// Detail wraps the standard bootstrap response shape (node /
+// pending_draft / generation_status / etc.) and adds the
+// ref-specific edge lists.
+export interface ReferenceDetail extends BootstrapResponse {
+  outgoing_edges: ReferenceEdge[];
+  incoming_edges: ReferenceEdge[];
 }
 
-export async function getReference(
-  projectId: string,
-  refId: string,
-): Promise<ReferenceDetail> {
-  const { data } = await api.get(`/projects/${projectId}/references/${refId}`);
-  return ReferenceDetailSchema.parse(data);
-}
+const ReferenceDetailRawSchema = z.object({
+  node: z.object({
+    id: z.string(),
+    name: z.string(),
+    content: z.string(),
+    updated_at: z.string(),
+  }),
+  pending_draft: z
+    .object({
+      id: z.string(),
+      content: z.string(),
+      created_at: z.string(),
+    })
+    .nullable(),
+  generation_status: z.enum(['idle', 'running', 'failed']),
+  last_error: z.string().nullable(),
+  latest_telemetry: z
+    .object({
+      prompt_tokens: z.number(),
+      completion_tokens: z.number(),
+      model: z.string(),
+      created_at: z.string(),
+    })
+    .nullable(),
+  generation_started_at: z.string().nullish().transform((v) => v ?? null),
+  outgoing_edges: z.array(ReferenceEdgeSchema),
+  incoming_edges: z.array(ReferenceEdgeSchema),
+});
 
-export async function createReference(
-  projectId: string,
-  name: string,
-  seedDescription: string,
-  relatedNodes: string[],
-): Promise<CreateReferenceResponse> {
-  const { data } = await api.post(`/projects/${projectId}/references/create`, {
-    name,
-    seed_description: seedDescription,
-    related_nodes: relatedNodes,
-  });
-  return CreateReferenceResponseSchema.parse(data);
-}
-
-export async function updateReference(
-  projectId: string,
-  refId: string,
-  feedback: string | null,
-): Promise<{ job_id: string }> {
-  const { data } = await api.post(
-    `/projects/${projectId}/references/${refId}/feedback`,
-    { feedback },
+// Standard bootstrap-pattern lifecycle handlers, scoped per ref.
+// `referencesApi.getState(refId)` etc. The base URL closure pulls
+// `projectId` from the per-call context, but since refs are owned
+// per-project we curry it via the `projectScopedReferencesApi`
+// factory below so call sites only pass `refId`.
+export function makeReferencesApi(projectId: string) {
+  const lifecycle = makeBootstrapApi(
+    (refId) => `/projects/${projectId}/references/${refId}`,
   );
-  return { job_id: data.job_id };
+
+  return {
+    ...lifecycle,
+
+    async list(): Promise<ReferenceListResponse> {
+      const { data } = await api.get(`/projects/${projectId}/references`);
+      return ReferenceListResponseSchema.parse(data);
+    },
+
+    async getDetail(refId: string): Promise<ReferenceDetail> {
+      const { data } = await api.get(`/projects/${projectId}/references/${refId}`);
+      return ReferenceDetailRawSchema.parse(data);
+    },
+
+    async create(
+      name: string,
+      seedDescription: string,
+      relatedNodes: string[],
+    ): Promise<CreateReferenceResponse> {
+      const { data } = await api.post(`/projects/${projectId}/references/create`, {
+        name,
+        seed_description: seedDescription,
+        related_nodes: relatedNodes,
+      });
+      return CreateReferenceResponseSchema.parse(data);
+    },
+
+    async delete(refId: string): Promise<void> {
+      await api.post(`/projects/${projectId}/references/${refId}/delete`);
+    },
+
+    async addEdge(sourceId: string, targetId: string): Promise<ReferenceEdge> {
+      const { data } = await api.post(`/projects/${projectId}/edges/reference`, {
+        source_id: sourceId,
+        target_id: targetId,
+      });
+      return ReferenceEdgeSchema.parse(data);
+    },
+
+    async removeEdge(sourceId: string, targetId: string): Promise<void> {
+      await api.delete(`/projects/${projectId}/edges/reference`, {
+        data: { source_id: sourceId, target_id: targetId },
+      });
+    },
+  };
 }
 
-export async function approveReferenceDraft(
-  projectId: string,
-  refId: string,
-  draftId: string,
-): Promise<void> {
-  await api.post(`/projects/${projectId}/references/${refId}/approve`, {
-    draft_id: draftId,
-  });
-}
-
-export async function discardReferenceDraft(
-  projectId: string,
-  refId: string,
-  draftId: string,
-): Promise<void> {
-  await api.post(`/projects/${projectId}/references/${refId}/discard`, {
-    draft_id: draftId,
-  });
-}
-
-export async function deleteReference(
-  projectId: string,
-  refId: string,
-): Promise<void> {
-  await api.post(`/projects/${projectId}/references/${refId}/delete`);
-}
-
-export async function addReferenceEdge(
-  projectId: string,
-  sourceId: string,
-  targetId: string,
-): Promise<ReferenceEdge> {
-  const { data } = await api.post(`/projects/${projectId}/edges/reference`, {
-    source_id: sourceId,
-    target_id: targetId,
-  });
-  return ReferenceEdgeSchema.parse(data);
-}
-
-export async function removeReferenceEdge(
-  projectId: string,
-  sourceId: string,
-  targetId: string,
-): Promise<void> {
-  await api.delete(`/projects/${projectId}/edges/reference`, {
-    data: { source_id: sourceId, target_id: targetId },
-  });
-}
+// Re-exported for the panel — keeps the import surface narrow
+// since most consumers only want the detail shape and the helper
+// types.
+export type { GenerationStatus, TelemetrySummary };
 
 // Parse a stored `<reference>` XML block into structured fields
 // for display. Server-validated content; client-side extraction
@@ -175,8 +154,8 @@ export function parseReference(content: string): ParsedReference {
 }
 
 // Build a canonical `<reference>` XML block from structured
-// fields (used by potential future direct-edit paths;
-// currently the LLM generates these).
+// fields (used by the create-route's seed shell on the backend
+// and by the small XML round-trip tests on the frontend).
 export function buildReferenceXml(
   title: string,
   body: string,

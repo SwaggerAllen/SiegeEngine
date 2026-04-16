@@ -218,13 +218,17 @@ class TestDetail:
         resp = client.get(f"/api/projects/{project.id}/references/ref_DEADBEEF")
         assert resp.status_code == 404
 
-    def test_returns_empty_content_before_approval(self, client, project):
+    def test_returns_seed_content_before_first_regen(self, client, project):
         ref_id = _create_ref(client, project.id)
         resp = client.get(f"/api/projects/{project.id}/references/{ref_id}")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["id"] == ref_id
-        assert body["content"] == ""
+        assert body["node"]["id"] == ref_id
+        # The create route now writes a minimal <reference> shell
+        # carrying the seed_description as the body, so subsequent
+        # regens have something to anchor against.
+        assert "<reference>" in body["node"]["content"]
+        assert "Deployment runbook" in body["node"]["content"]
 
 
 class TestFeedback:
@@ -286,7 +290,10 @@ class TestApproveDiscard:
         )
         assert resp.status_code == 200
         detail = client.get(f"/api/projects/{project.id}/references/{ref_id}").json()
-        assert "<reference>" in detail["content"]
+        # After approval the draft's <body>b</body> content overrides
+        # the seed shell — content stays a reference XML block.
+        assert "<reference>" in detail["node"]["content"]
+        assert "<body>b</body>" in detail["node"]["content"]
 
     def test_discard_clears_draft(self, client, db, project):
         ref_id = _create_ref(client, project.id)
@@ -297,6 +304,9 @@ class TestApproveDiscard:
         )
         assert resp.status_code == 200
         detail = client.get(f"/api/projects/{project.id}/references/{ref_id}").json()
+        # The discard auto-enqueues a fresh generation (matching the
+        # bootstrap-tier UX); the worker is gated off so the new
+        # job sits in the queue without producing a draft yet.
         assert detail["pending_draft"] is None
 
 
