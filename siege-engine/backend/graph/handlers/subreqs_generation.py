@@ -27,13 +27,13 @@ decomposition.
 from __future__ import annotations
 
 import logging
-import secrets
-import uuid
 
 from backend.database import SessionLocal
-from backend.graph import events as ev
 from backend.graph.fragments import FragmentKind, fragment_id
-from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
+from backend.graph.handlers._bootstrap_generation import (
+    persist_draft,
+    run_parse_validate_loop,
+)
 from backend.graph.parsers.validators import validate_subrequirements
 from backend.graph.prompts.subrequirements import (
     format_component_summary,
@@ -47,14 +47,12 @@ from backend.graph.queries import (
     list_subresponsibilities,
     top_level_resps_assigned_to,
 )
-from backend.graph.reducer import append_event
 from backend.graph.subrequirements import (
     get_subreqs_node,
     pending_subreqs_draft,
 )
 from backend.models import Project
 from backend.models.node import Fragment, Node
-from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
 from backend.projects.settings import get_project_settings
 
@@ -69,14 +67,6 @@ class SubreqsHandlerError(RuntimeError):
 
 class SubreqsParseRetryExhausted(RuntimeError):
     """Raised when parse-validate retries are exhausted."""
-
-
-def _new_draft_id() -> str:
-    return f"draft_{secrets.token_hex(8)}"
-
-
-def _new_batch_id() -> str:
-    return f"batch_{uuid.uuid4().hex[:16]}"
 
 
 async def generate_subreqs(payload: dict) -> None:
@@ -229,53 +219,15 @@ async def generate_subreqs(payload: dict) -> None:
         log_handler_name="generate_subreqs",
     )
 
-    # ── Phase 3: persist events + telemetry ─────────────────────────
-    db = SessionLocal()
-    try:
-        if prior_pending_id is not None:
-            append_event(
-                db,
-                project_id,
-                ev.DraftDiscarded(draft_id=prior_pending_id),
-            )
-
-        new_draft_id = _new_draft_id()
-        new_batch_id = _new_batch_id()
-        append_event(
-            db,
-            project_id,
-            ev.DraftGenerated(
-                draft_id=new_draft_id,
-                target_type="node",
-                target_id=subreqs_node_id,
-                content=validated_output.text,
-                batch_id=new_batch_id,
-            ),
-        )
-        for attempt in attempts:
-            db.add(
-                GenerationTelemetry(
-                    project_id=project_id,
-                    node_id=subreqs_node_id,
-                    section="subrequirements",
-                    model=attempt.model,
-                    prompt_tokens=attempt.prompt_tokens,
-                    completion_tokens=attempt.completion_tokens,
-                )
-            )
-        db.commit()
-        logger.info(
-            "generate_subreqs project=%s comp=%s draft_id=%s committed "
-            "(attempts=%d final_prompt=%d final_completion=%d)",
-            project_id,
-            component_id,
-            new_draft_id,
-            len(attempts),
-            validated_output.prompt_tokens,
-            validated_output.completion_tokens,
-        )
-    finally:
-        db.close()
+    persist_draft(
+        project_id=project_id,
+        node_id=subreqs_node_id,
+        section="subrequirements",
+        validated_output=validated_output,
+        attempts=attempts,
+        prior_pending_id=prior_pending_id,
+        log_handler_name="generate_subreqs",
+    )
 
 
 def _read_fragment(db, owner_id: str, kind: FragmentKind) -> str | None:

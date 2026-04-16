@@ -36,19 +36,18 @@ See ``docs/architecture/v2-roadmap.md`` Phase 3.
 from __future__ import annotations
 
 import logging
-import secrets
-import uuid
 
 from backend.database import SessionLocal
-from backend.graph import events as ev
-from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
+from backend.graph.handlers._bootstrap_generation import (
+    persist_draft,
+    run_parse_validate_loop,
+)
 from backend.graph.parsers.validators import validate_requirements
 from backend.graph.prompts.requirements import (
     format_features_summary,
     render_system_prompt,
     render_user_prompt,
 )
-from backend.graph.reducer import append_event
 from backend.graph.requirements import (
     get_reqs_node,
     pending_reqs_draft,
@@ -56,7 +55,6 @@ from backend.graph.requirements import (
 from backend.models import Project
 from backend.models.input_document import InputDocument
 from backend.models.node import Node
-from backend.models.telemetry import GenerationTelemetry
 from backend.pipeline import queue as pipeline_queue
 from backend.projects.settings import get_project_settings
 
@@ -71,14 +69,6 @@ class RequirementsHandlerError(RuntimeError):
 
 class RequirementsParseRetryExhausted(RuntimeError):
     """Raised when parse-validate retries are exhausted without success."""
-
-
-def _new_draft_id() -> str:
-    return f"draft_{secrets.token_hex(8)}"
-
-
-def _new_batch_id() -> str:
-    return f"batch_{uuid.uuid4().hex[:16]}"
 
 
 async def generate_requirements(payload: dict) -> None:
@@ -205,53 +195,15 @@ async def generate_requirements(payload: dict) -> None:
         log_handler_name="generate_requirements",
     )
 
-    # ── Phase 3: persist events + telemetry ─────────────────────────
-    db = SessionLocal()
-    try:
-        if prior_pending_id is not None:
-            append_event(
-                db,
-                project_id,
-                ev.DraftDiscarded(draft_id=prior_pending_id),
-            )
-
-        new_draft_id = _new_draft_id()
-        new_batch_id = _new_batch_id()
-        append_event(
-            db,
-            project_id,
-            ev.DraftGenerated(
-                draft_id=new_draft_id,
-                target_type="node",
-                target_id=reqs_node_id,
-                content=validated_output.text,
-                batch_id=new_batch_id,
-            ),
-        )
-        for attempt in attempts:
-            db.add(
-                GenerationTelemetry(
-                    project_id=project_id,
-                    node_id=reqs_node_id,
-                    section="requirements",
-                    model=attempt.model,
-                    prompt_tokens=attempt.prompt_tokens,
-                    completion_tokens=attempt.completion_tokens,
-                )
-            )
-        db.commit()
-        logger.info(
-            "generate_requirements project=%s draft_id=%s committed "
-            "(attempts=%d final_prompt=%d final_completion=%d model=%s)",
-            project_id,
-            new_draft_id,
-            len(attempts),
-            validated_output.prompt_tokens,
-            validated_output.completion_tokens,
-            validated_output.model,
-        )
-    finally:
-        db.close()
+    persist_draft(
+        project_id=project_id,
+        node_id=reqs_node_id,
+        section="requirements",
+        validated_output=validated_output,
+        attempts=attempts,
+        prior_pending_id=prior_pending_id,
+        log_handler_name="generate_requirements",
+    )
 
 
 def register() -> None:
