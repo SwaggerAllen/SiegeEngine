@@ -334,13 +334,20 @@ EXPANSION_CONFIG = BootstrapTierConfig(
     collect_downstream_nodes=expansion_collect_downstream_nodes,
     collect_pending_drafts_for_nodes=sysarch_collect_pending_drafts_for_nodes,
     downstream_job_types=(
-        "v2.generate_feature_expansion", "v2.mint_features",
-        "v2.generate_requirements", "v2.mint_requirements",
-        "v2.generate_sysarch", "v2.mint_sysarch",
-        "v2.generate_subrequirements", "v2.mint_subrequirements",
-        "v2.generate_comparch", "v2.mint_comparch",
-        "v2.generate_subcomparch", "v2.mint_subcomparch",
-        "v2.apply_top_level_policies", "v2.apply_component_local_policies",
+        "v2.generate_feature_expansion",
+        "v2.mint_features",
+        "v2.generate_requirements",
+        "v2.mint_requirements",
+        "v2.generate_sysarch",
+        "v2.mint_sysarch",
+        "v2.generate_subrequirements",
+        "v2.mint_subrequirements",
+        "v2.generate_comparch",
+        "v2.mint_comparch",
+        "v2.generate_subcomparch",
+        "v2.mint_subcomparch",
+        "v2.apply_top_level_policies",
+        "v2.apply_component_local_policies",
     ),
     additional_nodes_to_clear=lambda db, pid: [
         get_reqs_node(db, pid),
@@ -383,9 +390,7 @@ def post_expansion_approve(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ApproveResponse:
-    result = bootstrap_approve(
-        db, project_id, (), req.draft_id, EXPANSION_CONFIG, _require_project
-    )
+    result = bootstrap_approve(db, project_id, (), req.draft_id, EXPANSION_CONFIG, _require_project)
     return ApproveResponse(node=ExpansionNodeResponse(**result["node"]))
 
 
@@ -500,52 +505,50 @@ def _serialize_reqs_node(node) -> ReqsNodeResponse:
 # ── Requirements endpoints ──────────────────────────────────────────
 
 
+REQUIREMENTS_CONFIG = BootstrapTierConfig(
+    tier_name="Requirements",
+    get_node=get_reqs_node,
+    get_pending_draft=pending_reqs_draft,
+    has_been_approved=reqs_has_been_approved,
+    bootstrap_node=bootstrap_reqs_node,
+    generate_job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
+    mint_job_type=MINT_REQUIREMENTS_JOB_TYPE,
+    serialize_node=_node_to_dict,
+    serialize_draft=_draft_to_dict,
+    feedback_readonly_detail=(
+        "Requirements is read-only after approval; further "
+        "responsibility-layer edits happen on individual "
+        "responsibility nodes."
+    ),
+    collect_downstream_nodes=reqs_collect_downstream_nodes,
+    collect_pending_drafts_for_nodes=sysarch_collect_pending_drafts_for_nodes,
+    downstream_job_types=(
+        "v2.generate_requirements",
+        "v2.mint_requirements",
+        "v2.generate_sysarch",
+        "v2.mint_sysarch",
+        "v2.generate_subrequirements",
+        "v2.mint_subrequirements",
+        "v2.generate_comparch",
+        "v2.mint_comparch",
+        "v2.generate_subcomparch",
+        "v2.mint_subcomparch",
+        "v2.apply_top_level_policies",
+        "v2.apply_component_local_policies",
+    ),
+    additional_nodes_to_clear=lambda db, pid: [get_sysarch_node(db, pid)],
+    additional_drafts_to_discard=lambda db, pid: [pending_sysarch_draft(db, pid)],
+)
+
+
 @router.get("/{project_id}/requirements", response_model=ReqsResponse)
 def get_requirements(
     project_id: str,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ReqsResponse:
-    """Return the project's reqs node state — same four-state shape
-    as ``GET /{project_id}/expansion``.
-
-    Lazily bootstraps the node and enqueues its initial generation
-    if it's missing, so opening a project whose feature mint
-    finished before the reqs bootstrap (e.g. a replay before Phase
-    3 shipped) still works without a 404.
-    """
-    _require_project(db, project_id)
-    node = get_reqs_node(db, project_id)
-    if node is None:
-        logger.warning("Project %s has no reqs node; lazy-bootstrapping", project_id)
-        bootstrap_reqs_node(db, project_id)
-        db.commit()
-        pipeline_queue.enqueue(
-            db,
-            job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
-            payload={"project_id": project_id, "feedback": None},
-        )
-        node = get_reqs_node(db, project_id)
-        assert node is not None, "bootstrap_reqs_node should have minted one"
-    draft = pending_reqs_draft(db, project_id)
-    status, last_error, started_at = queries.latest_generation_status(
-        db, project_id, GENERATE_REQUIREMENTS_JOB_TYPE
-    )
     return ReqsResponse(
-        node=_serialize_reqs_node(node),
-        pending_draft=(
-            ReqsDraftResponse(
-                id=draft.id,
-                content=draft.content,
-                created_at=draft.created_at.isoformat() if draft.created_at else "",
-            )
-            if draft is not None
-            else None
-        ),
-        generation_status=status,
-        last_error=last_error,
-        latest_telemetry=_latest_telemetry(db, project_id, node.id),
-        generation_started_at=started_at,
+        **bootstrap_get_state(db, project_id, (), REQUIREMENTS_CONFIG, _require_project)
     )
 
 
@@ -556,30 +559,16 @@ def post_requirements_feedback(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
-    _require_project(db, project_id)
-    if get_reqs_node(db, project_id) is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Requirements node missing for project",
+    return FeedbackResponse(
+        **bootstrap_feedback(
+            db,
+            project_id,
+            (),
+            req.feedback,
+            REQUIREMENTS_CONFIG,
+            _require_project,
         )
-    # Read-only after approval — further changes land as structural
-    # edits on resp_* nodes (Phase 10), not by re-editing the prose.
-    if reqs_has_been_approved(db, project_id):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Requirements is read-only after approval; further "
-                "responsibility-layer edits happen on individual "
-                "responsibility nodes."
-            ),
-        )
-    feedback = (req.feedback or "").strip() or None
-    job_id = pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
-        payload={"project_id": project_id, "feedback": feedback},
     )
-    return FeedbackResponse(job_id=job_id)
 
 
 @router.post("/{project_id}/requirements/approve", response_model=ReqsApproveResponse)
@@ -589,41 +578,10 @@ def post_requirements_approve(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ReqsApproveResponse:
-    _require_project(db, project_id)
-    node = get_reqs_node(db, project_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="Requirements node missing for project")
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != node.id
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Draft not found for this project's requirements",
-        )
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-
-    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
-    db.commit()
-    db.refresh(node)
-
-    # Approval is destructive at the child level — mint top-level
-    # resp_* nodes from the approved content. Runs on the pipeline
-    # worker; the frontend polls /responsibilities.
-    pipeline_queue.enqueue(
-        db,
-        job_type=MINT_REQUIREMENTS_JOB_TYPE,
-        payload={"project_id": project_id},
+    result = bootstrap_approve(
+        db, project_id, (), req.draft_id, REQUIREMENTS_CONFIG, _require_project
     )
-
-    return ReqsApproveResponse(node=_serialize_reqs_node(node))
+    return ReqsApproveResponse(node=ReqsNodeResponse(**result["node"]))
 
 
 @router.post("/{project_id}/requirements/discard", response_model=DiscardResponse)
@@ -633,38 +591,9 @@ def post_requirements_discard(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> DiscardResponse:
-    _require_project(db, project_id)
-    node = get_reqs_node(db, project_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="Requirements node missing for project")
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != node.id
-    ):
-        raise HTTPException(
-            status_code=404,
-            detail="Draft not found for this project's requirements",
-        )
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-
-    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
-    db.commit()
-
-    # Mirrors /expansion/discard: reject regenerates from scratch.
-    pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
-        payload={"project_id": project_id, "feedback": None},
+    return DiscardResponse(
+        **bootstrap_discard(db, project_id, (), req.draft_id, REQUIREMENTS_CONFIG, _require_project)
     )
-
-    return DiscardResponse(ok=True)
 
 
 @router.post("/{project_id}/requirements/cancel", response_model=CancelResponse)
@@ -673,17 +602,9 @@ def post_requirements_cancel(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> CancelResponse:
-    """Stop any queued/running requirements generation for this project."""
-    _require_project(db, project_id)
-    job = pipeline_queue.find_active_job(
-        db,
-        GENERATE_REQUIREMENTS_JOB_TYPE,
-        payload_filters={"project_id": project_id},
+    return CancelResponse(
+        **bootstrap_cancel(db, project_id, (), REQUIREMENTS_CONFIG, _require_project)
     )
-    if job is None:
-        return CancelResponse(cancelled=False)
-    ok = pipeline_queue.cancel_job(db, job.id)
-    return CancelResponse(cancelled=ok)
 
 
 # ── Responsibilities list endpoint ──────────────────────────────────
@@ -1120,7 +1041,9 @@ class PromptPreviewRequest(BaseModel):
 
 
 def _expansion_prompt_preview(
-    db: Session, project_id: str, feedback: str,
+    db: Session,
+    project_id: str,
+    feedback: str,
 ) -> tuple[str, str]:
     from backend.graph.prompts.feature_expansion import render_system_prompt, render_user_prompt
     from backend.models.input_document import InputDocument
@@ -1157,36 +1080,30 @@ def post_expansion_prompt_preview(
 ) -> PromptPreviewResponse:
     return PromptPreviewResponse(
         **bootstrap_prompt_preview(
-            db, project_id, (), req.feedback, EXPANSION_CONFIG, _require_project,
+            db,
+            project_id,
+            (),
+            req.feedback,
+            EXPANSION_CONFIG,
+            _require_project,
         )
     )
 
 
-@router.post("/{project_id}/requirements/prompt-preview", response_model=PromptPreviewResponse)
-def post_reqs_prompt_preview(
+def _requirements_prompt_preview(
+    db: Session,
     project_id: str,
-    req: PromptPreviewRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> PromptPreviewResponse:
-    """Render the requirements prompt as the LLM would see it."""
-    _require_project(db, project_id)
-    node = get_reqs_node(db, project_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="Requirements node missing")
-
+    feedback: str,
+) -> tuple[str, str]:
     from backend.graph.prompts.requirements import (
         format_features_summary,
-    )
-    from backend.graph.prompts.requirements import (
-        render_system_prompt as reqs_render_system,
-    )
-    from backend.graph.prompts.requirements import (
-        render_user_prompt as reqs_render_user,
+        render_system_prompt,
+        render_user_prompt,
     )
     from backend.graph.vocabulary import render_vocab_summary_all
     from backend.models.input_document import InputDocument
 
+    node = get_reqs_node(db, project_id)
     pending = pending_reqs_draft(db, project_id)
     feature_rows = (
         db.query(Node)
@@ -1213,18 +1130,39 @@ def post_reqs_prompt_preview(
         .order_by(InputDocument.created_at.desc())
         .first()
     )
-    feedback = req.feedback.strip() or None
-
-    return PromptPreviewResponse(
-        system_prompt=reqs_render_system(),
-        user_prompt=reqs_render_user(
+    fb = feedback.strip() or None
+    return (
+        render_system_prompt(),
+        render_user_prompt(
             features_summary=features_summary,
-            prior_approved=node.content or None,
+            prior_approved=node.content or None if node else None,
             prior_pending=pending.content if pending else None,
-            feedback=feedback,
+            feedback=fb,
             vocab_summary=vocab_summary,
             input_doc=(input_doc_row.content or "") if input_doc_row else "",
         ),
+    )
+
+
+REQUIREMENTS_CONFIG.render_prompt_preview = _requirements_prompt_preview
+
+
+@router.post("/{project_id}/requirements/prompt-preview", response_model=PromptPreviewResponse)
+def post_reqs_prompt_preview(
+    project_id: str,
+    req: PromptPreviewRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> PromptPreviewResponse:
+    return PromptPreviewResponse(
+        **bootstrap_prompt_preview(
+            db,
+            project_id,
+            (),
+            req.feedback,
+            REQUIREMENTS_CONFIG,
+            _require_project,
+        )
     )
 
 
@@ -1314,9 +1252,7 @@ def post_expansion_reset(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ResetResponse:
-    return ResetResponse(
-        **bootstrap_reset(db, project_id, (), EXPANSION_CONFIG, _require_project)
-    )
+    return ResetResponse(**bootstrap_reset(db, project_id, (), EXPANSION_CONFIG, _require_project))
 
 
 _EXPANSION_RESET_CANCEL_JOB_TYPES: tuple[str, ...] = (
@@ -1346,51 +1282,8 @@ def post_reqs_reset(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ResetResponse:
-    """Destructively reset requirements and all downstream state."""
-    _require_project(db, project_id)
-    node = get_reqs_node(db, project_id)
-    if node is None:
-        raise HTTPException(status_code=404, detail="Requirements node missing for project")
-    if not reqs_has_been_approved(db, project_id):
-        raise HTTPException(status_code=409, detail="Requirements is not in approved state")
-
-    jobs_cancelled = 0
-    for jt in _REQS_RESET_CANCEL_JOB_TYPES:
-        jobs_cancelled += pipeline_queue.cancel_jobs_by_type(db, jt, project_id=project_id)
-
-    downstream_nodes = reqs_collect_downstream_nodes(db, project_id)
-    downstream_ids = [n.id for n in downstream_nodes]
-    pending_drafts = sysarch_collect_pending_drafts_for_nodes(db, project_id, downstream_ids)
-    own_pending = pending_reqs_draft(db, project_id)
-
-    sysarch_node = get_sysarch_node(db, project_id)
-    sysarch_pending: Draft | None = pending_sysarch_draft(db, project_id) if sysarch_node else None
-
-    drafts_discarded = 0
-    for draft in pending_drafts:
-        append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
-        drafts_discarded += 1
-    for maybe_draft in [own_pending, sysarch_pending]:
-        if maybe_draft is not None:
-            append_event(db, project_id, ev.DraftDiscarded(draft_id=maybe_draft.id))
-            drafts_discarded += 1
-    for dn in downstream_nodes:
-        append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
-    if sysarch_node and sysarch_node.content:
-        append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=sysarch_node.id))
-    append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=node.id))
-    db.commit()
-
-    pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
-        payload={"project_id": project_id, "feedback": None},
-    )
     return ResetResponse(
-        ok=True,
-        nodes_deleted=len(downstream_nodes),
-        drafts_discarded=drafts_discarded,
-        jobs_cancelled=jobs_cancelled,
+        **bootstrap_reset(db, project_id, (), REQUIREMENTS_CONFIG, _require_project)
     )
 
 
