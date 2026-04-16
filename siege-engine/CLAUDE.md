@@ -19,6 +19,33 @@ fragments, drafts) are derived from the event log. Read `docs/architecture/v2-re
 for the data model and `docs/architecture/v2-roadmap.md` for the
 phase plan. The current branch is `claude/review-architecture-docs-YoIiI`.
 
+## Meaning engine framing
+
+SiegeEngine is a meaning engine, not a document generator. Every
+tier transition is either compression (sysarch → comparch pubapi)
+or scope-bounded expansion (subreqs within one component's
+territory). Quality at a tier is measured by what the next tier
+down can do reading only that tier's output, not by whether the
+output is structurally valid. Vague handles multiply into
+downstream guessing.
+
+When editing a prompt or debugging output, the test is: **what
+does the consumer of this output see, and is it sharp enough for
+them to make correct decisions without re-reading upstream
+content?** If yes, the tier is doing its job. If no, the fix is
+in the producing tier, not the consuming one — never widen a
+downstream prompt's context to paper over vague upstream handles.
+
+The character problem concentrates at the last compression step
+before implementation. Sysarch sets trajectory, comparch sets
+concreteness, impl multiplies whatever slack was left above it.
+Weight prompt-quality work accordingly: comparch is the single
+highest-leverage tier because it's the last place articulation
+pressure can be applied before tactics take over.
+
+Full framing: `docs/architecture/v2-rearchitecture.md` §"The
+meaning engine."
+
 ## Verification commands
 
 Run all of these from `siege-engine/` before claiming a change is
