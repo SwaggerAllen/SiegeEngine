@@ -4,27 +4,48 @@ import type { ReferenceListResponse } from '../api/references';
 import { TestQueryWrapper } from '../test/queryWrapper';
 import { ReferencesList } from './ReferencesList';
 
+// The component pulls everything off makeReferencesApi(projectId).
+// Mock the factory so each call returns a stable stub object the
+// tests can configure via `apiStub`.
+const apiStub: {
+  list: ReturnType<typeof vi.fn>;
+  getDetail: ReturnType<typeof vi.fn>;
+  create: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+  addEdge: ReturnType<typeof vi.fn>;
+  removeEdge: ReturnType<typeof vi.fn>;
+  getState: ReturnType<typeof vi.fn>;
+  postFeedback: ReturnType<typeof vi.fn>;
+  approveDraft: ReturnType<typeof vi.fn>;
+  discardDraft: ReturnType<typeof vi.fn>;
+  cancelGeneration: ReturnType<typeof vi.fn>;
+  resetTier: ReturnType<typeof vi.fn>;
+  getPromptPreview: ReturnType<typeof vi.fn>;
+} = {
+  list: vi.fn(),
+  getDetail: vi.fn(),
+  create: vi.fn(),
+  delete: vi.fn(),
+  addEdge: vi.fn(),
+  removeEdge: vi.fn(),
+  getState: vi.fn(),
+  postFeedback: vi.fn(),
+  approveDraft: vi.fn(),
+  discardDraft: vi.fn(),
+  cancelGeneration: vi.fn(),
+  resetTier: vi.fn(),
+  getPromptPreview: vi.fn(),
+};
+
 vi.mock('../api/references', async () => {
   const actual = await vi.importActual<typeof import('../api/references')>(
     '../api/references',
   );
   return {
     ...actual,
-    getReferences: vi.fn(),
-    getReference: vi.fn(),
-    createReference: vi.fn(),
-    updateReference: vi.fn(),
-    approveReferenceDraft: vi.fn(),
-    discardReferenceDraft: vi.fn(),
-    deleteReference: vi.fn(),
-    addReferenceEdge: vi.fn(),
-    removeReferenceEdge: vi.fn(),
+    makeReferencesApi: vi.fn(() => apiStub),
   };
 });
-
-import * as refsApi from '../api/references';
-
-const mockedGet = refsApi.getReferences as unknown as ReturnType<typeof vi.fn>;
 
 function renderList() {
   return render(
@@ -49,7 +70,7 @@ beforeEach(() => {
 
 describe('ReferencesList', () => {
   it('shows the empty state when no refs exist', async () => {
-    mockedGet.mockResolvedValue(response());
+    apiStub.list.mockResolvedValue(response());
     renderList();
     await waitFor(() =>
       expect(screen.getByText(/No references defined yet/i)).toBeInTheDocument(),
@@ -57,7 +78,7 @@ describe('ReferencesList', () => {
   });
 
   it('renders a list item for each reference', async () => {
-    mockedGet.mockResolvedValue(
+    apiStub.list.mockResolvedValue(
       response({
         references: [
           {
@@ -84,7 +105,7 @@ describe('ReferencesList', () => {
   });
 
   it('shows an "+ Add reference" button', async () => {
-    mockedGet.mockResolvedValue(response());
+    apiStub.list.mockResolvedValue(response());
     renderList();
     await waitFor(() =>
       expect(

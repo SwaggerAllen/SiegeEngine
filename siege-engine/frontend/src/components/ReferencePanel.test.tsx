@@ -5,27 +5,45 @@ import type { ReferenceDetail } from '../api/references';
 import { TestQueryWrapper } from '../test/queryWrapper';
 import { ReferencePanel } from './ReferencePanel';
 
+const apiStub: {
+  list: ReturnType<typeof vi.fn>;
+  getDetail: ReturnType<typeof vi.fn>;
+  create: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
+  addEdge: ReturnType<typeof vi.fn>;
+  removeEdge: ReturnType<typeof vi.fn>;
+  getState: ReturnType<typeof vi.fn>;
+  postFeedback: ReturnType<typeof vi.fn>;
+  approveDraft: ReturnType<typeof vi.fn>;
+  discardDraft: ReturnType<typeof vi.fn>;
+  cancelGeneration: ReturnType<typeof vi.fn>;
+  resetTier: ReturnType<typeof vi.fn>;
+  getPromptPreview: ReturnType<typeof vi.fn>;
+} = {
+  list: vi.fn(),
+  getDetail: vi.fn(),
+  create: vi.fn(),
+  delete: vi.fn(),
+  addEdge: vi.fn(),
+  removeEdge: vi.fn(),
+  getState: vi.fn(),
+  postFeedback: vi.fn(),
+  approveDraft: vi.fn(),
+  discardDraft: vi.fn(),
+  cancelGeneration: vi.fn(),
+  resetTier: vi.fn(),
+  getPromptPreview: vi.fn(),
+};
+
 vi.mock('../api/references', async () => {
   const actual = await vi.importActual<typeof import('../api/references')>(
     '../api/references',
   );
   return {
     ...actual,
-    getReference: vi.fn(),
-    updateReference: vi.fn(),
-    approveReferenceDraft: vi.fn(),
-    discardReferenceDraft: vi.fn(),
-    deleteReference: vi.fn(),
-    removeReferenceEdge: vi.fn(),
+    makeReferencesApi: vi.fn(() => apiStub),
   };
 });
-
-import * as refsApi from '../api/references';
-
-const mockedGet = refsApi.getReference as unknown as ReturnType<typeof vi.fn>;
-const mockedUpdate = refsApi.updateReference as unknown as ReturnType<typeof vi.fn>;
-const mockedApprove = refsApi.approveReferenceDraft as unknown as ReturnType<typeof vi.fn>;
-const mockedRemoveEdge = refsApi.removeReferenceEdge as unknown as ReturnType<typeof vi.fn>;
 
 function renderPanel(refId: string | null = 'ref_AAAAAAAA') {
   return render(
@@ -37,10 +55,12 @@ function renderPanel(refId: string | null = 'ref_AAAAAAAA') {
 
 function detail(overrides: Partial<ReferenceDetail> = {}): ReferenceDetail {
   return {
-    id: 'ref_AAAAAAAA',
-    name: 'Runbook',
-    content: '',
-    updated_at: '2026-04-16T00:00:00',
+    node: {
+      id: 'ref_AAAAAAAA',
+      name: 'Runbook',
+      content: '',
+      updated_at: '2026-04-16T00:00:00',
+    },
     pending_draft: null,
     generation_status: 'idle',
     last_error: null,
@@ -63,7 +83,7 @@ describe('ReferencePanel', () => {
   });
 
   it('shows a pending draft with approve and discard buttons', async () => {
-    mockedGet.mockResolvedValue(
+    apiStub.getDetail.mockResolvedValue(
       detail({
         pending_draft: {
           id: 'draft_1',
@@ -84,7 +104,7 @@ describe('ReferencePanel', () => {
   });
 
   it('approves a pending draft when Approve is clicked', async () => {
-    mockedGet.mockResolvedValue(
+    apiStub.getDetail.mockResolvedValue(
       detail({
         pending_draft: {
           id: 'draft_1',
@@ -93,32 +113,38 @@ describe('ReferencePanel', () => {
         },
       }),
     );
-    mockedApprove.mockResolvedValue(undefined);
+    apiStub.approveDraft.mockResolvedValue(undefined);
     renderPanel();
     const approveBtn = await screen.findByRole('button', { name: /Approve/i });
     await userEvent.click(approveBtn);
     await waitFor(() =>
-      expect(mockedApprove).toHaveBeenCalledWith('proj_1', 'ref_AAAAAAAA', 'draft_1'),
+      expect(apiStub.approveDraft).toHaveBeenCalledWith('ref_AAAAAAAA', 'draft_1'),
     );
   });
 
   it('allows feedback submission even when content is already approved', async () => {
-    mockedGet.mockResolvedValue(
+    apiStub.getDetail.mockResolvedValue(
       detail({
-        content: '<reference><title>Approved</title><body>Body.</body></reference>',
+        node: {
+          id: 'ref_AAAAAAAA',
+          name: 'Runbook',
+          content:
+            '<reference><title>Approved</title><body>Body.</body></reference>',
+          updated_at: '2026-04-16T00:00:00',
+        },
       }),
     );
-    mockedUpdate.mockResolvedValue({ job_id: 'job_1' });
+    apiStub.postFeedback.mockResolvedValue({ job_id: 'job_1' });
     renderPanel();
     const updateBtn = await screen.findByRole('button', { name: /Update/i });
     await userEvent.click(updateBtn);
     await waitFor(() =>
-      expect(mockedUpdate).toHaveBeenCalledWith('proj_1', 'ref_AAAAAAAA', null),
+      expect(apiStub.postFeedback).toHaveBeenCalledWith('ref_AAAAAAAA', ''),
     );
   });
 
   it('lists outgoing reference edges and supports removing them', async () => {
-    mockedGet.mockResolvedValue(
+    apiStub.getDetail.mockResolvedValue(
       detail({
         outgoing_edges: [
           {
@@ -129,7 +155,7 @@ describe('ReferencePanel', () => {
         ],
       }),
     );
-    mockedRemoveEdge.mockResolvedValue(undefined);
+    apiStub.removeEdge.mockResolvedValue(undefined);
     renderPanel();
     await waitFor(() =>
       expect(screen.getByText(/comp_BILLING1/)).toBeInTheDocument(),
@@ -137,8 +163,7 @@ describe('ReferencePanel', () => {
     const removeBtn = screen.getByRole('button', { name: /Remove/i });
     await userEvent.click(removeBtn);
     await waitFor(() =>
-      expect(mockedRemoveEdge).toHaveBeenCalledWith(
-        'proj_1',
+      expect(apiStub.removeEdge).toHaveBeenCalledWith(
         'ref_AAAAAAAA',
         'comp_BILLING1',
       ),

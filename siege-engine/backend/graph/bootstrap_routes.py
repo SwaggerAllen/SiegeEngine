@@ -100,18 +100,31 @@ class BootstrapTierConfig:
     # Signature: (db, project_id, *scope_ids, feedback) -> (sys, user)
     render_prompt_preview: Callable[..., tuple[str, str]] | None = None
 
+    # ── Job payload key names ──────────────────────────────────────
+    # The keys the generation / mint handlers expect for each scope
+    # id in the job payload. Defaults match the bootstrap chain
+    # (component_id for the first scope, sub_id for the second).
+    # Tiers with different payload conventions (e.g. refs use
+    # ``ref_id``) override this.
+    scope_payload_keys: tuple[str, ...] = ("component_id", "sub_id")
+
 
 def build_job_payload(
     project_id: str,
     scope_ids: tuple[str, ...],
     feedback: str | None = None,
+    *,
+    scope_payload_keys: tuple[str, ...] = ("component_id", "sub_id"),
 ) -> dict[str, Any]:
     """Build a job payload dict with the right scope keys."""
     payload: dict[str, Any] = {"project_id": project_id, "feedback": feedback}
-    if len(scope_ids) >= 1:
-        payload["component_id"] = scope_ids[0]
-    if len(scope_ids) >= 2:
-        payload["sub_id"] = scope_ids[1]
+    for idx, sid in enumerate(scope_ids):
+        if idx >= len(scope_payload_keys):
+            raise ValueError(
+                f"build_job_payload: scope_ids has {len(scope_ids)} entries "
+                f"but only {len(scope_payload_keys)} payload keys configured"
+            )
+        payload[scope_payload_keys[idx]] = sid
     return payload
 
 
@@ -137,7 +150,11 @@ def bootstrap_get_state(
             pipeline_queue.enqueue(
                 db,
                 job_type=config.generate_job_type,
-                payload=build_job_payload(project_id, scope_ids),
+                payload=build_job_payload(
+                    project_id,
+                    scope_ids,
+                    scope_payload_keys=config.scope_payload_keys,
+                ),
             )
             node = config.get_node(db, project_id, *scope_ids)
             assert node is not None
@@ -147,11 +164,10 @@ def bootstrap_get_state(
                 detail=f"{config.tier_name} node missing",
             )
     draft = config.get_pending_draft(db, project_id, *scope_ids)
-    payload_filters = {}
-    if len(scope_ids) >= 1:
-        payload_filters["component_id"] = scope_ids[0]
-    if len(scope_ids) >= 2:
-        payload_filters["sub_id"] = scope_ids[1]
+    payload_filters: dict[str, Any] = {}
+    for idx, sid in enumerate(scope_ids):
+        if idx < len(config.scope_payload_keys):
+            payload_filters[config.scope_payload_keys[idx]] = sid
     status, last_error, started_at = queries.latest_generation_status(
         db,
         project_id,
@@ -193,7 +209,12 @@ def bootstrap_feedback(
     job_id = pipeline_queue.enqueue(
         db,
         job_type=config.generate_job_type,
-        payload=build_job_payload(project_id, scope_ids, feedback),
+        payload=build_job_payload(
+            project_id,
+            scope_ids,
+            feedback,
+            scope_payload_keys=config.scope_payload_keys,
+        ),
     )
     return {"job_id": job_id}
 
@@ -235,10 +256,9 @@ def bootstrap_approve(
     db.refresh(node)
     if config.mint_job_type:
         mint_payload: dict[str, Any] = {"project_id": project_id}
-        if len(scope_ids) >= 1:
-            mint_payload["component_id"] = scope_ids[0]
-        if len(scope_ids) >= 2:
-            mint_payload["sub_id"] = scope_ids[1]
+        for idx, sid in enumerate(scope_ids):
+            if idx < len(config.scope_payload_keys):
+                mint_payload[config.scope_payload_keys[idx]] = sid
         pipeline_queue.enqueue(
             db,
             job_type=config.mint_job_type,
@@ -284,7 +304,11 @@ def bootstrap_discard(
     pipeline_queue.enqueue(
         db,
         job_type=config.generate_job_type,
-        payload=build_job_payload(project_id, scope_ids),
+        payload=build_job_payload(
+            project_id,
+            scope_ids,
+            scope_payload_keys=config.scope_payload_keys,
+        ),
     )
     return {"ok": True}
 
@@ -299,8 +323,9 @@ def bootstrap_cancel(
     """Generic POST cancel handler."""
     require_project(db, project_id)
     payload_filters: dict[str, Any] = {"project_id": project_id}
-    if len(scope_ids) >= 1:
-        payload_filters["component_id"] = scope_ids[0]
+    for idx, sid in enumerate(scope_ids):
+        if idx < len(config.scope_payload_keys):
+            payload_filters[config.scope_payload_keys[idx]] = sid
     job = pipeline_queue.find_active_job(
         db,
         config.generate_job_type,
@@ -393,7 +418,11 @@ def bootstrap_reset(
     pipeline_queue.enqueue(
         db,
         job_type=config.generate_job_type,
-        payload=build_job_payload(project_id, scope_ids),
+        payload=build_job_payload(
+            project_id,
+            scope_ids,
+            scope_payload_keys=config.scope_payload_keys,
+        ),
     )
     return {
         "ok": True,

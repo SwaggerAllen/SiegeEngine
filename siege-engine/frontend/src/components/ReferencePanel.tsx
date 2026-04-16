@@ -19,21 +19,23 @@ interface Props {
 /**
  * Detail + draft-review panel for a single reference.
  *
- * Four-state shape mirrors the other bootstrap tiers (idle /
- * running / draft-pending / approved) but with one crucial
- * difference: refs are NOT frozen after approval, so the
- * feedback button is always enabled.
+ * Reads the standard bootstrap-tier shape (node / pending_draft /
+ * generation_status / latest_telemetry) from the ref API, plus
+ * the ref-specific outgoing/incoming edge lists.
  *
- * Also hosts the "connected nodes" list with add/remove
- * affordances for ``reference`` edges.
+ * Refs are NOT frozen after approval, so the feedback button is
+ * always enabled — that's the one behavioural divergence from
+ * the bootstrap tiers.
  */
 export function ReferencePanel({ projectId, refId, onDeleted }: Props) {
   const { data, isLoading, error } = useReferenceDetail(projectId, refId);
   const [feedbackText, setFeedbackText] = useState('');
 
-  const updateMutation = useUpdateReferenceMutation(projectId);
-  const approveMutation = useApproveReferenceMutation(projectId);
-  const discardMutation = useDiscardReferenceMutation(projectId);
+  // Hook order is fixed across renders; bind even when refId is
+  // null (we early-return before using them).
+  const updateMutation = useUpdateReferenceMutation(projectId, refId ?? '');
+  const approveMutation = useApproveReferenceMutation(projectId, refId ?? '');
+  const discardMutation = useDiscardReferenceMutation(projectId, refId ?? '');
   const deleteMutation = useDeleteReferenceMutation(projectId);
   const removeEdgeMutation = useRemoveReferenceEdgeMutation(projectId);
 
@@ -55,29 +57,29 @@ export function ReferencePanel({ projectId, refId, onDeleted }: Props) {
     );
   }
 
-  const isRunning = data.generation_status === 'running';
-  const hasDraft = data.pending_draft !== null;
-  const hasContent = !!data.content;
+  const { node, pending_draft, generation_status, last_error, latest_telemetry } = data;
+  const isRunning = generation_status === 'running';
+  const hasDraft = pending_draft !== null;
+  const hasContent = !!node.content;
 
   const handleFeedback = () => {
-    updateMutation.mutate(
-      { refId, feedback: feedbackText.trim() || null },
-      { onSuccess: () => setFeedbackText('') },
-    );
+    updateMutation.mutate(feedbackText.trim(), {
+      onSuccess: () => setFeedbackText(''),
+    });
   };
 
   const handleApprove = () => {
-    if (!data.pending_draft) return;
-    approveMutation.mutate({ refId, draftId: data.pending_draft.id });
+    if (!pending_draft) return;
+    approveMutation.mutate(pending_draft.id);
   };
 
   const handleDiscard = () => {
-    if (!data.pending_draft) return;
-    discardMutation.mutate({ refId, draftId: data.pending_draft.id });
+    if (!pending_draft) return;
+    discardMutation.mutate(pending_draft.id);
   };
 
   const handleDelete = () => {
-    if (!window.confirm(`Delete reference "${data.name}"?`)) return;
+    if (!window.confirm(`Delete reference "${node.name}"?`)) return;
     deleteMutation.mutate(refId, { onSuccess: () => onDeleted?.() });
   };
 
@@ -85,8 +87,8 @@ export function ReferencePanel({ projectId, refId, onDeleted }: Props) {
     <div className="space-y-4 p-4">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <h2 className="text-base font-bold text-white m-0">{data.name}</h2>
-          <div className="text-xs font-mono text-gray-500">{data.id}</div>
+          <h2 className="text-base font-bold text-white m-0">{node.name}</h2>
+          <div className="text-xs font-mono text-gray-500">{node.id}</div>
         </div>
         <button
           type="button"
@@ -97,9 +99,9 @@ export function ReferencePanel({ projectId, refId, onDeleted }: Props) {
         </button>
       </div>
 
-      {data.last_error && (
+      {last_error && (
         <div className="text-xs text-red-400 bg-red-950 border border-red-900 rounded p-2">
-          Last generation error: {data.last_error}
+          Last generation error: {last_error}
         </div>
       )}
 
@@ -109,18 +111,18 @@ export function ReferencePanel({ projectId, refId, onDeleted }: Props) {
           <h3 className="text-xs uppercase tracking-wider text-gray-400 mb-1">
             Approved content
           </h3>
-          <XmlDocument content={data.content} renderers={referencesRenderers} />
+          <XmlDocument content={node.content} renderers={referencesRenderers} />
         </section>
       )}
 
       {/* Pending draft */}
-      {hasDraft && data.pending_draft && (
+      {hasDraft && pending_draft && (
         <section>
           <h3 className="text-xs uppercase tracking-wider text-gray-400 mb-1">
             Pending draft
           </h3>
           <XmlDocument
-            content={data.pending_draft.content}
+            content={pending_draft.content}
             renderers={referencesRenderers}
           />
           <div className="flex gap-2 mt-2">
@@ -236,11 +238,11 @@ export function ReferencePanel({ projectId, refId, onDeleted }: Props) {
         )}
       </section>
 
-      {data.latest_telemetry && (
+      {latest_telemetry && (
         <section className="text-xs text-gray-500">
-          Latest generation: {data.latest_telemetry.prompt_tokens} prompt /{' '}
-          {data.latest_telemetry.completion_tokens} completion tokens (
-          {data.latest_telemetry.model})
+          Latest generation: {latest_telemetry.prompt_tokens} prompt /{' '}
+          {latest_telemetry.completion_tokens} completion tokens (
+          {latest_telemetry.model})
         </section>
       )}
     </div>

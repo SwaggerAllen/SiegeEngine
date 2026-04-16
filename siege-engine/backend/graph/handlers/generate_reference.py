@@ -3,13 +3,23 @@
 Registered on the pipeline job queue as ``v2.generate_reference``.
 Payload: ``{"project_id": str, "ref_id": str, "feedback": str | None}``.
 
+The bootstrap-style routes in ``backend.graph.routes`` build this
+payload via ``BootstrapTierConfig.scope_payload_keys=("ref_id",)``,
+so the only fields the handler needs to read off the payload are
+``project_id``, ``ref_id``, and ``feedback``. The seed description
+the user supplied at create time is preserved on the ref node's
+``content`` field (as a minimal ``<reference>`` shell), so the
+handler reuses ``ref.name`` as the prompt's seed handle on every
+regen — no separate ``seed_description`` payload key needed.
+
 Unlike the bootstrap tiers (expansion / reqs / sysarch / subreqs),
 references are **not** frozen after approval — ``UpdateReference``
 re-enters this handler regardless of the ref's current approval
-state. The rationale (see
-``docs/architecture/v2-rearchitecture.md`` §Project references):
-refs don't mint children, so there's no downstream desync to
-guard against after approval.
+state. The route layer enforces that by leaving
+``has_been_approved=None`` on ``REFERENCE_CONFIG``. The rationale
+(see ``docs/architecture/v2-rearchitecture.md`` §Project
+references): refs don't mint children, so there's no downstream
+desync to guard against after approval.
 
 Flow (matches ``feature_expansion.generate_feature_expansion``):
 
@@ -83,7 +93,10 @@ async def generate_reference(payload: dict) -> None:
     """Job handler for ``v2.generate_reference``.
 
     Payload shape: ``{"project_id": str, "ref_id": str,
-    "seed_description": str, "feedback": str | None}``.
+    "feedback": str | None}``. The seed description the user
+    supplied at create time is read off the ref node itself (its
+    ``name`` plus the seed-XML body in ``content``), so it
+    persists across regens without needing to ride in the payload.
     """
     project_id = payload.get("project_id")
     if not isinstance(project_id, str) or not project_id:
@@ -91,7 +104,6 @@ async def generate_reference(payload: dict) -> None:
     ref_id = payload.get("ref_id")
     if not isinstance(ref_id, str) or not ref_id:
         raise ReferenceHandlerError("generate_reference payload missing ref_id")
-    seed_description = payload.get("seed_description") or ""
     feedback: str | None = payload.get("feedback")
 
     # ── Phase 1: gather inputs ──────────────────────────────────────
@@ -102,6 +114,13 @@ async def generate_reference(payload: dict) -> None:
             raise ReferenceHandlerError(f"Reference {ref_id!r} not found in project {project_id!r}")
         if ref_node.project_id != project_id:
             raise ReferenceHandlerError(f"Reference {ref_id!r} belongs to a different project")
+        # The ref's name is the canonical seed handle. The create
+        # route writes a minimal ``<reference>`` shell to
+        # Node.content carrying the user's seed_description; that
+        # shell becomes ``prior_approved`` (since it sits in the
+        # node's content), so the first regen sees the seed body
+        # in the prior-approved section of the prompt.
+        seed_description = ref_node.name
         prior_approved: str | None = ref_node.content or None
 
         pending = _pending_ref_draft(db, project_id, ref_id)

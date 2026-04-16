@@ -96,7 +96,6 @@ from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
 from backend.models.node import Draft, Edge, Node
 from backend.models.telemetry import GenerationTelemetry
-from backend.pipeline import queue as pipeline_queue
 
 logger = logging.getLogger(__name__)
 
@@ -2483,12 +2482,23 @@ def post_delete_vocab(
 
 
 # ── Reference routes (Phase 6.6) ──────────────────────────────────
-
-
-class ReferenceDraftResponse(BaseModel):
-    id: str
-    content: str
-    created_at: str
+#
+# Refs use the BootstrapTierConfig pattern for their per-ref
+# lifecycle (get / feedback / approve / discard / cancel). Three
+# things make them deviate from a "pure" bootstrap tier:
+#
+# 1. Multi-instance — the project owns N refs, not a singleton.
+#    The standard list endpoint and the create endpoint stay
+#    bespoke since they have no analogue in the bootstrap config.
+# 2. Never frozen — ``has_been_approved=None`` skips the freeze
+#    gate so ``UpdateReference`` works at any time.
+# 3. ``ref_id`` payload key — generate_reference expects
+#    ``ref_id`` rather than ``component_id`` in the job payload,
+#    handled via the config's ``scope_payload_keys``.
+#
+# Edge add/remove and delete are bespoke because they're
+# non-lifecycle operations that don't map onto the bootstrap
+# helpers.
 
 
 class ReferenceEdgeResponse(BaseModel):
@@ -2498,11 +2508,15 @@ class ReferenceEdgeResponse(BaseModel):
 
 
 class ReferenceDetailResponse(BaseModel):
-    id: str
-    name: str
-    content: str  # raw <reference> XML (empty before first approval)
-    updated_at: str
-    pending_draft: ReferenceDraftResponse | None
+    """GET /references/{ref_id} response.
+
+    Wraps the standard ``BootstrapTierConfig`` payload (node /
+    pending_draft / generation_status / etc.) and adds the
+    ref-specific edge lists.
+    """
+
+    node: ExpansionNodeResponse
+    pending_draft: ExpansionDraftResponse | None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -2533,10 +2547,6 @@ class CreateReferenceResponse(BaseModel):
     job_id: str
 
 
-class UpdateReferenceRequest(BaseModel):
-    feedback: str | None = None
-
-
 class AddReferenceEdgeRequest(BaseModel):
     source_id: str
     target_id: str
@@ -2564,7 +2574,22 @@ def _serialize_ref_edge(edge: Edge) -> ReferenceEdgeResponse:
     )
 
 
-def _pending_reference_draft(db: Session, project_id: str, ref_id: str) -> Draft | None:
+def _ref_get_node(db: Session, project_id: str, ref_id: str) -> Node | None:
+    """BootstrapTierConfig.get_node adapter for refs.
+
+    Wraps ``references.reference_by_id`` with a project-id check
+    so the bootstrap helper's "node missing" branch fires for
+    cross-project lookups too.
+    """
+    from backend.graph.references import reference_by_id
+
+    node = reference_by_id(db, ref_id)
+    if node is None or node.project_id != project_id:
+        return None
+    return node
+
+
+def _ref_pending_draft(db: Session, project_id: str, ref_id: str) -> Draft | None:
     return db.execute(
         select(Draft).where(
             Draft.project_id == project_id,
@@ -2573,6 +2598,27 @@ def _pending_reference_draft(db: Session, project_id: str, ref_id: str) -> Draft
             Draft.status == "pending",
         )
     ).scalar_one_or_none()
+
+
+REFERENCE_CONFIG = BootstrapTierConfig(
+    tier_name="Reference",
+    get_node=_ref_get_node,
+    get_pending_draft=_ref_pending_draft,
+    # Refs are NOT frozen after approval — leaving this None
+    # skips the bootstrap helper's freeze-gate check.
+    has_been_approved=None,
+    # No lazy bootstrap: refs are always created explicitly via
+    # POST /references/create; absent is genuinely 404.
+    bootstrap_node=None,
+    generate_job_type=GENERATE_REFERENCE_JOB_TYPE,
+    # No mint job — refs don't fan out into children, so approval
+    # just commits Node.content.
+    mint_job_type="",
+    serialize_node=_node_to_dict,
+    serialize_draft=_draft_to_dict,
+    feedback_readonly_detail="",  # unused (has_been_approved is None)
+    scope_payload_keys=("ref_id",),
+)
 
 
 @router.get("/{project_id}/references", response_model=ReferenceListResponse)
@@ -2599,41 +2645,30 @@ def get_reference(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> ReferenceDetailResponse:
-    """Return one ref's full detail plus its draft / status state."""
-    _require_project(db, project_id)
+    """Return one ref's standard bootstrap payload plus its edges."""
+    state = bootstrap_get_state(
+        db,
+        project_id,
+        (ref_id,),
+        REFERENCE_CONFIG,
+        _require_project,
+    )
     from backend.graph.references import (
         incoming_reference_edges,
         outgoing_reference_edges,
-        reference_by_id,
     )
 
-    node = reference_by_id(db, ref_id)
-    if node is None or node.project_id != project_id:
-        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
-    draft = _pending_reference_draft(db, project_id, ref_id)
-    status, last_error, started_at = queries.latest_generation_status(
-        db, project_id, GENERATE_REFERENCE_JOB_TYPE
-    )
     outgoing = [_serialize_ref_edge(e) for e in outgoing_reference_edges(db, project_id, ref_id)]
     incoming = [_serialize_ref_edge(e) for e in incoming_reference_edges(db, project_id, ref_id)]
     return ReferenceDetailResponse(
-        id=node.id,
-        name=node.name,
-        content=node.content or "",
-        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+        node=ExpansionNodeResponse(**state["node"]),
         pending_draft=(
-            ReferenceDraftResponse(
-                id=draft.id,
-                content=draft.content,
-                created_at=draft.created_at.isoformat() if draft.created_at else "",
-            )
-            if draft is not None
-            else None
+            ExpansionDraftResponse(**state["pending_draft"]) if state["pending_draft"] else None
         ),
-        generation_status=status,
-        last_error=last_error,
-        latest_telemetry=_latest_telemetry(db, project_id, node.id),
-        generation_started_at=started_at,
+        generation_status=state["generation_status"],
+        last_error=state["last_error"],
+        latest_telemetry=state["latest_telemetry"],
+        generation_started_at=state.get("generation_started_at"),
         outgoing_edges=outgoing,
         incoming_edges=incoming,
     )
@@ -2651,11 +2686,12 @@ def post_create_reference(
 ) -> CreateReferenceResponse:
     """Mint a new ref node and enqueue its initial generation.
 
-    Unlike vocab (direct-CRUD), refs are LLM-generated: the route
-    mints an empty ``ref_*`` node, wires up ``reference`` edges to
-    the caller-supplied ``related_nodes``, and enqueues a
-    ``v2.generate_reference`` job. The draft lifecycle + approval
-    flow mirrors every other bootstrap tier.
+    Unlike vocab (direct-CRUD), refs are LLM-generated. The route
+    mints an empty ``ref_*`` node + ``reference`` edges to the
+    caller-supplied ``related_nodes``, then delegates to
+    :func:`bootstrap_feedback` to enqueue the initial generation
+    job — keeping the enqueue path inside the shared bootstrap
+    helper rather than duplicating it here.
     """
     _require_project(db, project_id)
 
@@ -2677,8 +2713,8 @@ def post_create_reference(
             detail=f"Reference named {name!r} already exists in this project.",
         )
 
-    # Validate any related_nodes exist in the project before minting
-    # so partial state isn't emitted on a bad request.
+    # Validate related_nodes exist before minting so partial state
+    # isn't emitted on a bad request.
     for related_id in req.related_nodes:
         related = db.get(Node, related_id)
         if related is None or related.project_id != project_id:
@@ -2690,6 +2726,14 @@ def post_create_reference(
     from backend.graph.ids import Kind, mint
 
     ref_id = mint(db, Kind.REF)
+    # The seed description rides into the ref's content as a tiny
+    # ``<reference>`` shell, so the generate handler's regen prompt
+    # always has something to anchor against (even though refs are
+    # not frozen, the very first call still needs a hint). The
+    # validator accepts this minimal shape.
+    seed_xml = (
+        f"<reference><title>{name}</title><body>{req.seed_description.strip()}</body></reference>"
+    )
     append_event(
         db,
         project_id,
@@ -2699,6 +2743,7 @@ def post_create_reference(
             kind="domain",
             parent_id=None,
             name=name,
+            content=seed_xml,
         ),
     )
     for related_id in req.related_nodes:
@@ -2715,17 +2760,15 @@ def post_create_reference(
         )
     db.commit()
 
-    job_id = pipeline_queue.enqueue(
+    feedback_result = bootstrap_feedback(
         db,
-        job_type=GENERATE_REFERENCE_JOB_TYPE,
-        payload={
-            "project_id": project_id,
-            "ref_id": ref_id,
-            "seed_description": req.seed_description,
-            "feedback": None,
-        },
+        project_id,
+        (ref_id,),
+        "",  # initial generation — no feedback yet
+        REFERENCE_CONFIG,
+        _require_project,
     )
-    return CreateReferenceResponse(ref_id=ref_id, job_id=job_id)
+    return CreateReferenceResponse(ref_id=ref_id, job_id=feedback_result["job_id"])
 
 
 @router.post(
@@ -2735,35 +2778,26 @@ def post_create_reference(
 def post_reference_feedback(
     project_id: str,
     ref_id: str,
-    req: UpdateReferenceRequest,
+    req: FeedbackRequest,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
     """Regenerate a reference with optional prose feedback.
 
-    References are **not** frozen after approval — this route
-    accepts feedback regardless of the ref's current approval
-    state, unlike the bootstrap tiers. Rationale: refs don't mint
-    children, so there's no downstream desync to guard.
+    Refs are NOT frozen after approval (``has_been_approved`` is
+    ``None`` on ``REFERENCE_CONFIG``), so the bootstrap helper's
+    freeze-gate check is skipped and feedback works in any state.
     """
-    _require_project(db, project_id)
-    from backend.graph.references import reference_by_id
-
-    node = reference_by_id(db, ref_id)
-    if node is None or node.project_id != project_id:
-        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
-    feedback = (req.feedback or "").strip() or None
-    job_id = pipeline_queue.enqueue(
-        db,
-        job_type=GENERATE_REFERENCE_JOB_TYPE,
-        payload={
-            "project_id": project_id,
-            "ref_id": ref_id,
-            "seed_description": node.name,
-            "feedback": feedback,
-        },
+    return FeedbackResponse(
+        **bootstrap_feedback(
+            db,
+            project_id,
+            (ref_id,),
+            req.feedback,
+            REFERENCE_CONFIG,
+            _require_project,
+        )
     )
-    return FeedbackResponse(job_id=job_id)
 
 
 @router.post(
@@ -2778,27 +2812,14 @@ def post_reference_approve(
     _user: User = Depends(get_current_user),
 ) -> DiscardResponse:
     """Approve a pending ref draft, committing its content to Node.content."""
-    _require_project(db, project_id)
-    from backend.graph.references import reference_by_id
-
-    node = reference_by_id(db, ref_id)
-    if node is None or node.project_id != project_id:
-        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != ref_id
-    ):
-        raise HTTPException(status_code=404, detail="Draft not found for this reference")
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
-        )
-    append_event(db, project_id, ev.DraftApproved(draft_id=req.draft_id))
-    db.commit()
+    bootstrap_approve(
+        db,
+        project_id,
+        (ref_id,),
+        req.draft_id,
+        REFERENCE_CONFIG,
+        _require_project,
+    )
     return DiscardResponse(ok=True)
 
 
@@ -2813,36 +2834,45 @@ def post_reference_discard(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> DiscardResponse:
-    """Discard a pending ref draft without approving it.
+    """Discard a pending ref draft and re-enqueue a fresh generation.
 
-    Unlike the expansion's discard route, this does NOT auto-enqueue
-    a fresh generation — the user can re-request one via the
-    feedback route when ready. Refs are lower-urgency than the
-    bootstrap chain, so a stale discard doesn't block downstream
-    work.
+    Same auto-regen behaviour as every other bootstrap tier — the
+    user is presumably iterating on the draft, so dropping the
+    pending one and immediately re-running matches the bootstrap
+    chain's UX.
     """
-    _require_project(db, project_id)
-    from backend.graph.references import reference_by_id
-
-    node = reference_by_id(db, ref_id)
-    if node is None or node.project_id != project_id:
-        raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
-    draft = db.get(Draft, req.draft_id)
-    if (
-        draft is None
-        or draft.project_id != project_id
-        or draft.target_type != "node"
-        or draft.target_id != ref_id
-    ):
-        raise HTTPException(status_code=404, detail="Draft not found for this reference")
-    if draft.status != "pending":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Draft is {draft.status!r}, not pending",
+    return DiscardResponse(
+        **bootstrap_discard(
+            db,
+            project_id,
+            (ref_id,),
+            req.draft_id,
+            REFERENCE_CONFIG,
+            _require_project,
         )
-    append_event(db, project_id, ev.DraftDiscarded(draft_id=req.draft_id))
-    db.commit()
-    return DiscardResponse(ok=True)
+    )
+
+
+@router.post(
+    "/{project_id}/references/{ref_id}/cancel",
+    response_model=CancelResponse,
+)
+def post_reference_cancel(
+    project_id: str,
+    ref_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    """Stop any queued/running generation for this reference."""
+    return CancelResponse(
+        **bootstrap_cancel(
+            db,
+            project_id,
+            (ref_id,),
+            REFERENCE_CONFIG,
+            _require_project,
+        )
+    )
 
 
 @router.post("/{project_id}/references/{ref_id}/delete")
@@ -2852,18 +2882,10 @@ def post_reference_delete(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    """Delete a ref node (and cascade-delete its reference edges).
-
-    The reducer's ``NodeDeleted`` branch removes the node; the
-    DB's FK cascade on the ``edges`` table removes any incoming or
-    outgoing edges that referenced it (both ``reference`` and any
-    other edge type that happened to hit it).
-    """
+    """Delete a ref node (and cascade-delete its reference edges)."""
     _require_project(db, project_id)
-    from backend.graph.references import reference_by_id
-
-    node = reference_by_id(db, ref_id)
-    if node is None or node.project_id != project_id:
+    node = _ref_get_node(db, project_id, ref_id)
+    if node is None:
         raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
     append_event(db, project_id, ev.NodeDeleted(node_id=ref_id))
     db.commit()
