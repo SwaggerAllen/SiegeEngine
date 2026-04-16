@@ -157,14 +157,14 @@ function DashboardShell({ projectId }: { projectId: string }) {
         <DashboardMenu projectId={projectId} />
       </header>
       <nav
-        className="border-b border-gray-700 px-3 flex items-center gap-1 shrink-0"
+        className="border-b border-gray-700 px-3 flex items-center gap-1 shrink-0 overflow-x-auto"
         role="tablist"
         aria-label="Project dashboard tabs"
       >
         {tabs.map((tab) => {
           const isActive = tab.key === activeTab;
           const baseClasses =
-            'px-4 py-2 text-sm border-b-2 -mb-px transition-colors';
+            'px-4 py-2 text-sm border-b-2 -mb-px transition-colors shrink-0 whitespace-nowrap';
           const activeClasses = 'border-blue-500 text-white';
           const enabledClasses =
             'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-600 cursor-pointer';

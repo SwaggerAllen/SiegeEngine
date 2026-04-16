@@ -2,7 +2,6 @@ import { useExpansion } from '../hooks/queries/useExpansionQueries';
 import {
   useApproveMutation,
   useCancelGenerationMutation,
-  useDiscardMutation,
   useFeedbackMutation,
 } from '../hooks/mutations/useExpansionMutations';
 import {
@@ -29,13 +28,11 @@ export function FeatureExpansionPanel({ projectId }: Props) {
   const { data, error, isLoading } = useExpansion(projectId);
   const feedbackMutation = useFeedbackMutation(projectId);
   const approveMutation = useApproveMutation(projectId);
-  const discardMutation = useDiscardMutation(projectId);
   const cancelMutation = useCancelGenerationMutation(projectId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    discardMutation.isPending ||
     cancelMutation.isPending;
 
   return (
@@ -47,7 +44,6 @@ export function FeatureExpansionPanel({ projectId }: Props) {
       callbacks={{
         onFeedback: (f) => feedbackMutation.mutate(f),
         onApprove: (id) => approveMutation.mutate(id),
-        onDiscard: (id) => discardMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
         isBusy,

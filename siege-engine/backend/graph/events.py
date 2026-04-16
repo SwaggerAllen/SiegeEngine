@@ -202,6 +202,31 @@ class DraftDiscarded(_EventBase):
     draft_id: str
 
 
+class BootstrapNodeContentCleared(_EventBase):
+    """Reset a bootstrap tier's approved content back to empty.
+
+    Emitted by the destructive reset path on approved bootstrap nodes
+    (currently sysarch only) so the user can regenerate against a
+    new prompt without touching upstream state. The reducer sets
+    ``node.content = ""`` (empty string rather than ``None``, since
+    the column is ``nullable=False``) so the read-only post-approval
+    UI state flips back to the pending / no-content state, which in
+    turn unblocks the HTTP layer's freeze-on-approval 409 guard —
+    ``has_been_approved`` evaluates ``bool(node.content)``, which is
+    ``False`` for empty string.
+
+    Carries only the node id — the reset route walks the downstream
+    projection separately and emits ``NodeDeleted`` / ``DraftDiscarded``
+    events for everything that was minted from the approval before
+    appending this event, all in the same transaction. Replay of the
+    event log therefore produces the same post-reset state
+    deterministically.
+    """
+
+    event_type: Literal["BootstrapNodeContentCleared"] = "BootstrapNodeContentCleared"
+    node_id: str
+
+
 # ── View events ──────────────────────────────────────────────────────
 
 
@@ -231,6 +256,7 @@ Event = Annotated[
         DraftEdited,
         DraftApproved,
         DraftDiscarded,
+        BootstrapNodeContentCleared,
         ViewRecorded,
     ],
     Field(discriminator="event_type"),
@@ -253,6 +279,7 @@ _EVENT_TYPES: dict[str, type[_EventBase]] = {
     "DraftEdited": DraftEdited,
     "DraftApproved": DraftApproved,
     "DraftDiscarded": DraftDiscarded,
+    "BootstrapNodeContentCleared": BootstrapNodeContentCleared,
     "ViewRecorded": ViewRecorded,
 }
 

@@ -52,6 +52,22 @@ def engine_and_factory(monkeypatch):
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    # SQLite ignores FK constraints by default, which means the
+    # ``ON DELETE CASCADE`` on edges/fragments pointing at nodes
+    # doesn't fire and NodeDeleted would leave orphaned child rows.
+    # Production Postgres enforces FKs; turn it on here so the tests
+    # match real-world cascade behaviour — the ``/sysarch/reset``
+    # route specifically relies on fragments + edges being cleaned up
+    # via cascade when their owner node is deleted.
+    from sqlalchemy import event as sa_event
+
+    @sa_event.listens_for(engine, "connect")
+    def _sqlite_enable_fk(dbapi_conn, _):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
@@ -112,6 +128,12 @@ def project_with_sysarch(db):
         git_repo_path="/tmp/test-repo",
     )
     db.add(p)
+    # Flush the project row before appending any events. Now that
+    # this module enables SQLite FK enforcement (to match Postgres
+    # production behaviour for the reset cascade test), the
+    # graph_events rows' project_id FK requires the parent row to
+    # be visible at INSERT time.
+    db.flush()
     db.add(
         InputDocument(
             project_id=p.id,
@@ -137,6 +159,7 @@ def project_no_sysarch(db):
         git_repo_path="/tmp/legacy",
     )
     db.add(p)
+    db.flush()  # see project_with_sysarch docstring re: FK enforcement
     _mint_top_level_resp(db, p.id, "X", 0)
     db.commit()
     return p
@@ -322,6 +345,288 @@ class TestDiscard:
             if j.payload.get("project_id") == project_with_sysarch.id
         ]
         assert fresh
+
+
+class TestReset:
+    """The ``/sysarch/reset`` route is the only escape hatch once a
+    user has approved a sysarch draft and wants to regenerate
+    against a different prompt. It has to cascade deletion
+    through the whole downstream projection (comps, policies,
+    subreqs, subresps, fragments, edges), discard any pending
+    drafts targeting those nodes, cancel any queued downstream
+    jobs, clear sysarch ``node.content`` back to None, and
+    enqueue a fresh generation. The guard: the sysarch node
+    must actually be in approved state — otherwise use the
+    pending-draft regen path."""
+
+    def test_reset_requires_approved_state(self, client, project_with_sysarch, db, monkeypatch):
+        # Pending draft, no approval — reset should 409.
+        draft_xml = _valid_sysarch(_resp_ids(db, project_with_sysarch.id))
+        _patch_cli(monkeypatch, draft_xml)
+        asyncio.run(generate_sysarch({"project_id": project_with_sysarch.id, "feedback": None}))
+
+        resp = client.post(f"/api/projects/{project_with_sysarch.id}/sysarch/reset")
+        assert resp.status_code == 409
+        assert "not in approved state" in resp.json()["detail"]
+
+    def test_reset_cascades_approved_state(self, client, project_with_sysarch, db, monkeypatch):
+        # Approve a sysarch draft, hand-mint some downstream state
+        # (comps + policies + subreqs + a nested resp + a fragment +
+        # a pending draft on one of the comps), then reset.
+        draft_xml = _valid_sysarch(_resp_ids(db, project_with_sysarch.id))
+        _patch_cli(monkeypatch, draft_xml)
+        asyncio.run(generate_sysarch({"project_id": project_with_sysarch.id, "feedback": None}))
+        draft = db.execute(
+            select(Draft).where(Draft.project_id == project_with_sysarch.id)
+        ).scalar_one()
+        client.post(
+            f"/api/projects/{project_with_sysarch.id}/sysarch/approve",
+            json={"draft_id": draft.id},
+        )
+
+        # Fake the downstream mint state the sysarch_mint + later
+        # pipeline tiers would have created. Two comps, one policy,
+        # one subreqs node, one nested subresp, one fragment on a
+        # comp, one pending draft on a comp.
+        from backend.models.node import Fragment
+
+        comp_ids = []
+        for i, name in enumerate(["Auth", "Billing"]):
+            cid = mint(db, Kind.COMP)
+            append_event(
+                db,
+                project_with_sysarch.id,
+                ev.NodeCreated(
+                    node_id=cid,
+                    tier="comp",
+                    kind="domain",
+                    parent_id=None,
+                    name=name,
+                    display_order=i,
+                    content="",
+                ),
+            )
+            comp_ids.append(cid)
+
+        policy_id = mint(db, Kind.POLICY)
+        append_event(
+            db,
+            project_with_sysarch.id,
+            ev.NodeCreated(
+                node_id=policy_id,
+                tier="policy",
+                kind="domain",
+                parent_id=None,
+                name="Telemetry",
+                display_order=0,
+                content="<policy/>",
+            ),
+        )
+
+        subreqs_id = mint(db, Kind.SUBREQS)
+        append_event(
+            db,
+            project_with_sysarch.id,
+            ev.NodeCreated(
+                node_id=subreqs_id,
+                tier="subreqs",
+                kind="domain",
+                parent_id=comp_ids[0],
+                name="Auth subreqs",
+                display_order=0,
+                content="",
+            ),
+        )
+
+        # Nested subresp — tier='resp' but parent_id set to a comp.
+        subresp_id = mint(db, Kind.RESP)
+        append_event(
+            db,
+            project_with_sysarch.id,
+            ev.NodeCreated(
+                node_id=subresp_id,
+                tier="resp",
+                kind="domain",
+                parent_id=comp_ids[0],
+                name="Password reset",
+                display_order=0,
+                content="intent",
+            ),
+        )
+
+        # A pending draft targeting one of the comp nodes — the
+        # reset should discard it so it doesn't dangle with a
+        # stale target_id.
+        import secrets
+
+        from backend.graph.fragments import FragmentKind, fragment_id
+
+        append_event(
+            db,
+            project_with_sysarch.id,
+            ev.DraftGenerated(
+                draft_id=f"draft_{secrets.token_hex(8)}",
+                target_type="node",
+                target_id=comp_ids[0],
+                content="<comparch/>",
+                batch_id=f"batch_{uuid.uuid4().hex[:16]}",
+            ),
+        )
+
+        # A fragment owned by a comp — FK cascade should drop this
+        # automatically when we delete the comp.
+        frag_id_value = fragment_id(comp_ids[0], FragmentKind.PUBAPI)
+        append_event(
+            db,
+            project_with_sysarch.id,
+            ev.FragmentUpdated(
+                fragment_id=frag_id_value,
+                owner_id=comp_ids[0],
+                fragment_kind=FragmentKind.PUBAPI,
+                new_content="pub content",
+            ),
+        )
+
+        # Also queue a downstream job that should be cancelled.
+        import backend.pipeline.queue as pq
+
+        pq.enqueue(
+            db,
+            job_type="v2.generate_subrequirements",
+            payload={"project_id": project_with_sysarch.id, "comp_id": comp_ids[0]},
+        )
+
+        db.commit()
+
+        # Sanity check: things exist before the reset.
+        assert (
+            db.execute(
+                select(Node).where(Node.project_id == project_with_sysarch.id, Node.tier == "comp")
+            )
+            .scalars()
+            .all()
+        )
+        assert db.execute(
+            select(Fragment).where(
+                Fragment.project_id == project_with_sysarch.id,
+                Fragment.owner_id == comp_ids[0],
+            )
+        ).scalar_one_or_none()
+        sysarch_node_before = db.execute(
+            select(Node).where(Node.project_id == project_with_sysarch.id, Node.tier == "sysarch")
+        ).scalar_one()
+        assert sysarch_node_before.content  # approved
+
+        # Now reset.
+        resp = client.post(f"/api/projects/{project_with_sysarch.id}/sysarch/reset")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["ok"] is True
+        # 2 comps + 1 policy + 1 subreqs + 1 nested resp = 5 nodes
+        assert body["nodes_deleted"] == 5
+        # 1 pending comparch draft on comp_ids[0]
+        assert body["drafts_discarded"] == 1
+        # 1 queued subrequirements job + however many mint_sysarch /
+        # generate_sysarch jobs the approve flow queued. At least 1.
+        assert body["jobs_cancelled"] >= 1
+
+        # After reset: sysarch node still exists, content cleared
+        # back to empty (column is nullable=False so this is the
+        # "not approved" sentinel that has_been_approved checks).
+        db.expire_all()
+        sysarch_node_after = db.execute(
+            select(Node).where(Node.project_id == project_with_sysarch.id, Node.tier == "sysarch")
+        ).scalar_one()
+        assert sysarch_node_after.content == ""
+        assert sysarch_node_after.id == sysarch_node_before.id  # same row, not recreated
+        # Confirm the freeze check has flipped off.
+        from backend.graph.sysarch import has_been_approved
+
+        assert has_been_approved(db, project_with_sysarch.id) is False
+
+        # Downstream nodes are gone.
+        assert (
+            not db.execute(
+                select(Node).where(Node.project_id == project_with_sysarch.id, Node.tier == "comp")
+            )
+            .scalars()
+            .all()
+        )
+        assert (
+            not db.execute(
+                select(Node).where(
+                    Node.project_id == project_with_sysarch.id, Node.tier == "policy"
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert (
+            not db.execute(
+                select(Node).where(
+                    Node.project_id == project_with_sysarch.id, Node.tier == "subreqs"
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # Nested resps are gone, but top-level resps survive.
+        surviving_resps = (
+            db.execute(
+                select(Node).where(Node.project_id == project_with_sysarch.id, Node.tier == "resp")
+            )
+            .scalars()
+            .all()
+        )
+        assert all(r.parent_id is None for r in surviving_resps)
+        assert len(surviving_resps) == 3  # the three top-level resps the fixture seeds
+
+        # Fragment cascaded away via the FK on owner_id.
+        assert (
+            db.execute(
+                select(Fragment).where(
+                    Fragment.project_id == project_with_sysarch.id,
+                    Fragment.owner_id == comp_ids[0],
+                )
+            ).scalar_one_or_none()
+            is None
+        )
+
+        # The pending comparch draft is now discarded.
+        comparch_draft = db.execute(
+            select(Draft).where(
+                Draft.project_id == project_with_sysarch.id,
+                Draft.target_type == "node",
+                Draft.target_id == comp_ids[0],
+            )
+        ).scalar_one()
+        assert comparch_draft.status == "discarded"
+
+        # A fresh generate_sysarch job is queued post-reset so the
+        # UI flips back to the generating spinner.
+        fresh_jobs = [
+            j
+            for j in db.execute(select(Job).where(Job.job_type == "v2.generate_sysarch")).scalars()
+            if j.payload.get("project_id") == project_with_sysarch.id and j.status == "queued"
+        ]
+        assert fresh_jobs, "reset should enqueue a fresh generate_sysarch job"
+
+        # And the previously-queued downstream subreqs job got cancelled.
+        subreqs_jobs = (
+            db.execute(select(Job).where(Job.job_type == "v2.generate_subrequirements"))
+            .scalars()
+            .all()
+        )
+        assert all(j.status == "cancelled" for j in subreqs_jobs)
+
+    def test_reset_on_missing_sysarch_returns_404(self, client, project_no_sysarch):
+        resp = client.post(f"/api/projects/{project_no_sysarch.id}/sysarch/reset")
+        # Lazy-bootstrap runs on GET; reset doesn't. The node is
+        # absent → the route returns either 404 (node missing) or
+        # 409 (not approved because no content). Both are
+        # acceptable — the invariant is "reset can't silently
+        # no-op on a project that has never generated sysarch."
+        assert resp.status_code in (404, 409)
 
 
 class TestComponentsList:

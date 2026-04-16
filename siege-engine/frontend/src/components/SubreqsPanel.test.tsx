@@ -8,7 +8,6 @@ vi.mock('../api/subreqs', () => ({
   getSubreqs: vi.fn(),
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
-  discardDraft: vi.fn(),
   cancelGeneration: vi.fn(),
   getSubresponsibilities: vi.fn(),
 }));
@@ -18,7 +17,6 @@ import * as subreqsApi from '../api/subreqs';
 const mockedGet = subreqsApi.getSubreqs as unknown as ReturnType<typeof vi.fn>;
 const mockedPostFeedback = subreqsApi.postFeedback as unknown as ReturnType<typeof vi.fn>;
 const mockedApprove = subreqsApi.approveDraft as unknown as ReturnType<typeof vi.fn>;
-const mockedDiscard = subreqsApi.discardDraft as unknown as ReturnType<typeof vi.fn>;
 
 function renderPanel() {
   return render(
@@ -132,7 +130,7 @@ describe('SubreqsPanel', () => {
     renderPanel();
     const textarea = await screen.findByPlaceholderText(/retry backoff/i);
     fireEvent.change(textarea, { target: { value: 'Add backoff' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reject & Regenerate' }));
     await waitFor(() =>
       expect(mockedPostFeedback).toHaveBeenCalledWith(
         'proj_1',
@@ -142,7 +140,7 @@ describe('SubreqsPanel', () => {
     );
   });
 
-  it('discards with componentId context', async () => {
+  it('rejects with empty feedback scoped to the component', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -152,11 +150,11 @@ describe('SubreqsPanel', () => {
         },
       })
     );
-    mockedDiscard.mockResolvedValue(undefined);
+    mockedPostFeedback.mockResolvedValue({ job_id: 'job_1' });
     renderPanel();
     fireEvent.click(await screen.findByRole('button', { name: 'Reject & Regenerate' }));
     await waitFor(() =>
-      expect(mockedDiscard).toHaveBeenCalledWith('proj_1', 'comp_billing1', 'draft_1')
+      expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', 'comp_billing1', '')
     );
   });
 });

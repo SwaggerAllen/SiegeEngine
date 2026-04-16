@@ -9,7 +9,6 @@ vi.mock('../api/expansion', () => ({
   getExpansion: vi.fn(),
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
-  discardDraft: vi.fn(),
   cancelGeneration: vi.fn(),
 }));
 
@@ -20,7 +19,6 @@ const mockedPostFeedback = expansionApi.postFeedback as unknown as ReturnType<
   typeof vi.fn
 >;
 const mockedApprove = expansionApi.approveDraft as unknown as ReturnType<typeof vi.fn>;
-const mockedDiscard = expansionApi.discardDraft as unknown as ReturnType<typeof vi.fn>;
 
 function renderPanel() {
   return render(
@@ -60,7 +58,7 @@ describe('FeatureExpansionPanel', () => {
     );
   });
 
-  it('renders the pending draft with approve/discard/regenerate actions', async () => {
+  it('renders the pending draft with approve and reject-regenerate actions', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -77,12 +75,6 @@ describe('FeatureExpansionPanel', () => {
     expect(
       screen.getByRole('button', { name: 'Reject & Regenerate' })
     ).toBeInTheDocument();
-    // The feedback-driven Regenerate button is disabled until
-    // feedback is non-empty. Use exact match since "Reject &
-    // Regenerate" also contains the word "Regenerate".
-    expect(
-      screen.getByRole('button', { name: 'Regenerate' })
-    ).toBeDisabled();
   });
 
   it('invokes approveDraft when Approve is clicked', async () => {
@@ -111,12 +103,7 @@ describe('FeatureExpansionPanel', () => {
     );
   });
 
-  it('invokes discardDraft when Reject & Regenerate is clicked', async () => {
-    // The button is labeled "Reject & Regenerate" but still hits
-    // the same discardDraft API; the backend's discard endpoint
-    // now enqueues a fresh generation after discarding, so the
-    // button semantics match the label even though the mutation
-    // name hasn't changed.
+  it('invokes feedback (empty) when Reject & Regenerate is clicked without feedback', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -126,7 +113,7 @@ describe('FeatureExpansionPanel', () => {
         },
       })
     );
-    mockedDiscard.mockResolvedValue(undefined);
+    mockedPostFeedback.mockResolvedValue({ job_id: 'job_1' });
 
     renderPanel();
     const btn = await screen.findByRole('button', {
@@ -135,11 +122,11 @@ describe('FeatureExpansionPanel', () => {
     fireEvent.click(btn);
 
     await waitFor(() =>
-      expect(mockedDiscard).toHaveBeenCalledWith('proj_1', 'draft_1')
+      expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', '')
     );
   });
 
-  it('sends feedback to postFeedback when Regenerate is clicked', async () => {
+  it('sends typed feedback when Reject & Regenerate is clicked with feedback text', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -154,7 +141,7 @@ describe('FeatureExpansionPanel', () => {
     renderPanel();
     const textarea = await screen.findByPlaceholderText(/Add reporting/i);
     fireEvent.change(textarea, { target: { value: 'Add reporting' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reject & Regenerate' }));
 
     await waitFor(() =>
       expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', 'Add reporting')
@@ -206,9 +193,6 @@ describe('FeatureExpansionPanel', () => {
   });
 
   it('renders approved content as read-only with no revision button', async () => {
-    // v2 spec: bootstrap nodes become read-only after their initial
-    // approval. Ongoing feature-layer work happens on individual
-    // feature nodes (Phase 2), not by re-editing the expansion prose.
     mockedGet.mockResolvedValue(
       makeResponse({
         node: {
@@ -222,14 +206,10 @@ describe('FeatureExpansionPanel', () => {
     renderPanel();
 
     await waitFor(() => expect(screen.getByText(/Approved plan/)).toBeInTheDocument());
-    // Read-only marker visible.
     expect(screen.getByText(/Approved · read-only/i)).toBeInTheDocument();
-    // No "Request revision" button exists anywhere in the document.
     expect(
       screen.queryByRole('button', { name: /Request revision/i })
     ).toBeNull();
-    // No "Submit feedback" button either (old inline revision form
-    // is also gone).
     expect(
       screen.queryByRole('button', { name: /Submit feedback/i })
     ).toBeNull();

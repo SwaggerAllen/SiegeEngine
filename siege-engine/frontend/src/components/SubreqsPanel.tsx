@@ -2,7 +2,6 @@ import { useSubreqs } from '../hooks/queries/useSubreqsQueries';
 import {
   useApproveMutation,
   useCancelGenerationMutation,
-  useDiscardMutation,
   useFeedbackMutation,
 } from '../hooks/mutations/useSubreqsMutations';
 import {
@@ -40,13 +39,11 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
   const { data, error, isLoading } = useSubreqs(projectId, componentId);
   const feedbackMutation = useFeedbackMutation(projectId, componentId);
   const approveMutation = useApproveMutation(projectId, componentId);
-  const discardMutation = useDiscardMutation(projectId, componentId);
   const cancelMutation = useCancelGenerationMutation(projectId, componentId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    discardMutation.isPending ||
     cancelMutation.isPending;
 
   return (
@@ -58,7 +55,6 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
       callbacks={{
         onFeedback: (f) => feedbackMutation.mutate(f),
         onApprove: (id) => approveMutation.mutate(id),
-        onDiscard: (id) => discardMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
         isBusy,

@@ -9,7 +9,6 @@ vi.mock('../api/requirements', () => ({
   getRequirements: vi.fn(),
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
-  discardDraft: vi.fn(),
   cancelGeneration: vi.fn(),
   getResponsibilities: vi.fn(),
 }));
@@ -19,7 +18,6 @@ import * as reqsApi from '../api/requirements';
 const mockedGet = reqsApi.getRequirements as unknown as ReturnType<typeof vi.fn>;
 const mockedPostFeedback = reqsApi.postFeedback as unknown as ReturnType<typeof vi.fn>;
 const mockedApprove = reqsApi.approveDraft as unknown as ReturnType<typeof vi.fn>;
-const mockedDiscard = reqsApi.discardDraft as unknown as ReturnType<typeof vi.fn>;
 
 function renderPanel() {
   return render(
@@ -76,7 +74,6 @@ describe('RequirementsPanel', () => {
     expect(screen.getByText('Identify users.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject & Regenerate' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeDisabled();
   });
 
   it('invokes approveDraft when Approve is clicked', async () => {
@@ -104,7 +101,7 @@ describe('RequirementsPanel', () => {
     await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith('proj_1', 'draft_1'));
   });
 
-  it('invokes discardDraft when Reject & Regenerate is clicked', async () => {
+  it('invokes feedback (empty) when Reject & Regenerate is clicked without feedback', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -115,16 +112,16 @@ describe('RequirementsPanel', () => {
         },
       })
     );
-    mockedDiscard.mockResolvedValue(undefined);
+    mockedPostFeedback.mockResolvedValue({ job_id: 'job_1' });
 
     renderPanel();
     const btn = await screen.findByRole('button', { name: 'Reject & Regenerate' });
     fireEvent.click(btn);
 
-    await waitFor(() => expect(mockedDiscard).toHaveBeenCalledWith('proj_1', 'draft_1'));
+    await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', ''));
   });
 
-  it('sends feedback to postFeedback when Regenerate is clicked', async () => {
+  it('sends feedback to postFeedback when Reject & Regenerate is clicked with feedback', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -140,7 +137,7 @@ describe('RequirementsPanel', () => {
     renderPanel();
     const textarea = await screen.findByPlaceholderText(/Add rate limiting/i);
     fireEvent.change(textarea, { target: { value: 'Add rate limiting' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reject & Regenerate' }));
 
     await waitFor(() =>
       expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', 'Add rate limiting')

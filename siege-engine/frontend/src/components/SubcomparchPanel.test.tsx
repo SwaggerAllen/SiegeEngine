@@ -8,7 +8,6 @@ vi.mock('../api/subcomparch', () => ({
   getSubcomparch: vi.fn(),
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
-  discardDraft: vi.fn(),
   cancelGeneration: vi.fn(),
 }));
 
@@ -19,8 +18,6 @@ const mockedPostFeedback =
   subcomparchApi.postFeedback as unknown as ReturnType<typeof vi.fn>;
 const mockedApprove =
   subcomparchApi.approveDraft as unknown as ReturnType<typeof vi.fn>;
-const mockedDiscard =
-  subcomparchApi.discardDraft as unknown as ReturnType<typeof vi.fn>;
 
 function renderPanel() {
   return render(
@@ -147,7 +144,7 @@ describe('SubcomparchPanel', () => {
     renderPanel();
     const textarea = await screen.findByPlaceholderText(/Narrow the public surface/i);
     fireEvent.change(textarea, { target: { value: 'Tighten rotation' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reject & Regenerate' }));
     await waitFor(() =>
       expect(mockedPostFeedback).toHaveBeenCalledWith(
         'proj_1',
@@ -158,7 +155,7 @@ describe('SubcomparchPanel', () => {
     );
   });
 
-  it('discards with (projectId, parentCompId, subId) context', async () => {
+  it('rejects with empty feedback scoped to (projectId, parentCompId, subId)', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -168,17 +165,17 @@ describe('SubcomparchPanel', () => {
         },
       })
     );
-    mockedDiscard.mockResolvedValue(undefined);
+    mockedPostFeedback.mockResolvedValue({ job_id: 'job_2' });
     renderPanel();
     fireEvent.click(
       await screen.findByRole('button', { name: 'Reject & Regenerate' })
     );
     await waitFor(() =>
-      expect(mockedDiscard).toHaveBeenCalledWith(
+      expect(mockedPostFeedback).toHaveBeenCalledWith(
         'proj_1',
         'comp_billing1',
         'comp_token_sto',
-        'draft_1'
+        ''
       )
     );
   });

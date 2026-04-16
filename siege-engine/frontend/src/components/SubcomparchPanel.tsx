@@ -2,7 +2,6 @@ import { useSubcomparch } from '../hooks/queries/useSubcomparchQueries';
 import {
   useSubcomparchApproveMutation,
   useSubcomparchCancelGenerationMutation,
-  useSubcomparchDiscardMutation,
   useSubcomparchFeedbackMutation,
 } from '../hooks/mutations/useSubcomparchMutations';
 import {
@@ -56,11 +55,6 @@ export function SubcomparchPanel({
     parentCompId,
     subId
   );
-  const discardMutation = useSubcomparchDiscardMutation(
-    projectId,
-    parentCompId,
-    subId
-  );
   const cancelMutation = useSubcomparchCancelGenerationMutation(
     projectId,
     parentCompId,
@@ -70,7 +64,6 @@ export function SubcomparchPanel({
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    discardMutation.isPending ||
     cancelMutation.isPending;
 
   return (
@@ -82,7 +75,6 @@ export function SubcomparchPanel({
       callbacks={{
         onFeedback: (f) => feedbackMutation.mutate(f),
         onApprove: (id) => approveMutation.mutate(id),
-        onDiscard: (id) => discardMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
         isBusy,

@@ -77,13 +77,14 @@ export interface BootstrapPanelLabels {
  * functions; it doesn't care what hooks produced them.
  */
 export interface BootstrapPanelCallbacks {
-  /** Submit feedback and regenerate. */
+  /** Submit (possibly-empty) feedback and regenerate. The handler
+   * always sees the current pending draft as ``prior_pending`` so
+   * the LLM can iterate on what it produced last time, rather than
+   * regenerating from scratch. Called by the single
+   * "Reject & Regenerate" button in the pending-draft state. */
   onFeedback: (feedback: string) => void;
   /** Approve the given pending draft id. */
   onApprove: (draftId: string) => void;
-  /** Discard the given pending draft id (and, per the current
-   * backend semantics, regenerate from scratch). */
-  onDiscard: (draftId: string) => void;
   /** Kick off a fresh generation with no feedback (the
    * failed-state retry path). */
   onRetry: () => void;
@@ -92,6 +93,15 @@ export interface BootstrapPanelCallbacks {
    * ``idle``, dropping the user back into the feedback / accept /
    * reject state over any remaining pending draft. */
   onCancel: () => void;
+  /**
+   * Destructively reset an **approved** bootstrap node — nuke all
+   * downstream state it minted and re-enqueue a fresh generation.
+   * Only wired by panels that have a corresponding backend reset
+   * route (currently just sysarch). When absent, the approved
+   * read-only state shows no reset affordance — matching the
+   * historical behavior for tiers that can't be reset yet.
+   */
+  onReset?: () => void;
   /** True while any of the mutations is in-flight. */
   isBusy: boolean;
 }
@@ -202,6 +212,74 @@ function GenerationClock({
 }
 
 /**
+ * Two-click confirm for the destructive reset action on the
+ * approved-state panel. First click flips the button into "Are
+ * you sure?" mode; a second click within that mode calls through
+ * to ``onReset``. Clicking anywhere else on the control row
+ * cancels the pending confirm.
+ *
+ * Two-click confirm rather than a full modal because the page is
+ * already busy and a modal would add more chrome than the action
+ * warrants. The visual distinction (red button text → "Confirm
+ * reset — nukes downstream state" in red background) is enough
+ * to make the destructive nature obvious.
+ */
+function ResetApprovedStateControl({
+  onReset,
+  isBusy,
+}: {
+  onReset: () => void;
+  isBusy: boolean;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div className="pt-4 border-t border-gray-800 flex items-center gap-3 flex-wrap">
+      {confirming ? (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              onReset();
+              setConfirming(false);
+            }}
+            disabled={isBusy}
+            className="px-4 py-2 text-sm rounded bg-red-700 hover:bg-red-600 disabled:opacity-40"
+          >
+            Confirm reset — this will delete all downstream state
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            disabled={isBusy}
+            className="px-4 py-2 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
+          >
+            Cancel
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            disabled={isBusy}
+            className="px-4 py-2 text-sm rounded border border-red-900 text-red-300 hover:bg-red-950 disabled:opacity-40"
+            title="Destructively reset this approved doc and all state minted from its approval"
+          >
+            Reset &amp; Regenerate
+          </button>
+          <span className="text-xs text-gray-500">
+            Deletes every downstream component, policy, subreqs, and
+            pending draft this approval minted, then regenerates
+            against the current prompt. Upstream state (features,
+            top-level responsibilities) is untouched.
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
  * The four-state bootstrap-doc panel shell.
  *
  * Each of the v2 bootstrap docs (expansion, requirements, sysarch,
@@ -248,8 +326,14 @@ export function BootstrapDraftPanel({
   } = data;
 
   const submitFeedback = () => {
+    // Passes through whatever is in the textarea, trimmed — empty
+    // string OK. The feedback endpoint always uses the current
+    // pending draft as ``prior_pending``, so an empty feedback
+    // still gives the LLM a do-over with its own prior attempt
+    // visible. This merges the former split between "Regenerate
+    // with feedback" (required text) and "Reject & Regenerate"
+    // (silently discard and start over) into one affordance.
     const trimmed = feedback.trim();
-    if (!trimmed) return;
     callbacks.onFeedback(trimmed);
     setFeedback('');
   };
@@ -315,14 +399,6 @@ export function BootstrapDraftPanel({
         <div className="flex gap-2 flex-wrap">
           <button
             type="button"
-            onClick={submitFeedback}
-            disabled={callbacks.isBusy || isRegenerating || !feedback.trim()}
-            className="px-4 py-2 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
-          >
-            Regenerate
-          </button>
-          <button
-            type="button"
             onClick={() => callbacks.onApprove(pending_draft.id)}
             disabled={callbacks.isBusy || isRegenerating}
             className="px-4 py-2 text-sm rounded bg-green-700 hover:bg-green-600 disabled:opacity-40"
@@ -331,10 +407,14 @@ export function BootstrapDraftPanel({
           </button>
           <button
             type="button"
-            onClick={() => callbacks.onDiscard(pending_draft.id)}
+            onClick={submitFeedback}
             disabled={callbacks.isBusy || isRegenerating}
             className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
-            title="Discard this draft and generate a new one from scratch"
+            title={
+              feedback.trim()
+                ? 'Regenerate this draft with the feedback above; the LLM sees the current draft as its starting point'
+                : 'Regenerate this draft (LLM sees the current draft as starting point; add feedback above for targeted guidance)'
+            }
           >
             Reject &amp; Regenerate
           </button>
@@ -378,6 +458,12 @@ export function BootstrapDraftPanel({
         <XmlDocument content={node.content} renderers={contentRenderers} />
         <div className="text-xs text-gray-500 italic">{labels.readOnlyExplanation}</div>
         <TelemetryLine telemetry={latest_telemetry} />
+        {callbacks.onReset && (
+          <ResetApprovedStateControl
+            onReset={callbacks.onReset}
+            isBusy={callbacks.isBusy}
+          />
+        )}
       </div>
     );
   }

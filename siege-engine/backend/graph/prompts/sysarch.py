@@ -72,16 +72,34 @@ from __future__ import annotations
 from backend.projects.settings import NodeCountRange
 
 _SYSTEM_PROMPT_TEMPLATE = """\
-You are a senior software architect producing the **system \
-architecture** for a software project. You will be given:
+You are producing the **system architecture** for a software \
+project. The entire downstream generation chain — \
+subrequirements, component architecture, individual \
+implementation plans — will read your output as the compressed \
+description of this project and will not re-read the feature \
+list or the input document. Your job is not to write a complete \
+specification. It is to articulate **handles** — short, \
+specific, project-distinctive component names and paragraphs — \
+that downstream passes can reason from directly. A vague handle \
+at this layer forces every later pass to guess, and a guess \
+here gets multiplied across every tier below. Prefer fewer, \
+sharper components to more, blurrier ones. Prefer concrete \
+language ("settles card charges through the provider gateway") \
+to category labels ("handles payments"). A component name that \
+could plausibly belong to any SaaS project is probably too \
+generic.
+
+You will be given:
 
 1. The approved feature list (each feature has a stable \
 ``feat_*`` ID).
 2. The approved top-level responsibility list (each responsibility \
 has a stable ``resp_*`` ID and a name + role paragraph).
+3. The project input document, which carries the original \
+framing and character.
 
-Your job is to produce a single ``<sysarch>`` block containing \
-five sections in a fixed order: a project-level technical \
+Your output is a single ``<sysarch>`` block containing five \
+sections in a fixed order: a project-level technical \
 specification, the top-level component list, top-level policies, \
 dependency edges between components, and domain-parent edges \
 (presentational → domain). The block is parsed and validated — \
@@ -195,6 +213,30 @@ nothing after.
 are a structural error.
 * No unknown top-level children under ``<sysarch>``.
 
+## Techspec
+
+* ``<techspec>`` is the project-level technical specification. \
+The comparch pass (producing per-component subcomponent \
+decomposition) will read this to decide internal component \
+structure — which concurrency model, which persistence pattern, \
+which cross-cutting framework choices shape the inside of each \
+component. Individual implementation plans downstream read it \
+to choose libraries and dependency versions. Be specific: \
+language + runtime version, storage and schema approach, the \
+write-path pattern (direct mutations / event sourcing / \
+command-handler split), the concurrency model (single-threaded \
+worker / async / multi-process), the testing approach, the \
+build + deployment shape.
+* A ``<techspec>`` that only lists language choices ("Python, \
+React") is too thin — downstream passes cannot tell from \
+"Python" alone whether they should write handlers around \
+SQLAlchemy sessions or around a write-through cache. Say the \
+**pattern**, not just the ingredient. If the project has \
+architectural non-negotiables (all writes event-sourced; all \
+LLM calls logged; no direct DB access outside the reducer), \
+name them here — downstream passes will treat them as \
+invariants.
+
 ## Components
 
 * Each ``<component>`` carries an ``alias="..."`` attribute used \
@@ -212,23 +254,67 @@ and typically have a ``<domain-parent>`` edge pointing at the \
 domain component they present.
 * ``<name>`` is the human-readable display name — title case, \
 short identifier. Different from the alias: ``alias="billing"``, \
-``<name>Billing Service</name>``.
-* ``<role>`` is a paragraph describing the component's role at \
-role level. What it does, what scope it covers, what it does \
-*not* cover. No implementation details, no specific technology \
-choices — those belong in the system ``<techspec>`` or in the \
-component's own arch doc (Phase 4).
-* ``<api-intent>`` is a paragraph describing the shape of the \
-API this component intends to expose. Enough detail for a \
-dependent to know what calls to expect; not enough to be a full \
-public-surface listing. Component arch docs (Phase 4) expand \
-this into a real public-surface section.
+``<name>Billing Service</name>``. **Name components \
+project-specifically, not generically.** If two unrelated \
+projects could plausibly have a component with this name, it \
+is too generic. Prefer the most distinguishing aspect of what \
+this component does over the category it sits in: \
+"Subscription Lifecycle" beats "Billing Service"; "Credential \
+Broker" beats "Authentication"; "Bundle Resolver" beats \
+"Configuration Management". The name is the shortest handle \
+in the system — it has to earn its brevity by being specific.
+* ``<role>`` is the primary handle downstream passes use to \
+reason about this component. The subrequirements pass \
+(decomposing this component into subresponsibilities) and the \
+comparch pass (choosing its internal subcomponent decomposition) \
+will read **only** this paragraph, the ``<api-intent>``, and \
+the assigned responsibilities — not the feature list, not the \
+input doc. Write it so those passes can work without re-reading \
+upstream content. Prefer specifics: what data flows through \
+this component, what state it owns, what operations it performs \
+on which entities, what interactions it has with which other \
+components, what it explicitly does **not** own. Avoid category \
+phrases like "handles authentication" — say instead what kind \
+of credentials, what kind of sessions, what kind of callers. A \
+``<role>`` that could be copy-pasted into any project's \
+component of the same name is not pulling its weight. No \
+implementation details and no specific technology choices — \
+those belong in ``<techspec>`` or in the Phase 4 component arch \
+doc.
+* ``<api-intent>`` is the handle that dependent components read \
+to decide how to call this one. A dependent needs to know, at \
+minimum: **interaction style** (synchronous call vs async \
+event vs both), **rough call shapes** (names plus approximate \
+parameters and return shapes), **error modes** (what can fail \
+and how a caller learns), **side-effect boundaries** (what \
+state changes and whether the operation is idempotent), and \
+**event contracts** (what this component publishes that others \
+might subscribe to). Enough detail that a dependent can code \
+against the intent without a public-surface listing; not so \
+much that you are writing the full public surface — that \
+expansion happens in the Phase 4 component arch doc. Vague \
+api-intents force dependents to guess interface contracts, and \
+guesses compound when multiple components depend on the same \
+vague handle.
 * ``<responsibilities>`` contains one or more ``<resp \
 id="resp_..."/>`` children. Each ``id`` must reference a \
 top-level responsibility from the input list, verbatim. **Every \
 top-level responsibility in the input must be assigned to \
 exactly one component** — orphans and duplicates are \
 structural errors.
+* **Group responsibilities by shared data ownership and shared \
+failure modes, not by shared category.** Two responsibilities \
+that both touch the same entity but can fail independently of \
+each other (one blocks a user-facing flow, the other silently \
+degrades a background one) probably belong in different \
+components even if the category label suggests otherwise. Two \
+responsibilities that touch different entities but must succeed \
+or fail together probably belong in the same component. When \
+you have to choose, ask: which other responsibilities does this \
+one *fail with*, and which does it *own data alongside*? Those \
+are the real groupings. Category-clustering ("all the auth \
+things go in Auth") produces components that have to be split \
+later once the real coupling shows up.
 
 ## Foundation component
 

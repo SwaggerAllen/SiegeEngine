@@ -112,3 +112,155 @@ def has_been_approved(session: Session, project_id: str) -> bool:
     if node is None:
         return False
     return bool(node.content)
+
+
+# ── Destructive reset ─────────────────────────────────────────────────
+
+# Tier names for every node that can exist downstream of sysarch
+# approval. Anything with a tier in this set is fair game for the
+# destructive reset walker to delete. Upstream tiers (feat, top-level
+# resp, reqs, expansion, sysarch itself) are *never* in this set —
+# they survive the reset so the user can regen sysarch against the
+# same upstream state.
+#
+# Note that ``resp`` is deliberately absent: top-level responsibilities
+# (``parent_id IS NULL``) are upstream of sysarch and must survive.
+# Sub-responsibilities (``parent_id`` set to a ``comp_*`` id) live in
+# the ``resp`` tier too but are downstream of sysarch mint + subreqs
+# mint, so the reset walker queries them with an explicit parent_id
+# filter rather than by tier alone.
+_DOWNSTREAM_OF_SYSARCH_TIERS: tuple[str, ...] = (
+    "comp",
+    "policy",
+    "subreqs",
+    "impl",
+    "plan",
+    "manifest",
+    "fanin",
+)
+
+# Queued job types to cancel when the reset runs. Everything that
+# downstream of ``v2.generate_sysarch`` in the pipeline: the sysarch
+# mint, subrequirements + comparch + subcomparch generation and mint
+# jobs, and the two policy-application tiers. ``v2.generate_sysarch``
+# itself is also cancelled — the reset route enqueues a fresh one
+# afterward and we don't want a stale pre-reset job running against
+# the new state.
+_DOWNSTREAM_JOB_TYPES: tuple[str, ...] = (
+    "v2.generate_sysarch",
+    "v2.mint_sysarch",
+    "v2.generate_subrequirements",
+    "v2.mint_subrequirements",
+    "v2.generate_comparch",
+    "v2.mint_comparch",
+    "v2.generate_subcomparch",
+    "v2.mint_subcomparch",
+    "v2.apply_top_level_policies",
+    "v2.apply_component_local_policies",
+)
+
+
+def collect_downstream_nodes(session: Session, project_id: str) -> list[Node]:
+    """Return every projection node that was minted downstream of
+    the project's sysarch approval.
+
+    Covers:
+
+    * Every node with a tier in :data:`_DOWNSTREAM_OF_SYSARCH_TIERS`
+      (top-level components, subcomponents, top-level + local
+      policies, subreqs nodes, any impl / plan / manifest / fanin
+      nodes if they exist yet).
+    * Every ``resp_*`` node with a non-null ``parent_id`` — those
+      are sub-responsibilities minted by ``subreqs_mint`` under a
+      component, distinct from the top-level resps that survive.
+
+    Order is unspecified. The reset route emits ``NodeDeleted``
+    events for each node; the reducer handles each deletion
+    independently, and DB-level ``ON DELETE CASCADE`` on the
+    fragment + edge tables takes care of owned fragments and
+    touching edges automatically.
+    """
+    from sqlalchemy import or_
+
+    tier_query = select(Node).where(
+        Node.project_id == project_id,
+        Node.tier.in_(_DOWNSTREAM_OF_SYSARCH_TIERS),
+    )
+    nested_resp_query = select(Node).where(
+        Node.project_id == project_id,
+        Node.tier == "resp",
+        Node.parent_id.is_not(None),
+    )
+    # Two separate queries rather than a single OR because the tier
+    # filter is a clean inclusion test and the resp-with-parent
+    # filter is a specific carve-out; keeping them separate makes
+    # the intent obvious to a reader and lets each query hit its
+    # natural index.
+    _ = or_  # kept imported in case a future rewrite merges them
+    return [
+        *session.execute(tier_query).scalars().all(),
+        *session.execute(nested_resp_query).scalars().all(),
+    ]
+
+
+def collect_pending_drafts_for_nodes(
+    session: Session, project_id: str, node_ids: list[str]
+) -> list[Draft]:
+    """Return every pending draft that targets a node in ``node_ids``
+    or a fragment owned by one of those nodes.
+
+    Drafts have no foreign key on ``target_id`` (the column is a
+    plain string that can point at either a node id or a fragment
+    id), so deleting a node via the reducer leaves orphaned
+    pending drafts pointing at the now-deleted target. This helper
+    finds them so the reset route can emit ``DraftDiscarded`` for
+    each before the ``NodeDeleted`` cascade fires.
+
+    The returned list includes drafts targeting *fragments* owned
+    by the to-be-deleted nodes, because fragment drafts are what
+    Phase 4+ tiers (comparch's pubapi / techspec fragments) regen
+    against, and if left pending they'd be orphaned the same way.
+    """
+    if not node_ids:
+        return []
+    from backend.models.node import Fragment
+
+    drafts: list[Draft] = []
+    # Direct node drafts.
+    drafts.extend(
+        session.execute(
+            select(Draft).where(
+                Draft.project_id == project_id,
+                Draft.target_type == "node",
+                Draft.target_id.in_(node_ids),
+                Draft.status == "pending",
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Fragment drafts whose owner is one of the to-be-deleted nodes.
+    fragment_ids = (
+        session.execute(
+            select(Fragment.id).where(
+                Fragment.project_id == project_id,
+                Fragment.owner_id.in_(node_ids),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if fragment_ids:
+        drafts.extend(
+            session.execute(
+                select(Draft).where(
+                    Draft.project_id == project_id,
+                    Draft.target_type == "fragment",
+                    Draft.target_id.in_(fragment_ids),
+                    Draft.status == "pending",
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return drafts
