@@ -69,6 +69,12 @@ from backend.graph.sysarch import (
     get_sysarch_node,
     pending_sysarch_draft,
 )
+from backend.graph.sysarch import (
+    collect_downstream_nodes as sysarch_collect_downstream_nodes,
+)
+from backend.graph.sysarch import (
+    collect_pending_drafts_for_nodes as sysarch_collect_pending_drafts_for_nodes,
+)
 from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
 from backend.models.node import Draft, Edge, Node
@@ -189,6 +195,22 @@ class CancelResponse(BaseModel):
     """
 
     cancelled: bool
+
+
+class ResetResponse(BaseModel):
+    """Response from a destructive bootstrap-tier reset.
+
+    Returns counts of what was nuked so the caller can sanity-check
+    that the expected amount of state was cleared, and an ``ok``
+    flag for the normal happy-path check. The counts are also
+    useful in logs and tests as a quick assertion on walker
+    correctness.
+    """
+
+    ok: bool
+    nodes_deleted: int
+    drafts_discarded: int
+    jobs_cancelled: int
 
 
 # ── Feature list response models ────────────────────────────────────
@@ -1005,6 +1027,7 @@ def post_sysarch_discard(
     return DiscardResponse(ok=True)
 
 
+<<<<<<< HEAD
 @router.post("/{project_id}/sysarch/cancel", response_model=CancelResponse)
 def post_sysarch_cancel(
     project_id: str,
@@ -1022,6 +1045,142 @@ def post_sysarch_cancel(
         return CancelResponse(cancelled=False)
     ok = pipeline_queue.cancel_job(db, job.id)
     return CancelResponse(cancelled=ok)
+=======
+@router.post("/{project_id}/sysarch/reset", response_model=ResetResponse)
+def post_sysarch_reset(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    """Destructively reset an **approved** sysarch node and all
+    downstream state it minted, so the user can regenerate against
+    a different prompt or a significantly different framing.
+
+    Unlike ``/sysarch/discard`` (which operates on a pending draft
+    and just swaps one pre-approval draft for another), this route
+    requires the sysarch node to be in the approved-and-frozen
+    state. That's exactly the state where the other regen paths
+    return 409, so this is the only way back to "generate a fresh
+    sysarch against the same features + responsibilities" once a
+    user has committed an approval they now regret.
+
+    What it cascades:
+
+    * Cancels every queued ``v2.generate_*`` / ``v2.mint_*`` job
+      downstream of sysarch (including mint_sysarch itself if
+      still queued, and any in-flight subreqs / comparch / policy
+      jobs).
+    * Appends ``DraftDiscarded`` for every pending draft targeting
+      a downstream node or a fragment owned by one, so partial
+      drafts don't survive with dangling ``target_id`` strings.
+    * Appends ``NodeDeleted`` for every ``comp_*`` / ``policy_*``
+      / ``subreqs_*`` / nested ``resp_*`` node in the project.
+      DB ``ON DELETE CASCADE`` on the edge + fragment tables takes
+      care of edges and fragments that reference the deleted
+      nodes, so no ``EdgeDeleted`` events need to be emitted
+      explicitly.
+    * Appends ``BootstrapNodeContentCleared`` for the sysarch node
+      itself, which sets ``node.content = ""`` (empty string, since
+      the column is ``nullable=False``) and flips the
+      ``has_been_approved`` check back to ``False``.
+    * Enqueues a fresh ``v2.generate_sysarch`` job so the UI has
+      a new pending draft to show immediately.
+
+    All event writes happen inside a single committed transaction
+    so event-log replay produces a consistent post-reset state.
+    Upstream state (features, top-level responsibilities,
+    expansion, the sysarch node's own row, vocabulary) is
+    deliberately untouched — the whole point is to test a
+    different sysarch prompt against the same upstream inputs.
+
+    No request body — the project id in the path fully specifies
+    the operation. Authed the same way as every other mutating
+    graph route (``get_current_user``); writer-gating can be
+    layered on later when the permission model grows role tiers.
+    """
+    _require_project(db, project_id)
+    node = get_sysarch_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Sysarch node missing for project")
+    if not sysarch_has_been_approved(db, project_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Sysarch is not in approved state; use the "
+                "'Reject & Regenerate' button on the pending draft "
+                "instead."
+            ),
+        )
+
+    # Phase 1 — cancel downstream queued jobs before we start
+    # mutating projection state. A worker picking up a stale
+    # generate_subreqs job mid-reset would see half-deleted
+    # projection rows and either crash or produce garbage.
+    jobs_cancelled = 0
+    for job_type in _SYSARCH_RESET_CANCEL_JOB_TYPES:
+        jobs_cancelled += pipeline_queue.cancel_jobs_by_type(db, job_type, project_id=project_id)
+
+    # Phase 2 — collect everything we're about to nuke. One walk
+    # up front, before any events commit, so subsequent queries
+    # don't have to reason about partially-applied state.
+    downstream_nodes = sysarch_collect_downstream_nodes(db, project_id)
+    downstream_node_ids = [n.id for n in downstream_nodes]
+    pending_drafts = sysarch_collect_pending_drafts_for_nodes(db, project_id, downstream_node_ids)
+    # Also pick up any pending draft for the sysarch node itself
+    # (rare but possible if the approval is being retried mid-
+    # flight), since we're about to clear its content.
+    sysarch_pending = pending_sysarch_draft(db, project_id)
+
+    # Phase 3 — emit the events in reverse-dependency order.
+    # Drafts first (so their discarded status is visible before
+    # the target node is deleted), then nodes, then the content
+    # clear on the sysarch node. The reducer processes each event
+    # independently; the DB-level CASCADE on edges + fragments
+    # fires as each node is deleted.
+    for draft in pending_drafts:
+        append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+    if sysarch_pending is not None:
+        append_event(db, project_id, ev.DraftDiscarded(draft_id=sysarch_pending.id))
+    for dn in downstream_nodes:
+        append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
+    append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=node.id))
+    db.commit()
+
+    # Phase 4 — enqueue a fresh sysarch generation so the user
+    # sees the UI flip back from "Approved · read-only" to the
+    # generating spinner immediately on the next poll. No
+    # feedback, no prior pending — the handler runs the initial
+    # path with the current (possibly newly-merged) prompt.
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_SYSARCH_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": None},
+    )
+
+    return ResetResponse(
+        ok=True,
+        nodes_deleted=len(downstream_nodes),
+        drafts_discarded=len(pending_drafts) + (1 if sysarch_pending else 0),
+        jobs_cancelled=jobs_cancelled,
+    )
+
+
+# Module-level constant so the test module can import the exact
+# same list and spot-check the cancel behaviour without repeating
+# the names.
+_SYSARCH_RESET_CANCEL_JOB_TYPES: tuple[str, ...] = (
+    "v2.generate_sysarch",
+    "v2.mint_sysarch",
+    "v2.generate_subrequirements",
+    "v2.mint_subrequirements",
+    "v2.generate_comparch",
+    "v2.mint_comparch",
+    "v2.generate_subcomparch",
+    "v2.mint_subcomparch",
+    "v2.apply_top_level_policies",
+    "v2.apply_component_local_policies",
+)
+>>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 
 
 # ── Components + policies list endpoints ────────────────────────────

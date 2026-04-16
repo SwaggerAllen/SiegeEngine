@@ -35,7 +35,17 @@ export type SysarchResponse = z.infer<typeof SysarchResponseSchema>;
 const FeedbackResponseSchema = z.object({ job_id: z.string() });
 const ApproveResponseSchema = z.object({ node: SysarchNodeSchema });
 const DiscardResponseSchema = z.object({ ok: z.boolean() });
+<<<<<<< HEAD
 const CancelResponseSchema = z.object({ cancelled: z.boolean() });
+=======
+const ResetResponseSchema = z.object({
+  ok: z.boolean(),
+  nodes_deleted: z.number().int(),
+  drafts_discarded: z.number().int(),
+  jobs_cancelled: z.number().int(),
+});
+export type ResetResult = z.infer<typeof ResetResponseSchema>;
+>>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 
 // ── Components list ────────────────────────────────────────────────
 
@@ -110,9 +120,20 @@ export async function discardDraft(
   DiscardResponseSchema.parse(data);
 }
 
+<<<<<<< HEAD
 export async function cancelGeneration(projectId: string): Promise<boolean> {
   const { data } = await api.post(`/projects/${projectId}/sysarch/cancel`);
   return CancelResponseSchema.parse(data).cancelled;
+=======
+export async function resetSysarch(projectId: string): Promise<ResetResult> {
+  // Destructive reset of an approved sysarch node. Cascades deletion
+  // of every downstream comp/policy/subreqs/subresp, discards any
+  // pending downstream drafts, cancels queued downstream jobs, clears
+  // sysarch content, and enqueues a fresh generation. Returns the
+  // counts of what got nuked so the caller can surface a toast.
+  const { data } = await api.post(`/projects/${projectId}/sysarch/reset`);
+  return ResetResponseSchema.parse(data);
+>>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 }
 
 export async function getComponents(projectId: string): Promise<ComponentListResponse> {

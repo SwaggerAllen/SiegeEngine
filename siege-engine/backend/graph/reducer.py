@@ -479,6 +479,38 @@ def _apply_draft_discarded(session: Session, project_id: str, event: ev.DraftDis
     draft.updated_at = datetime.utcnow()
 
 
+def _apply_bootstrap_node_content_cleared(
+    session: Session,
+    project_id: str,
+    event: ev.BootstrapNodeContentCleared,
+) -> None:
+    """Reset a bootstrap tier node's ``content`` back to empty.
+
+    Used by the destructive reset path on approved bootstrap nodes
+    (currently sysarch only) so the user can regenerate against a
+    new prompt without touching upstream state. The reset route
+    emits this event at the end of the walk, after all downstream
+    ``NodeDeleted`` events for the approval cascade, so replay
+    from the event log produces a consistent post-reset state.
+
+    Mirrors the one-node scope of ``NodeDeleted``: takes a single
+    ``node_id`` and only mutates that node's content field. The
+    node itself is not deleted — the ID stays stable so event log
+    history stays intact and the next lazy-bootstrap GET finds
+    the existing row.
+
+    Sets ``node.content`` to the empty string (not ``None``)
+    because the column is ``nullable=False``. The
+    ``has_been_approved`` check is ``bool(node.content)``, so
+    empty string flips the freeze back off — same as if the
+    node had never been approved.
+    """
+    node = session.get(Node, event.node_id)
+    if node is None or node.project_id != project_id:
+        raise ReducerError(f"Node {event.node_id!r} not found in project {project_id!r}")
+    node.content = ""
+
+
 def _apply_view_recorded(session: Session, project_id: str, event: ev.ViewRecorded) -> None:
     # View markers are audit records only — no projection mutation.
     return
@@ -506,6 +538,7 @@ _HANDLERS: dict[str, Callable[[Session, str, Any], None]] = {
     "DraftEdited": _apply_draft_edited,
     "DraftApproved": _apply_draft_approved,
     "DraftDiscarded": _apply_draft_discarded,
+    "BootstrapNodeContentCleared": _apply_bootstrap_node_content_cleared,
     "ViewRecorded": _apply_view_recorded,
 }
 

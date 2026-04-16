@@ -1,8 +1,11 @@
 import { useComparch } from '../hooks/queries/useComparchQueries';
 import {
   useApproveMutation,
+<<<<<<< HEAD
   useCancelGenerationMutation,
   useDiscardMutation,
+=======
+>>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
   useFeedbackMutation,
 } from '../hooks/mutations/useComparchMutations';
 import {
@@ -40,6 +43,7 @@ export function ComparchPanel({ projectId, componentId, componentName }: Props) 
   const { data, error, isLoading } = useComparch(projectId, componentId);
   const feedbackMutation = useFeedbackMutation(projectId, componentId);
   const approveMutation = useApproveMutation(projectId, componentId);
+<<<<<<< HEAD
   const discardMutation = useDiscardMutation(projectId, componentId);
   const cancelMutation = useCancelGenerationMutation(projectId, componentId);
 
@@ -48,6 +52,10 @@ export function ComparchPanel({ projectId, componentId, componentName }: Props) 
     approveMutation.isPending ||
     discardMutation.isPending ||
     cancelMutation.isPending;
+=======
+
+  const isBusy = feedbackMutation.isPending || approveMutation.isPending;
+>>>>>>> bc67e15 (v2: destructive sysarch reset + merge regen buttons)
 
   return (
     <BootstrapDraftPanel
@@ -58,7 +66,6 @@ export function ComparchPanel({ projectId, componentId, componentName }: Props) 
       callbacks={{
         onFeedback: (f) => feedbackMutation.mutate(f),
         onApprove: (id) => approveMutation.mutate(id),
-        onDiscard: (id) => discardMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
         isBusy,
