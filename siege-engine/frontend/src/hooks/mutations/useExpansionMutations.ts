@@ -44,3 +44,25 @@ export function useDiscardMutation(projectId: string) {
     },
   });
 }
+
+export function useCancelGenerationMutation(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['expansion', 'cancel', projectId],
+    mutationFn: () => expansionApi.cancelGeneration(projectId),
+    onSuccess: () => {
+      // Optimistically flip back to idle so the Stop button stops
+      // showing and the panel re-renders into the feedback /
+      // accept / reject state over any remaining pending draft
+      // without waiting for the next poll tick.
+      queryClient.setQueryData<ExpansionResponse>(
+        expansionKeys.detail(projectId),
+        (prev) =>
+          prev
+            ? { ...prev, generation_status: 'idle', generation_started_at: null }
+            : prev
+      );
+      queryClient.invalidateQueries({ queryKey: expansionKeys.detail(projectId) });
+    },
+  });
+}

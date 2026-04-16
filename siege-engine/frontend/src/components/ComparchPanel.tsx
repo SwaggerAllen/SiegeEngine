@@ -1,6 +1,7 @@
 import { useComparch } from '../hooks/queries/useComparchQueries';
 import {
   useApproveMutation,
+  useCancelGenerationMutation,
   useDiscardMutation,
   useFeedbackMutation,
 } from '../hooks/mutations/useComparchMutations';
@@ -40,11 +41,13 @@ export function ComparchPanel({ projectId, componentId, componentName }: Props) 
   const feedbackMutation = useFeedbackMutation(projectId, componentId);
   const approveMutation = useApproveMutation(projectId, componentId);
   const discardMutation = useDiscardMutation(projectId, componentId);
+  const cancelMutation = useCancelGenerationMutation(projectId, componentId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    discardMutation.isPending;
+    discardMutation.isPending ||
+    cancelMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -57,6 +60,7 @@ export function ComparchPanel({ projectId, componentId, componentName }: Props) 
         onApprove: (id) => approveMutation.mutate(id),
         onDiscard: (id) => discardMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
+        onCancel: () => cancelMutation.mutate(),
         isBusy,
       }}
       contentRenderers={comparchRenderers}

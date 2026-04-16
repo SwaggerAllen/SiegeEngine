@@ -33,12 +33,18 @@ export const ExpansionResponseSchema = z.object({
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
   latest_telemetry: TelemetrySummarySchema.nullable(),
+  // ISO-8601 UTC timestamp when the running job was enqueued, or
+  // null when no generation is in flight. Server default is null,
+  // so nullish() here accepts both null and a missing field for
+  // forward-compatibility with older backends.
+  generation_started_at: z.string().nullish().transform((v) => v ?? null),
 });
 export type ExpansionResponse = z.infer<typeof ExpansionResponseSchema>;
 
 const FeedbackResponseSchema = z.object({ job_id: z.string() });
 const ApproveResponseSchema = z.object({ node: ExpansionNodeSchema });
 const DiscardResponseSchema = z.object({ ok: z.boolean() });
+const CancelResponseSchema = z.object({ cancelled: z.boolean() });
 
 export async function getExpansion(projectId: string): Promise<ExpansionResponse> {
   const { data } = await api.get(`/projects/${projectId}/expansion`);
@@ -73,4 +79,9 @@ export async function discardDraft(
     draft_id: draftId,
   });
   DiscardResponseSchema.parse(data);
+}
+
+export async function cancelGeneration(projectId: string): Promise<boolean> {
+  const { data } = await api.post(`/projects/${projectId}/expansion/cancel`);
+  return CancelResponseSchema.parse(data).cancelled;
 }

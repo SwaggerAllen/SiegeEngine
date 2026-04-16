@@ -8,16 +8,17 @@ and backpressure (configurable concurrency).
 import asyncio
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from backend.database import SessionLocal
 from backend.models.job import Job
 
-JobHandler = Callable[[dict], Awaitable[None]]
+JobHandler = Callable[[dict], Coroutine[Any, Any, None]]
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,14 @@ _shutdown_event = asyncio.Event()
 
 # Notify event — set by enqueue() to wake the worker immediately
 _job_notify = asyncio.Event()
+
+# Registry of in-flight handler tasks, keyed by job_id. Populated when
+# the worker loop claims a job and wraps its handler in a task;
+# removed in the ``finally`` after the task completes. Used by
+# :func:`cancel_job` so an HTTP route can cancel a running generation
+# by propagating ``asyncio.CancelledError`` into the handler (which in
+# turn kills the CLI subprocess — see ``backend.cli.manager._invoke``).
+_active_handler_tasks: dict[str, asyncio.Task] = {}
 
 
 def enqueue(
@@ -80,26 +89,102 @@ def enqueue(
 
 
 def cancel_job(db: Session, job_id: str) -> bool:
-    """Cancel a queued job. Returns True if cancelled, False if already running/done."""
+    """Cancel a job. Works for both queued and running jobs.
+
+    - Queued jobs are marked ``cancelled`` directly.
+    - Running jobs have their handler task cancelled via the
+      active-tasks registry. The worker loop's ``CancelledError``
+      handler then marks the row ``cancelled`` once the handler
+      unwinds (the CLI manager kills the subprocess on
+      ``CancelledError``).
+
+    Returns True if the cancel was dispatched, False if the job
+    doesn't exist or is already in a terminal state.
+
+    Thread-safety: this function is safe to call from FastAPI's
+    sync route thread pool. Task cancellation crosses threads via
+    ``loop.call_soon_threadsafe``.
+    """
     job = db.get(Job, job_id)
-    if not job or job.status != "queued":
+    if not job:
         return False
-    job.status = "cancelled"
-    db.commit()
-    return True
+    if job.status == "queued":
+        job.status = "cancelled"
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        return True
+    if job.status == "running":
+        task = _active_handler_tasks.get(job_id)
+        if task is None or task.done():
+            # Task ref lost or already finishing — best we can do is
+            # report failure; the worker's own completion path will
+            # write the final row status.
+            return False
+        loop = task.get_loop()
+        loop.call_soon_threadsafe(task.cancel)
+        return True
+    return False
 
 
 def cancel_jobs_by_type(db: Session, job_type: str, **payload_filters) -> int:
-    """Cancel all queued jobs of a given type matching payload filters."""
-    jobs = db.query(Job).filter_by(job_type=job_type, status="queued").all()
+    """Cancel all queued or running jobs of a given type matching payload filters.
+
+    Returns the number of jobs cancelled. Running jobs are cancelled
+    via the active-tasks registry (see :func:`cancel_job`); queued
+    jobs are marked ``cancelled`` directly in the DB.
+    """
+    jobs = (
+        db.query(Job).filter(Job.job_type == job_type, Job.status.in_(["queued", "running"])).all()
+    )
     cancelled = 0
+    commit_needed = False
     for job in jobs:
-        if all(job.payload.get(k) == v for k, v in payload_filters.items()):
+        if not all((job.payload or {}).get(k) == v for k, v in payload_filters.items()):
+            continue
+        if job.status == "queued":
             job.status = "cancelled"
+            job.completed_at = datetime.utcnow()
+            commit_needed = True
             cancelled += 1
-    if cancelled:
+        elif job.status == "running":
+            task = _active_handler_tasks.get(job.id)
+            if task is not None and not task.done():
+                task.get_loop().call_soon_threadsafe(task.cancel)
+                cancelled += 1
+    if commit_needed:
         db.commit()
     return cancelled
+
+
+def find_active_job(
+    db: Session,
+    job_type: str,
+    payload_filters: dict | None = None,
+) -> Job | None:
+    """Return the most recent queued/running job matching type + payload filters.
+
+    Used by cancel routes to locate the job to cancel without the
+    client needing to track job IDs. ``payload_filters`` is matched
+    against ``job.payload`` subset-wise; a filter of ``{"project_id":
+    "p1"}`` matches any job with that project_id regardless of other
+    payload keys.
+    """
+    filters = dict(payload_filters or {})
+    rows = (
+        db.execute(
+            select(Job)
+            .where(Job.job_type == job_type, Job.status.in_(["queued", "running"]))
+            .order_by(Job.created_at.desc())
+            .limit(50)
+        )
+        .scalars()
+        .all()
+    )
+    for job in rows:
+        payload = job.payload or {}
+        if all(payload.get(k) == v for k, v in filters.items()):
+            return job
+    return None
 
 
 def _claim_next_sync() -> tuple[str, str, dict] | None:
@@ -136,14 +221,25 @@ def _claim_next_sync() -> tuple[str, str, dict] | None:
         db.close()
 
 
-def _complete_job_sync(job_id: str, error: str | None = None) -> None:
-    """Synchronous: mark a job as completed or failed. Runs in a thread pool."""
+def _complete_job_sync(job_id: str, error: str | None = None, cancelled: bool = False) -> None:
+    """Synchronous: mark a job as completed, failed, or cancelled.
+
+    Runs in a thread pool. ``cancelled=True`` takes precedence over
+    ``error`` and marks the row ``cancelled`` (no retries) so the
+    UI's ``latest_generation_status`` reads it as idle and the user
+    can give feedback again.
+    """
     db = SessionLocal()
     try:
         job = db.get(Job, job_id)
         if not job or job.status != "running":
             return
-        if error:
+        if cancelled:
+            job.status = "cancelled"
+            job.error_message = error or "Cancelled"
+            job.completed_at = datetime.utcnow()
+            logger.info(f"Job {job.id} cancelled")
+        elif error:
             job.retry_count += 1
             if job.retry_count <= job.max_retries:
                 job.status = "queued"
@@ -224,17 +320,28 @@ async def worker_loop(poll_interval: float = 5.0) -> None:
             await asyncio.to_thread(_complete_job_sync, job_id, f"Unknown job type: {job_type}")
             continue
 
-        error = None
+        # Wrap the handler in its own task so an external caller
+        # (the /cancel HTTP route) can cancel it without cancelling
+        # the worker loop itself. The task is registered in
+        # ``_active_handler_tasks`` while it runs so ``cancel_job``
+        # can reach it.
+        error: str | None = None
+        cancelled = False
+        handler_task: asyncio.Task[None] = asyncio.create_task(handler(payload))
+        _active_handler_tasks[job_id] = handler_task
         try:
-            await handler(payload)
+            await handler_task
         except asyncio.CancelledError:
             logger.info("Job %s (%s) was cancelled", job_id, job_type)
+            cancelled = True
             error = "Cancelled"
         except Exception as e:
             logger.exception(f"Job {job_id} ({job_type}) failed")
             error = str(e)[:1000]
+        finally:
+            _active_handler_tasks.pop(job_id, None)
 
-        await asyncio.to_thread(_complete_job_sync, job_id, error)
+        await asyncio.to_thread(_complete_job_sync, job_id, error, cancelled)
 
     logger.info("Job queue worker stopped")
 

@@ -28,12 +28,14 @@ export const SubcomparchResponseSchema = z.object({
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
   latest_telemetry: TelemetrySummarySchema.nullable(),
+  generation_started_at: z.string().nullish().transform((v) => v ?? null),
 });
 export type SubcomparchResponse = z.infer<typeof SubcomparchResponseSchema>;
 
 const FeedbackResponseSchema = z.object({ job_id: z.string() });
 const ApproveResponseSchema = z.object({ node: SubcomparchNodeSchema });
 const DiscardResponseSchema = z.object({ ok: z.boolean() });
+const CancelResponseSchema = z.object({ cancelled: z.boolean() });
 
 function _base(projectId: string, parentCompId: string, subId: string): string {
   return (
@@ -88,4 +90,15 @@ export async function discardDraft(
     { draft_id: draftId }
   );
   DiscardResponseSchema.parse(data);
+}
+
+export async function cancelGeneration(
+  projectId: string,
+  parentCompId: string,
+  subId: string
+): Promise<boolean> {
+  const { data } = await api.post(
+    `${_base(projectId, parentCompId, subId)}/cancel`
+  );
+  return CancelResponseSchema.parse(data).cancelled;
 }

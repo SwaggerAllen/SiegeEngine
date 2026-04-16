@@ -76,3 +76,24 @@ export function useDiscardMutation(projectId: string, componentId: string) {
     },
   });
 }
+
+export function useCancelGenerationMutation(projectId: string, componentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['subreqs', 'cancel', projectId, componentId],
+    mutationFn: () => subreqsApi.cancelGeneration(projectId, componentId),
+    onSuccess: () => {
+      queryClient.setQueryData<SubreqsResponse>(
+        subreqsKeys.detail(projectId, componentId),
+        (prev) =>
+          prev
+            ? { ...prev, generation_status: 'idle', generation_started_at: null }
+            : prev
+      );
+      queryClient.invalidateQueries({
+        queryKey: subreqsKeys.detail(projectId, componentId),
+      });
+      invalidateWaitingIndicators(queryClient, projectId);
+    },
+  });
+}

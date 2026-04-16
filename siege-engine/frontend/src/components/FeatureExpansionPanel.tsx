@@ -1,6 +1,7 @@
 import { useExpansion } from '../hooks/queries/useExpansionQueries';
 import {
   useApproveMutation,
+  useCancelGenerationMutation,
   useDiscardMutation,
   useFeedbackMutation,
 } from '../hooks/mutations/useExpansionMutations';
@@ -29,9 +30,13 @@ export function FeatureExpansionPanel({ projectId }: Props) {
   const feedbackMutation = useFeedbackMutation(projectId);
   const approveMutation = useApproveMutation(projectId);
   const discardMutation = useDiscardMutation(projectId);
+  const cancelMutation = useCancelGenerationMutation(projectId);
 
   const isBusy =
-    feedbackMutation.isPending || approveMutation.isPending || discardMutation.isPending;
+    feedbackMutation.isPending ||
+    approveMutation.isPending ||
+    discardMutation.isPending ||
+    cancelMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -44,6 +49,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
         onApprove: (id) => approveMutation.mutate(id),
         onDiscard: (id) => discardMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
+        onCancel: () => cancelMutation.mutate(),
         isBusy,
       }}
       contentRenderers={featureRenderers}

@@ -9,6 +9,7 @@ vi.mock('../api/subcomparch', () => ({
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
   discardDraft: vi.fn(),
+  cancelGeneration: vi.fn(),
 }));
 
 import * as subcomparchApi from '../api/subcomparch';
@@ -49,6 +50,7 @@ function makeResponse(
     generation_status: 'idle',
     last_error: null,
     latest_telemetry: null,
+    generation_started_at: null,
     ...overrides,
   };
 }

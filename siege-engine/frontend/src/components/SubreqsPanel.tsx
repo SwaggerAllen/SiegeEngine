@@ -1,6 +1,7 @@
 import { useSubreqs } from '../hooks/queries/useSubreqsQueries';
 import {
   useApproveMutation,
+  useCancelGenerationMutation,
   useDiscardMutation,
   useFeedbackMutation,
 } from '../hooks/mutations/useSubreqsMutations';
@@ -40,9 +41,13 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
   const feedbackMutation = useFeedbackMutation(projectId, componentId);
   const approveMutation = useApproveMutation(projectId, componentId);
   const discardMutation = useDiscardMutation(projectId, componentId);
+  const cancelMutation = useCancelGenerationMutation(projectId, componentId);
 
   const isBusy =
-    feedbackMutation.isPending || approveMutation.isPending || discardMutation.isPending;
+    feedbackMutation.isPending ||
+    approveMutation.isPending ||
+    discardMutation.isPending ||
+    cancelMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -55,6 +60,7 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
         onApprove: (id) => approveMutation.mutate(id),
         onDiscard: (id) => discardMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
+        onCancel: () => cancelMutation.mutate(),
         isBusy,
       }}
       contentRenderers={subreqsRenderers}

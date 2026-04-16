@@ -10,6 +10,7 @@ vi.mock('../api/requirements', () => ({
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
   discardDraft: vi.fn(),
+  cancelGeneration: vi.fn(),
   getResponsibilities: vi.fn(),
 }));
 
@@ -40,6 +41,7 @@ function makeResponse(overrides: Partial<ReqsResponse> = {}): ReqsResponse {
     generation_status: 'idle',
     last_error: null,
     latest_telemetry: null,
+    generation_started_at: null,
     ...overrides,
   };
 }

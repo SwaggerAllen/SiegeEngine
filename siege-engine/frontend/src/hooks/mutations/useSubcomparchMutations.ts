@@ -88,3 +88,29 @@ export function useSubcomparchDiscardMutation(
     },
   });
 }
+
+export function useSubcomparchCancelGenerationMutation(
+  projectId: string,
+  parentCompId: string,
+  subId: string
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['subcomparch', 'cancel', projectId, parentCompId, subId],
+    mutationFn: () =>
+      subcomparchApi.cancelGeneration(projectId, parentCompId, subId),
+    onSuccess: () => {
+      queryClient.setQueryData<SubcomparchResponse>(
+        subcomparchKeys.detail(projectId, parentCompId, subId),
+        (prev) =>
+          prev
+            ? { ...prev, generation_status: 'idle', generation_started_at: null }
+            : prev
+      );
+      queryClient.invalidateQueries({
+        queryKey: subcomparchKeys.detail(projectId, parentCompId, subId),
+      });
+      invalidateWaitingIndicators(queryClient, projectId);
+    },
+  });
+}

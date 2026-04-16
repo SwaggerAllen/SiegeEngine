@@ -46,3 +46,21 @@ export function useDiscardMutation(projectId: string) {
     },
   });
 }
+
+export function useCancelGenerationMutation(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['requirements', 'cancel', projectId],
+    mutationFn: () => reqsApi.cancelGeneration(projectId),
+    onSuccess: () => {
+      queryClient.setQueryData<ReqsResponse>(
+        requirementsKeys.detail(projectId),
+        (prev) =>
+          prev
+            ? { ...prev, generation_status: 'idle', generation_started_at: null }
+            : prev
+      );
+      queryClient.invalidateQueries({ queryKey: requirementsKeys.detail(projectId) });
+    },
+  });
+}
