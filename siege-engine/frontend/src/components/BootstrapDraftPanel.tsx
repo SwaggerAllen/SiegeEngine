@@ -1,7 +1,27 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
 import { XmlDocument } from './xml';
 import type { XmlRendererMap } from './xml';
+
+function CopyButton({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [content]);
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="px-3 py-1 text-xs rounded border border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+      title="Copy raw content to clipboard"
+    >
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+}
 
 // ── Shared type shapes ─────────────────────────────────────────────
 
@@ -112,11 +132,6 @@ interface Props {
   error: unknown;
   labels: BootstrapPanelLabels;
   callbacks: BootstrapPanelCallbacks;
-  /**
-   * XML renderer map for the bootstrap doc's schema. See
-   * ``components/xml/featureRenderers.tsx`` for the Phase 2
-   * example — every phase ships its own map and passes it in.
-   */
   contentRenderers: XmlRendererMap;
 }
 
@@ -363,63 +378,66 @@ export function BootstrapDraftPanel({
   if (pending_draft) {
     const isRegenerating = generation_status === 'running';
     return (
-      <div className="p-6 space-y-4 max-w-4xl mx-auto">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{labels.draftHeading}</h2>
-          {isRegenerating && (
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-gray-400">regenerating…</span>
-              <GenerationClock startedAtIso={generation_started_at} />
-              <button
-                type="button"
-                onClick={callbacks.onCancel}
-                disabled={callbacks.isBusy}
-                className="px-3 py-1 text-xs rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
-                title="Stop this regeneration and return to the previous draft"
-                data-testid="generation-stop-button"
-              >
-                Stop
-              </button>
-            </div>
-          )}
+      <div className="max-w-4xl mx-auto">
+        <div className="p-6 pb-0 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">{labels.draftHeading}</h2>
+            {isRegenerating && (
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400">regenerating…</span>
+                <GenerationClock startedAtIso={generation_started_at} />
+                <button
+                  type="button"
+                  onClick={callbacks.onCancel}
+                  disabled={callbacks.isBusy}
+                  className="px-3 py-1 text-xs rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
+                  title="Stop this regeneration and return to the previous draft"
+                  data-testid="generation-stop-button"
+                >
+                  Stop
+                </button>
+              </div>
+            )}
+          </div>
+          <XmlDocument content={pending_draft.content} renderers={contentRenderers} />
+          <TelemetryLine telemetry={latest_telemetry} />
         </div>
-        <XmlDocument content={pending_draft.content} renderers={contentRenderers} />
-        <div className="space-y-2">
+        <div className="sticky bottom-0 bg-gray-950 border-t border-gray-800 p-4 space-y-3">
           <label className="block text-xs text-gray-400">
             Feedback for regeneration (optional)
           </label>
           <textarea
-            className="w-full h-24 bg-gray-900 border border-gray-700 rounded p-2 text-sm"
+            className="w-full h-20 bg-gray-900 border border-gray-700 rounded p-2 text-sm"
             placeholder={labels.feedbackPlaceholder}
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
             disabled={callbacks.isBusy || isRegenerating}
           />
+          <div className="flex gap-2 flex-wrap items-center">
+            <button
+              type="button"
+              onClick={() => callbacks.onApprove(pending_draft.id)}
+              disabled={callbacks.isBusy || isRegenerating}
+              className="px-4 py-2 text-sm rounded bg-green-700 hover:bg-green-600 disabled:opacity-40"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              onClick={submitFeedback}
+              disabled={callbacks.isBusy || isRegenerating}
+              className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
+              title={
+                feedback.trim()
+                  ? 'Regenerate this draft with the feedback above; the LLM sees the current draft as its starting point'
+                  : 'Regenerate this draft (LLM sees the current draft as starting point; add feedback above for targeted guidance)'
+              }
+            >
+              Reject &amp; Regenerate
+            </button>
+            <CopyButton content={pending_draft.content} />
+          </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => callbacks.onApprove(pending_draft.id)}
-            disabled={callbacks.isBusy || isRegenerating}
-            className="px-4 py-2 text-sm rounded bg-green-700 hover:bg-green-600 disabled:opacity-40"
-          >
-            Approve
-          </button>
-          <button
-            type="button"
-            onClick={submitFeedback}
-            disabled={callbacks.isBusy || isRegenerating}
-            className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
-            title={
-              feedback.trim()
-                ? 'Regenerate this draft with the feedback above; the LLM sees the current draft as its starting point'
-                : 'Regenerate this draft (LLM sees the current draft as starting point; add feedback above for targeted guidance)'
-            }
-          >
-            Reject &amp; Regenerate
-          </button>
-        </div>
-        <TelemetryLine telemetry={latest_telemetry} />
       </div>
     );
   }
@@ -457,7 +475,10 @@ export function BootstrapDraftPanel({
         </div>
         <XmlDocument content={node.content} renderers={contentRenderers} />
         <div className="text-xs text-gray-500 italic">{labels.readOnlyExplanation}</div>
-        <TelemetryLine telemetry={latest_telemetry} />
+        <div className="flex items-center gap-3">
+          <CopyButton content={node.content} />
+          <TelemetryLine telemetry={latest_telemetry} />
+        </div>
         {callbacks.onReset && (
           <ResetApprovedStateControl
             onReset={callbacks.onReset}

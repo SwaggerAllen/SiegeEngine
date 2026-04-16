@@ -29,6 +29,9 @@ from backend.graph.expansion import (
     has_been_approved,
     pending_expansion_draft,
 )
+from backend.graph.expansion import (
+    collect_downstream_nodes as expansion_collect_downstream_nodes,
+)
 from backend.graph.handlers.comparch_generation import (
     GENERATE_COMPARCH_JOB_TYPE,
 )
@@ -56,6 +59,9 @@ from backend.graph.requirements import (
     bootstrap_reqs_node,
     get_reqs_node,
     pending_reqs_draft,
+)
+from backend.graph.requirements import (
+    collect_downstream_nodes as reqs_collect_downstream_nodes,
 )
 from backend.graph.requirements import has_been_approved as reqs_has_been_approved
 from backend.graph.subrequirements import (
@@ -211,6 +217,18 @@ class ResetResponse(BaseModel):
     nodes_deleted: int
     drafts_discarded: int
     jobs_cancelled: int
+
+
+class PromptPreviewResponse(BaseModel):
+    """Rendered system + user prompts for a bootstrap tier.
+
+    Returned by the ``/prompt-preview`` endpoints so the user can
+    see exactly what the LLM would receive before hitting
+    Reject & Regenerate.
+    """
+
+    system_prompt: str
+    user_prompt: str
 
 
 # ── Feature list response models ────────────────────────────────────
@@ -1169,6 +1187,362 @@ def post_sysarch_reset(
 # same list and spot-check the cancel behaviour without repeating
 # the names.
 _SYSARCH_RESET_CANCEL_JOB_TYPES: tuple[str, ...] = (
+    "v2.generate_sysarch",
+    "v2.mint_sysarch",
+    "v2.generate_subrequirements",
+    "v2.mint_subrequirements",
+    "v2.generate_comparch",
+    "v2.mint_comparch",
+    "v2.generate_subcomparch",
+    "v2.mint_subcomparch",
+    "v2.apply_top_level_policies",
+    "v2.apply_component_local_policies",
+)
+
+
+# ── Prompt preview endpoints ─────────────────────────────────────────
+
+
+class PromptPreviewRequest(BaseModel):
+    feedback: str = ""
+
+
+@router.post("/{project_id}/expansion/prompt-preview", response_model=PromptPreviewResponse)
+def post_expansion_prompt_preview(
+    project_id: str,
+    req: PromptPreviewRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> PromptPreviewResponse:
+    """Render the expansion prompt as the LLM would see it."""
+    _require_project(db, project_id)
+    node = get_expansion_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Expansion node missing")
+
+    from backend.graph.prompts.feature_expansion import (
+        render_system_prompt as fe_render_system,
+    )
+    from backend.graph.prompts.feature_expansion import (
+        render_user_prompt as fe_render_user,
+    )
+    from backend.models.input_document import InputDocument
+    from backend.projects.settings import get_project_settings
+
+    pending = pending_expansion_draft(db, project_id)
+    input_doc_row = (
+        db.query(InputDocument)
+        .filter(InputDocument.project_id == project_id, InputDocument.doc_type == "project_doc")
+        .order_by(InputDocument.created_at.desc())
+        .first()
+    )
+    project_row = db.get(Project, project_id)
+    assert project_row is not None
+    settings = get_project_settings(project_row)
+    feedback = req.feedback.strip() or None
+
+    return PromptPreviewResponse(
+        system_prompt=fe_render_system(settings.features_per_group),
+        user_prompt=fe_render_user(
+            input_doc=(input_doc_row.content or "") if input_doc_row else "",
+            prior_approved=node.content or None,
+            prior_pending=pending.content if pending else None,
+            feedback=feedback,
+        ),
+    )
+
+
+@router.post("/{project_id}/requirements/prompt-preview", response_model=PromptPreviewResponse)
+def post_reqs_prompt_preview(
+    project_id: str,
+    req: PromptPreviewRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> PromptPreviewResponse:
+    """Render the requirements prompt as the LLM would see it."""
+    _require_project(db, project_id)
+    node = get_reqs_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Requirements node missing")
+
+    from backend.graph.prompts.requirements import (
+        format_features_summary,
+    )
+    from backend.graph.prompts.requirements import (
+        render_system_prompt as reqs_render_system,
+    )
+    from backend.graph.prompts.requirements import (
+        render_user_prompt as reqs_render_user,
+    )
+    from backend.graph.vocabulary import render_vocab_summary_all
+    from backend.models.input_document import InputDocument
+    from backend.projects.settings import get_project_settings
+
+    pending = pending_reqs_draft(db, project_id)
+    feature_rows = (
+        db.query(Node)
+        .filter(Node.project_id == project_id, Node.tier == "feat")
+        .order_by(Node.display_order, Node.created_at)
+        .all()
+    )
+    features_summary = format_features_summary(
+        [
+            {
+                "id": f.id,
+                "name": f.name,
+                "content": f.content,
+                "group_label": f.group_label,
+                "is_implicit": f.is_implicit,
+            }
+            for f in feature_rows
+        ]
+    )
+    vocab_summary = render_vocab_summary_all(db, project_id)
+    input_doc_row = (
+        db.query(InputDocument)
+        .filter(InputDocument.project_id == project_id, InputDocument.doc_type == "project_doc")
+        .order_by(InputDocument.created_at.desc())
+        .first()
+    )
+    project_row = db.get(Project, project_id)
+    assert project_row is not None
+    settings = get_project_settings(project_row)
+    feedback = req.feedback.strip() or None
+
+    return PromptPreviewResponse(
+        system_prompt=reqs_render_system(settings.top_level_responsibilities),
+        user_prompt=reqs_render_user(
+            features_summary=features_summary,
+            prior_approved=node.content or None,
+            prior_pending=pending.content if pending else None,
+            feedback=feedback,
+            vocab_summary=vocab_summary,
+            input_doc=(input_doc_row.content or "") if input_doc_row else "",
+        ),
+    )
+
+
+@router.post("/{project_id}/sysarch/prompt-preview", response_model=PromptPreviewResponse)
+def post_sysarch_prompt_preview(
+    project_id: str,
+    req: PromptPreviewRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> PromptPreviewResponse:
+    """Render the sysarch prompt as the LLM would see it."""
+    _require_project(db, project_id)
+    node = get_sysarch_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Sysarch node missing")
+
+    from backend.graph.prompts.requirements import format_features_summary
+    from backend.graph.prompts.sysarch import (
+        format_reqs_summary,
+    )
+    from backend.graph.prompts.sysarch import (
+        render_system_prompt as sa_render_system,
+    )
+    from backend.graph.prompts.sysarch import (
+        render_user_prompt as sa_render_user,
+    )
+    from backend.graph.vocabulary import render_vocab_summary_all
+    from backend.models.input_document import InputDocument
+    from backend.projects.settings import get_project_settings
+
+    pending = pending_sysarch_draft(db, project_id)
+    feature_rows = (
+        db.query(Node)
+        .filter(Node.project_id == project_id, Node.tier == "feat")
+        .order_by(Node.display_order, Node.created_at)
+        .all()
+    )
+    features_summary = format_features_summary(
+        [
+            {
+                "id": f.id,
+                "name": f.name,
+                "content": f.content,
+                "group_label": f.group_label,
+                "is_implicit": f.is_implicit,
+            }
+            for f in feature_rows
+        ]
+    )
+    resp_rows = (
+        db.query(Node)
+        .filter(Node.project_id == project_id, Node.tier == "resp", Node.parent_id.is_(None))
+        .order_by(Node.display_order, Node.created_at)
+        .all()
+    )
+    reqs_summary = format_reqs_summary(
+        [{"id": r.id, "name": r.name, "content": r.content} for r in resp_rows]
+    )
+    vocab_summary = render_vocab_summary_all(db, project_id)
+    input_doc_row = (
+        db.query(InputDocument)
+        .filter(InputDocument.project_id == project_id, InputDocument.doc_type == "project_doc")
+        .order_by(InputDocument.created_at.desc())
+        .first()
+    )
+    project_row = db.get(Project, project_id)
+    assert project_row is not None
+    settings = get_project_settings(project_row)
+    feedback = req.feedback.strip() or None
+
+    return PromptPreviewResponse(
+        system_prompt=sa_render_system(settings.top_level_components),
+        user_prompt=sa_render_user(
+            features_summary=features_summary,
+            reqs_summary=reqs_summary,
+            prior_approved=node.content or None,
+            prior_pending=pending.content if pending else None,
+            feedback=feedback,
+            vocab_summary=vocab_summary,
+            input_doc=(input_doc_row.content or "") if input_doc_row else "",
+        ),
+    )
+
+
+# ── Expansion reset ──────────────────────────────────────────────────
+
+
+@router.post("/{project_id}/expansion/reset", response_model=ResetResponse)
+def post_expansion_reset(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    """Destructively reset the expansion and all downstream state."""
+    _require_project(db, project_id)
+    node = get_expansion_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Expansion node missing for project")
+    if not has_been_approved(db, project_id):
+        raise HTTPException(status_code=409, detail="Expansion is not in approved state")
+
+    jobs_cancelled = 0
+    for jt in _EXPANSION_RESET_CANCEL_JOB_TYPES:
+        jobs_cancelled += pipeline_queue.cancel_jobs_by_type(db, jt, project_id=project_id)
+
+    downstream_nodes = expansion_collect_downstream_nodes(db, project_id)
+    downstream_ids = [n.id for n in downstream_nodes]
+    pending_drafts = sysarch_collect_pending_drafts_for_nodes(db, project_id, downstream_ids)
+    own_pending = pending_expansion_draft(db, project_id)
+
+    # Also clear reqs and sysarch singleton content.
+    reqs_node = get_reqs_node(db, project_id)
+    sysarch_node = get_sysarch_node(db, project_id)
+    reqs_pending: Draft | None = pending_reqs_draft(db, project_id) if reqs_node else None
+    sysarch_pending: Draft | None = pending_sysarch_draft(db, project_id) if sysarch_node else None
+
+    drafts_discarded = 0
+    for draft in pending_drafts:
+        append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+        drafts_discarded += 1
+    for maybe_draft in [own_pending, reqs_pending, sysarch_pending]:
+        if maybe_draft is not None:
+            append_event(db, project_id, ev.DraftDiscarded(draft_id=maybe_draft.id))
+            drafts_discarded += 1
+    for dn in downstream_nodes:
+        append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
+    if sysarch_node and sysarch_node.content:
+        append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=sysarch_node.id))
+    if reqs_node and reqs_node.content:
+        append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=reqs_node.id))
+    append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=node.id))
+    db.commit()
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_FEATURE_EXPANSION_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": None},
+    )
+    return ResetResponse(
+        ok=True,
+        nodes_deleted=len(downstream_nodes),
+        drafts_discarded=drafts_discarded,
+        jobs_cancelled=jobs_cancelled,
+    )
+
+
+_EXPANSION_RESET_CANCEL_JOB_TYPES: tuple[str, ...] = (
+    "v2.generate_feature_expansion",
+    "v2.mint_features",
+    "v2.generate_requirements",
+    "v2.mint_requirements",
+    "v2.generate_sysarch",
+    "v2.mint_sysarch",
+    "v2.generate_subrequirements",
+    "v2.mint_subrequirements",
+    "v2.generate_comparch",
+    "v2.mint_comparch",
+    "v2.generate_subcomparch",
+    "v2.mint_subcomparch",
+    "v2.apply_top_level_policies",
+    "v2.apply_component_local_policies",
+)
+
+
+# ── Requirements reset ───────────────────────────────────────────────
+
+
+@router.post("/{project_id}/requirements/reset", response_model=ResetResponse)
+def post_reqs_reset(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    """Destructively reset requirements and all downstream state."""
+    _require_project(db, project_id)
+    node = get_reqs_node(db, project_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Requirements node missing for project")
+    if not reqs_has_been_approved(db, project_id):
+        raise HTTPException(status_code=409, detail="Requirements is not in approved state")
+
+    jobs_cancelled = 0
+    for jt in _REQS_RESET_CANCEL_JOB_TYPES:
+        jobs_cancelled += pipeline_queue.cancel_jobs_by_type(db, jt, project_id=project_id)
+
+    downstream_nodes = reqs_collect_downstream_nodes(db, project_id)
+    downstream_ids = [n.id for n in downstream_nodes]
+    pending_drafts = sysarch_collect_pending_drafts_for_nodes(db, project_id, downstream_ids)
+    own_pending = pending_reqs_draft(db, project_id)
+
+    sysarch_node = get_sysarch_node(db, project_id)
+    sysarch_pending: Draft | None = pending_sysarch_draft(db, project_id) if sysarch_node else None
+
+    drafts_discarded = 0
+    for draft in pending_drafts:
+        append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+        drafts_discarded += 1
+    for maybe_draft in [own_pending, sysarch_pending]:
+        if maybe_draft is not None:
+            append_event(db, project_id, ev.DraftDiscarded(draft_id=maybe_draft.id))
+            drafts_discarded += 1
+    for dn in downstream_nodes:
+        append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
+    if sysarch_node and sysarch_node.content:
+        append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=sysarch_node.id))
+    append_event(db, project_id, ev.BootstrapNodeContentCleared(node_id=node.id))
+    db.commit()
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
+        payload={"project_id": project_id, "feedback": None},
+    )
+    return ResetResponse(
+        ok=True,
+        nodes_deleted=len(downstream_nodes),
+        drafts_discarded=drafts_discarded,
+        jobs_cancelled=jobs_cancelled,
+    )
+
+
+_REQS_RESET_CANCEL_JOB_TYPES: tuple[str, ...] = (
+    "v2.generate_requirements",
+    "v2.mint_requirements",
     "v2.generate_sysarch",
     "v2.mint_sysarch",
     "v2.generate_subrequirements",

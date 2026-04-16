@@ -5,6 +5,7 @@ import {
   useApproveMutation,
   useCancelGenerationMutation,
   useFeedbackMutation,
+  useResetMutation,
 } from '../hooks/mutations/useRequirementsMutations';
 import {
   BootstrapDraftPanel,
@@ -48,11 +49,13 @@ export function RequirementsPanel({ projectId }: Props) {
   const feedbackMutation = useFeedbackMutation(projectId);
   const approveMutation = useApproveMutation(projectId);
   const cancelMutation = useCancelGenerationMutation(projectId);
+  const resetMutation = useResetMutation(projectId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    cancelMutation.isPending;
+    cancelMutation.isPending ||
+    resetMutation.isPending;
 
   const renderers = useMemo(() => {
     const featureNames: Record<string, string> = {};
@@ -73,6 +76,7 @@ export function RequirementsPanel({ projectId }: Props) {
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
+        onReset: () => resetMutation.mutate(),
         isBusy,
       }}
       contentRenderers={renderers}
