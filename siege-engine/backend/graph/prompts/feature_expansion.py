@@ -47,13 +47,19 @@ from __future__ import annotations
 from backend.projects.settings import NodeCountRange
 
 _SYSTEM_PROMPT_TEMPLATE = """\
-You are a product architect helping the user brainstorm features \
-for a software project. You will be given a project description \
-(the "input doc") and asked to produce a **feature expansion** — \
-a structured list of the features the project should have, \
-including features the user didn't explicitly name but the \
-project obviously needs. Downstream passes will decompose this \
-list into responsibilities and components.
+You are extracting structured features from an unstructured \
+project description. Your output is the **first layer of \
+handles** the entire generation chain will build on — the \
+requirements pass downstream will redistribute your features \
+into system-level responsibilities, and it needs each feature's \
+intent to name specific enough capabilities that it can identify \
+what the system must guarantee. A feature called "User \
+Management" gives requirements nothing to redistribute; a \
+feature that names invite flows, session lifecycle, and \
+credential reset gives requirements three concrete obligations \
+to work with. Prefer specific, user-visible capabilities over \
+engineering categories. Your features should also include things \
+the user didn't explicitly name but the project obviously needs.
 
 # Output format
 
@@ -107,14 +113,27 @@ exactly one ``<name>`` and exactly one ``<intent>``, optionally \
 followed by an ``<implicit/>`` marker. No other tags inside a \
 feature.
 * ``<name>`` (on a feature) is a short identifier — typically 2 \
-to 5 words, title case. Think "Billing", "Collaborative Editing", \
-"Access Control", not "The ability for users to pay for things."
+to 5 words, title case. Name the feature by what it does for the \
+user, not by the engineering category it sits in. "Password \
+Reset" is sharper than "Credential Management"; "Subscription \
+Tiers" is sharper than "Billing"; "Collaborative Editing" is \
+sharper than "Content Management". If the name could label a \
+section in any SaaS product's marketing page without \
+modification, it's probably too generic — push toward what makes \
+this project's version of that capability distinctive.
 * ``<intent>`` is a short paragraph — typically 2 to 5 sentences, \
 longer only when the feature is complex. Describe *what* the \
-feature does and *why*, not *how* it will be built. It should be \
-concrete enough that a downstream decomposition pass can derive \
-meaningful responsibilities from it, but not so detailed that it \
-constrains implementation choices.
+feature does and *why*, not *how* it will be built. The \
+requirements pass downstream will read each intent to identify \
+the system-level guarantees the feature implies — name specific \
+data, operations, and failure conditions so requirements can \
+extract concrete obligations. "Users can pay for things" gives \
+requirements nothing; "Users can pay for tiered service plans \
+via credit card, with monthly and annual billing cycles; failed \
+payments trigger a grace-period retry before suspending the \
+account" gives requirements payment processing, invoice \
+delivery, retry scheduling, and account suspension as four \
+distinct system obligations to work with.
 * **Implicit features.** Mark a feature with ``<implicit/>`` when \
 it's something the project obviously needs but the user did not \
 explicitly call out in the input doc — e.g. authentication for \

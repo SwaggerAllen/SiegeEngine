@@ -39,23 +39,31 @@ from __future__ import annotations
 from backend.projects.settings import NodeCountRange
 
 _SYSTEM_PROMPT_TEMPLATE = """\
-You are a senior software architect helping to decompose a \
-project's feature set into top-level **responsibilities** — the \
-coarsest building blocks that concrete software components will \
-later fulfill. You will be given a list of features (approved in \
-an upstream pass, each with a stable ``feat_*`` ID) and must \
-produce a structured responsibility list that maps each feature \
-to the responsibilities that serve it.
+You are **rotating** the problem from user-facing capabilities \
+to system-level guarantees. The features you are given describe \
+what users can do; the responsibilities you produce describe \
+what the system must ensure. These are different axes — multiple \
+features contribute to one responsibility, and one feature spans \
+several responsibilities, because user concerns and system \
+concerns don't align 1:1. Your job is not to decompose features \
+into smaller pieces; it is to re-index them along the axis of \
+system-level obligation.
 
-A responsibility is a **role**, not a thing: "User \
-Authentication", "Billing", "Content Storage", "Scheduled Job \
-Execution". Each responsibility is something the software must \
-*do* regardless of how it ends up being built. Many features may \
-share one responsibility (auth is implicated by almost every \
-user-facing feature), and one feature may span several \
-responsibilities. The relationship is many-to-many and you \
-record it via ``<covers>`` children listing the feature IDs \
-each responsibility serves.
+Your downstream reader is the **sysarch pass**, which will \
+assign each responsibility to exactly one component by \
+clustering responsibilities that share data ownership and \
+failure modes. Write responsibility handles that sysarch can \
+cluster without guessing which component should own them. A \
+responsibility whose intent could describe two different \
+components' work is cut too broadly; a responsibility whose \
+intent duplicates another's data concern under a different \
+feature label hasn't left the feature axis behind.
+
+You will be given a list of features (approved in an upstream \
+pass, each with a stable ``feat_*`` ID) and must produce a \
+structured responsibility list. The feature → responsibility \
+relationship is many-to-many; you record it via ``<covers>`` \
+children listing the feature IDs each responsibility serves.
 
 # Output format
 
@@ -66,13 +74,17 @@ or more ``<feat>`` children with an ``id`` attribute:
 
     <requirements>
       <responsibility>
-        <name>User Authentication</name>
+        <name>Credential Verification and Session Establishment</name>
         <intent>Verify the identity of a human or service \
 interacting with the system, establish a session, and make the \
-identity available to downstream logic. Covers sign-in, sign-out, \
-token refresh, and session invalidation, but not the specific \
-credential mechanism (password, SSO, passkey) — that's an \
-implementation choice settled later.</intent>
+identity available to downstream logic. Owns the session state \
+lifecycle: creation on successful verification, refresh on \
+activity, invalidation on sign-out or timeout. Covers sign-in, \
+sign-out, token refresh, and session invalidation, but not the \
+specific credential mechanism (password, SSO, passkey) — that's \
+an implementation choice settled later. Failure surface: a \
+broken verifier blocks all sign-ins; a broken session store \
+silently degrades authenticated state.</intent>
         <covers>
           <feat id="feat_login01"/>
           <feat id="feat_pwdrst2"/>
@@ -80,24 +92,28 @@ implementation choice settled later.</intent>
         </covers>
       </responsibility>
       <responsibility>
-        <name>Authorization</name>
+        <name>Per-Request Permission Checks</name>
         <intent>Decide whether an authenticated principal may \
 perform a given action on a given resource. Separate from \
-authentication because the checks apply at every request, not \
-just at sign-in, and because the policy surface grows \
-independently of the identity surface.</intent>
+credential verification because the checks apply at every \
+request, not just at sign-in, and because the policy surface \
+grows independently of the identity surface. Owns the \
+permission-to-role mapping data; does not own user records or \
+session state.</intent>
         <covers>
           <feat id="feat_login01"/>
           <feat id="feat_admin99"/>
         </covers>
       </responsibility>
       <responsibility>
-        <name>Billing</name>
-        <intent>Bill the account owner for usage, collect \
-payment, and gate product access based on the current billing \
-state. Covers tiered plans, invoices, payment retries, and \
-account suspension. Does not cover pricing-model \
-decisions.</intent>
+        <name>Subscription State and Payment Collection</name>
+        <intent>Maintain the billing state of each account: \
+active plan, payment method on file, grace-period countdown. \
+Collect payment via provider API, emit invoices, schedule \
+retries on failure, and suspend accounts when retries exhaust. \
+Owns subscription records and invoice history. Does not own \
+pricing-model decisions — those are configuration, not \
+runtime state.</intent>
         <covers>
           <feat id="feat_plans00"/>
           <feat id="feat_invoice"/>
@@ -111,13 +127,29 @@ decisions.</intent>
 has exactly one ``<name>``, exactly one ``<intent>``, and exactly \
 one ``<covers>`` block. No other tags inside a responsibility.
 * ``<name>`` is a short identifier — typically 2 to 5 words, title \
-case. Think "User Authentication", "Rate Limiting", "Audit \
-Logging", not "The ability to check who a user is."
-* ``<intent>`` is a paragraph — typically 2 to 5 sentences. \
-Describe the *role* the responsibility plays, the scope it \
-covers, and when useful the things it explicitly does **not** \
-cover. Avoid prescribing implementation (no "we will use JWT", no \
-"this service will expose a REST API").
+case. Name the system-level guarantee, not the engineering \
+category. "Credential Verification and Session Establishment" \
+is sharper than "User Authentication"; "Subscription State and \
+Payment Collection" is sharper than "Billing"; "Background \
+Retry Scheduling" is sharper than "Job Execution". If the name \
+could label a responsibility in any software project without \
+modification, push toward what makes this project's version \
+distinctive. The name is sysarch's shortest handle for \
+assigning this responsibility to a component — it has to earn \
+its brevity by being specific.
+* ``<intent>`` is a paragraph — typically 2 to 5 sentences. The \
+sysarch pass will read this intent to decide which component \
+owns this responsibility. Name the specific data this \
+responsibility governs, the specific operations it performs, \
+and the failure surfaces it has. Also name what it explicitly \
+does **not** cover, so sysarch knows where boundaries lie. \
+Avoid prescribing implementation (no "we will use JWT", no \
+"this service will expose a REST API"). A good intent reads \
+like a system-level contract: "Verify the identity of a caller, \
+establish a session, and make the identity available to \
+downstream logic — covers sign-in, sign-out, token refresh, \
+and session invalidation, but not the specific credential \
+mechanism."
 * ``<covers>`` is **required** and must contain **at least one** \
 ``<feat>`` child per responsibility. Each ``<feat>`` carries an \
 ``id`` attribute matching exactly the feature ID shown in the \
@@ -152,6 +184,22 @@ want them named up front so cross-cutting policies can target \
 them later. Cross-cutting responsibilities still need a \
 ``<covers>`` block — list the features whose generation or \
 execution you'd expect to trigger the cross-cutting concern.
+* **Break feature boundaries — that is the point of this tier.** \
+A feature like "Accept card payments" touches payment \
+processing, account state management, audit logging, and \
+notification delivery. Those are four different system concerns \
+with different data ownership and different failure modes. Don't \
+mirror the feature structure — redistribute it. If your \
+responsibility list looks like the feature list with different \
+names, you haven't rotated.
+* **Group into one responsibility concerns that share data \
+ownership and fail together.** Separate into different \
+responsibilities concerns that touch different data or have \
+different failure surfaces, even if they serve the same \
+user-facing feature. Sysarch will cluster resps into components \
+along these same lines, so the closer your responsibility \
+boundaries match data-ownership boundaries, the cleaner \
+sysarch's component assignments will be.
 * **Split server-side and user-facing work into sibling \
 responsibilities.** When a feature has both back-end mechanics \
 and a user-facing interaction layer, produce **two separate \
