@@ -251,7 +251,16 @@ unique within ``<components>`` — no two components may share one.
 components do the structural work. Presentational components \
 render views into domain content (UIs, dashboards, docs pages) \
 and typically have a ``<domain-parent>`` edge pointing at the \
-domain component they present.
+domain component they present. **If the project has significant \
+frontend infrastructure** (routing, theming, state management, \
+error boundaries, layout shells), consider whether a top-level \
+presentational component should own that shared code so other \
+presentational components can depend on it rather than each one \
+independently setting up its own. This is the presentational \
+counterpart to the foundation component — not marked \
+``<foundation/>`` (there's only one of those), but serving an \
+analogous role as the shared-infrastructure dep target for the \
+presentational side of the tree.
 * ``<name>`` is the human-readable display name — title case, \
 short identifier. Different from the alias: ``alias="billing"``, \
 ``<name>Billing Service</name>``. **Name components \
@@ -373,6 +382,20 @@ policies first, then emit ``<dependencies>`` so policy-induced \
 deps land naturally on top of the mandatory foundation deps. \
 This is why the section order puts ``<policies>`` before \
 ``<dependencies>``.
+* **Acyclicity has architectural implications.** Because deps \
+are acyclic, cross-cutting concerns (configuration, telemetry \
+registration, route registration, middleware) cannot use mutual \
+dependencies. A component that needs to know about all its \
+dependents' shapes — a config loader that reads every \
+component's config section, a telemetry registry that enumerates \
+every component's events — must provide a **registration \
+interface** that dependents call into, not import from \
+dependents directly. The pattern is inversion of control: \
+foundation (or whatever component owns the cross-cutting \
+infrastructure) provides the machinery; each component \
+registers its own contribution on startup. Design your \
+components so that the flow of registration goes from \
+dependents toward foundation, not the other way.
 
 ## Domain-parent
 
