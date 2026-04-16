@@ -36,8 +36,6 @@ decomposition and §Feature → Responsibility → Component.
 
 from __future__ import annotations
 
-from backend.projects.settings import NodeCountRange
-
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are **rotating** the problem from user-facing capabilities \
 to system-level guarantees. The features you are given describe \
@@ -168,12 +166,8 @@ responsibility.** Before emitting the list, mentally check that \
 each input feature ID appears in at least one ``<covers>`` block. \
 Missing coverage is a parse error that gets fed back to you.
 * **Granularity.** Aim for a responsibility list that's coarser \
-than the feature list but finer than the project description. A \
-typical project produces {{TYPICAL_MIN}}–{{TYPICAL_MAX}} top-level \
-responsibilities. If you're at {{CEILING}} or more, you're \
-reaching into implementation territory; if you're at {{FLOOR}} \
-or fewer, you're probably glossing over real decomposition \
-work. Err on the side of fewer, coarser responsibilities — \
+than the feature list but finer than the project description. \
+Err on the side of fewer, coarser responsibilities — \
 sub-decomposition happens in a later pass per component.
 * **Cross-cutting concerns are responsibilities too.** Logging, \
 telemetry, health checks, background job scheduling, rate \
@@ -226,22 +220,9 @@ parser tolerates them.
 """
 
 
-def render_system_prompt(counts: NodeCountRange) -> str:
-    """Return the requirements system prompt with count tokens filled.
-
-    The template cites four numbers for the top-level
-    responsibility count — typical min/max plus a floor and a
-    ceiling for the "you're under-decomposing / over-decomposing"
-    warnings. The handler pulls the configured
-    ``top_level_responsibilities`` range off ``ProjectSettings``
-    and passes it here.
-    """
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{{FLOOR}}", str(counts.floor))
-        .replace("{{TYPICAL_MIN}}", str(counts.typical_min))
-        .replace("{{TYPICAL_MAX}}", str(counts.typical_max))
-        .replace("{{CEILING}}", str(counts.ceiling))
-    )
+def render_system_prompt() -> str:
+    """Return the requirements system prompt."""
+    return _SYSTEM_PROMPT_TEMPLATE
 
 
 def render_user_prompt(

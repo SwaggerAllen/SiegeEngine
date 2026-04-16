@@ -2,8 +2,7 @@
 
 Parallel to ``test_prompts_requirements.py`` — narrow coverage of
 the ``input_doc`` kwarg that the handler passes only on the
-initial bootstrap generation. Broader coverage of the count-range
-substitution lives in ``test_prompts_count_ranges.py``.
+initial bootstrap generation.
 """
 
 from __future__ import annotations

@@ -167,7 +167,7 @@ async def generate_requirements(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
-        system_prompt = render_system_prompt(settings.top_level_responsibilities)
+        system_prompt = render_system_prompt()
     finally:
         db.close()
 

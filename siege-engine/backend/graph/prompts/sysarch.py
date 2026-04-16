@@ -69,8 +69,6 @@ Component, and §Edge type vocabulary.
 
 from __future__ import annotations
 
-from backend.projects.settings import NodeCountRange
-
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are producing the **system architecture** for a software \
 project. The entire downstream generation chain — \
@@ -407,14 +405,8 @@ to a domain component.
 parents. Domain components may be referenced by multiple \
 presentationals.
 
-## Granularity and coverage
+## Coverage
 
-* Top-level component count: typically {{TYPICAL_MIN}} to \
-{{TYPICAL_MAX}} for a normal project, not counting the \
-foundation. If you're at {{FLOOR}} or fewer, you're probably \
-glossing over decomposition; if you're at {{CEILING}} or more, \
-you're reaching into subcomponent territory that belongs in \
-Phase 4 component arch docs.
 * Every top-level responsibility from the input list must be \
 assigned to exactly one component's ``<responsibilities>`` \
 block. Missing assignments are a structural error.
@@ -429,17 +421,9 @@ tolerates them.
 """
 
 
-def render_system_prompt(counts: NodeCountRange) -> str:
-    """Return the sysarch system prompt with top-level component
-    count tokens filled. Handler calls this with
-    ``ProjectSettings.top_level_components``.
-    """
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{{FLOOR}}", str(counts.floor))
-        .replace("{{TYPICAL_MIN}}", str(counts.typical_min))
-        .replace("{{TYPICAL_MAX}}", str(counts.typical_max))
-        .replace("{{CEILING}}", str(counts.ceiling))
-    )
+def render_system_prompt() -> str:
+    """Return the sysarch system prompt."""
+    return _SYSTEM_PROMPT_TEMPLATE
 
 
 def render_user_prompt(

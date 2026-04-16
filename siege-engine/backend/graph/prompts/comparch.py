@@ -74,8 +74,6 @@ documents are parseable, §Policies, §Foundation components, and
 
 from __future__ import annotations
 
-from backend.projects.settings import NodeCountRange
-
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are producing the **architecture document** for a single \
 component. This is the **last compression step** before \
@@ -381,16 +379,6 @@ every other subcomponent's code reaches into it at runtime. \
 This is enforced by the validator and mirrors the analogous \
 rule for top-level components at the sysarch layer.
 
-## Granularity
-
-* Subcomponent count (when decomposing): typically \
-{{TYPICAL_MIN}} to {{TYPICAL_MAX}} per component, including the \
-foundation. {{FLOOR}} or fewer subcomponents usually means \
-"un-fanned-out would be cleaner" — the component doesn't have \
-enough internal structure to justify the decomposition hop. \
-{{CEILING}} or more usually means you're reaching into \
-implementation detail that belongs in the subcomponent's own \
-Phase 5 arch doc or in individual ``impl_*`` nodes.
 
 ## Meta-rules
 
@@ -402,17 +390,9 @@ the XML tags themselves) are tolerated by the parser.
 """
 
 
-def render_system_prompt(counts: NodeCountRange) -> str:
-    """Return the comparch system prompt with subcomponent count
-    tokens filled. Handler calls this with
-    ``ProjectSettings.subcomponents_per_component``.
-    """
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{{FLOOR}}", str(counts.floor))
-        .replace("{{TYPICAL_MIN}}", str(counts.typical_min))
-        .replace("{{TYPICAL_MAX}}", str(counts.typical_max))
-        .replace("{{CEILING}}", str(counts.ceiling))
-    )
+def render_system_prompt() -> str:
+    """Return the comparch system prompt."""
+    return _SYSTEM_PROMPT_TEMPLATE
 
 
 def format_domain_parent_surface(

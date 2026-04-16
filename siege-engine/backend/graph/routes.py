@@ -1227,7 +1227,6 @@ def post_expansion_prompt_preview(
         render_user_prompt as fe_render_user,
     )
     from backend.models.input_document import InputDocument
-    from backend.projects.settings import get_project_settings
 
     pending = pending_expansion_draft(db, project_id)
     input_doc_row = (
@@ -1236,13 +1235,10 @@ def post_expansion_prompt_preview(
         .order_by(InputDocument.created_at.desc())
         .first()
     )
-    project_row = db.get(Project, project_id)
-    assert project_row is not None
-    settings = get_project_settings(project_row)
     feedback = req.feedback.strip() or None
 
     return PromptPreviewResponse(
-        system_prompt=fe_render_system(settings.features_per_group),
+        system_prompt=fe_render_system(),
         user_prompt=fe_render_user(
             input_doc=(input_doc_row.content or "") if input_doc_row else "",
             prior_approved=node.content or None,
@@ -1276,7 +1272,6 @@ def post_reqs_prompt_preview(
     )
     from backend.graph.vocabulary import render_vocab_summary_all
     from backend.models.input_document import InputDocument
-    from backend.projects.settings import get_project_settings
 
     pending = pending_reqs_draft(db, project_id)
     feature_rows = (
@@ -1304,13 +1299,10 @@ def post_reqs_prompt_preview(
         .order_by(InputDocument.created_at.desc())
         .first()
     )
-    project_row = db.get(Project, project_id)
-    assert project_row is not None
-    settings = get_project_settings(project_row)
     feedback = req.feedback.strip() or None
 
     return PromptPreviewResponse(
-        system_prompt=reqs_render_system(settings.top_level_responsibilities),
+        system_prompt=reqs_render_system(),
         user_prompt=reqs_render_user(
             features_summary=features_summary,
             prior_approved=node.content or None,
@@ -1347,7 +1339,6 @@ def post_sysarch_prompt_preview(
     )
     from backend.graph.vocabulary import render_vocab_summary_all
     from backend.models.input_document import InputDocument
-    from backend.projects.settings import get_project_settings
 
     pending = pending_sysarch_draft(db, project_id)
     feature_rows = (
@@ -1384,13 +1375,10 @@ def post_sysarch_prompt_preview(
         .order_by(InputDocument.created_at.desc())
         .first()
     )
-    project_row = db.get(Project, project_id)
-    assert project_row is not None
-    settings = get_project_settings(project_row)
     feedback = req.feedback.strip() or None
 
     return PromptPreviewResponse(
-        system_prompt=sa_render_system(settings.top_level_components),
+        system_prompt=sa_render_system(),
         user_prompt=sa_render_user(
             features_summary=features_summary,
             reqs_summary=reqs_summary,

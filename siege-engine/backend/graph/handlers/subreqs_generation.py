@@ -180,7 +180,7 @@ async def generate_subreqs(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
-        system_prompt = render_system_prompt(settings.subresponsibilities_per_component)
+        system_prompt = render_system_prompt()
 
         # Project vocabulary scoped to this component's reachable
         # features via the decomposition walk. The subreqs regen

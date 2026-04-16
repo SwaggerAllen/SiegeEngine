@@ -37,8 +37,6 @@ decomposition and ``docs/architecture/v2-roadmap.md`` Phase 3.
 
 from __future__ import annotations
 
-from backend.projects.settings import NodeCountRange
-
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are expanding a single component's top-level \
 responsibilities into finer-grained **subresponsibilities**, \
@@ -147,12 +145,6 @@ leaks are still forbidden, and the domain-parent subresps \
 belong to a different component's scope. The context exists \
 to help you write UI-side subresps that complement the domain \
 work coherently.
-* **Granularity.** A typical component produces {{TYPICAL_MIN}} \
-to {{TYPICAL_MAX}} subresponsibilities. If you're producing \
-{{FLOOR}} or fewer, you're probably not decomposing enough. If \
-you're producing {{CEILING}} or more, you're reaching into \
-implementation detail that belongs in the component arch doc \
-(Phase 4) or in individual impl nodes.
 * Do not include meta-commentary about what you are doing. \
 Output only the ``<subrequirements>`` block.
 * Unescaped ``&`` and ``<`` in intent text are fine — the parser \
@@ -160,17 +152,9 @@ tolerates them.
 """
 
 
-def render_system_prompt(counts: NodeCountRange) -> str:
-    """Return the subrequirements system prompt with count tokens
-    filled. Handler calls this with
-    ``ProjectSettings.subresponsibilities_per_component``.
-    """
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{{FLOOR}}", str(counts.floor))
-        .replace("{{TYPICAL_MIN}}", str(counts.typical_min))
-        .replace("{{TYPICAL_MAX}}", str(counts.typical_max))
-        .replace("{{CEILING}}", str(counts.ceiling))
-    )
+def render_system_prompt() -> str:
+    """Return the subrequirements system prompt."""
+    return _SYSTEM_PROMPT_TEMPLATE
 
 
 def render_user_prompt(

@@ -146,7 +146,7 @@ async def generate_feature_expansion(payload: dict) -> None:
         assert project_row is not None  # expansion node existed, so does the project
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
-        system_prompt = render_system_prompt(settings.features_per_group)
+        system_prompt = render_system_prompt()
     finally:
         db.close()
 

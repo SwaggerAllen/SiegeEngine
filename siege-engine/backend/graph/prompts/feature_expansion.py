@@ -44,8 +44,6 @@ keep it stable so later prompt-version tracking can diff cleanly.
 
 from __future__ import annotations
 
-from backend.projects.settings import NodeCountRange
-
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are extracting structured features from an unstructured \
 project description. Your output is the **first layer of \
@@ -149,15 +147,7 @@ Management", "Billing", "Content", "Notifications"). A group \
 contains exactly one ``<name>`` and one or more ``<feature>`` \
 entries. Groups do not nest — every feature lives in at most one \
 group. Features that don't fit a theme can sit directly under \
-``<features>`` without a group wrapper. Aim for \
-{{TYPICAL_MIN}}–{{TYPICAL_MAX}} features per group when grouping \
-at all. A group of {{FLOOR}} or fewer features is usually a \
-signal to inline it — the grouping isn't pulling enough weight \
-to justify a ``<group>`` wrapper. A group of {{CEILING}} or more \
-features should probably split into two groups along a \
-sub-theme — if it can't, the group is labeling a coarse area of \
-the product rather than a tight theme, and the sub-theme \
-structure will be more useful than the flat list.
+``<features>`` without a group wrapper.
 * Aim for breadth, not depth. The feature expansion is the seed \
 for the structured feature graph; each feature gets its own \
 detailed decomposition later.
@@ -265,17 +255,9 @@ describes *what words the project uses*.
 """
 
 
-def render_system_prompt(counts: NodeCountRange) -> str:
-    """Return the feature-expansion system prompt with count tokens
-    filled. Handler calls this with
-    ``ProjectSettings.features_per_group``.
-    """
-    return (
-        _SYSTEM_PROMPT_TEMPLATE.replace("{{FLOOR}}", str(counts.floor))
-        .replace("{{TYPICAL_MIN}}", str(counts.typical_min))
-        .replace("{{TYPICAL_MAX}}", str(counts.typical_max))
-        .replace("{{CEILING}}", str(counts.ceiling))
-    )
+def render_system_prompt() -> str:
+    """Return the feature-expansion system prompt."""
+    return _SYSTEM_PROMPT_TEMPLATE
 
 
 def render_user_prompt(
