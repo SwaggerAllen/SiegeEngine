@@ -178,6 +178,19 @@ class RegenContext:
     domain_parent_techspecs: dict[str, str] = field(default_factory=dict)
     domain_parent_pubapis: dict[str, str] = field(default_factory=dict)
 
+    # Referenced content — Phase 6.6. Every regen also sees the
+    # rendered content of nodes this regen target has outgoing
+    # ``reference`` edges to. The walker
+    # (``references.referenced_content_for_node``) dispatches on
+    # each target's tier to pull the right chunk (full content for
+    # ref_*, pubapi fragment for comp_*, etc.), so the edge type
+    # is source-tier-agnostic — any node can draw a ``reference``
+    # edge to any other node. For targets without outgoing
+    # reference edges this stays empty and the formatter renders
+    # the sentinel "(no external references)" so the prompt
+    # partition is always present and deterministic.
+    referenced_content: dict[str, str] = field(default_factory=dict)
+
 
 def build_regen_context(session: Session, comp_id: str) -> RegenContext:
     """Assemble the regen-context bundle for a single comp node.
@@ -361,6 +374,15 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
                 session, parent.id, FragmentKind.PUBAPI
             )
 
+    # Referenced content (Phase 6.6): pull every node this regen
+    # target has an outgoing ``reference`` edge to. The walker is
+    # source-tier-agnostic and dispatches on the target's tier.
+    from backend.graph import references as _references_module
+
+    referenced_content_map = _references_module.referenced_content_for_node(
+        session, project_id, comp_id
+    )
+
     return RegenContext(
         component=component,
         component_techspec=cc.techspec,
@@ -386,6 +408,7 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         domain_parents=domain_parents_tuple,
         domain_parent_techspecs=domain_parent_techspec_map,
         domain_parent_pubapis=domain_parent_pubapi_map,
+        referenced_content=referenced_content_map,
     )
 
 
@@ -498,6 +521,7 @@ def format_regen_context(ctx: RegenContext) -> dict[str, str]:
         ),
         "vocab_summary": _render_vocab_summary_from_ctx(ctx),
         "domain_parent_surface": _render_domain_parent_surface_for_comparch(ctx),
+        "referenced_content_summary": _render_referenced_content_from_ctx(ctx),
     }
 
 
@@ -570,6 +594,7 @@ def format_regen_context_for_sub(ctx: RegenContext) -> dict[str, str]:
         ),
         "vocab_summary": _render_vocab_summary_from_ctx(ctx),
         "domain_parent_surface": _render_domain_parent_surface_for_sub(ctx),
+        "referenced_content_summary": _render_referenced_content_from_ctx(ctx),
     }
 
 
@@ -589,6 +614,21 @@ def _render_domain_parent_surface_for_sub(ctx: RegenContext) -> str:
         ctx.domain_parent_techspecs,
         ctx.domain_parent_pubapis,
     )
+
+
+def _render_referenced_content_from_ctx(ctx: RegenContext) -> str:
+    """Render the Phase 6.6 referenced-content partition.
+
+    Delegates to ``references.format_referenced_content_summary``
+    so comparch / subcomparch / requirements / sysarch / subreqs
+    / policy-application all share one renderer. The summary
+    collapses to the sentinel ``"(no external references)"`` when
+    ``ctx.referenced_content`` is empty, which keeps the prompt
+    partition visible but minimal.
+    """
+    from backend.graph import references
+
+    return references.format_referenced_content_summary(ctx.referenced_content)
 
 
 def _render_vocab_summary_from_ctx(ctx: RegenContext) -> str:

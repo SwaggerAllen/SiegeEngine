@@ -211,11 +211,41 @@ def _enforce_vocab_parent_constraint(
         )
 
 
+def _enforce_reference_parent_constraint(
+    new_tier: str,
+    new_parent_id: str | None,
+    node_id_for_error: str,
+) -> None:
+    """Reject structural changes that would parent a ``ref_*`` node under anything.
+
+    Per ``docs/architecture/v2-rearchitecture.md`` §Project references,
+    refs are always top-level: ``parent_id`` must be ``None``. Unlike
+    vocab (which is scoped to project or feature), refs have no
+    sub-scope — any node can pull any ref into its regen context via
+    an outgoing ``reference`` edge, so parenting refs below the
+    project root has no meaning.
+
+    Enforced on ``NodeCreated`` and ``NodeReparented`` events whose
+    target tier is ``ref``.
+    """
+    if new_tier != "ref":
+        return
+    if new_parent_id is None:
+        return
+    raise ReducerError(
+        f"Cannot attach ref node {node_id_for_error!r} under parent "
+        f"{new_parent_id!r}: references are always top-level "
+        "(parent_id must be None). Reference edges connect refs to "
+        "consumers; hierarchical parenting is not used."
+    )
+
+
 def _apply_node_created(session: Session, project_id: str, event: ev.NodeCreated) -> None:
     _enforce_comp_depth_cap(session, project_id, event.tier, event.parent_id, event.node_id)
     _enforce_vocab_parent_constraint(
         session, project_id, event.tier, event.parent_id, event.node_id
     )
+    _enforce_reference_parent_constraint(event.tier, event.parent_id, event.node_id)
     now = datetime.utcnow()
     session.add(
         Node(
@@ -255,6 +285,7 @@ def _apply_node_reparented(session: Session, project_id: str, event: ev.NodeRepa
     _enforce_vocab_parent_constraint(
         session, project_id, node.tier, event.new_parent_id, event.node_id
     )
+    _enforce_reference_parent_constraint(node.tier, event.new_parent_id, event.node_id)
     node.parent_id = event.new_parent_id
     node.updated_at = datetime.utcnow()
 

@@ -200,6 +200,10 @@ async def apply_top_level_policies(payload: dict) -> None:
         from backend.graph.vocabulary import render_vocab_summary_for_node
 
         vocab_summary = render_vocab_summary_for_node(db, project_id, component_id)
+
+        from backend.graph.references import render_referenced_content_summary
+
+        referenced_content_summary = render_referenced_content_summary(db, project_id, component_id)
     finally:
         db.close()
 
@@ -221,6 +225,7 @@ async def apply_top_level_policies(payload: dict) -> None:
             scope="top-level",
             parse_error=parse_error,
             vocab_summary=vocab_summary,
+            referenced_content_summary=referenced_content_summary,
         )
 
     def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]

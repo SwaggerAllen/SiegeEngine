@@ -151,6 +151,15 @@ async def generate_sysarch(payload: dict) -> None:
 
         vocab_summary = render_vocab_summary_all(db, project_id)
 
+        # Referenced content — any ``reference`` edges the sysarch
+        # node has pointing outward. Empty in the common case;
+        # plumbed so users can attach standalone refs to sysarch.
+        from backend.graph.references import render_referenced_content_summary
+
+        referenced_content_summary = render_referenced_content_summary(
+            db, project_id, sysarch_node_id
+        )
+
         # Project input document — fed unconditionally on every
         # sysarch generation. Same reasoning as
         # ``requirements_generation.py``: the route blocks regen
@@ -191,6 +200,7 @@ async def generate_sysarch(payload: dict) -> None:
             parse_error=parse_error,
             vocab_summary=vocab_summary,
             input_doc=input_doc,
+            referenced_content_summary=referenced_content_summary,
         )
 
     def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]

@@ -10,6 +10,7 @@ import { PromptPreviewPanel } from '../components/PromptPreviewPanel';
 import { RequirementsPanel } from '../components/RequirementsPanel';
 import { ResponsibilityList } from '../components/ResponsibilityList';
 import { SysarchPanel } from '../components/SysarchPanel';
+import { ReferencesList } from '../components/ReferencesList';
 import { VocabularyList } from '../components/VocabularyList';
 import { getPromptPreview as getExpansionPrompt } from '../api/expansion';
 import { getPromptPreview as getReqsPrompt } from '../api/requirements';
@@ -21,7 +22,12 @@ import { useResponsibilities } from '../hooks/queries/useRequirementsQueries';
 import { debugLog } from '../lib/debugLog';
 import { describeApiError } from '../lib/describeApiError';
 
-type DashboardTab = 'expansion' | 'vocabulary' | 'requirements' | 'architecture';
+type DashboardTab =
+  | 'expansion'
+  | 'vocabulary'
+  | 'references'
+  | 'requirements'
+  | 'architecture';
 
 function EmptySubtabMessage({ children }: { children: React.ReactNode }) {
   return <p className="p-6 text-sm italic text-gray-500">{children}</p>;
@@ -74,6 +80,14 @@ function DashboardShell({ projectId }: { projectId: string }) {
         // narrative and vocabulary is auxiliary.
         key: 'vocabulary',
         label: 'Vocabulary',
+        enabled: true,
+      },
+      {
+        // References are always enabled — supplemental documents
+        // can attach to any tier. Same "auxiliary, not part of
+        // the default progression" rationale as vocabulary.
+        key: 'references',
+        label: 'References',
         enabled: true,
       },
       {
@@ -238,6 +252,16 @@ function DashboardShell({ projectId }: { projectId: string }) {
                 this wrapper intentionally does NOT set overflow-auto —
                 doing so would produce a double-scroll. */}
             <VocabularyList projectId={projectId} />
+          </div>
+        )}
+        {activeTab === 'references' && (
+          <div
+            role="tabpanel"
+            id="tabpanel-references"
+            aria-labelledby="tab-references"
+            className="h-full"
+          >
+            <ReferencesList projectId={projectId} />
           </div>
         )}
         {activeTab === 'requirements' && (

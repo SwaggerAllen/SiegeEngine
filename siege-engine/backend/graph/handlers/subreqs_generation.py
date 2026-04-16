@@ -190,6 +190,14 @@ async def generate_subreqs(payload: dict) -> None:
         from backend.graph.vocabulary import render_vocab_summary_for_node
 
         vocab_summary = render_vocab_summary_for_node(db, project_id, component_id)
+
+        # Referenced content — pulled from outgoing ``reference``
+        # edges on the subreqs node itself (not the component).
+        from backend.graph.references import render_referenced_content_summary
+
+        referenced_content_summary = render_referenced_content_summary(
+            db, project_id, subreqs_node_id
+        )
     finally:
         db.close()
 
@@ -213,6 +221,7 @@ async def generate_subreqs(payload: dict) -> None:
             feedback=feedback,
             parse_error=parse_error,
             vocab_summary=vocab_summary,
+            referenced_content_summary=referenced_content_summary,
         )
 
     def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
