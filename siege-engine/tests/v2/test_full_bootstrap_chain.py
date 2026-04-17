@@ -52,6 +52,7 @@ from backend.cli.manager import GenerationResult  # noqa: E402
 from backend.database import Base  # noqa: E402
 from backend.graph import events as ev  # noqa: E402
 from backend.graph.expansion import bootstrap_expansion_node  # noqa: E402
+from backend.graph.prompts import impl as _p_impl  # noqa: E402
 from backend.graph.prompts import policy_application as _p_policy  # noqa: E402
 from backend.graph.prompts import subcomparch as _p_subcomparch  # noqa: E402
 from backend.graph.reducer import append_event  # noqa: E402
@@ -84,6 +85,7 @@ _MODULES_WITH_SESSION_LOCAL = (
     "backend.graph.handlers.policy_application_local",
     "backend.graph.handlers.subcomparch_generation",
     "backend.graph.handlers.subcomparch_mint",
+    "backend.graph.handlers.impl_generation",
 )
 
 
@@ -398,6 +400,27 @@ def _subcomparch_xml() -> str:
     )
 
 
+def _impl_xml() -> str:
+    # Phase 8 leaf: a single implementation doc under each impl
+    # owner. Prose sections, not code — the plan prompt (Phase 14)
+    # is what translates these into (file, region, change)
+    # tuples. Structural validator enforces presence + ordering;
+    # content is opaque.
+    return (
+        "<implementation>"
+        "<behavior>Stub behavior description for the test harness — "
+        "leaf accepts calls and mutates its private state.</behavior>"
+        "<invariants>Stub invariants — all inputs validated at the "
+        "boundary; private state never leaks outward.</invariants>"
+        "<sequencing>Stub sequencing — operations are idempotent "
+        "except for the state-mutating ones which run in order.</sequencing>"
+        "<edge-cases>Stub edge cases — empty input returns a "
+        "sentinel; concurrent mutation surfaces as a retry error."
+        "</edge-cases>"
+        "</implementation>"
+    )
+
+
 def _unique_in_order(items: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -469,6 +492,7 @@ def stub_cli(monkeypatch, shared_session_factory):
     phase_by_identity: dict[int, str] = {
         id(_p_subcomparch.SYSTEM_PROMPT): "subcomparch",
         id(_p_policy.SYSTEM_PROMPT): "policy_application",
+        id(_p_impl.SYSTEM_PROMPT): "impl",
     }
     phase_by_substring: tuple[tuple[str, str], ...] = (
         ("extracting structured features", "features"),
@@ -524,6 +548,8 @@ def stub_cli(monkeypatch, shared_session_factory):
                 text = _comparch_xml(session, project_id, prompt)
             elif phase == "subcomparch":
                 text = _subcomparch_xml()
+            elif phase == "impl":
+                text = _impl_xml()
             elif phase == "policy_application":
                 # Empty <policies> at every tier means the policy
                 # handlers early-return with no candidates and never
@@ -644,6 +670,12 @@ def _approve_all_pending_drafts(factory, project_id: str) -> int:
                         job_type="v2.mint_subcomparch",
                         payload={"project_id": project_id, "component_id": node.id},
                     )
+            elif node.tier == "impl":
+                # Phase 8: impl approval commits Node.content via
+                # the DraftApproved reducer branch. No mint job
+                # follows — impls have no fragments and no
+                # children. Plan / codegen coupling is Phase 14.
+                pass
             else:
                 raise AssertionError(f"unexpected draft target tier: {node.tier!r}")
         session.commit()
@@ -884,6 +916,45 @@ class TestFullBootstrapChain:
                     "deps",
                 }, f"{sub.id} fragments = {frag_kinds}"
 
+            # ── Phase 8: impl leaves minted + filled ──────────────
+            # comparch_mint creates one impl shell per
+            # subcomponent (all subs in this harness) and one
+            # per un-fanned-out top-level comp (none in this
+            # harness — every top-level decomposes into subs).
+            # generate_impl fills each shell with the stub
+            # <implementation> block.
+            impl_nodes = list(
+                session.execute(
+                    select(Node).where(
+                        Node.project_id == project_id,
+                        Node.tier == "impl",
+                    )
+                ).scalars()
+            )
+            # One impl per subcomponent — every sub is a leaf.
+            assert len(impl_nodes) == len(subcomps), (
+                f"expected {len(subcomps)} impl leaves (one per "
+                f"subcomponent), got {len(impl_nodes)}"
+            )
+            # Every impl's parent is a subcomponent (not a
+            # fanned-out top-level comp — those have no impl).
+            subcomp_ids = {s.id for s in subcomps}
+            for impl in impl_nodes:
+                assert impl.parent_id in subcomp_ids, (
+                    f"impl {impl.id} has parent_id "
+                    f"{impl.parent_id!r}, expected one of the "
+                    "subcomponent ids"
+                )
+                assert impl.content, f"impl {impl.id} has empty content"
+                assert impl.content.lstrip().startswith("<implementation>")
+            # Fanned-out top-level comps have NO impl child —
+            # their impl lives in their subcomponents' impls.
+            for comp in top_comps:
+                impl_under_top = [i for i in impl_nodes if i.parent_id == comp.id]
+                assert impl_under_top == [], (
+                    f"top-level fanned-out comp {comp.id} unexpectedly has an impl child"
+                )
+
             # The decomposition edge network is populated. Every
             # subresp has at least one decomposition edge to a
             # subcomponent (from comparch mint).
@@ -914,6 +985,7 @@ class TestFullBootstrapChain:
                 "subrequirements",
                 "comparch",
                 "subcomparch",
+                "impl",
             }, f"unexpected phases called: {phases}"
 
             # ── Phase 6: presentational path ──────────────────────

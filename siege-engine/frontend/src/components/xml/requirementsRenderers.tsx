@@ -1,3 +1,4 @@
+import { CollapsibleSection } from './CollapsibleSection';
 import type { XmlRendererMap } from './types';
 import { findChild, findChildText, findChildren } from './types';
 
@@ -45,9 +46,12 @@ export function makeRequirementsRenderers(
             .map((f) => (typeof f.attributes.id === 'string' ? f.attributes.id : null))
             .filter((id): id is string => id !== null)
         : [];
+      const meta =
+        coveredFeatureIds.length > 0 ? (
+          <span className="text-gray-500">{coveredFeatureIds.length} feat</span>
+        ) : undefined;
       return (
-        <article className="bg-gray-800/40 border border-gray-700 rounded p-4 space-y-2">
-          <h3 className="font-semibold text-white m-0 text-sm">{name}</h3>
+        <CollapsibleSection summary={name} meta={meta}>
           {intent && <p className="text-sm text-gray-300 m-0">{intent}</p>}
           {coveredFeatureIds.length > 0 && (
             <div className="pt-1 border-t border-gray-700/60">
@@ -70,7 +74,7 @@ export function makeRequirementsRenderers(
               </ul>
             </div>
           )}
-        </article>
+        </CollapsibleSection>
       );
     },
 

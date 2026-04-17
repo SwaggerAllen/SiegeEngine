@@ -1,3 +1,4 @@
+import { CollapsibleSection } from './CollapsibleSection';
 import type { XmlRendererMap } from './types';
 import { findChild, findChildText, findChildren, textContent } from './types';
 
@@ -35,36 +36,27 @@ export const comparchRenderers: XmlRendererMap = {
   ),
 
   'technical-specification': (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        Technical Specification
-      </h2>
+    <CollapsibleSection summary="Technical Specification">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
-    </section>
+    </CollapsibleSection>
   ),
 
   'public-surface': (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        Public Surface
-      </h2>
+    <CollapsibleSection summary="Public Surface">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
-    </section>
+    </CollapsibleSection>
   ),
 
   'private-surface': (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        Private Surface
-      </h2>
+    <CollapsibleSection summary="Private Surface">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
-    </section>
+    </CollapsibleSection>
   ),
 
   policies: (node, ctx) => {
@@ -88,14 +80,16 @@ export const comparchRenderers: XmlRendererMap = {
     const trigger = findChildText(node, 'trigger') ?? '';
     const required = findChildText(node, 'required') ?? '';
     const rationale = findChildText(node, 'rationale') ?? '';
+    const summary = (
+      <span className="flex items-baseline flex-wrap gap-x-2 gap-y-1">
+        <span className="font-semibold text-white text-sm">{name}</span>
+        {trigger && (
+          <span className="text-xs italic text-gray-400 font-normal">on {trigger}</span>
+        )}
+      </span>
+    );
     return (
-      <article className="bg-gray-800/40 border border-gray-700 rounded p-3 space-y-1">
-        <div className="flex items-baseline flex-wrap gap-x-2 gap-y-1">
-          <h3 className="font-semibold text-white m-0 text-sm">{name}</h3>
-          {trigger && (
-            <span className="text-xs italic text-gray-400">on {trigger}</span>
-          )}
-        </div>
+      <CollapsibleSection summary={summary}>
         {required && (
           <div className="text-xs text-gray-400">
             requires <span className="font-mono text-gray-300">{required}</span>
@@ -104,7 +98,7 @@ export const comparchRenderers: XmlRendererMap = {
         {rationale && (
           <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">{rationale}</p>
         )}
-      </article>
+      </CollapsibleSection>
     );
   },
 
@@ -157,7 +151,7 @@ export const comparchRenderers: XmlRendererMap = {
             ({subs.length})
           </span>
         </h2>
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="space-y-2">
           {subs.map((s, i) => ctx.renderNode(s, i))}
         </div>
       </section>
@@ -183,22 +177,22 @@ export const comparchRenderers: XmlRendererMap = {
           })
           .filter(Boolean)
       : [];
+    const summary = (
+      <span className="flex items-baseline flex-wrap gap-x-2 gap-y-1">
+        <span className="font-semibold text-white text-sm">{name}</span>
+        <span className="text-xs font-mono text-gray-500">{alias}</span>
+      </span>
+    );
+    const meta = isFoundation ? (
+      <span
+        className="text-xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-200"
+        title="Foundation subcomponent — owns the component's root folder territory"
+      >
+        foundation
+      </span>
+    ) : undefined;
     return (
-      <article className="bg-gray-800/40 border border-gray-700 rounded p-4 space-y-2">
-        <header>
-          <div className="flex items-baseline flex-wrap gap-x-2 gap-y-1">
-            <h3 className="font-semibold text-white m-0 text-sm">{name}</h3>
-            <span className="text-xs font-mono text-gray-500">{alias}</span>
-            {isFoundation && (
-              <span
-                className="text-xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-200"
-                title="Foundation subcomponent — owns the component's root folder territory"
-              >
-                foundation
-              </span>
-            )}
-          </div>
-        </header>
+      <CollapsibleSection summary={summary} meta={meta}>
         {role && (
           <div className="space-y-1">
             <div className="text-[10px] uppercase tracking-wider text-gray-500">
@@ -234,7 +228,7 @@ export const comparchRenderers: XmlRendererMap = {
             </div>
           </div>
         )}
-      </article>
+      </CollapsibleSection>
     );
   },
 

@@ -10,7 +10,9 @@ import { ProjectDashboardLayout } from './pages/ProjectDashboardLayout';
 import { ProjectSettingsPage } from './pages/ProjectSettingsPage';
 import { ComponentSubreqsPage } from './pages/ComponentSubreqsPage';
 import { ComponentComparchPage } from './pages/ComponentComparchPage';
+import { ComponentImplPage } from './pages/ComponentImplPage';
 import { SubcomponentComparchPage } from './pages/SubcomponentComparchPage';
+import { SubcomponentImplPage } from './pages/SubcomponentImplPage';
 import { DecompositionGraphPage } from './pages/DecompositionGraphPage';
 import { VocabularyPage } from './pages/VocabularyPage';
 import { ReferencesPage } from './pages/ReferencesPage';
@@ -109,6 +111,22 @@ export default function App() {
           element={
             <ProtectedRoute>
               <SubcomponentComparchPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:id/components/:compId/impl"
+          element={
+            <ProtectedRoute>
+              <ComponentImplPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:id/components/:compId/subcomponents/:subId/impl"
+          element={
+            <ProtectedRoute>
+              <SubcomponentImplPage />
             </ProtectedRoute>
           }
         />

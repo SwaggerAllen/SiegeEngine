@@ -1,3 +1,4 @@
+import { CollapsibleSection } from './CollapsibleSection';
 import type { XmlRendererMap } from './types';
 import { findChild, findChildText, findChildren, hasChild, textContent } from './types';
 
@@ -92,7 +93,7 @@ export function makeSysarchRenderers(
             ({components.length})
           </span>
         </h2>
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="space-y-2">
           {components.map((c, i) => ctx.renderNode(c, i))}
         </div>
       </section>
@@ -118,45 +119,49 @@ export function makeSysarchRenderers(
           .filter(Boolean)
       : [];
     const pendingKind = pendingByName[name];
-    const cardBorderClass = pendingKind
-      ? 'border-amber-500/60'
-      : 'border-gray-700';
+    const cardBorderClass = pendingKind ? 'border-amber-500/60' : '';
+    const summary = (
+      <span className="flex items-baseline flex-wrap gap-x-2 gap-y-1">
+        <span className="font-semibold text-white text-sm">{name}</span>
+        <span className="text-xs font-mono text-gray-500">{alias}</span>
+      </span>
+    );
+    const meta = (
+      <>
+        <span
+          className={
+            'text-xs uppercase tracking-wider px-1.5 py-0.5 rounded ' +
+            (kind === 'presentational'
+              ? 'bg-purple-900/40 text-purple-200'
+              : 'bg-blue-900/40 text-blue-200')
+          }
+        >
+          {kind}
+        </span>
+        {isFoundation && (
+          <span
+            className="text-xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-200"
+            title="Foundation component — owns the root folder territory"
+          >
+            foundation
+          </span>
+        )}
+        {pendingKind && (
+          <span
+            className="text-xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/40"
+            title={`A ${pendingKind} draft for this component is waiting on your approval`}
+          >
+            {WAITING_LABELS[pendingKind] ?? 'Waiting'}
+          </span>
+        )}
+      </>
+    );
     return (
-      <article
-        className={`bg-gray-800/40 border ${cardBorderClass} rounded p-4 space-y-2`}
+      <CollapsibleSection
+        summary={summary}
+        meta={meta}
+        className={cardBorderClass}
       >
-        <header className="space-y-1">
-          <div className="flex items-baseline flex-wrap gap-x-2 gap-y-1">
-            <h3 className="font-semibold text-white m-0 text-sm">{name}</h3>
-            <span className="text-xs font-mono text-gray-500">{alias}</span>
-            <span
-              className={
-                'text-xs uppercase tracking-wider px-1.5 py-0.5 rounded ' +
-                (kind === 'presentational'
-                  ? 'bg-purple-900/40 text-purple-200'
-                  : 'bg-blue-900/40 text-blue-200')
-              }
-            >
-              {kind}
-            </span>
-            {isFoundation && (
-              <span
-                className="text-xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-200"
-                title="Foundation component — owns the root folder territory"
-              >
-                foundation
-              </span>
-            )}
-            {pendingKind && (
-              <span
-                className="text-xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/40"
-                title={`A ${pendingKind} draft for this component is waiting on your approval`}
-              >
-                {WAITING_LABELS[pendingKind] ?? 'Waiting'}
-              </span>
-            )}
-          </div>
-        </header>
         {role && (
           <div className="space-y-1">
             <div className="text-[10px] uppercase tracking-wider text-gray-500">Role</div>
@@ -195,7 +200,7 @@ export function makeSysarchRenderers(
             </ul>
           </div>
         )}
-      </article>
+      </CollapsibleSection>
     );
   },
 
@@ -222,14 +227,16 @@ export function makeSysarchRenderers(
     const trigger = findChildText(node, 'trigger') ?? '';
     const required = findChildText(node, 'required') ?? '';
     const rationale = findChildText(node, 'rationale') ?? '';
+    const summary = (
+      <span className="flex items-baseline flex-wrap gap-x-2 gap-y-1">
+        <span className="font-semibold text-white text-sm">{name}</span>
+        {trigger && (
+          <span className="text-xs italic text-gray-400 font-normal">on {trigger}</span>
+        )}
+      </span>
+    );
     return (
-      <article className="bg-gray-800/40 border border-gray-700 rounded p-3 space-y-1">
-        <div className="flex items-baseline flex-wrap gap-x-2 gap-y-1">
-          <h3 className="font-semibold text-white m-0 text-sm">{name}</h3>
-          {trigger && (
-            <span className="text-xs italic text-gray-400">on {trigger}</span>
-          )}
-        </div>
+      <CollapsibleSection summary={summary}>
         {required && (
           <div className="text-xs text-gray-400">
             requires{' '}
@@ -239,7 +246,7 @@ export function makeSysarchRenderers(
         {rationale && (
           <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">{rationale}</p>
         )}
-      </article>
+      </CollapsibleSection>
     );
   },
 

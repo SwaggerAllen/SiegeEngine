@@ -1,3 +1,4 @@
+import { CollapsibleSection } from './CollapsibleSection';
 import type { XmlRendererMap } from './types';
 import { findChildren, textContent } from './types';
 
@@ -26,50 +27,41 @@ export const subcomparchRenderers: XmlRendererMap = {
   ),
 
   'technical-specification': (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        Technical Specification
-      </h2>
+    <CollapsibleSection summary="Technical Specification">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
-    </section>
+    </CollapsibleSection>
   ),
 
   'public-surface': (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        Public Surface
-      </h2>
+    <CollapsibleSection summary="Public Surface">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
-    </section>
+    </CollapsibleSection>
   ),
 
   'private-surface': (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        Private Surface
-      </h2>
+    <CollapsibleSection summary="Private Surface">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
-    </section>
+    </CollapsibleSection>
   ),
 
   dependencies: (node) => {
     const deps = findChildren(node, 'dep');
+    const meta = (
+      <span className="text-gray-500">{deps.length === 0 ? 'none' : deps.length}</span>
+    );
     if (deps.length === 0) {
       return (
-        <section className="space-y-2">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-            Dependencies
-          </h2>
+        <CollapsibleSection summary="Dependencies" meta={meta}>
           <p className="text-sm text-gray-500 italic m-0">
             Leaf subcomponent — no dependencies.
           </p>
-        </section>
+        </CollapsibleSection>
       );
     }
     const targets: string[] = [];
@@ -79,13 +71,7 @@ export const subcomparchRenderers: XmlRendererMap = {
       if (target) targets.push(target);
     }
     return (
-      <section className="space-y-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-          Dependencies
-          <span className="ml-2 text-gray-600 font-normal normal-case tracking-normal">
-            ({deps.length})
-          </span>
-        </h2>
+      <CollapsibleSection summary="Dependencies" meta={meta}>
         <ul className="text-xs font-mono text-gray-400 space-y-0.5 m-0 pl-0 list-none">
           {targets.map((target) => (
             <li key={`dep-${target}`}>
@@ -94,7 +80,7 @@ export const subcomparchRenderers: XmlRendererMap = {
             </li>
           ))}
         </ul>
-      </section>
+      </CollapsibleSection>
     );
   },
 
