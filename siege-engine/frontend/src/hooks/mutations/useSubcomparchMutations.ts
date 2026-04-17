@@ -1,6 +1,5 @@
 import * as api from '../../api/subcomparch';
 import { makeBootstrapMutations } from '../useBootstrapHooks';
-import { componentsKeys } from '../queries/useSysarchQueries';
 import { subcomparchKeys } from '../queries/useSubcomparchQueries';
 
 const m = makeBootstrapMutations(
@@ -11,10 +10,7 @@ const m = makeBootstrapMutations(
     discardDraft: (pid, pcid, sid, did) => api.discardDraft(pid, pcid, sid, did),
     cancelGeneration: (pid, pcid, sid) => api.cancelGeneration(pid, pcid, sid),
   },
-  subcomparchKeys,
-  (queryClient, projectId) => {
-    queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
-  }
+  subcomparchKeys
 );
 
 export const useSubcomparchFeedbackMutation = m.useFeedbackMutation;

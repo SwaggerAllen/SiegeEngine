@@ -1,28 +1,33 @@
-import { useQuery } from '@tanstack/react-query';
-import * as featuresApi from '../../api/features';
-
-export const featureKeys = {
-  all: ['features'] as const,
-  list: (projectId: string) => [...featureKeys.all, 'list', projectId] as const,
-};
+import { useMemo } from 'react';
+import { useProjectStructure } from './useProjectStructure';
 
 /**
- * Fetch the project's `feat_*` nodes.
+ * Light wrapper over :func:`useProjectStructure` that derives the
+ * feature list from the project's structure snapshot. Kept as a
+ * named hook so consumers (``RequirementsPanel``,
+ * ``CreateVocabEntryDialog``) don't need to know the projection
+ * shape.
  *
- * The ``mintPending`` argument tells the hook to poll the endpoint
- * while the feature list might be in the process of populating —
- * i.e. the expansion has been approved but the mint handler
- * hasn't run yet. When the list is non-empty or when mintPending
- * becomes false, the poll stops.
- *
- * In practice the caller passes ``mintPending`` as a boolean
- * derived from the expansion query: "has the user approved the
- * expansion but the feature list is still empty?"
+ * Previously this hook hit a dedicated ``/features`` GET and
+ * polled during mint. Now the SSE stream triggers structure
+ * refetches on ``NodeCreated``/``NodeDeleted``, so the derived
+ * list stays fresh without its own poller.
  */
 export function useFeatures(projectId: string) {
-  return useQuery({
-    queryKey: featureKeys.list(projectId),
-    queryFn: () => featuresApi.getFeatures(projectId),
-    enabled: !!projectId,
-  });
+  const query = useProjectStructure(projectId);
+  const features = useMemo(() => {
+    const nodes = query.data?.nodes ?? [];
+    return nodes
+      .filter((n) => n.tier === 'feat')
+      .sort((a, b) => a.display_order - b.display_order)
+      .map((n) => ({
+        id: n.id,
+        name: n.name,
+        content: n.content,
+      }));
+  }, [query.data]);
+  return {
+    ...query,
+    data: query.data ? { features } : undefined,
+  };
 }

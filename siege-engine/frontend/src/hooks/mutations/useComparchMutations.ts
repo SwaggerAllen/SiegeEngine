@@ -1,7 +1,6 @@
 import * as api from '../../api/comparch';
 import { makeBootstrapMutations } from '../useBootstrapHooks';
 import { comparchKeys } from '../queries/useComparchQueries';
-import { componentsKeys } from '../queries/useSysarchQueries';
 
 const m = makeBootstrapMutations(
   'comparch',
@@ -11,10 +10,7 @@ const m = makeBootstrapMutations(
     discardDraft: (pid, cid, did) => api.discardDraft(pid, cid, did),
     cancelGeneration: (pid, cid) => api.cancelGeneration(pid, cid),
   },
-  comparchKeys,
-  (queryClient, projectId) => {
-    queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
-  }
+  comparchKeys
 );
 
 export const useFeedbackMutation = m.useFeedbackMutation;

@@ -398,39 +398,3 @@ class TestDiscard:
         assert resp.status_code == 200
         db.refresh(draft)
         assert draft.status == "discarded"
-
-
-class TestSubresponsibilitiesList:
-    def test_empty_initially(self, client, seeded):
-        resp = client.get(
-            f"/api/projects/{seeded['project_id']}/components/{seeded['comp_id']}/subresponsibilities"
-        )
-        assert resp.status_code == 200
-        assert resp.json() == {"subresponsibilities": []}
-
-    def test_lists_subresponsibilities(self, client, seeded, db):
-        for i, name in enumerate(["Tokenization", "Delivery"]):
-            rid = mint(db, Kind.RESP)
-            append_event(
-                db,
-                seeded["project_id"],
-                ev.NodeCreated(
-                    node_id=rid,
-                    tier="resp",
-                    kind="domain",
-                    parent_id=seeded["comp_id"],
-                    name=name,
-                    display_order=i,
-                    content=f"{name} intent.",
-                ),
-            )
-        db.commit()
-
-        resp = client.get(
-            f"/api/projects/{seeded['project_id']}/components/{seeded['comp_id']}/subresponsibilities"
-        )
-        body = resp.json()
-        assert [s["name"] for s in body["subresponsibilities"]] == [
-            "Tokenization",
-            "Delivery",
-        ]

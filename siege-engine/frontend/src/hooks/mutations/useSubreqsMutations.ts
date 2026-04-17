@@ -1,6 +1,5 @@
 import * as api from '../../api/subreqs';
 import { makeBootstrapMutations } from '../useBootstrapHooks';
-import { componentsKeys } from '../queries/useSysarchQueries';
 import { subreqsKeys } from '../queries/useSubreqsQueries';
 
 const m = makeBootstrapMutations(
@@ -11,10 +10,7 @@ const m = makeBootstrapMutations(
     discardDraft: (pid, cid, did) => api.discardDraft(pid, cid, did),
     cancelGeneration: (pid, cid) => api.cancelGeneration(pid, cid),
   },
-  subreqsKeys,
-  (queryClient, projectId) => {
-    queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
-  }
+  subreqsKeys
 );
 
 export const useFeedbackMutation = m.useFeedbackMutation;

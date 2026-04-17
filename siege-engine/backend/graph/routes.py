@@ -250,23 +250,6 @@ class PromptPreviewResponse(BaseModel):
     user_prompt: str
 
 
-# ── Feature list response models ────────────────────────────────────
-
-
-class FeatureSummary(BaseModel):
-    id: str
-    name: str
-    content: str
-    display_order: int
-    group_label: str | None
-    is_implicit: bool
-    updated_at: str
-
-
-class FeatureListResponse(BaseModel):
-    features: list[FeatureSummary]
-
-
 # ── Expansion endpoints ─────────────────────────────────────────────
 
 
@@ -426,41 +409,6 @@ def post_expansion_cancel(
     )
 
 
-# ── Feature list endpoint ───────────────────────────────────────────
-
-
-@router.get("/{project_id}/features", response_model=FeatureListResponse)
-def get_features(
-    project_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> FeatureListResponse:
-    """List all ``feat_*`` nodes for a project in document order.
-
-    The list is populated by the ``v2.mint_features`` pipeline job
-    after the user approves the feature expansion. Before mint
-    completes, the list is empty. The frontend polls this endpoint
-    while the mint is running; once features appear, it stops
-    polling.
-    """
-    _require_project(db, project_id)
-    features = queries.list_features(db, project_id)
-    return FeatureListResponse(
-        features=[
-            FeatureSummary(
-                id=f.id,
-                name=f.name,
-                content=f.content,
-                display_order=f.display_order,
-                group_label=f.group_label,
-                is_implicit=f.is_implicit,
-                updated_at=f.updated_at.isoformat() if f.updated_at else "",
-            )
-            for f in features
-        ]
-    )
-
-
 # ── Requirements response models ────────────────────────────────────
 
 
@@ -491,18 +439,6 @@ class ReqsResponse(BaseModel):
 
 class ReqsApproveResponse(BaseModel):
     node: ReqsNodeResponse
-
-
-class ResponsibilitySummary(BaseModel):
-    id: str
-    name: str
-    content: str
-    display_order: int
-    updated_at: str
-
-
-class ResponsibilityListResponse(BaseModel):
-    responsibilities: list[ResponsibilitySummary]
 
 
 def _serialize_reqs_node(node) -> ReqsNodeResponse:
@@ -619,39 +555,6 @@ def post_requirements_cancel(
     )
 
 
-# ── Responsibilities list endpoint ──────────────────────────────────
-
-
-@router.get("/{project_id}/responsibilities", response_model=ResponsibilityListResponse)
-def get_responsibilities(
-    project_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> ResponsibilityListResponse:
-    """List all top-level ``resp_*`` nodes for a project in document order.
-
-    Top-level responsibilities are the ones minted by the
-    ``v2.mint_requirements`` pipeline job after the user approves
-    the requirements. Subresponsibilities (minted later by per-
-    component subreqs handlers) have a non-null ``parent_id`` and
-    are not included in this list.
-    """
-    _require_project(db, project_id)
-    responsibilities = queries.list_top_level_responsibilities(db, project_id)
-    return ResponsibilityListResponse(
-        responsibilities=[
-            ResponsibilitySummary(
-                id=r.id,
-                name=r.name,
-                content=r.content,
-                display_order=r.display_order,
-                updated_at=r.updated_at.isoformat() if r.updated_at else "",
-            )
-            for r in responsibilities
-        ]
-    )
-
-
 # ── Sysarch response models ─────────────────────────────────────────
 
 
@@ -682,40 +585,6 @@ class SysarchResponse(BaseModel):
 
 class SysarchApproveResponse(BaseModel):
     node: SysarchNodeResponse
-
-
-class ComponentSummary(BaseModel):
-    id: str
-    name: str
-    kind: str  # "domain" | "presentational"
-    display_order: int
-    updated_at: str
-    # Phase 6 waiting-on-approval indicator. Non-null when this
-    # comp has a pending draft the user still has to approve —
-    # ``"subreqs"`` / ``"comparch"`` / ``"subcomparch"``. Null
-    # when the comp is fully approved or when no draft has been
-    # generated for it yet. See
-    # :func:`backend.graph.queries.pending_draft_kinds_by_comp`.
-    pending_draft_kind: str | None = None
-
-
-class ComponentListResponse(BaseModel):
-    components: list[ComponentSummary]
-
-
-class PolicySummary(BaseModel):
-    id: str
-    name: str
-    # The raw <policy>...</policy> blob stored on Node.content. The
-    # frontend parses it for display; no need to double-parse on
-    # every list read when the payload is small.
-    content: str
-    display_order: int
-    updated_at: str
-
-
-class PolicyListResponse(BaseModel):
-    policies: list[PolicySummary]
 
 
 def _serialize_sysarch_node(node) -> SysarchNodeResponse:
@@ -1093,69 +962,6 @@ def post_reqs_reset(
     )
 
 
-# ── Components + policies list endpoints ────────────────────────────
-
-
-@router.get("/{project_id}/components", response_model=ComponentListResponse)
-def get_components(
-    project_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> ComponentListResponse:
-    """List all top-level ``comp_*`` nodes for a project.
-
-    Populated by the ``v2.mint_sysarch`` pipeline job after the
-    sysarch draft is approved. Before then, empty. Frontend polls
-    while the mint might still be running; stops once at least one
-    component is present.
-    """
-    _require_project(db, project_id)
-    components = queries.list_top_level_components(db, project_id)
-    pending_by_comp = queries.pending_draft_kinds_by_comp(db, project_id)
-    return ComponentListResponse(
-        components=[
-            ComponentSummary(
-                id=c.id,
-                name=c.name,
-                kind=c.kind,
-                display_order=c.display_order,
-                updated_at=c.updated_at.isoformat() if c.updated_at else "",
-                pending_draft_kind=pending_by_comp.get(c.id),
-            )
-            for c in components
-        ]
-    )
-
-
-@router.get("/{project_id}/policies", response_model=PolicyListResponse)
-def get_policies(
-    project_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> PolicyListResponse:
-    """List all ``policy_*`` nodes for a project.
-
-    Includes top-level policies minted at sysarch approval and
-    component-local policies minted at comparch approval (Phase 4).
-    Frontend is responsible for parsing the inline ``<policy>`` XML
-    blob on ``Node.content`` into structured fields for display.
-    """
-    _require_project(db, project_id)
-    policies = queries.list_policies(db, project_id)
-    return PolicyListResponse(
-        policies=[
-            PolicySummary(
-                id=p.id,
-                name=p.name,
-                content=p.content,
-                display_order=p.display_order,
-                updated_at=p.updated_at.isoformat() if p.updated_at else "",
-            )
-            for p in policies
-        ]
-    )
-
-
 # ── Subreqs response models ─────────────────────────────────────────
 
 
@@ -1186,18 +992,6 @@ class SubreqsResponse(BaseModel):
 
 class SubreqsApproveResponse(BaseModel):
     node: SubreqsNodeResponse
-
-
-class SubresponsibilitySummary(BaseModel):
-    id: str
-    name: str
-    content: str
-    display_order: int
-    updated_at: str
-
-
-class SubresponsibilityListResponse(BaseModel):
-    subresponsibilities: list[SubresponsibilitySummary]
 
 
 def _serialize_subreqs_node(node) -> SubreqsNodeResponse:
@@ -1366,34 +1160,6 @@ def post_subreqs_cancel(
     )
 
 
-@router.get(
-    "/{project_id}/components/{comp_id}/subresponsibilities",
-    response_model=SubresponsibilityListResponse,
-)
-def get_subresponsibilities(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> SubresponsibilityListResponse:
-    """List the subresp ``resp_*`` nodes under a given component."""
-    _require_project(db, project_id)
-    _require_top_level_comp(db, project_id, comp_id)
-    subresps = queries.list_subresponsibilities(db, comp_id)
-    return SubresponsibilityListResponse(
-        subresponsibilities=[
-            SubresponsibilitySummary(
-                id=sr.id,
-                name=sr.name,
-                content=sr.content,
-                display_order=sr.display_order,
-                updated_at=sr.updated_at.isoformat() if sr.updated_at else "",
-            )
-            for sr in subresps
-        ]
-    )
-
-
 # ── Comparch response models ───────────────────────────────────────
 
 
@@ -1424,41 +1190,6 @@ class ComparchResponse(BaseModel):
 
 class ComparchApproveResponse(BaseModel):
     node: ComparchNodeResponse
-
-
-class SubcomponentSummary(BaseModel):
-    id: str
-    name: str
-    parent_id: str
-    display_order: int
-    updated_at: str
-
-
-class SubcomponentListResponse(BaseModel):
-    subcomponents: list[SubcomponentSummary]
-
-
-class ComponentLocalPolicySummary(BaseModel):
-    id: str
-    name: str
-    content: str  # inline <policy> blob
-    display_order: int
-    updated_at: str
-
-
-class ComponentLocalPolicyListResponse(BaseModel):
-    policies: list[ComponentLocalPolicySummary]
-
-
-class AppliedPolicySummary(BaseModel):
-    policy_id: str
-    policy_name: str
-    policy_content: str
-    target_id: str
-
-
-class AppliedPolicyListResponse(BaseModel):
-    applied_policies: list[AppliedPolicySummary]
 
 
 def _serialize_comparch_node(node) -> ComparchNodeResponse:
@@ -1869,134 +1600,6 @@ def post_subcomparch_cancel(
             SUBCOMPARCH_CONFIG,
             _require_project,
         )
-    )
-
-
-# ── Subcomponent / policy list endpoints ───────────────────────────
-
-
-@router.get(
-    "/{project_id}/components/{comp_id}/subcomponents",
-    response_model=SubcomponentListResponse,
-)
-def get_subcomponents(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> SubcomponentListResponse:
-    """List the subcomponent ``comp_*`` children under a top-level component."""
-    _require_project(db, project_id)
-    _require_top_level_comp(db, project_id, comp_id)
-    subs = list(
-        db.execute(
-            select(Node)
-            .where(
-                Node.project_id == project_id,
-                Node.tier == "comp",
-                Node.parent_id == comp_id,
-            )
-            .order_by(Node.display_order.asc(), Node.id.asc())
-        ).scalars()
-    )
-    return SubcomponentListResponse(
-        subcomponents=[
-            SubcomponentSummary(
-                id=s.id,
-                name=s.name,
-                # The query filtered on ``parent_id == comp_id`` so
-                # this is known non-null at runtime; pass comp_id
-                # directly rather than narrowing ``s.parent_id``.
-                parent_id=comp_id,
-                display_order=s.display_order,
-                updated_at=s.updated_at.isoformat() if s.updated_at else "",
-            )
-            for s in subs
-        ]
-    )
-
-
-@router.get(
-    "/{project_id}/components/{comp_id}/local-policies",
-    response_model=ComponentLocalPolicyListResponse,
-)
-def get_component_local_policies(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> ComponentLocalPolicyListResponse:
-    """List the component-local ``policy_*`` children under a top-level component."""
-    _require_project(db, project_id)
-    _require_top_level_comp(db, project_id, comp_id)
-    policies = list(
-        db.execute(
-            select(Node)
-            .where(
-                Node.project_id == project_id,
-                Node.tier == "policy",
-                Node.parent_id == comp_id,
-            )
-            .order_by(Node.display_order.asc(), Node.id.asc())
-        ).scalars()
-    )
-    return ComponentLocalPolicyListResponse(
-        policies=[
-            ComponentLocalPolicySummary(
-                id=p.id,
-                name=p.name,
-                content=p.content or "",
-                display_order=p.display_order,
-                updated_at=p.updated_at.isoformat() if p.updated_at else "",
-            )
-            for p in policies
-        ]
-    )
-
-
-@router.get(
-    "/{project_id}/components/{comp_id}/applied-policies",
-    response_model=AppliedPolicyListResponse,
-)
-def get_applied_policies(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> AppliedPolicyListResponse:
-    """List the ``policy_application`` edges targeting this component.
-
-    Returns each applied policy with its name and raw inline
-    blob content so the frontend can parse the blob for display.
-    Rationale from the LLM's decision is not included — per the
-    Phase 4 stage 9 design call, rationale stays in handler logs
-    only.
-    """
-    _require_project(db, project_id)
-    _require_top_level_comp(db, project_id, comp_id)
-    rows = list(
-        db.execute(
-            select(Node, Edge)
-            .join(Edge, Edge.source_id == Node.id)
-            .where(
-                Edge.project_id == project_id,
-                Edge.edge_type == "policy_application",
-                Edge.target_id == comp_id,
-                Node.tier == "policy",
-            )
-            .order_by(Node.display_order.asc(), Node.id.asc())
-        ).all()
-    )
-    return AppliedPolicyListResponse(
-        applied_policies=[
-            AppliedPolicySummary(
-                policy_id=node.id,
-                policy_name=node.name,
-                policy_content=node.content or "",
-                target_id=edge.target_id,
-            )
-            for node, edge in rows
-        ]
     )
 
 
