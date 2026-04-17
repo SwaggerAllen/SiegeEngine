@@ -8,6 +8,7 @@ import {
   BootstrapDraftPanel,
   type BootstrapPanelLabels,
 } from './BootstrapDraftPanel';
+import { ResponsibilityCoverage } from './ResponsibilityCoverage';
 import { subreqsRenderers } from './xml';
 
 interface Props {
@@ -47,19 +48,24 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
     cancelMutation.isPending;
 
   return (
-    <BootstrapDraftPanel
-      data={data}
-      isLoading={isLoading}
-      error={error}
-      labels={makeLabels(componentName)}
-      callbacks={{
-        onFeedback: (f) => feedbackMutation.mutate(f),
-        onApprove: (id) => approveMutation.mutate(id),
-        onRetry: () => feedbackMutation.mutate(''),
-        onCancel: () => cancelMutation.mutate(),
-        isBusy,
-      }}
-      contentRenderers={subreqsRenderers}
-    />
+    <div className="flex flex-col h-full overflow-auto">
+      <ResponsibilityCoverage projectId={projectId} compId={componentId} />
+      <div className="flex-1 min-h-0">
+        <BootstrapDraftPanel
+          data={data}
+          isLoading={isLoading}
+          error={error}
+          labels={makeLabels(componentName)}
+          callbacks={{
+            onFeedback: (f) => feedbackMutation.mutate(f),
+            onApprove: (id) => approveMutation.mutate(id),
+            onRetry: () => feedbackMutation.mutate(''),
+            onCancel: () => cancelMutation.mutate(),
+            isBusy,
+          }}
+          contentRenderers={subreqsRenderers}
+        />
+      </div>
+    </div>
   );
 }
