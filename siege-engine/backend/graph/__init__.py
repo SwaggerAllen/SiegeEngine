@@ -23,11 +23,13 @@ Importing this package also registers the v2 job handlers:
   * ``v2.mint_subcomparch``
   * ``v2.generate_reference``
   * ``v2.generate_impl``
+  * ``v2.generate_fanin``
 """
 
 from backend.graph import queue as _queue
 from backend.graph.handlers import comparch_generation as _comparch_gen_handler
 from backend.graph.handlers import comparch_mint as _comparch_mint_handler
+from backend.graph.handlers import fanin_generation as _fanin_gen_handler
 from backend.graph.handlers import feature_expansion as _feature_expansion_handler
 from backend.graph.handlers import feature_mint as _feature_mint_handler
 from backend.graph.handlers import generate_reference as _generate_reference_handler
@@ -60,3 +62,4 @@ _subcomparch_gen_handler.register()
 _subcomparch_mint_handler.register()
 _generate_reference_handler.register()
 _impl_gen_handler.register()
+_fanin_gen_handler.register()

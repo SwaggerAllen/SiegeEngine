@@ -178,6 +178,20 @@ class RegenContext:
     domain_parent_techspecs: dict[str, str] = field(default_factory=dict)
     domain_parent_pubapis: dict[str, str] = field(default_factory=dict)
 
+    # Phase 7 domain fan-in context. For each domain parent that
+    # has a ``tier="fanin"`` child with non-empty content, maps
+    # that parent's ``comp_*`` id to the serialized ``<fanin>``
+    # block. The presentational comparch / subcomparch prompts
+    # render this alongside the top-down techspec / pubapi as the
+    # "as built" view, and the prompt frames the two views
+    # side-by-side so the LLM can surface drift. Domain parents
+    # without a fan-in yet (un-fanned-out domains, or domains
+    # whose subs haven't approved impls yet) yield no entry —
+    # the presentational prompt falls back to the raw pubapi
+    # path unchanged. For domain comps themselves this stays
+    # empty.
+    domain_parent_fanins: dict[str, str] = field(default_factory=dict)
+
     # Referenced content — Phase 6.6. Every regen also sees the
     # rendered content of nodes this regen target has outgoing
     # ``reference`` edges to. The walker
@@ -363,6 +377,7 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
     domain_parents_tuple: tuple[Node, ...] = ()
     domain_parent_techspec_map: dict[str, str] = {}
     domain_parent_pubapi_map: dict[str, str] = {}
+    domain_parent_fanin_map: dict[str, str] = {}
     if domain_parent_lookup_source is not None:
         parent_rows = domain_parents_of(session, domain_parent_lookup_source)
         domain_parents_tuple = tuple(parent_rows)
@@ -373,6 +388,17 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
             domain_parent_pubapi_map[parent.id] = _fragment_content(
                 session, parent.id, FragmentKind.PUBAPI
             )
+            # Phase 7: if the domain parent has a fan-in child
+            # with non-empty content, surface it alongside the
+            # raw pubapi so the presentational regen can
+            # compare contract (pubapi) against built reality
+            # (fan-in). Missing / empty fan-in leaves the
+            # pubapi path unchanged — un-fanned-out domain
+            # parents and domain parents whose subs haven't
+            # approved impls yet both fall through here.
+            fanin_content = _fanin_content_for_comp(session, parent.id)
+            if fanin_content:
+                domain_parent_fanin_map[parent.id] = fanin_content
 
     # Referenced content (Phase 6.6): pull every node this regen
     # target has an outgoing ``reference`` edge to. The walker is
@@ -408,8 +434,149 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         domain_parents=domain_parents_tuple,
         domain_parent_techspecs=domain_parent_techspec_map,
         domain_parent_pubapis=domain_parent_pubapi_map,
+        domain_parent_fanins=domain_parent_fanin_map,
         referenced_content=referenced_content_map,
     )
+
+
+def build_fanin_synthesis_context(
+    session: Session,
+    owner_comp_id: str,
+) -> dict[str, object]:
+    """Assemble the input bundle the fan-in prompt consumes.
+
+    Phase 7 counterpart to :func:`build_regen_context`. Unlike
+    that helper, fan-in synthesis is bottom-up: it doesn't read
+    the owner comp's own techspec / pubapi. The inputs are:
+
+    - ``owner_summary``: ``name (comp_id)`` — a handle, not a
+      spec. The fan-in prompt explicitly instructs the LLM not
+      to see the owning comp's design intent.
+    - ``sub_pubapi_fragments``: ordered list of ``{"sub_name",
+      "sub_id", "pubapi"}`` dicts, one per direct subcomponent
+      of the owning comp. Pubapi content is the sub's pubapi
+      fragment (subcomparch-produced).
+    - ``impl_contents``: ordered list of ``{"owner_name",
+      "owner_id", "content"}`` dicts, one per ``tier="impl"``
+      node under the owning comp's subtree. Ordered by a
+      deterministic DFS so reproducibility is stable across
+      regens.
+    - ``vocab_summary`` / ``referenced_content_summary``: shared
+      cross-cutting context rendered the same way every other
+      tier sees them.
+
+    Raises ``ValueError`` if ``owner_comp_id`` does not resolve
+    to a ``comp_*`` node in the session.
+    """
+    owner = session.get(Node, owner_comp_id)
+    if owner is None:
+        raise ValueError(f"build_fanin_synthesis_context: owner comp {owner_comp_id!r} not found")
+    if owner.tier != "comp":
+        raise ValueError(
+            f"build_fanin_synthesis_context: owner {owner_comp_id!r} is "
+            f"tier={owner.tier!r}, expected 'comp'"
+        )
+
+    # Direct subs, ordered deterministically.
+    subs = list(list_subcomponents_of(session, owner_comp_id))
+
+    sub_pubapi_fragments: list[dict[str, str]] = []
+    for sub in subs:
+        sub_pubapi_fragments.append(
+            {
+                "sub_name": sub.name or "",
+                "sub_id": sub.id,
+                "pubapi": _fragment_content(session, sub.id, FragmentKind.PUBAPI),
+            }
+        )
+
+    # Impl contents: walk the subtree via DFS. For fanned-out
+    # domain comps, the impls live one-per-sub under each sub.
+    # For the (theoretical, not currently reachable via
+    # comparch_mint for fanned-out comps) case of a second-level
+    # impl, we'd pick it up via DFS — but the depth cap means
+    # that can't happen today. Using DFS keeps the walk
+    # tier-shape-agnostic.
+    impl_contents: list[dict[str, str]] = []
+    stack: list[Node] = [owner]
+    while stack:
+        current = stack.pop()
+        children = list(
+            session.execute(
+                select(Node)
+                .where(Node.parent_id == current.id)
+                .order_by(Node.display_order.asc(), Node.id.asc())
+            ).scalars()
+        )
+        # Push in reverse so the visit order matches display_order.
+        for child in reversed(children):
+            if child.tier == "impl":
+                impl_contents.append(
+                    {
+                        "owner_name": current.name or "",
+                        "owner_id": current.id,
+                        "content": child.content or "",
+                    }
+                )
+            elif child.tier == "comp":
+                stack.append(child)
+
+    # Build a throwaway RegenContext-like shape only for the
+    # vocab + referenced-content summaries that share renderers
+    # with other tiers. We don't need the full RegenContext
+    # here, but the two render helpers take the RegenContext's
+    # ``component`` field to resolve the session, so we bind
+    # ``owner`` directly.
+    owner_summary = f"**{owner.name or '(unnamed)'}** (`{owner.id}`)"
+
+    from backend.graph import references as _references_module
+    from backend.graph import vocabulary as _vocab_module
+
+    all_reachable_vocab = _vocab_module.reachable_vocab_for_node(
+        session, owner.project_id, owner_comp_id
+    )
+    project_vocab_nodes = tuple(n for n in all_reachable_vocab if n.parent_id is None)
+    feature_vocab_nodes = tuple(n for n in all_reachable_vocab if n.parent_id is not None)
+    feature_name_map = _vocab_module._build_feature_name_map(session, feature_vocab_nodes)
+    vocab_summary = _vocab_module.format_vocab_summary(
+        project_vocab_nodes,
+        feature_vocab_nodes,
+        feature_names=feature_name_map,
+    )
+
+    referenced_content_map = _references_module.referenced_content_for_node(
+        session, owner.project_id, owner_comp_id
+    )
+    referenced_content_summary = _references_module.format_referenced_content_summary(
+        referenced_content_map
+    )
+
+    return {
+        "owner_summary": owner_summary,
+        "sub_pubapi_fragments": sub_pubapi_fragments,
+        "impl_contents": impl_contents,
+        "vocab_summary": vocab_summary,
+        "referenced_content_summary": referenced_content_summary,
+    }
+
+
+def _fanin_content_for_comp(session: Session, comp_id: str) -> str:
+    """Return the ``tier="fanin"`` child's content for ``comp_id``, or empty.
+
+    Fan-in is minted once per fanned-out domain comp (see
+    :mod:`backend.graph.handlers.comparch_mint`); the row exists
+    with ``content=""`` from mint time and gets its real content
+    written by the fan-in generation handler on the first impl
+    approval beneath the comp. Callers use empty-string as the
+    "no fan-in available" signal.
+    """
+    row = session.execute(
+        select(Node).where(
+            Node.parent_id == comp_id,
+            Node.tier == "fanin",
+        )
+    ).scalar_one_or_none()
+    return (row.content or "") if row is not None else ""
 
 
 def _fragment_content(session: Session, owner_id: str, kind: FragmentKind) -> str:
@@ -532,7 +699,10 @@ def _render_domain_parent_surface_for_comparch(ctx: RegenContext) -> str:
     :func:`backend.graph.prompts.comparch.format_domain_parent_surface`
     via a local import to keep the import direction
     ``prompts -> regen_context`` clean (mirrors the
-    ``_render_vocab_summary_from_ctx`` pattern above).
+    ``_render_vocab_summary_from_ctx`` pattern above). Phase 7
+    threads the per-parent fan-in content through alongside
+    techspec / pubapi so the presentational prompt can surface
+    drift between the two.
     """
     from backend.graph.prompts.comparch import format_domain_parent_surface
 
@@ -540,6 +710,7 @@ def _render_domain_parent_surface_for_comparch(ctx: RegenContext) -> str:
         ctx.domain_parents,
         ctx.domain_parent_techspecs,
         ctx.domain_parent_pubapis,
+        ctx.domain_parent_fanins,
     )
 
 
@@ -704,7 +875,8 @@ def _render_domain_parent_surface_for_sub(ctx: RegenContext) -> str:
     delegates to the subcomparch-side thin wrapper so the
     framing-prose side of the rendering stays with the prompt
     module that owns it. The actual per-parent layout is shared
-    with comparch via the wrapper.
+    with comparch via the wrapper, including the Phase 7 fan-in
+    thread-through.
     """
     from backend.graph.prompts.subcomparch import format_domain_parent_surface_for_sub
 
@@ -712,6 +884,7 @@ def _render_domain_parent_surface_for_sub(ctx: RegenContext) -> str:
         ctx.domain_parents,
         ctx.domain_parent_techspecs,
         ctx.domain_parent_pubapis,
+        ctx.domain_parent_fanins,
     )
 
 

@@ -52,6 +52,7 @@ from backend.cli.manager import GenerationResult  # noqa: E402
 from backend.database import Base  # noqa: E402
 from backend.graph import events as ev  # noqa: E402
 from backend.graph.expansion import bootstrap_expansion_node  # noqa: E402
+from backend.graph.prompts import fanin as _p_fanin  # noqa: E402
 from backend.graph.prompts import impl as _p_impl  # noqa: E402
 from backend.graph.prompts import policy_application as _p_policy  # noqa: E402
 from backend.graph.prompts import subcomparch as _p_subcomparch  # noqa: E402
@@ -86,6 +87,7 @@ _MODULES_WITH_SESSION_LOCAL = (
     "backend.graph.handlers.subcomparch_generation",
     "backend.graph.handlers.subcomparch_mint",
     "backend.graph.handlers.impl_generation",
+    "backend.graph.handlers.fanin_generation",
 )
 
 
@@ -400,6 +402,17 @@ def _subcomparch_xml() -> str:
     )
 
 
+def _fanin_xml() -> str:
+    # Phase 7 synthesis: three required sections.
+    return (
+        "<fanin>"
+        "<summary>Stub fan-in summary of the built component.</summary>"
+        "<exposed-surface>public API for this component's subs.</exposed-surface>"
+        "<realized-behavior>Subs compose via call-through ordering.</realized-behavior>"
+        "</fanin>"
+    )
+
+
 def _impl_xml() -> str:
     # Phase 8 leaf: a single implementation doc under each impl
     # owner. Prose sections, not code — the plan prompt (Phase 14)
@@ -493,6 +506,7 @@ def stub_cli(monkeypatch, shared_session_factory):
         id(_p_subcomparch.SYSTEM_PROMPT): "subcomparch",
         id(_p_policy.SYSTEM_PROMPT): "policy_application",
         id(_p_impl.SYSTEM_PROMPT): "impl",
+        id(_p_fanin.SYSTEM_PROMPT): "fanin",
     }
     phase_by_substring: tuple[tuple[str, str], ...] = (
         ("extracting structured features", "features"),
@@ -550,6 +564,8 @@ def stub_cli(monkeypatch, shared_session_factory):
                 text = _subcomparch_xml()
             elif phase == "impl":
                 text = _impl_xml()
+            elif phase == "fanin":
+                text = _fanin_xml()
             elif phase == "policy_application":
                 # Empty <policies> at every tier means the policy
                 # handlers early-return with no candidates and never
@@ -675,7 +691,12 @@ def _approve_all_pending_drafts(factory, project_id: str) -> int:
                 # the DraftApproved reducer branch. No mint job
                 # follows — impls have no fragments and no
                 # children. Plan / codegen coupling is Phase 14.
-                pass
+                # Phase 7: fire the on_approve hook the real
+                # bootstrap_approve wires up, so fan-in regen
+                # enqueues under fanned-out domain comps.
+                from backend.graph.handlers.impl_generation import on_impl_approved
+
+                on_impl_approved(session, project_id, node, (node.parent_id,))
             else:
                 raise AssertionError(f"unexpected draft target tier: {node.tier!r}")
         session.commit()
@@ -986,7 +1007,53 @@ class TestFullBootstrapChain:
                 "comparch",
                 "subcomparch",
                 "impl",
+                "fanin",
             }, f"unexpected phases called: {phases}"
+
+            # ── Phase 7: fan-in shells minted + filled ────────────
+            # Every fanned-out domain top-level comp has a
+            # tier="fanin" child with non-empty content after all
+            # impls approve. Presentational comps do not get
+            # fan-ins. (All four top-level comps in this harness
+            # fan out into 2 subs; three are domain, one is
+            # presentational — BillingUIService.)
+            fanin_nodes = list(
+                session.execute(
+                    select(Node).where(
+                        Node.project_id == project_id,
+                        Node.tier == "fanin",
+                    )
+                ).scalars()
+            )
+            domain_top_comps = [c for c in top_comps if c.kind == "domain"]
+            assert len(fanin_nodes) == len(domain_top_comps), (
+                f"expected {len(domain_top_comps)} fan-in shells "
+                f"(one per fanned-out domain top-level), got "
+                f"{len(fanin_nodes)}"
+            )
+            fanin_parent_ids = {f.parent_id for f in fanin_nodes}
+            domain_top_ids = {c.id for c in domain_top_comps}
+            assert fanin_parent_ids == domain_top_ids, (
+                f"fan-in parent ids {fanin_parent_ids} do not "
+                f"match domain top-level ids {domain_top_ids}"
+            )
+            # Presentational top-level must have no fan-in child.
+            pres_top = next(c for c in top_comps if c.kind == "presentational")
+            assert not any(f.parent_id == pres_top.id for f in fanin_nodes)
+            # Every fan-in got filled by generate_fanin.
+            for fanin in fanin_nodes:
+                assert fanin.content, (
+                    f"fan-in {fanin.id} under comp {fanin.parent_id} "
+                    "has empty content after chain convergence"
+                )
+                assert fanin.content.lstrip().startswith("<fanin>")
+
+            # Fan-in generation ran at least once per domain comp.
+            # The queue's payload-dedup may collapse multiple
+            # impl approvals into a single run, so we assert
+            # "at least one per domain comp, at most len(impls)".
+            fanin_phase_calls = [p for p in stub_cli["phases"] if p == "fanin"]
+            assert len(fanin_phase_calls) >= len(domain_top_comps)
 
             # ── Phase 6: presentational path ──────────────────────
             # sysarch emitted a presentational comp + domain_parent
@@ -1060,6 +1127,43 @@ class TestFullBootstrapChain:
                 "sysarch-time role seed instead of the approved "
                 "comparch techspec"
             )
+
+            # ── Phase 7: presentational regen sees fan-in ─────────
+            # After the chain converges (so fan-in content exists),
+            # a fresh comparch regen for the presentational comp
+            # should populate domain_parent_fanins from the
+            # BillingDomain fan-in. The presentational prompt
+            # captured during bootstrap ran BEFORE any impls were
+            # approved, so its fanin map was empty; assert against
+            # a fresh regen context instead.
+            from backend.graph.regen_context import build_regen_context
+
+            pres_ctx = build_regen_context(session, presentational_comp.id)
+            assert domain_target_comp.id in pres_ctx.domain_parent_fanins, (
+                "presentational regen context missing fan-in entry "
+                f"for domain parent {domain_target_comp.id}"
+            )
+            fanin_in_ctx = pres_ctx.domain_parent_fanins[domain_target_comp.id]
+            assert fanin_in_ctx.lstrip().startswith("<fanin>"), (
+                "domain_parent_fanins entry does not look like a "
+                f"<fanin> block: {fanin_in_ctx[:100]!r}"
+            )
+
+            # And the formatted presenting block carries both the
+            # pubapi (top-down intent) and the fan-in (built
+            # reality) so the LLM can surface drift.
+            from backend.graph.prompts.comparch import format_domain_parent_surface
+
+            presenting_block = format_domain_parent_surface(
+                pres_ctx.domain_parents,
+                pres_ctx.domain_parent_techspecs,
+                pres_ctx.domain_parent_pubapis,
+                pres_ctx.domain_parent_fanins,
+            )
+            assert "top-down intent" in presenting_block
+            assert "bottom-up fan-in synthesis" in presenting_block
+            assert "public API for BillingDomain" in presenting_block
+            assert "<fanin>" in presenting_block
 
             # And every subcomparch prompt for a sub OF the
             # presentational comp must carry the grandparent block.

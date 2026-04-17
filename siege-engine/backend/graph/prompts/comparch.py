@@ -399,6 +399,7 @@ def format_domain_parent_surface(
     parents: tuple,
     techspecs: dict[str, str],
     pubapis: dict[str, str],
+    fanins: dict[str, str] | None = None,
 ) -> str:
     """Render the Phase 6 "what you're presenting" context block.
 
@@ -412,17 +413,30 @@ def format_domain_parent_surface(
     for every domain component and for presentational components
     whose ``domain_parent`` edges haven't been drawn yet.
 
+    Phase 7: ``fanins`` optionally maps each parent's ``comp_*``
+    id to the serialized ``<fanin>`` block synthesized from that
+    parent's subtree of impls. When present, the per-parent
+    subsection renders the fan-in below the techspec + pubapi
+    under a "*As built (fan-in synthesis):*" header. The LLM
+    sees the top-down design intent (techspec / pubapi) and the
+    bottom-up built reality (fan-in) side-by-side and can
+    surface drift in its own output. Missing or empty fan-in
+    entries collapse to the pre-Phase-7 view — un-fanned-out
+    domain parents and parents whose impls haven't been
+    approved yet both fall through cleanly.
+
     The output is markdown with one ``## <name> (`comp_id`)``
-    subsection per parent, each carrying at most two fenced
-    blocks (one for the techspec, one for the pubapi). The
-    fencing keeps the rendered fragments from being mistaken for
-    prompt directives by the LLM; the calling ``render_user_prompt``
-    wraps the whole thing in a ``# This component presents`` section
-    header with framing prose that tells the LLM how to use the
-    material.
+    subsection per parent, each carrying at most three fenced
+    blocks (techspec, pubapi, fan-in). The fencing keeps the
+    rendered fragments from being mistaken for prompt
+    directives by the LLM; the calling ``render_user_prompt``
+    wraps the whole thing in a ``# This component presents``
+    section header with framing prose that tells the LLM how
+    to use the material.
     """
     if not parents:
         return ""
+    fanins = fanins or {}
     lines: list[str] = []
     for parent in parents:
         name = getattr(parent, "name", "") or "(unnamed)"
@@ -430,19 +444,27 @@ def format_domain_parent_surface(
         lines.append(f"## {name} (`{pid}`)")
         techspec = (techspecs.get(pid, "") or "").strip()
         pubapi = (pubapis.get(pid, "") or "").strip()
+        fanin = (fanins.get(pid, "") or "").strip()
         if techspec:
             lines.append("")
-            lines.append("*Technical specification (domain side):*")
+            lines.append("*Technical specification (domain side, top-down intent):*")
             lines.append("")
             lines.append("```")
             lines.append(techspec)
             lines.append("```")
         if pubapi:
             lines.append("")
-            lines.append("*Public surface (domain side):*")
+            lines.append("*Public surface (domain side, top-down intent):*")
             lines.append("")
             lines.append("```")
             lines.append(pubapi)
+            lines.append("```")
+        if fanin:
+            lines.append("")
+            lines.append("*As built (bottom-up fan-in synthesis):*")
+            lines.append("")
+            lines.append("```")
+            lines.append(fanin)
             lines.append("```")
         lines.append("")
     return "\n".join(lines).rstrip()
@@ -569,7 +591,19 @@ def render_user_prompt(
             "domain logic. If you need behavior that isn't on the "
             "domain side yet, declare a ``<dependency>`` on the "
             "domain component and lean on its public surface rather "
-            "than duplicating its state into this layer."
+            "than duplicating its state into this layer.\n\n"
+            "Some domain parents below include **two views**: the "
+            "top-down technical specification / public surface "
+            "(the **contract**, written before the impls pinned "
+            "down the real shape) and a bottom-up fan-in "
+            "synthesis (the **built reality**, articulated from "
+            "the actual impls). If the two drift — operations on "
+            "one side missing from the other, divergent shapes, "
+            "invariants named in one view but not the other — "
+            "align your presentational surface with the **built** "
+            "view and call out the drift explicitly in your "
+            "``<technical-specification>`` so the discrepancy is "
+            "visible rather than papered over."
         )
         parts.append("")
         parts.append(domain_parent_surface.strip())

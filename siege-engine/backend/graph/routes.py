@@ -51,7 +51,10 @@ from backend.graph.handlers.feature_expansion import (
 )
 from backend.graph.handlers.feature_mint import MINT_FEATURES_JOB_TYPE
 from backend.graph.handlers.generate_reference import GENERATE_REFERENCE_JOB_TYPE
-from backend.graph.handlers.impl_generation import GENERATE_IMPL_JOB_TYPE
+from backend.graph.handlers.impl_generation import (
+    GENERATE_IMPL_JOB_TYPE,
+    on_impl_approved,
+)
 from backend.graph.handlers.requirements_generation import (
     GENERATE_REQUIREMENTS_JOB_TYPE,
 )
@@ -2590,6 +2593,10 @@ IMPL_CONFIG = BootstrapTierConfig(
     serialize_draft=_draft_to_dict,
     feedback_readonly_detail="",  # unused (has_been_approved is None)
     scope_payload_keys=("owner_id",),
+    # Phase 7: after an impl approval lands, walk up to the
+    # owning top-level domain comp and enqueue fan-in regen if
+    # one exists. See ``impl_generation.on_impl_approved``.
+    on_approve=on_impl_approved,
 )
 
 

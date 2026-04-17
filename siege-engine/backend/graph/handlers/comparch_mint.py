@@ -296,6 +296,19 @@ async def mint_comparch(payload: dict) -> None:
         if not minted_sub_ids:
             _mint_impl_shell(db, project_id, component_id, comp_node.kind, comp_node.name)
 
+        # Phase 7: if this is a fanned-out domain comp, mint its
+        # fan-in synthesis shell. One ``fanin_*`` per fanned-out
+        # domain comp, sitting as a child of the comp. Content
+        # starts empty; the fan-in generation handler
+        # (``v2.generate_fanin``) is enqueued by the
+        # impl-approval hook on the first descendant impl
+        # approval, so mint-time enqueue is deliberately skipped.
+        # Presentational comps do not get fan-ins — only domain
+        # comps have the "built vs contract" drift concern that
+        # fan-in solves.
+        if comp_node.kind == "domain" and minted_sub_ids:
+            _mint_fanin_shell(db, project_id, component_id, comp_node.name)
+
         db.commit()
 
         # ── Phase 6: post-commit policy application fan-out ─────
@@ -483,6 +496,61 @@ def _mint_impl_shell(
         ),
     )
     return impl_id
+
+
+def _mint_fanin_shell(
+    db,  # type: ignore[no-untyped-def]
+    project_id: str,
+    owner_comp_id: str,
+    owner_name: str,
+) -> str | None:
+    """Mint an empty ``fanin_*`` shell under ``owner_comp_id``, or None if one exists.
+
+    Idempotent: if a fan-in child already exists under this comp,
+    logs and returns None. The shell's id is not returned because
+    the caller uses the return value only to know whether a mint
+    happened. Fan-in generation is NOT enqueued here — the first
+    descendant impl approval triggers it via the
+    ``on_impl_approved`` hook on ``IMPL_CONFIG``.
+
+    Kind is always ``"domain"`` because fan-ins only exist for
+    fanned-out domain comps — presentational comps don't get
+    fan-ins. The caller gates on ``comp.kind == "domain"``
+    before calling this helper.
+    """
+    from sqlalchemy import select
+
+    existing = db.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "fanin",
+            Node.parent_id == owner_comp_id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        logger.info(
+            "mint_comparch project=%s owner=%s fanin shell already exists (id=%s); skipping",
+            project_id,
+            owner_comp_id,
+            existing.id,
+        )
+        return None
+
+    fanin_id = mint(db, Kind.FANIN)
+    append_event(
+        db,
+        project_id,
+        ev.NodeCreated(
+            node_id=fanin_id,
+            tier="fanin",
+            kind="domain",
+            parent_id=owner_comp_id,
+            name=f"{owner_name} fan-in",
+            display_order=0,
+            content="",
+        ),
+    )
+    return fanin_id
 
 
 def _serialize_policies_fragment(policies) -> str:  # type: ignore[no-untyped-def]

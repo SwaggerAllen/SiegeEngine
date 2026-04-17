@@ -209,6 +209,28 @@ class DraftDiscarded(_EventBase):
     draft_id: str
 
 
+class FanInContentUpdated(_EventBase):
+    """A fan-in node's content is replaced by a new synthesis.
+
+    Fan-in (``tier="fanin"``) has no draft lifecycle — the
+    generation handler validates the LLM output and writes the
+    serialized ``<fanin>`` block directly to ``Node.content``
+    via this event. Reusing ``DraftApproved`` would create
+    phantom ``Draft`` rows that have no review step; this
+    dedicated event keeps the "draft row implies a reviewable
+    artifact" invariant intact.
+
+    Phase 7 counterpart to ``DraftApproved`` for the fan-in tier.
+    The reducer asserts the target node's tier is ``"fanin"`` and
+    overwrites its ``content`` field; the event itself carries
+    only the node id and the new content.
+    """
+
+    event_type: Literal["FanInContentUpdated"] = "FanInContentUpdated"
+    node_id: str
+    new_content: str
+
+
 class BootstrapNodeContentCleared(_EventBase):
     """Reset a bootstrap tier's approved content back to empty.
 
@@ -263,6 +285,7 @@ Event = Annotated[
         DraftEdited,
         DraftApproved,
         DraftDiscarded,
+        FanInContentUpdated,
         BootstrapNodeContentCleared,
         ViewRecorded,
     ],
@@ -286,6 +309,7 @@ _EVENT_TYPES: dict[str, type[_EventBase]] = {
     "DraftEdited": DraftEdited,
     "DraftApproved": DraftApproved,
     "DraftDiscarded": DraftDiscarded,
+    "FanInContentUpdated": FanInContentUpdated,
     "BootstrapNodeContentCleared": BootstrapNodeContentCleared,
     "ViewRecorded": ViewRecorded,
 }

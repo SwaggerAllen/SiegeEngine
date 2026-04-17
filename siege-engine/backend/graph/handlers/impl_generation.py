@@ -216,6 +216,83 @@ async def generate_impl(payload: dict) -> None:
     )
 
 
+GENERATE_FANIN_JOB_TYPE = "v2.generate_fanin"
+
+
+def on_impl_approved(
+    db,  # type: ignore[no-untyped-def]
+    project_id: str,
+    impl_node: Node,
+    scope_ids: tuple[str, ...],
+) -> None:
+    """Post-approval hook: enqueue fan-in regen if this impl is under a fanned-out domain comp.
+
+    Wired into ``IMPL_CONFIG.on_approve``. Called by
+    ``bootstrap_approve`` after the reducer commits the
+    ``DraftApproved`` event for an impl draft. The hook:
+
+    1. Walks up the impl's parent chain to find the top-level
+       comp that owns the subtree this impl lives in.
+    2. Checks whether that top-level comp has a ``fanin_*``
+       child (minted by ``comparch_mint`` only for fanned-out
+       domain comps).
+    3. If yes, enqueues ``v2.generate_fanin`` keyed on that
+       comp's id. The pipeline_queue's payload-dedup collapses
+       rapid-fire impl approvals into a single regen run.
+
+    Presentational subtrees (whose top-level comp is
+    presentational and thus has no fan-in) no-op. Un-fanned-out
+    domain comps no-op for the same reason — they have no
+    fan-in child.
+
+    Failures here must NOT roll back the approval; callers
+    (``bootstrap_approve``) wrap this in try/except and swallow
+    exceptions after logging.
+    """
+    _ = scope_ids  # unused — we resolve via the impl node's parent chain
+    if impl_node.tier != "impl":
+        return
+
+    # Walk up to the top-level comp. Depth is hard-capped at 2
+    # comp tiers (comp → subcomp → leaf), so the chain is at most
+    # impl → comp → comp.
+    current_parent_id = impl_node.parent_id
+    top_level: Node | None = None
+    while current_parent_id is not None:
+        parent = db.get(Node, current_parent_id)
+        if parent is None:
+            break
+        if parent.tier == "comp" and parent.parent_id is None:
+            top_level = parent
+            break
+        current_parent_id = parent.parent_id
+
+    if top_level is None:
+        return
+
+    # Only domain comps get fan-ins (presentational comps don't).
+    # Check for an actual fan-in child rather than gating on
+    # kind alone, so un-fanned-out domain comps also no-op.
+    fanin_child = db.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "fanin",
+            Node.parent_id == top_level.id,
+        )
+    ).scalar_one_or_none()
+    if fanin_child is None:
+        return
+
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_FANIN_JOB_TYPE,
+        payload={
+            "project_id": project_id,
+            "owner_comp_id": top_level.id,
+        },
+    )
+
+
 def register() -> None:
     """Register the handler with the pipeline job queue."""
     pipeline_queue.register_handler(GENERATE_IMPL_JOB_TYPE, generate_impl)
