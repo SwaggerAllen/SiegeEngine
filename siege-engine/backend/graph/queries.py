@@ -156,6 +156,35 @@ def domain_parents_of(session: Session, comp_id: str) -> list[Node]:
     )
 
 
+def dependencies_of(session: Session, comp_id: str) -> list[Node]:
+    """Return the ``comp_*`` nodes this comp declares as dependencies.
+
+    Walks ``dependency`` edges where ``source_id == comp_id`` and
+    returns the target components. The sysarch mint handler emits
+    these edges from ``<dependencies>`` / ``<dep from=… to=…/>``
+    entries, so the direction is always ``this comp → its dep``.
+
+    Used by the subreqs generation handler to thread read-only
+    sibling-dependency context into the prompt: when writing
+    subresponsibilities for this comp, the LLM should see what
+    each dependency already exposes (via the dep's ``pubapi``
+    fragment) and avoid re-deriving responsibilities the deps
+    already own.
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .join(Edge, Edge.target_id == Node.id)
+            .where(
+                Edge.edge_type == "dependency",
+                Edge.source_id == comp_id,
+                Node.tier == "comp",
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
 def presentational_children_of(session: Session, comp_id: str) -> list[Node]:
     """Return the presentational comps that declare ``comp_id`` as a domain parent.
 
