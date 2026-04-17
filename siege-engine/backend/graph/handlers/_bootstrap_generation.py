@@ -308,7 +308,12 @@ def persist_draft(
         # Phase 8: enqueue AI self-review against the newly-
         # committed draft. Review handler re-assembles tier
         # context and emits ``DraftReviewUpdated`` on success.
-        if review_job_type:
+        # ``SIEGE_DISABLE_AI_REVIEW=1`` opts out project-wide —
+        # used by the chain integration test to keep its stub
+        # scope small.
+        import os
+
+        if review_job_type and os.environ.get("SIEGE_DISABLE_AI_REVIEW") != "1":
             pipeline_queue.enqueue(
                 db,
                 job_type=review_job_type,

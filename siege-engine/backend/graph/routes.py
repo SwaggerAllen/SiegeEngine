@@ -32,6 +32,7 @@ from backend.graph.bootstrap_routes import (
     bootstrap_get_state,
     bootstrap_prompt_preview,
     bootstrap_reset,
+    bootstrap_retry_review,
 )
 from backend.graph.broadcast import commit_and_publish
 from backend.graph.expansion import (
@@ -1079,6 +1080,7 @@ SUBREQS_CONFIG = BootstrapTierConfig(
     collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
     downstream_job_types=per_comp_reset.subreqs_downstream_job_types(),
     additional_nodes_to_clear=per_comp_reset.additional_nodes_to_clear_subreqs,
+    review_job_type="v2.review_subreqs",
 )
 
 
@@ -1210,6 +1212,29 @@ def post_subreqs_reset(
     _require_top_level_comp(db, project_id, comp_id)
     return ResetResponse(
         **bootstrap_reset(
+            db,
+            project_id,
+            (comp_id,),
+            SUBREQS_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/subrequirements/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_subreqs_review_retry(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    """Manually re-enqueue the AI review for this subreqs draft."""
+    _require_top_level_comp(db, project_id, comp_id)
+    return FeedbackResponse(
+        **bootstrap_retry_review(
             db,
             project_id,
             (comp_id,),
