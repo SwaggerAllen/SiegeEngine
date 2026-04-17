@@ -30,6 +30,8 @@ describe('StructureResponseSchema', () => {
           has_pending_draft: false,
           generation_running: true,
           has_error: false,
+          techspec: 'Runs in Python.',
+          pubapi: 'Mints / refreshes / revokes sessions.',
         },
         {
           id: 'resp_X',
@@ -43,6 +45,8 @@ describe('StructureResponseSchema', () => {
           has_pending_draft: false,
           generation_running: false,
           has_error: false,
+          techspec: '',
+          pubapi: '',
         },
       ],
       edges: [

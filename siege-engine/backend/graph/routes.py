@@ -43,6 +43,7 @@ from backend.graph.expansion import (
 from backend.graph.expansion import (
     collect_downstream_nodes as expansion_collect_downstream_nodes,
 )
+from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.handlers.comparch_generation import (
     GENERATE_COMPARCH_JOB_TYPE,
 )
@@ -100,7 +101,7 @@ from backend.graph.sysarch import (
 )
 from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
-from backend.models.node import Draft, Edge, Node
+from backend.models.node import Draft, Edge, Fragment, Node
 from backend.models.telemetry import GenerationTelemetry
 
 logger = logging.getLogger(__name__)
@@ -1650,6 +1651,18 @@ class StructureNodeResponse(BaseModel):
     # enqueued. Surfaced as a red dot in the sidebar tree ahead
     # of the amber pending-draft / running indicators.
     has_error: bool
+    # Sysarch-time fragments for ``comp`` tier nodes. Populated at
+    # sysarch mint with the role paragraph (techspec) and api-intent
+    # paragraph (pubapi) the LLM wrote in its ``<sysarch>`` output.
+    # Read-only context for the component Overview tab so the user
+    # can review what sysarch said about this comp before triggering
+    # comparch generation. Empty string for tiers that don't own
+    # these fragments. Kept inline on the structure payload rather
+    # than via a dedicated endpoint because the fragment bodies are
+    # small (a few hundred chars each) and refetching on SSE keeps
+    # them fresh without extra round-trips.
+    techspec: str
+    pubapi: str
 
 
 class StructureEdgeResponse(BaseModel):
@@ -1767,6 +1780,27 @@ def get_project_structure(
     # ``StructureNodeResponse.content`` for the rationale.
     light_content_tiers = {"feat", "resp", "policy", "vocab", "ref"}
 
+    # Bulk-load the sysarch-minted techspec + pubapi fragments for
+    # every comp in the project. Two indexed lookups per comp on
+    # the ComponentOverviewPanel would be fine but the payload is
+    # small and this keeps the structure fetch to one-query-per-
+    # table.
+    comp_ids = [n.id for n in node_rows if n.tier == "comp"]
+    fragment_by_id: dict[str, str] = {}
+    if comp_ids:
+        wanted_fragment_ids: list[str] = []
+        for cid in comp_ids:
+            wanted_fragment_ids.append(fragment_id(cid, FragmentKind.TECHSPEC))
+            wanted_fragment_ids.append(fragment_id(cid, FragmentKind.PUBAPI))
+        frag_rows = db.execute(
+            select(Fragment.id, Fragment.content).where(
+                Fragment.project_id == project_id,
+                Fragment.id.in_(wanted_fragment_ids),
+            )
+        ).all()
+        for fid, fcontent in frag_rows:
+            fragment_by_id[fid] = fcontent or ""
+
     return StructureResponse(
         offset=offset,
         nodes=[
@@ -1782,6 +1816,12 @@ def get_project_structure(
                 has_pending_draft=n.id in pending_target_ids,
                 generation_running=n.id in running_ids,
                 has_error=n.id in errored_ids,
+                techspec=fragment_by_id.get(fragment_id(n.id, FragmentKind.TECHSPEC), "")
+                if n.tier == "comp"
+                else "",
+                pubapi=fragment_by_id.get(fragment_id(n.id, FragmentKind.PUBAPI), "")
+                if n.tier == "comp"
+                else "",
             )
             for n in node_rows
         ],

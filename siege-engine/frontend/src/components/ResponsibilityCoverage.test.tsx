@@ -43,6 +43,8 @@ function n(
     has_pending_draft: false,
     generation_running: false,
     has_error: false,
+    techspec: '',
+    pubapi: '',
     ...extras,
   };
 }

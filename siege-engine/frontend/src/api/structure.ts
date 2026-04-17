@@ -28,6 +28,13 @@ export const StructureNodeSchema = z.object({
   // tree ahead of amber pending / running badges; cleared when
   // the user enqueues a retry.
   has_error: z.boolean(),
+  // Sysarch-time techspec + pubapi fragments for ``comp`` tier
+  // nodes — populated when sysarch_mint writes them, empty
+  // string otherwise. Drives the component Overview tab so the
+  // user can review what sysarch said about this comp before
+  // triggering comparch. Empty for non-comp tiers.
+  techspec: z.string(),
+  pubapi: z.string(),
 });
 export type StructureNode = z.infer<typeof StructureNodeSchema>;
 

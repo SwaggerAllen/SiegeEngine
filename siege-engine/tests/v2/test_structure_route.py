@@ -378,6 +378,60 @@ class TestFlags:
         assert nodes[c]["generation_running"] is True
 
 
+class TestComponentFragments:
+    """The ``techspec`` and ``pubapi`` fields on the structure node
+    carry the sysarch-minted role + api-intent paragraphs so the
+    ComponentOverviewPanel can show them read-only without a
+    dedicated endpoint."""
+
+    def test_comp_carries_techspec_and_pubapi_when_fragments_exist(self, client, project, db):
+        from backend.graph.fragments import FragmentKind, fragment_id
+        from backend.models.node import Fragment
+
+        c = _mint(db, project.id, Kind.COMP, tier="comp", name="Billing")
+        db.add(
+            Fragment(
+                id=fragment_id(c, FragmentKind.TECHSPEC),
+                project_id=project.id,
+                owner_id=c,
+                fragment_kind=FragmentKind.TECHSPEC.value,
+                content="Runs as a Python service.",
+            )
+        )
+        db.add(
+            Fragment(
+                id=fragment_id(c, FragmentKind.PUBAPI),
+                project_id=project.id,
+                owner_id=c,
+                fragment_kind=FragmentKind.PUBAPI.value,
+                content="Exposes mint/refresh/revoke session ops.",
+            )
+        )
+        db.commit()
+
+        nodes = {
+            n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
+        }
+        assert nodes[c]["techspec"] == "Runs as a Python service."
+        assert nodes[c]["pubapi"] == "Exposes mint/refresh/revoke session ops."
+
+    def test_non_comp_nodes_have_empty_techspec_and_pubapi(self, client, project, db):
+        r = _mint(db, project.id, Kind.RESP, tier="resp", name="R", content="x")
+        nodes = {
+            n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
+        }
+        assert nodes[r]["techspec"] == ""
+        assert nodes[r]["pubapi"] == ""
+
+    def test_comp_missing_fragments_returns_empty_strings(self, client, project, db):
+        c = _mint(db, project.id, Kind.COMP, tier="comp", name="NoFragmentsYet")
+        nodes = {
+            n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
+        }
+        assert nodes[c]["techspec"] == ""
+        assert nodes[c]["pubapi"] == ""
+
+
 class TestOffset:
     def test_offset_tracks_latest_event(self, client, project, db):
         # Empty project → offset 0.
