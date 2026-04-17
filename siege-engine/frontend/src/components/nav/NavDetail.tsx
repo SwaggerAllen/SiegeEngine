@@ -83,8 +83,12 @@ export function NavDetail({ projectId, selectedId, nodes }: Props) {
       // Subreqs node's parent_id is the owning comp.
       if (!node.parent_id) return <MissingParent />;
       const comp = nodes.find((n) => n.id === node.parent_id);
+      // SubreqsPanel manages its own scroll container — it stacks
+      // the responsibility coverage summary above the draft panel
+      // and needs to control overflow so the two sections scroll
+      // together. Drop our wrapper here so we don't double-scroll.
       return (
-        <div className="h-full overflow-auto">
+        <div className="h-full">
           <SubreqsPanel
             projectId={projectId}
             componentId={node.parent_id}

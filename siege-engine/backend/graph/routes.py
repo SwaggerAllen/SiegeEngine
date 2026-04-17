@@ -1394,6 +1394,68 @@ def get_subresponsibilities(
     )
 
 
+# ── Responsibility coverage (received + computed) ───────────────────
+#
+# The subreqs view wants to show, side by side:
+#   - Top-level resps routed to this comp via sysarch decomposition
+#     edges ("Received" — what the component was told to own).
+#   - Subresps minted under this comp at subreqs approval time
+#     ("Computed" — what the component broke its responsibilities
+#     into).
+#
+# Both lists come from existing queries. Combining them into one
+# endpoint keeps the sidebar-driven detail pane to a single query
+# and lets the frontend group cleanly without wiring up two
+# hooks.
+
+
+class ResponsibilityCoverageResponse(BaseModel):
+    # Top-level resps assigned to this comp via decomposition edges.
+    # "Received" in the subreqs view — what sysarch routed here.
+    received: list[ResponsibilitySummary]
+    # Subresps minted under this comp by subreqs approval.
+    # "Computed" in the subreqs view — what the component broke
+    # its received responsibilities into.
+    computed: list[ResponsibilitySummary]
+
+
+def _serialize_resp_summary(node: Node) -> ResponsibilitySummary:
+    return ResponsibilitySummary(
+        id=node.id,
+        name=node.name,
+        content=node.content or "",
+        display_order=node.display_order,
+        updated_at=node.updated_at.isoformat() if node.updated_at else "",
+    )
+
+
+@router.get(
+    "/{project_id}/components/{comp_id}/responsibility-coverage",
+    response_model=ResponsibilityCoverageResponse,
+)
+def get_responsibility_coverage(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResponsibilityCoverageResponse:
+    """Return resps received from sysarch + subresps computed here.
+
+    Used by the subreqs detail pane to render "what the component
+    was asked to own" alongside "what the component broke those
+    responsibilities into" so the user can audit the compression
+    at a glance.
+    """
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    received = queries.top_level_resps_assigned_to(db, comp_id)
+    computed = queries.list_subresponsibilities(db, comp_id)
+    return ResponsibilityCoverageResponse(
+        received=[_serialize_resp_summary(r) for r in received],
+        computed=[_serialize_resp_summary(r) for r in computed],
+    )
+
+
 # ── Comparch response models ───────────────────────────────────────
 
 
