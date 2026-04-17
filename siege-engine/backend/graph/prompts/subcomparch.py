@@ -228,6 +228,7 @@ def format_domain_parent_surface_for_sub(
     parents: tuple,
     techspecs: dict[str, str],
     pubapis: dict[str, str],
+    fanins: dict[str, str] | None = None,
 ) -> str:
     """Render the Phase 6 "grandparent-domain" context block for a sub.
 
@@ -238,11 +239,12 @@ def format_domain_parent_surface_for_sub(
     differs. Subcomponents of a presentational parent inherit the
     same domain-parent bundle their parent would see at its own
     comparch regen, so sharing the renderer keeps the two tiers'
-    output identical down to whitespace.
+    output identical down to whitespace. Phase 7 fan-in content
+    is threaded through the same way.
     """
     from backend.graph.prompts.comparch import format_domain_parent_surface
 
-    return format_domain_parent_surface(parents, techspecs, pubapis)
+    return format_domain_parent_surface(parents, techspecs, pubapis, fanins)
 
 
 def render_user_prompt(
@@ -340,7 +342,14 @@ def render_user_prompt(
             "exposes. If you need behavior that isn't on the domain "
             "side yet, route through the parent component's own "
             "``<dependencies>`` (one level up) rather than duplicating "
-            "domain state into this subcomponent."
+            "domain state into this subcomponent.\n\n"
+            "Some domain parents below include **two views**: the "
+            "top-down technical specification / public surface "
+            "(the contract) and a bottom-up fan-in synthesis (the "
+            "built reality, articulated from the actual impls). "
+            "Prefer the built view when they drift, and flag the "
+            "drift in your own ``<technical-specification>`` "
+            "rather than silently picking one side."
         )
         parts.append("")
         parts.append(domain_parent_surface.strip())

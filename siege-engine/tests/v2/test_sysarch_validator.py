@@ -663,6 +663,92 @@ class TestDomainParentEdges:
         with pytest.raises(ValidationError, match="must be a domain"):
             validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
 
+    def test_two_domain_parents_accepted(self):
+        # Two parents is the upper bound and must validate cleanly.
+        comps = _default_components() + _comp(
+            "ui_combo",
+            "Billing + Auth View",
+            "presentational",
+            "Surfaces billing status and login state together.",
+            "Combined view.",
+            ("resp_billing001", "resp_auth00001"),
+        )
+        raw = _sysarch(
+            components=comps,
+            dependencies=(_DEFAULT_DEPS + '<dep from="ui_combo" to="foundation"/>'),
+            domain_parent=(
+                '<parent from="ui_combo" to="billing"/><parent from="ui_combo" to="auth"/>'
+            ),
+        )
+        doc = validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+        assert len(doc.domain_parents) == 2
+
+    def test_three_domain_parents_rejected(self):
+        # Three or more means the presentational has conflated
+        # multiple user tasks into an application-shaped component.
+        # The fix is to split it, not to widen the edge count.
+        comps = _default_components() + _comp(
+            "ui_everything",
+            "Everything Dashboard",
+            "presentational",
+            "Surfaces all the things.",
+            "One view to rule them all.",
+            ("resp_billing001", "resp_auth00001", "resp_config001"),
+        )
+        raw = _sysarch(
+            components=comps,
+            dependencies=(_DEFAULT_DEPS + '<dep from="ui_everything" to="foundation"/>'),
+            domain_parent=(
+                '<parent from="ui_everything" to="billing"/>'
+                '<parent from="ui_everything" to="auth"/>'
+                '<parent from="ui_everything" to="foundation"/>'
+            ),
+        )
+        with pytest.raises(
+            ValidationError,
+            match=r"has 3 <domain-parent> edges; the cap is 2",
+        ):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+
+    def test_cap_is_per_presentational_not_global(self):
+        # Two different presentationals with two parents each must
+        # validate — the cap applies per component, not in aggregate.
+        comps = (
+            _default_components()
+            + _comp(
+                "ui_one",
+                "UI One",
+                "presentational",
+                "First task.",
+                "v1",
+                ("resp_billing001",),
+            )
+            + _comp(
+                "ui_two",
+                "UI Two",
+                "presentational",
+                "Second task.",
+                "v2",
+                ("resp_auth00001",),
+            )
+        )
+        raw = _sysarch(
+            components=comps,
+            dependencies=(
+                _DEFAULT_DEPS
+                + '<dep from="ui_one" to="foundation"/>'
+                + '<dep from="ui_two" to="foundation"/>'
+            ),
+            domain_parent=(
+                '<parent from="ui_one" to="billing"/>'
+                '<parent from="ui_one" to="auth"/>'
+                '<parent from="ui_two" to="billing"/>'
+                '<parent from="ui_two" to="auth"/>'
+            ),
+        )
+        doc = validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+        assert len(doc.domain_parents) == 4
+
 
 class TestFoundationDependency:
     def test_all_non_foundation_with_dep_accepted(self):

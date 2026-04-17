@@ -1139,6 +1139,26 @@ def _validate_sysarch_domain_parent(
                 f"be a domain component (kind={alias_kind_map[to_alias]!r})."
             )
         edges.append(DomainParentEdge(from_alias=from_alias, to_alias=to_alias))
+
+    # Phase 7 slice-by-task rule: a presentational with more than
+    # two domain parents has almost certainly conflated multiple
+    # user tasks into one application-shaped component. Reject at
+    # three so the sysarch pass splits the slice rather than
+    # widening it. Counts per ``from`` alias.
+    parent_count_by_from: dict[str, int] = {}
+    for edge in edges:
+        parent_count_by_from[edge.from_alias] = parent_count_by_from.get(edge.from_alias, 0) + 1
+    for from_alias, count in parent_count_by_from.items():
+        if count > 2:
+            raise ValidationError(
+                f"Presentational component {from_alias!r} has {count} "
+                "<domain-parent> edges; the cap is 2. More than two "
+                "domain parents indicates the component is surfacing "
+                "multiple user tasks as one application — split it "
+                "into distinct task-shaped presentational components, "
+                "each with 1 or 2 <domain-parent> edges."
+            )
+
     return tuple(edges)
 
 
@@ -3251,3 +3271,127 @@ def parse_and_validate_implementation(raw: str) -> ImplementationEntry:
     """Convenience helper: parse ``raw`` and validate in one call."""
     tree = extract_tag_tree(raw, "implementation")
     return validate_implementation(tree, raw_content=raw)
+
+
+# ── Fan-in (Phase 7: fanin_* domain synthesis nodes) ─────────────────
+#
+# Fan-in is the bottom-up counterpart to a domain component's
+# top-down comparch. One ``fanin_*`` per fanned-out domain comp,
+# sitting at the bottom of its subtree. Content is a ``<fanin>``
+# XML block with three opaque prose sections in fixed order:
+# <summary> / <exposed-surface> / <realized-behavior>. The
+# validator enforces structural presence + ordering but does not
+# parse the prose contents — downstream presentational regen
+# consumes the whole <fanin> block verbatim as bottom-up context.
+
+
+_FANIN_ALLOWED_CHILDREN = {"summary", "exposed-surface", "realized-behavior"}
+_FANIN_REQUIRED_ORDER = ("summary", "exposed-surface", "realized-behavior")
+
+
+@dataclass(frozen=True)
+class FanInEntry:
+    """A single validated ``<fanin>`` block.
+
+    Carries the three prose sections plus ``raw_content`` — the
+    full ``<fanin>...</fanin>`` XML as authored, preserved
+    verbatim so the handler can store it on ``Node.content``
+    without re-serializing. Mirrors the
+    :class:`ImplementationEntry` shape.
+    """
+
+    summary: str
+    exposed_surface: str
+    realized_behavior: str
+    raw_content: str
+
+
+def validate_fanin(tree: TagNode, *, raw_content: str) -> FanInEntry:
+    """Validate a parsed ``<fanin>`` tree and return its entry.
+
+    Grammar:
+
+    * ``tree.tag`` must be exactly ``"fanin"``.
+    * Children must all be one of ``<summary>`` /
+      ``<exposed-surface>`` / ``<realized-behavior>``; unknown
+      tags are rejected.
+    * All three sections are **required**, exactly one of each.
+    * Children must appear in the fixed order
+      ``<summary>`` → ``<exposed-surface>`` →
+      ``<realized-behavior>``.
+    * Each section must be non-empty — an empty section is a
+      structural error because it signals the LLM skipped the
+      slot. Contents are opaque (the validator does not parse
+      nested structure).
+
+    ``raw_content`` is the original full string the tree was
+    parsed from; the validator stores a reference to it on the
+    returned entry so the caller can persist it verbatim.
+
+    Returns a single :class:`FanInEntry`. Raises
+    :class:`ValidationError` on the first problem found.
+    """
+    if tree.tag != "fanin":
+        raise ValidationError(
+            f"Expected root tag <fanin>, got <{tree.tag}>. "
+            "Wrap the fan-in content in a single "
+            "<fanin>...</fanin> block."
+        )
+
+    for child in tree.children:
+        if child.tag not in _FANIN_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<fanin> contains an unexpected child "
+                f"<{child.tag}>. Allowed children are: "
+                f"{sorted(_FANIN_ALLOWED_CHILDREN)}."
+            )
+
+    seen: dict[str, TagNode] = {}
+    for child in tree.children:
+        if child.tag in seen:
+            raise ValidationError(
+                f"<fanin> has more than one <{child.tag}> child; "
+                "exactly one of each section is required."
+            )
+        seen[child.tag] = child
+
+    for required in _FANIN_REQUIRED_ORDER:
+        if required not in seen:
+            raise ValidationError(
+                f"<fanin> is missing the required <{required}> "
+                "child. All three sections (<summary>, "
+                "<exposed-surface>, <realized-behavior>) must be "
+                "present."
+            )
+
+    actual_order = [c.tag for c in tree.children if c.tag in _FANIN_REQUIRED_ORDER]
+    expected_order = list(_FANIN_REQUIRED_ORDER)
+    if actual_order != expected_order:
+        raise ValidationError(
+            "<fanin> children are not in the required order. "
+            f"Expected: {expected_order}. Got: {actual_order}. "
+            "Reorder to <summary> → <exposed-surface> → "
+            "<realized-behavior>."
+        )
+
+    sections: dict[str, str] = {}
+    for name in _FANIN_REQUIRED_ORDER:
+        body = _collect_implementation_section_text(seen[name])
+        if not body:
+            raise ValidationError(
+                f"<fanin> <{name}> is empty. Every section must carry non-empty prose."
+            )
+        sections[name] = body
+
+    return FanInEntry(
+        summary=sections["summary"],
+        exposed_surface=sections["exposed-surface"],
+        realized_behavior=sections["realized-behavior"],
+        raw_content=raw_content,
+    )
+
+
+def parse_and_validate_fanin(raw: str) -> FanInEntry:
+    """Convenience helper: parse ``raw`` and validate in one call."""
+    tree = extract_tag_tree(raw, "fanin")
+    return validate_fanin(tree, raw_content=raw)

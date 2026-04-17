@@ -510,6 +510,35 @@ def _apply_draft_discarded(session: Session, project_id: str, event: ev.DraftDis
     draft.updated_at = datetime.utcnow()
 
 
+def _apply_fanin_content_updated(
+    session: Session,
+    project_id: str,
+    event: ev.FanInContentUpdated,
+) -> None:
+    """Overwrite a ``tier="fanin"`` node's ``content`` with a new synthesis.
+
+    Fan-in has no draft lifecycle: the generation handler
+    validates the LLM output and writes the serialized ``<fanin>``
+    block directly via this event. Reusing ``DraftApproved``
+    would create phantom ``Draft`` rows with no review step and
+    pollute draft-count queries; keeping a dedicated event
+    preserves the "Draft rows imply a reviewable artifact"
+    invariant.
+
+    Asserts the target node exists, belongs to this project, and
+    is on the fan-in tier — any other tier is a bug (caller sent
+    the wrong event type).
+    """
+    node = _require_node(session, project_id, event.node_id)
+    if node.tier != "fanin":
+        raise ReducerError(
+            f"FanInContentUpdated: node {event.node_id!r} is "
+            f"tier={node.tier!r}, expected tier='fanin'"
+        )
+    node.content = event.new_content
+    node.updated_at = datetime.utcnow()
+
+
 def _apply_bootstrap_node_content_cleared(
     session: Session,
     project_id: str,
@@ -569,6 +598,7 @@ _HANDLERS: dict[str, Callable[[Session, str, Any], None]] = {
     "DraftEdited": _apply_draft_edited,
     "DraftApproved": _apply_draft_approved,
     "DraftDiscarded": _apply_draft_discarded,
+    "FanInContentUpdated": _apply_fanin_content_updated,
     "BootstrapNodeContentCleared": _apply_bootstrap_node_content_cleared,
     "ViewRecorded": _apply_view_recorded,
 }

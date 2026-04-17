@@ -294,11 +294,11 @@ children and therefore have no downstream desync to guard.
 
 Bound the input set to presentational counterparts.
 
-- [ ] Auto-mint one fan-in node (`fanin_*`) per domain component with subcomponents, **unconditionally** — minted whether or not a presentational counterpart currently exists, so adding a domain-parent edge later is a pure edit, not a mint-on-the-fly
-- [ ] Fan-in handler: reads all subcomponent implementation nodes, writes a synthesis doc
-- [ ] Feeds presentational counterparts (current or future) via `domain_parent`
-- [ ] Excluded from review scoping (mechanical, not user-editable)
-- [ ] Staleness trigger: any subcomponent implementation change regenerates the fan-in
+- [x] Auto-mint one fan-in node (`fanin_*`) per domain component with subcomponents, **unconditionally** — minted whether or not a presentational counterpart currently exists, so adding a domain-parent edge later is a pure edit, not a mint-on-the-fly
+- [x] Fan-in handler: reads all subcomponent implementation nodes, writes a synthesis doc
+- [x] Feeds presentational counterparts (current or future) via `domain_parent`
+- [x] Excluded from review scoping (mechanical, not user-editable)
+- [x] Staleness trigger: any subcomponent implementation change regenerates the fan-in
 
 ## Phase 8 — Implementation nodes (leaves)
 

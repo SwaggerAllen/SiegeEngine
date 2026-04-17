@@ -108,6 +108,16 @@ class BootstrapTierConfig:
     # ``ref_id``) override this.
     scope_payload_keys: tuple[str, ...] = ("component_id", "sub_id")
 
+    # ── Post-approval hook ─────────────────────────────────────────
+    # Optional callable invoked by ``bootstrap_approve`` after the
+    # reducer commits the ``DraftApproved`` event and the node has
+    # been refreshed. Used by the impl tier to walk up to the
+    # owning domain comp and enqueue fan-in regeneration (Phase 7
+    # ``on_impl_approved``). Errors in the hook are logged and
+    # swallowed — the approval itself has already committed.
+    # Signature: (db, project_id, node, scope_ids) -> None
+    on_approve: Callable[..., None] | None = None
+
 
 def build_job_payload(
     project_id: str,
@@ -274,6 +284,19 @@ def bootstrap_approve(
             job_type=config.mint_job_type,
             payload=mint_payload,
         )
+    # Phase 7: post-approval hook for side-effects that shouldn't
+    # roll back the approval if they fail. Currently used by the
+    # impl tier to walk up to the owning domain comp and enqueue
+    # fan-in regeneration.
+    if config.on_approve is not None:
+        try:
+            config.on_approve(db, project_id, node, scope_ids)
+        except Exception:
+            logger.exception(
+                "%s on_approve hook failed for node %s — approval already committed, swallowing",
+                config.tier_name,
+                node.id,
+            )
     return {"node": config.serialize_node(node)}
 
 

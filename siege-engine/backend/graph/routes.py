@@ -46,12 +46,16 @@ from backend.graph.handlers.comparch_generation import (
     GENERATE_COMPARCH_JOB_TYPE,
 )
 from backend.graph.handlers.comparch_mint import MINT_COMPARCH_JOB_TYPE
+from backend.graph.handlers.fanin_generation import GENERATE_FANIN_JOB_TYPE
 from backend.graph.handlers.feature_expansion import (
     GENERATE_FEATURE_EXPANSION_JOB_TYPE,
 )
 from backend.graph.handlers.feature_mint import MINT_FEATURES_JOB_TYPE
 from backend.graph.handlers.generate_reference import GENERATE_REFERENCE_JOB_TYPE
-from backend.graph.handlers.impl_generation import GENERATE_IMPL_JOB_TYPE
+from backend.graph.handlers.impl_generation import (
+    GENERATE_IMPL_JOB_TYPE,
+    on_impl_approved,
+)
 from backend.graph.handlers.requirements_generation import (
     GENERATE_REQUIREMENTS_JOB_TYPE,
 )
@@ -95,6 +99,7 @@ from backend.graph.sysarch import (
 )
 from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
+from backend.models.job import Job
 from backend.models.node import Draft, Edge, Node
 from backend.models.telemetry import GenerationTelemetry
 
@@ -2038,9 +2043,11 @@ def get_decomposition_graph(
     """Return the full decomposition graph for Cytoscape rendering.
 
     Ships every comp_* (top-level and subcomponent), every resp_*
-    (top-level and subresp), every dependency edge, every
-    decomposition edge, and every domain_parent edge. The frontend
-    graph component decides what to show based on view filters.
+    (top-level and subresp), every fanin_* (Phase 7 bottom-up
+    synthesis under each fanned-out domain comp), every dependency
+    edge, every decomposition edge, and every domain_parent edge.
+    The frontend graph component decides what to show based on
+    view filters.
     """
     _require_project(db, project_id)
 
@@ -2049,7 +2056,7 @@ def get_decomposition_graph(
             select(Node)
             .where(
                 Node.project_id == project_id,
-                Node.tier.in_(["comp", "resp"]),
+                Node.tier.in_(["comp", "resp", "fanin"]),
             )
             .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
         ).scalars()
@@ -2095,6 +2102,178 @@ def get_decomposition_graph(
                 target_id=e.target_id,
             )
             for e in filtered_edges
+        ],
+    )
+
+
+# ── Nav tree route ──────────────────────────────────────────────────
+#
+# Single query that returns every node the workspace sidebar
+# cares about, flat. The frontend builds the tree hierarchy.
+# Covers singleton tiers (expansion/reqs/sysarch), per-comp tiers
+# (comp/subcomp/subreqs/fanin/impl), and carries the status flags
+# the sidebar needs to render badges (has_pending_draft, and
+# generation_running from the job queue).
+
+
+class NavTreeNodeResponse(BaseModel):
+    id: str
+    tier: str
+    kind: str  # 'domain' | 'presentational'
+    parent_id: str | None
+    name: str
+    display_order: int
+    has_content: bool
+    has_pending_draft: bool
+    generation_running: bool
+
+
+class NavTreeResponse(BaseModel):
+    nodes: list[NavTreeNodeResponse]
+
+
+# Map from node tier to the job type the scheduler uses for that
+# tier's regen. Used to surface live "generating…" indicators on
+# tree nodes by checking for queued/running jobs keyed on the
+# tier's scope payload. Entries cover every tier that appears in
+# the sidebar; other tiers (policy, feat, vocab, ref) don't have
+# their own regen indicator in the tree view.
+_NAV_TREE_JOB_TYPES_BY_TIER = {
+    "expansion": GENERATE_FEATURE_EXPANSION_JOB_TYPE,
+    "reqs": GENERATE_REQUIREMENTS_JOB_TYPE,
+    "sysarch": GENERATE_SYSARCH_JOB_TYPE,
+    "subreqs": GENERATE_SUBREQS_JOB_TYPE,
+    "comp": GENERATE_COMPARCH_JOB_TYPE,  # top-level comps; subs handled below
+    "fanin": GENERATE_FANIN_JOB_TYPE,
+    "impl": GENERATE_IMPL_JOB_TYPE,
+}
+
+
+@router.get(
+    "/{project_id}/nav-tree",
+    response_model=NavTreeResponse,
+)
+def get_nav_tree(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> NavTreeResponse:
+    """Return every node the workspace sidebar renders, flat.
+
+    One query per project: the frontend builds the tree hierarchy
+    from ``parent_id``. Badge flags come inline so the sidebar
+    doesn't need N+1 follow-up queries — ``has_pending_draft``
+    for the amber "ready to review" dot, ``generation_running``
+    for the pulse while a regen is in flight.
+    """
+    _require_project(db, project_id)
+
+    # All nodes that belong in the sidebar tree.
+    node_rows = list(
+        db.execute(
+            select(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.tier.in_(
+                    (
+                        "expansion",
+                        "reqs",
+                        "sysarch",
+                        "subreqs",
+                        "comp",
+                        "fanin",
+                        "impl",
+                    )
+                ),
+            )
+            .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+    # One batch query for pending drafts (target_type='node') so
+    # we can tag ``has_pending_draft`` inline.
+    pending_target_ids: set[str] = set(
+        db.execute(
+            select(Draft.target_id).where(
+                Draft.project_id == project_id,
+                Draft.target_type == "node",
+                Draft.status == "pending",
+            )
+        ).scalars()
+    )
+
+    # One batch query for queued/running jobs; match each to the
+    # node via its payload keys. Different tiers use different
+    # payload keys (component_id, sub_id, owner_id, owner_comp_id,
+    # or no scope at all), so we collect all active jobs for any
+    # tier job type and match inline.
+    tier_job_types = set(_NAV_TREE_JOB_TYPES_BY_TIER.values()) | {
+        GENERATE_SUBCOMPARCH_JOB_TYPE,
+    }
+    active_jobs = list(
+        db.execute(
+            select(Job).where(
+                Job.job_type.in_(tier_job_types),
+                Job.status.in_(("queued", "running")),
+            )
+        ).scalars()
+    )
+
+    # Index active jobs by (job_type, payload) for fast node→job lookup.
+    # Each job's payload.project_id must match ours, and the scope
+    # keys pick out which specific node the job runs against.
+    def _running_for_node(node: Node) -> bool:
+        for job in active_jobs:
+            payload = job.payload or {}
+            if payload.get("project_id") != project_id:
+                continue
+            tier = node.tier
+            if tier == "expansion" and job.job_type == GENERATE_FEATURE_EXPANSION_JOB_TYPE:
+                return True
+            if tier == "reqs" and job.job_type == GENERATE_REQUIREMENTS_JOB_TYPE:
+                return True
+            if tier == "sysarch" and job.job_type == GENERATE_SYSARCH_JOB_TYPE:
+                return True
+            if tier == "subreqs" and job.job_type == GENERATE_SUBREQS_JOB_TYPE:
+                if payload.get("component_id") == node.parent_id:
+                    return True
+            if tier == "comp":
+                # Top-level: generate_comparch keyed on component_id.
+                # Subcomponent: generate_subcomparch keyed on component_id (the sub's id).
+                if node.parent_id is None:
+                    if (
+                        job.job_type == GENERATE_COMPARCH_JOB_TYPE
+                        and payload.get("component_id") == node.id
+                    ):
+                        return True
+                else:
+                    if (
+                        job.job_type == GENERATE_SUBCOMPARCH_JOB_TYPE
+                        and payload.get("component_id") == node.id
+                    ):
+                        return True
+            if tier == "fanin" and job.job_type == GENERATE_FANIN_JOB_TYPE:
+                if payload.get("owner_comp_id") == node.parent_id:
+                    return True
+            if tier == "impl" and job.job_type == GENERATE_IMPL_JOB_TYPE:
+                if payload.get("owner_id") == node.parent_id:
+                    return True
+        return False
+
+    return NavTreeResponse(
+        nodes=[
+            NavTreeNodeResponse(
+                id=n.id,
+                tier=n.tier,
+                kind=n.kind,
+                parent_id=n.parent_id,
+                name=n.name,
+                display_order=n.display_order,
+                has_content=bool((n.content or "").strip()),
+                has_pending_draft=n.id in pending_target_ids,
+                generation_running=_running_for_node(n),
+            )
+            for n in node_rows
         ],
     )
 
@@ -2590,6 +2769,10 @@ IMPL_CONFIG = BootstrapTierConfig(
     serialize_draft=_draft_to_dict,
     feedback_readonly_detail="",  # unused (has_been_approved is None)
     scope_payload_keys=("owner_id",),
+    # Phase 7: after an impl approval lands, walk up to the
+    # owning top-level domain comp and enqueue fan-in regen if
+    # one exists. See ``impl_generation.on_impl_approved``.
+    on_approve=on_impl_approved,
 )
 
 
@@ -2852,6 +3035,209 @@ def post_impl_sub_cancel(
             _require_project,
         )
     )
+
+
+# ── Fan-in inspection routes (Phase 7) ────────────────────────────
+#
+# Fan-in has **no draft lifecycle** — the handler writes Node.content
+# directly via ``FanInContentUpdated``. That makes ``BootstrapTierConfig``
+# the wrong shape (no feedback / approve / discard). Three small
+# endpoints instead:
+#
+#   GET  /{project_id}/components/{comp_id}/fanin
+#        → node content + generation status + telemetry
+#   POST /{project_id}/components/{comp_id}/fanin/regenerate
+#        → enqueue v2.generate_fanin (dedup-safe)
+#   POST /{project_id}/components/{comp_id}/fanin/cancel
+#        → cancel the active regen if any
+#
+# The owning comp is addressed by its own comp_id in the URL — the
+# fan-in node itself lives as its ``tier="fanin"`` child, minted at
+# comparch-approval time for fanned-out domain comps.
+
+
+class FanInNodeResponse(BaseModel):
+    id: str
+    name: str
+    owner_comp_id: str
+    content: str
+    updated_at: str
+
+
+class FanInResponse(BaseModel):
+    node: FanInNodeResponse
+    generation_status: queries.GenerationStatus
+    last_error: str | None
+    latest_telemetry: TelemetrySummary | None
+    generation_started_at: str | None = None
+    current_attempt: int | None = None
+    max_attempts: int | None = None
+    failed_raw_output: str | None = None
+
+
+def _get_fanin_by_owner(db: Session, project_id: str, owner_comp_id: str) -> Node | None:
+    """Return the ``fanin_*`` child of ``owner_comp_id``, or None.
+
+    Mirrors ``_get_impl_by_owner`` but filters on ``tier="fanin"``.
+    One fan-in per fanned-out domain comp — minted by
+    ``comparch_mint`` if and only if ``comp.kind == "domain"`` and
+    the comp fanned out into subcomponents. A missing fan-in means
+    the comp either is presentational or un-fanned-out; callers
+    should 404.
+    """
+    return db.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "fanin",
+            Node.parent_id == owner_comp_id,
+        )
+    ).scalar_one_or_none()
+
+
+def _fanin_response(
+    db: Session,
+    project_id: str,
+    owner_comp_id: str,
+    fanin_node: Node,
+) -> FanInResponse:
+    (
+        status,
+        last_error,
+        started_at,
+        current_attempt,
+        max_attempts,
+        failed_raw_output,
+    ) = queries.latest_generation_status(
+        db,
+        project_id,
+        GENERATE_FANIN_JOB_TYPE,
+        payload_filters={"owner_comp_id": owner_comp_id},
+    )
+    telemetry_row = (
+        db.query(GenerationTelemetry)
+        .filter(
+            GenerationTelemetry.project_id == project_id,
+            GenerationTelemetry.node_id == fanin_node.id,
+        )
+        .order_by(GenerationTelemetry.created_at.desc())
+        .first()
+    )
+    telemetry = (
+        TelemetrySummary(
+            prompt_tokens=telemetry_row.prompt_tokens,
+            completion_tokens=telemetry_row.completion_tokens,
+            model=telemetry_row.model,
+            created_at=telemetry_row.created_at.isoformat() if telemetry_row.created_at else "",
+        )
+        if telemetry_row is not None
+        else None
+    )
+    return FanInResponse(
+        node=FanInNodeResponse(
+            id=fanin_node.id,
+            name=fanin_node.name,
+            owner_comp_id=owner_comp_id,
+            content=fanin_node.content or "",
+            updated_at=(fanin_node.updated_at.isoformat() if fanin_node.updated_at else ""),
+        ),
+        generation_status=status,
+        last_error=last_error,
+        latest_telemetry=telemetry,
+        generation_started_at=started_at,
+        current_attempt=current_attempt,
+        max_attempts=max_attempts,
+        failed_raw_output=failed_raw_output,
+    )
+
+
+@router.get(
+    "/{project_id}/components/{comp_id}/fanin",
+    response_model=FanInResponse,
+)
+def get_fanin(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FanInResponse:
+    """Return the fan-in node's content + generation status.
+
+    404 if the comp has no fan-in child — presentational comps and
+    un-fanned-out domain comps don't mint one.
+    """
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    fanin = _get_fanin_by_owner(db, project_id, comp_id)
+    if fanin is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Component {comp_id!r} has no fan-in node — only "
+                "fanned-out domain components produce fan-in syntheses."
+            ),
+        )
+    return _fanin_response(db, project_id, comp_id, fanin)
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/fanin/regenerate",
+    response_model=FeedbackResponse,
+)
+def post_fanin_regenerate(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    """Manually enqueue a fresh fan-in synthesis.
+
+    Normally the ``on_impl_approved`` hook drives regen; this
+    endpoint exists for debugging and for the user to re-run with
+    updated prompt state. Payload-dedup collapses duplicate enqueues
+    into the same running job.
+    """
+    from backend.pipeline import queue as pipeline_queue
+
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    fanin = _get_fanin_by_owner(db, project_id, comp_id)
+    if fanin is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Component {comp_id!r} has no fan-in node.",
+        )
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_FANIN_JOB_TYPE,
+        payload={"project_id": project_id, "owner_comp_id": comp_id},
+    )
+    return FeedbackResponse(job_id=job_id)
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/fanin/cancel",
+    response_model=CancelResponse,
+)
+def post_fanin_cancel(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    """Cancel any in-flight fan-in regen for this comp."""
+    from backend.pipeline import queue as pipeline_queue
+
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    job = pipeline_queue.find_active_job(
+        db,
+        GENERATE_FANIN_JOB_TYPE,
+        payload_filters={"project_id": project_id, "owner_comp_id": comp_id},
+    )
+    if job is None:
+        return CancelResponse(cancelled=False)
+    ok = pipeline_queue.cancel_job(db, job.id)
+    return CancelResponse(cancelled=ok)
 
 
 # ── Reference routes (Phase 6.6) ──────────────────────────────────
