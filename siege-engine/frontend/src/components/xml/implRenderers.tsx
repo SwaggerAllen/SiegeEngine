@@ -1,3 +1,4 @@
+import { CollapsibleSection } from './CollapsibleSection';
 import type { XmlRendererMap } from './types';
 import { textContent } from './types';
 
@@ -11,59 +12,47 @@ import { textContent } from './types';
  *     <edge-cases>…</edge-cases>
  *   </implementation>
  *
- * Four prose sections in fixed order. All four are opaque prose
- * blobs — the validator doesn't parse their contents, and the
- * renderer just outputs each as whitespace-preserving text.
- * Fenced code blocks are explicitly discouraged at generation
- * time; if the LLM emits them anyway they render as-is via the
- * whitespace-pre-wrap style.
+ * Four prose sections in fixed order. Each section renders as a
+ * collapsed ``<CollapsibleSection>`` by default so the page opens
+ * on a birds-eye view of the four section titles; callers expand
+ * individual sections to read their prose bodies. Contents are
+ * opaque prose — the validator doesn't parse them, and this
+ * renderer just emits each as whitespace-preserving text.
  */
 export const implRenderers: XmlRendererMap = {
   implementation: (node, ctx) => (
-    <div className="not-prose space-y-6">{ctx.renderChildren(node.children)}</div>
+    <div className="not-prose space-y-3">{ctx.renderChildren(node.children)}</div>
   ),
 
   behavior: (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        Behavior
-      </h2>
+    <CollapsibleSection summary="Behavior">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
-    </section>
+    </CollapsibleSection>
   ),
 
   invariants: (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        Invariants
-      </h2>
+    <CollapsibleSection summary="Invariants">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
-    </section>
+    </CollapsibleSection>
   ),
 
   sequencing: (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        Sequencing
-      </h2>
+    <CollapsibleSection summary="Sequencing">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
-    </section>
+    </CollapsibleSection>
   ),
 
   'edge-cases': (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        Edge Cases
-      </h2>
+    <CollapsibleSection summary="Edge Cases">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
-    </section>
+    </CollapsibleSection>
   ),
 };

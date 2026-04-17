@@ -1,3 +1,4 @@
+import { CollapsibleSection } from './CollapsibleSection';
 import type { XmlRendererMap } from './types';
 import { findChild, findChildText } from './types';
 
@@ -41,9 +42,12 @@ export const subreqsRenderers: XmlRendererMap = {
           })
           .filter(Boolean)
       : [];
+    const meta =
+      parentIds.length > 0 ? (
+        <span className="text-gray-500">{parentIds.length} from</span>
+      ) : undefined;
     return (
-      <article className="bg-gray-800/40 border border-gray-700 rounded p-4 space-y-2">
-        <h3 className="font-semibold text-white m-0 text-sm">{name}</h3>
+      <CollapsibleSection summary={name} meta={meta}>
         {intent && <p className="text-sm text-gray-300 m-0">{intent}</p>}
         {parentIds.length > 0 && (
           <div className="space-y-1">
@@ -62,7 +66,7 @@ export const subreqsRenderers: XmlRendererMap = {
             </div>
           </div>
         )}
-      </article>
+      </CollapsibleSection>
     );
   },
 

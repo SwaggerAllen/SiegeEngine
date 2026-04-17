@@ -14,7 +14,7 @@ describe('featureRenderers', () => {
         '<feature><name>Billing</name><intent>Users pay for plans.</intent></feature>' +
         '</features>'
     );
-    expect(screen.getByRole('heading', { name: 'Billing' })).toBeInTheDocument();
+    expect(screen.getByText('Billing')).toBeInTheDocument();
     expect(screen.getByText('Users pay for plans.')).toBeInTheDocument();
   });
 
@@ -27,10 +27,9 @@ describe('featureRenderers', () => {
     );
     const badges = screen.getAllByText(/inferred/i);
     expect(badges).toHaveLength(1);
-    // The badge lives next to the implicit feature, not the explicit one.
-    expect(
-      screen.getByRole('heading', { name: 'Password Reset' }).parentElement?.textContent
-    ).toMatch(/inferred/);
+    // The badge lives in the summary row next to the implicit feature's name.
+    const resetSummary = screen.getByText('Password Reset').closest('summary');
+    expect(resetSummary?.textContent).toMatch(/inferred/);
   });
 
   it('renders a group with a heading, count, and nested feature cards', () => {
@@ -47,8 +46,8 @@ describe('featureRenderers', () => {
     expect(groupHeading).toBeInTheDocument();
     // Count annotation inside the same heading.
     expect(groupHeading.textContent).toContain('(2)');
-    expect(screen.getByRole('heading', { name: 'Login' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Signup' })).toBeInTheDocument();
+    expect(screen.getByText('Login')).toBeInTheDocument();
+    expect(screen.getByText('Signup')).toBeInTheDocument();
   });
 
   it('renders mixed grouped and ungrouped features', () => {
@@ -62,8 +61,8 @@ describe('featureRenderers', () => {
         '</features>'
     );
     expect(screen.getByRole('heading', { name: /Core/ })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Login' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Search' })).toBeInTheDocument();
+    expect(screen.getByText('Login')).toBeInTheDocument();
+    expect(screen.getByText('Search')).toBeInTheDocument();
     expect(screen.getByText('Search everything.')).toBeInTheDocument();
   });
 

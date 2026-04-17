@@ -1,3 +1,4 @@
+import { CollapsibleSection } from './CollapsibleSection';
 import type { XmlRendererMap } from './types';
 import { findChildText, findChildren, hasChild } from './types';
 
@@ -51,21 +52,22 @@ export const featureRenderers: XmlRendererMap = {
     const name = findChildText(node, 'name') ?? 'Untitled';
     const intent = findChildText(node, 'intent') ?? '';
     const implicit = hasChild(node, 'implicit');
+    const meta = implicit ? (
+      <span
+        className="italic text-blue-300/80"
+        title="Inferred by the LLM — not explicit in the input doc"
+      >
+        inferred
+      </span>
+    ) : undefined;
     return (
-      <article className="bg-gray-800/40 border border-gray-700 rounded p-4 space-y-1">
-        <div className="flex items-baseline gap-2">
-          <h3 className="font-semibold text-white m-0 text-sm">{name}</h3>
-          {implicit && (
-            <span
-              className="text-xs font-normal italic text-blue-300/80"
-              title="Inferred by the LLM — not explicit in the input doc"
-            >
-              inferred
-            </span>
-          )}
-        </div>
-        {intent && <p className="text-sm text-gray-300 m-0">{intent}</p>}
-      </article>
+      <CollapsibleSection summary={name} meta={meta}>
+        {intent ? (
+          <p className="text-sm text-gray-300 m-0">{intent}</p>
+        ) : (
+          <p className="text-xs text-gray-500 italic m-0">No intent provided.</p>
+        )}
+      </CollapsibleSection>
     );
   },
 
