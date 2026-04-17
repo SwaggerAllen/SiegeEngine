@@ -250,15 +250,26 @@ components do the structural work. Presentational components \
 render views into domain content — UIs, dashboards, CLIs, \
 operator consoles, docs pages, any surface where a human \
 interacts with what the domains expose.
-* **If the project has any user-facing surface at all — a web \
-UI, a CLI, a dashboard, an admin console, a docs site — emit \
-at least one presentational component for it.** A system \
-without presentational components implies the only consumers \
-are other software. Most projects have a human consumer \
-somewhere; skipping the presentational layer hides that \
-surface and produces a lopsided tree where half the work \
-(rendering, review UX, editor surfaces, notification \
-presentation) has no home.
+* **Domain-presentational pairing is the expected default, not \
+a carve-out.** Almost every project has at least one human \
+consumer (developer, operator, end user, admin, reviewer), so \
+almost every project has at least one presentational \
+component. A system with zero presentational components is \
+the exception — it implies the only consumers are other \
+software. For every domain component whose responsibilities \
+surface to a human, expect a presentational counterpart with \
+a ``<domain-parent>`` edge back to it. The pairing does not \
+have to be 1:1 — one presentational may present multiple \
+domains (a unified UI that surfaces billing, auth, and \
+reporting has three ``<domain-parent>`` edges), and one \
+domain may be presented by multiple presentationals (the \
+same billing domain might be surfaced both by a customer UI \
+and an admin console). But if you emit a domain whose \
+responsibilities have a user-facing face and you do **not** \
+emit a presentational that pairs with it, you've left half \
+the tree unbuilt — the subreqs pass for the UI side has \
+nothing to decompose, and the presentational articulation \
+falls out of the system.
 * Every presentational component must declare a \
 ``<domain-parent>`` edge for **each domain whose \
 responsibilities it surfaces to the user.** A unified UI that \
@@ -273,20 +284,29 @@ implies. Err on the side of wiring more ``<domain-parent>`` \
 edges, not fewer.
 * A responsibility may appear in one presentational \
 component's ``<responsibilities>`` block **in addition to** its \
-owning domain component — but only for resps that the \
-presentational actually surfaces as part of its UX (e.g. a \
-review panel that exposes review-gate operations, a telemetry \
-dashboard that surfaces usage rollups). The mirror is for \
-user-facing surfaces, not for every domain resp. Most \
-presentational responsibilities are genuinely presentational \
-(rendering the DAG, laying out the review panel, hosting \
-drag-drop editors) and appear only in the presentational, \
-with no domain counterpart. If the presentational's \
-``<responsibilities>`` block is empty or only mirrors domain \
-resps, the reqs tier is probably missing UI-shaped \
-responsibilities — flag this by emitting the presentational \
-anyway with its genuine UI resps noted in the ``<role>`` so \
-the gap is visible downstream.
+owning domain component — and for any responsibility that has \
+a user-facing face, it **should**. This mirror pattern is how \
+sysarch expresses "the presentational component surfaces this \
+responsibility to the user." The reqs tier deliberately does \
+not split responsibilities into domain-side and UI-side halves \
+— one responsibility like "Payment Collection" covers both the \
+backend mechanics and whatever UI surface presents it — and it \
+is the sysarch layer's job to decide which side(s) claim each \
+resp. When the presentational claims a resp via the mirror, \
+subreqs later rotates it to UI-shaped articulation; the \
+presentational's comparch inherits the domain's pubapi via the \
+``<domain-parent>`` edge. Without the mirror, the subreqs pass \
+for the presentational has no parent resps to decompose.
+* Concretely: if a presentational component has a \
+``<domain-parent>`` edge to a domain component, every \
+responsibility on that domain that the presentational actually \
+surfaces should be mirrored into the presentational's \
+``<responsibilities>`` block. Presentationals whose \
+``<responsibilities>`` blocks are empty or far smaller than \
+the set of resps they ought to surface are under-specified — \
+they give the subreqs pass nothing to rotate, and their \
+comparch pulls in domain pubapi without having decomposed its \
+own UI-side articulation.
 * **If the project has significant frontend infrastructure** \
 (routing, theming, state management, error boundaries, layout \
 shells), consider whether a top-level presentational \
