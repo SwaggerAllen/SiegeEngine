@@ -144,6 +144,64 @@ class TestEmptyProject:
         assert body == {"offset": 0, "nodes": [], "edges": []}
 
 
+class TestInlineContent:
+    def test_content_included_for_light_tiers(self, client, project, db):
+        # resp / feat / policy / vocab / ref content ships inline.
+        r = _mint(
+            db, project.id, Kind.RESP, tier="resp", name="R", content="Resp description."
+        )
+        f = _mint(
+            db, project.id, Kind.FEAT, tier="feat", name="F", content="Feature description."
+        )
+        v = _mint(
+            db,
+            project.id,
+            Kind.VOCAB,
+            tier="vocab",
+            name="V",
+            content="<vocab-entry>...</vocab-entry>",
+        )
+        db.commit()
+
+        nodes = {
+            n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
+        }
+        assert nodes[r]["content"] == "Resp description."
+        assert nodes[f]["content"] == "Feature description."
+        assert nodes[v]["content"].startswith("<vocab-entry>")
+
+    def test_content_empty_for_heavy_tiers(self, client, project, db):
+        # comp / subreqs / impl / fanin / expansion / reqs / sysarch
+        # have their own detail endpoints; /structure leaves
+        # ``content`` empty to keep the snapshot payload bounded.
+        c = _mint(
+            db,
+            project.id,
+            Kind.COMP,
+            tier="comp",
+            name="C",
+            content="<comparch>big blob</comparch>",
+        )
+        e = _mint(
+            db,
+            project.id,
+            Kind.EXPANSION,
+            tier="expansion",
+            name="E",
+            content="<expansion>…</expansion>",
+        )
+        db.commit()
+
+        nodes = {
+            n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
+        }
+        assert nodes[c]["content"] == ""
+        # But has_content still reflects the truth.
+        assert nodes[c]["has_content"] is True
+        assert nodes[e]["content"] == ""
+        assert nodes[e]["has_content"] is True
+
+
 class TestTierCoverage:
     def test_ships_every_structural_tier(self, client, project, db):
         ids = {

@@ -1,6 +1,5 @@
 import * as api from '../../api/subreqs';
 import { makeBootstrapMutations } from '../useBootstrapHooks';
-import { decompositionGraphKeys } from '../queries/useDecompositionGraph';
 import { componentsKeys } from '../queries/useSysarchQueries';
 import { subreqsKeys } from '../queries/useSubreqsQueries';
 
@@ -15,9 +14,6 @@ const m = makeBootstrapMutations(
   subreqsKeys,
   (queryClient, projectId) => {
     queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
-    queryClient.invalidateQueries({
-      queryKey: decompositionGraphKeys.detail(projectId),
-    });
   }
 );
 

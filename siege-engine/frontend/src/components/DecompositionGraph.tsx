@@ -2,14 +2,10 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
-import type {
-  DecompositionGraphEdge,
-  DecompositionGraphNode,
-  DecompositionGraphResponse,
-} from '../api/decomposition';
+import type { StructureEdge, StructureNode, StructureResponse } from '../api/structure';
 
 interface Props {
-  graph: DecompositionGraphResponse;
+  graph: StructureResponse;
   projectId: string;
 }
 
@@ -61,7 +57,7 @@ export function DecompositionGraph({ graph, projectId }: Props) {
       if (!node) return null;
       if (node.tier === 'comp') {
         // Subcomponent: walk parent_id to find the top-level.
-        let current: DecompositionGraphNode | undefined = node;
+        let current: StructureNode | undefined = node;
         while (current && current.parent_id) {
           const parent = byId.get(current.parent_id);
           if (!parent || parent.tier !== 'comp') break;
@@ -317,10 +313,10 @@ export function DecompositionGraph({ graph, projectId }: Props) {
  * clicked subcomponent belongs to.
  */
 function topLevelCompIdForNode(
-  start: DecompositionGraphNode,
-  byId: Map<string, DecompositionGraphNode>
+  start: StructureNode,
+  byId: Map<string, StructureNode>
 ): string | null {
-  let current: DecompositionGraphNode | undefined = start;
+  let current: StructureNode | undefined = start;
   while (current && current.parent_id) {
     const parent = byId.get(current.parent_id);
     if (!parent || parent.tier !== 'comp') break;
@@ -335,8 +331,8 @@ function topLevelCompIdForNode(
  * the stylesheet uses for color/size dispatch.
  */
 function toCytoscapeElements(
-  nodes: DecompositionGraphNode[],
-  edges: DecompositionGraphEdge[]
+  nodes: StructureNode[],
+  edges: StructureEdge[]
 ): cytoscape.ElementDefinition[] {
   const isCompParent = (parentId: string | null) => {
     if (!parentId) return false;
@@ -365,8 +361,12 @@ function toCytoscapeElements(
       kind: n.kind,
       parent: n.tier === 'comp' && n.parent_id ? n.parent_id : undefined,
     };
-    if (n.pending_draft_kind) {
-      data.pendingDraftKind = n.pending_draft_kind;
+    if (n.has_pending_draft) {
+      // Structure schema replaced the old tier-specific
+      // ``pending_draft_kind`` with a boolean ``has_pending_draft``
+      // — the stylesheet selector ``node[pendingDraftKind]``
+      // only cares that something is pending, not which tier.
+      data.pendingDraftKind = 'pending';
     }
     return { data };
   });

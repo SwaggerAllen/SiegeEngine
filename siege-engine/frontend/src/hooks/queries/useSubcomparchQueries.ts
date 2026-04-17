@@ -13,7 +13,5 @@ export function useSubcomparch(
     queryKey: subcomparchKeys.detail(projectId, parentCompId, subId),
     queryFn: () => subcomparchApi.getSubcomparch(projectId, parentCompId, subId),
     enabled: !!projectId && !!parentCompId && !!subId,
-    refetchInterval: (query) =>
-      query.state.data?.generation_status === 'running' ? 2000 : false,
   });
 }

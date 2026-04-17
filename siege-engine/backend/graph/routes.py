@@ -2370,6 +2370,15 @@ class StructureNodeResponse(BaseModel):
     parent_id: str | None
     name: str
     display_order: int
+    # Content is included inline for the "light" tiers whose
+    # only UI is a list view — resp, feat, policy, vocab, ref.
+    # Heavy tiers (comp, subreqs, impl, fanin, expansion, reqs,
+    # sysarch) have dedicated detail endpoints that ship the
+    # full XML draft + telemetry, so we leave their ``content``
+    # empty here to keep the snapshot payload small. The
+    # ``has_content`` boolean below still reflects the truth
+    # for every tier.
+    content: str
     has_content: bool
     has_pending_draft: bool
     generation_running: bool
@@ -2485,6 +2494,10 @@ def get_project_structure(
     running_ids = running_node_ids(db, project_id)
     offset = queries.latest_offset(db, project_id) or 0
 
+    # Tiers whose content is included inline. See the doc on
+    # ``StructureNodeResponse.content`` for the rationale.
+    light_content_tiers = {"feat", "resp", "policy", "vocab", "ref"}
+
     return StructureResponse(
         offset=offset,
         nodes=[
@@ -2495,6 +2508,7 @@ def get_project_structure(
                 parent_id=n.parent_id,
                 name=n.name,
                 display_order=n.display_order,
+                content=(n.content or "") if n.tier in light_content_tiers else "",
                 has_content=bool((n.content or "").strip()),
                 has_pending_draft=n.id in pending_target_ids,
                 generation_running=n.id in running_ids,

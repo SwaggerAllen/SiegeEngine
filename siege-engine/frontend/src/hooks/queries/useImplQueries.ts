@@ -18,8 +18,6 @@ export function useImplTopLevel(projectId: string, compId: string) {
     queryKey: implKeys.detail(projectId, compId),
     queryFn: () => implApi.getImplTopLevel(projectId, compId),
     enabled: !!projectId && !!compId,
-    refetchInterval: (query) =>
-      query.state.data?.generation_status === 'running' ? 2000 : false,
   });
 }
 
@@ -39,7 +37,5 @@ export function useImplSub(
     queryKey: implKeys.detail(projectId, subId),
     queryFn: () => implApi.getImplSub(projectId, parentCompId, subId),
     enabled: !!projectId && !!parentCompId && !!subId,
-    refetchInterval: (query) =>
-      query.state.data?.generation_status === 'running' ? 2000 : false,
   });
 }

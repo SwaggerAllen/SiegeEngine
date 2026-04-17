@@ -14,20 +14,13 @@ export function useRequirements(projectId: string) {
     queryKey: requirementsKeys.detail(projectId),
     queryFn: () => reqsApi.getRequirements(projectId),
     enabled: !!projectId,
-    refetchInterval: (query) =>
-      query.state.data?.generation_status === 'running' ? 2000 : false,
   });
 }
 
-export function useResponsibilities(projectId: string, mintPending: boolean = false) {
+export function useResponsibilities(projectId: string) {
   return useQuery({
     queryKey: responsibilitiesKeys.list(projectId),
     queryFn: () => reqsApi.getResponsibilities(projectId),
     enabled: !!projectId,
-    refetchInterval: (query) => {
-      if (!mintPending) return false;
-      const hasResps = (query.state.data?.responsibilities.length ?? 0) > 0;
-      return hasResps ? false : 2000;
-    },
   });
 }

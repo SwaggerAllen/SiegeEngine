@@ -1,7 +1,6 @@
 import * as api from '../../api/comparch';
 import { makeBootstrapMutations } from '../useBootstrapHooks';
 import { comparchKeys } from '../queries/useComparchQueries';
-import { decompositionGraphKeys } from '../queries/useDecompositionGraph';
 import { componentsKeys } from '../queries/useSysarchQueries';
 
 const m = makeBootstrapMutations(
@@ -15,9 +14,6 @@ const m = makeBootstrapMutations(
   comparchKeys,
   (queryClient, projectId) => {
     queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
-    queryClient.invalidateQueries({
-      queryKey: decompositionGraphKeys.detail(projectId),
-    });
   }
 );
 

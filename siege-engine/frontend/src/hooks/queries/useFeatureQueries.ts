@@ -19,18 +19,10 @@ export const featureKeys = {
  * derived from the expansion query: "has the user approved the
  * expansion but the feature list is still empty?"
  */
-export function useFeatures(projectId: string, mintPending: boolean = false) {
+export function useFeatures(projectId: string) {
   return useQuery({
     queryKey: featureKeys.list(projectId),
     queryFn: () => featuresApi.getFeatures(projectId),
     enabled: !!projectId,
-    refetchInterval: (query) => {
-      // Poll while the mint handler might still be running. Stop
-      // as soon as we see features or the caller says the mint is
-      // no longer pending.
-      if (!mintPending) return false;
-      const hasFeatures = (query.state.data?.features.length ?? 0) > 0;
-      return hasFeatures ? false : 2000;
-    },
   });
 }

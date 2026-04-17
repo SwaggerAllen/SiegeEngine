@@ -15,24 +15,16 @@ export function useSubreqs(projectId: string, componentId: string) {
     queryKey: subreqsKeys.detail(projectId, componentId),
     queryFn: () => subreqsApi.getSubreqs(projectId, componentId),
     enabled: !!projectId && !!componentId,
-    refetchInterval: (query) =>
-      query.state.data?.generation_status === 'running' ? 2000 : false,
   });
 }
 
 export function useSubresponsibilities(
   projectId: string,
-  componentId: string,
-  mintPending: boolean = false
+  componentId: string
 ) {
   return useQuery({
     queryKey: subresponsibilitiesKeys.list(projectId, componentId),
     queryFn: () => subreqsApi.getSubresponsibilities(projectId, componentId),
     enabled: !!projectId && !!componentId,
-    refetchInterval: (query) => {
-      if (!mintPending) return false;
-      const hasSubresps = (query.state.data?.subresponsibilities.length ?? 0) > 0;
-      return hasSubresps ? false : 2000;
-    },
   });
 }

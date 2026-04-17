@@ -23,8 +23,6 @@ export function useFanIn(projectId: string, compId: string) {
     queryKey: faninKeys.detail(projectId, compId),
     queryFn: () => faninApi.getFanIn(projectId, compId),
     enabled: !!projectId && !!compId,
-    refetchInterval: (query) =>
-      query.state.data?.generation_status === 'running' ? 2000 : false,
     // A 404 here is a deliberate signal "comp has no fan-in
     // child" (presentational or un-fanned-out). Retrying on that
     // is pointless noise — it floods the error log every time a

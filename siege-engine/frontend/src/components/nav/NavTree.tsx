@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { NavTreeNode } from '../../api/navTree';
+import type { StructureNode } from '../../api/structure';
 import {
   ancestorIds,
   buildNavTree,
@@ -9,7 +9,7 @@ import {
 } from './buildNavTree';
 
 interface Props {
-  nodes: NavTreeNode[];
+  nodes: StructureNode[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   /** Invoked when the user taps a leaf node on mobile (closes the drawer). */

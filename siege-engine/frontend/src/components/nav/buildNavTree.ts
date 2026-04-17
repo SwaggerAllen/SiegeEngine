@@ -1,4 +1,4 @@
-import type { NavTreeNode } from '../../api/navTree';
+import type { StructureNode } from '../../api/structure';
 
 /**
  * A single item in the rendered sidebar tree.
@@ -17,7 +17,7 @@ export interface NavItem {
   id: string;
   label: string;
   /** Real node data if backed by a DB row, null for synthetic entries. */
-  node: NavTreeNode | null;
+  node: StructureNode | null;
   /** Short role tag used for styling dispatch (icon + colour). */
   role:
     | 'expansion'
@@ -65,13 +65,13 @@ const EMPTY_STATUS = {
 };
 
 function singleNode(
-  nodes: NavTreeNode[],
-  predicate: (n: NavTreeNode) => boolean,
-): NavTreeNode | undefined {
+  nodes: StructureNode[],
+  predicate: (n: StructureNode) => boolean,
+): StructureNode | undefined {
   return nodes.find(predicate);
 }
 
-function statusFor(n: NavTreeNode) {
+function statusFor(n: StructureNode) {
   return {
     has_pending_draft: n.has_pending_draft,
     generation_running: n.generation_running,
@@ -114,7 +114,7 @@ function rollUpStatus(self: NavItem['status'], children: NavItem[]): NavItem['st
  *       [each subcomponent]
  *         Implementation (if sub has an impl child)
  */
-export function buildNavTree(nodes: NavTreeNode[]): NavItem[] {
+export function buildNavTree(nodes: StructureNode[]): NavItem[] {
   const items: NavItem[] = [];
 
   const expansion = singleNode(nodes, (n) => n.tier === 'expansion');
@@ -200,7 +200,7 @@ export function buildNavTree(nodes: NavTreeNode[]): NavItem[] {
   return items;
 }
 
-function buildComponentSubtree(comp: NavTreeNode, nodes: NavTreeNode[]): NavItem {
+function buildComponentSubtree(comp: StructureNode, nodes: StructureNode[]): NavItem {
   const children: NavItem[] = [];
 
   // Subrequirements — a singleton subreqs_* node parented to the comp.

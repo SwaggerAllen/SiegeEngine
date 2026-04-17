@@ -3,8 +3,9 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { DashboardMenu } from '../components/DashboardMenu';
 import { NavDetail } from '../components/nav/NavDetail';
 import { NavTree } from '../components/nav/NavTree';
-import { useNavTree } from '../hooks/queries/useNavTree';
 import { useProject } from '../hooks/queries/useProjectQueries';
+import { useProjectEventStream } from '../hooks/queries/useProjectEventStream';
+import { useProjectStructure } from '../hooks/queries/useProjectStructure';
 import { describeApiError } from '../lib/describeApiError';
 
 /**
@@ -37,7 +38,13 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
   const selectedId = searchParams.get('node');
 
   const { data: project, error: projectError } = useProject(projectId);
-  const { data: navTree, error: navError } = useNavTree(projectId);
+  const { data: structure, error: navError } = useProjectStructure(projectId);
+
+  // One EventSource per mounted project page. Drives all cache
+  // invalidations for this project; per-tier query hooks drop
+  // their ``refetchInterval`` polling because the stream is
+  // now the refetch trigger.
+  useProjectEventStream(projectId);
 
   // Desktop sidebar collapsed/expanded state. On mobile this also
   // controls the drawer; we reset it to closed on mount so mobile
@@ -104,7 +111,7 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
     );
   }
 
-  const nodes = navTree?.nodes ?? [];
+  const nodes = structure?.nodes ?? [];
   const selectedNode = selectedId ? nodes.find((n) => n.id === selectedId) : null;
   const breadcrumb = selectedNode?.name ?? breadcrumbForSyntheticId(selectedId);
 

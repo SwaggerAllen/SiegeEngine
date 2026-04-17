@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useNavTree } from '../hooks/queries/useNavTree';
+import { useProjectStructure } from '../hooks/queries/useProjectStructure';
 
 type ChildTier = 'subreqs' | 'fanin' | 'impl';
 
@@ -18,17 +18,17 @@ function useLegacyRedirect(
   anchorId: string | undefined,
   childTier: ChildTier | null,
 ) {
-  const { data: navTree, isLoading } = useNavTree(projectId ?? '');
+  const { data: structure, isLoading } = useProjectStructure(projectId ?? '');
   const navigate = useNavigate();
 
   useEffect(() => {
     if (!projectId || !anchorId) return;
-    if (isLoading || !navTree) return;
+    if (isLoading || !structure) return;
     let targetId: string | null = null;
     if (childTier === null) {
       targetId = anchorId; // comparch / subcomparch → select the comp/sub itself
     } else {
-      const child = navTree.nodes.find(
+      const child = structure.nodes.find(
         (n) => n.parent_id === anchorId && n.tier === childTier,
       );
       targetId = child?.id ?? anchorId; // fall back to parent if not minted yet
@@ -38,7 +38,7 @@ function useLegacyRedirect(
         ? `/projects/${projectId}?node=${targetId}`
         : `/projects/${projectId}?node=${targetId}`;
     navigate(dest, { replace: true });
-  }, [projectId, anchorId, childTier, isLoading, navTree, navigate]);
+  }, [projectId, anchorId, childTier, isLoading, structure, navigate]);
 }
 
 function RedirectPlaceholder() {

@@ -27,42 +27,28 @@ export function useComparch(projectId: string, componentId: string) {
     queryKey: comparchKeys.detail(projectId, componentId),
     queryFn: () => comparchApi.getComparch(projectId, componentId),
     enabled: !!projectId && !!componentId,
-    refetchInterval: (query) =>
-      query.state.data?.generation_status === 'running' ? 2000 : false,
   });
 }
 
 export function useSubcomponents(
   projectId: string,
-  componentId: string,
-  mintPending: boolean = false
+  componentId: string
 ) {
   return useQuery({
     queryKey: subcomponentsKeys.list(projectId, componentId),
     queryFn: () => comparchApi.getSubcomponents(projectId, componentId),
     enabled: !!projectId && !!componentId,
-    refetchInterval: (query) => {
-      if (!mintPending) return false;
-      const count = query.state.data?.subcomponents.length ?? 0;
-      return count > 0 ? false : 2000;
-    },
   });
 }
 
 export function useComponentLocalPolicies(
   projectId: string,
-  componentId: string,
-  mintPending: boolean = false
+  componentId: string
 ) {
   return useQuery({
     queryKey: componentLocalPoliciesKeys.list(projectId, componentId),
     queryFn: () => comparchApi.getComponentLocalPolicies(projectId, componentId),
     enabled: !!projectId && !!componentId,
-    refetchInterval: (query) => {
-      if (!mintPending) return false;
-      const count = query.state.data?.policies.length ?? 0;
-      return count > 0 ? false : 2000;
-    },
   });
 }
 

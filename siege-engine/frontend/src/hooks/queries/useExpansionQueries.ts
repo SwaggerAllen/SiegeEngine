@@ -9,7 +9,5 @@ export function useExpansion(projectId: string) {
     queryKey: expansionKeys.detail(projectId),
     queryFn: () => expansionApi.getExpansion(projectId),
     enabled: !!projectId,
-    refetchInterval: (query) =>
-      query.state.data?.generation_status === 'running' ? 2000 : false,
   });
 }
