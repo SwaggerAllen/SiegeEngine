@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import * as implApi from '../../api/impl';
-import { makeBootstrapKeys } from '../useBootstrapHooks';
+import { makeBootstrapKeys, runningRefetchInterval } from '../useBootstrapHooks';
 
 // Phase 8: two impl query hooks, one per URL shape. Both share
 // a single `impl` key factory rooted on the owner id so the
@@ -18,6 +18,7 @@ export function useImplTopLevel(projectId: string, compId: string) {
     queryKey: implKeys.detail(projectId, compId),
     queryFn: () => implApi.getImplTopLevel(projectId, compId),
     enabled: !!projectId && !!compId,
+    refetchInterval: runningRefetchInterval,
   });
 }
 
@@ -37,5 +38,6 @@ export function useImplSub(
     queryKey: implKeys.detail(projectId, subId),
     queryFn: () => implApi.getImplSub(projectId, parentCompId, subId),
     enabled: !!projectId && !!parentCompId && !!subId,
+    refetchInterval: runningRefetchInterval,
   });
 }

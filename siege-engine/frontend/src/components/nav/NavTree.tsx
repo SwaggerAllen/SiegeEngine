@@ -115,10 +115,13 @@ function NavTreeRow({
   // tree without expanding.
   const showPendingSelf = item.status.has_pending_draft;
   const showRunningSelf = item.status.generation_running;
+  const showErrorSelf = item.status.has_error;
   const showPendingDescendant =
     !isExpanded && item.status.descendant_has_pending_draft && !showPendingSelf;
   const showRunningDescendant =
     !isExpanded && item.status.descendant_generation_running && !showRunningSelf;
+  const showErrorDescendant =
+    !isExpanded && item.status.descendant_has_error && !showErrorSelf;
 
   return (
     <li role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
@@ -179,8 +182,10 @@ function NavTreeRow({
         <StatusBadges
           running={showRunningSelf}
           pending={showPendingSelf}
+          errored={showErrorSelf}
           descendantRunning={showRunningDescendant}
           descendantPending={showPendingDescendant}
+          descendantErrored={showErrorDescendant}
         />
       </div>
       {hasChildren && isExpanded && (
@@ -246,15 +251,27 @@ function RoleIcon({
 function StatusBadges({
   running,
   pending,
+  errored,
   descendantRunning,
   descendantPending,
+  descendantErrored,
 }: {
   running: boolean;
   pending: boolean;
+  errored: boolean;
   descendantRunning: boolean;
   descendantPending: boolean;
+  descendantErrored: boolean;
 }) {
-  if (!running && !pending && !descendantRunning && !descendantPending) return null;
+  if (
+    !running &&
+    !pending &&
+    !errored &&
+    !descendantRunning &&
+    !descendantPending &&
+    !descendantErrored
+  )
+    return null;
   return (
     <span className="shrink-0 flex items-center gap-1 pl-2">
       {running && (
@@ -264,7 +281,14 @@ function StatusBadges({
           className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"
         />
       )}
-      {pending && !running && (
+      {errored && !running && (
+        <span
+          title="Generation failed"
+          aria-label="Generation failed"
+          className="inline-block w-1.5 h-1.5 rounded-full bg-red-500"
+        />
+      )}
+      {pending && !running && !errored && (
         <span
           title="Draft awaiting review"
           aria-label="Draft awaiting review"
@@ -278,13 +302,23 @@ function StatusBadges({
           className="inline-block w-1 h-1 rounded-full bg-amber-400/50 animate-pulse"
         />
       )}
-      {descendantPending && !pending && !descendantRunning && (
+      {descendantErrored && !errored && !descendantRunning && (
         <span
-          title="Descendant has draft awaiting review"
-          aria-label="Descendant has draft awaiting review"
-          className="inline-block w-1 h-1 rounded-full bg-amber-400/50"
+          title="Descendant generation failed"
+          aria-label="Descendant generation failed"
+          className="inline-block w-1 h-1 rounded-full bg-red-500/60"
         />
       )}
+      {descendantPending &&
+        !pending &&
+        !descendantRunning &&
+        !descendantErrored && (
+          <span
+            title="Descendant has draft awaiting review"
+            aria-label="Descendant has draft awaiting review"
+            className="inline-block w-1 h-1 rounded-full bg-amber-400/50"
+          />
+        )}
     </span>
   );
 }

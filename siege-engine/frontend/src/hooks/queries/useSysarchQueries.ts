@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import * as sysarchApi from '../../api/sysarch';
-import { makeBootstrapKeys } from '../useBootstrapHooks';
+import { makeBootstrapKeys, runningRefetchInterval } from '../useBootstrapHooks';
 import { useProjectStructure } from './useProjectStructure';
 
 export const sysarchKeys = makeBootstrapKeys('sysarch');
@@ -11,6 +11,7 @@ export function useSysarch(projectId: string) {
     queryKey: sysarchKeys.detail(projectId),
     queryFn: () => sysarchApi.getSysarch(projectId),
     enabled: !!projectId,
+    refetchInterval: runningRefetchInterval,
   });
 }
 

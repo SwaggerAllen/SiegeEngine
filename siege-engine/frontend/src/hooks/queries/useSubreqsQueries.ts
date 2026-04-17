@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import * as subreqsApi from '../../api/subreqs';
-import { makeBootstrapKeys } from '../useBootstrapHooks';
+import { makeBootstrapKeys, runningRefetchInterval } from '../useBootstrapHooks';
 
 export const subreqsKeys = makeBootstrapKeys('subreqs');
 
@@ -9,5 +9,6 @@ export function useSubreqs(projectId: string, componentId: string) {
     queryKey: subreqsKeys.detail(projectId, componentId),
     queryFn: () => subreqsApi.getSubreqs(projectId, componentId),
     enabled: !!projectId && !!componentId,
+    refetchInterval: runningRefetchInterval,
   });
 }

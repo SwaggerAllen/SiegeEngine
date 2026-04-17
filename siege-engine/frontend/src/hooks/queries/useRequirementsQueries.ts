@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import * as reqsApi from '../../api/requirements';
-import { makeBootstrapKeys } from '../useBootstrapHooks';
+import { makeBootstrapKeys, runningRefetchInterval } from '../useBootstrapHooks';
 import { useProjectStructure } from './useProjectStructure';
 
 export const requirementsKeys = makeBootstrapKeys('requirements');
@@ -11,6 +11,7 @@ export function useRequirements(projectId: string) {
     queryKey: requirementsKeys.detail(projectId),
     queryFn: () => reqsApi.getRequirements(projectId),
     enabled: !!projectId,
+    refetchInterval: runningRefetchInterval,
   });
 }
 

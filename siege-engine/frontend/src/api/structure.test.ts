@@ -29,6 +29,7 @@ describe('StructureResponseSchema', () => {
           has_content: true,
           has_pending_draft: false,
           generation_running: true,
+          has_error: false,
         },
         {
           id: 'resp_X',
@@ -41,6 +42,7 @@ describe('StructureResponseSchema', () => {
           has_content: true,
           has_pending_draft: false,
           generation_running: false,
+          has_error: false,
         },
       ],
       edges: [

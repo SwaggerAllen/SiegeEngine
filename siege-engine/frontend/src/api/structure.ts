@@ -23,6 +23,11 @@ export const StructureNodeSchema = z.object({
   has_content: z.boolean(),
   has_pending_draft: z.boolean(),
   generation_running: z.boolean(),
+  // True when the latest generation job targeting this node
+  // ended in ``failed``. Surfaced as a red dot in the sidebar
+  // tree ahead of amber pending / running badges; cleared when
+  // the user enqueues a retry.
+  has_error: z.boolean(),
 });
 export type StructureNode = z.infer<typeof StructureNodeSchema>;
 

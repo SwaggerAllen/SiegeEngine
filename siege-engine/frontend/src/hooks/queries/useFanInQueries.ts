@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import * as faninApi from '../../api/fanin';
+import { runningRefetchInterval } from '../useBootstrapHooks';
 
 /**
  * Phase 7 fan-in inspection query. Scoped by ``(projectId, compId)``
@@ -28,5 +29,6 @@ export function useFanIn(projectId: string, compId: string) {
     // is pointless noise — it floods the error log every time a
     // comparch page mounts for a comp without a fan-in.
     retry: false,
+    refetchInterval: runningRefetchInterval,
   });
 }

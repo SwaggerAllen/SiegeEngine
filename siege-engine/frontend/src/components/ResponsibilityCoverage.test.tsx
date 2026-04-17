@@ -42,6 +42,7 @@ function n(
     has_content: false,
     has_pending_draft: false,
     generation_running: false,
+    has_error: false,
     ...extras,
   };
 }

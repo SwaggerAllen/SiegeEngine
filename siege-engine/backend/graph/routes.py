@@ -1644,6 +1644,12 @@ class StructureNodeResponse(BaseModel):
     has_content: bool
     has_pending_draft: bool
     generation_running: bool
+    # True when the most recent generation job targeting this node
+    # ended in ``failed`` state (parse-validate exhausted, CLI
+    # crash, budget exceeded, etc.). Cleared when a retry is
+    # enqueued. Surfaced as a red dot in the sidebar tree ahead
+    # of the amber pending-draft / running indicators.
+    has_error: bool
 
 
 class StructureEdgeResponse(BaseModel):
@@ -1709,7 +1715,7 @@ def get_project_structure(
     vocab, refs). Replaces the per-view GET endpoints that
     previously each required their own fetch + polling.
     """
-    from backend.graph.running import running_node_ids
+    from backend.graph.running import errored_node_ids, running_node_ids
 
     _require_project(db, project_id)
 
@@ -1754,6 +1760,7 @@ def get_project_structure(
     )
 
     running_ids = running_node_ids(db, project_id)
+    errored_ids = errored_node_ids(db, project_id)
     offset = queries.latest_offset(db, project_id) or 0
 
     # Tiers whose content is included inline. See the doc on
@@ -1774,6 +1781,7 @@ def get_project_structure(
                 has_content=bool((n.content or "").strip()),
                 has_pending_draft=n.id in pending_target_ids,
                 generation_running=n.id in running_ids,
+                has_error=n.id in errored_ids,
             )
             for n in node_rows
         ],

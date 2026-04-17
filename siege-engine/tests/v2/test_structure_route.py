@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -321,6 +321,60 @@ class TestFlags:
         nodes = {
             n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
         }
+        assert nodes[c]["generation_running"] is True
+
+    def test_has_error_flag_when_latest_job_failed(self, client, project, db):
+        c = _mint(db, project.id, Kind.COMP, tier="comp", name="C")
+        db.add(
+            Job(
+                job_type="v2.generate_comparch",
+                payload={"project_id": project.id, "component_id": c},
+                status="failed",
+                priority=10,
+                max_retries=0,
+                created_at=datetime.utcnow(),
+                error_message="parse-validate exhausted",
+            )
+        )
+        db.commit()
+
+        nodes = {
+            n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
+        }
+        assert nodes[c]["has_error"] is True
+        assert nodes[c]["generation_running"] is False
+
+    def test_has_error_cleared_by_newer_queued_retry(self, client, project, db):
+        c = _mint(db, project.id, Kind.COMP, tier="comp", name="C")
+        now = datetime.utcnow()
+        db.add(
+            Job(
+                job_type="v2.generate_comparch",
+                payload={"project_id": project.id, "component_id": c},
+                status="failed",
+                priority=10,
+                max_retries=0,
+                created_at=now,
+                error_message="parse-validate exhausted",
+            )
+        )
+        db.add(
+            Job(
+                job_type="v2.generate_comparch",
+                payload={"project_id": project.id, "component_id": c},
+                status="queued",
+                priority=10,
+                max_retries=0,
+                created_at=now + timedelta(seconds=1),
+            )
+        )
+        db.commit()
+
+        nodes = {
+            n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
+        }
+        # Latest job is queued, so the scope is no longer errored.
+        assert nodes[c]["has_error"] is False
         assert nodes[c]["generation_running"] is True
 
 
