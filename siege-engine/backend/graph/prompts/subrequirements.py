@@ -131,20 +131,36 @@ component's scope.
 least one subresp.** Before emitting the list, mentally check \
 that each parent resp ID appears in at least one \
 ``<derived-from>`` block. Missing coverage is a parse error.
-* **Domain-parent context (presentational components only).** If \
-this component is presentational and the prompt includes a \
-"# Domain-parent context" section listing subresponsibilities \
-from a domain component this presentational component presents, \
-treat those as **read-only context**. They describe what the \
-domain side does; your subresps should be about what this \
-presentational component does (rendering, interaction, view \
-state) and should *align with* rather than *duplicate* the \
-domain context. **Do not reference any of the domain-parent \
-subresp ids in your ``<derived-from>`` blocks** — cross-component \
-leaks are still forbidden, and the domain-parent subresps \
-belong to a different component's scope. The context exists \
-to help you write UI-side subresps that complement the domain \
-work coherently.
+* **Presentational components: rotate mirrored parent resps to \
+UI-side articulation.** If this component is presentational, \
+its top-level responsibilities are (by sysarch design) mirrors \
+of responsibilities also claimed by one or more domain \
+components — the same ``resp_*`` IDs appear on both sides. \
+Your job for each mirrored parent resp is to decompose it into \
+subresps that articulate **the presentational face of that \
+responsibility**: what the user sees, how they interact with \
+it, what view state the component maintains, what feedback \
+and error affordances it provides, what structural editing or \
+navigation it supports. The "presentational face" is whatever \
+fits the component's medium — UI panels for a web client, \
+commands and flags for a CLI, dashboards for an operator \
+console, pages for a docs site. The domain side is \
+decomposing the same parent resp into its mechanism/data \
+articulation; you are decomposing it into its human-interface \
+articulation. Both decompositions derive from the same parent \
+resp IDs via ``<derived-from>``.
+* When the prompt includes a "# Domain-parent context" section \
+listing subresps already minted by the domain side of a \
+mirrored resp, treat it as a **reference for how the domain \
+articulated the parent** — useful so your UI-side subresps \
+align coherently with the backing domain work. **Do not \
+reference any of the domain-parent subresp ids in your \
+``<derived-from>`` blocks** — subresp IDs are scoped to the \
+component that minted them, and your ``<derived-from>`` \
+targets are always the top-level parent resps assigned to \
+*this* component. Your subresps are a parallel rotation of \
+the same parent resps, not derived from the domain's \
+subresps.
 * Do not include meta-commentary about what you are doing. \
 Output only the ``<subrequirements>`` block.
 * Unescaped ``&`` and ``<`` in intent text are fine — the parser \
