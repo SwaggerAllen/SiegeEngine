@@ -6,17 +6,17 @@ import { debugLog } from './lib/debugLog';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectListPage } from './pages/ProjectListPage';
 import { ProjectCreatePage } from './pages/ProjectCreatePage';
-import { ProjectDashboardLayout } from './pages/ProjectDashboardLayout';
+import { ProjectWorkspacePage } from './pages/ProjectWorkspacePage';
 import { ProjectSettingsPage } from './pages/ProjectSettingsPage';
-import { ComponentSubreqsPage } from './pages/ComponentSubreqsPage';
-import { ComponentComparchPage } from './pages/ComponentComparchPage';
-import { ComponentFanInPage } from './pages/ComponentFanInPage';
-import { ComponentImplPage } from './pages/ComponentImplPage';
-import { SubcomponentComparchPage } from './pages/SubcomponentComparchPage';
-import { SubcomponentImplPage } from './pages/SubcomponentImplPage';
-import { DecompositionGraphPage } from './pages/DecompositionGraphPage';
-import { VocabularyPage } from './pages/VocabularyPage';
-import { ReferencesPage } from './pages/ReferencesPage';
+import {
+  RedirectComponentComparch,
+  RedirectComponentFanIn,
+  RedirectComponentImpl,
+  RedirectComponentSubreqs,
+  RedirectSubcomponentImpl,
+  RedirectSubcomponentSubcomparch,
+  RedirectToSynthetic,
+} from './pages/LegacyRedirects';
 import { GitHubCallbackPage } from './pages/GitHubCallbackPage';
 
 function NavigationLogger() {
@@ -79,7 +79,7 @@ export default function App() {
           path="/projects/:id"
           element={
             <ProtectedRoute>
-              <ProjectDashboardLayout />
+              <ProjectWorkspacePage />
             </ProtectedRoute>
           }
         />
@@ -91,11 +91,14 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        {/* Legacy deep links — resolve to the workspace with the
+            matching node selected. Bookmarks from the pre-workspace
+            nav still land on the right place. */}
         <Route
           path="/projects/:id/components/:compId/subreqs"
           element={
             <ProtectedRoute>
-              <ComponentSubreqsPage />
+              <RedirectComponentSubreqs />
             </ProtectedRoute>
           }
         />
@@ -103,7 +106,7 @@ export default function App() {
           path="/projects/:id/components/:compId/comparch"
           element={
             <ProtectedRoute>
-              <ComponentComparchPage />
+              <RedirectComponentComparch />
             </ProtectedRoute>
           }
         />
@@ -111,7 +114,7 @@ export default function App() {
           path="/projects/:id/components/:compId/subcomponents/:subId/subcomparch"
           element={
             <ProtectedRoute>
-              <SubcomponentComparchPage />
+              <RedirectSubcomponentSubcomparch />
             </ProtectedRoute>
           }
         />
@@ -119,7 +122,7 @@ export default function App() {
           path="/projects/:id/components/:compId/impl"
           element={
             <ProtectedRoute>
-              <ComponentImplPage />
+              <RedirectComponentImpl />
             </ProtectedRoute>
           }
         />
@@ -127,7 +130,7 @@ export default function App() {
           path="/projects/:id/components/:compId/subcomponents/:subId/impl"
           element={
             <ProtectedRoute>
-              <SubcomponentImplPage />
+              <RedirectSubcomponentImpl />
             </ProtectedRoute>
           }
         />
@@ -135,7 +138,7 @@ export default function App() {
           path="/projects/:id/components/:compId/fanin"
           element={
             <ProtectedRoute>
-              <ComponentFanInPage />
+              <RedirectComponentFanIn />
             </ProtectedRoute>
           }
         />
@@ -143,7 +146,7 @@ export default function App() {
           path="/projects/:id/decomposition"
           element={
             <ProtectedRoute>
-              <DecompositionGraphPage />
+              <RedirectToSynthetic target=":decomposition-graph" />
             </ProtectedRoute>
           }
         />
@@ -151,7 +154,7 @@ export default function App() {
           path="/projects/:id/vocabulary"
           element={
             <ProtectedRoute>
-              <VocabularyPage />
+              <RedirectToSynthetic target=":vocabulary" />
             </ProtectedRoute>
           }
         />
@@ -159,7 +162,7 @@ export default function App() {
           path="/projects/:id/references"
           element={
             <ProtectedRoute>
-              <ReferencesPage />
+              <RedirectToSynthetic target=":references" />
             </ProtectedRoute>
           }
         />

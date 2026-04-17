@@ -99,6 +99,7 @@ from backend.graph.sysarch import (
 )
 from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
+from backend.models.job import Job
 from backend.models.node import Draft, Edge, Node
 from backend.models.telemetry import GenerationTelemetry
 
@@ -2101,6 +2102,178 @@ def get_decomposition_graph(
                 target_id=e.target_id,
             )
             for e in filtered_edges
+        ],
+    )
+
+
+# ── Nav tree route ──────────────────────────────────────────────────
+#
+# Single query that returns every node the workspace sidebar
+# cares about, flat. The frontend builds the tree hierarchy.
+# Covers singleton tiers (expansion/reqs/sysarch), per-comp tiers
+# (comp/subcomp/subreqs/fanin/impl), and carries the status flags
+# the sidebar needs to render badges (has_pending_draft, and
+# generation_running from the job queue).
+
+
+class NavTreeNodeResponse(BaseModel):
+    id: str
+    tier: str
+    kind: str  # 'domain' | 'presentational'
+    parent_id: str | None
+    name: str
+    display_order: int
+    has_content: bool
+    has_pending_draft: bool
+    generation_running: bool
+
+
+class NavTreeResponse(BaseModel):
+    nodes: list[NavTreeNodeResponse]
+
+
+# Map from node tier to the job type the scheduler uses for that
+# tier's regen. Used to surface live "generating…" indicators on
+# tree nodes by checking for queued/running jobs keyed on the
+# tier's scope payload. Entries cover every tier that appears in
+# the sidebar; other tiers (policy, feat, vocab, ref) don't have
+# their own regen indicator in the tree view.
+_NAV_TREE_JOB_TYPES_BY_TIER = {
+    "expansion": GENERATE_FEATURE_EXPANSION_JOB_TYPE,
+    "reqs": GENERATE_REQUIREMENTS_JOB_TYPE,
+    "sysarch": GENERATE_SYSARCH_JOB_TYPE,
+    "subreqs": GENERATE_SUBREQS_JOB_TYPE,
+    "comp": GENERATE_COMPARCH_JOB_TYPE,  # top-level comps; subs handled below
+    "fanin": GENERATE_FANIN_JOB_TYPE,
+    "impl": GENERATE_IMPL_JOB_TYPE,
+}
+
+
+@router.get(
+    "/{project_id}/nav-tree",
+    response_model=NavTreeResponse,
+)
+def get_nav_tree(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> NavTreeResponse:
+    """Return every node the workspace sidebar renders, flat.
+
+    One query per project: the frontend builds the tree hierarchy
+    from ``parent_id``. Badge flags come inline so the sidebar
+    doesn't need N+1 follow-up queries — ``has_pending_draft``
+    for the amber "ready to review" dot, ``generation_running``
+    for the pulse while a regen is in flight.
+    """
+    _require_project(db, project_id)
+
+    # All nodes that belong in the sidebar tree.
+    node_rows = list(
+        db.execute(
+            select(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.tier.in_(
+                    (
+                        "expansion",
+                        "reqs",
+                        "sysarch",
+                        "subreqs",
+                        "comp",
+                        "fanin",
+                        "impl",
+                    )
+                ),
+            )
+            .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+    # One batch query for pending drafts (target_type='node') so
+    # we can tag ``has_pending_draft`` inline.
+    pending_target_ids: set[str] = set(
+        db.execute(
+            select(Draft.target_id).where(
+                Draft.project_id == project_id,
+                Draft.target_type == "node",
+                Draft.status == "pending",
+            )
+        ).scalars()
+    )
+
+    # One batch query for queued/running jobs; match each to the
+    # node via its payload keys. Different tiers use different
+    # payload keys (component_id, sub_id, owner_id, owner_comp_id,
+    # or no scope at all), so we collect all active jobs for any
+    # tier job type and match inline.
+    tier_job_types = set(_NAV_TREE_JOB_TYPES_BY_TIER.values()) | {
+        GENERATE_SUBCOMPARCH_JOB_TYPE,
+    }
+    active_jobs = list(
+        db.execute(
+            select(Job).where(
+                Job.job_type.in_(tier_job_types),
+                Job.status.in_(("queued", "running")),
+            )
+        ).scalars()
+    )
+
+    # Index active jobs by (job_type, payload) for fast node→job lookup.
+    # Each job's payload.project_id must match ours, and the scope
+    # keys pick out which specific node the job runs against.
+    def _running_for_node(node: Node) -> bool:
+        for job in active_jobs:
+            payload = job.payload or {}
+            if payload.get("project_id") != project_id:
+                continue
+            tier = node.tier
+            if tier == "expansion" and job.job_type == GENERATE_FEATURE_EXPANSION_JOB_TYPE:
+                return True
+            if tier == "reqs" and job.job_type == GENERATE_REQUIREMENTS_JOB_TYPE:
+                return True
+            if tier == "sysarch" and job.job_type == GENERATE_SYSARCH_JOB_TYPE:
+                return True
+            if tier == "subreqs" and job.job_type == GENERATE_SUBREQS_JOB_TYPE:
+                if payload.get("component_id") == node.parent_id:
+                    return True
+            if tier == "comp":
+                # Top-level: generate_comparch keyed on component_id.
+                # Subcomponent: generate_subcomparch keyed on component_id (the sub's id).
+                if node.parent_id is None:
+                    if (
+                        job.job_type == GENERATE_COMPARCH_JOB_TYPE
+                        and payload.get("component_id") == node.id
+                    ):
+                        return True
+                else:
+                    if (
+                        job.job_type == GENERATE_SUBCOMPARCH_JOB_TYPE
+                        and payload.get("component_id") == node.id
+                    ):
+                        return True
+            if tier == "fanin" and job.job_type == GENERATE_FANIN_JOB_TYPE:
+                if payload.get("owner_comp_id") == node.parent_id:
+                    return True
+            if tier == "impl" and job.job_type == GENERATE_IMPL_JOB_TYPE:
+                if payload.get("owner_id") == node.parent_id:
+                    return True
+        return False
+
+    return NavTreeResponse(
+        nodes=[
+            NavTreeNodeResponse(
+                id=n.id,
+                tier=n.tier,
+                kind=n.kind,
+                parent_id=n.parent_id,
+                name=n.name,
+                display_order=n.display_order,
+                has_content=bool((n.content or "").strip()),
+                has_pending_draft=n.id in pending_target_ids,
+                generation_running=_running_for_node(n),
+            )
+            for n in node_rows
         ],
     )
 

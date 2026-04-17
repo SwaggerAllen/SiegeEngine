@@ -1,0 +1,332 @@
+import type { NavTreeNode } from '../../api/navTree';
+
+/**
+ * A single item in the rendered sidebar tree.
+ *
+ * Real nodes (tier='comp', 'impl', 'fanin', etc.) carry a
+ * ``node`` payload and a concrete id from the backend. Synthetic
+ * items (section headers like "Components", "Vocabulary") have
+ * ``node === null`` and use a stable colon-prefixed id that
+ * cannot collide with backend node ids (backend ids use
+ * underscores).
+ *
+ * Children are pre-sorted by the assembly logic — consumers
+ * render them in order without further sorting.
+ */
+export interface NavItem {
+  id: string;
+  label: string;
+  /** Real node data if backed by a DB row, null for synthetic entries. */
+  node: NavTreeNode | null;
+  /** Short role tag used for styling dispatch (icon + colour). */
+  role:
+    | 'expansion'
+    | 'reqs'
+    | 'sysarch'
+    | 'vocabulary'
+    | 'references'
+    | 'decomposition-graph'
+    | 'components-root'
+    | 'component-top'
+    | 'component-sub'
+    | 'component-subreqs'
+    | 'component-fanin'
+    | 'component-impl'
+    | 'subcomponent-impl';
+  children: NavItem[];
+  /** Pre-aggregated status for the badge cluster on this row. */
+  status: {
+    has_pending_draft: boolean;
+    generation_running: boolean;
+    /** True if this item or any descendant has a pending draft. */
+    descendant_has_pending_draft: boolean;
+    /** True if any descendant has generation running (for the collapsed pulse). */
+    descendant_generation_running: boolean;
+  };
+}
+
+/**
+ * Stable synthetic item ids. Colon prefix guarantees they can
+ * never collide with backend-minted node ids, which use
+ * Crockford base32 with underscores.
+ */
+export const SYNTHETIC_IDS = {
+  VOCABULARY: ':vocabulary',
+  REFERENCES: ':references',
+  DECOMPOSITION_GRAPH: ':decomposition-graph',
+  COMPONENTS_ROOT: ':components',
+} as const;
+
+const EMPTY_STATUS = {
+  has_pending_draft: false,
+  generation_running: false,
+  descendant_has_pending_draft: false,
+  descendant_generation_running: false,
+};
+
+function singleNode(
+  nodes: NavTreeNode[],
+  predicate: (n: NavTreeNode) => boolean,
+): NavTreeNode | undefined {
+  return nodes.find(predicate);
+}
+
+function statusFor(n: NavTreeNode) {
+  return {
+    has_pending_draft: n.has_pending_draft,
+    generation_running: n.generation_running,
+    descendant_has_pending_draft: n.has_pending_draft,
+    descendant_generation_running: n.generation_running,
+  };
+}
+
+function rollUpStatus(self: NavItem['status'], children: NavItem[]): NavItem['status'] {
+  let descPending = self.has_pending_draft;
+  let descRunning = self.generation_running;
+  for (const c of children) {
+    if (c.status.descendant_has_pending_draft) descPending = true;
+    if (c.status.descendant_generation_running) descRunning = true;
+  }
+  return {
+    ...self,
+    descendant_has_pending_draft: descPending,
+    descendant_generation_running: descRunning,
+  };
+}
+
+/**
+ * Assemble the flat backend response into the hierarchical shape
+ * the sidebar renders. Pure function — same input always produces
+ * the same output tree.
+ *
+ * Layout (top to bottom):
+ *   Feature Expansion  (present only if a node exists)
+ *   Requirements       (same)
+ *   Sysarch            (same)
+ *   Vocabulary         (synthetic, always)
+ *   References         (synthetic, always)
+ *   Decomposition      (synthetic, always — opens the cytoscape view)
+ *   Components/        (synthetic header, always shown once sysarch has minted any top-level comp)
+ *     [each top-level comp]
+ *       Subrequirements  (node, if exists)
+ *       Fan-in           (node, if exists)
+ *       Implementation   (if comp has an impl child — only for un-fanned-out comps)
+ *       [each subcomponent]
+ *         Implementation (if sub has an impl child)
+ */
+export function buildNavTree(nodes: NavTreeNode[]): NavItem[] {
+  const items: NavItem[] = [];
+
+  const expansion = singleNode(nodes, (n) => n.tier === 'expansion');
+  if (expansion) {
+    items.push({
+      id: expansion.id,
+      label: 'Feature Expansion',
+      node: expansion,
+      role: 'expansion',
+      children: [],
+      status: statusFor(expansion),
+    });
+  }
+  const reqs = singleNode(nodes, (n) => n.tier === 'reqs');
+  if (reqs) {
+    items.push({
+      id: reqs.id,
+      label: 'Requirements',
+      node: reqs,
+      role: 'reqs',
+      children: [],
+      status: statusFor(reqs),
+    });
+  }
+  const sysarch = singleNode(nodes, (n) => n.tier === 'sysarch');
+  if (sysarch) {
+    items.push({
+      id: sysarch.id,
+      label: 'Sysarch',
+      node: sysarch,
+      role: 'sysarch',
+      children: [],
+      status: statusFor(sysarch),
+    });
+  }
+
+  items.push({
+    id: SYNTHETIC_IDS.VOCABULARY,
+    label: 'Vocabulary',
+    node: null,
+    role: 'vocabulary',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.REFERENCES,
+    label: 'References',
+    node: null,
+    role: 'references',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.DECOMPOSITION_GRAPH,
+    label: 'Decomposition Graph',
+    node: null,
+    role: 'decomposition-graph',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+
+  // Top-level components + their subtrees.
+  const topLevelComps = nodes
+    .filter((n) => n.tier === 'comp' && n.parent_id === null)
+    .sort((a, b) => a.display_order - b.display_order);
+
+  if (topLevelComps.length > 0) {
+    const componentItems: NavItem[] = topLevelComps.map((comp) =>
+      buildComponentSubtree(comp, nodes),
+    );
+    const componentsRoot: NavItem = {
+      id: SYNTHETIC_IDS.COMPONENTS_ROOT,
+      label: 'Components',
+      node: null,
+      role: 'components-root',
+      children: componentItems,
+      status: { ...EMPTY_STATUS },
+    };
+    componentsRoot.status = rollUpStatus(componentsRoot.status, componentItems);
+    items.push(componentsRoot);
+  }
+
+  return items;
+}
+
+function buildComponentSubtree(comp: NavTreeNode, nodes: NavTreeNode[]): NavItem {
+  const children: NavItem[] = [];
+
+  // Subrequirements — a singleton subreqs_* node parented to the comp.
+  const subreqs = nodes.find((n) => n.tier === 'subreqs' && n.parent_id === comp.id);
+  if (subreqs) {
+    children.push({
+      id: subreqs.id,
+      label: 'Subrequirements',
+      node: subreqs,
+      role: 'component-subreqs',
+      children: [],
+      status: statusFor(subreqs),
+    });
+  }
+
+  // Fan-in — a singleton fanin_* node parented to the comp (only
+  // exists for fanned-out domain comps).
+  const fanin = nodes.find((n) => n.tier === 'fanin' && n.parent_id === comp.id);
+  if (fanin) {
+    children.push({
+      id: fanin.id,
+      label: 'Fan-in',
+      node: fanin,
+      role: 'component-fanin',
+      children: [],
+      status: statusFor(fanin),
+    });
+  }
+
+  // Implementation directly under an un-fanned-out top-level comp.
+  const topLevelImpl = nodes.find((n) => n.tier === 'impl' && n.parent_id === comp.id);
+  if (topLevelImpl) {
+    children.push({
+      id: topLevelImpl.id,
+      label: 'Implementation',
+      node: topLevelImpl,
+      role: 'component-impl',
+      children: [],
+      status: statusFor(topLevelImpl),
+    });
+  }
+
+  // Subcomponents + their leaves.
+  const subs = nodes
+    .filter((n) => n.tier === 'comp' && n.parent_id === comp.id)
+    .sort((a, b) => a.display_order - b.display_order);
+  for (const sub of subs) {
+    const subChildren: NavItem[] = [];
+    const subImpl = nodes.find((n) => n.tier === 'impl' && n.parent_id === sub.id);
+    if (subImpl) {
+      subChildren.push({
+        id: subImpl.id,
+        label: 'Implementation',
+        node: subImpl,
+        role: 'subcomponent-impl',
+        children: [],
+        status: statusFor(subImpl),
+      });
+    }
+    const subItem: NavItem = {
+      id: sub.id,
+      label: sub.name,
+      node: sub,
+      role: 'component-sub',
+      children: subChildren,
+      status: statusFor(sub),
+    };
+    subItem.status = rollUpStatus(subItem.status, subChildren);
+    children.push(subItem);
+  }
+
+  const compItem: NavItem = {
+    id: comp.id,
+    label: comp.name,
+    node: comp,
+    role: 'component-top',
+    children,
+    status: statusFor(comp),
+  };
+  compItem.status = rollUpStatus(compItem.status, children);
+  return compItem;
+}
+
+/** Flatten a tree back out (for default-expand sets, tests, etc.). */
+export function walkItems(items: NavItem[]): NavItem[] {
+  const out: NavItem[] = [];
+  for (const it of items) {
+    out.push(it);
+    out.push(...walkItems(it.children));
+  }
+  return out;
+}
+
+/**
+ * The ids whose expand state defaults to open on first render.
+ * Components root is always open so the comp list is visible
+ * without clicking. Individual comps stay collapsed — user picks
+ * which subtree to expand.
+ */
+export function defaultExpandedIds(): Set<string> {
+  // Components root always opens so the comp list is visible
+  // without an extra click. Individual comps stay collapsed —
+  // the user picks which subtree to expand. Ancestor expansion
+  // for a selected-via-URL node is handled in the layout hook.
+  const open = new Set<string>();
+  open.add(SYNTHETIC_IDS.COMPONENTS_ROOT);
+  return open;
+}
+
+/** Given a selected id, return every ancestor id so the layout can auto-expand them. */
+export function ancestorIds(items: NavItem[], selectedId: string | null): Set<string> {
+  const out = new Set<string>();
+  if (!selectedId) return out;
+  const path: string[] = [];
+  const dfs = (nodes: NavItem[]): boolean => {
+    for (const n of nodes) {
+      path.push(n.id);
+      if (n.id === selectedId) return true;
+      if (dfs(n.children)) return true;
+      path.pop();
+    }
+    return false;
+  };
+  if (dfs(items)) {
+    // Every id in the path except the selected leaf.
+    for (const id of path.slice(0, -1)) out.add(id);
+  }
+  return out;
+}
