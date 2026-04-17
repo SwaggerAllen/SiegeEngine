@@ -308,3 +308,114 @@ def errored_node_ids(db: Session, project_id: str) -> set[str]:
         errored.add(rid)
 
     return errored
+
+
+def cancelled_node_ids(db: Session, project_id: str) -> set[str]:
+    """Return the ids of every node whose latest generation job was cancelled.
+
+    Parallel to :func:`errored_node_ids` but filters on
+    ``Job.status == "cancelled"``. Surfaces nodes the user (or a
+    cascade) explicitly cancelled without a replacement job yet
+    — idle, no pending draft, but explicitly waiting on a user
+    retry. Drives the blue dot in the sidebar tree.
+
+    Returns empty for nodes whose latest job is queued, running,
+    failed, or completed — those live under different badges.
+    """
+    all_jobs = list(
+        db.execute(
+            select(Job).where(Job.job_type.in_(_TIER_JOB_TYPES)).order_by(Job.created_at.desc())
+        ).scalars()
+    )
+    by_type: dict[str, list[Job]] = {}
+    for job in all_jobs:
+        if (job.payload or {}).get("project_id") != project_id:
+            continue
+        by_type.setdefault(job.job_type, []).append(job)
+    if not by_type:
+        return set()
+
+    def latest_cancelled_scopes(jobs: list[Job], scope_key: str) -> set[str]:
+        seen: set[str] = set()
+        cancelled: set[str] = set()
+        for job in jobs:
+            scope = (job.payload or {}).get(scope_key)
+            if not isinstance(scope, str):
+                continue
+            if scope in seen:
+                continue
+            seen.add(scope)
+            if job.status == "cancelled":
+                cancelled.add(scope)
+        return cancelled
+
+    cancelled: set[str] = set()
+
+    for job_type, tier in (
+        (GENERATE_FEATURE_EXPANSION_JOB_TYPE, "expansion"),
+        (GENERATE_REQUIREMENTS_JOB_TYPE, "reqs"),
+        (GENERATE_SYSARCH_JOB_TYPE, "sysarch"),
+    ):
+        jobs = by_type.get(job_type, [])
+        if not jobs or jobs[0].status != "cancelled":
+            continue
+        node_id = db.execute(
+            select(Node.id).where(
+                Node.project_id == project_id,
+                Node.tier == tier,
+            )
+        ).scalar_one_or_none()
+        if node_id is not None:
+            cancelled.add(node_id)
+
+    subreqs_comp_ids = latest_cancelled_scopes(
+        by_type.get(GENERATE_SUBREQS_JOB_TYPE, []), "component_id"
+    )
+    if subreqs_comp_ids:
+        rows = db.execute(
+            select(Node.id).where(
+                Node.project_id == project_id,
+                Node.tier == "subreqs",
+                Node.parent_id.in_(subreqs_comp_ids),
+            )
+        ).scalars()
+        for nid in rows:
+            cancelled.add(nid)
+
+    for cid in latest_cancelled_scopes(by_type.get(GENERATE_COMPARCH_JOB_TYPE, []), "component_id"):
+        cancelled.add(cid)
+    for cid in latest_cancelled_scopes(
+        by_type.get(GENERATE_SUBCOMPARCH_JOB_TYPE, []), "component_id"
+    ):
+        cancelled.add(cid)
+
+    fanin_owner_ids = latest_cancelled_scopes(
+        by_type.get(GENERATE_FANIN_JOB_TYPE, []), "owner_comp_id"
+    )
+    if fanin_owner_ids:
+        rows = db.execute(
+            select(Node.id).where(
+                Node.project_id == project_id,
+                Node.tier == "fanin",
+                Node.parent_id.in_(fanin_owner_ids),
+            )
+        ).scalars()
+        for nid in rows:
+            cancelled.add(nid)
+
+    impl_owner_ids = latest_cancelled_scopes(by_type.get(GENERATE_IMPL_JOB_TYPE, []), "owner_id")
+    if impl_owner_ids:
+        rows = db.execute(
+            select(Node.id).where(
+                Node.project_id == project_id,
+                Node.tier == "impl",
+                Node.parent_id.in_(impl_owner_ids),
+            )
+        ).scalars()
+        for nid in rows:
+            cancelled.add(nid)
+
+    for rid in latest_cancelled_scopes(by_type.get(GENERATE_REFERENCE_JOB_TYPE, []), "ref_id"):
+        cancelled.add(rid)
+
+    return cancelled

@@ -39,12 +39,15 @@ export interface NavItem {
     has_pending_draft: boolean;
     generation_running: boolean;
     has_error: boolean;
+    has_cancelled_latest_job: boolean;
     /** True if this item or any descendant has a pending draft. */
     descendant_has_pending_draft: boolean;
     /** True if any descendant has generation running (for the collapsed pulse). */
     descendant_generation_running: boolean;
     /** True if any descendant has an errored latest job (for the collapsed red dot). */
     descendant_has_error: boolean;
+    /** True if any descendant has a cancelled latest job (for the collapsed blue dot). */
+    descendant_has_cancelled_latest_job: boolean;
   };
 }
 
@@ -64,9 +67,11 @@ const EMPTY_STATUS = {
   has_pending_draft: false,
   generation_running: false,
   has_error: false,
+  has_cancelled_latest_job: false,
   descendant_has_pending_draft: false,
   descendant_generation_running: false,
   descendant_has_error: false,
+  descendant_has_cancelled_latest_job: false,
 };
 
 function singleNode(
@@ -81,9 +86,11 @@ function statusFor(n: StructureNode) {
     has_pending_draft: n.has_pending_draft,
     generation_running: n.generation_running,
     has_error: n.has_error,
+    has_cancelled_latest_job: n.has_cancelled_latest_job,
     descendant_has_pending_draft: n.has_pending_draft,
     descendant_generation_running: n.generation_running,
     descendant_has_error: n.has_error,
+    descendant_has_cancelled_latest_job: n.has_cancelled_latest_job,
   };
 }
 
@@ -91,16 +98,19 @@ function rollUpStatus(self: NavItem['status'], children: NavItem[]): NavItem['st
   let descPending = self.has_pending_draft;
   let descRunning = self.generation_running;
   let descError = self.has_error;
+  let descCancelled = self.has_cancelled_latest_job;
   for (const c of children) {
     if (c.status.descendant_has_pending_draft) descPending = true;
     if (c.status.descendant_generation_running) descRunning = true;
     if (c.status.descendant_has_error) descError = true;
+    if (c.status.descendant_has_cancelled_latest_job) descCancelled = true;
   }
   return {
     ...self,
     descendant_has_pending_draft: descPending,
     descendant_generation_running: descRunning,
     descendant_has_error: descError,
+    descendant_has_cancelled_latest_job: descCancelled,
   };
 }
 
