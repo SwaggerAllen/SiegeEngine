@@ -57,10 +57,18 @@ def _seed_with_subcomp_impl(
     *,
     top_kind: str = "domain",
     mint_fanin: bool = True,
+    impl_content: str = "<implementation>ok</implementation>",
 ) -> tuple[str, str, str, str]:
     """Seed project + fanned-out top-level + subcomp + impl, optionally with fanin shell.
 
     Returns (project_id, top_comp_id, sub_comp_id, impl_id).
+
+    ``impl_content`` defaults to non-empty because the Phase 7.5
+    first-pass gate (``all_impls_populated_for``) only enqueues
+    fanin when every impl under the owner carries approved
+    content. The real pipeline populates impl content through
+    ``DraftApproved`` before ``on_impl_approved`` fires, so
+    seeding with content already present mirrors production state.
     """
     session: Session = factory()
     try:
@@ -104,6 +112,7 @@ def _seed_with_subcomp_impl(
                 kind=top_kind,  # type: ignore[arg-type]
                 parent_id=sub_id,
                 name="Sub impl",
+                content=impl_content,
             ),
         )
         if mint_fanin:
@@ -364,5 +373,167 @@ class TestBootstrapApproveIntegration:
                 assert jobs == []
             finally:
                 IMPL_CONFIG.on_approve = original_hook
+        finally:
+            session.close()
+
+
+class TestFirstPassGate:
+    """Phase 7.5: fan-in only enqueues once every impl under the
+    top-level domain comp has been approved at least once. Partial
+    approvals (some impls still empty) leave the gate closed.
+    Subsequent approvals after first-pass re-fire (deduped)."""
+
+    def test_partial_impl_coverage_does_not_enqueue_fanin(self, shared_session_factory):
+        """Two subs, only one has approved impl content. Fan-in gate
+        stays closed — no generate_fanin job is enqueued."""
+        session: Session = shared_session_factory()
+        try:
+            project_id = str(uuid.uuid4())
+            session.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
+            session.flush()
+
+            top_id = mint(session, Kind.COMP)
+            append_event(
+                session,
+                project_id,
+                ev.NodeCreated(
+                    node_id=top_id,
+                    tier="comp",
+                    kind="domain",
+                    parent_id=None,
+                    name="Top",
+                    content="<comparch>ok</comparch>",
+                ),
+            )
+            sub_ids: list[str] = []
+            impl_ids: list[str] = []
+            for i in range(2):
+                sub_id = mint(session, Kind.COMP)
+                sub_ids.append(sub_id)
+                append_event(
+                    session,
+                    project_id,
+                    ev.NodeCreated(
+                        node_id=sub_id,
+                        tier="comp",
+                        kind="domain",
+                        parent_id=top_id,
+                        name=f"Sub{i}",
+                        content="<subcomparch>ok</subcomparch>",
+                    ),
+                )
+                impl_id = mint(session, Kind.IMPL)
+                impl_ids.append(impl_id)
+                # First sub's impl is populated; second sub's impl
+                # has empty content (never approved).
+                append_event(
+                    session,
+                    project_id,
+                    ev.NodeCreated(
+                        node_id=impl_id,
+                        tier="impl",
+                        kind="domain",
+                        parent_id=sub_id,
+                        name=f"Sub{i} impl",
+                        content=("<implementation>ok</implementation>" if i == 0 else ""),
+                    ),
+                )
+            fanin_id = mint(session, Kind.FANIN)
+            append_event(
+                session,
+                project_id,
+                ev.NodeCreated(
+                    node_id=fanin_id,
+                    tier="fanin",
+                    kind="domain",
+                    parent_id=top_id,
+                    name="Top fan-in",
+                ),
+            )
+            session.commit()
+
+            first_impl = session.get(Node, impl_ids[0])
+            on_impl_approved(session, project_id, first_impl, (sub_ids[0],))
+            session.commit()
+            # First-pass gate still closed — sub1's impl is empty.
+            assert _enqueued_fanin_jobs(session, project_id) == []
+        finally:
+            session.close()
+
+    def test_last_impl_completes_first_pass_and_enqueues(self, shared_session_factory):
+        """When the last empty impl gets populated, the gate flips
+        true and a single fan-in job enqueues."""
+        session: Session = shared_session_factory()
+        try:
+            project_id = str(uuid.uuid4())
+            session.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
+            session.flush()
+
+            top_id = mint(session, Kind.COMP)
+            append_event(
+                session,
+                project_id,
+                ev.NodeCreated(
+                    node_id=top_id,
+                    tier="comp",
+                    kind="domain",
+                    parent_id=None,
+                    name="Top",
+                    content="<comparch>ok</comparch>",
+                ),
+            )
+            sub_ids: list[str] = []
+            impl_ids: list[str] = []
+            for i in range(2):
+                sub_id = mint(session, Kind.COMP)
+                sub_ids.append(sub_id)
+                append_event(
+                    session,
+                    project_id,
+                    ev.NodeCreated(
+                        node_id=sub_id,
+                        tier="comp",
+                        kind="domain",
+                        parent_id=top_id,
+                        name=f"Sub{i}",
+                        content="<subcomparch>ok</subcomparch>",
+                    ),
+                )
+                impl_id = mint(session, Kind.IMPL)
+                impl_ids.append(impl_id)
+                # Both impls populated — simulates the final
+                # approval having just landed, completing the set.
+                append_event(
+                    session,
+                    project_id,
+                    ev.NodeCreated(
+                        node_id=impl_id,
+                        tier="impl",
+                        kind="domain",
+                        parent_id=sub_id,
+                        name=f"Sub{i} impl",
+                        content="<implementation>ok</implementation>",
+                    ),
+                )
+            fanin_id = mint(session, Kind.FANIN)
+            append_event(
+                session,
+                project_id,
+                ev.NodeCreated(
+                    node_id=fanin_id,
+                    tier="fanin",
+                    kind="domain",
+                    parent_id=top_id,
+                    name="Top fan-in",
+                ),
+            )
+            session.commit()
+
+            last_impl = session.get(Node, impl_ids[1])
+            on_impl_approved(session, project_id, last_impl, (sub_ids[1],))
+            session.commit()
+            jobs = _enqueued_fanin_jobs(session, project_id)
+            assert len(jobs) == 1
+            assert jobs[0].payload["owner_comp_id"] == top_id
         finally:
             session.close()

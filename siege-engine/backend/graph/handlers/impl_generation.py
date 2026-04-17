@@ -283,6 +283,21 @@ def on_impl_approved(
     if fanin_child is None:
         return
 
+    # Phase 7.5 first-pass gate: hold off on the initial fan-in
+    # until every impl under this top-level comp has been approved
+    # at least once. Before first-pass, an approval here with only
+    # a partial impl set leaves the check False and the enqueue is
+    # skipped — the fan-in never fires on an incomplete set.
+    #
+    # After first-pass, the check returns True on every subsequent
+    # approval (all impls remain populated except when reset-cleared)
+    # and the enqueue runs. The queue's payload-dedupe collapses
+    # bursts of approvals into a single regen.
+    from backend.graph.queries import all_impls_populated_for
+
+    if not all_impls_populated_for(db, top_level.id):
+        return
+
     pipeline_queue.enqueue(
         db,
         job_type=GENERATE_FANIN_JOB_TYPE,
