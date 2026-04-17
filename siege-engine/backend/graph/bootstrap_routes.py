@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from backend.graph import events as ev
 from backend.graph import queries
+from backend.graph.broadcast import commit_and_publish
 from backend.graph.reducer import append_event
 from backend.models.node import Draft
 from backend.pipeline import queue as pipeline_queue
@@ -156,7 +157,7 @@ def bootstrap_get_state(
                 project_id,
             )
             config.bootstrap_node(db, project_id, *scope_ids)
-            db.commit()
+            commit_and_publish(db, project_id)
             pipeline_queue.enqueue(
                 db,
                 job_type=config.generate_job_type,
@@ -272,7 +273,7 @@ def bootstrap_approve(
             detail=f"Draft is {draft.status!r}, not pending",
         )
     append_event(db, project_id, ev.DraftApproved(draft_id=draft_id))
-    db.commit()
+    commit_and_publish(db, project_id)
     db.refresh(node)
     if config.mint_job_type:
         mint_payload: dict[str, Any] = {"project_id": project_id}
@@ -333,7 +334,7 @@ def bootstrap_discard(
             detail=f"Draft is {draft.status!r}, not pending",
         )
     append_event(db, project_id, ev.DraftDiscarded(draft_id=draft_id))
-    db.commit()
+    commit_and_publish(db, project_id)
     pipeline_queue.enqueue(
         db,
         job_type=config.generate_job_type,
@@ -446,7 +447,7 @@ def bootstrap_reset(
         project_id,
         ev.BootstrapNodeContentCleared(node_id=node.id),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
 
     pipeline_queue.enqueue(
         db,

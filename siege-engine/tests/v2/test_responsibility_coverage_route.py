@@ -279,9 +279,7 @@ class TestSubcompRejected:
         )
         db.commit()
 
-        resp = client.get(
-            f"/api/projects/{project.id}/components/{sub_id}/responsibility-coverage"
-        )
+        resp = client.get(f"/api/projects/{project.id}/components/{sub_id}/responsibility-coverage")
         assert resp.status_code == 404
 
 

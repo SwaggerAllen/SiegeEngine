@@ -33,6 +33,7 @@ from backend.graph.bootstrap_routes import (
     bootstrap_prompt_preview,
     bootstrap_reset,
 )
+from backend.graph.broadcast import commit_and_publish
 from backend.graph.expansion import (
     bootstrap_expansion_node,
     get_expansion_node,
@@ -2340,6 +2341,220 @@ def get_nav_tree(
     )
 
 
+# ── Project structure + event stream ─────────────────────────────
+#
+# Two endpoints that together replace the per-tier polling
+# pattern:
+#
+# - ``GET /structure`` — one consolidated read that ships every
+#   node + edge in the project plus status flags. Replaces nav-tree,
+#   decomposition-graph, responsibility-coverage, and most list
+#   endpoints. Returns ``offset`` so clients can subscribe to
+#   ``/events/stream?since=<offset>`` without losing events
+#   committed between the snapshot and the SSE handshake.
+# - ``GET /events/stream`` — SSE channel. Emits one tiny message
+#   per committed event (``{offset, event_type, node_ids}``).
+#   Clients use these as invalidation signals for their TanStack
+#   Query cache; per-tier detail GETs refetch on push rather than
+#   on a 2-second timer.
+#
+# See ``backend/graph/broadcast.py`` for the in-process pub/sub
+# primitive, and the design doc at
+# ``/root/.claude/plans/let-s-plan-phase-6-6-gentle-engelbart.md``.
+
+
+class StructureNodeResponse(BaseModel):
+    id: str
+    tier: str
+    kind: str  # 'domain' | 'presentational'
+    parent_id: str | None
+    name: str
+    display_order: int
+    has_content: bool
+    has_pending_draft: bool
+    generation_running: bool
+
+
+class StructureEdgeResponse(BaseModel):
+    id: str
+    edge_type: str
+    source_id: str
+    target_id: str
+
+
+class StructureResponse(BaseModel):
+    # Event-log offset at the time this snapshot was read. SSE
+    # subscribers pass this as ``?since=<offset>`` on
+    # ``/events/stream`` so no event is lost in the race between
+    # reading the snapshot and subscribing to the channel.
+    offset: int
+    nodes: list[StructureNodeResponse]
+    edges: list[StructureEdgeResponse]
+
+
+# Every tier the frontend's structure store cares about. ``feat``,
+# ``policy``, ``vocab``, and ``ref`` are included so the list
+# views for features / policies / vocabulary / references can
+# derive from this single endpoint too. ``resp`` covers both
+# top-level responsibilities and subresps.
+_STRUCTURE_TIERS = (
+    "expansion",
+    "reqs",
+    "sysarch",
+    "feat",
+    "resp",
+    "comp",
+    "subreqs",
+    "fanin",
+    "impl",
+    "policy",
+    "vocab",
+    "ref",
+)
+
+_STRUCTURE_EDGE_TYPES = (
+    "dependency",
+    "decomposition",
+    "domain_parent",
+    "reference",
+    "policy_application",
+)
+
+
+@router.get(
+    "/{project_id}/structure",
+    response_model=StructureResponse,
+)
+def get_project_structure(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> StructureResponse:
+    """Return the full structural snapshot for the workspace.
+
+    One query per project. Consumed by the sidebar tree, the
+    decomposition graph, responsibility coverage, and every
+    list view (features, responsibilities, subcomps, policies,
+    vocab, refs). Replaces the per-view GET endpoints that
+    previously each required their own fetch + polling.
+    """
+    from backend.graph.running import running_node_ids
+
+    _require_project(db, project_id)
+
+    node_rows = list(
+        db.execute(
+            select(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.tier.in_(_STRUCTURE_TIERS),
+            )
+            .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+    node_ids_in_project = {n.id for n in node_rows}
+
+    edge_rows = list(
+        db.execute(
+            select(Edge)
+            .where(
+                Edge.project_id == project_id,
+                Edge.edge_type.in_(_STRUCTURE_EDGE_TYPES),
+            )
+            .order_by(Edge.id.asc())
+        ).scalars()
+    )
+    # Filter edges to those whose endpoints are in the returned
+    # node set — keeps the response self-consistent.
+    filtered_edges = [
+        e
+        for e in edge_rows
+        if e.source_id in node_ids_in_project and e.target_id in node_ids_in_project
+    ]
+
+    pending_target_ids: set[str] = set(
+        db.execute(
+            select(Draft.target_id).where(
+                Draft.project_id == project_id,
+                Draft.target_type == "node",
+                Draft.status == "pending",
+            )
+        ).scalars()
+    )
+
+    running_ids = running_node_ids(db, project_id)
+    offset = queries.latest_offset(db, project_id) or 0
+
+    return StructureResponse(
+        offset=offset,
+        nodes=[
+            StructureNodeResponse(
+                id=n.id,
+                tier=n.tier,
+                kind=n.kind,
+                parent_id=n.parent_id,
+                name=n.name,
+                display_order=n.display_order,
+                has_content=bool((n.content or "").strip()),
+                has_pending_draft=n.id in pending_target_ids,
+                generation_running=n.id in running_ids,
+            )
+            for n in node_rows
+        ],
+        edges=[
+            StructureEdgeResponse(
+                id=e.id,
+                edge_type=e.edge_type,
+                source_id=e.source_id,
+                target_id=e.target_id,
+            )
+            for e in filtered_edges
+        ],
+    )
+
+
+@router.get("/{project_id}/events/stream")
+async def get_project_event_stream(
+    project_id: str,
+    since: int | None = None,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """SSE channel of committed events for this project.
+
+    Emits `{offset, event_type, node_ids}` per commit. The
+    ``since`` query param is the event-log offset the client
+    already has (from its last ``/structure`` read or a prior
+    live event). The broadcaster replays buffered messages with
+    ``offset > since`` before switching to live; this closes the
+    race where an event commits between snapshot read and
+    subscribe.
+
+    Client lifecycle: use browser ``EventSource``. Reconnects
+    automatically; on reconnect, re-fetch ``/structure`` to
+    re-seed state (cheaper and simpler than reasoning about
+    ring-buffer gaps).
+    """
+    from sse_starlette.sse import EventSourceResponse
+
+    from backend.graph.broadcast import get_broadcaster
+
+    _require_project(db, project_id)
+    broadcaster = get_broadcaster()
+
+    async def event_publisher():
+        async for msg in broadcaster.subscribe(project_id, since_offset=since):
+            yield {
+                "event": "delta",
+                "data": __import__("json").dumps(msg.to_payload()),
+            }
+
+    # 15-second ping from sse-starlette so intermediate proxies
+    # (load balancers, corporate firewalls) don't drop the
+    # connection as idle.
+    return EventSourceResponse(event_publisher(), ping=15)
+
+
 # ── Vocabulary routes (Phase 5.5) ──────────────────────────────────
 
 
@@ -2562,7 +2777,7 @@ def post_create_vocab(
             content=req.content,
         ),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
 
     node = db.get(Node, vocab_id)
     assert node is not None
@@ -2616,7 +2831,7 @@ def post_edit_vocab(
 
     entry.content = req.new_content
     entry.updated_at = datetime.utcnow()
-    db.commit()
+    commit_and_publish(db, project_id)
 
     return _serialize_vocab_entry(db, entry)
 
@@ -2656,7 +2871,7 @@ def post_rename_vocab(
         project_id,
         ev.NodeRenamed(node_id=vocab_id, new_name=new_name),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
 
     entry = db.get(Node, vocab_id)
     assert entry is not None
@@ -2711,7 +2926,7 @@ def post_reparent_vocab(
         project_id,
         ev.NodeReparented(node_id=vocab_id, new_parent_id=req.new_parent_id),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
 
     entry = db.get(Node, vocab_id)
     assert entry is not None
@@ -2737,7 +2952,7 @@ def post_delete_vocab(
         project_id,
         ev.NodeDeleted(node_id=vocab_id),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
     return {"status": "deleted", "vocab_id": vocab_id}
 
 
@@ -3585,7 +3800,7 @@ def post_create_reference(
                 target_id=related_id,
             ),
         )
-    db.commit()
+    commit_and_publish(db, project_id)
 
     feedback_result = bootstrap_feedback(
         db,
@@ -3715,7 +3930,7 @@ def post_reference_delete(
     if node is None:
         raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
     append_event(db, project_id, ev.NodeDeleted(node_id=ref_id))
-    db.commit()
+    commit_and_publish(db, project_id)
     return {"status": "deleted", "ref_id": ref_id}
 
 
@@ -3780,7 +3995,7 @@ def post_add_reference_edge(
             target_id=req.target_id,
         ),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
     return ReferenceEdgeResponse(
         edge_id=edge_id,
         source_id=req.source_id,
@@ -3814,5 +4029,5 @@ def post_remove_reference_edge(
             detail=(f"No reference edge between {req.source_id!r} and {req.target_id!r}"),
         )
     append_event(db, project_id, ev.EdgeDeleted(edge_id=edge.id))
-    db.commit()
+    commit_and_publish(db, project_id)
     return DiscardResponse(ok=True)
