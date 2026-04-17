@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useFanIn } from '../hooks/queries/useFanInQueries';
 import {
   useFanInCancelMutation,
   useFanInRegenerateMutation,
+  useFanInResetMutation,
 } from '../hooks/mutations/useFanInMutations';
 import { describeApiError } from '../lib/describeApiError';
 import { XmlDocument, faninRenderers } from './xml';
@@ -33,6 +35,8 @@ export function FanInPanel({ projectId, compId, ownerName }: Props) {
   const { data, error, isLoading } = useFanIn(projectId, compId);
   const regenerate = useFanInRegenerateMutation(projectId, compId);
   const cancel = useFanInCancelMutation(projectId, compId);
+  const reset = useFanInResetMutation(projectId, compId);
+  const [confirmingReset, setConfirmingReset] = useState(false);
 
   if (isLoading) {
     return (
@@ -63,7 +67,7 @@ export function FanInPanel({ projectId, compId, ownerName }: Props) {
   if (!data) return null;
 
   const isRunning = data.generation_status === 'running';
-  const isBusy = regenerate.isPending || cancel.isPending;
+  const isBusy = regenerate.isPending || cancel.isPending || reset.isPending;
   const hasContent = !!data.node.content.trim();
 
   return (
@@ -90,15 +94,43 @@ export function FanInPanel({ projectId, compId, ownerName }: Props) {
               Stop
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={() => regenerate.mutate()}
-              disabled={isBusy}
-              className="px-3 py-1.5 text-sm rounded border border-purple-700/50 text-purple-200 hover:bg-purple-950 disabled:opacity-50"
-              title="Re-run the fan-in synthesis against the current impls."
-            >
-              {regenerate.isPending ? 'Starting…' : 'Regenerate'}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => regenerate.mutate()}
+                disabled={isBusy}
+                className="px-3 py-1.5 text-sm rounded border border-purple-700/50 text-purple-200 hover:bg-purple-950 disabled:opacity-50"
+                title="Re-run the fan-in synthesis against the current impls."
+              >
+                {regenerate.isPending ? 'Starting…' : 'Regenerate'}
+              </button>
+              {confirmingReset ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    reset.mutate();
+                    setConfirmingReset(false);
+                  }}
+                  onBlur={() => setConfirmingReset(false)}
+                  disabled={isBusy}
+                  autoFocus
+                  className="px-3 py-1.5 text-sm rounded border border-red-700 bg-red-950 text-red-200 hover:bg-red-900 disabled:opacity-50"
+                  title="Clear the fan-in content and re-enqueue generation."
+                >
+                  Confirm reset
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmingReset(true)}
+                  disabled={isBusy || !hasContent}
+                  className="px-3 py-1.5 text-sm rounded border border-red-800/40 text-red-300 hover:bg-red-950 disabled:opacity-40"
+                  title="Destructively clear content and regen. Two-click confirm."
+                >
+                  Reset
+                </button>
+              )}
+            </>
           )}
         </div>
       </header>

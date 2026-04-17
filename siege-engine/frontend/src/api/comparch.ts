@@ -25,3 +25,6 @@ export const discardDraft = (projectId: string, componentId: string, draftId: st
 
 export const cancelGeneration = (projectId: string, componentId: string) =>
   comparchApi.cancelGeneration(projectId, componentId);
+
+export const resetComparch = (projectId: string, componentId: string) =>
+  comparchApi.resetTier(projectId, componentId);

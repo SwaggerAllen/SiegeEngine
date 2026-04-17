@@ -400,7 +400,7 @@ def bootstrap_reset(
             project_id=project_id,
         )
 
-    downstream_nodes = config.collect_downstream_nodes(db, project_id)
+    downstream_nodes = config.collect_downstream_nodes(db, project_id, *scope_ids)
     downstream_ids = [n.id for n in downstream_nodes]
     assert config.collect_pending_drafts_for_nodes is not None
     pending_drafts = config.collect_pending_drafts_for_nodes(
@@ -419,7 +419,7 @@ def bootstrap_reset(
         drafts_discarded += 1
 
     additional_drafts = (
-        config.additional_drafts_to_discard(db, project_id)
+        config.additional_drafts_to_discard(db, project_id, *scope_ids)
         if config.additional_drafts_to_discard
         else []
     )
@@ -432,7 +432,9 @@ def bootstrap_reset(
         append_event(db, project_id, ev.NodeDeleted(node_id=dn.id))
 
     additional_to_clear = (
-        config.additional_nodes_to_clear(db, project_id) if config.additional_nodes_to_clear else []
+        config.additional_nodes_to_clear(db, project_id, *scope_ids)
+        if config.additional_nodes_to_clear
+        else []
     )
     for clear_node in additional_to_clear:
         if clear_node is not None and clear_node.content:

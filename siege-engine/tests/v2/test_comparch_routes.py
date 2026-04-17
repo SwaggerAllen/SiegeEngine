@@ -223,3 +223,76 @@ class TestApproveDiscard:
 
         db.refresh(draft)
         assert draft.status == "discarded"
+
+
+class TestReset:
+    """Destructive reset for the per-component comparch tier.
+
+    Comparch reset deletes subcomp children, local policies,
+    fanin + impl under the comp, and clears the comp_* node's
+    own content. Leaves subresps alone (those are subreqs-owned).
+    """
+
+    def test_reset_requires_approved_state(self, client, project_with_comp):
+        resp = client.post(
+            f"/api/projects/{project_with_comp['project'].id}"
+            f"/components/{project_with_comp['comp_id']}/comparch/reset"
+        )
+        assert resp.status_code == 409
+
+    def test_reset_deletes_subcomps_and_clears_content(self, client, project_with_comp, db):
+        pid = project_with_comp["project"].id
+        comp_id = project_with_comp["comp_id"]
+
+        # Approve comparch by stuffing content directly.
+        comp = db.get(Node, comp_id)
+        comp.content = "<comparch></comparch>"
+        # Add a subcomp + a local policy to verify cascade.
+        sub_id = mint(db, Kind.COMP)
+        append_event(
+            db,
+            pid,
+            ev.NodeCreated(
+                node_id=sub_id,
+                tier="comp",
+                kind="domain",
+                parent_id=comp_id,
+                name="Sub",
+                display_order=0,
+                content="",
+            ),
+        )
+        policy_id = mint(db, Kind.POLICY)
+        append_event(
+            db,
+            pid,
+            ev.NodeCreated(
+                node_id=policy_id,
+                tier="policy",
+                kind="domain",
+                parent_id=comp_id,
+                name="LocalPolicy",
+                display_order=0,
+                content="<policy></policy>",
+            ),
+        )
+        db.commit()
+
+        resp = client.post(f"/api/projects/{pid}/components/{comp_id}/comparch/reset")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["ok"] is True
+
+        assert db.get(Node, sub_id) is None
+        assert db.get(Node, policy_id) is None
+        db.refresh(comp)
+        assert comp.content == ""
+
+        fresh = [
+            j
+            for j in db.execute(select(Job).where(Job.job_type == "v2.generate_comparch")).scalars()
+            if (j.payload or {}).get("project_id") == pid
+            and (j.payload or {}).get("component_id") == comp_id
+            and j.status in ("queued", "running")
+        ]
+        assert len(fresh) >= 1

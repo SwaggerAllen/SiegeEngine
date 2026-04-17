@@ -3,6 +3,7 @@ import {
   useApproveMutation,
   useCancelGenerationMutation,
   useFeedbackMutation,
+  useResetMutation,
 } from '../hooks/mutations/useComparchMutations';
 import {
   BootstrapDraftPanel,
@@ -40,11 +41,13 @@ export function ComparchPanel({ projectId, componentId, componentName }: Props) 
   const feedbackMutation = useFeedbackMutation(projectId, componentId);
   const approveMutation = useApproveMutation(projectId, componentId);
   const cancelMutation = useCancelGenerationMutation(projectId, componentId);
+  const resetMutation = useResetMutation(projectId, componentId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    cancelMutation.isPending;
+    cancelMutation.isPending ||
+    resetMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -57,6 +60,7 @@ export function ComparchPanel({ projectId, componentId, componentName }: Props) 
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
+        onReset: () => resetMutation.mutate(),
         isBusy,
       }}
       contentRenderers={comparchRenderers}

@@ -67,6 +67,9 @@ export const discardImplTopLevelDraft = (
 export const cancelImplTopLevelGeneration = (projectId: string, compId: string) =>
   implTopLevelApi.cancelGeneration(projectId, compId);
 
+export const resetImplTopLevel = (projectId: string, compId: string) =>
+  implTopLevelApi.resetTier(projectId, compId);
+
 // ── Per-subcomponent impl CRUD ─────────────────────────────────────
 // Signature: (projectId, parentCompId, subId). The sub is the
 // owner; parentCompId is the URL context so the client has a
@@ -104,3 +107,9 @@ export const cancelImplSubGeneration = (
   parentCompId: string,
   subId: string,
 ) => implSubApi.cancelGeneration(projectId, parentCompId, subId);
+
+export const resetImplSub = (
+  projectId: string,
+  parentCompId: string,
+  subId: string,
+) => implSubApi.resetTier(projectId, parentCompId, subId);

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from backend.auth.routes import get_current_user
 from backend.database import get_db
 from backend.graph import events as ev
-from backend.graph import queries
+from backend.graph import per_comp_reset, queries
 from backend.graph.bootstrap_routes import (
     BootstrapTierConfig,
     bootstrap_approve,
@@ -1043,6 +1043,10 @@ SUBREQS_CONFIG = BootstrapTierConfig(
         "subresponsibility-layer edits happen via individual "
         "subresp nodes and structural edit UIs."
     ),
+    collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_subreqs,
+    collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
+    downstream_job_types=per_comp_reset.subreqs_downstream_job_types(),
+    additional_nodes_to_clear=per_comp_reset.additional_nodes_to_clear_subreqs,
 )
 
 
@@ -1161,6 +1165,28 @@ def post_subreqs_cancel(
     )
 
 
+@router.post(
+    "/{project_id}/components/{comp_id}/subrequirements/reset",
+    response_model=ResetResponse,
+)
+def post_subreqs_reset(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return ResetResponse(
+        **bootstrap_reset(
+            db,
+            project_id,
+            (comp_id,),
+            SUBREQS_CONFIG,
+            _require_project,
+        )
+    )
+
+
 # ── Comparch response models ───────────────────────────────────────
 
 
@@ -1239,6 +1265,9 @@ COMPARCH_CONFIG = BootstrapTierConfig(
         "further edits happen via individual comp_* / policy_* "
         "nodes and the structural-edit UIs coming in Phase 11."
     ),
+    collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_comparch,
+    collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
+    downstream_job_types=per_comp_reset.comparch_downstream_job_types(),
 )
 
 
@@ -1343,6 +1372,28 @@ def post_comparch_cancel(
 ) -> CancelResponse:
     return CancelResponse(
         **bootstrap_cancel(
+            db,
+            project_id,
+            (comp_id,),
+            COMPARCH_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/comparch/reset",
+    response_model=ResetResponse,
+)
+def post_comparch_reset(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return ResetResponse(
+        **bootstrap_reset(
             db,
             project_id,
             (comp_id,),
@@ -1479,6 +1530,9 @@ SUBCOMPARCH_CONFIG = BootstrapTierConfig(
         "further edits happen via the structural-edit UIs "
         "coming in Phase 11."
     ),
+    collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_subcomparch,
+    collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
+    downstream_job_types=per_comp_reset.subcomparch_downstream_job_types(),
 )
 
 
@@ -1595,6 +1649,29 @@ def post_subcomparch_cancel(
     _require_subcomponent(db, project_id, parent_comp_id, sub_id)
     return CancelResponse(
         **bootstrap_cancel(
+            db,
+            project_id,
+            (sub_id,),
+            SUBCOMPARCH_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/subcomparch/reset",
+    response_model=ResetResponse,
+)
+def post_subcomparch_reset(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return ResetResponse(
+        **bootstrap_reset(
             db,
             project_id,
             (sub_id,),
@@ -2374,6 +2451,9 @@ IMPL_CONFIG = BootstrapTierConfig(
     # owning top-level domain comp and enqueue fan-in regen if
     # one exists. See ``impl_generation.on_impl_approved``.
     on_approve=on_impl_approved,
+    collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_impl,
+    collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
+    downstream_job_types=per_comp_reset.impl_downstream_job_types(),
 )
 
 
@@ -2516,6 +2596,28 @@ def post_impl_top_level_cancel(
     )
 
 
+@router.post(
+    "/{project_id}/components/{comp_id}/impl/reset",
+    response_model=ResetResponse,
+)
+def post_impl_top_level_reset(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return ResetResponse(
+        **bootstrap_reset(
+            db,
+            project_id,
+            (comp_id,),
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
 # ── Per-subcomponent impl routes ───────────────────────────────────
 
 
@@ -2629,6 +2731,29 @@ def post_impl_sub_cancel(
     _require_subcomponent(db, project_id, parent_comp_id, sub_id)
     return CancelResponse(
         **bootstrap_cancel(
+            db,
+            project_id,
+            (sub_id,),
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/impl/reset",
+    response_model=ResetResponse,
+)
+def post_impl_sub_reset(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return ResetResponse(
+        **bootstrap_reset(
             db,
             project_id,
             (sub_id,),
@@ -2839,6 +2964,71 @@ def post_fanin_cancel(
         return CancelResponse(cancelled=False)
     ok = pipeline_queue.cancel_job(db, job.id)
     return CancelResponse(cancelled=ok)
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/fanin/reset",
+    response_model=ResetResponse,
+)
+def post_fanin_reset(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    """Force-reset the fan-in summary for this comp.
+
+    Fan-in doesn't use the draft lifecycle (content writes land
+    via ``FanInContentUpdated`` directly from the generation
+    handler), so we skip the draft-discard step the generic
+    ``bootstrap_reset`` runs. Instead: cancel the in-flight
+    generation job if one exists, clear the fanin node's content
+    via ``BootstrapNodeContentCleared``, re-enqueue
+    ``v2.generate_fanin``, and return the same response shape as
+    the other reset endpoints.
+    """
+    from backend.pipeline import queue as pipeline_queue
+
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+
+    # Locate the fanin node for this comp.
+    fanin_node = db.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "fanin",
+            Node.parent_id == comp_id,
+        )
+    ).scalar_one_or_none()
+    if fanin_node is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Fan-in node missing — this comp hasn't been fanned out yet.",
+        )
+
+    jobs_cancelled = pipeline_queue.cancel_jobs_by_type(
+        db,
+        GENERATE_FANIN_JOB_TYPE,
+        project_id=project_id,
+        owner_comp_id=comp_id,
+    )
+    append_event(
+        db,
+        project_id,
+        ev.BootstrapNodeContentCleared(node_id=fanin_node.id),
+    )
+    commit_and_publish(db, project_id)
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_FANIN_JOB_TYPE,
+        payload={"project_id": project_id, "owner_comp_id": comp_id},
+    )
+    return ResetResponse(
+        ok=True,
+        nodes_deleted=0,
+        drafts_discarded=0,
+        jobs_cancelled=jobs_cancelled,
+    )
 
 
 # ── Reference routes (Phase 6.6) ──────────────────────────────────

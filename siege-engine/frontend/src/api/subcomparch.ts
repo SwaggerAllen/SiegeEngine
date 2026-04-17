@@ -54,3 +54,7 @@ export const discardDraft = (
 export const cancelGeneration = (
   projectId: string, parentCompId: string, subId: string,
 ) => subcomparchApi.cancelGeneration(projectId, parentCompId, subId);
+
+export const resetSubcomparch = (
+  projectId: string, parentCompId: string, subId: string,
+) => subcomparchApi.resetTier(projectId, parentCompId, subId);

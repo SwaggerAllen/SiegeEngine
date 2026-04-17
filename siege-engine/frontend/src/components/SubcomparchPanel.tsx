@@ -3,6 +3,7 @@ import {
   useSubcomparchApproveMutation,
   useSubcomparchCancelGenerationMutation,
   useSubcomparchFeedbackMutation,
+  useSubcomparchResetMutation,
 } from '../hooks/mutations/useSubcomparchMutations';
 import {
   BootstrapDraftPanel,
@@ -60,11 +61,17 @@ export function SubcomparchPanel({
     parentCompId,
     subId
   );
+  const resetMutation = useSubcomparchResetMutation(
+    projectId,
+    parentCompId,
+    subId
+  );
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    cancelMutation.isPending;
+    cancelMutation.isPending ||
+    resetMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -77,6 +84,7 @@ export function SubcomparchPanel({
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
+        onReset: () => resetMutation.mutate(),
         isBusy,
       }}
       contentRenderers={subcomparchRenderers}

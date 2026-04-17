@@ -398,3 +398,74 @@ class TestDiscard:
         assert resp.status_code == 200
         db.refresh(draft)
         assert draft.status == "discarded"
+
+
+class TestReset:
+    """Destructive reset for the per-component subreqs tier.
+
+    Cascades through to subresps + all comparch-minted state
+    (subcomponents, local policies, impl, fanin) under the same
+    top-level comp. Clears the subreqs_* node's content, clears
+    the comp_*'s own content (which holds comparch XML), and
+    re-enqueues ``v2.generate_subrequirements`` for a fresh run.
+    """
+
+    def test_reset_requires_approved_state(self, client, seeded):
+        resp = client.post(
+            f"/api/projects/{seeded['project_id']}/components/{seeded['comp_id']}/subrequirements/reset"
+        )
+        assert resp.status_code == 409
+
+    def test_reset_deletes_cascaded_subresps_and_re_enqueues(self, client, seeded, db):
+        # Manually approve the subreqs node: push non-empty content.
+        subreqs_node = db.execute(
+            select(Node).where(
+                Node.project_id == seeded["project_id"],
+                Node.tier == "subreqs",
+                Node.parent_id == seeded["comp_id"],
+            )
+        ).scalar_one()
+        subreqs_node.content = "<subrequirements></subrequirements>"
+        # Also mint a subresp parented to the comp to verify the
+        # reset cascade picks it up.
+        subresp_id = mint(db, Kind.RESP)
+        append_event(
+            db,
+            seeded["project_id"],
+            ev.NodeCreated(
+                node_id=subresp_id,
+                tier="resp",
+                kind="domain",
+                parent_id=seeded["comp_id"],
+                name="Minted subresp",
+                display_order=0,
+                content="Subresp body.",
+            ),
+        )
+        db.commit()
+
+        resp = client.post(
+            f"/api/projects/{seeded['project_id']}/components/{seeded['comp_id']}/subrequirements/reset"
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["nodes_deleted"] >= 1
+
+        # Subresp is gone.
+        assert db.get(Node, subresp_id) is None
+        # Subreqs node content cleared.
+        db.refresh(subreqs_node)
+        assert subreqs_node.content == ""
+
+        # A fresh generate_subrequirements job enqueues for this comp.
+        fresh = [
+            j
+            for j in db.execute(
+                select(Job).where(Job.job_type == "v2.generate_subrequirements")
+            ).scalars()
+            if (j.payload or {}).get("project_id") == seeded["project_id"]
+            and (j.payload or {}).get("component_id") == seeded["comp_id"]
+            and j.status in ("queued", "running")
+        ]
+        assert len(fresh) >= 1

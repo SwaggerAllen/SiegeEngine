@@ -25,3 +25,6 @@ export const discardDraft = (projectId: string, componentId: string, draftId: st
 
 export const cancelGeneration = (projectId: string, componentId: string) =>
   subreqsApi.cancelGeneration(projectId, componentId);
+
+export const resetSubreqs = (projectId: string, componentId: string) =>
+  subreqsApi.resetTier(projectId, componentId);
