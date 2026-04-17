@@ -43,7 +43,19 @@ def append_event(session: Session, project_id: str, event: ev._EventBase) -> int
     Transactional: if ``apply_event`` raises, the whole operation is
     rolled back and no partial state is written. Returns the assigned
     per-project offset.
+
+    After a successful flush, records the offset on ``session.info``
+    via :func:`backend.graph.broadcast.stash_offset`. Write-route
+    handlers call :func:`backend.graph.broadcast.commit_and_publish`
+    in place of ``db.commit()``; that helper drains the stash and
+    fans out SSE messages *after* the transaction commits, so a
+    failed broadcast can't roll back state.
     """
+    # Local import to avoid a circular graph.broadcast ↔ graph.reducer
+    # during package init (broadcast imports GraphEvent which lives
+    # in models, which re-exports via models.__init__).
+    from backend.graph.broadcast import stash_offset
+
     # Assign next offset for this project. SQLite doesn't need FOR
     # UPDATE — the surrounding session is already the single writer.
     current_max = session.execute(
@@ -66,6 +78,7 @@ def append_event(session: Session, project_id: str, event: ev._EventBase) -> int
     except Exception:
         session.rollback()
         raise
+    stash_offset(session, next_offset)
     return next_offset
 
 

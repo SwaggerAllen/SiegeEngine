@@ -35,6 +35,12 @@ export type FanInResponse = z.infer<typeof FanInResponseSchema>;
 
 const RegenerateResponseSchema = z.object({ job_id: z.string() });
 const CancelResponseSchema = z.object({ cancelled: z.boolean() });
+const ResetResponseSchema = z.object({
+  ok: z.boolean(),
+  nodes_deleted: z.number().int(),
+  drafts_discarded: z.number().int(),
+  jobs_cancelled: z.number().int(),
+});
 
 export async function getFanIn(
   projectId: string,
@@ -64,4 +70,14 @@ export async function cancelFanIn(
     `/projects/${projectId}/components/${compId}/fanin/cancel`,
   );
   return CancelResponseSchema.parse(data);
+}
+
+export async function resetFanIn(
+  projectId: string,
+  compId: string,
+): Promise<{ ok: boolean }> {
+  const { data } = await api.post(
+    `/projects/${projectId}/components/${compId}/fanin/reset`,
+  );
+  return ResetResponseSchema.parse(data);
 }

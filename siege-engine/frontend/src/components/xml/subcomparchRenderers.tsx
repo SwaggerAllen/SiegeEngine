@@ -1,4 +1,5 @@
 import { CollapsibleSection } from './CollapsibleSection';
+import { Paragraphs } from './Paragraphs';
 import type { XmlRendererMap } from './types';
 import { findChildren, textContent } from './types';
 
@@ -28,9 +29,7 @@ export const subcomparchRenderers: XmlRendererMap = {
 
   'technical-specification': (node) => (
     <CollapsibleSection summary="Technical Specification">
-      <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
-        {textContent(node).trim()}
-      </p>
+      <Paragraphs text={textContent(node)} />
     </CollapsibleSection>
   ),
 

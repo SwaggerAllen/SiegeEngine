@@ -1,6 +1,6 @@
 import * as api from '../../api/sysarch';
 import { makeBootstrapMutations } from '../useBootstrapHooks';
-import { componentsKeys, policiesKeys, sysarchKeys } from '../queries/useSysarchQueries';
+import { sysarchKeys } from '../queries/useSysarchQueries';
 
 const m = makeBootstrapMutations(
   'sysarch',
@@ -11,11 +11,7 @@ const m = makeBootstrapMutations(
     cancelGeneration: (pid) => api.cancelGeneration(pid),
     resetTier: (pid) => api.resetSysarch(pid),
   },
-  sysarchKeys,
-  (queryClient, projectId) => {
-    queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
-    queryClient.invalidateQueries({ queryKey: policiesKeys.list(projectId) });
-  }
+  sysarchKeys
 );
 
 export const useFeedbackMutation = m.useFeedbackMutation;

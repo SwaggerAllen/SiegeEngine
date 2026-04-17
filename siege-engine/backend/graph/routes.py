@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from backend.auth.routes import get_current_user
 from backend.database import get_db
 from backend.graph import events as ev
-from backend.graph import queries
+from backend.graph import per_comp_reset, queries
 from backend.graph.bootstrap_routes import (
     BootstrapTierConfig,
     bootstrap_approve,
@@ -33,6 +33,7 @@ from backend.graph.bootstrap_routes import (
     bootstrap_prompt_preview,
     bootstrap_reset,
 )
+from backend.graph.broadcast import commit_and_publish
 from backend.graph.expansion import (
     bootstrap_expansion_node,
     get_expansion_node,
@@ -42,6 +43,7 @@ from backend.graph.expansion import (
 from backend.graph.expansion import (
     collect_downstream_nodes as expansion_collect_downstream_nodes,
 )
+from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.handlers.comparch_generation import (
     GENERATE_COMPARCH_JOB_TYPE,
 )
@@ -99,8 +101,7 @@ from backend.graph.sysarch import (
 )
 from backend.graph.sysarch import has_been_approved as sysarch_has_been_approved
 from backend.models import Project, User
-from backend.models.job import Job
-from backend.models.node import Draft, Edge, Node
+from backend.models.node import Draft, Edge, Fragment, Node
 from backend.models.telemetry import GenerationTelemetry
 
 logger = logging.getLogger(__name__)
@@ -248,23 +249,6 @@ class PromptPreviewResponse(BaseModel):
 
     system_prompt: str
     user_prompt: str
-
-
-# ── Feature list response models ────────────────────────────────────
-
-
-class FeatureSummary(BaseModel):
-    id: str
-    name: str
-    content: str
-    display_order: int
-    group_label: str | None
-    is_implicit: bool
-    updated_at: str
-
-
-class FeatureListResponse(BaseModel):
-    features: list[FeatureSummary]
 
 
 # ── Expansion endpoints ─────────────────────────────────────────────
@@ -426,41 +410,6 @@ def post_expansion_cancel(
     )
 
 
-# ── Feature list endpoint ───────────────────────────────────────────
-
-
-@router.get("/{project_id}/features", response_model=FeatureListResponse)
-def get_features(
-    project_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> FeatureListResponse:
-    """List all ``feat_*`` nodes for a project in document order.
-
-    The list is populated by the ``v2.mint_features`` pipeline job
-    after the user approves the feature expansion. Before mint
-    completes, the list is empty. The frontend polls this endpoint
-    while the mint is running; once features appear, it stops
-    polling.
-    """
-    _require_project(db, project_id)
-    features = queries.list_features(db, project_id)
-    return FeatureListResponse(
-        features=[
-            FeatureSummary(
-                id=f.id,
-                name=f.name,
-                content=f.content,
-                display_order=f.display_order,
-                group_label=f.group_label,
-                is_implicit=f.is_implicit,
-                updated_at=f.updated_at.isoformat() if f.updated_at else "",
-            )
-            for f in features
-        ]
-    )
-
-
 # ── Requirements response models ────────────────────────────────────
 
 
@@ -491,18 +440,6 @@ class ReqsResponse(BaseModel):
 
 class ReqsApproveResponse(BaseModel):
     node: ReqsNodeResponse
-
-
-class ResponsibilitySummary(BaseModel):
-    id: str
-    name: str
-    content: str
-    display_order: int
-    updated_at: str
-
-
-class ResponsibilityListResponse(BaseModel):
-    responsibilities: list[ResponsibilitySummary]
 
 
 def _serialize_reqs_node(node) -> ReqsNodeResponse:
@@ -619,39 +556,6 @@ def post_requirements_cancel(
     )
 
 
-# ── Responsibilities list endpoint ──────────────────────────────────
-
-
-@router.get("/{project_id}/responsibilities", response_model=ResponsibilityListResponse)
-def get_responsibilities(
-    project_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> ResponsibilityListResponse:
-    """List all top-level ``resp_*`` nodes for a project in document order.
-
-    Top-level responsibilities are the ones minted by the
-    ``v2.mint_requirements`` pipeline job after the user approves
-    the requirements. Subresponsibilities (minted later by per-
-    component subreqs handlers) have a non-null ``parent_id`` and
-    are not included in this list.
-    """
-    _require_project(db, project_id)
-    responsibilities = queries.list_top_level_responsibilities(db, project_id)
-    return ResponsibilityListResponse(
-        responsibilities=[
-            ResponsibilitySummary(
-                id=r.id,
-                name=r.name,
-                content=r.content,
-                display_order=r.display_order,
-                updated_at=r.updated_at.isoformat() if r.updated_at else "",
-            )
-            for r in responsibilities
-        ]
-    )
-
-
 # ── Sysarch response models ─────────────────────────────────────────
 
 
@@ -682,40 +586,6 @@ class SysarchResponse(BaseModel):
 
 class SysarchApproveResponse(BaseModel):
     node: SysarchNodeResponse
-
-
-class ComponentSummary(BaseModel):
-    id: str
-    name: str
-    kind: str  # "domain" | "presentational"
-    display_order: int
-    updated_at: str
-    # Phase 6 waiting-on-approval indicator. Non-null when this
-    # comp has a pending draft the user still has to approve —
-    # ``"subreqs"`` / ``"comparch"`` / ``"subcomparch"``. Null
-    # when the comp is fully approved or when no draft has been
-    # generated for it yet. See
-    # :func:`backend.graph.queries.pending_draft_kinds_by_comp`.
-    pending_draft_kind: str | None = None
-
-
-class ComponentListResponse(BaseModel):
-    components: list[ComponentSummary]
-
-
-class PolicySummary(BaseModel):
-    id: str
-    name: str
-    # The raw <policy>...</policy> blob stored on Node.content. The
-    # frontend parses it for display; no need to double-parse on
-    # every list read when the payload is small.
-    content: str
-    display_order: int
-    updated_at: str
-
-
-class PolicyListResponse(BaseModel):
-    policies: list[PolicySummary]
 
 
 def _serialize_sysarch_node(node) -> SysarchNodeResponse:
@@ -1093,69 +963,6 @@ def post_reqs_reset(
     )
 
 
-# ── Components + policies list endpoints ────────────────────────────
-
-
-@router.get("/{project_id}/components", response_model=ComponentListResponse)
-def get_components(
-    project_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> ComponentListResponse:
-    """List all top-level ``comp_*`` nodes for a project.
-
-    Populated by the ``v2.mint_sysarch`` pipeline job after the
-    sysarch draft is approved. Before then, empty. Frontend polls
-    while the mint might still be running; stops once at least one
-    component is present.
-    """
-    _require_project(db, project_id)
-    components = queries.list_top_level_components(db, project_id)
-    pending_by_comp = queries.pending_draft_kinds_by_comp(db, project_id)
-    return ComponentListResponse(
-        components=[
-            ComponentSummary(
-                id=c.id,
-                name=c.name,
-                kind=c.kind,
-                display_order=c.display_order,
-                updated_at=c.updated_at.isoformat() if c.updated_at else "",
-                pending_draft_kind=pending_by_comp.get(c.id),
-            )
-            for c in components
-        ]
-    )
-
-
-@router.get("/{project_id}/policies", response_model=PolicyListResponse)
-def get_policies(
-    project_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> PolicyListResponse:
-    """List all ``policy_*`` nodes for a project.
-
-    Includes top-level policies minted at sysarch approval and
-    component-local policies minted at comparch approval (Phase 4).
-    Frontend is responsible for parsing the inline ``<policy>`` XML
-    blob on ``Node.content`` into structured fields for display.
-    """
-    _require_project(db, project_id)
-    policies = queries.list_policies(db, project_id)
-    return PolicyListResponse(
-        policies=[
-            PolicySummary(
-                id=p.id,
-                name=p.name,
-                content=p.content,
-                display_order=p.display_order,
-                updated_at=p.updated_at.isoformat() if p.updated_at else "",
-            )
-            for p in policies
-        ]
-    )
-
-
 # ── Subreqs response models ─────────────────────────────────────────
 
 
@@ -1186,18 +993,6 @@ class SubreqsResponse(BaseModel):
 
 class SubreqsApproveResponse(BaseModel):
     node: SubreqsNodeResponse
-
-
-class SubresponsibilitySummary(BaseModel):
-    id: str
-    name: str
-    content: str
-    display_order: int
-    updated_at: str
-
-
-class SubresponsibilityListResponse(BaseModel):
-    subresponsibilities: list[SubresponsibilitySummary]
 
 
 def _serialize_subreqs_node(node) -> SubreqsNodeResponse:
@@ -1248,6 +1043,10 @@ SUBREQS_CONFIG = BootstrapTierConfig(
         "subresponsibility-layer edits happen via individual "
         "subresp nodes and structural edit UIs."
     ),
+    collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_subreqs,
+    collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
+    downstream_job_types=per_comp_reset.subreqs_downstream_job_types(),
+    additional_nodes_to_clear=per_comp_reset.additional_nodes_to_clear_subreqs,
 )
 
 
@@ -1366,93 +1165,25 @@ def post_subreqs_cancel(
     )
 
 
-@router.get(
-    "/{project_id}/components/{comp_id}/subresponsibilities",
-    response_model=SubresponsibilityListResponse,
+@router.post(
+    "/{project_id}/components/{comp_id}/subrequirements/reset",
+    response_model=ResetResponse,
 )
-def get_subresponsibilities(
+def post_subreqs_reset(
     project_id: str,
     comp_id: str,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
-) -> SubresponsibilityListResponse:
-    """List the subresp ``resp_*`` nodes under a given component."""
-    _require_project(db, project_id)
+) -> ResetResponse:
     _require_top_level_comp(db, project_id, comp_id)
-    subresps = queries.list_subresponsibilities(db, comp_id)
-    return SubresponsibilityListResponse(
-        subresponsibilities=[
-            SubresponsibilitySummary(
-                id=sr.id,
-                name=sr.name,
-                content=sr.content,
-                display_order=sr.display_order,
-                updated_at=sr.updated_at.isoformat() if sr.updated_at else "",
-            )
-            for sr in subresps
-        ]
-    )
-
-
-# ── Responsibility coverage (received + computed) ───────────────────
-#
-# The subreqs view wants to show, side by side:
-#   - Top-level resps routed to this comp via sysarch decomposition
-#     edges ("Received" — what the component was told to own).
-#   - Subresps minted under this comp at subreqs approval time
-#     ("Computed" — what the component broke its responsibilities
-#     into).
-#
-# Both lists come from existing queries. Combining them into one
-# endpoint keeps the sidebar-driven detail pane to a single query
-# and lets the frontend group cleanly without wiring up two
-# hooks.
-
-
-class ResponsibilityCoverageResponse(BaseModel):
-    # Top-level resps assigned to this comp via decomposition edges.
-    # "Received" in the subreqs view — what sysarch routed here.
-    received: list[ResponsibilitySummary]
-    # Subresps minted under this comp by subreqs approval.
-    # "Computed" in the subreqs view — what the component broke
-    # its received responsibilities into.
-    computed: list[ResponsibilitySummary]
-
-
-def _serialize_resp_summary(node: Node) -> ResponsibilitySummary:
-    return ResponsibilitySummary(
-        id=node.id,
-        name=node.name,
-        content=node.content or "",
-        display_order=node.display_order,
-        updated_at=node.updated_at.isoformat() if node.updated_at else "",
-    )
-
-
-@router.get(
-    "/{project_id}/components/{comp_id}/responsibility-coverage",
-    response_model=ResponsibilityCoverageResponse,
-)
-def get_responsibility_coverage(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> ResponsibilityCoverageResponse:
-    """Return resps received from sysarch + subresps computed here.
-
-    Used by the subreqs detail pane to render "what the component
-    was asked to own" alongside "what the component broke those
-    responsibilities into" so the user can audit the compression
-    at a glance.
-    """
-    _require_project(db, project_id)
-    _require_top_level_comp(db, project_id, comp_id)
-    received = queries.top_level_resps_assigned_to(db, comp_id)
-    computed = queries.list_subresponsibilities(db, comp_id)
-    return ResponsibilityCoverageResponse(
-        received=[_serialize_resp_summary(r) for r in received],
-        computed=[_serialize_resp_summary(r) for r in computed],
+    return ResetResponse(
+        **bootstrap_reset(
+            db,
+            project_id,
+            (comp_id,),
+            SUBREQS_CONFIG,
+            _require_project,
+        )
     )
 
 
@@ -1486,41 +1217,6 @@ class ComparchResponse(BaseModel):
 
 class ComparchApproveResponse(BaseModel):
     node: ComparchNodeResponse
-
-
-class SubcomponentSummary(BaseModel):
-    id: str
-    name: str
-    parent_id: str
-    display_order: int
-    updated_at: str
-
-
-class SubcomponentListResponse(BaseModel):
-    subcomponents: list[SubcomponentSummary]
-
-
-class ComponentLocalPolicySummary(BaseModel):
-    id: str
-    name: str
-    content: str  # inline <policy> blob
-    display_order: int
-    updated_at: str
-
-
-class ComponentLocalPolicyListResponse(BaseModel):
-    policies: list[ComponentLocalPolicySummary]
-
-
-class AppliedPolicySummary(BaseModel):
-    policy_id: str
-    policy_name: str
-    policy_content: str
-    target_id: str
-
-
-class AppliedPolicyListResponse(BaseModel):
-    applied_policies: list[AppliedPolicySummary]
 
 
 def _serialize_comparch_node(node) -> ComparchNodeResponse:
@@ -1569,6 +1265,9 @@ COMPARCH_CONFIG = BootstrapTierConfig(
         "further edits happen via individual comp_* / policy_* "
         "nodes and the structural-edit UIs coming in Phase 11."
     ),
+    collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_comparch,
+    collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
+    downstream_job_types=per_comp_reset.comparch_downstream_job_types(),
 )
 
 
@@ -1673,6 +1372,28 @@ def post_comparch_cancel(
 ) -> CancelResponse:
     return CancelResponse(
         **bootstrap_cancel(
+            db,
+            project_id,
+            (comp_id,),
+            COMPARCH_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/comparch/reset",
+    response_model=ResetResponse,
+)
+def post_comparch_reset(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return ResetResponse(
+        **bootstrap_reset(
             db,
             project_id,
             (comp_id,),
@@ -1809,6 +1530,9 @@ SUBCOMPARCH_CONFIG = BootstrapTierConfig(
         "further edits happen via the structural-edit UIs "
         "coming in Phase 11."
     ),
+    collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_subcomparch,
+    collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
+    downstream_job_types=per_comp_reset.subcomparch_downstream_job_types(),
 )
 
 
@@ -1934,326 +1658,201 @@ def post_subcomparch_cancel(
     )
 
 
-# ── Subcomponent / policy list endpoints ───────────────────────────
-
-
-@router.get(
-    "/{project_id}/components/{comp_id}/subcomponents",
-    response_model=SubcomponentListResponse,
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/subcomparch/reset",
+    response_model=ResetResponse,
 )
-def get_subcomponents(
+def post_subcomparch_reset(
     project_id: str,
-    comp_id: str,
+    parent_comp_id: str,
+    sub_id: str,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
-) -> SubcomponentListResponse:
-    """List the subcomponent ``comp_*`` children under a top-level component."""
-    _require_project(db, project_id)
-    _require_top_level_comp(db, project_id, comp_id)
-    subs = list(
-        db.execute(
-            select(Node)
-            .where(
-                Node.project_id == project_id,
-                Node.tier == "comp",
-                Node.parent_id == comp_id,
-            )
-            .order_by(Node.display_order.asc(), Node.id.asc())
-        ).scalars()
-    )
-    return SubcomponentListResponse(
-        subcomponents=[
-            SubcomponentSummary(
-                id=s.id,
-                name=s.name,
-                # The query filtered on ``parent_id == comp_id`` so
-                # this is known non-null at runtime; pass comp_id
-                # directly rather than narrowing ``s.parent_id``.
-                parent_id=comp_id,
-                display_order=s.display_order,
-                updated_at=s.updated_at.isoformat() if s.updated_at else "",
-            )
-            for s in subs
-        ]
+) -> ResetResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return ResetResponse(
+        **bootstrap_reset(
+            db,
+            project_id,
+            (sub_id,),
+            SUBCOMPARCH_CONFIG,
+            _require_project,
+        )
     )
 
 
-@router.get(
-    "/{project_id}/components/{comp_id}/local-policies",
-    response_model=ComponentLocalPolicyListResponse,
-)
-def get_component_local_policies(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> ComponentLocalPolicyListResponse:
-    """List the component-local ``policy_*`` children under a top-level component."""
-    _require_project(db, project_id)
-    _require_top_level_comp(db, project_id, comp_id)
-    policies = list(
-        db.execute(
-            select(Node)
-            .where(
-                Node.project_id == project_id,
-                Node.tier == "policy",
-                Node.parent_id == comp_id,
-            )
-            .order_by(Node.display_order.asc(), Node.id.asc())
-        ).scalars()
-    )
-    return ComponentLocalPolicyListResponse(
-        policies=[
-            ComponentLocalPolicySummary(
-                id=p.id,
-                name=p.name,
-                content=p.content or "",
-                display_order=p.display_order,
-                updated_at=p.updated_at.isoformat() if p.updated_at else "",
-            )
-            for p in policies
-        ]
-    )
-
-
-@router.get(
-    "/{project_id}/components/{comp_id}/applied-policies",
-    response_model=AppliedPolicyListResponse,
-)
-def get_applied_policies(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> AppliedPolicyListResponse:
-    """List the ``policy_application`` edges targeting this component.
-
-    Returns each applied policy with its name and raw inline
-    blob content so the frontend can parse the blob for display.
-    Rationale from the LLM's decision is not included — per the
-    Phase 4 stage 9 design call, rationale stays in handler logs
-    only.
-    """
-    _require_project(db, project_id)
-    _require_top_level_comp(db, project_id, comp_id)
-    rows = list(
-        db.execute(
-            select(Node, Edge)
-            .join(Edge, Edge.source_id == Node.id)
-            .where(
-                Edge.project_id == project_id,
-                Edge.edge_type == "policy_application",
-                Edge.target_id == comp_id,
-                Node.tier == "policy",
-            )
-            .order_by(Node.display_order.asc(), Node.id.asc())
-        ).all()
-    )
-    return AppliedPolicyListResponse(
-        applied_policies=[
-            AppliedPolicySummary(
-                policy_id=node.id,
-                policy_name=node.name,
-                policy_content=node.content or "",
-                target_id=edge.target_id,
-            )
-            for node, edge in rows
-        ]
-    )
-
-
-# ── Decomposition graph (Phase 4 stage 10) ─────────────────────────
-
-
-class DecompositionGraphNode(BaseModel):
-    id: str
-    name: str
-    tier: str
-    kind: str
-    parent_id: str | None
-    display_order: int
-    # Phase 6 waiting-on-approval indicator. Non-null for comp_*
-    # nodes that have a pending draft the user still has to
-    # approve; ``"subreqs"`` / ``"comparch"`` / ``"subcomparch"``.
-    # Always null for resp_* nodes (they don't own drafts of
-    # their own — drafts attach to the comp_* or subreqs_* that
-    # generated them).
-    pending_draft_kind: str | None = None
-
-
-class DecompositionGraphEdge(BaseModel):
-    id: str
-    edge_type: str
-    source_id: str
-    target_id: str
-
-
-class DecompositionGraphResponse(BaseModel):
-    nodes: list[DecompositionGraphNode]
-    edges: list[DecompositionGraphEdge]
-
-
-@router.get(
-    "/{project_id}/decomposition-graph",
-    response_model=DecompositionGraphResponse,
-)
-def get_decomposition_graph(
-    project_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> DecompositionGraphResponse:
-    """Return the full decomposition graph for Cytoscape rendering.
-
-    Ships every comp_* (top-level and subcomponent), every resp_*
-    (top-level and subresp), every fanin_* (Phase 7 bottom-up
-    synthesis under each fanned-out domain comp), every dependency
-    edge, every decomposition edge, and every domain_parent edge.
-    The frontend graph component decides what to show based on
-    view filters.
-    """
-    _require_project(db, project_id)
-
-    node_rows = list(
-        db.execute(
-            select(Node)
-            .where(
-                Node.project_id == project_id,
-                Node.tier.in_(["comp", "resp", "fanin"]),
-            )
-            .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
-        ).scalars()
-    )
-    node_ids: set[str] = {n.id for n in node_rows}
-
-    # Filter edges by edge_type AND by whether both endpoints are
-    # in the returned node set. feat → resp decomposition edges
-    # reference feat_* nodes that we deliberately exclude from
-    # the graph scope; if we returned them anyway, the frontend
-    # Cytoscape component would fail with "nonexistent source".
-    edge_rows = list(
-        db.execute(
-            select(Edge)
-            .where(
-                Edge.project_id == project_id,
-                Edge.edge_type.in_(["dependency", "decomposition", "domain_parent"]),
-            )
-            .order_by(Edge.id.asc())
-        ).scalars()
-    )
-    filtered_edges = [e for e in edge_rows if e.source_id in node_ids and e.target_id in node_ids]
-    pending_by_comp = queries.pending_draft_kinds_by_comp(db, project_id)
-
-    return DecompositionGraphResponse(
-        nodes=[
-            DecompositionGraphNode(
-                id=n.id,
-                name=n.name,
-                tier=n.tier,
-                kind=n.kind,
-                parent_id=n.parent_id,
-                display_order=n.display_order,
-                pending_draft_kind=(pending_by_comp.get(n.id) if n.tier == "comp" else None),
-            )
-            for n in node_rows
-        ],
-        edges=[
-            DecompositionGraphEdge(
-                id=e.id,
-                edge_type=e.edge_type,
-                source_id=e.source_id,
-                target_id=e.target_id,
-            )
-            for e in filtered_edges
-        ],
-    )
-
-
-# ── Nav tree route ──────────────────────────────────────────────────
+# ── Project structure + event stream ─────────────────────────────
 #
-# Single query that returns every node the workspace sidebar
-# cares about, flat. The frontend builds the tree hierarchy.
-# Covers singleton tiers (expansion/reqs/sysarch), per-comp tiers
-# (comp/subcomp/subreqs/fanin/impl), and carries the status flags
-# the sidebar needs to render badges (has_pending_draft, and
-# generation_running from the job queue).
+# Two endpoints that together replace the per-tier polling
+# pattern:
+#
+# - ``GET /structure`` — one consolidated read that ships every
+#   node + edge in the project plus status flags. Replaces nav-tree,
+#   decomposition-graph, responsibility-coverage, and most list
+#   endpoints. Returns ``offset`` so clients can subscribe to
+#   ``/events/stream?since=<offset>`` without losing events
+#   committed between the snapshot and the SSE handshake.
+# - ``GET /events/stream`` — SSE channel. Emits one tiny message
+#   per committed event (``{offset, event_type, node_ids}``).
+#   Clients use these as invalidation signals for their TanStack
+#   Query cache; per-tier detail GETs refetch on push rather than
+#   on a 2-second timer.
+#
+# See ``backend/graph/broadcast.py`` for the in-process pub/sub
+# primitive, and the design doc at
+# ``/root/.claude/plans/let-s-plan-phase-6-6-gentle-engelbart.md``.
 
 
-class NavTreeNodeResponse(BaseModel):
+class StructureNodeResponse(BaseModel):
     id: str
     tier: str
     kind: str  # 'domain' | 'presentational'
     parent_id: str | None
     name: str
     display_order: int
+    # Content is included inline for the "light" tiers whose
+    # only UI is a list view — resp, feat, policy, vocab, ref.
+    # Heavy tiers (comp, subreqs, impl, fanin, expansion, reqs,
+    # sysarch) have dedicated detail endpoints that ship the
+    # full XML draft + telemetry, so we leave their ``content``
+    # empty here to keep the snapshot payload small. The
+    # ``has_content`` boolean below still reflects the truth
+    # for every tier.
+    content: str
     has_content: bool
     has_pending_draft: bool
     generation_running: bool
+    # True when the most recent generation job targeting this node
+    # ended in ``failed`` state (parse-validate exhausted, CLI
+    # crash, budget exceeded, etc.). Cleared when a retry is
+    # enqueued. Surfaced as a red dot in the sidebar tree ahead
+    # of the amber pending-draft / running indicators.
+    has_error: bool
+    # True when the node is idle and explicitly waiting on the
+    # user to kick it — either the latest job was cancelled with
+    # no replacement queued, or the node is an ``impl_*`` that
+    # hasn't been triggered yet (impl is the one tier that
+    # doesn't auto-enqueue on mint). Surfaced as a blue dot in
+    # the sidebar tree, between red (error) and amber (pending
+    # / running) in precedence. Does not fire for nodes that
+    # are upstream-blocked — those sit idle waiting for the
+    # chain, not the user.
+    needs_user_action: bool
+    # Sysarch-time fragments for ``comp`` tier nodes. Populated at
+    # sysarch mint with the role paragraph (techspec) and api-intent
+    # paragraph (pubapi) the LLM wrote in its ``<sysarch>`` output.
+    # Read-only context for the component Overview tab so the user
+    # can review what sysarch said about this comp before triggering
+    # comparch generation. Empty string for tiers that don't own
+    # these fragments. Kept inline on the structure payload rather
+    # than via a dedicated endpoint because the fragment bodies are
+    # small (a few hundred chars each) and refetching on SSE keeps
+    # them fresh without extra round-trips.
+    techspec: str
+    pubapi: str
 
 
-class NavTreeResponse(BaseModel):
-    nodes: list[NavTreeNodeResponse]
+class StructureEdgeResponse(BaseModel):
+    id: str
+    edge_type: str
+    source_id: str
+    target_id: str
 
 
-# Map from node tier to the job type the scheduler uses for that
-# tier's regen. Used to surface live "generating…" indicators on
-# tree nodes by checking for queued/running jobs keyed on the
-# tier's scope payload. Entries cover every tier that appears in
-# the sidebar; other tiers (policy, feat, vocab, ref) don't have
-# their own regen indicator in the tree view.
-_NAV_TREE_JOB_TYPES_BY_TIER = {
-    "expansion": GENERATE_FEATURE_EXPANSION_JOB_TYPE,
-    "reqs": GENERATE_REQUIREMENTS_JOB_TYPE,
-    "sysarch": GENERATE_SYSARCH_JOB_TYPE,
-    "subreqs": GENERATE_SUBREQS_JOB_TYPE,
-    "comp": GENERATE_COMPARCH_JOB_TYPE,  # top-level comps; subs handled below
-    "fanin": GENERATE_FANIN_JOB_TYPE,
-    "impl": GENERATE_IMPL_JOB_TYPE,
-}
+class StructureResponse(BaseModel):
+    # Event-log offset at the time this snapshot was read. SSE
+    # subscribers pass this as ``?since=<offset>`` on
+    # ``/events/stream`` so no event is lost in the race between
+    # reading the snapshot and subscribing to the channel.
+    offset: int
+    nodes: list[StructureNodeResponse]
+    edges: list[StructureEdgeResponse]
+
+
+# Every tier the frontend's structure store cares about. ``feat``,
+# ``policy``, ``vocab``, and ``ref`` are included so the list
+# views for features / policies / vocabulary / references can
+# derive from this single endpoint too. ``resp`` covers both
+# top-level responsibilities and subresps.
+_STRUCTURE_TIERS = (
+    "expansion",
+    "reqs",
+    "sysarch",
+    "feat",
+    "resp",
+    "comp",
+    "subreqs",
+    "fanin",
+    "impl",
+    "policy",
+    "vocab",
+    "ref",
+)
+
+_STRUCTURE_EDGE_TYPES = (
+    "dependency",
+    "decomposition",
+    "domain_parent",
+    "reference",
+    "policy_application",
+)
 
 
 @router.get(
-    "/{project_id}/nav-tree",
-    response_model=NavTreeResponse,
+    "/{project_id}/structure",
+    response_model=StructureResponse,
 )
-def get_nav_tree(
+def get_project_structure(
     project_id: str,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
-) -> NavTreeResponse:
-    """Return every node the workspace sidebar renders, flat.
+) -> StructureResponse:
+    """Return the full structural snapshot for the workspace.
 
-    One query per project: the frontend builds the tree hierarchy
-    from ``parent_id``. Badge flags come inline so the sidebar
-    doesn't need N+1 follow-up queries — ``has_pending_draft``
-    for the amber "ready to review" dot, ``generation_running``
-    for the pulse while a regen is in flight.
+    One query per project. Consumed by the sidebar tree, the
+    decomposition graph, responsibility coverage, and every
+    list view (features, responsibilities, subcomps, policies,
+    vocab, refs). Replaces the per-view GET endpoints that
+    previously each required their own fetch + polling.
     """
+    from backend.graph.running import (
+        errored_node_ids,
+        running_node_ids,
+        user_action_needed_node_ids,
+    )
+
     _require_project(db, project_id)
 
-    # All nodes that belong in the sidebar tree.
     node_rows = list(
         db.execute(
             select(Node)
             .where(
                 Node.project_id == project_id,
-                Node.tier.in_(
-                    (
-                        "expansion",
-                        "reqs",
-                        "sysarch",
-                        "subreqs",
-                        "comp",
-                        "fanin",
-                        "impl",
-                    )
-                ),
+                Node.tier.in_(_STRUCTURE_TIERS),
             )
             .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
         ).scalars()
     )
+    node_ids_in_project = {n.id for n in node_rows}
 
-    # One batch query for pending drafts (target_type='node') so
-    # we can tag ``has_pending_draft`` inline.
+    edge_rows = list(
+        db.execute(
+            select(Edge)
+            .where(
+                Edge.project_id == project_id,
+                Edge.edge_type.in_(_STRUCTURE_EDGE_TYPES),
+            )
+            .order_by(Edge.id.asc())
+        ).scalars()
+    )
+    # Filter edges to those whose endpoints are in the returned
+    # node set — keeps the response self-consistent.
+    filtered_edges = [
+        e
+        for e in edge_rows
+        if e.source_id in node_ids_in_project and e.target_id in node_ids_in_project
+    ]
+
     pending_target_ids: set[str] = set(
         db.execute(
             select(Draft.target_id).where(
@@ -2264,80 +1863,113 @@ def get_nav_tree(
         ).scalars()
     )
 
-    # One batch query for queued/running jobs; match each to the
-    # node via its payload keys. Different tiers use different
-    # payload keys (component_id, sub_id, owner_id, owner_comp_id,
-    # or no scope at all), so we collect all active jobs for any
-    # tier job type and match inline.
-    tier_job_types = set(_NAV_TREE_JOB_TYPES_BY_TIER.values()) | {
-        GENERATE_SUBCOMPARCH_JOB_TYPE,
-    }
-    active_jobs = list(
-        db.execute(
-            select(Job).where(
-                Job.job_type.in_(tier_job_types),
-                Job.status.in_(("queued", "running")),
+    running_ids = running_node_ids(db, project_id)
+    errored_ids = errored_node_ids(db, project_id)
+    user_action_ids = user_action_needed_node_ids(db, project_id)
+    offset = queries.latest_offset(db, project_id) or 0
+
+    # Tiers whose content is included inline. See the doc on
+    # ``StructureNodeResponse.content`` for the rationale.
+    light_content_tiers = {"feat", "resp", "policy", "vocab", "ref"}
+
+    # Bulk-load the sysarch-minted techspec + pubapi fragments for
+    # every comp in the project. Two indexed lookups per comp on
+    # the ComponentOverviewPanel would be fine but the payload is
+    # small and this keeps the structure fetch to one-query-per-
+    # table.
+    comp_ids = [n.id for n in node_rows if n.tier == "comp"]
+    fragment_by_id: dict[str, str] = {}
+    if comp_ids:
+        wanted_fragment_ids: list[str] = []
+        for cid in comp_ids:
+            wanted_fragment_ids.append(fragment_id(cid, FragmentKind.TECHSPEC))
+            wanted_fragment_ids.append(fragment_id(cid, FragmentKind.PUBAPI))
+        frag_rows = db.execute(
+            select(Fragment.id, Fragment.content).where(
+                Fragment.project_id == project_id,
+                Fragment.id.in_(wanted_fragment_ids),
             )
-        ).scalars()
-    )
+        ).all()
+        for fid, fcontent in frag_rows:
+            fragment_by_id[fid] = fcontent or ""
 
-    # Index active jobs by (job_type, payload) for fast node→job lookup.
-    # Each job's payload.project_id must match ours, and the scope
-    # keys pick out which specific node the job runs against.
-    def _running_for_node(node: Node) -> bool:
-        for job in active_jobs:
-            payload = job.payload or {}
-            if payload.get("project_id") != project_id:
-                continue
-            tier = node.tier
-            if tier == "expansion" and job.job_type == GENERATE_FEATURE_EXPANSION_JOB_TYPE:
-                return True
-            if tier == "reqs" and job.job_type == GENERATE_REQUIREMENTS_JOB_TYPE:
-                return True
-            if tier == "sysarch" and job.job_type == GENERATE_SYSARCH_JOB_TYPE:
-                return True
-            if tier == "subreqs" and job.job_type == GENERATE_SUBREQS_JOB_TYPE:
-                if payload.get("component_id") == node.parent_id:
-                    return True
-            if tier == "comp":
-                # Top-level: generate_comparch keyed on component_id.
-                # Subcomponent: generate_subcomparch keyed on component_id (the sub's id).
-                if node.parent_id is None:
-                    if (
-                        job.job_type == GENERATE_COMPARCH_JOB_TYPE
-                        and payload.get("component_id") == node.id
-                    ):
-                        return True
-                else:
-                    if (
-                        job.job_type == GENERATE_SUBCOMPARCH_JOB_TYPE
-                        and payload.get("component_id") == node.id
-                    ):
-                        return True
-            if tier == "fanin" and job.job_type == GENERATE_FANIN_JOB_TYPE:
-                if payload.get("owner_comp_id") == node.parent_id:
-                    return True
-            if tier == "impl" and job.job_type == GENERATE_IMPL_JOB_TYPE:
-                if payload.get("owner_id") == node.parent_id:
-                    return True
-        return False
-
-    return NavTreeResponse(
+    return StructureResponse(
+        offset=offset,
         nodes=[
-            NavTreeNodeResponse(
+            StructureNodeResponse(
                 id=n.id,
                 tier=n.tier,
                 kind=n.kind,
                 parent_id=n.parent_id,
                 name=n.name,
                 display_order=n.display_order,
+                content=(n.content or "") if n.tier in light_content_tiers else "",
                 has_content=bool((n.content or "").strip()),
                 has_pending_draft=n.id in pending_target_ids,
-                generation_running=_running_for_node(n),
+                generation_running=n.id in running_ids,
+                has_error=n.id in errored_ids,
+                needs_user_action=n.id in user_action_ids,
+                techspec=fragment_by_id.get(fragment_id(n.id, FragmentKind.TECHSPEC), "")
+                if n.tier == "comp"
+                else "",
+                pubapi=fragment_by_id.get(fragment_id(n.id, FragmentKind.PUBAPI), "")
+                if n.tier == "comp"
+                else "",
             )
             for n in node_rows
         ],
+        edges=[
+            StructureEdgeResponse(
+                id=e.id,
+                edge_type=e.edge_type,
+                source_id=e.source_id,
+                target_id=e.target_id,
+            )
+            for e in filtered_edges
+        ],
     )
+
+
+@router.get("/{project_id}/events/stream")
+async def get_project_event_stream(
+    project_id: str,
+    since: int | None = None,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """SSE channel of committed events for this project.
+
+    Emits `{offset, event_type, node_ids}` per commit. The
+    ``since`` query param is the event-log offset the client
+    already has (from its last ``/structure`` read or a prior
+    live event). The broadcaster replays buffered messages with
+    ``offset > since`` before switching to live; this closes the
+    race where an event commits between snapshot read and
+    subscribe.
+
+    Client lifecycle: use browser ``EventSource``. Reconnects
+    automatically; on reconnect, re-fetch ``/structure`` to
+    re-seed state (cheaper and simpler than reasoning about
+    ring-buffer gaps).
+    """
+    from sse_starlette.sse import EventSourceResponse
+
+    from backend.graph.broadcast import get_broadcaster
+
+    _require_project(db, project_id)
+    broadcaster = get_broadcaster()
+
+    async def event_publisher():
+        async for msg in broadcaster.subscribe(project_id, since_offset=since):
+            yield {
+                "event": "delta",
+                "data": __import__("json").dumps(msg.to_payload()),
+            }
+
+    # 15-second ping from sse-starlette so intermediate proxies
+    # (load balancers, corporate firewalls) don't drop the
+    # connection as idle.
+    return EventSourceResponse(event_publisher(), ping=15)
 
 
 # ── Vocabulary routes (Phase 5.5) ──────────────────────────────────
@@ -2562,7 +2194,7 @@ def post_create_vocab(
             content=req.content,
         ),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
 
     node = db.get(Node, vocab_id)
     assert node is not None
@@ -2616,7 +2248,7 @@ def post_edit_vocab(
 
     entry.content = req.new_content
     entry.updated_at = datetime.utcnow()
-    db.commit()
+    commit_and_publish(db, project_id)
 
     return _serialize_vocab_entry(db, entry)
 
@@ -2656,7 +2288,7 @@ def post_rename_vocab(
         project_id,
         ev.NodeRenamed(node_id=vocab_id, new_name=new_name),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
 
     entry = db.get(Node, vocab_id)
     assert entry is not None
@@ -2711,7 +2343,7 @@ def post_reparent_vocab(
         project_id,
         ev.NodeReparented(node_id=vocab_id, new_parent_id=req.new_parent_id),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
 
     entry = db.get(Node, vocab_id)
     assert entry is not None
@@ -2737,7 +2369,7 @@ def post_delete_vocab(
         project_id,
         ev.NodeDeleted(node_id=vocab_id),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
     return {"status": "deleted", "vocab_id": vocab_id}
 
 
@@ -2835,6 +2467,9 @@ IMPL_CONFIG = BootstrapTierConfig(
     # owning top-level domain comp and enqueue fan-in regen if
     # one exists. See ``impl_generation.on_impl_approved``.
     on_approve=on_impl_approved,
+    collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_impl,
+    collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
+    downstream_job_types=per_comp_reset.impl_downstream_job_types(),
 )
 
 
@@ -2977,6 +2612,28 @@ def post_impl_top_level_cancel(
     )
 
 
+@router.post(
+    "/{project_id}/components/{comp_id}/impl/reset",
+    response_model=ResetResponse,
+)
+def post_impl_top_level_reset(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return ResetResponse(
+        **bootstrap_reset(
+            db,
+            project_id,
+            (comp_id,),
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
 # ── Per-subcomponent impl routes ───────────────────────────────────
 
 
@@ -3090,6 +2747,29 @@ def post_impl_sub_cancel(
     _require_subcomponent(db, project_id, parent_comp_id, sub_id)
     return CancelResponse(
         **bootstrap_cancel(
+            db,
+            project_id,
+            (sub_id,),
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/impl/reset",
+    response_model=ResetResponse,
+)
+def post_impl_sub_reset(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return ResetResponse(
+        **bootstrap_reset(
             db,
             project_id,
             (sub_id,),
@@ -3300,6 +2980,71 @@ def post_fanin_cancel(
         return CancelResponse(cancelled=False)
     ok = pipeline_queue.cancel_job(db, job.id)
     return CancelResponse(cancelled=ok)
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/fanin/reset",
+    response_model=ResetResponse,
+)
+def post_fanin_reset(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ResetResponse:
+    """Force-reset the fan-in summary for this comp.
+
+    Fan-in doesn't use the draft lifecycle (content writes land
+    via ``FanInContentUpdated`` directly from the generation
+    handler), so we skip the draft-discard step the generic
+    ``bootstrap_reset`` runs. Instead: cancel the in-flight
+    generation job if one exists, clear the fanin node's content
+    via ``BootstrapNodeContentCleared``, re-enqueue
+    ``v2.generate_fanin``, and return the same response shape as
+    the other reset endpoints.
+    """
+    from backend.pipeline import queue as pipeline_queue
+
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+
+    # Locate the fanin node for this comp.
+    fanin_node = db.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "fanin",
+            Node.parent_id == comp_id,
+        )
+    ).scalar_one_or_none()
+    if fanin_node is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Fan-in node missing — this comp hasn't been fanned out yet.",
+        )
+
+    jobs_cancelled = pipeline_queue.cancel_jobs_by_type(
+        db,
+        GENERATE_FANIN_JOB_TYPE,
+        project_id=project_id,
+        owner_comp_id=comp_id,
+    )
+    append_event(
+        db,
+        project_id,
+        ev.BootstrapNodeContentCleared(node_id=fanin_node.id),
+    )
+    commit_and_publish(db, project_id)
+    pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_FANIN_JOB_TYPE,
+        payload={"project_id": project_id, "owner_comp_id": comp_id},
+    )
+    return ResetResponse(
+        ok=True,
+        nodes_deleted=0,
+        drafts_discarded=0,
+        jobs_cancelled=jobs_cancelled,
+    )
 
 
 # ── Reference routes (Phase 6.6) ──────────────────────────────────
@@ -3585,7 +3330,7 @@ def post_create_reference(
                 target_id=related_id,
             ),
         )
-    db.commit()
+    commit_and_publish(db, project_id)
 
     feedback_result = bootstrap_feedback(
         db,
@@ -3715,7 +3460,7 @@ def post_reference_delete(
     if node is None:
         raise HTTPException(status_code=404, detail=f"Reference {ref_id!r} not found")
     append_event(db, project_id, ev.NodeDeleted(node_id=ref_id))
-    db.commit()
+    commit_and_publish(db, project_id)
     return {"status": "deleted", "ref_id": ref_id}
 
 
@@ -3780,7 +3525,7 @@ def post_add_reference_edge(
             target_id=req.target_id,
         ),
     )
-    db.commit()
+    commit_and_publish(db, project_id)
     return ReferenceEdgeResponse(
         edge_id=edge_id,
         source_id=req.source_id,
@@ -3814,5 +3559,5 @@ def post_remove_reference_edge(
             detail=(f"No reference edge between {req.source_id!r} and {req.target_id!r}"),
         )
     append_event(db, project_id, ev.EdgeDeleted(edge_id=edge.id))
-    db.commit()
+    commit_and_publish(db, project_id)
     return DiscardResponse(ok=True)

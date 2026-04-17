@@ -38,3 +38,21 @@ export function useFanInCancelMutation(projectId: string, compId: string) {
     },
   });
 }
+
+/**
+ * Destructive reset for the fan-in tier. Clears the fanin node's
+ * content via ``BootstrapNodeContentCleared``, cancels any
+ * in-flight generate_fanin job, and re-enqueues a fresh regen.
+ * Fan-in has no draft lifecycle so no drafts are discarded.
+ */
+export function useFanInResetMutation(projectId: string, compId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => faninApi.resetFanIn(projectId, compId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: faninKeys.detail(projectId, compId),
+      });
+    },
+  });
+}

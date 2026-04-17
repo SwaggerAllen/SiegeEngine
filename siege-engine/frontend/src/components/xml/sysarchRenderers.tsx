@@ -1,4 +1,5 @@
 import { CollapsibleSection } from './CollapsibleSection';
+import { Paragraphs } from './Paragraphs';
 import type { XmlRendererMap } from './types';
 import { findChild, findChildText, findChildren, hasChild, textContent } from './types';
 
@@ -77,9 +78,7 @@ export function makeSysarchRenderers(
       <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
         System Technical Specification
       </h2>
-      <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
-        {textContent(node).trim()}
-      </p>
+      <Paragraphs text={textContent(node)} />
     </section>
   ),
 

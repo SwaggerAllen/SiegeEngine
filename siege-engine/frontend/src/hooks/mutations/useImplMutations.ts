@@ -13,6 +13,7 @@ const topLevel = makeBootstrapMutations(
     approveDraft: (pid, cid, did) => implApi.approveImplTopLevelDraft(pid, cid, did),
     discardDraft: (pid, cid, did) => implApi.discardImplTopLevelDraft(pid, cid, did),
     cancelGeneration: (pid, cid) => implApi.cancelImplTopLevelGeneration(pid, cid),
+    resetTier: (pid, cid) => implApi.resetImplTopLevel(pid, cid),
   },
   implKeys,
 );
@@ -24,6 +25,7 @@ const sub = makeBootstrapMutations(
     approveDraft: (pid, pcid, sid, did) => implApi.approveImplSubDraft(pid, pcid, sid, did),
     discardDraft: (pid, pcid, sid, did) => implApi.discardImplSubDraft(pid, pcid, sid, did),
     cancelGeneration: (pid, pcid, sid) => implApi.cancelImplSubGeneration(pid, pcid, sid),
+    resetTier: (pid, pcid, sid) => implApi.resetImplSub(pid, pcid, sid),
   },
   implKeys,
 );
@@ -34,9 +36,11 @@ export const useImplTopLevelApproveMutation = topLevel.useApproveMutation;
 export const useImplTopLevelDiscardMutation = topLevel.useDiscardMutation;
 export const useImplTopLevelCancelGenerationMutation =
   topLevel.useCancelGenerationMutation;
+export const useImplTopLevelResetMutation = topLevel.useResetMutation;
 
 // Per-sub impl mutation hooks — `(projectId, parentCompId, subId, ...)`.
 export const useImplSubFeedbackMutation = sub.useFeedbackMutation;
 export const useImplSubApproveMutation = sub.useApproveMutation;
 export const useImplSubDiscardMutation = sub.useDiscardMutation;
 export const useImplSubCancelGenerationMutation = sub.useCancelGenerationMutation;
+export const useImplSubResetMutation = sub.useResetMutation;

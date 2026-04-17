@@ -1,5 +1,6 @@
-import type { NavTreeNode } from '../../api/navTree';
+import type { StructureNode } from '../../api/structure';
 import { ComparchPanel } from '../ComparchPanel';
+import { ComponentOverviewPanel } from '../ComponentOverviewPanel';
 import { DecompositionGraph } from '../DecompositionGraph';
 import { FanInPanel } from '../FanInPanel';
 import { FeatureExpansionPanel } from '../FeatureExpansionPanel';
@@ -10,7 +11,7 @@ import { SubcomparchPanel } from '../SubcomparchPanel';
 import { SubreqsPanel } from '../SubreqsPanel';
 import { SysarchPanel } from '../SysarchPanel';
 import { VocabularyList } from '../VocabularyList';
-import { useDecompositionGraph } from '../../hooks/queries/useDecompositionGraph';
+import { useProjectStructure } from '../../hooks/queries/useProjectStructure';
 import { SYNTHETIC_IDS } from './buildNavTree';
 
 interface Props {
@@ -18,7 +19,11 @@ interface Props {
   selectedId: string | null;
   /** Flat node list from the nav-tree query, used to resolve
    *  metadata (name, parent_id) for the selected id. */
-  nodes: NavTreeNode[];
+  nodes: StructureNode[];
+  /** ``?view=`` URL param. When a top-level comp is selected this
+   *  chooses between Overview (default / ``overview``) and
+   *  Comparch (``comparch``). Ignored for other tiers. */
+  view: string | null;
 }
 
 /**
@@ -31,7 +36,7 @@ interface Props {
  * previous full-page "shells" just wrapped them with a header.
  * The workspace header replaces those shells.
  */
-export function NavDetail({ projectId, selectedId, nodes }: Props) {
+export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
   if (!selectedId) {
     return <EmptyState />;
   }
@@ -99,16 +104,22 @@ export function NavDetail({ projectId, selectedId, nodes }: Props) {
     }
     case 'comp': {
       if (node.parent_id === null) {
-        // Top-level component → comparch panel.
-        return (
-          <div className="h-full overflow-auto">
-            <ComparchPanel
-              projectId={projectId}
-              componentId={node.id}
-              componentName={node.name}
-            />
-          </div>
-        );
+        // Top-level component — Overview is the default tab, users
+        // flip to Comparch via ``?view=comparch``. Fan-in and Impl
+        // tabs navigate to their own child nodes, so they don't
+        // land here.
+        if (view === 'comparch') {
+          return (
+            <div className="h-full overflow-auto">
+              <ComparchPanel
+                projectId={projectId}
+                componentId={node.id}
+                componentName={node.name}
+              />
+            </div>
+          );
+        }
+        return <ComponentOverviewPanel component={node} />;
       }
       // Subcomponent → subcomparch panel.
       return (
@@ -175,15 +186,14 @@ export function NavDetail({ projectId, selectedId, nodes }: Props) {
 }
 
 function DecompositionGraphView({ projectId }: { projectId: string }) {
-  const { data, isLoading, error } = useDecompositionGraph(projectId);
+  // Same snapshot that powers the sidebar — no extra fetch.
+  const { data, isLoading, error } = useProjectStructure(projectId);
   if (isLoading) {
     return <div className="p-6 text-sm text-gray-400">Loading graph…</div>;
   }
   if (error || !data) {
     return (
-      <div className="p-6 text-sm text-red-400">
-        Failed to load decomposition graph.
-      </div>
+      <div className="p-6 text-sm text-red-400">Failed to load decomposition graph.</div>
     );
   }
   return (

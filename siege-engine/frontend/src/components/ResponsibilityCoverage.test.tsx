@@ -1,28 +1,52 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ResponsibilityCoverage as Coverage } from '../api/responsibilityCoverage';
+import type { StructureResponse } from '../api/structure';
 import { TestQueryWrapper } from '../test/queryWrapper';
 import { ResponsibilityCoverage } from './ResponsibilityCoverage';
 
-vi.mock('../api/responsibilityCoverage', async () => {
-  const actual = await vi.importActual<
-    typeof import('../api/responsibilityCoverage')
-  >('../api/responsibilityCoverage');
+vi.mock('../api/structure', async () => {
+  const actual = await vi.importActual<typeof import('../api/structure')>('../api/structure');
   return {
     ...actual,
-    getResponsibilityCoverage: vi.fn(),
+    getProjectStructure: vi.fn(),
   };
 });
 
-import * as api from '../api/responsibilityCoverage';
+import * as structureApi from '../api/structure';
 
-const mocked = api.getResponsibilityCoverage as unknown as ReturnType<typeof vi.fn>;
+const mocked = structureApi.getProjectStructure as unknown as ReturnType<typeof vi.fn>;
 
-function fixture(overrides: Partial<Coverage> = {}): Coverage {
+function fixture(overrides: Partial<StructureResponse> = {}): StructureResponse {
   return {
-    received: [],
-    computed: [],
+    offset: 0,
+    nodes: [],
+    edges: [],
     ...overrides,
+  };
+}
+
+function n(
+  id: string,
+  tier: string,
+  parent_id: string | null,
+  extras: Partial<StructureResponse['nodes'][number]> = {},
+): StructureResponse['nodes'][number] {
+  return {
+    id,
+    tier,
+    kind: 'domain',
+    parent_id,
+    name: id,
+    display_order: 0,
+    content: '',
+    has_content: false,
+    has_pending_draft: false,
+    generation_running: false,
+    has_error: false,
+    needs_user_action: false,
+    techspec: '',
+    pubapi: '',
+    ...extras,
   };
 }
 
@@ -31,63 +55,86 @@ beforeEach(() => {
 });
 
 describe('ResponsibilityCoverage', () => {
-  it('renders both groups with counts and items', async () => {
+  it('renders received resps from decomposition edges', async () => {
     mocked.mockResolvedValue(
       fixture({
-        received: [
-          {
-            id: 'resp_RRRR1111',
+        nodes: [
+          n('comp_C', 'comp', null),
+          n('resp_TOP1', 'resp', null, {
             name: 'Authenticate users',
             content: 'Verify creds.',
-            display_order: 0,
-            updated_at: '2026-04-17T00:00:00',
-          },
-          {
-            id: 'resp_RRRR2222',
+            has_content: true,
+          }),
+          n('resp_TOP2', 'resp', null, {
             name: 'Manage sessions',
             content: 'Maintain sessions.',
-            display_order: 1,
-            updated_at: '2026-04-17T00:00:00',
-          },
+            has_content: true,
+          }),
         ],
-        computed: [
-          {
-            id: 'resp_SSSS1111',
-            name: 'Password hashing',
-            content: 'Bcrypt with work factor.',
-            display_order: 0,
-            updated_at: '2026-04-17T00:00:00',
-          },
+        edges: [
+          { id: 'e1', edge_type: 'decomposition', source_id: 'resp_TOP1', target_id: 'comp_C' },
+          { id: 'e2', edge_type: 'decomposition', source_id: 'resp_TOP2', target_id: 'comp_C' },
         ],
       }),
     );
 
     render(
       <TestQueryWrapper>
-        <ResponsibilityCoverage projectId="p1" compId="c1" />
+        <ResponsibilityCoverage projectId="p1" compId="comp_C" />
       </TestQueryWrapper>,
     );
 
     await waitFor(() =>
       expect(screen.getByText('Authenticate users')).toBeInTheDocument(),
     );
-    expect(screen.getByText('Received')).toBeInTheDocument();
-    expect(screen.getByText('Computed')).toBeInTheDocument();
     expect(screen.getByText('Manage sessions')).toBeInTheDocument();
-    expect(screen.getByText('Password hashing')).toBeInTheDocument();
     expect(screen.getByText('Verify creds.')).toBeInTheDocument();
-    expect(screen.getByText('Bcrypt with work factor.')).toBeInTheDocument();
-    // Each resp shows its id
-    expect(screen.getByText('resp_RRRR1111')).toBeInTheDocument();
-    expect(screen.getByText('resp_SSSS1111')).toBeInTheDocument();
+    expect(screen.getByText('Received')).toBeInTheDocument();
   });
 
-  it('shows empty hints for each group when the list is empty', async () => {
-    mocked.mockResolvedValue(fixture());
+  it('renders computed subresps as children of the comp', async () => {
+    mocked.mockResolvedValue(
+      fixture({
+        nodes: [
+          n('comp_C', 'comp', null),
+          n('resp_S1', 'resp', 'comp_C', {
+            name: 'Password hashing',
+            content: 'Bcrypt.',
+            has_content: true,
+          }),
+          n('resp_S2', 'resp', 'comp_C', {
+            name: 'Session tokens',
+            content: 'Opaque UUID4.',
+            has_content: true,
+            display_order: 1,
+          }),
+        ],
+      }),
+    );
 
     render(
       <TestQueryWrapper>
-        <ResponsibilityCoverage projectId="p1" compId="c1" />
+        <ResponsibilityCoverage projectId="p1" compId="comp_C" />
+      </TestQueryWrapper>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText('Password hashing')).toBeInTheDocument(),
+    );
+    expect(screen.getByText('Session tokens')).toBeInTheDocument();
+    expect(screen.getByText('Bcrypt.')).toBeInTheDocument();
+  });
+
+  it('shows empty hints when neither list has entries', async () => {
+    mocked.mockResolvedValue(
+      fixture({
+        nodes: [n('comp_C', 'comp', null)],
+      }),
+    );
+
+    render(
+      <TestQueryWrapper>
+        <ResponsibilityCoverage projectId="p1" compId="comp_C" />
       </TestQueryWrapper>,
     );
 
@@ -99,16 +146,21 @@ describe('ResponsibilityCoverage', () => {
     expect(screen.getByText(/No subresponsibilities yet/)).toBeInTheDocument();
   });
 
-  it('renders received without computed', async () => {
+  it('ignores resps assigned to other comps', async () => {
     mocked.mockResolvedValue(
       fixture({
-        received: [
+        nodes: [
+          n('comp_C', 'comp', null),
+          n('comp_OTHER', 'comp', null),
+          n('resp_OtherMine', 'resp', null, { name: 'OtherResp' }),
+          n('resp_Sub_other', 'resp', 'comp_OTHER', { name: 'OtherSub' }),
+        ],
+        edges: [
           {
-            id: 'resp_A',
-            name: 'A',
-            content: '',
-            display_order: 0,
-            updated_at: '2026-04-17T00:00:00',
+            id: 'e1',
+            edge_type: 'decomposition',
+            source_id: 'resp_OtherMine',
+            target_id: 'comp_OTHER',
           },
         ],
       }),
@@ -116,11 +168,16 @@ describe('ResponsibilityCoverage', () => {
 
     render(
       <TestQueryWrapper>
-        <ResponsibilityCoverage projectId="p1" compId="c1" />
+        <ResponsibilityCoverage projectId="p1" compId="comp_C" />
       </TestQueryWrapper>,
     );
 
-    await waitFor(() => expect(screen.getByText('A')).toBeInTheDocument());
-    expect(screen.getByText(/No subresponsibilities yet/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByText(/No top-level responsibilities assigned/),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('OtherResp')).not.toBeInTheDocument();
+    expect(screen.queryByText('OtherSub')).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { NavTreeNode } from '../../api/navTree';
+import type { StructureNode } from '../../api/structure';
 import {
   ancestorIds,
   buildNavTree,
@@ -9,7 +9,7 @@ import {
 } from './buildNavTree';
 
 interface Props {
-  nodes: NavTreeNode[];
+  nodes: StructureNode[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   /** Invoked when the user taps a leaf node on mobile (closes the drawer). */
@@ -115,10 +115,23 @@ function NavTreeRow({
   // tree without expanding.
   const showPendingSelf = item.status.has_pending_draft;
   const showRunningSelf = item.status.generation_running;
+  const showErrorSelf = item.status.has_error;
+  const showBlueSelf = item.status.needs_user_action;
+  const showGreenSelf =
+    item.node !== null &&
+    item.node.has_content &&
+    !showRunningSelf &&
+    !showErrorSelf &&
+    !showPendingSelf &&
+    !showBlueSelf;
   const showPendingDescendant =
     !isExpanded && item.status.descendant_has_pending_draft && !showPendingSelf;
   const showRunningDescendant =
     !isExpanded && item.status.descendant_generation_running && !showRunningSelf;
+  const showErrorDescendant =
+    !isExpanded && item.status.descendant_has_error && !showErrorSelf;
+  const showBlueDescendant =
+    !isExpanded && item.status.descendant_needs_user_action && !showBlueSelf;
 
   return (
     <li role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
@@ -179,8 +192,13 @@ function NavTreeRow({
         <StatusBadges
           running={showRunningSelf}
           pending={showPendingSelf}
+          errored={showErrorSelf}
+          needsUserAction={showBlueSelf}
+          approved={showGreenSelf}
           descendantRunning={showRunningDescendant}
           descendantPending={showPendingDescendant}
+          descendantErrored={showErrorDescendant}
+          descendantNeedsUserAction={showBlueDescendant}
         />
       </div>
       {hasChildren && isExpanded && (
@@ -246,15 +264,36 @@ function RoleIcon({
 function StatusBadges({
   running,
   pending,
+  errored,
+  needsUserAction,
+  approved,
   descendantRunning,
   descendantPending,
+  descendantErrored,
+  descendantNeedsUserAction,
 }: {
   running: boolean;
   pending: boolean;
+  errored: boolean;
+  needsUserAction: boolean;
+  approved: boolean;
   descendantRunning: boolean;
   descendantPending: boolean;
+  descendantErrored: boolean;
+  descendantNeedsUserAction: boolean;
 }) {
-  if (!running && !pending && !descendantRunning && !descendantPending) return null;
+  if (
+    !running &&
+    !pending &&
+    !errored &&
+    !needsUserAction &&
+    !approved &&
+    !descendantRunning &&
+    !descendantPending &&
+    !descendantErrored &&
+    !descendantNeedsUserAction
+  )
+    return null;
   return (
     <span className="shrink-0 flex items-center gap-1 pl-2">
       {running && (
@@ -264,11 +303,32 @@ function StatusBadges({
           className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"
         />
       )}
-      {pending && !running && (
+      {errored && !running && (
+        <span
+          title="Generation failed"
+          aria-label="Generation failed"
+          className="inline-block w-1.5 h-1.5 rounded-full bg-red-500"
+        />
+      )}
+      {pending && !running && !errored && (
         <span
           title="Draft awaiting review"
           aria-label="Draft awaiting review"
           className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400"
+        />
+      )}
+      {needsUserAction && !running && !errored && !pending && (
+        <span
+          title="Ready — waiting on your kick"
+          aria-label="Ready — waiting on your kick"
+          className="inline-block w-1.5 h-1.5 rounded-full bg-sky-400"
+        />
+      )}
+      {approved && (
+        <span
+          title="Approved"
+          aria-label="Approved"
+          className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"
         />
       )}
       {descendantRunning && !running && (
@@ -278,13 +338,34 @@ function StatusBadges({
           className="inline-block w-1 h-1 rounded-full bg-amber-400/50 animate-pulse"
         />
       )}
-      {descendantPending && !pending && !descendantRunning && (
+      {descendantErrored && !errored && !descendantRunning && (
         <span
-          title="Descendant has draft awaiting review"
-          aria-label="Descendant has draft awaiting review"
-          className="inline-block w-1 h-1 rounded-full bg-amber-400/50"
+          title="Descendant generation failed"
+          aria-label="Descendant generation failed"
+          className="inline-block w-1 h-1 rounded-full bg-red-500/60"
         />
       )}
+      {descendantNeedsUserAction &&
+        !needsUserAction &&
+        !descendantRunning &&
+        !descendantErrored && (
+          <span
+            title="Descendant ready — waiting on your kick"
+            aria-label="Descendant ready — waiting on your kick"
+            className="inline-block w-1 h-1 rounded-full bg-sky-400/60"
+          />
+        )}
+      {descendantPending &&
+        !pending &&
+        !descendantRunning &&
+        !descendantErrored &&
+        !descendantNeedsUserAction && (
+          <span
+            title="Descendant has draft awaiting review"
+            aria-label="Descendant has draft awaiting review"
+            className="inline-block w-1 h-1 rounded-full bg-amber-400/50"
+          />
+        )}
     </span>
   );
 }

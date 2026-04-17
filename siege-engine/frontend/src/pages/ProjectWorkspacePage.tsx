@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { DashboardMenu } from '../components/DashboardMenu';
 import { NavDetail } from '../components/nav/NavDetail';
 import { NavTree } from '../components/nav/NavTree';
-import { useNavTree } from '../hooks/queries/useNavTree';
+import { TabStrip } from '../components/nav/TabStrip';
+import { tabScope, type Tab } from '../components/nav/tabScope';
 import { useProject } from '../hooks/queries/useProjectQueries';
+import { useProjectEventStream } from '../hooks/queries/useProjectEventStream';
+import { useProjectStructure } from '../hooks/queries/useProjectStructure';
 import { describeApiError } from '../lib/describeApiError';
 
 /**
@@ -35,9 +38,16 @@ const SIDEBAR_OPEN_STORAGE_KEY = 'siege.workspace.sidebarOpen';
 function WorkspaceShell({ projectId }: { projectId: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get('node');
+  const view = searchParams.get('view');
 
   const { data: project, error: projectError } = useProject(projectId);
-  const { data: navTree, error: navError } = useNavTree(projectId);
+  const { data: structure, error: navError } = useProjectStructure(projectId);
+
+  // One EventSource per mounted project page. Drives all cache
+  // invalidations for this project; per-tier query hooks drop
+  // their ``refetchInterval`` polling because the stream is
+  // now the refetch trigger.
+  useProjectEventStream(projectId);
 
   // Desktop sidebar collapsed/expanded state. On mobile this also
   // controls the drawer; we reset it to closed on mount so mobile
@@ -54,9 +64,26 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
 
   const handleSelect = useCallback(
     (id: string) => {
-      // Update URL without blowing away other search params.
+      // Sidebar selection clears ``?view=`` so the user lands on
+      // the destination node's default view. Tab clicks set view
+      // explicitly via ``handleSelectTab`` instead.
       const next = new URLSearchParams(searchParams);
       next.set('node', id);
+      next.delete('view');
+      setSearchParams(next, { replace: false });
+    },
+    [searchParams, setSearchParams],
+  );
+
+  const handleSelectTab = useCallback(
+    (tab: Tab) => {
+      const next = new URLSearchParams(searchParams);
+      next.set('node', tab.targetNodeId);
+      if (tab.targetView) {
+        next.set('view', tab.targetView);
+      } else {
+        next.delete('view');
+      }
       setSearchParams(next, { replace: false });
     },
     [searchParams, setSearchParams],
@@ -83,6 +110,14 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
     }
   }, []);
 
+  const nodes = useMemo(() => structure?.nodes ?? [], [structure]);
+  const selectedNode = selectedId ? nodes.find((n) => n.id === selectedId) : null;
+  const breadcrumb = selectedNode?.name ?? breadcrumbForSyntheticId(selectedId);
+  const scope = useMemo(
+    () => tabScope(selectedId, view, nodes),
+    [selectedId, view, nodes],
+  );
+
   if (projectError) {
     return (
       <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center text-white">
@@ -103,10 +138,6 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
       </div>
     );
   }
-
-  const nodes = navTree?.nodes ?? [];
-  const selectedNode = selectedId ? nodes.find((n) => n.id === selectedId) : null;
-  const breadcrumb = selectedNode?.name ?? breadcrumbForSyntheticId(selectedId);
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden">
@@ -190,8 +221,16 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
           </>
         )}
 
-        <main className="flex-1 min-w-0 overflow-hidden">
-          <NavDetail projectId={projectId} selectedId={selectedId} nodes={nodes} />
+        <main className="flex-1 min-w-0 overflow-hidden flex flex-col">
+          <TabStrip scope={scope} onSelectTab={handleSelectTab} />
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <NavDetail
+              projectId={projectId}
+              selectedId={selectedId}
+              nodes={nodes}
+              view={view}
+            />
+          </div>
         </main>
       </div>
     </div>

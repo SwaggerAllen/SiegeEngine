@@ -1,5 +1,3 @@
-import { z } from 'zod';
-import api from './client';
 import { subreqsApi } from './bootstrapApi';
 import { GenerationStatusSchema, TelemetrySummarySchema } from './expansion';
 
@@ -10,24 +8,6 @@ export type {
 } from './bootstrapApi';
 
 export { GenerationStatusSchema, TelemetrySummarySchema };
-
-// ── Subresponsibilities list ──────────────────────────────────────
-
-export const SubresponsibilitySummarySchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  content: z.string(),
-  display_order: z.number().int(),
-  updated_at: z.string(),
-});
-export type SubresponsibilitySummary = z.infer<typeof SubresponsibilitySummarySchema>;
-
-export const SubresponsibilityListResponseSchema = z.object({
-  subresponsibilities: z.array(SubresponsibilitySummarySchema),
-});
-export type SubresponsibilityListResponse = z.infer<
-  typeof SubresponsibilityListResponseSchema
->;
 
 // ── Bootstrap CRUD (delegated to shared API) ───────────────────────
 
@@ -46,14 +26,5 @@ export const discardDraft = (projectId: string, componentId: string, draftId: st
 export const cancelGeneration = (projectId: string, componentId: string) =>
   subreqsApi.cancelGeneration(projectId, componentId);
 
-// ── Tier-specific list endpoint ────────────────────────────────────
-
-export async function getSubresponsibilities(
-  projectId: string,
-  componentId: string
-): Promise<SubresponsibilityListResponse> {
-  const { data } = await api.get(
-    `/projects/${projectId}/components/${componentId}/subresponsibilities`
-  );
-  return SubresponsibilityListResponseSchema.parse(data);
-}
+export const resetSubreqs = (projectId: string, componentId: string) =>
+  subreqsApi.resetTier(projectId, componentId);

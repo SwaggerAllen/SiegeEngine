@@ -1,7 +1,5 @@
 import * as api from '../../api/subcomparch';
 import { makeBootstrapMutations } from '../useBootstrapHooks';
-import { decompositionGraphKeys } from '../queries/useDecompositionGraph';
-import { componentsKeys } from '../queries/useSysarchQueries';
 import { subcomparchKeys } from '../queries/useSubcomparchQueries';
 
 const m = makeBootstrapMutations(
@@ -11,16 +9,12 @@ const m = makeBootstrapMutations(
     approveDraft: (pid, pcid, sid, did) => api.approveDraft(pid, pcid, sid, did),
     discardDraft: (pid, pcid, sid, did) => api.discardDraft(pid, pcid, sid, did),
     cancelGeneration: (pid, pcid, sid) => api.cancelGeneration(pid, pcid, sid),
+    resetTier: (pid, pcid, sid) => api.resetSubcomparch(pid, pcid, sid),
   },
-  subcomparchKeys,
-  (queryClient, projectId) => {
-    queryClient.invalidateQueries({ queryKey: componentsKeys.list(projectId) });
-    queryClient.invalidateQueries({
-      queryKey: decompositionGraphKeys.detail(projectId),
-    });
-  }
+  subcomparchKeys
 );
 
 export const useSubcomparchFeedbackMutation = m.useFeedbackMutation;
 export const useSubcomparchApproveMutation = m.useApproveMutation;
 export const useSubcomparchCancelGenerationMutation = m.useCancelGenerationMutation;
+export const useSubcomparchResetMutation = m.useResetMutation;

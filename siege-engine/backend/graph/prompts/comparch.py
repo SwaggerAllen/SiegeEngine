@@ -228,6 +228,11 @@ SQLAlchemy sessions or raw queries, exception handlers or result \
 types. **No** per-subcomponent sequencing, no implementation \
 walkthroughs. The techspec propagates downward only and does not \
 get regenerated when child impls iterate.
+* Structure the spec as paragraphs separated by a blank line \
+(``\n\n``). Each paragraph addresses one concern — concurrency, \
+persistence, error handling, testing. Don't use bullet lists or \
+headings; the downstream renderer splits on blank lines and \
+wraps each paragraph in its own block.
 * ``<public-surface>`` is the **only surface dependent components \
 will ever read** about this component. Types, function \
 signatures, method signatures, events. Code-shaped content lives \

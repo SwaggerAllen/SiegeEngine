@@ -1,5 +1,21 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type Query } from '@tanstack/react-query';
 import type { BootstrapResponse } from '../api/bootstrapApi';
+
+/**
+ * Conditional refetch interval for per-tier detail queries.
+ *
+ * SSE drives refetches for committed events (draft / content /
+ * offset advances), but attempt-counter progress is stashed on
+ * the live Job row's payload and never produces an event. While
+ * a tier is actively generating, poll every 2s so the
+ * ``current_attempt`` / ``max_attempts`` fields stay fresh for
+ * the generation spinner. Idle tiers stay push-only.
+ */
+export function runningRefetchInterval<
+  T extends { generation_status?: string } | undefined,
+>(query: Query<T, Error, T, readonly unknown[]>): number | false {
+  return query.state.data?.generation_status === 'running' ? 2000 : false;
+}
 
 export interface BootstrapKeyFactory {
   all: readonly string[];

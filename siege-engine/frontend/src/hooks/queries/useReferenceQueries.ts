@@ -35,9 +35,5 @@ export function useReferenceDetail(
     queryKey: referenceKeys.detail(projectId, refId ?? ''),
     queryFn: () => makeReferencesApi(projectId).getDetail(refId as string),
     enabled: !!projectId && !!refId,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      return data?.generation_status === 'running' ? 2000 : false;
-    },
   });
 }

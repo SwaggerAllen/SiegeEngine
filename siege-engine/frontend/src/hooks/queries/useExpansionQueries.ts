@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import * as expansionApi from '../../api/expansion';
-import { makeBootstrapKeys } from '../useBootstrapHooks';
+import { makeBootstrapKeys, runningRefetchInterval } from '../useBootstrapHooks';
 
 export const expansionKeys = makeBootstrapKeys('expansion');
 
@@ -9,7 +9,6 @@ export function useExpansion(projectId: string) {
     queryKey: expansionKeys.detail(projectId),
     queryFn: () => expansionApi.getExpansion(projectId),
     enabled: !!projectId,
-    refetchInterval: (query) =>
-      query.state.data?.generation_status === 'running' ? 2000 : false,
+    refetchInterval: runningRefetchInterval,
   });
 }

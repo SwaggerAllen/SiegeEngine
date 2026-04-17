@@ -156,6 +156,35 @@ def domain_parents_of(session: Session, comp_id: str) -> list[Node]:
     )
 
 
+def dependencies_of(session: Session, comp_id: str) -> list[Node]:
+    """Return the ``comp_*`` nodes this comp declares as dependencies.
+
+    Walks ``dependency`` edges where ``source_id == comp_id`` and
+    returns the target components. The sysarch mint handler emits
+    these edges from ``<dependencies>`` / ``<dep from=… to=…/>``
+    entries, so the direction is always ``this comp → its dep``.
+
+    Used by the subreqs generation handler to thread read-only
+    sibling-dependency context into the prompt: when writing
+    subresponsibilities for this comp, the LLM should see what
+    each dependency already exposes (via the dep's ``pubapi``
+    fragment) and avoid re-deriving responsibilities the deps
+    already own.
+    """
+    return list(
+        session.execute(
+            select(Node)
+            .join(Edge, Edge.target_id == Node.id)
+            .where(
+                Edge.edge_type == "dependency",
+                Edge.source_id == comp_id,
+                Node.tier == "comp",
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
+    )
+
+
 def presentational_children_of(session: Session, comp_id: str) -> list[Node]:
     """Return the presentational comps that declare ``comp_id`` as a domain parent.
 
@@ -181,26 +210,97 @@ def presentational_children_of(session: Session, comp_id: str) -> list[Node]:
     )
 
 
-def all_domain_parents_have_approved_comparch(session: Session, comp_id: str) -> bool:
-    """True iff every ``domain_parent`` target of ``comp_id`` has approved comparch content.
+def all_domain_parents_have_populated_fanin(session: Session, comp_id: str) -> bool:
+    """True iff every ``domain_parent`` target of ``comp_id`` has a populated fan-in node.
 
-    Treats ``domain_parent`` edges as dependency-equivalent for
-    comparch regen ordering: a presentational component's comparch
-    must see its domain parents' approved arch docs so that its
-    own public surface can be aligned with the real shapes the
-    domain side exposes, not the skeletal sysarch-time seeds.
+    Phase 7.5 gate change: a presentational component's comparch
+    now waits on the domain side's **fan-in synthesis**, not on
+    the domain's comparch approval. The fan-in is the bottom-up
+    summary of what the domain component as-built actually does —
+    the presentational's public surface aligns to real behavior
+    rather than to skeletal comparch intent. This deepens the
+    sequencing (domain impl must complete before presentational
+    comparch starts) but eliminates drift between the
+    presentational's top-down contract and the domain's
+    bottom-up reality.
 
     Returns ``True`` unconditionally for any comp that has no
-    ``domain_parent`` edges (including every domain comp), so this
-    is safe to call on any tier without a prior ``kind`` check.
-    "Approved comparch" is defined as "the comp's ``content`` field
-    is non-empty" — comparch_mint writes the approved arch doc
-    body into ``Node.content`` at approval time.
+    ``domain_parent`` edges (including every domain comp). A
+    populated fan-in is defined as "a ``fanin_*`` child of the
+    domain parent whose ``content`` field is non-empty" —
+    ``FanInContentUpdated`` is the only writer.
     """
     parents = domain_parents_of(session, comp_id)
     if not parents:
         return True
-    return all((p.content or "").strip() for p in parents)
+    for parent in parents:
+        fanin = session.execute(
+            select(Node).where(
+                Node.tier == "fanin",
+                Node.parent_id == parent.id,
+            )
+        ).scalar_one_or_none()
+        if fanin is None or not (fanin.content or "").strip():
+            return False
+    return True
+
+
+def all_impls_populated_for(session: Session, owner_comp_id: str) -> bool:
+    """True iff every impl_* in ``owner_comp_id``'s subtree has content.
+
+    Phase 7.5 gate for fan-in first-pass completion. Fan-in
+    synthesis waits until every impl node under the owner (a
+    fanned-out top-level domain comp) has been approved at least
+    once before firing for the first time — subsequent approvals
+    re-fire (deduped by the queue) so ongoing iteration still
+    propagates.
+
+    Returns ``False`` when the subtree has no impl nodes at all
+    (no subcomps yet, or comparch hasn't minted them). Returns
+    ``False`` when any impl has empty content (never approved, or
+    reset-cleared). Returns ``True`` only when every expected
+    impl carries approved content.
+
+    Un-fanned-out domain comps aren't expected to call this (they
+    have no fan-in) but the helper still handles them correctly
+    by looking for a single impl child directly under the owner.
+    """
+    owner = session.get(Node, owner_comp_id)
+    if owner is None:
+        return False
+
+    subcomps = list(
+        session.execute(
+            select(Node).where(
+                Node.tier == "comp",
+                Node.parent_id == owner_comp_id,
+            )
+        ).scalars()
+    )
+
+    if not subcomps:
+        # Un-fanned-out: a single impl child directly under owner.
+        impl = session.execute(
+            select(Node).where(
+                Node.tier == "impl",
+                Node.parent_id == owner_comp_id,
+            )
+        ).scalar_one_or_none()
+        if impl is None:
+            return False
+        return bool((impl.content or "").strip())
+
+    # Fanned-out: each sub must carry a populated impl child.
+    for sub in subcomps:
+        impl = session.execute(
+            select(Node).where(
+                Node.tier == "impl",
+                Node.parent_id == sub.id,
+            )
+        ).scalar_one_or_none()
+        if impl is None or not (impl.content or "").strip():
+            return False
+    return True
 
 
 def get_component_context(session: Session, comp_id: str) -> ComponentContext:

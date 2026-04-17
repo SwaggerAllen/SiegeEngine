@@ -1,51 +1,44 @@
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import * as sysarchApi from '../../api/sysarch';
-import { makeBootstrapKeys } from '../useBootstrapHooks';
+import { makeBootstrapKeys, runningRefetchInterval } from '../useBootstrapHooks';
+import { useProjectStructure } from './useProjectStructure';
 
 export const sysarchKeys = makeBootstrapKeys('sysarch');
-
-export const componentsKeys = {
-  all: ['components'] as const,
-  list: (projectId: string) => [...componentsKeys.all, 'list', projectId] as const,
-};
-
-export const policiesKeys = {
-  all: ['policies'] as const,
-  list: (projectId: string) => [...policiesKeys.all, 'list', projectId] as const,
-};
 
 export function useSysarch(projectId: string) {
   return useQuery({
     queryKey: sysarchKeys.detail(projectId),
     queryFn: () => sysarchApi.getSysarch(projectId),
     enabled: !!projectId,
-    refetchInterval: (query) =>
-      query.state.data?.generation_status === 'running' ? 2000 : false,
+    refetchInterval: runningRefetchInterval,
   });
 }
 
-export function useComponents(projectId: string, mintPending: boolean = false) {
-  return useQuery({
-    queryKey: componentsKeys.list(projectId),
-    queryFn: () => sysarchApi.getComponents(projectId),
-    enabled: !!projectId,
-    refetchInterval: (query) => {
-      if (!mintPending) return false;
-      const hasComps = (query.state.data?.components.length ?? 0) > 0;
-      return hasComps ? false : 2000;
-    },
-  });
-}
-
-export function usePolicies(projectId: string, mintPending: boolean = false) {
-  return useQuery({
-    queryKey: policiesKeys.list(projectId),
-    queryFn: () => sysarchApi.getPolicies(projectId),
-    enabled: !!projectId,
-    refetchInterval: (query) => {
-      if (!mintPending) return false;
-      const hasPolicies = (query.state.data?.policies.length ?? 0) > 0;
-      return hasPolicies ? false : 2000;
-    },
-  });
+/**
+ * Top-level ``comp_*`` nodes for the project, derived from the
+ * structure snapshot. Used by ``SysarchPanel`` to annotate
+ * component cards with the pending-draft amber border when a
+ * comp has a draft waiting for review. The returned
+ * ``pending_draft_kind`` is a truthy sentinel rather than the
+ * specific tier name — the renderer only checks for truthiness.
+ */
+export function useComponents(projectId: string) {
+  const query = useProjectStructure(projectId);
+  const components = useMemo(() => {
+    const nodes = query.data?.nodes ?? [];
+    return nodes
+      .filter((n) => n.tier === 'comp' && n.parent_id === null)
+      .sort((a, b) => a.display_order - b.display_order)
+      .map((n) => ({
+        id: n.id,
+        name: n.name,
+        kind: n.kind,
+        pending_draft_kind: n.has_pending_draft ? 'pending' : null,
+      }));
+  }, [query.data]);
+  return {
+    ...query,
+    data: query.data ? { components } : undefined,
+  };
 }

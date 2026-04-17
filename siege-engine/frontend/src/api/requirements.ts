@@ -1,5 +1,3 @@
-import { z } from 'zod';
-import api from './client';
 import { requirementsApi } from './bootstrapApi';
 import { GenerationStatusSchema, TelemetrySummarySchema } from './expansion';
 
@@ -13,22 +11,6 @@ export type {
 
 // Re-export for backward compat (other API files import these)
 export { GenerationStatusSchema, TelemetrySummarySchema };
-
-// ── Responsibilities list (minted resp_* nodes) ────────────────────
-
-export const ResponsibilitySummarySchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  content: z.string(),
-  display_order: z.number().int(),
-  updated_at: z.string(),
-});
-export type ResponsibilitySummary = z.infer<typeof ResponsibilitySummarySchema>;
-
-export const ResponsibilityListResponseSchema = z.object({
-  responsibilities: z.array(ResponsibilitySummarySchema),
-});
-export type ResponsibilityListResponse = z.infer<typeof ResponsibilityListResponseSchema>;
 
 // ── Bootstrap CRUD (delegated to shared API) ───────────────────────
 
@@ -52,12 +34,3 @@ export const resetRequirements = (projectId: string) =>
 
 export const getPromptPreview = (projectId: string, feedback: string) =>
   requirementsApi.getPromptPreview(projectId, feedback);
-
-// ── Tier-specific list endpoint ────────────────────────────────────
-
-export async function getResponsibilities(
-  projectId: string
-): Promise<ResponsibilityListResponse> {
-  const { data } = await api.get(`/projects/${projectId}/responsibilities`);
-  return ResponsibilityListResponseSchema.parse(data);
-}

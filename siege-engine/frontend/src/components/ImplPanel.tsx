@@ -10,9 +10,11 @@ import {
   useImplSubApproveMutation,
   useImplSubCancelGenerationMutation,
   useImplSubFeedbackMutation,
+  useImplSubResetMutation,
   useImplTopLevelApproveMutation,
   useImplTopLevelCancelGenerationMutation,
   useImplTopLevelFeedbackMutation,
+  useImplTopLevelResetMutation,
 } from '../hooks/mutations/useImplMutations';
 import { implRenderers } from './xml';
 
@@ -77,11 +79,13 @@ function ImplPanelTopLevel({
   const feedbackMutation = useImplTopLevelFeedbackMutation(projectId, compId);
   const approveMutation = useImplTopLevelApproveMutation(projectId, compId);
   const cancelMutation = useImplTopLevelCancelGenerationMutation(projectId, compId);
+  const resetMutation = useImplTopLevelResetMutation(projectId, compId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    cancelMutation.isPending;
+    cancelMutation.isPending ||
+    resetMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -94,6 +98,7 @@ function ImplPanelTopLevel({
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
+        onReset: () => resetMutation.mutate(),
         isBusy,
       }}
       contentRenderers={implRenderers}
@@ -115,11 +120,13 @@ function ImplPanelSub({
     parentCompId,
     subId,
   );
+  const resetMutation = useImplSubResetMutation(projectId, parentCompId, subId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
-    cancelMutation.isPending;
+    cancelMutation.isPending ||
+    resetMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -132,6 +139,7 @@ function ImplPanelSub({
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
+        onReset: () => resetMutation.mutate(),
         isBusy,
       }}
       contentRenderers={implRenderers}

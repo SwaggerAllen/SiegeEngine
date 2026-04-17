@@ -277,15 +277,28 @@ def _sysarch_xml(session, project_id: str) -> str:
 
 
 def _subrequirements_xml(prompt: str) -> str:
-    # Parent resps are rendered into the prompt with their IDs;
-    # grab them straight from the rendered text so we don't need
-    # to figure out which component this gen is targeting from
-    # the DB side — the handler already did that work.
-    parent_resp_ids = _unique_in_order(_RESP_ID_RE.findall(prompt))
+    # Parent resps are rendered under the "Top-level
+    # responsibilities assigned to this component" header in the
+    # prompt; grab only those so the stub doesn't capture resp IDs
+    # from the sibling-dependency block (those belong to peer
+    # comps and would fail the cross-component-leak validator).
+    header = "# Top-level responsibilities assigned to this component"
+    if header not in prompt:
+        raise AssertionError(
+            "subrequirements stub: missing parent-resps header — handler changed its prompt shape?"
+        )
+    # Scope the resp-id grab to the slice between the parent-resps
+    # header and the next top-level ``#`` header. Sibling / domain-
+    # parent context is emitted under its own header, so slicing
+    # out this section and stopping at the next ``#`` keeps the
+    # stub derived-from set accurate for this component.
+    section = prompt.split(header, 1)[1]
+    section = section.split("\n# ", 1)[0]
+    parent_resp_ids = _unique_in_order(_RESP_ID_RE.findall(section))
     if not parent_resp_ids:
         raise AssertionError(
-            "subrequirements stub: no resp_* IDs in rendered prompt — "
-            "handler changed its prompt shape?"
+            "subrequirements stub: no resp_* IDs under parent-resps "
+            "header — handler changed its prompt shape?"
         )
     # Emit two subresps, each derived from all parent resps, so
     # the per-resp coverage check passes regardless of the

@@ -45,7 +45,7 @@ from backend.graph.parsers.validators import (
 )
 from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
 from backend.graph.queries import (
-    all_domain_parents_have_approved_comparch,
+    all_domain_parents_have_populated_fanin,
     top_level_resps_assigned_to,
 )
 from backend.graph.reducer import append_event
@@ -179,14 +179,18 @@ async def mint_subreqs(payload: dict) -> None:
         # Phase 6 ordering: domain_parent edges count as a
         # dependency in regen order. If this component is
         # presentational and any of its domain parents has not
-        # yet had its own comparch approved (i.e. its
-        # ``Node.content`` is still empty), defer the enqueue.
-        # The last domain parent's comparch_mint will re-check
-        # presentational children and enqueue those that are now
-        # ready. Domain comps and presentational comps with no
+        # yet had its fan-in synthesis land (i.e. the parent's
+        # ``fanin_*`` child is missing or empty), defer the
+        # comparch enqueue. Fan-in lands after the domain side's
+        # impl set is fully approved (see ``on_impl_approved`` and
+        # ``all_impls_populated_for``). When the last domain
+        # parent's fan-in content commits, the
+        # post-fan-in-commit hook in ``fanin_generation`` re-checks
+        # presentational children and enqueues the ones that are
+        # now ready. Domain comps and presentational comps with no
         # domain_parent edges are unaffected — the readiness
         # helper returns True for them.
-        if all_domain_parents_have_approved_comparch(db, component_id):
+        if all_domain_parents_have_populated_fanin(db, component_id):
             pipeline_queue.enqueue(
                 db,
                 job_type="v2.generate_comparch",
@@ -207,7 +211,7 @@ async def mint_subreqs(payload: dict) -> None:
         else:
             logger.info(
                 "mint_subreqs project=%s comp=%s minted %d subresps and %d edges "
-                "(comparch generation deferred — waiting on domain parents)",
+                "(comparch generation deferred — waiting on domain parents' fan-in)",
                 project_id,
                 component_id,
                 len(minted_subresp_ids),

@@ -1,15 +1,15 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import type { NavTreeNode } from '../../api/navTree';
+import type { StructureNode } from '../../api/structure';
 import { NavTree } from './NavTree';
 
 function n(
   id: string,
   tier: string,
   parent_id: string | null,
-  overrides: Partial<NavTreeNode> = {},
-): NavTreeNode {
+  overrides: Partial<StructureNode> = {},
+): StructureNode {
   return {
     id,
     tier,
@@ -17,9 +17,14 @@ function n(
     parent_id,
     name: id,
     display_order: 0,
+    content: '',
     has_content: true,
     has_pending_draft: false,
     generation_running: false,
+    has_error: false,
+    needs_user_action: false,
+    techspec: '',
+    pubapi: '',
     ...overrides,
   };
 }

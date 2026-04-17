@@ -39,10 +39,12 @@ from backend.graph.prompts.subrequirements import (
     format_component_summary,
     format_domain_parent_context,
     format_parent_resps_summary,
+    format_sibling_dep_context,
     render_system_prompt,
     render_user_prompt,
 )
 from backend.graph.queries import (
+    dependencies_of,
     domain_parents_of,
     list_subresponsibilities,
     top_level_resps_assigned_to,
@@ -166,6 +168,46 @@ async def generate_subreqs(payload: dict) -> None:
             rendered = format_domain_parent_context(parent_bundles)
             domain_parent_context = rendered or None
 
+        # Sibling-dependency context — the api-intent paragraph
+        # (pubapi fragment) and the top-level responsibilities
+        # assigned to each comp this comp declares a ``dependency``
+        # edge to. Populated for both domain and presentational
+        # comps. Surfaces two kinds of signal:
+        #
+        #  - pubapi tells the LLM what the dep offers as a consumer
+        #    contract;
+        #  - top-level resps tell the LLM what the dep is scoped
+        #    to handle (its concern territory at the sysarch level),
+        #    so this comp doesn't re-derive responsibilities the
+        #    dep already owns.
+        #
+        # Both are populated at sysarch mint, so this block is
+        # reliably present the first time any dependent's subreqs
+        # job fires.
+        sibling_dep_context: str | None = None
+        dep_rows = dependencies_of(db, component_id)
+        if dep_rows:
+            dep_bundles: list[dict] = []
+            for dep in dep_rows:
+                dep_pubapi = _read_fragment(db, dep.id, FragmentKind.PUBAPI) or ""
+                dep_resps = top_level_resps_assigned_to(db, dep.id)
+                dep_bundles.append(
+                    {
+                        "name": dep.name,
+                        "api_intent": dep_pubapi,
+                        "responsibilities": [
+                            {
+                                "id": r.id,
+                                "name": r.name,
+                                "content": r.content,
+                            }
+                            for r in dep_resps
+                        ],
+                    }
+                )
+            rendered_deps = format_sibling_dep_context(dep_bundles)
+            sibling_dep_context = rendered_deps or None
+
         project_row = db.get(Project, project_id)
         assert project_row is not None
         settings = get_project_settings(project_row)
@@ -207,6 +249,7 @@ async def generate_subreqs(payload: dict) -> None:
             component_summary=component_summary,
             parent_resps_summary=parent_resps_summary,
             domain_parent_context=domain_parent_context,
+            sibling_dep_context=sibling_dep_context,
             prior_approved=prior_approved,
             prior_pending=prior_pending,
             feedback=feedback,

@@ -1,4 +1,4 @@
-import type { NavTreeNode } from '../../api/navTree';
+import type { StructureNode } from '../../api/structure';
 
 /**
  * A single item in the rendered sidebar tree.
@@ -17,7 +17,7 @@ export interface NavItem {
   id: string;
   label: string;
   /** Real node data if backed by a DB row, null for synthetic entries. */
-  node: NavTreeNode | null;
+  node: StructureNode | null;
   /** Short role tag used for styling dispatch (icon + colour). */
   role:
     | 'expansion'
@@ -38,10 +38,16 @@ export interface NavItem {
   status: {
     has_pending_draft: boolean;
     generation_running: boolean;
+    has_error: boolean;
+    needs_user_action: boolean;
     /** True if this item or any descendant has a pending draft. */
     descendant_has_pending_draft: boolean;
     /** True if any descendant has generation running (for the collapsed pulse). */
     descendant_generation_running: boolean;
+    /** True if any descendant has an errored latest job (for the collapsed red dot). */
+    descendant_has_error: boolean;
+    /** True if any descendant has a cancelled latest job (for the collapsed blue dot). */
+    descendant_needs_user_action: boolean;
   };
 }
 
@@ -60,37 +66,51 @@ export const SYNTHETIC_IDS = {
 const EMPTY_STATUS = {
   has_pending_draft: false,
   generation_running: false,
+  has_error: false,
+  needs_user_action: false,
   descendant_has_pending_draft: false,
   descendant_generation_running: false,
+  descendant_has_error: false,
+  descendant_needs_user_action: false,
 };
 
 function singleNode(
-  nodes: NavTreeNode[],
-  predicate: (n: NavTreeNode) => boolean,
-): NavTreeNode | undefined {
+  nodes: StructureNode[],
+  predicate: (n: StructureNode) => boolean,
+): StructureNode | undefined {
   return nodes.find(predicate);
 }
 
-function statusFor(n: NavTreeNode) {
+function statusFor(n: StructureNode) {
   return {
     has_pending_draft: n.has_pending_draft,
     generation_running: n.generation_running,
+    has_error: n.has_error,
+    needs_user_action: n.needs_user_action,
     descendant_has_pending_draft: n.has_pending_draft,
     descendant_generation_running: n.generation_running,
+    descendant_has_error: n.has_error,
+    descendant_needs_user_action: n.needs_user_action,
   };
 }
 
 function rollUpStatus(self: NavItem['status'], children: NavItem[]): NavItem['status'] {
   let descPending = self.has_pending_draft;
   let descRunning = self.generation_running;
+  let descError = self.has_error;
+  let descCancelled = self.needs_user_action;
   for (const c of children) {
     if (c.status.descendant_has_pending_draft) descPending = true;
     if (c.status.descendant_generation_running) descRunning = true;
+    if (c.status.descendant_has_error) descError = true;
+    if (c.status.descendant_needs_user_action) descCancelled = true;
   }
   return {
     ...self,
     descendant_has_pending_draft: descPending,
     descendant_generation_running: descRunning,
+    descendant_has_error: descError,
+    descendant_needs_user_action: descCancelled,
   };
 }
 
@@ -114,7 +134,7 @@ function rollUpStatus(self: NavItem['status'], children: NavItem[]): NavItem['st
  *       [each subcomponent]
  *         Implementation (if sub has an impl child)
  */
-export function buildNavTree(nodes: NavTreeNode[]): NavItem[] {
+export function buildNavTree(nodes: StructureNode[]): NavItem[] {
   const items: NavItem[] = [];
 
   const expansion = singleNode(nodes, (n) => n.tier === 'expansion');
@@ -200,7 +220,7 @@ export function buildNavTree(nodes: NavTreeNode[]): NavItem[] {
   return items;
 }
 
-function buildComponentSubtree(comp: NavTreeNode, nodes: NavTreeNode[]): NavItem {
+function buildComponentSubtree(comp: StructureNode, nodes: StructureNode[]): NavItem {
   const children: NavItem[] = [];
 
   // Subrequirements — a singleton subreqs_* node parented to the comp.

@@ -178,6 +178,7 @@ def render_user_prompt(
     component_summary: str,
     parent_resps_summary: str,
     domain_parent_context: str | None = None,
+    sibling_dep_context: str | None = None,
     prior_approved: str | None,
     prior_pending: str | None,
     feedback: str | None,
@@ -222,6 +223,22 @@ def render_user_prompt(
     parts.append("")
     parts.append(parent_resps_summary.strip() or "(no responsibilities assigned)")
     parts.append("")
+
+    if sibling_dep_context and sibling_dep_context.strip():
+        parts.append("# Sibling dependency context (read-only — already available here)")
+        parts.append("")
+        parts.append(
+            "These are the sibling components this component depends on, as "
+            "declared in the sysarch. Their published API intent is shown "
+            "so you can avoid re-deriving responsibilities these deps "
+            "already own — this component should *consume* that surface, "
+            "not reimplement it. **Do not reference any of these deps' "
+            "ids in your <derived-from> blocks** — the validator rejects "
+            "cross-component leaks. This context is advisory only."
+        )
+        parts.append("")
+        parts.append(sibling_dep_context.strip())
+        parts.append("")
 
     if domain_parent_context and domain_parent_context.strip():
         parts.append("# Domain-parent context (read-only)")
@@ -363,5 +380,51 @@ def format_domain_parent_context(parents: list[dict]) -> str:
             sname = sub.get("name", "").strip() or "(unnamed)"
             intent = (sub.get("content") or "").strip()
             lines.append(f"- `{sid}` **{sname}**: {intent}")
+        sections.append("\n".join(lines))
+    return "\n\n".join(sections)
+
+
+def format_sibling_dep_context(deps: list[dict]) -> str:
+    """Render sibling-dependency components + their surface as prompt context.
+
+    Each entry in ``deps`` carries:
+
+    - ``name``: the dep's display name.
+    - ``api_intent``: the dep's ``pubapi`` fragment (its
+      ``<api-intent>`` paragraph sysarch wrote at mint time).
+    - ``responsibilities``: the top-level ``resp_*`` nodes assigned
+      to the dep via ``decomposition`` edges at sysarch mint.
+      Shape: list of ``{"id", "name", "content"}`` dicts. These
+      are the dep's concern territory at the sysarch level — what
+      it's scoped to handle.
+
+    Both signals land at sysarch mint, so this block is reliably
+    populated the first time any dependent's subreqs job fires.
+    A dep is included when it has *either* an api_intent or at
+    least one assigned responsibility; deps with neither are
+    skipped.
+    """
+    sections: list[str] = []
+    for dep in deps:
+        name = (dep.get("name") or "(unnamed)").strip()
+        api_intent = (dep.get("api_intent") or "").strip()
+        resps = dep.get("responsibilities") or []
+        if not api_intent and not resps:
+            continue
+        lines: list[str] = [f"## {name}", ""]
+        if api_intent:
+            lines.append("**API intent:**")
+            lines.append("")
+            lines.append(api_intent)
+        if resps:
+            if api_intent:
+                lines.append("")
+            lines.append("**Responsibilities assigned here:**")
+            lines.append("")
+            for r in resps:
+                rid = r.get("id", "").strip() or "(unknown-id)"
+                rname = r.get("name", "").strip() or "(unnamed)"
+                intent = (r.get("content") or "").strip()
+                lines.append(f"- `{rid}` **{rname}**: {intent}")
         sections.append("\n".join(lines))
     return "\n\n".join(sections)
