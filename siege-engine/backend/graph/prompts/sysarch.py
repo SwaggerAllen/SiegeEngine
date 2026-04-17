@@ -247,18 +247,56 @@ unique within ``<components>`` — no two components may share one.
 ``<responsibilities>`` block.
 * ``<kind>`` is either ``domain`` or ``presentational``. Domain \
 components do the structural work. Presentational components \
-render views into domain content (UIs, dashboards, docs pages) \
-and typically have a ``<domain-parent>`` edge pointing at the \
-domain component they present. **If the project has significant \
-frontend infrastructure** (routing, theming, state management, \
-error boundaries, layout shells), consider whether a top-level \
-presentational component should own that shared code so other \
-presentational components can depend on it rather than each one \
-independently setting up its own. This is the presentational \
-counterpart to the foundation component — not marked \
-``<foundation/>`` (there's only one of those), but serving an \
-analogous role as the shared-infrastructure dep target for the \
-presentational side of the tree.
+render views into domain content — UIs, dashboards, CLIs, \
+operator consoles, docs pages, any surface where a human \
+interacts with what the domains expose.
+* **If the project has any user-facing surface at all — a web \
+UI, a CLI, a dashboard, an admin console, a docs site — emit \
+at least one presentational component for it.** A system \
+without presentational components implies the only consumers \
+are other software. Most projects have a human consumer \
+somewhere; skipping the presentational layer hides that \
+surface and produces a lopsided tree where half the work \
+(rendering, review UX, editor surfaces, notification \
+presentation) has no home.
+* Every presentational component must declare a \
+``<domain-parent>`` edge for **each domain whose \
+responsibilities it surfaces to the user.** A unified UI that \
+presents billing, auth, and reporting has three \
+``<domain-parent>`` edges, not one. Under-wired presentationals \
+— where the ``<role>`` describes presenting five domains but \
+only one or two ``<domain-parent>`` edges are declared — \
+produce shadow components: their role mentions work they have \
+no structural path to inherit pubapis for, and downstream \
+comparch fan-in carries only a fraction of what the role \
+implies. Err on the side of wiring more ``<domain-parent>`` \
+edges, not fewer.
+* A responsibility may appear in one presentational \
+component's ``<responsibilities>`` block **in addition to** its \
+owning domain component — but only for resps that the \
+presentational actually surfaces as part of its UX (e.g. a \
+review panel that exposes review-gate operations, a telemetry \
+dashboard that surfaces usage rollups). The mirror is for \
+user-facing surfaces, not for every domain resp. Most \
+presentational responsibilities are genuinely presentational \
+(rendering the DAG, laying out the review panel, hosting \
+drag-drop editors) and appear only in the presentational, \
+with no domain counterpart. If the presentational's \
+``<responsibilities>`` block is empty or only mirrors domain \
+resps, the reqs tier is probably missing UI-shaped \
+responsibilities — flag this by emitting the presentational \
+anyway with its genuine UI resps noted in the ``<role>`` so \
+the gap is visible downstream.
+* **If the project has significant frontend infrastructure** \
+(routing, theming, state management, error boundaries, layout \
+shells), consider whether a top-level presentational \
+component should own that shared code so other presentational \
+components can depend on it rather than each one independently \
+setting up its own. This is the presentational counterpart to \
+the foundation component — not marked ``<foundation/>`` \
+(there's only one of those), but serving an analogous role as \
+the shared-infrastructure dep target for the presentational \
+side of the tree.
 * ``<name>`` is the human-readable display name — title case, \
 short identifier. Different from the alias: ``alias="billing"``, \
 ``<name>Billing Service</name>``. **Name components \
@@ -407,9 +445,19 @@ dependents toward foundation, not the other way.
 domain edge. The ``from`` alias must belong to a component with \
 ``<kind>presentational</kind>``; the ``to`` alias must belong \
 to a domain component.
-* A presentational component may have zero or more domain \
-parents. Domain components may be referenced by multiple \
-presentationals.
+* **A presentational component's ``<domain-parent>`` edges must \
+cover every domain whose work it surfaces**, not just one \
+representative domain. Downstream comparch for the \
+presentational uses these edges to pull in domain pubapi \
+fragments for fan-in context; missing edges mean the \
+presentational's comparch reasons from an incomplete picture \
+of what it's supposed to render. If the presentational's \
+``<role>`` mentions presenting domains A, B, and C, there must \
+be ``<parent>`` edges to all three.
+* A presentational component with no ``<domain-parent>`` edges \
+is almost always a mistake — either it isn't actually \
+presentational (and should be ``<kind>domain</kind>``), or its \
+domain-parent edges are missing.
 
 ## Coverage
 
