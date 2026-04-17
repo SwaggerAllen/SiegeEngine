@@ -147,12 +147,8 @@ class TestEmptyProject:
 class TestInlineContent:
     def test_content_included_for_light_tiers(self, client, project, db):
         # resp / feat / policy / vocab / ref content ships inline.
-        r = _mint(
-            db, project.id, Kind.RESP, tier="resp", name="R", content="Resp description."
-        )
-        f = _mint(
-            db, project.id, Kind.FEAT, tier="feat", name="F", content="Feature description."
-        )
+        r = _mint(db, project.id, Kind.RESP, tier="resp", name="R", content="Resp description.")
+        f = _mint(db, project.id, Kind.FEAT, tier="feat", name="F", content="Feature description.")
         v = _mint(
             db,
             project.id,

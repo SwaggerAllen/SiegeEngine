@@ -144,11 +144,15 @@ def _seed_fanned_out_domain_with_fanin(db: Session, project_id: str) -> tuple[st
     return comp_id, fanin_id
 
 
-class TestDecompositionGraphIncludesFanIn:
-    def test_graph_response_ships_fanin_nodes(self, client, project, db):
+class TestStructureIncludesFanIn:
+    def test_structure_response_ships_fanin_nodes(self, client, project, db):
         comp_id, fanin_id = _seed_fanned_out_domain_with_fanin(db, project.id)
 
-        resp = client.get(f"/api/projects/{project.id}/decomposition-graph")
+        # Fan-in coverage moved to /structure (the consolidated
+        # read) when /decomposition-graph was removed. The
+        # structure response still must surface fan-in nodes
+        # parented to their owning domain comp.
+        resp = client.get(f"/api/projects/{project.id}/structure")
         assert resp.status_code == 200
         body = resp.json()
         node_ids = [n["id"] for n in body["nodes"]]
@@ -157,13 +161,6 @@ class TestDecompositionGraphIncludesFanIn:
         assert fanin_node["tier"] == "fanin"
         assert fanin_node["kind"] == "domain"
         assert fanin_node["parent_id"] == comp_id
-
-    def test_graph_response_omits_empty_state(self, client, project):
-        # Sanity: a fan-in-less project still returns the normal
-        # empty shape rather than erroring.
-        resp = client.get(f"/api/projects/{project.id}/decomposition-graph")
-        assert resp.status_code == 200
-        assert resp.json() == {"nodes": [], "edges": []}
 
 
 class TestGetFanIn:
