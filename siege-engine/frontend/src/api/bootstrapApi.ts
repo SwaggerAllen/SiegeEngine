@@ -143,3 +143,15 @@ export const subcomparchApi = makeBootstrapApi(
   (projectId, parentCompId, subId) =>
     `/projects/${projectId}/components/${parentCompId}/subcomponents/${subId}/subcomparch`
 );
+
+// Phase 8: impl gets two URL shapes. `implTopLevelApi` is for
+// un-fanned-out top-level comps (impl lives directly under the
+// comp). `implSubApi` is for per-subcomponent impls.
+export const implTopLevelApi = makeBootstrapApi(
+  (projectId, compId) => `/projects/${projectId}/components/${compId}/impl`
+);
+
+export const implSubApi = makeBootstrapApi(
+  (projectId, parentCompId, subId) =>
+    `/projects/${projectId}/components/${parentCompId}/subcomponents/${subId}/impl`
+);

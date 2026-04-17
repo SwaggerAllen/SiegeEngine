@@ -83,6 +83,7 @@ MINT_COMPARCH_JOB_TYPE = "v2.mint_comparch"
 _APPLY_TOP_LEVEL_POLICIES_JOB = "v2.apply_top_level_policies"
 _APPLY_COMPONENT_LOCAL_POLICIES_JOB = "v2.apply_component_local_policies"
 _GENERATE_SUBCOMPARCH_JOB = "v2.generate_subcomparch"
+_GENERATE_IMPL_JOB = "v2.generate_impl"
 
 
 class ComparchMintHandlerError(RuntimeError):
@@ -208,6 +209,13 @@ async def mint_comparch(payload: dict) -> None:
             alias_to_sub_id[subcomp.alias] = sub_id
             minted_sub_ids.append(sub_id)
 
+            # Phase 8: mint an empty impl shell under every
+            # subcomponent. One impl per leaf, per the architecture
+            # doc. The shell starts with content="" and
+            # Phase 8's v2.generate_impl job (enqueued post-commit
+            # below) fills it after the subcomparch is approved.
+            _mint_impl_shell(db, project_id, sub_id, comp_node.kind, subcomp.name)
+
             # Skeletal fragments for the subcomponent seeded from
             # its role + api-intent. The Phase 5 subcomparch
             # generation handler (enqueued post-commit below) will
@@ -279,6 +287,15 @@ async def mint_comparch(payload: dict) -> None:
                 ),
             )
 
+        # Phase 8: if this comp is un-fanned-out (no subcomponents
+        # in the approved comparch), mint a single impl shell
+        # under the comp itself. The architecture doc is explicit:
+        # "A component with no subcomponents has one impl_*
+        # directly." Fanned-out comps get no impl of their own —
+        # their impl lives in subcomponent impls.
+        if not minted_sub_ids:
+            _mint_impl_shell(db, project_id, component_id, comp_node.kind, comp_node.name)
+
         db.commit()
 
         # ── Phase 6: post-commit policy application fan-out ─────
@@ -292,6 +309,24 @@ async def mint_comparch(payload: dict) -> None:
             job_type=_APPLY_COMPONENT_LOCAL_POLICIES_JOB,
             payload={"project_id": project_id, "component_id": component_id},
         )
+
+        # ── Phase 8: impl generation enqueue (un-fanned-out only) ─
+        # Only un-fanned-out top-level comps get their impl
+        # enqueued here — their owner (the comp itself) has
+        # content approved at this point. Subcomponent impls are
+        # enqueued by subcomparch_mint after the subcomparch is
+        # approved; enqueueing them here would fail the
+        # precondition check (subs still have empty content).
+        if not minted_sub_ids:
+            pipeline_queue.enqueue(
+                db,
+                job_type=_GENERATE_IMPL_JOB,
+                payload={
+                    "project_id": project_id,
+                    "owner_id": component_id,
+                    "feedback": None,
+                },
+            )
 
         # ── Phase 7: post-commit subcomparch generation fan-out ─
         # One v2.generate_subcomparch per newly-minted subcomponent.
@@ -390,6 +425,64 @@ def _emit_fragment(db, project_id: str, owner_id: str, kind: FragmentKind, conte
             new_content=content,
         ),
     )
+
+
+def _mint_impl_shell(
+    db,  # type: ignore[no-untyped-def]
+    project_id: str,
+    owner_id: str,
+    owner_kind: str,
+    owner_name: str,
+) -> str | None:
+    """Mint an empty ``impl_*`` shell under ``owner_id``, or return None if one exists.
+
+    Idempotent: if an impl_* child already exists under this
+    owner, logs and returns None. The existing shell's id is not
+    returned because the caller uses the return value only to
+    know whether an enqueue happened. Generation is enqueued
+    separately in the comparch_mint post-commit fan-out, keyed
+    on owner_id (which is stable).
+
+    Kind is inherited from the owner. For subcomponents, that's
+    the owning top-level's kind (which is what comparch_mint
+    already writes into the subcomponent NodeCreated). For an
+    un-fanned-out top-level owner, it's the comp's own kind.
+    Matches the implicit "kind flows down" rule used everywhere
+    else in the v2 model.
+    """
+    from sqlalchemy import select
+
+    existing = db.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "impl",
+            Node.parent_id == owner_id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        logger.info(
+            "mint_comparch project=%s owner=%s impl shell already exists (id=%s); skipping",
+            project_id,
+            owner_id,
+            existing.id,
+        )
+        return None
+
+    impl_id = mint(db, Kind.IMPL)
+    append_event(
+        db,
+        project_id,
+        ev.NodeCreated(
+            node_id=impl_id,
+            tier="impl",
+            kind=owner_kind,  # type: ignore[arg-type]
+            parent_id=owner_id,
+            name=f"{owner_name} impl",
+            display_order=0,
+            content="",
+        ),
+    )
+    return impl_id
 
 
 def _serialize_policies_fragment(policies) -> str:  # type: ignore[no-untyped-def]

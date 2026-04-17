@@ -1,20 +1,21 @@
 import { Link, useParams } from 'react-router-dom';
-import { SubcomparchPanel } from '../components/SubcomparchPanel';
+import { ImplPanel } from '../components/ImplPanel';
 import { useComparch } from '../hooks/queries/useComparchQueries';
-import { useSubcomparch } from '../hooks/queries/useSubcomparchQueries';
+import { useImplSub } from '../hooks/queries/useImplQueries';
 import { useProject } from '../hooks/queries/useProjectQueries';
+import { useSubcomparch } from '../hooks/queries/useSubcomparchQueries';
 import { describeApiError } from '../lib/describeApiError';
 
 /**
- * Full-page route for a single subcomponent's architecture doc.
- * URL: ``/projects/:id/components/:compId/subcomponents/:subId/subcomparch``.
+ * Full-page route for a single subcomponent's implementation.
+ * URL: ``/projects/:id/components/:compId/subcomponents/:subId/impl``.
  *
- * Layout mirrors :file:`ComponentComparchPage.tsx`:
- * - Header with back link to dashboard, parent component's
- *   comparch page, and subcomponent name breadcrumb
- * - SubcomparchPanel (four-state draft review)
+ * The impl shell is minted by comparch_mint at subcomponent
+ * creation time and filled by generate_impl post-subcomparch
+ * approval. Layout mirrors SubcomponentComparchPage for
+ * consistency.
  */
-export function SubcomponentComparchPage() {
+export function SubcomponentImplPage() {
   const { id: projectId, compId, subId } = useParams<{
     id: string;
     compId: string;
@@ -22,7 +23,7 @@ export function SubcomponentComparchPage() {
   }>();
   if (!projectId || !compId || !subId) return null;
   return (
-    <SubcomponentComparchShell
+    <SubcomponentImplShell
       projectId={projectId}
       compId={compId}
       subId={subId}
@@ -30,7 +31,7 @@ export function SubcomponentComparchPage() {
   );
 }
 
-function SubcomponentComparchShell({
+function SubcomponentImplShell({
   projectId,
   compId,
   subId,
@@ -41,11 +42,8 @@ function SubcomponentComparchShell({
 }) {
   const { data: project, error: projectError } = useProject(projectId);
   const { data: parentComparch } = useComparch(projectId, compId);
-  const { data: subcomparch, error: subError } = useSubcomparch(
-    projectId,
-    compId,
-    subId
-  );
+  const { data: subcomparch } = useSubcomparch(projectId, compId, subId);
+  const { error: implError } = useImplSub(projectId, compId, subId);
 
   if (projectError) {
     return (
@@ -68,21 +66,21 @@ function SubcomponentComparchShell({
     );
   }
 
-  if (subError) {
+  if (implError) {
     return (
       <div className="fixed inset-0 bg-gray-900 z-50 flex items-center justify-center text-white">
         <div className="text-center max-w-xl px-6">
           <h1 className="text-xl font-bold text-red-400 mb-2">
-            Failed to load subcomponent
+            Failed to load implementation
           </h1>
           <p className="text-gray-400 text-sm">
-            {describeApiError(subError, 'Unknown error')}
+            {describeApiError(implError, 'Unknown error')}
           </p>
           <Link
-            to={`/projects/${projectId}/components/${compId}/comparch`}
+            to={`/projects/${projectId}/components/${compId}/subcomponents/${subId}/subcomparch`}
             className="mt-4 inline-block px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
           >
-            Back to Parent Component
+            Back to Subcomponent Arch Doc
           </Link>
         </div>
       </div>
@@ -112,29 +110,31 @@ function SubcomponentComparchShell({
               >
                 {parentName}
               </Link>{' '}
-              / {subName} / Subcomponent Arch Doc
+              /{' '}
+              <Link
+                to={`/projects/${projectId}/components/${compId}/subcomponents/${subId}/subcomparch`}
+                className="hover:text-white"
+              >
+                {subName}
+              </Link>{' '}
+              / Implementation
             </span>
           </h1>
         </div>
         <Link
-          to={`/projects/${projectId}/components/${compId}/subcomponents/${subId}/impl`}
+          to={`/projects/${projectId}/components/${compId}/subcomponents/${subId}/subcomparch`}
           className="text-sm text-gray-400 hover:text-white"
         >
-          Implementation →
-        </Link>
-        <Link
-          to={`/projects/${projectId}/components/${compId}/comparch`}
-          className="text-sm text-gray-400 hover:text-white"
-        >
-          ← Parent Comparch
+          ← Subcomponent Arch Doc
         </Link>
       </header>
       <main className="flex-1 overflow-auto">
-        <SubcomparchPanel
+        <ImplPanel
+          kind="sub"
           projectId={projectId}
           parentCompId={compId}
           subId={subId}
-          subName={subName}
+          ownerName={subName}
         />
       </main>
     </div>

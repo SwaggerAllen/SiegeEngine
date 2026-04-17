@@ -4,6 +4,7 @@ import { ComparchPanel } from '../components/ComparchPanel';
 import { ComponentLocalPolicyList } from '../components/ComponentLocalPolicyList';
 import { SubcomponentList } from '../components/SubcomponentList';
 import { useComparch } from '../hooks/queries/useComparchQueries';
+import { useImplTopLevel } from '../hooks/queries/useImplQueries';
 import { useProject } from '../hooks/queries/useProjectQueries';
 import { describeApiError } from '../lib/describeApiError';
 
@@ -35,6 +36,11 @@ function ComponentComparchShell({
   const { data: project, error: projectError } = useProject(projectId);
   const { data: comparch } = useComparch(projectId, compId);
   const isApproved = !!comparch?.node.content;
+  // Top-level impl exists only when the comp is un-fanned-out.
+  // We query it unconditionally; the hook swallows 404 and
+  // ``data`` stays undefined on fanned-out comps.
+  const { data: implData } = useImplTopLevel(projectId, compId);
+  const hasTopLevelImpl = !!implData;
 
   if (projectError) {
     return (
@@ -74,6 +80,14 @@ function ComponentComparchShell({
             </span>
           </h1>
         </div>
+        {hasTopLevelImpl && (
+          <Link
+            to={`/projects/${projectId}/components/${compId}/impl`}
+            className="text-sm text-gray-400 hover:text-white"
+          >
+            Implementation →
+          </Link>
+        )}
         <Link
           to={`/projects/${projectId}/components/${compId}/subreqs`}
           className="text-sm text-gray-400 hover:text-white"

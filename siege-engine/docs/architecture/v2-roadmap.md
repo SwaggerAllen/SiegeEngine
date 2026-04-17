@@ -306,11 +306,11 @@ Implementation nodes (`impl_*`) are separate leaf nodes, distinct from
 the parent component's `<technical-specification>` section. One impl
 node per subcomponent and per un-fanned-out component.
 
-- [ ] `impl` tier node minted as leaf under each subcomponent and each un-fanned-out component
-- [ ] Components with subcomponents have no impl node of their own — their impl lives in their subcomponents' impl nodes
-- [ ] Implementation regen prompt: parent `techspec` + parent `pubapi`/`privapi` fragments + dep `pubapi` fragments
-- [ ] Uses shared regen helper from Phase 4
-- [ ] Destructive-edit gate only; non-destructive impl edits propagate automatically to plan nodes
+- [x] `impl` tier node minted as leaf under each subcomponent and each un-fanned-out component
+- [x] Components with subcomponents have no impl node of their own — their impl lives in their subcomponents' impl nodes
+- [x] Implementation regen prompt: parent `techspec` + parent `pubapi`/`privapi` fragments + dep `pubapi` fragments
+- [x] Uses shared regen helper from Phase 4
+- [x] Destructive-edit gate only; non-destructive impl edits propagate automatically to plan nodes
 
 ## Phase 9 — Staleness ledger & fanout decision
 

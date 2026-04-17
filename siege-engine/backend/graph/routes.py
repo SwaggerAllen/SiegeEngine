@@ -51,6 +51,7 @@ from backend.graph.handlers.feature_expansion import (
 )
 from backend.graph.handlers.feature_mint import MINT_FEATURES_JOB_TYPE
 from backend.graph.handlers.generate_reference import GENERATE_REFERENCE_JOB_TYPE
+from backend.graph.handlers.impl_generation import GENERATE_IMPL_JOB_TYPE
 from backend.graph.handlers.requirements_generation import (
     GENERATE_REQUIREMENTS_JOB_TYPE,
 )
@@ -2479,6 +2480,354 @@ def post_delete_vocab(
     )
     db.commit()
     return {"status": "deleted", "vocab_id": vocab_id}
+
+
+# ── Implementation routes (Phase 8) ────────────────────────────────
+#
+# One IMPL_CONFIG, two URL shapes:
+#
+#   /components/{comp_id}/impl              → un-fanned-out top-level
+#   /components/{comp_id}/subcomponents/{sub_id}/impl
+#                                            → per-subcomponent
+#
+# Both pass the **owner id** (the comp/sub that owns the impl) as
+# the single scope id into ``bootstrap_*`` helpers. ``IMPL_CONFIG``
+# sets ``scope_payload_keys=("owner_id",)`` so the generation
+# handler's payload carries ``owner_id`` rather than the default
+# ``component_id``.
+#
+# ``has_been_approved=None`` — per the architecture doc, impl has a
+# destructive-edit gate only. Feedback / regen / re-approval flow
+# freely post-approval; delete/merge/split (Phase 11) are the
+# destructive ops that gate.
+#
+# No ``mint_job_type`` — approval commits ``Node.content`` via the
+# standard DraftApproved reducer branch. No fragments, no children.
+
+
+class ImplNodeResponse(BaseModel):
+    id: str
+    name: str
+    parent_id: str
+    content: str
+    updated_at: str
+
+
+class ImplDraftResponse(BaseModel):
+    id: str
+    content: str
+    created_at: str
+
+
+class ImplResponse(BaseModel):
+    node: ImplNodeResponse
+    pending_draft: ImplDraftResponse | None
+    generation_status: queries.GenerationStatus
+    last_error: str | None
+    latest_telemetry: TelemetrySummary | None
+    generation_started_at: str | None = None
+
+
+def _get_impl_by_owner(db: Session, project_id: str, owner_id: str) -> Node | None:
+    """Return the ``impl_*`` child of ``owner_id``, or None.
+
+    The one-impl-per-leaf invariant is enforced at mint time by
+    :func:`comparch_mint._mint_impl_shell`, so the query uses
+    ``scalar_one_or_none`` defensively rather than ``.first()``.
+    """
+    return db.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "impl",
+            Node.parent_id == owner_id,
+        )
+    ).scalar_one_or_none()
+
+
+def _pending_impl_draft(db: Session, project_id: str, owner_id: str) -> Draft | None:
+    impl = _get_impl_by_owner(db, project_id, owner_id)
+    if impl is None:
+        return None
+    return db.execute(
+        select(Draft).where(
+            Draft.project_id == project_id,
+            Draft.target_type == "node",
+            Draft.target_id == impl.id,
+            Draft.status == "pending",
+        )
+    ).scalar_one_or_none()
+
+
+IMPL_CONFIG = BootstrapTierConfig(
+    tier_name="Implementation",
+    get_node=_get_impl_by_owner,
+    get_pending_draft=_pending_impl_draft,
+    has_been_approved=None,  # destructive-edit gate only; never frozen
+    generate_job_type=GENERATE_IMPL_JOB_TYPE,
+    mint_job_type="",  # no downstream mint — DraftApproved commits content
+    serialize_node=_node_to_dict_with_parent,
+    serialize_draft=_draft_to_dict,
+    feedback_readonly_detail="",  # unused (has_been_approved is None)
+    scope_payload_keys=("owner_id",),
+)
+
+
+def _impl_response_from_state(state: dict) -> ImplResponse:
+    """Shape the standard bootstrap_get_state payload into ImplResponse.
+
+    The node dict from ``_node_to_dict_with_parent`` carries
+    ``parent_id`` alongside id / name / content / updated_at,
+    matching the ``ImplNodeResponse`` schema exactly.
+    """
+    return ImplResponse(
+        node=ImplNodeResponse(**state["node"]),
+        pending_draft=(
+            ImplDraftResponse(**state["pending_draft"]) if state["pending_draft"] else None
+        ),
+        generation_status=state["generation_status"],
+        last_error=state["last_error"],
+        latest_telemetry=state["latest_telemetry"],
+        generation_started_at=state.get("generation_started_at"),
+    )
+
+
+# ── Top-level (un-fanned-out) impl routes ──────────────────────────
+
+
+@router.get(
+    "/{project_id}/components/{comp_id}/impl",
+    response_model=ImplResponse,
+)
+def get_impl_top_level(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ImplResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    state = bootstrap_get_state(
+        db,
+        project_id,
+        (comp_id,),
+        IMPL_CONFIG,
+        _require_project,
+    )
+    return _impl_response_from_state(state)
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/impl/feedback",
+    response_model=FeedbackResponse,
+)
+def post_impl_top_level_feedback(
+    project_id: str,
+    comp_id: str,
+    req: FeedbackRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return FeedbackResponse(
+        **bootstrap_feedback(
+            db,
+            project_id,
+            (comp_id,),
+            req.feedback,
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/impl/approve",
+    response_model=DiscardResponse,
+)
+def post_impl_top_level_approve(
+    project_id: str,
+    comp_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    bootstrap_approve(
+        db,
+        project_id,
+        (comp_id,),
+        req.draft_id,
+        IMPL_CONFIG,
+        _require_project,
+    )
+    return DiscardResponse(ok=True)
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/impl/discard",
+    response_model=DiscardResponse,
+)
+def post_impl_top_level_discard(
+    project_id: str,
+    comp_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return DiscardResponse(
+        **bootstrap_discard(
+            db,
+            project_id,
+            (comp_id,),
+            req.draft_id,
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/impl/cancel",
+    response_model=CancelResponse,
+)
+def post_impl_top_level_cancel(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return CancelResponse(
+        **bootstrap_cancel(
+            db,
+            project_id,
+            (comp_id,),
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
+# ── Per-subcomponent impl routes ───────────────────────────────────
+
+
+@router.get(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/impl",
+    response_model=ImplResponse,
+)
+def get_impl_sub(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ImplResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    state = bootstrap_get_state(
+        db,
+        project_id,
+        (sub_id,),
+        IMPL_CONFIG,
+        _require_project,
+    )
+    return _impl_response_from_state(state)
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/impl/feedback",
+    response_model=FeedbackResponse,
+)
+def post_impl_sub_feedback(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    req: FeedbackRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return FeedbackResponse(
+        **bootstrap_feedback(
+            db,
+            project_id,
+            (sub_id,),
+            req.feedback,
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/impl/approve",
+    response_model=DiscardResponse,
+)
+def post_impl_sub_approve(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    bootstrap_approve(
+        db,
+        project_id,
+        (sub_id,),
+        req.draft_id,
+        IMPL_CONFIG,
+        _require_project,
+    )
+    return DiscardResponse(ok=True)
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/impl/discard",
+    response_model=DiscardResponse,
+)
+def post_impl_sub_discard(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    req: DraftIdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DiscardResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return DiscardResponse(
+        **bootstrap_discard(
+            db,
+            project_id,
+            (sub_id,),
+            req.draft_id,
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/impl/cancel",
+    response_model=CancelResponse,
+)
+def post_impl_sub_cancel(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return CancelResponse(
+        **bootstrap_cancel(
+            db,
+            project_id,
+            (sub_id,),
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
 
 
 # ── Reference routes (Phase 6.6) ──────────────────────────────────

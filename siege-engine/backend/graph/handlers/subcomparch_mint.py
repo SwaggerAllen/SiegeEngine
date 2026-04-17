@@ -178,6 +178,23 @@ async def mint_subcomparch(payload: dict) -> None:
 
         db.commit()
 
+        # ── Phase 8: post-commit impl generation enqueue ────────
+        # The subcomponent's arch doc just committed (its
+        # Node.content is now non-empty). That satisfies the
+        # impl-generation handler's precondition, so enqueue now.
+        # comparch_mint already minted the impl shell at
+        # subcomponent-mint time; we're just kicking off
+        # generation to fill it.
+        pipeline_queue.enqueue(
+            db,
+            job_type="v2.generate_impl",
+            payload={
+                "project_id": project_id,
+                "owner_id": component_id,
+                "feedback": None,
+            },
+        )
+
         logger.info(
             "mint_subcomparch project=%s sub=%s parent=%s committed (4 fragments, %d dep edges)",
             project_id,

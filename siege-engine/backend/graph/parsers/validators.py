@@ -3098,3 +3098,156 @@ def parse_and_validate_reference(raw: str) -> ReferenceEntry:
     """
     tree = extract_tag_tree(raw, "reference")
     return validate_reference(tree, raw_content=raw)
+
+
+# ── Implementation (Phase 8: impl_* leaf nodes) ──────────────────────
+#
+# Implementation docs are the last articulation layer before code
+# territory. One per leaf (every subcomponent, every un-fanned-out
+# top-level comp). Content is a ``<implementation>`` XML block with
+# four opaque prose sections in fixed order: <behavior> /
+# <invariants> / <sequencing> / <edge-cases>. The validator
+# enforces structural presence + ordering but does not parse the
+# prose contents — the plan prompt (Phase 14) consumes the whole
+# <implementation> block verbatim.
+
+
+_IMPLEMENTATION_ALLOWED_CHILDREN = {"behavior", "invariants", "sequencing", "edge-cases"}
+_IMPLEMENTATION_REQUIRED_ORDER = ("behavior", "invariants", "sequencing", "edge-cases")
+
+
+@dataclass(frozen=True)
+class ImplementationEntry:
+    """A single validated ``<implementation>`` block.
+
+    Carries the four prose sections plus ``raw_content`` — the full
+    ``<implementation>...</implementation>`` XML as authored,
+    preserved verbatim so the handler can store it on
+    ``Node.content`` without re-serializing. Mirrors the
+    :class:`ReferenceEntry` shape.
+    """
+
+    behavior: str
+    invariants: str
+    sequencing: str
+    edge_cases: str
+    raw_content: str
+
+
+def validate_implementation(tree: TagNode, *, raw_content: str) -> ImplementationEntry:
+    """Validate a parsed ``<implementation>`` tree and return its entry.
+
+    Grammar:
+
+    * ``tree.tag`` must be exactly ``"implementation"``.
+    * Children must all be one of ``<behavior>`` / ``<invariants>``
+      / ``<sequencing>`` / ``<edge-cases>``; unknown tags are
+      rejected.
+    * All four sections are **required**, exactly one of each.
+    * Children must appear in the fixed order
+      ``<behavior>`` → ``<invariants>`` → ``<sequencing>`` →
+      ``<edge-cases>``.
+    * Each section must be non-empty — an empty section is a
+      structural error because it signals the LLM skipped the
+      slot. Contents are opaque (the validator does not parse
+      nested structure).
+
+    ``raw_content`` is the original full string the tree was
+    parsed from; the validator stores a reference to it on the
+    returned entry so the caller can persist it verbatim.
+
+    Returns a single :class:`ImplementationEntry`. Raises
+    :class:`ValidationError` on the first problem found.
+    """
+    if tree.tag != "implementation":
+        raise ValidationError(
+            f"Expected root tag <implementation>, got <{tree.tag}>. "
+            "Wrap the implementation content in a single "
+            "<implementation>...</implementation> block."
+        )
+
+    for child in tree.children:
+        if child.tag not in _IMPLEMENTATION_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<implementation> contains an unexpected child "
+                f"<{child.tag}>. Allowed children are: "
+                f"{sorted(_IMPLEMENTATION_ALLOWED_CHILDREN)}."
+            )
+
+    seen: dict[str, TagNode] = {}
+    for child in tree.children:
+        if child.tag in seen:
+            raise ValidationError(
+                f"<implementation> has more than one <{child.tag}> "
+                "child; exactly one of each section is required."
+            )
+        seen[child.tag] = child
+
+    for required in _IMPLEMENTATION_REQUIRED_ORDER:
+        if required not in seen:
+            raise ValidationError(
+                f"<implementation> is missing the required "
+                f"<{required}> child. All four sections "
+                "(<behavior>, <invariants>, <sequencing>, "
+                "<edge-cases>) must be present."
+            )
+
+    actual_order = [c.tag for c in tree.children if c.tag in _IMPLEMENTATION_REQUIRED_ORDER]
+    expected_order = list(_IMPLEMENTATION_REQUIRED_ORDER)
+    if actual_order != expected_order:
+        raise ValidationError(
+            "<implementation> children are not in the required "
+            f"order. Expected: {expected_order}. Got: "
+            f"{actual_order}. Reorder to <behavior> → "
+            "<invariants> → <sequencing> → <edge-cases>."
+        )
+
+    sections: dict[str, str] = {}
+    for name in _IMPLEMENTATION_REQUIRED_ORDER:
+        body = _collect_implementation_section_text(seen[name])
+        if not body:
+            raise ValidationError(
+                f"<implementation> <{name}> is empty. Every section must carry non-empty prose."
+            )
+        sections[name] = body
+
+    return ImplementationEntry(
+        behavior=sections["behavior"],
+        invariants=sections["invariants"],
+        sequencing=sections["sequencing"],
+        edge_cases=sections["edge-cases"],
+        raw_content=raw_content,
+    )
+
+
+def _collect_implementation_section_text(node: TagNode) -> str:
+    """Collect opaque prose from an implementation section.
+
+    Sections are prose blobs; nested markup (like short bulleted
+    lists the LLM emits as a mix of text + child tags) is
+    flattened into plain text, stripped. Matches the
+    ``<body>`` handling in reference validation.
+    """
+    chunks: list[str] = []
+    if node.text:
+        chunks.append(node.text)
+    for child in node.children:
+        nested = _flatten_text_recursive(child)
+        if nested:
+            chunks.append(nested)
+    return "\n\n".join(c.strip() for c in chunks if c.strip())
+
+
+def _flatten_text_recursive(node: TagNode) -> str:
+    pieces: list[str] = []
+    if node.text:
+        pieces.append(node.text)
+    for child in node.children:
+        pieces.append(_flatten_text_recursive(child))
+    return " ".join(p for p in pieces if p)
+
+
+def parse_and_validate_implementation(raw: str) -> ImplementationEntry:
+    """Convenience helper: parse ``raw`` and validate in one call."""
+    tree = extract_tag_tree(raw, "implementation")
+    return validate_implementation(tree, raw_content=raw)

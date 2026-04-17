@@ -598,6 +598,105 @@ def format_regen_context_for_sub(ctx: RegenContext) -> dict[str, str]:
     }
 
 
+def format_regen_context_for_impl(ctx: RegenContext) -> dict[str, str]:
+    """Render a :class:`RegenContext` as impl prompt kwargs.
+
+    Phase 8 counterpart to :func:`format_regen_context` and
+    :func:`format_regen_context_for_sub`. Works for both
+    un-fanned-out top-level comps (where ``ctx.parent_component``
+    is None) and subcomponents (where it's the owning comp).
+
+    Returns a dict with keys matching
+    :func:`backend.graph.prompts.impl.render_user_prompt`:
+
+    - ``owner_summary``: the leaf's own name + role + pubapi /
+      privapi summary
+    - ``parent_summary``: the owning parent component's techspec
+      + pubapi + privapi. Empty string for un-fanned-out
+      top-level impls (the leaf IS the top-level comp).
+    - ``dep_pubapi_summary``: public surfaces of the leaf's
+      allowed deps (reused from the existing dep summary).
+    - ``vocab_summary`` / ``referenced_content_summary``: shared
+      with every other tier that takes them.
+
+    Impl has no domain-parent concern (that lives at the
+    comparch level), so the domain-parent surface is intentionally
+    not surfaced here.
+    """
+    return {
+        "owner_summary": _format_impl_owner_summary(ctx),
+        "parent_summary": _format_impl_parent_summary(ctx),
+        "dep_pubapi_summary": _format_dep_pubapi_summary(
+            ctx.sibling_comps, ctx.dep_pubapi_fragments
+        ),
+        "vocab_summary": _render_vocab_summary_from_ctx(ctx),
+        "referenced_content_summary": _render_referenced_content_from_ctx(ctx),
+    }
+
+
+def _format_impl_owner_summary(ctx: RegenContext) -> str:
+    """Render the impl's owning leaf identity + its own fragments.
+
+    For a subcomponent impl, ``ctx.component`` is the subcomponent;
+    its techspec / pubapi / privapi fragments describe the
+    subcomparch-level view (what the subcomponent exposes to
+    siblings and what it keeps private). For an un-fanned-out
+    top-level impl, ``ctx.component`` is the top-level comp; its
+    comparch-level fragments describe the same but at the
+    top-level scope.
+    """
+    parts: list[str] = [f"**{ctx.component.name}** (`{ctx.component.id}`)"]
+    if ctx.component_techspec.strip():
+        parts.append("")
+        parts.append("*Technical specification:*")
+        parts.append(ctx.component_techspec.strip())
+    if ctx.component_pubapi.strip():
+        parts.append("")
+        parts.append("*Public surface:*")
+        parts.append(ctx.component_pubapi.strip())
+    from backend.graph.fragments import FragmentKind
+
+    # The leaf's privapi is what its impl is allowed to see about
+    # its own internal helpers. Only populated when the node has
+    # a privapi fragment (subcomponent or comparch leaf post-mint).
+    session = _session_from_node(ctx.component)
+    if session is not None:
+        privapi = _fragment_content(session, ctx.component.id, FragmentKind.PRIVAPI)
+        if privapi.strip():
+            parts.append("")
+            parts.append("*Private surface:*")
+            parts.append(privapi.strip())
+    return "\n".join(parts).rstrip()
+
+
+def _format_impl_parent_summary(ctx: RegenContext) -> str:
+    """Render the owning parent component's fragments for a subcomponent impl.
+
+    Returns empty string for un-fanned-out top-level impls (where
+    the leaf IS the top-level and has no parent component). For
+    subcomponent impls, returns techspec + pubapi + privapi in a
+    labeled block — identical to
+    :func:`_format_parent_component_summary` but phrased for the
+    impl reader rather than the subcomparch reader.
+    """
+    if ctx.parent_component is None:
+        return ""
+    parts: list[str] = [f"**{ctx.parent_component.name}** (`{ctx.parent_component.id}`)"]
+    if ctx.parent_techspec.strip():
+        parts.append("")
+        parts.append("*Parent technical specification:*")
+        parts.append(ctx.parent_techspec.strip())
+    if ctx.parent_pubapi.strip():
+        parts.append("")
+        parts.append("*Parent public surface:*")
+        parts.append(ctx.parent_pubapi.strip())
+    if ctx.parent_privapi.strip():
+        parts.append("")
+        parts.append("*Parent private surface:*")
+        parts.append(ctx.parent_privapi.strip())
+    return "\n".join(parts).rstrip()
+
+
 def _render_domain_parent_surface_for_sub(ctx: RegenContext) -> str:
     """Render the Phase 6 domain-parent context block for subcomparch.
 
