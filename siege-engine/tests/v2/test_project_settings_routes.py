@@ -89,21 +89,26 @@ class TestGetSettings:
         resp = client.get(f"/api/projects/{project.id}/settings")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["generation_timeout_seconds"] == 900
+        assert body["generation_timeout_seconds"] == 1800
+        assert body["cli_max_budget_usd"] == 2.00
 
     def test_returns_overridden_value_when_column_is_set(self, client, project, db):
-        project.settings = {"generation_timeout_seconds": 1500}
+        project.settings = {"generation_timeout_seconds": 1500, "cli_max_budget_usd": 5.00}
         db.commit()
         resp = client.get(f"/api/projects/{project.id}/settings")
         assert resp.status_code == 200
-        assert resp.json()["generation_timeout_seconds"] == 1500
+        body = resp.json()
+        assert body["generation_timeout_seconds"] == 1500
+        assert body["cli_max_budget_usd"] == 5.00
 
     def test_returns_defaults_when_column_is_empty_dict(self, client, project, db):
         project.settings = {}
         db.commit()
         resp = client.get(f"/api/projects/{project.id}/settings")
         assert resp.status_code == 200
-        assert resp.json()["generation_timeout_seconds"] == 900
+        body = resp.json()
+        assert body["generation_timeout_seconds"] == 1800
+        assert body["cli_max_budget_usd"] == 2.00
 
     def test_unknown_project_is_404(self, client):
         resp = client.get("/api/projects/does-not-exist/settings")
@@ -124,13 +129,26 @@ class TestPutSettings:
         assert project.settings["generation_timeout_seconds"] == 1200
 
     def test_empty_body_resets_to_defaults(self, client, project, db):
-        project.settings = {"generation_timeout_seconds": 2000}
+        project.settings = {"generation_timeout_seconds": 2000, "cli_max_budget_usd": 5.0}
         db.commit()
         resp = client.put(f"/api/projects/{project.id}/settings", json={})
         assert resp.status_code == 200
-        assert resp.json()["generation_timeout_seconds"] == 900
+        body = resp.json()
+        assert body["generation_timeout_seconds"] == 1800
+        assert body["cli_max_budget_usd"] == 2.00
         db.refresh(project)
-        assert project.settings["generation_timeout_seconds"] == 900
+        assert project.settings["generation_timeout_seconds"] == 1800
+        assert project.settings["cli_max_budget_usd"] == 2.00
+
+    def test_updates_budget(self, client, project, db):
+        resp = client.put(
+            f"/api/projects/{project.id}/settings",
+            json={"generation_timeout_seconds": 1800, "cli_max_budget_usd": 4.50},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["cli_max_budget_usd"] == 4.50
+        db.refresh(project)
+        assert project.settings["cli_max_budget_usd"] == 4.50
 
     def test_below_minimum_is_rejected(self, client, project):
         resp = client.put(
@@ -143,6 +161,20 @@ class TestPutSettings:
         resp = client.put(
             f"/api/projects/{project.id}/settings",
             json={"generation_timeout_seconds": 99999},
+        )
+        assert resp.status_code == 422
+
+    def test_budget_below_minimum_is_rejected(self, client, project):
+        resp = client.put(
+            f"/api/projects/{project.id}/settings",
+            json={"cli_max_budget_usd": 0.00},
+        )
+        assert resp.status_code == 422
+
+    def test_budget_above_maximum_is_rejected(self, client, project):
+        resp = client.put(
+            f"/api/projects/{project.id}/settings",
+            json={"cli_max_budget_usd": 1000.00},
         )
         assert resp.status_code == 422
 

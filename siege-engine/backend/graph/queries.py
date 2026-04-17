@@ -656,21 +656,31 @@ def latest_generation_status(
     project_id: str,
     job_type: str,
     payload_filters: dict | None = None,
-) -> tuple[GenerationStatus, str | None, str | None]:
+) -> tuple[GenerationStatus, str | None, str | None, int | None, int | None, str | None]:
     """Derive a generation status from the latest job of ``job_type``.
 
-    Returns ``(status, last_error, started_at_iso)``:
+    Returns ``(status, last_error, started_at_iso, current_attempt,
+    max_attempts, failed_raw_output)``:
 
-    * ``("idle", None, None)`` if no matching job exists, or the
-      latest matching job ``completed`` or was ``cancelled`` (we
-      treat cancellation as "back to idle" so the UI can return to
-      the feedback / accept / reject state).
-    * ``("running", None, started_at_iso)`` if the latest job is
-      ``queued`` or ``running``. ``started_at_iso`` is the job's
-      ``created_at`` serialized to ISO-8601 (UTC, naive) so the
-      client can render a duration clock off it.
-    * ``("failed", error, None)`` if the latest job is in a terminal-
-      failure state.
+    * ``("idle", None, None, None, None, None)`` if no matching job
+      exists, or the latest matching job ``completed`` or was
+      ``cancelled`` (we treat cancellation as "back to idle" so the
+      UI can return to the feedback / accept / reject state).
+    * ``("running", None, started_at_iso, attempt?, max?, None)`` if
+      the latest job is ``queued`` or ``running``. ``started_at_iso``
+      is the job's ``created_at`` serialized to ISO-8601 (UTC, naive)
+      so the client can render a duration clock off it.
+      ``current_attempt`` / ``max_attempts`` are populated once the
+      parse-validate loop has started writing them back onto the
+      payload (see ``_record_attempt_progress`` in
+      ``backend.graph.handlers._bootstrap_generation``); until then
+      they are ``None`` (queued, or a non-bootstrap job type).
+    * ``("failed", error, None, None, None, raw?)`` if the latest job
+      is in a terminal-failure state. ``failed_raw_output`` is the
+      last failed attempt's raw LLM text when the parse-validate
+      loop exhausted (written by ``_record_failed_raw_output``);
+      ``None`` for other failure modes (CLI crash before any
+      attempt, transient errors that never produced text).
 
     ``payload_filters`` lets callers scope the lookup to jobs whose
     payload matches a set of key/value pairs — used by the per-
@@ -693,13 +703,21 @@ def latest_generation_status(
             continue
         if job.status in ("queued", "running"):
             started = job.created_at.isoformat() if job.created_at else None
-            return "running", None, started
+            current_attempt_raw = payload.get("_current_attempt")
+            max_attempts_raw = payload.get("_max_attempts")
+            current_attempt = (
+                int(current_attempt_raw) if isinstance(current_attempt_raw, int) else None
+            )
+            max_attempts = int(max_attempts_raw) if isinstance(max_attempts_raw, int) else None
+            return "running", None, started, current_attempt, max_attempts, None
         if job.status == "failed":
-            return "failed", job.error_message, None
+            failed_raw = payload.get("_failed_raw_output")
+            failed_raw_str = failed_raw if isinstance(failed_raw, str) else None
+            return "failed", job.error_message, None, None, None, failed_raw_str
         if job.status == "cancelled":
             # Cancelled: fall through to idle so the UI returns to
             # the draft-review / empty state rather than "failed".
-            return "idle", None, None
+            return "idle", None, None, None, None, None
         # completed
-        return "idle", None, None
-    return "idle", None, None
+        return "idle", None, None, None, None, None
+    return "idle", None, None, None, None, None

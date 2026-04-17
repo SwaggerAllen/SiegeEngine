@@ -151,6 +151,7 @@ async def generate_comparch(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+        cli_max_budget_usd = settings.cli_max_budget_usd
         system_prompt = render_system_prompt()
     finally:
         db.close()
@@ -191,6 +192,7 @@ async def generate_comparch(payload: dict) -> None:
         root_tag="comparch",
         system_prompt=system_prompt,
         cli_timeout_seconds=cli_timeout_seconds,
+        cli_max_budget_usd=cli_max_budget_usd,
         prior_pending=prior_pending,
         render_prompt=_render,
         validate=_validate,

@@ -9,8 +9,17 @@ Current settings:
 
 * ``generation_timeout_seconds`` — how long handlers wait on a
   single Claude CLI subprocess before killing it and surfacing a
-  timeout error. Default 900 (15 minutes). Minimum 60 (1 minute)
+  timeout error. Default 1800 (30 minutes). Minimum 60 (1 minute)
   and maximum 3600 (1 hour) to keep obvious footguns out.
+* ``cli_max_budget_usd`` — maximum dollar budget passed to the
+  Claude CLI's ``--max-budget-usd`` flag for a single generation
+  attempt. Default 2.00. Each parse-validate retry is a fresh
+  call with a fresh budget. Bumping this lets bigger decomposition
+  tasks finish thinking without blowing the budget mid-response;
+  lowering it caps runaway cost at the expense of possibly
+  cutting off long reasoning chains. Minimum 0.10 and maximum
+  20.00. Budget-exceeded failures are non-retryable (see
+  :class:`backend.cli.manager.CliBudgetExceededError`).
 
 Call sites:
 
@@ -44,7 +53,7 @@ class ProjectSettings(BaseModel):
     """
 
     generation_timeout_seconds: int = Field(
-        default=900,
+        default=1800,
         ge=60,
         le=3600,
         description=(
@@ -52,6 +61,18 @@ class ProjectSettings(BaseModel):
             "killing it. 60s floor so you can't accidentally starve "
             "real work; 3600s ceiling so a typo doesn't hang a "
             "worker for a whole day."
+        ),
+    )
+    cli_max_budget_usd: float = Field(
+        default=2.00,
+        ge=0.10,
+        le=20.00,
+        description=(
+            "Maximum dollar budget per Claude CLI invocation. Passed "
+            "as --max-budget-usd. Each parse-validate retry is a "
+            "fresh call with a fresh budget. 0.10 floor catches "
+            "accidental zeros; 20.00 ceiling keeps a typo from "
+            "burning a whole card in one generation."
         ),
     )
 

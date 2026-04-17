@@ -6,6 +6,7 @@ import api from './client';
 // frontend validates client-side before the round trip.
 export const ProjectSettingsSchema = z.object({
   generation_timeout_seconds: z.number().int().min(60).max(3600),
+  cli_max_budget_usd: z.number().min(0.1).max(20),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 

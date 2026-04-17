@@ -18,6 +18,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from backend.cli.manager import CliTransientError
 from backend.database import Base
 from backend.graph import events as ev
 from backend.graph.expansion import bootstrap_expansion_node
@@ -574,13 +575,13 @@ class TestProjectSettingsTimeout:
     project's settings column and passes it to the CLI invocation.
     """
 
-    def test_default_timeout_is_900_when_settings_is_null(
+    def test_default_timeout_is_1800_when_settings_is_null(
         self, shared_session_factory, seeded_project, monkeypatch
     ):
         calls = _patch_cli(monkeypatch)
         asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 1
-        assert calls[0]["timeout"] == 900
+        assert calls[0]["timeout"] == 1800
 
     def test_uses_override_when_settings_is_populated(
         self, shared_session_factory, seeded_project, monkeypatch
@@ -655,7 +656,7 @@ class TestTransientCLIRetry:
         good = _feature_xml(("Recovered", "After one flake."))
         calls = _patch_cli_mixed(
             monkeypatch,
-            [RuntimeError("API Error: 500 transient blip"), good],
+            [CliTransientError("API Error: 500 transient blip"), good],
         )
 
         asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
@@ -689,7 +690,7 @@ class TestTransientCLIRetry:
         # CLI_MAX_TRANSIENT_RETRIES + 1 times total before bubbling
         # the final error.
         total_attempts = CLI_MAX_TRANSIENT_RETRIES + 1
-        failures = [RuntimeError(f"API Error: 500 #{i}") for i in range(total_attempts)]
+        failures = [CliTransientError(f"API Error: 500 #{i}") for i in range(total_attempts)]
         calls = _patch_cli_mixed(monkeypatch, failures)
 
         with pytest.raises(RuntimeError, match="API Error: 500"):
@@ -729,7 +730,7 @@ class TestTransientCLIRetry:
         calls = _patch_cli_mixed(
             monkeypatch,
             [
-                RuntimeError("API Error: 500 transient"),
+                CliTransientError("API Error: 500 transient"),
                 "not xml at all",
                 good,
             ],

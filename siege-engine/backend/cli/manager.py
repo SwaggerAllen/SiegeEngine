@@ -33,6 +33,136 @@ class GenerationResult:
     model: str
 
 
+class CliError(RuntimeError):
+    """Base class for Claude CLI subprocess failures.
+
+    Inherits :class:`RuntimeError` so existing ``except RuntimeError``
+    sites continue to catch the whole family. The subclasses below
+    carry one bit of semantics that matters to the retry wrapper:
+    whether the error is worth retrying. Any ``CliError`` subclass
+    that is *not* :class:`CliTransientError` must be treated as fatal
+    — retrying either burns budget for no chance of success (budget,
+    context window, content policy) or won't resolve without user
+    action (auth, invalid argument).
+    """
+
+
+class CliTransientError(CliError):
+    """CLI failed in a way that's worth retrying.
+
+    Upstream 5xx / 529 overload, rate limits, connection resets,
+    unexpected CLI process crashes — anything where waiting and
+    retrying has a reasonable chance of success. The transient
+    retry wrapper catches this class only.
+
+    Default classification for any ``RuntimeError``-shaped CLI
+    failure we don't recognize — "retry unless we're sure it's
+    fatal" is the safer default for CLI bugs we haven't seen yet.
+    """
+
+
+class CliBudgetExceededError(CliError):
+    """CLI aborted because it hit the ``--max-budget-usd`` limit.
+
+    Fatal — every retry passes the same budget and fails the same
+    way. User action: bump the project's ``cli_max_budget_usd``
+    setting or split the generation into smaller pieces.
+    """
+
+
+class CliAuthError(CliError):
+    """CLI rejected the request for auth reasons.
+
+    Fatal — the credentials need rotating or the login needs
+    refreshing. Retrying without user action changes nothing.
+    """
+
+
+class CliContextWindowError(CliError):
+    """CLI reported the prompt exceeded the model's context window.
+
+    Fatal — the same prompt will always be too long. User action:
+    shrink the context budget or drop partitions that aren't
+    pulling their weight.
+    """
+
+
+class CliContentPolicyError(CliError):
+    """CLI / model declined to respond on content-policy grounds.
+
+    Fatal — a refusal from the model is deterministic for the
+    same prompt. Retrying wastes budget. User action: inspect
+    and revise the upstream content that tripped the refusal.
+    """
+
+
+class CliInvalidArgumentError(CliError):
+    """CLI rejected the invocation shape.
+
+    Fatal — a bad flag, unsupported model, or invalid tool spec
+    won't fix itself on retry. Usually a programming error in
+    the pipeline, not a runtime condition.
+    """
+
+
+# Lowercase substring signals per fatal class. Order matters — first
+# match wins, so put the more specific patterns ahead of generic ones.
+# Detection runs against the combined stderr+stdout text from the
+# failing subprocess and is deliberately loose: we'd rather classify
+# a fatal error as transient (wasting a retry budget) than classify
+# a transient error as fatal (stalling forever on a blip).
+_FATAL_CLI_SIGNALS: tuple[tuple[tuple[str, ...], type[CliError]], ...] = (
+    (
+        ("max-budget", "budget exceeded", "budget limit", "max_budget_usd"),
+        CliBudgetExceededError,
+    ),
+    (
+        ("context length", "context window", "prompt is too long", "prompt_too_long"),
+        CliContextWindowError,
+    ),
+    (
+        ("content policy", "i cannot help", "i can't help", "unable to assist"),
+        CliContentPolicyError,
+    ),
+    (
+        (
+            "unauthorized",
+            "authentication failed",
+            "invalid api key",
+            "login expired",
+            "401 unauthorized",
+            "403 forbidden",
+        ),
+        CliAuthError,
+    ),
+    (
+        (
+            "unrecognized arguments",
+            "invalid choice",
+            "unknown flag",
+            "unknown option",
+            "no such option",
+        ),
+        CliInvalidArgumentError,
+    ),
+)
+
+
+def _classify_cli_failure(returncode: int | None, detail: str) -> CliError:
+    """Return the most specific :class:`CliError` for a non-zero CLI exit.
+
+    Matches ``detail`` (lowercased stderr+stdout) against
+    :data:`_FATAL_CLI_SIGNALS`. Unrecognized failures fall through
+    to :class:`CliTransientError` so the retry wrapper gets a chance
+    — the safer default when we don't recognize the error.
+    """
+    needle = detail.lower()
+    for patterns, cls in _FATAL_CLI_SIGNALS:
+        if any(p in needle for p in patterns):
+            return cls(f"Claude CLI failed (exit {returncode}): {detail[:1000]}")
+    return CliTransientError(f"Claude CLI failed (exit {returncode}): {detail[:1000]}")
+
+
 _semaphore: asyncio.Semaphore | None = None
 _semaphore_loop: asyncio.AbstractEventLoop | None = None
 
@@ -257,7 +387,11 @@ class CLIManager:
             logger.error("CLI failed (rc=%d) stderr: %s", proc.returncode, err_output[:2000])
             logger.error("CLI failed (rc=%d) stdout: %s", proc.returncode, output[:2000])
             detail = err_output.strip() or output.strip() or "(no output)"
-            raise RuntimeError(f"Claude CLI failed (exit {proc.returncode}): {detail[:1000]}")
+            # Classify into fatal vs transient so the retry wrapper
+            # can skip futile retries (budget, context window, auth,
+            # content policy, invalid arg) while still retrying real
+            # blips (5xx, rate limits, network resets, crashes).
+            raise _classify_cli_failure(proc.returncode, detail)
 
         if err_output:
             logger.debug("CLI stderr: %s", err_output[:500])

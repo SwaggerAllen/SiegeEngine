@@ -217,6 +217,7 @@ async def apply_component_local_policies(payload: dict) -> None:
         assert project_row is not None
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+        cli_max_budget_usd = settings.cli_max_budget_usd
 
         # Project vocabulary scoped to this component's reachable
         # features. Component-local policy application reasons
@@ -281,6 +282,7 @@ async def apply_component_local_policies(payload: dict) -> None:
             root_tag="policy-applications",
             system_prompt=SYSTEM_PROMPT,
             cli_timeout_seconds=cli_timeout_seconds,
+            cli_max_budget_usd=cli_max_budget_usd,
             prior_pending=None,
             render_prompt=_render,
             validate=_validate,

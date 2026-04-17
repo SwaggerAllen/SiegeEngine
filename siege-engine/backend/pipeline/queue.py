@@ -9,6 +9,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Callable, Coroutine
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any
 
@@ -21,6 +22,13 @@ from backend.models.job import Job
 JobHandler = Callable[[dict], Coroutine[Any, Any, None]]
 
 logger = logging.getLogger(__name__)
+
+# Current job ID, scoped to the asyncio task running a handler. Set by
+# ``worker_loop`` before dispatching the handler task and read by any
+# code that wants to surface handler-side progress back onto the Job
+# row (e.g. ``run_parse_validate_loop`` bumping the current attempt
+# counter). ``None`` outside a handler task.
+current_job_id_var: ContextVar[str | None] = ContextVar("current_job_id", default=None)
 
 # Singleton worker ID for this process
 _WORKER_ID = str(uuid.uuid4())[:8]
@@ -325,9 +333,20 @@ async def worker_loop(poll_interval: float = 5.0) -> None:
         # the worker loop itself. The task is registered in
         # ``_active_handler_tasks`` while it runs so ``cancel_job``
         # can reach it.
+        #
+        # The ``current_job_id_var`` contextvar is set before the
+        # handler task is created so every coroutine spawned from
+        # the handler inherits the job id — handlers use this to
+        # post progress (e.g. parse-validate attempt counters) back
+        # onto the Job row without threading the id through every
+        # helper.
         error: str | None = None
         cancelled = False
-        handler_task: asyncio.Task[None] = asyncio.create_task(handler(payload))
+        token = current_job_id_var.set(job_id)
+        try:
+            handler_task: asyncio.Task[None] = asyncio.create_task(handler(payload))
+        finally:
+            current_job_id_var.reset(token)
         _active_handler_tasks[job_id] = handler_task
         try:
             await handler_task

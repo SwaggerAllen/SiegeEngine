@@ -168,7 +168,14 @@ def bootstrap_get_state(
     for idx, sid in enumerate(scope_ids):
         if idx < len(config.scope_payload_keys):
             payload_filters[config.scope_payload_keys[idx]] = sid
-    status, last_error, started_at = queries.latest_generation_status(
+    (
+        status,
+        last_error,
+        started_at,
+        current_attempt,
+        max_attempts,
+        failed_raw_output,
+    ) = queries.latest_generation_status(
         db,
         project_id,
         config.generate_job_type,
@@ -182,6 +189,9 @@ def bootstrap_get_state(
         "last_error": last_error,
         "latest_telemetry": telemetry,
         "generation_started_at": started_at,
+        "current_attempt": current_attempt,
+        "max_attempts": max_attempts,
+        "failed_raw_output": failed_raw_output,
     }
 
 
