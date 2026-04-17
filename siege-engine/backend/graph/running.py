@@ -310,7 +310,107 @@ def errored_node_ids(db: Session, project_id: str) -> set[str]:
     return errored
 
 
-def cancelled_node_ids(db: Session, project_id: str) -> set[str]:
+def user_action_needed_node_ids(db: Session, project_id: str) -> set[str]:
+    """Return node ids that are idle and waiting on a user kick.
+
+    Surfaces as the blue dot in the sidebar tree. A node is
+    "waiting on a user kick" when its prerequisites are met but
+    it has no content, no pending draft, no running job, and
+    no errored latest job. Two paths land a node here:
+
+    1. Latest generation job was cancelled (user aborted or a
+       cascade cancelled it) with no replacement queued.
+    2. The node's prerequisites are met (upstream tiers have
+       approved content, or the tier has no upstream) but it
+       hasn't been generated yet — typically ``impl_*`` (the
+       one tier that doesn't auto-enqueue on mint) or the
+       project's ``expansion`` node on first open.
+
+    Excludes upstream-blocked tiers (gated presentational
+    comparch waiting on domain fan-in, fanin awaiting
+    first-pass impl completion, anything minted by a handler
+    that hasn't run yet). Their idle state means "waiting on
+    the chain", not "waiting on the user" — the automatic
+    pipeline enqueues their jobs when prerequisites land.
+    """
+    from backend.graph.queries import all_impls_populated_for
+    from backend.models.node import Draft
+
+    cancelled = _cancelled_node_ids(db, project_id)
+    running = running_node_ids(db, project_id)
+    errored = errored_node_ids(db, project_id)
+    pending_target_ids: set[str] = set(
+        db.execute(
+            select(Draft.target_id).where(
+                Draft.project_id == project_id,
+                Draft.target_type == "node",
+                Draft.status == "pending",
+            )
+        ).scalars()
+    )
+
+    all_nodes = list(db.execute(select(Node).where(Node.project_id == project_id)).scalars())
+    by_id: dict[str, Node] = {n.id: n for n in all_nodes}
+
+    def has_content(node_id: str) -> bool:
+        node = by_id.get(node_id)
+        return bool(node and (node.content or "").strip())
+
+    def prereq_met(node: Node) -> bool:
+        """True iff the upstream signal needed to generate this node has landed."""
+        tier = node.tier
+        if tier == "expansion":
+            return True  # Top of the chain; always kickable when the node exists.
+        if tier == "reqs":
+            # Single expansion node per project.
+            exp = next((n for n in all_nodes if n.tier == "expansion"), None)
+            return exp is not None and bool((exp.content or "").strip())
+        if tier == "sysarch":
+            reqs = next((n for n in all_nodes if n.tier == "reqs"), None)
+            return reqs is not None and bool((reqs.content or "").strip())
+        if tier == "subreqs":
+            # Subreqs nodes only get minted at sysarch-mint time,
+            # so their existence already implies sysarch approved.
+            return True
+        if tier == "comp":
+            if node.parent_id is None:
+                # Top-level comparch: subreqs child must be approved.
+                sr = next(
+                    (n for n in all_nodes if n.tier == "subreqs" and n.parent_id == node.id),
+                    None,
+                )
+                return sr is not None and bool((sr.content or "").strip())
+            # Subcomp: parent comp's comparch content must be approved.
+            return has_content(node.parent_id)
+        if tier == "impl":
+            # Owning comp/sub must have approved arch content.
+            return node.parent_id is not None and has_content(node.parent_id)
+        if tier == "fanin":
+            # First-pass gate: every impl in the owner's subtree populated.
+            return node.parent_id is not None and all_impls_populated_for(db, node.parent_id)
+        # policy / vocab / ref / feat / resp are "data" tiers with
+        # content minted by their parent generation — they never
+        # sit in "ready-to-generate" state.
+        return False
+
+    needs: set[str] = set(cancelled)
+    for node in all_nodes:
+        if node.id in needs:
+            continue
+        if (node.content or "").strip():
+            continue  # already has approved content → green, not blue
+        if node.id in running or node.id in errored:
+            continue
+        if node.id in pending_target_ids:
+            continue
+        if not prereq_met(node):
+            continue
+        needs.add(node.id)
+
+    return needs
+
+
+def _cancelled_node_ids(db: Session, project_id: str) -> set[str]:
     """Return the ids of every node whose latest generation job was cancelled.
 
     Parallel to :func:`errored_node_ids` but filters on

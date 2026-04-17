@@ -43,7 +43,7 @@ function n(
     has_pending_draft: false,
     generation_running: false,
     has_error: false,
-    has_cancelled_latest_job: false,
+    needs_user_action: false,
     techspec: '',
     pubapi: '',
     ...extras,

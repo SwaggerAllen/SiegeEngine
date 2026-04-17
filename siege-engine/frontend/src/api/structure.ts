@@ -31,7 +31,7 @@ export const StructureNodeSchema = z.object({
   // True when the latest generation job was cancelled and no
   // replacement is queued. Drives the blue dot in the sidebar
   // tree — signals "idle but explicitly waiting on user retry".
-  has_cancelled_latest_job: z.boolean(),
+  needs_user_action: z.boolean(),
   // Sysarch-time techspec + pubapi fragments for ``comp`` tier
   // nodes — populated when sysarch_mint writes them, empty
   // string otherwise. Drives the component Overview tab so the

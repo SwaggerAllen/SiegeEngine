@@ -1728,13 +1728,16 @@ class StructureNodeResponse(BaseModel):
     # enqueued. Surfaced as a red dot in the sidebar tree ahead
     # of the amber pending-draft / running indicators.
     has_error: bool
-    # True when the latest generation job targeting this node was
-    # cancelled (user aborted, or a cascade cancelled it) and no
-    # replacement has been enqueued. Node is idle but explicitly
-    # waiting on a user retry — surfaced as a blue dot in the
-    # sidebar tree, between the red (error) and amber (pending /
-    # running) badges in precedence.
-    has_cancelled_latest_job: bool
+    # True when the node is idle and explicitly waiting on the
+    # user to kick it — either the latest job was cancelled with
+    # no replacement queued, or the node is an ``impl_*`` that
+    # hasn't been triggered yet (impl is the one tier that
+    # doesn't auto-enqueue on mint). Surfaced as a blue dot in
+    # the sidebar tree, between red (error) and amber (pending
+    # / running) in precedence. Does not fire for nodes that
+    # are upstream-blocked — those sit idle waiting for the
+    # chain, not the user.
+    needs_user_action: bool
     # Sysarch-time fragments for ``comp`` tier nodes. Populated at
     # sysarch mint with the role paragraph (techspec) and api-intent
     # paragraph (pubapi) the LLM wrote in its ``<sysarch>`` output.
@@ -1812,7 +1815,11 @@ def get_project_structure(
     vocab, refs). Replaces the per-view GET endpoints that
     previously each required their own fetch + polling.
     """
-    from backend.graph.running import cancelled_node_ids, errored_node_ids, running_node_ids
+    from backend.graph.running import (
+        errored_node_ids,
+        running_node_ids,
+        user_action_needed_node_ids,
+    )
 
     _require_project(db, project_id)
 
@@ -1858,7 +1865,7 @@ def get_project_structure(
 
     running_ids = running_node_ids(db, project_id)
     errored_ids = errored_node_ids(db, project_id)
-    cancelled_ids = cancelled_node_ids(db, project_id)
+    user_action_ids = user_action_needed_node_ids(db, project_id)
     offset = queries.latest_offset(db, project_id) or 0
 
     # Tiers whose content is included inline. See the doc on
@@ -1901,7 +1908,7 @@ def get_project_structure(
                 has_pending_draft=n.id in pending_target_ids,
                 generation_running=n.id in running_ids,
                 has_error=n.id in errored_ids,
-                has_cancelled_latest_job=n.id in cancelled_ids,
+                needs_user_action=n.id in user_action_ids,
                 techspec=fragment_by_id.get(fragment_id(n.id, FragmentKind.TECHSPEC), "")
                 if n.tier == "comp"
                 else "",

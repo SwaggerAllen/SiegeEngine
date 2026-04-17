@@ -344,7 +344,7 @@ class TestFlags:
         assert nodes[c]["has_error"] is True
         assert nodes[c]["generation_running"] is False
 
-    def test_has_cancelled_latest_job_flag(self, client, project, db):
+    def test_needs_user_action_flag(self, client, project, db):
         c = _mint(db, project.id, Kind.COMP, tier="comp", name="C")
         db.add(
             Job(
@@ -361,11 +361,43 @@ class TestFlags:
         nodes = {
             n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
         }
-        assert nodes[c]["has_cancelled_latest_job"] is True
+        assert nodes[c]["needs_user_action"] is True
         assert nodes[c]["has_error"] is False
         assert nodes[c]["generation_running"] is False
 
-    def test_has_cancelled_cleared_by_newer_queued_retry(self, client, project, db):
+    def test_idle_impl_without_content_or_job_flags_needs_user_action(self, client, project, db):
+        # Impl is the one tier that doesn't auto-enqueue on mint —
+        # an empty impl with no job is waiting on a user kick.
+        c = _mint(db, project.id, Kind.COMP, tier="comp", name="C", content="ok")
+        impl = _mint(db, project.id, Kind.IMPL, tier="impl", name="I", parent_id=c)
+        db.commit()
+
+        nodes = {
+            n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
+        }
+        assert nodes[impl]["needs_user_action"] is True
+        # Non-impl empty nodes don't flag — they're upstream-blocked.
+        assert nodes[c]["needs_user_action"] is False
+
+    def test_idle_impl_with_content_does_not_flag(self, client, project, db):
+        c = _mint(db, project.id, Kind.COMP, tier="comp", name="C")
+        impl = _mint(
+            db,
+            project.id,
+            Kind.IMPL,
+            tier="impl",
+            name="I",
+            parent_id=c,
+            content="<implementation>done</implementation>",
+        )
+        db.commit()
+
+        nodes = {
+            n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
+        }
+        assert nodes[impl]["needs_user_action"] is False
+
+    def test_needs_user_action_cleared_by_newer_queued_retry(self, client, project, db):
         c = _mint(db, project.id, Kind.COMP, tier="comp", name="C")
         now = datetime.utcnow()
         db.add(
@@ -393,7 +425,7 @@ class TestFlags:
         nodes = {
             n["id"]: n for n in client.get(f"/api/projects/{project.id}/structure").json()["nodes"]
         }
-        assert nodes[c]["has_cancelled_latest_job"] is False
+        assert nodes[c]["needs_user_action"] is False
         assert nodes[c]["generation_running"] is True
 
     def test_has_error_cleared_by_newer_queued_retry(self, client, project, db):

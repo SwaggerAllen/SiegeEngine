@@ -116,15 +116,22 @@ function NavTreeRow({
   const showPendingSelf = item.status.has_pending_draft;
   const showRunningSelf = item.status.generation_running;
   const showErrorSelf = item.status.has_error;
-  const showCancelledSelf = item.status.has_cancelled_latest_job;
+  const showBlueSelf = item.status.needs_user_action;
+  const showGreenSelf =
+    item.node !== null &&
+    item.node.has_content &&
+    !showRunningSelf &&
+    !showErrorSelf &&
+    !showPendingSelf &&
+    !showBlueSelf;
   const showPendingDescendant =
     !isExpanded && item.status.descendant_has_pending_draft && !showPendingSelf;
   const showRunningDescendant =
     !isExpanded && item.status.descendant_generation_running && !showRunningSelf;
   const showErrorDescendant =
     !isExpanded && item.status.descendant_has_error && !showErrorSelf;
-  const showCancelledDescendant =
-    !isExpanded && item.status.descendant_has_cancelled_latest_job && !showCancelledSelf;
+  const showBlueDescendant =
+    !isExpanded && item.status.descendant_needs_user_action && !showBlueSelf;
 
   return (
     <li role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
@@ -186,11 +193,12 @@ function NavTreeRow({
           running={showRunningSelf}
           pending={showPendingSelf}
           errored={showErrorSelf}
-          cancelled={showCancelledSelf}
+          needsUserAction={showBlueSelf}
+          approved={showGreenSelf}
           descendantRunning={showRunningDescendant}
           descendantPending={showPendingDescendant}
           descendantErrored={showErrorDescendant}
-          descendantCancelled={showCancelledDescendant}
+          descendantNeedsUserAction={showBlueDescendant}
         />
       </div>
       {hasChildren && isExpanded && (
@@ -257,30 +265,33 @@ function StatusBadges({
   running,
   pending,
   errored,
-  cancelled,
+  needsUserAction,
+  approved,
   descendantRunning,
   descendantPending,
   descendantErrored,
-  descendantCancelled,
+  descendantNeedsUserAction,
 }: {
   running: boolean;
   pending: boolean;
   errored: boolean;
-  cancelled: boolean;
+  needsUserAction: boolean;
+  approved: boolean;
   descendantRunning: boolean;
   descendantPending: boolean;
   descendantErrored: boolean;
-  descendantCancelled: boolean;
+  descendantNeedsUserAction: boolean;
 }) {
   if (
     !running &&
     !pending &&
     !errored &&
-    !cancelled &&
+    !needsUserAction &&
+    !approved &&
     !descendantRunning &&
     !descendantPending &&
     !descendantErrored &&
-    !descendantCancelled
+    !descendantNeedsUserAction
   )
     return null;
   return (
@@ -299,18 +310,25 @@ function StatusBadges({
           className="inline-block w-1.5 h-1.5 rounded-full bg-red-500"
         />
       )}
-      {cancelled && !running && !errored && (
-        <span
-          title="Cancelled — waiting on retry"
-          aria-label="Cancelled — waiting on retry"
-          className="inline-block w-1.5 h-1.5 rounded-full bg-sky-400"
-        />
-      )}
-      {pending && !running && !errored && !cancelled && (
+      {pending && !running && !errored && (
         <span
           title="Draft awaiting review"
           aria-label="Draft awaiting review"
           className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400"
+        />
+      )}
+      {needsUserAction && !running && !errored && !pending && (
+        <span
+          title="Ready — waiting on your kick"
+          aria-label="Ready — waiting on your kick"
+          className="inline-block w-1.5 h-1.5 rounded-full bg-sky-400"
+        />
+      )}
+      {approved && (
+        <span
+          title="Approved"
+          aria-label="Approved"
+          className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"
         />
       )}
       {descendantRunning && !running && (
@@ -327,13 +345,13 @@ function StatusBadges({
           className="inline-block w-1 h-1 rounded-full bg-red-500/60"
         />
       )}
-      {descendantCancelled &&
-        !cancelled &&
+      {descendantNeedsUserAction &&
+        !needsUserAction &&
         !descendantRunning &&
         !descendantErrored && (
           <span
-            title="Descendant cancelled — waiting on retry"
-            aria-label="Descendant cancelled — waiting on retry"
+            title="Descendant ready — waiting on your kick"
+            aria-label="Descendant ready — waiting on your kick"
             className="inline-block w-1 h-1 rounded-full bg-sky-400/60"
           />
         )}
@@ -341,7 +359,7 @@ function StatusBadges({
         !pending &&
         !descendantRunning &&
         !descendantErrored &&
-        !descendantCancelled && (
+        !descendantNeedsUserAction && (
           <span
             title="Descendant has draft awaiting review"
             aria-label="Descendant has draft awaiting review"
