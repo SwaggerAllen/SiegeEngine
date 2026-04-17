@@ -4,6 +4,7 @@ import { ComparchPanel } from '../components/ComparchPanel';
 import { ComponentLocalPolicyList } from '../components/ComponentLocalPolicyList';
 import { SubcomponentList } from '../components/SubcomponentList';
 import { useComparch } from '../hooks/queries/useComparchQueries';
+import { useFanIn } from '../hooks/queries/useFanInQueries';
 import { useImplTopLevel } from '../hooks/queries/useImplQueries';
 import { useProject } from '../hooks/queries/useProjectQueries';
 import { describeApiError } from '../lib/describeApiError';
@@ -41,6 +42,12 @@ function ComponentComparchShell({
   // ``data`` stays undefined on fanned-out comps.
   const { data: implData } = useImplTopLevel(projectId, compId);
   const hasTopLevelImpl = !!implData;
+  // Phase 7: show a "Fan-in →" link only when the comp has a
+  // fanin_* child. Only fanned-out domain comps have one; the
+  // API 404s for presentational and un-fanned-out comps, which
+  // leaves ``data`` undefined and hides the link.
+  const { data: faninData } = useFanIn(projectId, compId);
+  const hasFanIn = !!faninData;
 
   if (projectError) {
     return (
@@ -86,6 +93,14 @@ function ComponentComparchShell({
             className="text-sm text-gray-400 hover:text-white"
           >
             Implementation →
+          </Link>
+        )}
+        {hasFanIn && (
+          <Link
+            to={`/projects/${projectId}/components/${compId}/fanin`}
+            className="text-sm text-purple-300 hover:text-white"
+          >
+            Fan-in →
           </Link>
         )}
         <Link

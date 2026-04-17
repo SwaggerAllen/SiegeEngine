@@ -10,6 +10,7 @@ import { ProjectDashboardLayout } from './pages/ProjectDashboardLayout';
 import { ProjectSettingsPage } from './pages/ProjectSettingsPage';
 import { ComponentSubreqsPage } from './pages/ComponentSubreqsPage';
 import { ComponentComparchPage } from './pages/ComponentComparchPage';
+import { ComponentFanInPage } from './pages/ComponentFanInPage';
 import { ComponentImplPage } from './pages/ComponentImplPage';
 import { SubcomponentComparchPage } from './pages/SubcomponentComparchPage';
 import { SubcomponentImplPage } from './pages/SubcomponentImplPage';
@@ -127,6 +128,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <SubcomponentImplPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:id/components/:compId/fanin"
+          element={
+            <ProtectedRoute>
+              <ComponentFanInPage />
             </ProtectedRoute>
           }
         />

@@ -46,6 +46,7 @@ from backend.graph.handlers.comparch_generation import (
     GENERATE_COMPARCH_JOB_TYPE,
 )
 from backend.graph.handlers.comparch_mint import MINT_COMPARCH_JOB_TYPE
+from backend.graph.handlers.fanin_generation import GENERATE_FANIN_JOB_TYPE
 from backend.graph.handlers.feature_expansion import (
     GENERATE_FEATURE_EXPANSION_JOB_TYPE,
 )
@@ -2041,9 +2042,11 @@ def get_decomposition_graph(
     """Return the full decomposition graph for Cytoscape rendering.
 
     Ships every comp_* (top-level and subcomponent), every resp_*
-    (top-level and subresp), every dependency edge, every
-    decomposition edge, and every domain_parent edge. The frontend
-    graph component decides what to show based on view filters.
+    (top-level and subresp), every fanin_* (Phase 7 bottom-up
+    synthesis under each fanned-out domain comp), every dependency
+    edge, every decomposition edge, and every domain_parent edge.
+    The frontend graph component decides what to show based on
+    view filters.
     """
     _require_project(db, project_id)
 
@@ -2052,7 +2055,7 @@ def get_decomposition_graph(
             select(Node)
             .where(
                 Node.project_id == project_id,
-                Node.tier.in_(["comp", "resp"]),
+                Node.tier.in_(["comp", "resp", "fanin"]),
             )
             .order_by(Node.tier.asc(), Node.display_order.asc(), Node.id.asc())
         ).scalars()
@@ -2859,6 +2862,209 @@ def post_impl_sub_cancel(
             _require_project,
         )
     )
+
+
+# ── Fan-in inspection routes (Phase 7) ────────────────────────────
+#
+# Fan-in has **no draft lifecycle** — the handler writes Node.content
+# directly via ``FanInContentUpdated``. That makes ``BootstrapTierConfig``
+# the wrong shape (no feedback / approve / discard). Three small
+# endpoints instead:
+#
+#   GET  /{project_id}/components/{comp_id}/fanin
+#        → node content + generation status + telemetry
+#   POST /{project_id}/components/{comp_id}/fanin/regenerate
+#        → enqueue v2.generate_fanin (dedup-safe)
+#   POST /{project_id}/components/{comp_id}/fanin/cancel
+#        → cancel the active regen if any
+#
+# The owning comp is addressed by its own comp_id in the URL — the
+# fan-in node itself lives as its ``tier="fanin"`` child, minted at
+# comparch-approval time for fanned-out domain comps.
+
+
+class FanInNodeResponse(BaseModel):
+    id: str
+    name: str
+    owner_comp_id: str
+    content: str
+    updated_at: str
+
+
+class FanInResponse(BaseModel):
+    node: FanInNodeResponse
+    generation_status: queries.GenerationStatus
+    last_error: str | None
+    latest_telemetry: TelemetrySummary | None
+    generation_started_at: str | None = None
+    current_attempt: int | None = None
+    max_attempts: int | None = None
+    failed_raw_output: str | None = None
+
+
+def _get_fanin_by_owner(db: Session, project_id: str, owner_comp_id: str) -> Node | None:
+    """Return the ``fanin_*`` child of ``owner_comp_id``, or None.
+
+    Mirrors ``_get_impl_by_owner`` but filters on ``tier="fanin"``.
+    One fan-in per fanned-out domain comp — minted by
+    ``comparch_mint`` if and only if ``comp.kind == "domain"`` and
+    the comp fanned out into subcomponents. A missing fan-in means
+    the comp either is presentational or un-fanned-out; callers
+    should 404.
+    """
+    return db.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "fanin",
+            Node.parent_id == owner_comp_id,
+        )
+    ).scalar_one_or_none()
+
+
+def _fanin_response(
+    db: Session,
+    project_id: str,
+    owner_comp_id: str,
+    fanin_node: Node,
+) -> FanInResponse:
+    (
+        status,
+        last_error,
+        started_at,
+        current_attempt,
+        max_attempts,
+        failed_raw_output,
+    ) = queries.latest_generation_status(
+        db,
+        project_id,
+        GENERATE_FANIN_JOB_TYPE,
+        payload_filters={"owner_comp_id": owner_comp_id},
+    )
+    telemetry_row = (
+        db.query(GenerationTelemetry)
+        .filter(
+            GenerationTelemetry.project_id == project_id,
+            GenerationTelemetry.node_id == fanin_node.id,
+        )
+        .order_by(GenerationTelemetry.created_at.desc())
+        .first()
+    )
+    telemetry = (
+        TelemetrySummary(
+            prompt_tokens=telemetry_row.prompt_tokens,
+            completion_tokens=telemetry_row.completion_tokens,
+            model=telemetry_row.model,
+            created_at=telemetry_row.created_at.isoformat() if telemetry_row.created_at else "",
+        )
+        if telemetry_row is not None
+        else None
+    )
+    return FanInResponse(
+        node=FanInNodeResponse(
+            id=fanin_node.id,
+            name=fanin_node.name,
+            owner_comp_id=owner_comp_id,
+            content=fanin_node.content or "",
+            updated_at=(fanin_node.updated_at.isoformat() if fanin_node.updated_at else ""),
+        ),
+        generation_status=status,
+        last_error=last_error,
+        latest_telemetry=telemetry,
+        generation_started_at=started_at,
+        current_attempt=current_attempt,
+        max_attempts=max_attempts,
+        failed_raw_output=failed_raw_output,
+    )
+
+
+@router.get(
+    "/{project_id}/components/{comp_id}/fanin",
+    response_model=FanInResponse,
+)
+def get_fanin(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FanInResponse:
+    """Return the fan-in node's content + generation status.
+
+    404 if the comp has no fan-in child — presentational comps and
+    un-fanned-out domain comps don't mint one.
+    """
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    fanin = _get_fanin_by_owner(db, project_id, comp_id)
+    if fanin is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Component {comp_id!r} has no fan-in node — only "
+                "fanned-out domain components produce fan-in syntheses."
+            ),
+        )
+    return _fanin_response(db, project_id, comp_id, fanin)
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/fanin/regenerate",
+    response_model=FeedbackResponse,
+)
+def post_fanin_regenerate(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    """Manually enqueue a fresh fan-in synthesis.
+
+    Normally the ``on_impl_approved`` hook drives regen; this
+    endpoint exists for debugging and for the user to re-run with
+    updated prompt state. Payload-dedup collapses duplicate enqueues
+    into the same running job.
+    """
+    from backend.pipeline import queue as pipeline_queue
+
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    fanin = _get_fanin_by_owner(db, project_id, comp_id)
+    if fanin is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Component {comp_id!r} has no fan-in node.",
+        )
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=GENERATE_FANIN_JOB_TYPE,
+        payload={"project_id": project_id, "owner_comp_id": comp_id},
+    )
+    return FeedbackResponse(job_id=job_id)
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/fanin/cancel",
+    response_model=CancelResponse,
+)
+def post_fanin_cancel(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> CancelResponse:
+    """Cancel any in-flight fan-in regen for this comp."""
+    from backend.pipeline import queue as pipeline_queue
+
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    job = pipeline_queue.find_active_job(
+        db,
+        GENERATE_FANIN_JOB_TYPE,
+        payload_filters={"project_id": project_id, "owner_comp_id": comp_id},
+    )
+    if job is None:
+        return CancelResponse(cancelled=False)
+    ok = pipeline_queue.cancel_job(db, job.id)
+    return CancelResponse(cancelled=ok)
 
 
 # ── Reference routes (Phase 6.6) ──────────────────────────────────

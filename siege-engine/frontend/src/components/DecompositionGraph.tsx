@@ -30,9 +30,11 @@ interface Props {
  *
  * Click-to-navigate: clicking a top-level component navigates
  * to its comparch page. Clicking a subcomponent navigates to
- * its owning top-level's comparch page. Clicking a resp node
- * selects it without navigation (no resp detail page exists).
- * Structural edits (create/move/delete) are Phase 11.
+ * its owning top-level's comparch page. Clicking a fan-in node
+ * navigates to its owning domain comp's fan-in inspection page.
+ * Clicking a resp node selects it without navigation (no resp
+ * detail page exists). Structural edits (create/move/delete)
+ * are Phase 11.
  */
 export function DecompositionGraph({ graph, projectId }: Props) {
   const navigate = useNavigate();
@@ -100,12 +102,22 @@ export function DecompositionGraph({ graph, projectId }: Props) {
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
+    const byIdLocal = new Map(graph.nodes.map((n) => [n.id, n]));
     const onTap = (event: cytoscape.EventObject) => {
       const target = event.target;
       // event.target is the core itself when tapping the background
       if (target === cy) return;
       if (!target.isNode || !target.isNode()) return;
       const nodeId = target.id();
+      const tappedNode = byIdLocal.get(nodeId);
+      // Fan-in nodes route to their own inspection page keyed on
+      // the owning domain comp (the fan-in's parent_id).
+      if (tappedNode?.tier === 'fanin' && tappedNode.parent_id) {
+        navigate(
+          `/projects/${projectId}/components/${tappedNode.parent_id}/fanin`
+        );
+        return;
+      }
       const compId = topLevelCompIdFor(nodeId);
       if (compId) {
         navigate(`/projects/${projectId}/components/${compId}/comparch`);
@@ -115,7 +127,7 @@ export function DecompositionGraph({ graph, projectId }: Props) {
     return () => {
       cy.off('tap', onTap);
     };
-  }, [navigate, projectId, topLevelCompIdFor]);
+  }, [graph, navigate, projectId, topLevelCompIdFor]);
 
   const stylesheet = useMemo<cytoscape.StylesheetCSS[]>(
     () => [
@@ -185,6 +197,24 @@ export function DecompositionGraph({ graph, projectId }: Props) {
           width: 90,
           height: 24,
           'font-size': 9,
+        },
+      },
+      {
+        // Phase 7 fan-in synthesis. One per fanned-out domain
+        // comp, drawn as a dashed-border hexagon in purple so
+        // the bottom-up "as built" artifact reads distinct from
+        // the top-down comparch box.
+        selector: 'node[type = "fanin"]',
+        css: {
+          'background-color': '#4c1d95',
+          'border-color': '#c4b5fd',
+          'border-width': 2,
+          'border-style': 'dashed',
+          shape: 'hexagon',
+          width: 100,
+          height: 40,
+          'font-size': 10,
+          color: '#ede9fe',
         },
       },
       {
@@ -320,6 +350,8 @@ function toCytoscapeElements(
       type = n.parent_id ? 'comp-sub' : 'comp-top';
     } else if (n.tier === 'resp') {
       type = isCompParent(n.parent_id) ? 'resp-sub' : 'resp-top';
+    } else if (n.tier === 'fanin') {
+      type = 'fanin';
     } else {
       type = 'other';
     }
