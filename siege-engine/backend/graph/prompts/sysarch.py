@@ -234,6 +234,13 @@ architectural non-negotiables (all writes event-sourced; all \
 LLM calls logged; no direct DB access outside the reducer), \
 name them here — downstream passes will treat them as \
 invariants.
+* Structure the spec as paragraphs separated by a blank line \
+(``\n\n``). Each paragraph addresses one concern — \
+language/runtime, persistence, concurrency model, testing, \
+build + deploy, architectural invariants. Don't use bullet \
+lists or headings; the downstream renderer splits on blank \
+lines and wraps each paragraph in its own block, so the blank \
+line between paragraphs is the structural signal.
 
 ## Components
 

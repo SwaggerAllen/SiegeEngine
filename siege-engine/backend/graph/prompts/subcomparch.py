@@ -163,6 +163,11 @@ with PostgreSQL via SQLAlchemy", this subcomponent's techspec \
 adds what it specifically owns within that stack (which tables, \
 which async patterns, which validation approach), not a \
 re-statement of the full sentence.
+* Structure the spec as paragraphs separated by a blank line \
+(``\n\n``) when it runs more than a sentence or two — one \
+paragraph per concern. Don't use bullet lists or headings; the \
+downstream renderer splits on blank lines and wraps each \
+paragraph in its own block.
 * ``<public-surface>`` is the **only API** sibling subcomponents \
 and the parent component's external dependents will see. Types, \
 function signatures, method signatures, events. Code-shaped \
