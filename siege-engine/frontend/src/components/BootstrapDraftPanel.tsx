@@ -3,7 +3,15 @@ import { describeApiError } from '../lib/describeApiError';
 import { XmlDocument } from './xml';
 import type { XmlRendererMap } from './xml';
 
-function CopyButton({ content }: { content: string }) {
+function CopyButton({
+  content,
+  label = 'Copy',
+  title = 'Copy raw content to clipboard',
+}: {
+  content: string;
+  label?: string;
+  title?: string;
+}) {
   const [copied, setCopied] = useState(false);
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(content).then(() => {
@@ -16,9 +24,9 @@ function CopyButton({ content }: { content: string }) {
       type="button"
       onClick={handleCopy}
       className="px-3 py-1 text-xs rounded border border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"
-      title="Copy raw content to clipboard"
+      title={title}
     >
-      {copied ? 'Copied' : 'Copy'}
+      {copied ? 'Copied' : label}
     </button>
   );
 }
@@ -77,6 +85,15 @@ export interface BootstrapPanelData {
   current_attempt: number | null;
   /** Total parse-validate attempts allowed (initial + retries). */
   max_attempts: number | null;
+  /**
+   * Raw LLM output from the last failed attempt when the parse-
+   * validate loop exhausted, so the failed-state UI can offer a
+   * copy-to-clipboard affordance for debugging what the model
+   * actually returned. ``null`` for other failure modes (CLI
+   * crash before any attempt produced text) and for non-failed
+   * states.
+   */
+  failed_raw_output: string | null;
 }
 
 /**
@@ -360,6 +377,7 @@ export function BootstrapDraftPanel({
     generation_started_at,
     current_attempt,
     max_attempts,
+    failed_raw_output,
   } = data;
 
   const submitFeedback = () => {
@@ -481,14 +499,23 @@ export function BootstrapDraftPanel({
           <div className="font-semibold mb-1">Generation failed</div>
           {last_error && <div className="text-red-400/80">{last_error}</div>}
         </div>
-        <button
-          type="button"
-          onClick={callbacks.onRetry}
-          disabled={callbacks.isBusy}
-          className="px-4 py-2 text-sm rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
-        >
-          Retry
-        </button>
+        <div className="flex gap-2 items-center flex-wrap">
+          <button
+            type="button"
+            onClick={callbacks.onRetry}
+            disabled={callbacks.isBusy}
+            className="px-4 py-2 text-sm rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
+          >
+            Retry
+          </button>
+          {failed_raw_output && (
+            <CopyButton
+              content={failed_raw_output}
+              label="Copy last response"
+              title="Copy the raw LLM output from the last failed attempt to the clipboard"
+            />
+          )}
+        </div>
         <TelemetryLine telemetry={latest_telemetry} />
       </div>
     );

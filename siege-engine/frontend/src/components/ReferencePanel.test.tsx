@@ -68,6 +68,7 @@ function detail(overrides: Partial<ReferenceDetail> = {}): ReferenceDetail {
     generation_started_at: null,
       current_attempt: null,
       max_attempts: null,
+      failed_raw_output: null,
     outgoing_edges: [],
     incoming_edges: [],
     ...overrides,

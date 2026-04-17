@@ -34,6 +34,7 @@ export const ImplResponseSchema = z.object({
   generation_started_at: z.string().nullish().transform((v) => v ?? null),
   current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   max_attempts: z.number().int().nullish().transform((v) => v ?? null),
+  failed_raw_output: z.string().nullish().transform((v) => v ?? null),
 });
 export type ImplResponse = z.infer<typeof ImplResponseSchema>;
 

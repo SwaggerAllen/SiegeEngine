@@ -34,6 +34,7 @@ const ResponseSchema = z.object({
   generation_started_at: z.string().nullish().transform((v) => v ?? null),
   current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   max_attempts: z.number().int().nullish().transform((v) => v ?? null),
+  failed_raw_output: z.string().nullish().transform((v) => v ?? null),
 });
 
 const FeedbackResponseSchema = z.object({ job_id: z.string() });

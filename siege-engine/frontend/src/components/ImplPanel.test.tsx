@@ -48,6 +48,7 @@ function response(overrides: Partial<ImplResponse> = {}): ImplResponse {
     generation_started_at: null,
     current_attempt: null,
     max_attempts: null,
+      failed_raw_output: null,
     ...overrides,
   };
 }

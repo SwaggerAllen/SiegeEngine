@@ -174,6 +174,7 @@ def bootstrap_get_state(
         started_at,
         current_attempt,
         max_attempts,
+        failed_raw_output,
     ) = queries.latest_generation_status(
         db,
         project_id,
@@ -190,6 +191,7 @@ def bootstrap_get_state(
         "generation_started_at": started_at,
         "current_attempt": current_attempt,
         "max_attempts": max_attempts,
+        "failed_raw_output": failed_raw_output,
     }
 
 

@@ -94,6 +94,35 @@ def _record_attempt_progress(attempt_idx: int, max_attempts: int) -> None:
         logger.exception("Failed to record parse-validate attempt progress")
 
 
+def _record_failed_raw_output(raw_output: str) -> None:
+    """Stash the last failed attempt's raw LLM text on the Job row.
+
+    Called right before the parse-validate loop raises its
+    exhaustion exception, so the UI can surface a copy-to-clipboard
+    affordance for the raw output alongside the human-readable
+    error. Stored in ``Job.payload["_failed_raw_output"]`` (same
+    JSON column that carries ``_current_attempt`` — no migration).
+
+    No-op outside a handler task. Swallows any DB error so progress
+    visibility never blocks the real failure path.
+    """
+    job_id = current_job_id_var.get()
+    if job_id is None:
+        return
+    try:
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            if job is None:
+                return
+            payload = dict(job.payload or {})
+            payload["_failed_raw_output"] = raw_output
+            job.payload = payload
+            flag_modified(job, "payload")
+            db.commit()
+    except Exception:
+        logger.exception("Failed to record failed raw output on job row")
+
+
 async def run_parse_validate_loop(
     *,
     root_tag: str,
@@ -179,6 +208,8 @@ async def run_parse_validate_loop(
         return result, attempts
 
     # Exhausted all attempts.
+    if attempts:
+        _record_failed_raw_output(attempts[-1].text)
     raise exhausted_exception_cls(
         f"{log_handler_name} failed parse-validate after "
         f"{MAX_PARSE_RETRIES + 1} attempts. Final error: {parse_error}"
