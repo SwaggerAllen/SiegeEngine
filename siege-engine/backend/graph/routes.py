@@ -178,6 +178,8 @@ class ExpansionResponse(BaseModel):
     # running. Used by the frontend to render a duration clock / PST
     # start-time label while an artifact regenerates.
     generation_started_at: str | None = None
+    current_attempt: int | None = None
+    max_attempts: int | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -476,6 +478,8 @@ class ReqsResponse(BaseModel):
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
     generation_started_at: str | None = None
+    current_attempt: int | None = None
+    max_attempts: int | None = None
 
 
 class ReqsApproveResponse(BaseModel):
@@ -664,6 +668,8 @@ class SysarchResponse(BaseModel):
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
     generation_started_at: str | None = None
+    current_attempt: int | None = None
+    max_attempts: int | None = None
 
 
 class SysarchApproveResponse(BaseModel):
@@ -1165,6 +1171,8 @@ class SubreqsResponse(BaseModel):
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
     generation_started_at: str | None = None
+    current_attempt: int | None = None
+    max_attempts: int | None = None
 
 
 class SubreqsApproveResponse(BaseModel):
@@ -1400,6 +1408,8 @@ class ComparchResponse(BaseModel):
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
     generation_started_at: str | None = None
+    current_attempt: int | None = None
+    max_attempts: int | None = None
 
 
 class ComparchApproveResponse(BaseModel):
@@ -1624,6 +1634,8 @@ class SubcomparchResponse(BaseModel):
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
     generation_started_at: str | None = None
+    current_attempt: int | None = None
+    max_attempts: int | None = None
 
 
 class SubcomparchApproveResponse(BaseModel):
@@ -2526,6 +2538,8 @@ class ImplResponse(BaseModel):
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
     generation_started_at: str | None = None
+    current_attempt: int | None = None
+    max_attempts: int | None = None
 
 
 def _get_impl_by_owner(db: Session, project_id: str, owner_id: str) -> Node | None:
@@ -2588,6 +2602,8 @@ def _impl_response_from_state(state: dict) -> ImplResponse:
         last_error=state["last_error"],
         latest_telemetry=state["latest_telemetry"],
         generation_started_at=state.get("generation_started_at"),
+        current_attempt=state.get("current_attempt"),
+        max_attempts=state.get("max_attempts"),
     )
 
 
@@ -2870,6 +2886,8 @@ class ReferenceDetailResponse(BaseModel):
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
     generation_started_at: str | None = None
+    current_attempt: int | None = None
+    max_attempts: int | None = None
     outgoing_edges: list[ReferenceEdgeResponse]
     incoming_edges: list[ReferenceEdgeResponse]
 
@@ -3018,6 +3036,8 @@ def get_reference(
         last_error=state["last_error"],
         latest_telemetry=state["latest_telemetry"],
         generation_started_at=state.get("generation_started_at"),
+        current_attempt=state.get("current_attempt"),
+        max_attempts=state.get("max_attempts"),
         outgoing_edges=outgoing,
         incoming_edges=incoming,
     )

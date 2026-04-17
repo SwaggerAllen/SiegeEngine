@@ -66,6 +66,8 @@ function detail(overrides: Partial<ReferenceDetail> = {}): ReferenceDetail {
     last_error: null,
     latest_telemetry: null,
     generation_started_at: null,
+      current_attempt: null,
+      max_attempts: null,
     outgoing_edges: [],
     incoming_edges: [],
     ...overrides,

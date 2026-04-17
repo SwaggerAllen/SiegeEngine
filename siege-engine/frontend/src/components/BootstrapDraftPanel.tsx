@@ -67,6 +67,16 @@ export interface BootstrapPanelData {
    * time label the panel renders alongside the Stop button.
    */
   generation_started_at: string | null;
+  /**
+   * Current parse-validate attempt number (1-indexed) while a
+   * generation is actively running, or ``null`` if the handler
+   * hasn't entered the retry loop yet (queued, spinning up, or
+   * not a bootstrap tier). Paired with ``max_attempts`` to show
+   * "Attempt N / M" next to the generation timer.
+   */
+  current_attempt: number | null;
+  /** Total parse-validate attempts allowed (initial + retries). */
+  max_attempts: number | null;
 }
 
 /**
@@ -176,9 +186,13 @@ function formatDuration(seconds: number): string {
  */
 function GenerationClock({
   startedAtIso,
+  currentAttempt,
+  maxAttempts,
   variant = 'inline',
 }: {
   startedAtIso: string | null;
+  currentAttempt: number | null;
+  maxAttempts: number | null;
   variant?: 'inline' | 'block';
 }) {
   const [now, setNow] = useState(() => Date.now());
@@ -210,18 +224,24 @@ function GenerationClock({
     second: '2-digit',
     hour12: true,
   });
+  const attemptLabel =
+    currentAttempt && maxAttempts
+      ? `attempt ${currentAttempt} / ${maxAttempts}`
+      : null;
 
   if (variant === 'block') {
     return (
       <div className="text-xs text-gray-400 text-center" data-testid="generation-clock">
         <div>Elapsed: {duration}</div>
         <div className="text-gray-500">started {startedLabel} PT</div>
+        {attemptLabel && <div className="text-gray-500">{attemptLabel}</div>}
       </div>
     );
   }
   return (
     <span className="text-xs text-gray-400" data-testid="generation-clock">
       {duration} · started {startedLabel} PT
+      {attemptLabel && <> · {attemptLabel}</>}
     </span>
   );
 }
@@ -338,6 +358,8 @@ export function BootstrapDraftPanel({
     last_error,
     latest_telemetry,
     generation_started_at,
+    current_attempt,
+    max_attempts,
   } = data;
 
   const submitFeedback = () => {
@@ -359,7 +381,12 @@ export function BootstrapDraftPanel({
       <div className="p-6 flex flex-col items-center justify-center gap-3 text-gray-300">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-blue-400" />
         <div className="text-sm">{labels.generatingMessage}</div>
-        <GenerationClock startedAtIso={generation_started_at} variant="block" />
+        <GenerationClock
+          startedAtIso={generation_started_at}
+          currentAttempt={current_attempt}
+          maxAttempts={max_attempts}
+          variant="block"
+        />
         <button
           type="button"
           onClick={callbacks.onCancel}
@@ -385,7 +412,11 @@ export function BootstrapDraftPanel({
             {isRegenerating && (
               <div className="flex items-center gap-3">
                 <span className="text-xs text-gray-400">regenerating…</span>
-                <GenerationClock startedAtIso={generation_started_at} />
+                <GenerationClock
+                  startedAtIso={generation_started_at}
+                  currentAttempt={current_attempt}
+                  maxAttempts={max_attempts}
+                />
                 <button
                   type="button"
                   onClick={callbacks.onCancel}

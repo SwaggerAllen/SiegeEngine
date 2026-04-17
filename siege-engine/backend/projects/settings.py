@@ -9,7 +9,7 @@ Current settings:
 
 * ``generation_timeout_seconds`` — how long handlers wait on a
   single Claude CLI subprocess before killing it and surfacing a
-  timeout error. Default 900 (15 minutes). Minimum 60 (1 minute)
+  timeout error. Default 1800 (30 minutes). Minimum 60 (1 minute)
   and maximum 3600 (1 hour) to keep obvious footguns out.
 
 Call sites:
@@ -44,7 +44,7 @@ class ProjectSettings(BaseModel):
     """
 
     generation_timeout_seconds: int = Field(
-        default=900,
+        default=1800,
         ge=60,
         le=3600,
         description=(

@@ -46,7 +46,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from sqlalchemy.orm.attributes import flag_modified
+
 from backend.cli.manager import GenerationResult
+from backend.database import SessionLocal
 from backend.graph.handlers.feature_expansion import (
     CLI_MAX_BUDGET_USD,
     CLI_TOOLS,
@@ -55,8 +58,40 @@ from backend.graph.handlers.feature_expansion import (
 )
 from backend.graph.parsers.validators import ValidationError
 from backend.graph.parsers.xml_sections import ParseError, TagNode, extract_tag_tree
+from backend.models.job import Job
+from backend.pipeline.queue import current_job_id_var
 
 logger = logging.getLogger(__name__)
+
+
+def _record_attempt_progress(attempt_idx: int, max_attempts: int) -> None:
+    """Stamp the running Job row with the current parse-validate attempt.
+
+    Reads the handler's job id from ``current_job_id_var`` (set by the
+    worker loop before dispatching the handler) and updates the Job's
+    ``payload`` dict with ``_current_attempt`` / ``_max_attempts`` so
+    :func:`backend.graph.queries.latest_generation_status` can surface
+    retry progress to the UI while generation is still in flight.
+
+    No-op outside a handler task (contextvar unset). Any DB error is
+    logged and swallowed — progress visibility must not break generation.
+    """
+    job_id = current_job_id_var.get()
+    if job_id is None:
+        return
+    try:
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            if job is None:
+                return
+            payload = dict(job.payload or {})
+            payload["_current_attempt"] = attempt_idx
+            payload["_max_attempts"] = max_attempts
+            job.payload = payload
+            flag_modified(job, "payload")
+            db.commit()
+    except Exception:
+        logger.exception("Failed to record parse-validate attempt progress")
 
 
 async def run_parse_validate_loop(
@@ -101,7 +136,13 @@ async def run_parse_validate_loop(
     # MAX_PARSE_RETRIES + 1 total attempts: one initial attempt
     # plus up to MAX_PARSE_RETRIES retries that feed the previous
     # parse/validation error back into the prompt.
-    for attempt_idx in range(MAX_PARSE_RETRIES + 1):
+    max_attempts = MAX_PARSE_RETRIES + 1
+    for attempt_idx in range(max_attempts):
+        # Record progress on the Job row before kicking off the LLM
+        # call so a UI polling the bootstrap endpoint sees "attempt
+        # N of M" for the duration of the call, not just after it.
+        _record_attempt_progress(attempt_idx + 1, max_attempts)
+
         # On retries, use the *previous* attempt's raw text as the
         # "prior pending" so the LLM sees what it produced and can
         # correct it. First attempt uses the caller-supplied prior.

@@ -89,7 +89,7 @@ class TestGetSettings:
         resp = client.get(f"/api/projects/{project.id}/settings")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["generation_timeout_seconds"] == 900
+        assert body["generation_timeout_seconds"] == 1800
 
     def test_returns_overridden_value_when_column_is_set(self, client, project, db):
         project.settings = {"generation_timeout_seconds": 1500}
@@ -103,7 +103,7 @@ class TestGetSettings:
         db.commit()
         resp = client.get(f"/api/projects/{project.id}/settings")
         assert resp.status_code == 200
-        assert resp.json()["generation_timeout_seconds"] == 900
+        assert resp.json()["generation_timeout_seconds"] == 1800
 
     def test_unknown_project_is_404(self, client):
         resp = client.get("/api/projects/does-not-exist/settings")
@@ -128,9 +128,9 @@ class TestPutSettings:
         db.commit()
         resp = client.put(f"/api/projects/{project.id}/settings", json={})
         assert resp.status_code == 200
-        assert resp.json()["generation_timeout_seconds"] == 900
+        assert resp.json()["generation_timeout_seconds"] == 1800
         db.refresh(project)
-        assert project.settings["generation_timeout_seconds"] == 900
+        assert project.settings["generation_timeout_seconds"] == 1800
 
     def test_below_minimum_is_rejected(self, client, project):
         resp = client.put(

@@ -47,6 +47,8 @@ function makeResponse(overrides: Partial<SysarchResponse> = {}): SysarchResponse
     last_error: null,
     latest_telemetry: null,
     generation_started_at: null,
+    current_attempt: null,
+    max_attempts: null,
     ...overrides,
   };
 }
