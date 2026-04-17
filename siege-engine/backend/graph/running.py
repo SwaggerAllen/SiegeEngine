@@ -36,6 +36,25 @@ from backend.graph.handlers.sysarch_generation import GENERATE_SYSARCH_JOB_TYPE
 from backend.models.job import Job
 from backend.models.node import Node
 
+# Phase 8 — AI self-review job types. Deterministic
+# ``v2.review_<tier>`` naming so the registered handlers and
+# this running-jobs tracker stay in sync without cross-imports.
+# The review job payload always carries ``node_id`` explicitly
+# (unlike generator payloads, which use tier-specific scope
+# keys) so the running-node resolver handles them uniformly.
+REVIEW_JOB_TYPES: frozenset[str] = frozenset(
+    {
+        "v2.review_expansion",
+        "v2.review_requirements",
+        "v2.review_sysarch",
+        "v2.review_subreqs",
+        "v2.review_comparch",
+        "v2.review_subcomparch",
+        "v2.review_impl",
+        "v2.review_fanin",
+    }
+)
+
 _TIER_JOB_TYPES = frozenset(
     {
         GENERATE_FEATURE_EXPANSION_JOB_TYPE,
@@ -48,6 +67,7 @@ _TIER_JOB_TYPES = frozenset(
         GENERATE_IMPL_JOB_TYPE,
         GENERATE_REFERENCE_JOB_TYPE,
     }
+    | REVIEW_JOB_TYPES
 )
 
 
@@ -191,6 +211,17 @@ def running_node_ids(db: Session, project_id: str) -> set[str]:
         rid = p.get("ref_id")
         if isinstance(rid, str):
             running.add(rid)
+
+    # ── Phase 8 review jobs — every type carries node_id ──────────
+    # The review job payload explicitly names the tier node whose
+    # review is in flight. Extending ``running`` with those ids
+    # is what keeps the sidebar's pulsing-amber dot blinking
+    # through both draft generation and review generation.
+    for review_type in REVIEW_JOB_TYPES:
+        for p in by_type.get(review_type, []):
+            nid = p.get("node_id")
+            if isinstance(nid, str):
+                running.add(nid)
 
     return running
 

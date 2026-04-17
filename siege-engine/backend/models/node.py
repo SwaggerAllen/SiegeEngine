@@ -109,6 +109,12 @@ class Node(Base):
     # (see ``docs/architecture/v2-rearchitecture.md`` §Foundation
     # components).
     is_foundation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Phase 8 — AI self-review output for tiers whose reviews
+    # target the node directly rather than a Draft row. Used
+    # by ``fanin`` tier, which has no draft lifecycle — its
+    # content writes via ``FanInContentUpdated`` and its
+    # review lands here. Empty for every other tier.
+    review_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -193,6 +199,11 @@ class Draft(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     batch_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Phase 8 — AI self-review output. Starts empty; populated by
+    # a ``v2.review_<tier>`` job after the draft commits.
+    # Overwritten on ``DraftReviewUpdated`` events. Reset to empty
+    # when a new draft replaces this one.
+    review_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

@@ -552,6 +552,35 @@ def _apply_fanin_content_updated(
     node.updated_at = datetime.utcnow()
 
 
+def _apply_draft_review_updated(
+    session: Session,
+    project_id: str,
+    event: ev.DraftReviewUpdated,
+) -> None:
+    """Write the AI self-review markdown to the draft or owning node.
+
+    Phase 8: one review pass per draft commit. When ``draft_id``
+    is set the reducer updates ``Draft.review_text``; when it's
+    ``None`` (fanin tier — no draft lifecycle), it updates
+    ``Node.review_text`` on the owning node.
+
+    Idempotent: replaying simply re-sets ``review_text`` to the
+    same value.
+    """
+    if event.draft_id is not None:
+        draft = session.get(Draft, event.draft_id)
+        if draft is None or draft.project_id != project_id:
+            raise ReducerError(
+                f"DraftReviewUpdated: draft {event.draft_id!r} not found in project {project_id!r}"
+            )
+        draft.review_text = event.review_text
+        draft.updated_at = datetime.utcnow()
+        return
+    node = _require_node(session, project_id, event.node_id)
+    node.review_text = event.review_text
+    node.updated_at = datetime.utcnow()
+
+
 def _apply_bootstrap_node_content_cleared(
     session: Session,
     project_id: str,
@@ -607,6 +636,7 @@ _HANDLERS: dict[str, Callable[[Session, str, Any], None]] = {
     "EdgeCreated": _apply_edge_created,
     "EdgeDeleted": _apply_edge_deleted,
     "FragmentUpdated": _apply_fragment_updated,
+    "DraftReviewUpdated": _apply_draft_review_updated,
     "DraftGenerated": _apply_draft_generated,
     "DraftEdited": _apply_draft_edited,
     "DraftApproved": _apply_draft_approved,

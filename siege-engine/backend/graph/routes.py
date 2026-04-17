@@ -187,6 +187,14 @@ class ExpansionResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -436,6 +444,14 @@ class ReqsResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class ReqsApproveResponse(BaseModel):
@@ -582,6 +598,14 @@ class SysarchResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class SysarchApproveResponse(BaseModel):
@@ -989,6 +1013,14 @@ class SubreqsResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class SubreqsApproveResponse(BaseModel):
@@ -1213,6 +1245,14 @@ class ComparchResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class ComparchApproveResponse(BaseModel):
@@ -1430,6 +1470,14 @@ class SubcomparchResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class SubcomparchApproveResponse(BaseModel):
@@ -2420,6 +2468,14 @@ class ImplResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 def _get_impl_by_owner(db: Session, project_id: str, owner_id: str) -> Node | None:
@@ -2492,6 +2548,11 @@ def _impl_response_from_state(state: dict) -> ImplResponse:
         current_attempt=state.get("current_attempt"),
         max_attempts=state.get("max_attempts"),
         failed_raw_output=state.get("failed_raw_output"),
+        review_text=state.get("review_text", ""),
+        review_status=state.get("review_status", "idle"),
+        review_last_error=state.get("review_last_error"),
+        review_current_attempt=state.get("review_current_attempt"),
+        review_max_attempts=state.get("review_max_attempts"),
     )
 
 
@@ -2815,6 +2876,14 @@ class FanInResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 def _get_fanin_by_owner(db: Session, project_id: str, owner_comp_id: str) -> Node | None:
@@ -2855,6 +2924,21 @@ def _fanin_response(
         GENERATE_FANIN_JOB_TYPE,
         payload_filters={"owner_comp_id": owner_comp_id},
     )
+    # Phase 8 — fanin review status is keyed on the fanin node
+    # id (review payload always carries ``node_id``).
+    (
+        _review_status,
+        _review_last_error,
+        _,
+        _review_current_attempt,
+        _review_max_attempts,
+        _,
+    ) = queries.latest_generation_status(
+        db,
+        project_id,
+        "v2.review_fanin",
+        payload_filters={"node_id": fanin_node.id},
+    )
     telemetry_row = (
         db.query(GenerationTelemetry)
         .filter(
@@ -2889,6 +2973,11 @@ def _fanin_response(
         current_attempt=current_attempt,
         max_attempts=max_attempts,
         failed_raw_output=failed_raw_output,
+        review_text=fanin_node.review_text or "",
+        review_status=_review_status,
+        review_last_error=_review_last_error,
+        review_current_attempt=_review_current_attempt,
+        review_max_attempts=_review_max_attempts,
     )
 
 
@@ -3090,6 +3179,14 @@ class ReferenceDetailResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
     outgoing_edges: list[ReferenceEdgeResponse]
     incoming_edges: list[ReferenceEdgeResponse]
 

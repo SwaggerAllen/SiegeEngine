@@ -144,6 +144,12 @@ def _node_ids_for_event(event_type: str, payload: dict[str, Any]) -> tuple[str, 
             # the tier detail key.
             tgt = payload.get("target_id")
             return (tgt,) if isinstance(tgt, str) else ()
+        case "DraftReviewUpdated":
+            # Event carries node_id explicitly — the review
+            # handler computes it once before emitting so the
+            # broadcaster doesn't need a Draft lookup.
+            nid = payload.get("node_id")
+            return (nid,) if isinstance(nid, str) else ()
         case "DraftApproved" | "DraftDiscarded":
             # These carry only a draft_id — the frontend
             # resolver has to follow the draft to its target
