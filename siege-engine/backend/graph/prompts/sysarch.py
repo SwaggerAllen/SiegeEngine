@@ -250,38 +250,58 @@ components do the structural work. Presentational components \
 render views into domain content — UIs, dashboards, CLIs, \
 operator consoles, docs pages, any surface where a human \
 interacts with what the domains expose.
+* **A presentational component is one coherent user task, not \
+one audience.** The unit of decomposition is "what the user is \
+trying to do", not "who is using the system". Two distinct \
+tasks become two presentational components even when the same \
+user performs both; one task stays one component even when \
+multiple user types hit it. A single presentational that \
+covers "everything an admin sees" or "everything a user sees" \
+is an *application*, not a slice, and it will pull in too many \
+domains and generate with too little specificity.
+* **Each presentational component has 1 or 2 domain parents. \
+More than 2 is a structural error.** If the component's work \
+spans three or more domains, the task isn't one task — split \
+it. The 1–2 cap is enforced by the validator; a document that \
+wires 3+ ``<parent>`` edges from one presentational alias will \
+be rejected with an error pointing at the offending component. \
+If two domain parents expose fundamentally different handle \
+shapes (different entity types, different operations), that's \
+itself a signal the presentational is combining two tasks \
+rather than surfacing one.
+* **Anti-patterns that indicate you're building an application \
+instead of a slice:** names ending in ``Workspace``, \
+``Dashboard``, ``Console``, ``UI``, or ``Hub``; roles that \
+describe a collection of views ("renders the graph and the \
+review panels and the chat") rather than a single coherent \
+task; 3+ domain parents. If your first draft of the \
+presentational layer has one component per audience, start \
+over and slice by task instead.
 * **Domain-presentational pairing is the expected default, not \
 a carve-out.** Almost every project has at least one human \
-consumer (developer, operator, end user, admin, reviewer), so \
-almost every project has at least one presentational \
-component. A system with zero presentational components is \
-the exception — it implies the only consumers are other \
-software. For every domain component whose responsibilities \
-surface to a human, expect a presentational counterpart with \
-a ``<domain-parent>`` edge back to it. The pairing does not \
-have to be 1:1 — one presentational may present multiple \
-domains (a unified UI that surfaces billing, auth, and \
-reporting has three ``<domain-parent>`` edges), and one \
-domain may be presented by multiple presentationals (the \
-same billing domain might be surfaced both by a customer UI \
-and an admin console). But if you emit a domain whose \
-responsibilities have a user-facing face and you do **not** \
-emit a presentational that pairs with it, you've left half \
-the tree unbuilt — the subreqs pass for the UI side has \
-nothing to decompose, and the presentational articulation \
-falls out of the system.
-* Every presentational component must declare a \
-``<domain-parent>`` edge for **each domain whose \
-responsibilities it surfaces to the user.** A unified UI that \
-presents billing, auth, and reporting has three \
-``<domain-parent>`` edges, not one. Under-wired presentationals \
-— where the ``<role>`` describes presenting five domains but \
-only one or two ``<domain-parent>`` edges are declared — \
-produce shadow components: their role mentions work they have \
-no structural path to inherit pubapis for, and downstream \
-comparch fan-in carries only a fraction of what the role \
-implies. Err on the side of wiring more ``<domain-parent>`` \
-edges, not fewer.
+consumer, so almost every project has at least one \
+presentational component. A system with zero presentational \
+components is the exception — it implies the only consumers \
+are other software. For every *task* a human performs against \
+what the domains expose, expect a presentational component \
+with one or two ``<domain-parent>`` edges to the domains that \
+task actually touches. One domain may be presented by multiple \
+presentationals (the same billing domain surfaces through a \
+subscription-management task and a payment-history task — \
+those are two components). One presentational surfaces one or \
+two domains; if you find yourself listing three, the task is \
+too broad.
+* Every presentational component must open its ``<role>`` with \
+a one-sentence statement of the user task it serves — "Lets a \
+reviewer work through their outstanding review queue one \
+artifact at a time.", "Lets a developer compose a flow \
+proposal and send it to the lobby.", etc. If that sentence \
+covers multiple unrelated tasks, the component is too big. \
+This framing sentence is load-bearing: the downstream comparch \
+pass reads ``<role>`` as the primary handle for what to \
+decompose into, and a task-shaped opener keeps the \
+decomposition focused on that task's surface rather than on a \
+grab-bag of features.
 * A responsibility may appear in one presentational \
 component's ``<responsibilities>`` block **in addition to** its \
 owning domain component — and for any responsibility that has \
@@ -465,15 +485,15 @@ dependents toward foundation, not the other way.
 domain edge. The ``from`` alias must belong to a component with \
 ``<kind>presentational</kind>``; the ``to`` alias must belong \
 to a domain component.
-* **A presentational component's ``<domain-parent>`` edges must \
-cover every domain whose work it surfaces**, not just one \
-representative domain. Downstream comparch for the \
-presentational uses these edges to pull in domain pubapi \
-fragments for fan-in context; missing edges mean the \
-presentational's comparch reasons from an incomplete picture \
-of what it's supposed to render. If the presentational's \
-``<role>`` mentions presenting domains A, B, and C, there must \
-be ``<parent>`` edges to all three.
+* **Each presentational has 1 or 2 ``<domain-parent>`` edges — \
+3 or more is rejected by the validator.** Downstream comparch \
+for the presentational pulls in domain pubapi fragments for \
+fan-in context via these edges, and 5+ parents means the \
+component is surfacing too much for one task. If the \
+``<role>`` spans three or more domains, the solution is to \
+split the presentational into multiple task-focused \
+components, each with 1–2 parents — not to wire more edges on \
+the original.
 * A presentational component with no ``<domain-parent>`` edges \
 is almost always a mistake — either it isn't actually \
 presentational (and should be ``<kind>domain</kind>``), or its \

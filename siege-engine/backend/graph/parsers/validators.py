@@ -1139,6 +1139,26 @@ def _validate_sysarch_domain_parent(
                 f"be a domain component (kind={alias_kind_map[to_alias]!r})."
             )
         edges.append(DomainParentEdge(from_alias=from_alias, to_alias=to_alias))
+
+    # Phase 7 slice-by-task rule: a presentational with more than
+    # two domain parents has almost certainly conflated multiple
+    # user tasks into one application-shaped component. Reject at
+    # three so the sysarch pass splits the slice rather than
+    # widening it. Counts per ``from`` alias.
+    parent_count_by_from: dict[str, int] = {}
+    for edge in edges:
+        parent_count_by_from[edge.from_alias] = parent_count_by_from.get(edge.from_alias, 0) + 1
+    for from_alias, count in parent_count_by_from.items():
+        if count > 2:
+            raise ValidationError(
+                f"Presentational component {from_alias!r} has {count} "
+                "<domain-parent> edges; the cap is 2. More than two "
+                "domain parents indicates the component is surfacing "
+                "multiple user tasks as one application — split it "
+                "into distinct task-shaped presentational components, "
+                "each with 1 or 2 <domain-parent> edges."
+            )
+
     return tuple(edges)
 
 
