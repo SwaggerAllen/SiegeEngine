@@ -26,6 +26,7 @@ import { type ProjectSettings } from '../api/projectSettings';
 function defaultSettings(overrides?: Partial<ProjectSettings>): ProjectSettings {
   return {
     generation_timeout_seconds: 900,
+    cli_max_budget_usd: 2.0,
     ...overrides,
   };
 }

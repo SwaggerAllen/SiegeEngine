@@ -42,7 +42,7 @@ import logging
 import secrets
 import uuid
 
-from backend.cli.manager import cli_manager
+from backend.cli.manager import CliTransientError, cli_manager
 from backend.database import SessionLocal
 from backend.graph.expansion import get_expansion_node, pending_expansion_draft
 from backend.graph.parsers.validators import validate_features, validate_vocabulary
@@ -60,7 +60,6 @@ logger = logging.getLogger(__name__)
 
 GENERATE_FEATURE_EXPANSION_JOB_TYPE = "v2.generate_feature_expansion"
 
-CLI_MAX_BUDGET_USD = 1.00
 # Disable all CLI tools — this is pure text generation, no file I/O.
 CLI_TOOLS = '""'
 
@@ -143,6 +142,7 @@ async def generate_feature_expansion(payload: dict) -> None:
         assert project_row is not None  # expansion node existed, so does the project
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
+        cli_max_budget_usd = settings.cli_max_budget_usd
         system_prompt = render_system_prompt()
     finally:
         db.close()
@@ -199,6 +199,7 @@ async def generate_feature_expansion(payload: dict) -> None:
         root_tag="features",
         system_prompt=system_prompt,
         cli_timeout_seconds=cli_timeout_seconds,
+        cli_max_budget_usd=cli_max_budget_usd,
         prior_pending=prior_pending,
         render_prompt=_render,
         validate=_validate,
@@ -220,32 +221,42 @@ async def generate_feature_expansion(payload: dict) -> None:
 async def _call_cli_with_transient_retry(**kwargs):  # type: ignore[no-untyped-def]
     """Invoke ``cli_manager.generate_with_usage`` with retry on transient errors.
 
-    Upstream Anthropic 5xx, CLI crashes, and any other non-zero-exit
-    failures from the CLI all surface as ``RuntimeError`` from
-    ``generate_with_usage``. These are usually transient — the fix
-    is to wait and retry — so we do that up to
+    CLI failures are classified in
+    :func:`backend.cli.manager._classify_cli_failure` into typed
+    subclasses of :class:`backend.cli.manager.CliError`. This
+    wrapper retries **only** :class:`CliTransientError` — upstream
+    5xx / 529 overload, rate limits, connection resets, and
+    unexpected CLI process crashes — up to
     :data:`CLI_MAX_TRANSIENT_RETRIES` times with an exponential
-    backoff schedule before giving up and re-raising.
+    backoff schedule.
+
+    Fatal subclasses (``CliBudgetExceededError``,
+    ``CliContextWindowError``, ``CliAuthError``,
+    ``CliContentPolicyError``, ``CliInvalidArgumentError``) are
+    re-raised immediately — retrying either burns budget for no
+    chance of success or requires user action the retry can't
+    perform.
 
     Parse / validation errors have their own retry loop in
-    :func:`_generate_with_parse_validate`; this helper only retries
-    the "never got output at all" failure mode.
+    :func:`backend.graph.handlers._bootstrap_generation.run_parse_validate_loop`;
+    this helper only handles the "never got usable output at all"
+    failure mode.
 
     ``TimeoutError`` is **not** retried — the CLI already has its own
     timeout budget and three back-to-back timeout hangs is worse than
     failing fast. Any other exception type propagates unchanged.
     """
-    last_exc: RuntimeError | None = None
+    last_exc: CliTransientError | None = None
     for attempt_idx in range(CLI_MAX_TRANSIENT_RETRIES + 1):
         try:
             return await cli_manager.generate_with_usage(**kwargs)
-        except RuntimeError as exc:
+        except CliTransientError as exc:
             last_exc = exc
             if attempt_idx >= CLI_MAX_TRANSIENT_RETRIES:
                 break
             backoff = CLI_RETRY_BACKOFF_SECONDS[attempt_idx]
             logger.warning(
-                "CLI call failed on attempt %d/%d, retrying in %.1fs: %s",
+                "CLI call failed transiently on attempt %d/%d, retrying in %.1fs: %s",
                 attempt_idx + 1,
                 CLI_MAX_TRANSIENT_RETRIES + 1,
                 backoff,

@@ -33,6 +33,7 @@ Example caller binding (feature-expansion):
         root_tag="features",
         system_prompt=SYSTEM_PROMPT,
         cli_timeout_seconds=cli_timeout_seconds,
+        cli_max_budget_usd=cli_max_budget_usd,
         prior_pending=prior_pending,
         render_prompt=_render,
         validate=_validate,
@@ -51,7 +52,6 @@ from sqlalchemy.orm.attributes import flag_modified
 from backend.cli.manager import GenerationResult
 from backend.database import SessionLocal
 from backend.graph.handlers.feature_expansion import (
-    CLI_MAX_BUDGET_USD,
     CLI_TOOLS,
     MAX_PARSE_RETRIES,
     _call_cli_with_transient_retry,
@@ -128,6 +128,7 @@ async def run_parse_validate_loop(
     root_tag: str,
     system_prompt: str,
     cli_timeout_seconds: int,
+    cli_max_budget_usd: float,
     prior_pending: str | None,
     render_prompt: Callable[..., str],
     validate: Callable[[TagNode, str], None],
@@ -186,7 +187,7 @@ async def run_parse_validate_loop(
             system_prompt=system_prompt,
             tools=CLI_TOOLS,
             timeout=cli_timeout_seconds,
-            max_budget_usd=CLI_MAX_BUDGET_USD,
+            max_budget_usd=cli_max_budget_usd,
         )
         attempts.append(result)
 

@@ -10,6 +10,8 @@ import { type ProjectSettings } from '../api/projectSettings';
 
 const MIN_TIMEOUT_SECONDS = 60;
 const MAX_TIMEOUT_SECONDS = 3600;
+const MIN_BUDGET_USD = 0.1;
+const MAX_BUDGET_USD = 20;
 
 export function ProjectSettingsPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -24,14 +26,17 @@ function SettingsShell({ projectId }: { projectId: string }) {
 
   // Local form state: minutes rather than seconds for the timeout
   // so the UI is humane. The backend contract is still seconds;
-  // we convert on read and on submit.
+  // we convert on read and on submit. The budget is already USD
+  // on both sides, so no conversion.
   const [timeoutMinutes, setTimeoutMinutes] = useState<string>('');
+  const [budgetUsd, setBudgetUsd] = useState<string>('');
   const [validationError, setValidationError] = useState<string | null>(null);
   const [savedOnce, setSavedOnce] = useState(false);
 
   useEffect(() => {
     if (settings) {
       setTimeoutMinutes(String(Math.round(settings.generation_timeout_seconds / 60)));
+      setBudgetUsd(settings.cli_max_budget_usd.toFixed(2));
     }
   }, [settings]);
 
@@ -54,6 +59,20 @@ function SettingsShell({ projectId }: { projectId: string }) {
       return;
     }
 
+    const parsedBudget = Number.parseFloat(budgetUsd);
+    if (!Number.isFinite(parsedBudget) || parsedBudget <= 0) {
+      setValidationError('Budget must be a positive dollar amount.');
+      return;
+    }
+    if (parsedBudget < MIN_BUDGET_USD || parsedBudget > MAX_BUDGET_USD) {
+      setValidationError(
+        `Budget must be between $${MIN_BUDGET_USD.toFixed(2)} and $${MAX_BUDGET_USD.toFixed(
+          2
+        )}.`
+      );
+      return;
+    }
+
     if (!settings) {
       setValidationError('Settings are still loading.');
       return;
@@ -61,6 +80,7 @@ function SettingsShell({ projectId }: { projectId: string }) {
 
     const payload: ProjectSettings = {
       generation_timeout_seconds: seconds,
+      cli_max_budget_usd: parsedBudget,
     };
 
     updateMutation.mutate(payload, {
@@ -124,8 +144,40 @@ function SettingsShell({ projectId }: { projectId: string }) {
               </div>
               <p className="text-xs text-gray-500 mt-1">
                 How long a single LLM call may run before the worker
-                kills it. Between 1 and 60 minutes. Default: 15
+                kills it. Between 1 and 60 minutes. Default: 30
                 minutes.
+              </p>
+            </div>
+
+            <div>
+              <label
+                htmlFor="budget-usd"
+                className="block text-sm font-medium mb-1"
+              >
+                Max budget per call
+              </label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">$</span>
+                <input
+                  id="budget-usd"
+                  type="number"
+                  min={MIN_BUDGET_USD}
+                  max={MAX_BUDGET_USD}
+                  step={0.10}
+                  value={budgetUsd}
+                  onChange={(e) => setBudgetUsd(e.target.value)}
+                  className="w-24 bg-gray-800 border border-gray-700 rounded p-2 text-sm"
+                  disabled={updateMutation.isPending}
+                />
+                <span className="text-sm text-gray-400">USD</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Dollar cap passed to the Claude CLI's{' '}
+                <code className="text-gray-400">--max-budget-usd</code>{' '}
+                flag for a single generation attempt. Each parse-validate
+                retry is a fresh call with a fresh budget. Between
+                ${MIN_BUDGET_USD.toFixed(2)} and ${MAX_BUDGET_USD.toFixed(2)}.
+                Default: $2.00.
               </p>
             </div>
 
