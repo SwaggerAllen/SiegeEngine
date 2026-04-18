@@ -465,159 +465,41 @@ v2 §A.18.
 
 # Part B — Default bundle
 
-## B.0 Overview
-
-### B.0.1 What the default bundle is for
-Graph-of-prompts design system for AI code generation. Takes a
-prose input document and produces a layered structured model —
-features, responsibilities, components, subcomponents,
+The platform ships with a **default bundle**: a graph-of-prompts
+design system for AI code generation. It takes a prose input
+document describing a project and produces a layered structured
+model — features, responsibilities, components, subcomponents,
 implementations, plans, code — through a reviewable pipeline.
+Every node in the model is a reviewed artifact; every edge in
+the model is a typed declaration the reducer projects from
+approved fragment content.
 
-### B.0.2 Bundle summary at a glance
-One-page cheat sheet: the tier list, the edge list, the fragment
-kinds, the cold-start order, the meaning-engine framing. Gives
-a reader who only needs the default-bundle story something to
-anchor on before the rest of B unfolds.
+The default bundle is what most users will encounter as
+"Catapult." It exercises every platform mechanism: tier-and-edge
+schema (Part A §A.3), per-tier reactive scheduling (§A.3.6),
+flows that walk the graph with planning and regeneration
+prompts (§A.4), `git_commit`-generator-driven code delivery
+(§A.16), draft-and-review lifecycle (§A.5), ownership and
+scoped roles (§A.6). Bundle authors who want a different
+layered design system can fork the default bundle, swap tier
+vocabularies, swap flow declarations, and ship — the platform
+treats their bundle and the default identically.
 
-## B.1 Tier vocabulary
+The default bundle's full schema, structural rules, generation
+order, and flow declarations live in
+**`catapult-default-bundle-v3.md`** as reference content, with
+worked YAML examples and per-flow sketches in
+**`catapult-default-bundle-v3-examples.md`**. Both files attach
+to this section as `reference`-edge targets from the default
+bundle's component once the project is bootstrapped — they're
+where downstream comparch and subcomparch passes pull schema
+detail without dragging it into feature_expansion or sysarch.
 
-One subsection per tier. Each is a refactoring of the
-corresponding v2 §A.1.2 bullet into a proper section with its
-scope, identity, handle, draft grammar reference, and generator.
-
-### B.1.1 `feat` — features
-### B.1.2 `resp` — responsibilities (tier-agnostic IDs; top-level vs subresp lives in parent)
-### B.1.3 `comp` — components (tier-agnostic IDs; domain vs presentational kind)
-### B.1.4 `subcomp` — subcomponents (same kind as `comp`; structural tier only)
-### B.1.5 `impl` — implementation leaves
-### B.1.6 `plan` — per-impl plan nodes
-### B.1.7 `policy` — cross-cutting constraints (§B.5)
-### B.1.8 `fanin` — domain fan-in synthesis (§B.4.4)
-### B.1.9 `ref` — project reference documents (§B.8)
-### B.1.10 `vocab` — project vocabulary terms (§B.7)
-### B.1.11 Bootstrap tiers
-`expansion`, `reqs`, `sysarch`, `subreqs`, `manifest`. One
-subsubsection each, explaining which children each bootstrap
-mints. From v2 §A.1.2.
-### B.1.12 `changeplan` — per-flow-run intent nodes
-Per v2 §A.4.3; explicitly not a structural DAG node.
-
-## B.2 Edge vocabulary
-
-### B.2.1 `dependency`
-v2 §A.1.3.
-### B.2.2 `domain_parent`
-v2 §A.1.3, §A.1.8.
-### B.2.3 `policy_application`
-v2 §A.1.3, §A.1.10.
-### B.2.4 `decomposition`
-Both conventions (`feat→resp`, top-resp→subresp). v2 §A.1.3.
-### B.2.5 `reference`
-v2 §A.1.3, §A.1.13.
-
-## B.3 Fragments and transclusion
-
-### B.3.1 Section vocabulary and order
-`techspec`, `pubapi`, `privapi`, `policies`, `deps`. v2 §A.1.5.
-### B.3.2 Fragment-level diff as drift signal
-v2 §A.1.5 tail.
-
-## B.4 Structural rules
-
-### B.4.1 Foundation components
-v2 §A.1.6.
-### B.4.2 Subcomponent depth cap
-v2 §A.1.7.
-### B.4.3 Unified domain/presentational DAG
-v2 §A.1.8.
-### B.4.4 Domain fan-in synthesis
-v2 §A.1.9.
-
-## B.5 Policies
-
-v2 §A.1.10 in full. Shape, two-tier generation, application at
-component-architecture time, policy-induced dep edges.
-
-## B.6 Ownership and repository territory
-
-v2 §A.1.11. The territory model is default-bundle-specific
-(it's a property of the `impl` tier having `{repository,
-folder}` fields); ownership-as-scoped-role is platform-level and
-lives in A.6.
-
-## B.7 Project vocabulary
-
-v2 §A.1.12 in full.
-
-## B.8 Project references
-
-v2 §A.1.13 in full.
-
-## B.9 Generation plan
-
-### B.9.1 Cold-start order
-v2 §A.3.1.
-### B.9.2 The default bundle as a meaning engine
-Compression / rotation / expansion / articulation framing. v2
-§A.3.1a.
-### B.9.3 Context assembly strategy
-v2 §A.3.5.
-
-## B.10 Flow declarations on the default bundle
-
-The six default-bundle flows, each declared per A.4.1 with
-seed shape, optional phase-zero, direction, and the per-tier
-(planning, regeneration) prompt pair. Tier-specific prompt
-content is the bundle author's work; the shapes below describe
-which tiers each flow touches.
-
-### B.10.1 Scaffolding
-Seed: raw input document. Phase-zero: none (input expansion is
-the first bootstrap). Direction: `down`. Tiers touched:
-expansion → reqs → sysarch → subreqs → comparch → subcomparch →
-impl → plan → code. Planning auto-approves at every tier (no
-structural ops). From v2 §A.2.1.
-
-### B.10.2 Feature request
-Seed: feature-shaped prose. Phase-zero: LLM call that splits the
-request into one or more concrete features and lands them at the
-expansion tier. Direction: `down` from the fan-out point.
-Planning auto-approves. From v2 §A.2.2.
-
-### B.10.3 Refactor
-Seed: structural-op prose. Phase-zero: LLM call that shapes the
-request into a `<structural-ops>` list plus downstream plan.
-Direction: `down`. **Planning human-gates at every tier whose
-plan carries structural-ops** — which is most of them for a
-refactor — matching the destructive-op approval rule.
-Structural-ops applied end-of-run. From v2 §A.2.3.
-
-### B.10.4 Bug-fix propagation
-Seed: code diff mapped to `git_commit`-owning leaves via
-territory (A.16). Direction: `up_then_down`. Upward leg
-produces planning-only diagnoses at each ancestor up to the
-project root; merge-at-parent applies when multiple seed leaves
-converge. Downward leg starts at root with regeneration and
-implicated-children splits. No new code — input is already
-code. From v2 §A.2.4.
-
-### B.10.5 Downward propagation
-Seed: node-set-with-accumulated-feedback. Direction: `down`.
-Scope-bounded propagation depth (v2 §A.2.5 retains the "stop
-before impl" affordance). Planning auto-approves. From v2
-§A.2.5.
-
-### B.10.6 Upward propagation
-Seed: node-set-with-accumulated-feedback. Direction:
-`up_then_down`. Same up-then-down shape as bug-fix propagation
-but seeded from deferred feedback rather than a code diff. From
-v2 §A.2.6.
-
-## B.11 Default bundle as YAML
-
-The ~220-line YAML sketch from v2 §A.11.6 (What this produces).
-Lives here rather than in A.11 because it's the serialization of
-this specific bundle, not of the bundle system.
+A reader who wants to understand what Catapult *does* at the
+"a Catapult project produces a feat → resp → comp → subcomp →
+impl → plan → code chain" level reads only this section. A
+reader who needs to author or modify the bundle reads the ref
+docs.
 
 ---
 
