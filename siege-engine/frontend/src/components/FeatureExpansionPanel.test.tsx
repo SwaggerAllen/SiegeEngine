@@ -250,6 +250,13 @@ describe('FeatureExpansionPanel', () => {
 
   // Phase 8 — AI self-review block render states.
   describe('AI review block', () => {
+    // Review content lives behind the "Review" subtab — click it
+    // before asserting on review-state testids.
+    async function openReviewTab() {
+      const reviewTab = await screen.findByTestId('review-tab');
+      fireEvent.click(reviewTab);
+    }
+
     it('renders the review markdown when present on a pending draft', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
@@ -264,12 +271,12 @@ describe('FeatureExpansionPanel', () => {
       );
       renderPanel();
 
+      await openReviewTab();
       const reviewBlock = await screen.findByTestId('review-text');
-      expect(reviewBlock).toBeInTheDocument();
       expect(reviewBlock).toHaveTextContent(/AI Review/i);
     });
 
-    it('renders the in-flight spinner + attempt counter when review_status=running', async () => {
+    it('flags running review via a spinner on the tab and inside the panel', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
           pending_draft: {
@@ -284,12 +291,16 @@ describe('FeatureExpansionPanel', () => {
       );
       renderPanel();
 
+      // Tab indicator visible without clicking Review.
+      expect(await screen.findByTestId('review-tab-running')).toBeInTheDocument();
+
+      await openReviewTab();
       const running = await screen.findByTestId('review-running');
       expect(running).toHaveTextContent(/Reviewing/);
       expect(running).toHaveTextContent(/attempt 2 \/ 3/);
     });
 
-    it('renders the failed banner + retry button when review_status=failed', async () => {
+    it('flags failed review on the tab and renders retry button in the panel', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
           pending_draft: {
@@ -304,6 +315,9 @@ describe('FeatureExpansionPanel', () => {
       mockedRetryReview.mockResolvedValue({ job_id: 'job_review_retry' });
       renderPanel();
 
+      expect(await screen.findByTestId('review-tab-failed')).toBeInTheDocument();
+
+      await openReviewTab();
       const failed = await screen.findByTestId('review-failed');
       expect(failed).toHaveTextContent(/AI review failed/);
       expect(failed).toHaveTextContent(/review CLI timed out/);
@@ -330,10 +344,11 @@ describe('FeatureExpansionPanel', () => {
       await waitFor(() =>
         expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument()
       );
-      expect(screen.queryByTestId('review-text')).toBeNull();
-      expect(screen.queryByTestId('review-running')).toBeNull();
-      expect(screen.queryByTestId('review-failed')).toBeNull();
+      // No running / failed indicator on the Review tab.
+      expect(screen.queryByTestId('review-tab-running')).toBeNull();
+      expect(screen.queryByTestId('review-tab-failed')).toBeNull();
 
+      await openReviewTab();
       const generate = screen.getByTestId('review-generate-button');
       fireEvent.click(generate);
       await waitFor(() =>
@@ -358,6 +373,8 @@ describe('FeatureExpansionPanel', () => {
       await waitFor(() =>
         expect(screen.getByText(/Approved plan from before Phase 8/)).toBeInTheDocument()
       );
+
+      await openReviewTab();
       const generate = screen.getByTestId('review-generate-button');
       fireEvent.click(generate);
       await waitFor(() =>
@@ -383,7 +400,9 @@ describe('FeatureExpansionPanel', () => {
       await waitFor(() =>
         expect(screen.getByText(/Approved plan/)).toBeInTheDocument()
       );
-      const reviewBlock = screen.getByTestId('review-text');
+
+      await openReviewTab();
+      const reviewBlock = await screen.findByTestId('review-text');
       expect(reviewBlock).toHaveTextContent(/AI Review/);
     });
   });

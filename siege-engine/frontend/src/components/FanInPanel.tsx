@@ -7,7 +7,7 @@ import {
   useFanInReviewRetryMutation,
 } from '../hooks/mutations/useFanInMutations';
 import { describeApiError } from '../lib/describeApiError';
-import { CollapsibleMarkdown } from './editor/CollapsibleMarkdown';
+import { DocumentReviewTabs } from './DocumentReviewTabs';
 import { XmlDocument, faninRenderers } from './xml';
 
 interface Props {
@@ -162,16 +162,24 @@ export function FanInPanel({ projectId, compId, ownerName }: Props) {
       )}
 
       {hasContent ? (
-        <section className="rounded border border-gray-800 bg-gray-900/50 p-4 space-y-3">
-          <XmlDocument content={data.node.content} renderers={faninRenderers} />
-          <FanInReviewBlock
-            reviewText={data.review_text}
-            reviewStatus={data.review_status}
-            reviewLastError={data.review_last_error}
-            reviewCurrentAttempt={data.review_current_attempt}
-            reviewMaxAttempts={data.review_max_attempts}
-            onRetryReview={() => retryReview.mutate()}
-            isBusy={isBusy}
+        <section className="rounded border border-gray-800 bg-gray-900/50 p-4">
+          <DocumentReviewTabs
+            idPrefix="fanin"
+            document={
+              <XmlDocument content={data.node.content} renderers={faninRenderers} />
+            }
+            review={{
+              reviewText: data.review_text,
+              reviewStatus: data.review_status,
+              reviewLastError: data.review_last_error,
+              reviewCurrentAttempt: data.review_current_attempt,
+              reviewMaxAttempts: data.review_max_attempts,
+              onRetryReview: () => retryReview.mutate(),
+              allowGenerate: true,
+              isBusy,
+              emptyGenerateHint:
+                'No AI review yet — click to run one against this fan-in.',
+            }}
           />
         </section>
       ) : (
@@ -190,97 +198,6 @@ export function FanInPanel({ projectId, compId, ownerName }: Props) {
   );
 }
 
-function FanInReviewBlock({
-  reviewText,
-  reviewStatus,
-  reviewLastError,
-  reviewCurrentAttempt,
-  reviewMaxAttempts,
-  onRetryReview,
-  isBusy,
-}: {
-  reviewText: string;
-  reviewStatus: 'idle' | 'running' | 'failed';
-  reviewLastError: string | null;
-  reviewCurrentAttempt: number | null;
-  reviewMaxAttempts: number | null;
-  onRetryReview: () => void;
-  isBusy: boolean;
-}) {
-  if (reviewStatus === 'running') {
-    const attemptLabel =
-      reviewCurrentAttempt && reviewMaxAttempts
-        ? ` · attempt ${reviewCurrentAttempt} / ${reviewMaxAttempts}`
-        : '';
-    return (
-      <div
-        className="flex items-center gap-3 text-xs text-gray-400 border-t border-gray-800 pt-3"
-        data-testid="review-running"
-      >
-        <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-600 border-t-blue-400" />
-        <span>Reviewing…{attemptLabel}</span>
-      </div>
-    );
-  }
-  if (reviewStatus === 'failed') {
-    return (
-      <div
-        className="border-t border-gray-800 pt-3 space-y-2"
-        data-testid="review-failed"
-      >
-        <div className="p-3 border border-red-800 bg-red-950/40 rounded text-xs text-red-300">
-          <div className="font-semibold mb-1">AI review failed</div>
-          {reviewLastError && (
-            <div className="text-red-400/80 whitespace-pre-wrap">{reviewLastError}</div>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={onRetryReview}
-          disabled={isBusy}
-          className="px-3 py-1 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
-          data-testid="review-retry-button"
-        >
-          Retry review
-        </button>
-      </div>
-    );
-  }
-  if (reviewText.trim()) {
-    return (
-      <div
-        className="border-t border-gray-800 pt-3"
-        data-testid="review-text"
-      >
-        <CollapsibleMarkdown className="text-sm text-gray-300 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-200 [&_h2]:mt-2 [&_h2]:mb-1">
-          {`# AI Review\n\n${reviewText}`}
-        </CollapsibleMarkdown>
-      </div>
-    );
-  }
-  // Idle + empty review_text: offer the retroactive review
-  // affordance. Only mounts from the content-present branch, so
-  // there's always something to review.
-  return (
-    <div
-      className="border-t border-gray-800 pt-3 flex items-center gap-3"
-      data-testid="review-generate"
-    >
-      <button
-        type="button"
-        onClick={onRetryReview}
-        disabled={isBusy}
-        className="px-3 py-1 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
-        data-testid="review-generate-button"
-      >
-        Generate review
-      </button>
-      <span className="text-xs text-gray-500">
-        No AI review yet — click to run one against this fan-in.
-      </span>
-    </div>
-  );
-}
 
 function FanInStatusRow({
   data,
