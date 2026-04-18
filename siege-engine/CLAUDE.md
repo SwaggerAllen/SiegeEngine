@@ -72,7 +72,7 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
 
 ## Phase status (as of last session)
 
-**Complete:** Phases 0 through 7.5.
+**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review).
 
 - **Phases 0-5.5** — v2 bootstrap chain end-to-end: project →
   expansion → features → requirements → sysarch → subreqs (per
@@ -104,11 +104,20 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
   resps in subreqs prompts, presentational comparch waits for
   domain fan-in (not comparch), fan-in waits for first-pass impl
   completion then regens on change.
+- **Phase 8 (AI self-review)** — every generated draft (and fan-in
+  commit) triggers a review LLM pass that critiques the
+  generator's output against the same context the generator
+  saw. Advisory only — never blocks approval. Lives as a
+  collapsible markdown block on the draft panel, with four
+  render states (idle-with-text, running, failed, hidden).
+  Review failures carry their own transient-CLI retry counter
+  and expose a manual "Retry review" button. See the
+  "AI self-review" section below.
 
-**Next:** Phase 8 remaining work + Phase 11 structural edit UIs
-(domain-parent editor, subresp → subcomp mapping editor). The
-pending-change queue has storage + instruction types but the HTTP
-plumbing isn't exposed yet — that lands with Phase 11.
+**Next:** Phase 11 structural edit UIs (domain-parent editor,
+subresp → subcomp mapping editor). The pending-change queue has
+storage + instruction types but the HTTP plumbing isn't exposed
+yet — that lands with Phase 11.
 
 ## Meaning-engine model
 
@@ -171,6 +180,64 @@ The sidebar tree's dot badges mirror a node's real state:
 
 Descendant rollups emit dimmed mini-dots on collapsed ancestors
 so hidden state stays visible.
+
+The tree's pulsing-amber state spans **both** draft generation
+and AI self-review generation — `running.py`'s `_TIER_JOB_TYPES`
+includes the 8 `v2.review_<tier>` job types, so a draft that
+committed but is still being reviewed reads as "generating" in
+the sidebar. The pulse only flips off once the review job
+terminates (succeeded or failed).
+
+## AI self-review
+
+Every approved tier has a second LLM pass that critiques the
+generator's output. Reviews are advisory — approving a draft
+doesn't wait on review completion — and are **automatic** after
+every draft commit (gated off only by `SIEGE_DISABLE_AI_REVIEW=1`,
+which the chain integration test sets so it doesn't double its
+CLI call count).
+
+- **Per-tier module triad.** Every reviewed tier has three
+  matching modules: `review_context/<tier>.py` (the context
+  gatherer that **both** the generator and the reviewer call so
+  they see identical input), `prompts/review/<tier>.py` (the
+  review prompt), and `handlers/review_<tier>.py` (the job
+  handler registered as `v2.review_<tier>`). A shared
+  `prompts/review/_shared.py` template + `_tier_review.py`
+  wrapper keep the per-tier boilerplate to a couple dozen lines.
+- **Storage.** `Draft.review_text` holds the review output for
+  draft-based tiers; `Node.review_text` holds it for fan-in
+  (which writes content directly to the node without a draft
+  cycle). `DraftReviewUpdated` event routes by
+  `target_type="draft" | "node"` and the reducer writes to the
+  right row.
+- **Prompt contract.** One markdown response with two top-level
+  sections: `## Handles & structure` (coverage, naming, scope-
+  fit, downstream-readability) and `## Architectural decisions`
+  (tech-stack soundness, boundaries, anti-patterns). On tiers
+  that don't make tech decisions — expansion, requirements,
+  subreqs, fan-in — the second section critiques the
+  decomposition axis instead.
+- **Frontend render states.** `BootstrapDraftPanel` and
+  `FanInPanel` both show a review block with four states keyed
+  off `review_status`:
+  - `idle` + non-empty `review_text` → collapsible "AI Review"
+    markdown (default collapsed)
+  - `running` → spinner + "Reviewing… attempt N/M"
+  - `failed` → red banner showing `review_last_error` +
+    "Retry review" button (wired to the per-tier
+    `/review/retry` endpoint)
+  - `idle` + empty `review_text` → hidden (pre-Phase-8 drafts
+    and reviews-disabled mode)
+- **Independent retry loop.** The review handler reuses
+  `_record_attempt_progress` for transient-CLI retries, so the
+  frontend gets a live attempt counter independent of the
+  generator's counter. Hard failures surface as
+  `review_status="failed"` + `review_last_error`.
+- **Regen / reset cancels in-flight reviews.**
+  `persist_draft`'s prior-draft-discard block cancels the stale
+  draft's review; fan-in reset cancels its node-scoped review.
+  The new draft / node starts with `review_text=""`.
 
 ## Frontend patterns
 

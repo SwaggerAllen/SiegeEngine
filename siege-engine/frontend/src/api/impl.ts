@@ -35,6 +35,11 @@ export const ImplResponseSchema = z.object({
   current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   max_attempts: z.number().int().nullish().transform((v) => v ?? null),
   failed_raw_output: z.string().nullish().transform((v) => v ?? null),
+  review_text: z.string().default(""),
+  review_status: GenerationStatusSchema.default("idle"),
+  review_last_error: z.string().nullish().transform((v) => v ?? null),
+  review_current_attempt: z.number().int().nullish().transform((v) => v ?? null),
+  review_max_attempts: z.number().int().nullish().transform((v) => v ?? null),
 });
 export type ImplResponse = z.infer<typeof ImplResponseSchema>;
 
@@ -69,6 +74,9 @@ export const cancelImplTopLevelGeneration = (projectId: string, compId: string) 
 
 export const resetImplTopLevel = (projectId: string, compId: string) =>
   implTopLevelApi.resetTier(projectId, compId);
+
+export const retryImplTopLevelReview = (projectId: string, compId: string) =>
+  implTopLevelApi.retryReview(projectId, compId);
 
 // ── Per-subcomponent impl CRUD ─────────────────────────────────────
 // Signature: (projectId, parentCompId, subId). The sub is the
@@ -113,3 +121,9 @@ export const resetImplSub = (
   parentCompId: string,
   subId: string,
 ) => implSubApi.resetTier(projectId, parentCompId, subId);
+
+export const retryImplSubReview = (
+  projectId: string,
+  parentCompId: string,
+  subId: string,
+) => implSubApi.retryReview(projectId, parentCompId, subId);

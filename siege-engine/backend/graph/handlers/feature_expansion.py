@@ -215,6 +215,7 @@ async def generate_feature_expansion(payload: dict) -> None:
         attempts=attempts,
         prior_pending_id=prior_pending_id,
         log_handler_name="generate_feature_expansion",
+        review_job_type="v2.review_expansion",
     )
 
 

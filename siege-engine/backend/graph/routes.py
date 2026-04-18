@@ -32,6 +32,7 @@ from backend.graph.bootstrap_routes import (
     bootstrap_get_state,
     bootstrap_prompt_preview,
     bootstrap_reset,
+    bootstrap_retry_review,
 )
 from backend.graph.broadcast import commit_and_publish
 from backend.graph.expansion import (
@@ -187,6 +188,14 @@ class ExpansionResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -350,6 +359,7 @@ EXPANSION_CONFIG = BootstrapTierConfig(
         pending_reqs_draft(db, pid),
         pending_sysarch_draft(db, pid),
     ],
+    review_job_type="v2.review_expansion",
 )
 
 
@@ -436,6 +446,14 @@ class ReqsResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class ReqsApproveResponse(BaseModel):
@@ -487,6 +505,7 @@ REQUIREMENTS_CONFIG = BootstrapTierConfig(
     ),
     additional_nodes_to_clear=lambda db, pid: [get_sysarch_node(db, pid)],
     additional_drafts_to_discard=lambda db, pid: [pending_sysarch_draft(db, pid)],
+    review_job_type="v2.review_requirements",
 )
 
 
@@ -582,6 +601,14 @@ class SysarchResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class SysarchApproveResponse(BaseModel):
@@ -629,6 +656,7 @@ SYSARCH_CONFIG = BootstrapTierConfig(
         "v2.apply_top_level_policies",
         "v2.apply_component_local_policies",
     ),
+    review_job_type="v2.review_sysarch",
 )
 
 
@@ -715,6 +743,17 @@ def post_sysarch_reset(
     _user: User = Depends(get_current_user),
 ) -> ResetResponse:
     return ResetResponse(**bootstrap_reset(db, project_id, (), SYSARCH_CONFIG, _require_project))
+
+
+@router.post("/{project_id}/sysarch/review/retry", response_model=FeedbackResponse)
+def post_sysarch_review_retry(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    return FeedbackResponse(
+        **bootstrap_retry_review(db, project_id, (), SYSARCH_CONFIG, _require_project)
+    )
 
 
 # ── Prompt preview endpoints ─────────────────────────────────────────
@@ -949,6 +988,17 @@ def post_expansion_reset(
     return ResetResponse(**bootstrap_reset(db, project_id, (), EXPANSION_CONFIG, _require_project))
 
 
+@router.post("/{project_id}/expansion/review/retry", response_model=FeedbackResponse)
+def post_expansion_review_retry(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    return FeedbackResponse(
+        **bootstrap_retry_review(db, project_id, (), EXPANSION_CONFIG, _require_project)
+    )
+
+
 # ── Requirements reset ───────────────────────────────────────────────
 
 
@@ -960,6 +1010,17 @@ def post_reqs_reset(
 ) -> ResetResponse:
     return ResetResponse(
         **bootstrap_reset(db, project_id, (), REQUIREMENTS_CONFIG, _require_project)
+    )
+
+
+@router.post("/{project_id}/requirements/review/retry", response_model=FeedbackResponse)
+def post_reqs_review_retry(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    return FeedbackResponse(
+        **bootstrap_retry_review(db, project_id, (), REQUIREMENTS_CONFIG, _require_project)
     )
 
 
@@ -989,6 +1050,14 @@ class SubreqsResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class SubreqsApproveResponse(BaseModel):
@@ -1047,6 +1116,7 @@ SUBREQS_CONFIG = BootstrapTierConfig(
     collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
     downstream_job_types=per_comp_reset.subreqs_downstream_job_types(),
     additional_nodes_to_clear=per_comp_reset.additional_nodes_to_clear_subreqs,
+    review_job_type="v2.review_subreqs",
 )
 
 
@@ -1187,6 +1257,29 @@ def post_subreqs_reset(
     )
 
 
+@router.post(
+    "/{project_id}/components/{comp_id}/subrequirements/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_subreqs_review_retry(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    """Manually re-enqueue the AI review for this subreqs draft."""
+    _require_top_level_comp(db, project_id, comp_id)
+    return FeedbackResponse(
+        **bootstrap_retry_review(
+            db,
+            project_id,
+            (comp_id,),
+            SUBREQS_CONFIG,
+            _require_project,
+        )
+    )
+
+
 # ── Comparch response models ───────────────────────────────────────
 
 
@@ -1213,6 +1306,14 @@ class ComparchResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class ComparchApproveResponse(BaseModel):
@@ -1268,6 +1369,7 @@ COMPARCH_CONFIG = BootstrapTierConfig(
     collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_comparch,
     collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
     downstream_job_types=per_comp_reset.comparch_downstream_job_types(),
+    review_job_type="v2.review_comparch",
 )
 
 
@@ -1403,6 +1505,28 @@ def post_comparch_reset(
     )
 
 
+@router.post(
+    "/{project_id}/components/{comp_id}/comparch/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_comparch_review_retry(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return FeedbackResponse(
+        **bootstrap_retry_review(
+            db,
+            project_id,
+            (comp_id,),
+            COMPARCH_CONFIG,
+            _require_project,
+        )
+    )
+
+
 # ── Subcomparch response models (Phase 5) ──────────────────────────
 
 
@@ -1430,6 +1554,14 @@ class SubcomparchResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 class SubcomparchApproveResponse(BaseModel):
@@ -1533,6 +1665,7 @@ SUBCOMPARCH_CONFIG = BootstrapTierConfig(
     collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_subcomparch,
     collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
     downstream_job_types=per_comp_reset.subcomparch_downstream_job_types(),
+    review_job_type="v2.review_subcomparch",
 )
 
 
@@ -1672,6 +1805,29 @@ def post_subcomparch_reset(
     _require_subcomponent(db, project_id, parent_comp_id, sub_id)
     return ResetResponse(
         **bootstrap_reset(
+            db,
+            project_id,
+            (sub_id,),
+            SUBCOMPARCH_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/subcomparch/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_subcomparch_review_retry(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return FeedbackResponse(
+        **bootstrap_retry_review(
             db,
             project_id,
             (sub_id,),
@@ -2420,6 +2576,14 @@ class ImplResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 def _get_impl_by_owner(db: Session, project_id: str, owner_id: str) -> Node | None:
@@ -2470,6 +2634,7 @@ IMPL_CONFIG = BootstrapTierConfig(
     collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_impl,
     collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
     downstream_job_types=per_comp_reset.impl_downstream_job_types(),
+    review_job_type="v2.review_impl",
 )
 
 
@@ -2492,6 +2657,11 @@ def _impl_response_from_state(state: dict) -> ImplResponse:
         current_attempt=state.get("current_attempt"),
         max_attempts=state.get("max_attempts"),
         failed_raw_output=state.get("failed_raw_output"),
+        review_text=state.get("review_text", ""),
+        review_status=state.get("review_status", "idle"),
+        review_last_error=state.get("review_last_error"),
+        review_current_attempt=state.get("review_current_attempt"),
+        review_max_attempts=state.get("review_max_attempts"),
     )
 
 
@@ -2625,6 +2795,28 @@ def post_impl_top_level_reset(
     _require_top_level_comp(db, project_id, comp_id)
     return ResetResponse(
         **bootstrap_reset(
+            db,
+            project_id,
+            (comp_id,),
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/impl/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_impl_top_level_review_retry(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return FeedbackResponse(
+        **bootstrap_retry_review(
             db,
             project_id,
             (comp_id,),
@@ -2779,6 +2971,29 @@ def post_impl_sub_reset(
     )
 
 
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/impl/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_impl_sub_review_retry(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return FeedbackResponse(
+        **bootstrap_retry_review(
+            db,
+            project_id,
+            (sub_id,),
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
 # ── Fan-in inspection routes (Phase 7) ────────────────────────────
 #
 # Fan-in has **no draft lifecycle** — the handler writes Node.content
@@ -2815,6 +3030,14 @@ class FanInResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
 
 
 def _get_fanin_by_owner(db: Session, project_id: str, owner_comp_id: str) -> Node | None:
@@ -2855,6 +3078,21 @@ def _fanin_response(
         GENERATE_FANIN_JOB_TYPE,
         payload_filters={"owner_comp_id": owner_comp_id},
     )
+    # Phase 8 — fanin review status is keyed on the fanin node
+    # id (review payload always carries ``node_id``).
+    (
+        _review_status,
+        _review_last_error,
+        _,
+        _review_current_attempt,
+        _review_max_attempts,
+        _,
+    ) = queries.latest_generation_status(
+        db,
+        project_id,
+        "v2.review_fanin",
+        payload_filters={"node_id": fanin_node.id},
+    )
     telemetry_row = (
         db.query(GenerationTelemetry)
         .filter(
@@ -2889,6 +3127,11 @@ def _fanin_response(
         current_attempt=current_attempt,
         max_attempts=max_attempts,
         failed_raw_output=failed_raw_output,
+        review_text=fanin_node.review_text or "",
+        review_status=_review_status,
+        review_last_error=_review_last_error,
+        review_current_attempt=_review_current_attempt,
+        review_max_attempts=_review_max_attempts,
     )
 
 
@@ -3047,6 +3290,54 @@ def post_fanin_reset(
     )
 
 
+@router.post(
+    "/{project_id}/components/{comp_id}/fanin/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_fanin_review_retry(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    """Manually re-enqueue the AI review for this fanin node.
+
+    Fanin has no draft, so the review targets the Node row. Cancels
+    any stuck review job for this fanin and enqueues a fresh one.
+    """
+    from backend.pipeline import queue as pipeline_queue
+
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    fanin_node = db.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "fanin",
+            Node.parent_id == comp_id,
+        )
+    ).scalar_one_or_none()
+    if fanin_node is None:
+        raise HTTPException(status_code=404, detail="Fan-in node missing for this comp.")
+    if not (fanin_node.content or "").strip():
+        raise HTTPException(status_code=409, detail="Fan-in has no content to review yet.")
+    pipeline_queue.cancel_jobs_by_type(
+        db,
+        "v2.review_fanin",
+        project_id=project_id,
+        node_id=fanin_node.id,
+    )
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type="v2.review_fanin",
+        payload={
+            "project_id": project_id,
+            "node_id": fanin_node.id,
+            "draft_id": None,
+        },
+    )
+    return FeedbackResponse(job_id=job_id)
+
+
 # ── Reference routes (Phase 6.6) ──────────────────────────────────
 #
 # Refs use the BootstrapTierConfig pattern for their per-ref
@@ -3090,6 +3381,14 @@ class ReferenceDetailResponse(BaseModel):
     current_attempt: int | None = None
     max_attempts: int | None = None
     failed_raw_output: str | None = None
+    # Phase 8 — AI self-review fields. Populated when the tier
+    # has a configured review_job_type; empty string / "idle"
+    # for tiers that don't run reviews.
+    review_text: str = ""
+    review_status: queries.GenerationStatus = "idle"
+    review_last_error: str | None = None
+    review_current_attempt: int | None = None
+    review_max_attempts: int | None = None
     outgoing_edges: list[ReferenceEdgeResponse]
     incoming_edges: list[ReferenceEdgeResponse]
 

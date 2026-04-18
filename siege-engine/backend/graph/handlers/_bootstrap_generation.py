@@ -225,12 +225,20 @@ def persist_draft(
     attempts: list["GenerationResult"],
     prior_pending_id: str | None,
     log_handler_name: str,
+    review_job_type: str = "",
 ) -> None:
     """Phase 3: persist the validated draft + telemetry in one transaction.
 
     Shared by all generation handlers — the only variation is the
     ``section`` tag for telemetry rows and the ``node_id`` /
     ``log_handler_name`` for logging.
+
+    Phase 8: if ``review_job_type`` is provided, enqueue one review
+    job after the commit. The review handler re-assembles context
+    from the DB state, calls the CLI, and emits
+    ``DraftReviewUpdated`` on success. Any prior-draft review job
+    is cancelled when the prior draft is discarded so it can't
+    race with the fresh draft's review.
     """
     import secrets
 
@@ -238,6 +246,7 @@ def persist_draft(
     from backend.graph import events as ev
     from backend.graph.reducer import append_event
     from backend.models.telemetry import GenerationTelemetry
+    from backend.pipeline import queue as pipeline_queue
 
     db = SessionLocal()
     try:
@@ -247,6 +256,16 @@ def persist_draft(
                 project_id,
                 ev.DraftDiscarded(draft_id=prior_pending_id),
             )
+            # Cancel any in-flight review job for the discarded
+            # draft so a late-arriving review can't land on the
+            # wrong draft row.
+            if review_job_type:
+                pipeline_queue.cancel_jobs_by_type(
+                    db,
+                    review_job_type,
+                    project_id=project_id,
+                    draft_id=prior_pending_id,
+                )
 
         new_draft_id = f"draft_{secrets.token_hex(8)}"
         import uuid
@@ -286,5 +305,23 @@ def persist_draft(
             validated_output.completion_tokens,
             validated_output.model,
         )
+        # Phase 8: enqueue AI self-review against the newly-
+        # committed draft. Review handler re-assembles tier
+        # context and emits ``DraftReviewUpdated`` on success.
+        # ``SIEGE_DISABLE_AI_REVIEW=1`` opts out project-wide —
+        # used by the chain integration test to keep its stub
+        # scope small.
+        import os
+
+        if review_job_type and os.environ.get("SIEGE_DISABLE_AI_REVIEW") != "1":
+            pipeline_queue.enqueue(
+                db,
+                job_type=review_job_type,
+                payload={
+                    "project_id": project_id,
+                    "node_id": node_id,
+                    "draft_id": new_draft_id,
+                },
+            )
     finally:
         db.close()

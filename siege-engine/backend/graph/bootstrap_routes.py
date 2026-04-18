@@ -119,6 +119,15 @@ class BootstrapTierConfig:
     # Signature: (db, project_id, node, scope_ids) -> None
     on_approve: Callable[..., None] | None = None
 
+    # ── Phase 8: AI self-review job type ─────────────────────────────
+    # If set, ``persist_draft`` / ``persist_fanin_content``
+    # enqueues this job after committing the generation so the
+    # reviewer can critique the generated output. Empty string
+    # disables reviews for this tier (useful during chain tests).
+    # Signature of the review handler matches the other pipeline
+    # handlers — ``async def(payload: dict) -> None``.
+    review_job_type: str = ""
+
 
 def build_job_payload(
     project_id: str,
@@ -193,6 +202,36 @@ def bootstrap_get_state(
         payload_filters=payload_filters if payload_filters else None,
     )
     telemetry = _latest_telemetry(db, project_id, node.id)
+
+    # Phase 8: AI self-review fields — populated when the tier
+    # has a configured ``review_job_type``. Skipped otherwise
+    # (empty strings / nulls), so tiers without review support
+    # serialize the same shape without changing the response
+    # schema. Review jobs always carry ``node_id`` explicitly,
+    # which project-uniquely identifies the tier node being
+    # reviewed — cleaner filter than reusing the scope payload
+    # keys (which vary per tier).
+    review_text = _resolve_review_text(draft, node) if config.review_job_type else ""
+    if config.review_job_type:
+        (
+            review_status,
+            review_last_error,
+            _review_started_at,
+            review_current_attempt,
+            review_max_attempts,
+            _review_raw_output,
+        ) = queries.latest_generation_status(
+            db,
+            project_id,
+            config.review_job_type,
+            payload_filters={"node_id": node.id},
+        )
+    else:
+        review_status = "idle"
+        review_last_error = None
+        review_current_attempt = None
+        review_max_attempts = None
+
     return {
         "node": config.serialize_node(node),
         "pending_draft": config.serialize_draft(draft) if draft else None,
@@ -203,7 +242,26 @@ def bootstrap_get_state(
         "current_attempt": current_attempt,
         "max_attempts": max_attempts,
         "failed_raw_output": failed_raw_output,
+        "review_text": review_text,
+        "review_status": review_status,
+        "review_last_error": review_last_error,
+        "review_current_attempt": review_current_attempt,
+        "review_max_attempts": review_max_attempts,
     }
+
+
+def _resolve_review_text(draft: Draft | None, node) -> str:
+    """Return the current review_text for this tier.
+
+    For tiers with a pending draft, the review lives on the draft
+    row. For fanin (no draft lifecycle), it lives on the node row.
+    Approved / no-pending-draft state shows the last-known review
+    lifted from the node if the tier stashes one there (fanin);
+    otherwise empty string.
+    """
+    if draft is not None:
+        return draft.review_text or ""
+    return (node.review_text or "") if hasattr(node, "review_text") else ""
 
 
 def bootstrap_feedback(
@@ -369,6 +427,71 @@ def bootstrap_cancel(
         return {"cancelled": False}
     ok = pipeline_queue.cancel_job(db, job.id)
     return {"cancelled": ok}
+
+
+def bootstrap_retry_review(
+    db: Session,
+    project_id: str,
+    scope_ids: tuple[str, ...],
+    config: BootstrapTierConfig,
+    require_project: Callable,
+) -> dict[str, str]:
+    """Manually re-enqueue the AI self-review for this tier's node.
+
+    Called from the per-tier "Retry review" button when the
+    previous review job marked itself ``failed`` and the user
+    wants another pass. Cancels any currently-stuck review job
+    for this node, then enqueues a fresh one.
+
+    Review jobs key on ``node_id`` (the tier node being
+    reviewed) — plus ``draft_id`` for draft-bearing tiers or
+    ``None`` for fanin. The review handler reassembles context
+    from the DB state at run time, so no payload fields need to
+    change between retries.
+
+    Raises 404 if the tier has no configured review, or if the
+    target node is missing. Raises 409 if there's no draft /
+    fanin content to review yet.
+    """
+    if not config.review_job_type:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{config.tier_name} does not support AI review",
+        )
+    require_project(db, project_id)
+    node = config.get_node(db, project_id, *scope_ids)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"{config.tier_name} node missing")
+
+    # Resolve the target of the review: pending draft if one
+    # exists, else the node itself (fanin-style). Skip if there's
+    # nothing to review yet — avoids firing a review against an
+    # empty scope.
+    draft = config.get_pending_draft(db, project_id, *scope_ids)
+    draft_id: str | None = draft.id if draft is not None else None
+    if draft is None and not (node.content or "").strip():
+        raise HTTPException(
+            status_code=409,
+            detail=f"{config.tier_name} has no content to review yet",
+        )
+
+    # Cancel any stuck review job for this node before re-enqueueing.
+    pipeline_queue.cancel_jobs_by_type(
+        db,
+        config.review_job_type,
+        project_id=project_id,
+        node_id=node.id,
+    )
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type=config.review_job_type,
+        payload={
+            "project_id": project_id,
+            "node_id": node.id,
+            "draft_id": draft_id,
+        },
+    )
+    return {"job_id": job_id}
 
 
 def bootstrap_reset(

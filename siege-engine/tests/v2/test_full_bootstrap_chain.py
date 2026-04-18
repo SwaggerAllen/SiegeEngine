@@ -34,6 +34,10 @@ import uuid
 import pytest
 
 os.environ.setdefault("SIEGE_DISABLE_WORKER_LOOP", "1")
+# Skip Phase 8 AI self-review jobs in the chain integration test —
+# the stubbed CLI only knows the generator prompts; adding review
+# prompts would bloat the stub and double the test runtime.
+os.environ.setdefault("SIEGE_DISABLE_AI_REVIEW", "1")
 
 try:
     import cryptography.hazmat.bindings._rust  # noqa: F401

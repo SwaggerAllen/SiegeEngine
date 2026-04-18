@@ -209,6 +209,38 @@ class DraftDiscarded(_EventBase):
     draft_id: str
 
 
+class DraftReviewUpdated(_EventBase):
+    """AI self-review output landed for a draft-bearing tier.
+
+    Phase 8 — one review pass runs after every draft commit.
+    The review job re-assembles the same context the generator
+    saw, calls the CLI, and emits this event with the review
+    markdown.
+
+    ``draft_id`` is the target Draft id for tiers that carry a
+    draft row (everything except fanin); the reducer writes the
+    review text to ``Draft.review_text``. ``None`` for fanin,
+    which has no draft lifecycle — the reducer writes to
+    ``Node.review_text`` instead.
+
+    ``node_id`` is always populated — the owning tier node whose
+    detail query needs invalidating when this event lands. The
+    broadcaster uses it to compute SSE ``node_ids`` without a
+    DB lookup at publish time.
+
+    Failures don't emit this event — review jobs that exhaust
+    their retry budget mark their Job row ``failed``; the tier
+    detail response surfaces that via ``review_status ==
+    "failed"`` + ``review_last_error``. Event-sourced state
+    stays append-only: only successful reviews land.
+    """
+
+    event_type: Literal["DraftReviewUpdated"] = "DraftReviewUpdated"
+    draft_id: str | None
+    node_id: str
+    review_text: str
+
+
 class FanInContentUpdated(_EventBase):
     """A fan-in node's content is replaced by a new synthesis.
 

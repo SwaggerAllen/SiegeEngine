@@ -56,3 +56,15 @@ export function useFanInResetMutation(projectId: string, compId: string) {
     },
   });
 }
+
+export function useFanInReviewRetryMutation(projectId: string, compId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => faninApi.retryFanInReview(projectId, compId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: faninKeys.detail(projectId, compId),
+      });
+    },
+  });
+}

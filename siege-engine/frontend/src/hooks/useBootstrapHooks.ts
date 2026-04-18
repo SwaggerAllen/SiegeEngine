@@ -36,6 +36,7 @@ export interface MutationApiFns {
   discardDraft: (...args: string[]) => Promise<unknown>;
   cancelGeneration: (...args: string[]) => Promise<unknown>;
   resetTier?: (...args: string[]) => Promise<unknown>;
+  retryReview?: (...args: string[]) => Promise<unknown>;
 }
 
 export function makeBootstrapMutations(
@@ -125,11 +126,24 @@ export function makeBootstrapMutations(
     });
   }
 
+  function useReviewRetryMutation(...scopeIds: string[]) {
+    const queryClient = useQueryClient();
+    return useMutation({
+      mutationKey: [tierName, 'retry-review', ...scopeIds],
+      mutationFn: () => apiFns.retryReview?.(...scopeIds) ?? Promise.resolve(),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: keys.detail(...scopeIds) });
+        extraInvalidations?.(queryClient, scopeIds[0]);
+      },
+    });
+  }
+
   return {
     useFeedbackMutation,
     useApproveMutation,
     useDiscardMutation,
     useCancelGenerationMutation,
     useResetMutation,
+    useReviewRetryMutation,
   };
 }

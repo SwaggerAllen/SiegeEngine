@@ -4,6 +4,7 @@ import {
   useCancelGenerationMutation,
   useFeedbackMutation,
   useResetMutation,
+  useReviewRetryMutation,
 } from '../hooks/mutations/useSubreqsMutations';
 import {
   BootstrapDraftPanel,
@@ -43,12 +44,14 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
   const approveMutation = useApproveMutation(projectId, componentId);
   const cancelMutation = useCancelGenerationMutation(projectId, componentId);
   const resetMutation = useResetMutation(projectId, componentId);
+  const reviewRetryMutation = useReviewRetryMutation(projectId, componentId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
     cancelMutation.isPending ||
-    resetMutation.isPending;
+    resetMutation.isPending ||
+    reviewRetryMutation.isPending;
 
   return (
     <div className="flex flex-col h-full overflow-auto">
@@ -65,6 +68,7 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
             onRetry: () => feedbackMutation.mutate(''),
             onCancel: () => cancelMutation.mutate(),
             onReset: () => resetMutation.mutate(),
+            onRetryReview: () => reviewRetryMutation.mutate(),
             isBusy,
           }}
           contentRenderers={subreqsRenderers}

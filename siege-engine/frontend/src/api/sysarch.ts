@@ -29,5 +29,8 @@ export const cancelGeneration = (projectId: string) =>
 
 export const resetSysarch = (projectId: string) => sysarchApi.resetTier(projectId);
 
+export const retryReview = (projectId: string) =>
+  sysarchApi.retryReview(projectId);
+
 export const getPromptPreview = (projectId: string, feedback: string) =>
   sysarchApi.getPromptPreview(projectId, feedback);

@@ -312,6 +312,64 @@ node per subcomponent and per un-fanned-out component.
 - [x] Uses shared regen helper from Phase 4
 - [x] Destructive-edit gate only; non-destructive impl edits propagate automatically to plan nodes
 
+## Phase 8.5 — AI self-review on every generated draft
+
+Every draft (or fan-in commit) that lands triggers a second LLM
+pass that critiques the generator's output against the same
+context the generator saw. Reviews are advisory — they never
+block approval — and surface in the per-tier draft panel as a
+collapsible markdown block between the XML doc and the action
+cluster. Motivation: handle quality compounds downstream, and
+eight tiers × fan-out produces more content than a human can
+audit by hand; the review is the debugging surface.
+
+Each review prompt asks for a single markdown response with two
+top-level sections: `## Handles & structure` (coverage, naming,
+scope-fit, downstream-readability) and `## Architectural
+decisions` (tech-stack soundness, boundaries, anti-patterns; on
+tiers with no tech decisions this section critiques the
+decomposition axis instead).
+
+- [x] `Draft.review_text` + `Node.review_text` columns
+  (the latter serves the fan-in tier, which writes content
+  directly to the node rather than through a draft)
+- [x] `DraftReviewUpdated` event + reducer handler +
+  broadcaster wiring
+- [x] Per-tier `v2.review_<tier>` job types (8 total) sharing
+  a common `run_tier_review` helper and a shared system-prompt
+  template
+- [x] Per-tier `review_context/<tier>.py` modules — generator
+  and reviewer call the same context gatherer so zero drift
+  between what the generator saw and what the reviewer sees
+- [x] `persist_draft` / `persist_fanin_content` enqueue the
+  review job keyed to the new draft / node id after the
+  generation commit; prior-draft discards cancel any
+  in-flight review for the stale draft
+- [x] Review job carries its own transient-CLI-retry counter
+  (reuses `_record_attempt_progress` so the frontend shows
+  `Reviewing… attempt N/M` while in flight)
+- [x] Review-job types added to `_TIER_JOB_TYPES` so the tree
+  view's amber pulse spans both draft generation **and** review
+  generation — a draft committed but still under review is not
+  yet "done"
+- [x] `bootstrap_retry_review` + per-tier retry route lets the
+  user manually re-enqueue a failed review from the UI
+- [x] Tier detail response surfaces `review_text`,
+  `review_status`, `review_last_error`, `review_current_attempt`,
+  `review_max_attempts`; frontend renders a four-state review
+  block (idle-with-text → collapsible markdown; running →
+  spinner + attempt counter; failed → error banner + Retry
+  button; idle + empty → hidden)
+- [x] `SIEGE_DISABLE_AI_REVIEW=1` env toggle skips enqueueing
+  reviews (used by the chain integration test so it doesn't
+  double/triple CLI calls per tier)
+
+Out of scope for this phase: per-project review on/off, review-
+directed regeneration (reviews produce prose; the user reads
+them and decides whether to regen with them as feedback),
+multi-round review, retroactive review of pre-Phase-8 content,
+and per-tier prompt customization via PromptConfig.
+
 ## Phase 9 — Staleness ledger & fanout decision
 
 The diff helper and fragment-level diffs already landed in Phase 4.

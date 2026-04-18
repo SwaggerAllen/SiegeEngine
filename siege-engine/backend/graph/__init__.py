@@ -38,6 +38,14 @@ from backend.graph.handlers import policy_application_local as _policy_app_local
 from backend.graph.handlers import policy_application_top as _policy_app_top_handler
 from backend.graph.handlers import requirements_generation as _requirements_gen_handler
 from backend.graph.handlers import requirements_mint as _requirements_mint_handler
+from backend.graph.handlers import review_comparch as _review_comparch_handler
+from backend.graph.handlers import review_expansion as _review_expansion_handler
+from backend.graph.handlers import review_fanin as _review_fanin_handler
+from backend.graph.handlers import review_impl as _review_impl_handler
+from backend.graph.handlers import review_requirements as _review_requirements_handler
+from backend.graph.handlers import review_subcomparch as _review_subcomparch_handler
+from backend.graph.handlers import review_subreqs as _review_subreqs_handler
+from backend.graph.handlers import review_sysarch as _review_sysarch_handler
 from backend.graph.handlers import subcomparch_generation as _subcomparch_gen_handler
 from backend.graph.handlers import subcomparch_mint as _subcomparch_mint_handler
 from backend.graph.handlers import subreqs_generation as _subreqs_gen_handler
@@ -63,3 +71,11 @@ _subcomparch_mint_handler.register()
 _generate_reference_handler.register()
 _impl_gen_handler.register()
 _fanin_gen_handler.register()
+_review_expansion_handler.register()
+_review_requirements_handler.register()
+_review_sysarch_handler.register()
+_review_subreqs_handler.register()
+_review_comparch_handler.register()
+_review_subcomparch_handler.register()
+_review_impl_handler.register()
+_review_fanin_handler.register()

@@ -209,6 +209,7 @@ async def generate_subcomparch(payload: dict) -> None:
         attempts=attempts,
         prior_pending_id=prior_pending_id,
         log_handler_name="generate_subcomparch",
+        review_job_type="v2.review_subcomparch",
     )
 
 

@@ -49,7 +49,12 @@ function makeResponse(overrides: Partial<SysarchResponse> = {}): SysarchResponse
     generation_started_at: null,
     current_attempt: null,
     max_attempts: null,
-      failed_raw_output: null,
+    failed_raw_output: null,
+    review_text: '',
+    review_status: 'idle',
+    review_last_error: null,
+    review_current_attempt: null,
+    review_max_attempts: null,
     ...overrides,
   };
 }

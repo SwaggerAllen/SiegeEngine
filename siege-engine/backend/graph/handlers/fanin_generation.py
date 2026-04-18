@@ -235,6 +235,25 @@ def persist_fanin_content(
             validated_output.completion_tokens,
             validated_output.model,
         )
+        # Phase 8: enqueue AI self-review against the fresh fanin
+        # content (Node-backed, no draft). Review handler emits
+        # ``DraftReviewUpdated`` with ``draft_id=None`` + node_id
+        # set to this fanin node. Opt-out via
+        # ``SIEGE_DISABLE_AI_REVIEW=1``.
+        import os as _os
+
+        from backend.pipeline import queue as _pipeline_queue
+
+        if _os.environ.get("SIEGE_DISABLE_AI_REVIEW") != "1":
+            _pipeline_queue.enqueue(
+                db,
+                job_type="v2.review_fanin",
+                payload={
+                    "project_id": project_id,
+                    "node_id": node_id,
+                    "draft_id": None,
+                },
+            )
     finally:
         db.close()
 

@@ -6,6 +6,7 @@ import {
   useCancelGenerationMutation,
   useFeedbackMutation,
   useResetMutation,
+  useReviewRetryMutation,
 } from '../hooks/mutations/useSysarchMutations';
 import {
   BootstrapDraftPanel,
@@ -63,12 +64,14 @@ export function SysarchPanel({ projectId }: Props) {
   const approveMutation = useApproveMutation(projectId);
   const cancelMutation = useCancelGenerationMutation(projectId);
   const resetMutation = useResetMutation(projectId);
+  const reviewRetryMutation = useReviewRetryMutation(projectId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
     cancelMutation.isPending ||
-    resetMutation.isPending;
+    resetMutation.isPending ||
+    reviewRetryMutation.isPending;
 
   const renderers = useMemo(() => {
     const respNames: Record<string, string> = {};
@@ -96,6 +99,7 @@ export function SysarchPanel({ projectId }: Props) {
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
         onReset: () => resetMutation.mutate(),
+        onRetryReview: () => reviewRetryMutation.mutate(),
         isBusy,
       }}
       contentRenderers={renderers}

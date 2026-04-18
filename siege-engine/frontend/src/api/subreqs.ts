@@ -28,3 +28,6 @@ export const cancelGeneration = (projectId: string, componentId: string) =>
 
 export const resetSubreqs = (projectId: string, componentId: string) =>
   subreqsApi.resetTier(projectId, componentId);
+
+export const retryReview = (projectId: string, componentId: string) =>
+  subreqsApi.retryReview(projectId, componentId);

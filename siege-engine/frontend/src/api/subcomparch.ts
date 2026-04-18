@@ -30,6 +30,11 @@ export const SubcomparchResponseSchema = z.object({
   current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   max_attempts: z.number().int().nullish().transform((v) => v ?? null),
   failed_raw_output: z.string().nullish().transform((v) => v ?? null),
+  review_text: z.string().default(""),
+  review_status: GenerationStatusSchema.default("idle"),
+  review_last_error: z.string().nullish().transform((v) => v ?? null),
+  review_current_attempt: z.number().int().nullish().transform((v) => v ?? null),
+  review_max_attempts: z.number().int().nullish().transform((v) => v ?? null),
 });
 export type SubcomparchResponse = z.infer<typeof SubcomparchResponseSchema>;
 
@@ -58,3 +63,7 @@ export const cancelGeneration = (
 export const resetSubcomparch = (
   projectId: string, parentCompId: string, subId: string,
 ) => subcomparchApi.resetTier(projectId, parentCompId, subId);
+
+export const retryReview = (
+  projectId: string, parentCompId: string, subId: string,
+) => subcomparchApi.retryReview(projectId, parentCompId, subId);

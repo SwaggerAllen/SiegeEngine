@@ -29,32 +29,16 @@ from __future__ import annotations
 import logging
 
 from backend.database import SessionLocal
-from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.handlers._bootstrap_generation import (
     persist_draft,
     run_parse_validate_loop,
 )
 from backend.graph.parsers.validators import validate_subrequirements
 from backend.graph.prompts.subrequirements import (
-    format_component_summary,
-    format_domain_parent_context,
-    format_parent_resps_summary,
-    format_sibling_dep_context,
     render_system_prompt,
     render_user_prompt,
 )
-from backend.graph.queries import (
-    dependencies_of,
-    domain_parents_of,
-    list_subresponsibilities,
-    top_level_resps_assigned_to,
-)
-from backend.graph.subrequirements import (
-    get_subreqs_node,
-    pending_subreqs_draft,
-)
 from backend.models import Project
-from backend.models.node import Fragment, Node
 from backend.pipeline import queue as pipeline_queue
 from backend.projects.settings import get_project_settings
 
@@ -88,125 +72,25 @@ async def generate_subreqs(payload: dict) -> None:
     # ── Phase 1: gather inputs ──────────────────────────────────────
     db = SessionLocal()
     try:
-        comp_node = db.get(Node, component_id)
-        if comp_node is None or comp_node.project_id != project_id:
-            raise SubreqsHandlerError(
-                f"Component {component_id!r} not found in project {project_id!r}"
-            )
-        if comp_node.tier != "comp":
-            raise SubreqsHandlerError(
-                f"Node {component_id!r} is not a comp_* node (tier={comp_node.tier!r})"
-            )
+        from backend.graph.review_context.subreqs import gather_subreqs_context
 
-        subreqs_node = get_subreqs_node(db, project_id, component_id)
-        if subreqs_node is None:
-            raise SubreqsHandlerError(
-                f"Component {component_id!r} has no subreqs node; "
-                "was bootstrap_subreqs_node called at mint_sysarch time?"
-            )
-        subreqs_node_id: str = subreqs_node.id
-        prior_approved: str | None = subreqs_node.content or None
+        try:
+            ctx = gather_subreqs_context(db, project_id, component_id)
+        except ValueError as exc:
+            raise SubreqsHandlerError(str(exc)) from exc
 
-        pending = pending_subreqs_draft(db, project_id, component_id)
-        prior_pending: str | None = pending.content if pending else None
-        prior_pending_id: str | None = pending.id if pending else None
-
-        # Component metadata for the prompt: name + role + api-intent.
-        # Role and api-intent live in fragments written by the
-        # sysarch mint handler.
-        role = _read_fragment(db, component_id, FragmentKind.TECHSPEC) or ""
-        api_intent = _read_fragment(db, component_id, FragmentKind.PUBAPI) or ""
-        component_summary = format_component_summary(
-            name=comp_node.name, role=role, api_intent=api_intent
-        )
-
-        # Parent resps — the top-level resps assigned to this
-        # component via decomposition edges. This is the set the
-        # validator's coverage check enforces.
-        parent_resp_rows = top_level_resps_assigned_to(db, component_id)
-        parent_resps_summary = format_parent_resps_summary(
-            [{"id": r.id, "name": r.name, "content": r.content} for r in parent_resp_rows]
-        )
-        known_parent_resp_ids: set[str] = {r.id for r in parent_resp_rows}
-
-        # Domain-parent context — only populated when this is a
-        # presentational component with domain_parent edges that
-        # point at domain components whose own subreqs have
-        # already been minted. Rendered into the prompt as a
-        # read-only block so the LLM can align UI-side subresps
-        # with the domain side without duplicating. Cross-
-        # component references remain forbidden by the validator;
-        # this is advisory context only.
-        #
-        # If the presentational component's subreqs generation
-        # runs before any of its domain parents have approved
-        # subreqs (possible under the sysarch-mint fan-out
-        # ordering, which doesn't sequence domain before
-        # presentational), the context block is empty and the
-        # LLM falls back to writing subresps from scratch. A
-        # later regen once the domain side is minted will pick
-        # up the context.
-        domain_parent_context: str | None = None
-        if comp_node.kind == "presentational":
-            parent_rows = domain_parents_of(db, component_id)
-            parent_bundles: list[dict] = []
-            for parent in parent_rows:
-                parent_subresps = list_subresponsibilities(db, parent.id)
-                parent_bundles.append(
-                    {
-                        "name": parent.name,
-                        "subresps": [
-                            {
-                                "id": sr.id,
-                                "name": sr.name,
-                                "content": sr.content,
-                            }
-                            for sr in parent_subresps
-                        ],
-                    }
-                )
-            rendered = format_domain_parent_context(parent_bundles)
-            domain_parent_context = rendered or None
-
-        # Sibling-dependency context — the api-intent paragraph
-        # (pubapi fragment) and the top-level responsibilities
-        # assigned to each comp this comp declares a ``dependency``
-        # edge to. Populated for both domain and presentational
-        # comps. Surfaces two kinds of signal:
-        #
-        #  - pubapi tells the LLM what the dep offers as a consumer
-        #    contract;
-        #  - top-level resps tell the LLM what the dep is scoped
-        #    to handle (its concern territory at the sysarch level),
-        #    so this comp doesn't re-derive responsibilities the
-        #    dep already owns.
-        #
-        # Both are populated at sysarch mint, so this block is
-        # reliably present the first time any dependent's subreqs
-        # job fires.
-        sibling_dep_context: str | None = None
-        dep_rows = dependencies_of(db, component_id)
-        if dep_rows:
-            dep_bundles: list[dict] = []
-            for dep in dep_rows:
-                dep_pubapi = _read_fragment(db, dep.id, FragmentKind.PUBAPI) or ""
-                dep_resps = top_level_resps_assigned_to(db, dep.id)
-                dep_bundles.append(
-                    {
-                        "name": dep.name,
-                        "api_intent": dep_pubapi,
-                        "responsibilities": [
-                            {
-                                "id": r.id,
-                                "name": r.name,
-                                "content": r.content,
-                            }
-                            for r in dep_resps
-                        ],
-                    }
-                )
-            rendered_deps = format_sibling_dep_context(dep_bundles)
-            sibling_dep_context = rendered_deps or None
+        subreqs_node_id = ctx.subreqs_node_id
+        prior_approved = ctx.prior_approved
+        prior_pending = ctx.prior_pending
+        prior_pending_id = ctx.prior_pending_id
+        component_summary = ctx.component_summary
+        parent_resps_summary = ctx.parent_resps_summary
+        known_parent_resp_ids = ctx.known_parent_resp_ids
+        domain_parent_context = ctx.domain_parent_context
+        sibling_dep_context = ctx.sibling_dep_context
+        vocab_summary = ctx.vocab_summary
+        referenced_content_summary = ctx.referenced_content_summary
+        parent_resp_count = len(known_parent_resp_ids)
 
         project_row = db.get(Project, project_id)
         assert project_row is not None
@@ -214,23 +98,6 @@ async def generate_subreqs(payload: dict) -> None:
         cli_timeout_seconds = settings.generation_timeout_seconds
         cli_max_budget_usd = settings.cli_max_budget_usd
         system_prompt = render_system_prompt()
-
-        # Project vocabulary scoped to this component's reachable
-        # features via the decomposition walk. The subreqs regen
-        # is scoped to one top-level component, so it only needs
-        # vocab for the features that component's responsibilities
-        # serve, plus project-level vocab.
-        from backend.graph.vocabulary import render_vocab_summary_for_node
-
-        vocab_summary = render_vocab_summary_for_node(db, project_id, component_id)
-
-        # Referenced content — pulled from outgoing ``reference``
-        # edges on the subreqs node itself (not the component).
-        from backend.graph.references import render_referenced_content_summary
-
-        referenced_content_summary = render_referenced_content_summary(
-            db, project_id, subreqs_node_id
-        )
     finally:
         db.close()
 
@@ -241,7 +108,7 @@ async def generate_subreqs(payload: dict) -> None:
         component_id,
         bool(prior_pending),
         bool(feedback),
-        len(parent_resp_rows),
+        parent_resp_count,
     )
 
     def _render(*, prior_pending: str | None, parse_error: str | None) -> str:
@@ -281,14 +148,8 @@ async def generate_subreqs(payload: dict) -> None:
         attempts=attempts,
         prior_pending_id=prior_pending_id,
         log_handler_name="generate_subreqs",
+        review_job_type="v2.review_subreqs",
     )
-
-
-def _read_fragment(db, owner_id: str, kind: FragmentKind) -> str | None:
-    """Read a fragment's content by (owner, kind), or return None."""
-    fid = fragment_id(owner_id, kind)
-    frag = db.get(Fragment, fid)
-    return frag.content if frag is not None else None
 
 
 def register() -> None:
