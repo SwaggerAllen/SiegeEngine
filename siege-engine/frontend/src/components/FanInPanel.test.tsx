@@ -37,6 +37,11 @@ function response(overrides: Partial<FanInResponse> = {}): FanInResponse {
     current_attempt: null,
     max_attempts: null,
     failed_raw_output: null,
+    review_text: '',
+    review_status: 'idle',
+    review_last_error: null,
+    review_current_attempt: null,
+    review_max_attempts: null,
     ...overrides,
   };
 }

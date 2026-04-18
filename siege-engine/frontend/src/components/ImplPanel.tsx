@@ -11,10 +11,12 @@ import {
   useImplSubCancelGenerationMutation,
   useImplSubFeedbackMutation,
   useImplSubResetMutation,
+  useImplSubReviewRetryMutation,
   useImplTopLevelApproveMutation,
   useImplTopLevelCancelGenerationMutation,
   useImplTopLevelFeedbackMutation,
   useImplTopLevelResetMutation,
+  useImplTopLevelReviewRetryMutation,
 } from '../hooks/mutations/useImplMutations';
 import { implRenderers } from './xml';
 
@@ -80,12 +82,14 @@ function ImplPanelTopLevel({
   const approveMutation = useImplTopLevelApproveMutation(projectId, compId);
   const cancelMutation = useImplTopLevelCancelGenerationMutation(projectId, compId);
   const resetMutation = useImplTopLevelResetMutation(projectId, compId);
+  const reviewRetryMutation = useImplTopLevelReviewRetryMutation(projectId, compId);
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
     cancelMutation.isPending ||
-    resetMutation.isPending;
+    resetMutation.isPending ||
+    reviewRetryMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -99,6 +103,7 @@ function ImplPanelTopLevel({
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
         onReset: () => resetMutation.mutate(),
+        onRetryReview: () => reviewRetryMutation.mutate(),
         isBusy,
       }}
       contentRenderers={implRenderers}
@@ -121,12 +126,18 @@ function ImplPanelSub({
     subId,
   );
   const resetMutation = useImplSubResetMutation(projectId, parentCompId, subId);
+  const reviewRetryMutation = useImplSubReviewRetryMutation(
+    projectId,
+    parentCompId,
+    subId,
+  );
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
     cancelMutation.isPending ||
-    resetMutation.isPending;
+    resetMutation.isPending ||
+    reviewRetryMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -140,6 +151,7 @@ function ImplPanelSub({
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
         onReset: () => resetMutation.mutate(),
+        onRetryReview: () => reviewRetryMutation.mutate(),
         isBusy,
       }}
       contentRenderers={implRenderers}

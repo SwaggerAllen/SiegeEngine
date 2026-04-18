@@ -10,6 +10,7 @@ const m = makeBootstrapMutations(
     discardDraft: (pid, pcid, sid, did) => api.discardDraft(pid, pcid, sid, did),
     cancelGeneration: (pid, pcid, sid) => api.cancelGeneration(pid, pcid, sid),
     resetTier: (pid, pcid, sid) => api.resetSubcomparch(pid, pcid, sid),
+    retryReview: (pid, pcid, sid) => api.retryReview(pid, pcid, sid),
   },
   subcomparchKeys
 );
@@ -18,3 +19,4 @@ export const useSubcomparchFeedbackMutation = m.useFeedbackMutation;
 export const useSubcomparchApproveMutation = m.useApproveMutation;
 export const useSubcomparchCancelGenerationMutation = m.useCancelGenerationMutation;
 export const useSubcomparchResetMutation = m.useResetMutation;
+export const useSubcomparchReviewRetryMutation = m.useReviewRetryMutation;

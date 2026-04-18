@@ -28,3 +28,6 @@ export const cancelGeneration = (projectId: string, componentId: string) =>
 
 export const resetComparch = (projectId: string, componentId: string) =>
   comparchApi.resetTier(projectId, componentId);
+
+export const retryReview = (projectId: string, componentId: string) =>
+  comparchApi.retryReview(projectId, componentId);

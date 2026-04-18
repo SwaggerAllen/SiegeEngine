@@ -75,6 +75,11 @@ const ReferenceDetailRawSchema = z.object({
   current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   max_attempts: z.number().int().nullish().transform((v) => v ?? null),
   failed_raw_output: z.string().nullish().transform((v) => v ?? null),
+  review_text: z.string().default(''),
+  review_status: z.enum(['idle', 'running', 'failed']).default('idle'),
+  review_last_error: z.string().nullish().transform((v) => v ?? null),
+  review_current_attempt: z.number().int().nullish().transform((v) => v ?? null),
+  review_max_attempts: z.number().int().nullish().transform((v) => v ?? null),
   outgoing_edges: z.array(ReferenceEdgeSchema),
   incoming_edges: z.array(ReferenceEdgeSchema),
 });

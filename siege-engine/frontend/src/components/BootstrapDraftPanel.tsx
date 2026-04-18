@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
+import { CollapsibleMarkdown } from './editor/CollapsibleMarkdown';
 import { XmlDocument } from './xml';
 import type { XmlRendererMap } from './xml';
 
@@ -94,6 +95,15 @@ export interface BootstrapPanelData {
    * states.
    */
   failed_raw_output: string | null;
+  // Phase 8 — AI self-review fields. Surface independent of the
+  // generation state machine above: review runs after draft
+  // commit, lives on draft (or node, for fanin) as `review_text`,
+  // and fails / retries independently.
+  review_text: string;
+  review_status: BootstrapGenerationStatus;
+  review_last_error: string | null;
+  review_current_attempt: number | null;
+  review_max_attempts: number | null;
 }
 
 /**
@@ -149,6 +159,9 @@ export interface BootstrapPanelCallbacks {
    * historical behavior for tiers that can't be reset yet.
    */
   onReset?: () => void;
+  /** Phase 8 — re-enqueue the AI self-review job when the prior
+   * run failed. Absent on panels with no review wiring. */
+  onRetryReview?: () => void;
   /** True while any of the mutations is in-flight. */
   isBusy: boolean;
 }
@@ -261,6 +274,97 @@ function GenerationClock({
       {attemptLabel && <> · {attemptLabel}</>}
     </span>
   );
+}
+
+/**
+ * Phase 8 — AI self-review surface. Four render states, driven
+ * entirely by the review_* fields on BootstrapPanelData:
+ *
+ * - ``running``: spinner row + "Reviewing… attempt N/M" attempt
+ *   counter. Reuses GenerationClock styling via a local
+ *   attempt label so the reviewer has the same visual rhythm
+ *   as generation.
+ * - ``failed``: red banner showing ``review_last_error`` + a
+ *   Retry button (iff ``onRetryReview`` is wired).
+ * - ``idle`` + non-empty ``review_text``: collapsible markdown.
+ *   Default collapsed; the prompt's top-level headings
+ *   (``## Handles & structure`` / ``## Architectural decisions``)
+ *   give CollapsibleMarkdown its per-section controls.
+ * - ``idle`` + empty ``review_text``: rendered null. Pre-Phase-8
+ *   drafts, reviews-disabled mode, and approved content that
+ *   never received a review all land here.
+ */
+function ReviewBlock({
+  reviewText,
+  reviewStatus,
+  reviewLastError,
+  reviewCurrentAttempt,
+  reviewMaxAttempts,
+  onRetryReview,
+  isBusy,
+}: {
+  reviewText: string;
+  reviewStatus: BootstrapGenerationStatus;
+  reviewLastError: string | null;
+  reviewCurrentAttempt: number | null;
+  reviewMaxAttempts: number | null;
+  onRetryReview?: () => void;
+  isBusy: boolean;
+}) {
+  if (reviewStatus === 'running') {
+    const attemptLabel =
+      reviewCurrentAttempt && reviewMaxAttempts
+        ? ` · attempt ${reviewCurrentAttempt} / ${reviewMaxAttempts}`
+        : '';
+    return (
+      <div
+        className="flex items-center gap-3 text-xs text-gray-400 border-t border-gray-800 pt-3"
+        data-testid="review-running"
+      >
+        <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-600 border-t-blue-400" />
+        <span>Reviewing…{attemptLabel}</span>
+      </div>
+    );
+  }
+  if (reviewStatus === 'failed') {
+    return (
+      <div
+        className="border-t border-gray-800 pt-3 space-y-2"
+        data-testid="review-failed"
+      >
+        <div className="p-3 border border-red-800 bg-red-950/40 rounded text-xs text-red-300">
+          <div className="font-semibold mb-1">AI review failed</div>
+          {reviewLastError && (
+            <div className="text-red-400/80 whitespace-pre-wrap">{reviewLastError}</div>
+          )}
+        </div>
+        {onRetryReview && (
+          <button
+            type="button"
+            onClick={onRetryReview}
+            disabled={isBusy}
+            className="px-3 py-1 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
+            data-testid="review-retry-button"
+          >
+            Retry review
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (reviewText.trim()) {
+    return (
+      <div
+        className="border-t border-gray-800 pt-3"
+        data-testid="review-text"
+      >
+        <CollapsibleMarkdown className="text-sm text-gray-300 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-200 [&_h2]:mt-2 [&_h2]:mb-1">
+          {`# AI Review\n\n${reviewText}`}
+        </CollapsibleMarkdown>
+      </div>
+    );
+  }
+  return null;
 }
 
 /**
@@ -378,7 +482,24 @@ export function BootstrapDraftPanel({
     current_attempt,
     max_attempts,
     failed_raw_output,
+    review_text,
+    review_status,
+    review_last_error,
+    review_current_attempt,
+    review_max_attempts,
   } = data;
+
+  const reviewBlock = (
+    <ReviewBlock
+      reviewText={review_text}
+      reviewStatus={review_status}
+      reviewLastError={review_last_error}
+      reviewCurrentAttempt={review_current_attempt}
+      reviewMaxAttempts={review_max_attempts}
+      onRetryReview={callbacks.onRetryReview}
+      isBusy={callbacks.isBusy}
+    />
+  );
 
   const submitFeedback = () => {
     // Passes through whatever is in the textarea, trimmed — empty
@@ -449,6 +570,7 @@ export function BootstrapDraftPanel({
             )}
           </div>
           <XmlDocument content={pending_draft.content} renderers={contentRenderers} />
+          {reviewBlock}
           <TelemetryLine telemetry={latest_telemetry} />
         </div>
         <div className="sticky bottom-0 bg-gray-950 border-t border-gray-800 p-4 space-y-3">
@@ -532,6 +654,7 @@ export function BootstrapDraftPanel({
           </span>
         </div>
         <XmlDocument content={node.content} renderers={contentRenderers} />
+        {reviewBlock}
         <div className="text-xs text-gray-500 italic">{labels.readOnlyExplanation}</div>
         <div className="flex items-center gap-3">
           <CopyButton content={node.content} />

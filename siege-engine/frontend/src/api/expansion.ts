@@ -30,5 +30,8 @@ export const cancelGeneration = (projectId: string) =>
 export const resetExpansion = (projectId: string) =>
   expansionApi.resetTier(projectId);
 
+export const retryReview = (projectId: string) =>
+  expansionApi.retryReview(projectId);
+
 export const getPromptPreview = (projectId: string, feedback: string) =>
   expansionApi.getPromptPreview(projectId, feedback);

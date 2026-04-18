@@ -30,6 +30,11 @@ export const FanInResponseSchema = z.object({
   current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   max_attempts: z.number().int().nullish().transform((v) => v ?? null),
   failed_raw_output: z.string().nullish().transform((v) => v ?? null),
+  review_text: z.string().default(""),
+  review_status: GenerationStatusSchema.default("idle"),
+  review_last_error: z.string().nullish().transform((v) => v ?? null),
+  review_current_attempt: z.number().int().nullish().transform((v) => v ?? null),
+  review_max_attempts: z.number().int().nullish().transform((v) => v ?? null),
 });
 export type FanInResponse = z.infer<typeof FanInResponseSchema>;
 
@@ -80,4 +85,14 @@ export async function resetFanIn(
     `/projects/${projectId}/components/${compId}/fanin/reset`,
   );
   return ResetResponseSchema.parse(data);
+}
+
+export async function retryFanInReview(
+  projectId: string,
+  compId: string,
+): Promise<{ job_id: string }> {
+  const { data } = await api.post(
+    `/projects/${projectId}/components/${compId}/fanin/review/retry`,
+  );
+  return RegenerateResponseSchema.parse(data);
 }

@@ -4,6 +4,7 @@ import {
   useSubcomparchCancelGenerationMutation,
   useSubcomparchFeedbackMutation,
   useSubcomparchResetMutation,
+  useSubcomparchReviewRetryMutation,
 } from '../hooks/mutations/useSubcomparchMutations';
 import {
   BootstrapDraftPanel,
@@ -66,12 +67,18 @@ export function SubcomparchPanel({
     parentCompId,
     subId
   );
+  const reviewRetryMutation = useSubcomparchReviewRetryMutation(
+    projectId,
+    parentCompId,
+    subId
+  );
 
   const isBusy =
     feedbackMutation.isPending ||
     approveMutation.isPending ||
     cancelMutation.isPending ||
-    resetMutation.isPending;
+    resetMutation.isPending ||
+    reviewRetryMutation.isPending;
 
   return (
     <BootstrapDraftPanel
@@ -85,6 +92,7 @@ export function SubcomparchPanel({
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
         onReset: () => resetMutation.mutate(),
+        onRetryReview: () => reviewRetryMutation.mutate(),
         isBusy,
       }}
       contentRenderers={subcomparchRenderers}

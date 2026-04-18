@@ -35,6 +35,13 @@ const ResponseSchema = z.object({
   current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   max_attempts: z.number().int().nullish().transform((v) => v ?? null),
   failed_raw_output: z.string().nullish().transform((v) => v ?? null),
+  // Phase 8 — AI self-review fields. Empty text / "idle" for
+  // tiers without a configured review_job_type.
+  review_text: z.string().default(""),
+  review_status: GenerationStatusSchema.default("idle"),
+  review_last_error: z.string().nullish().transform((v) => v ?? null),
+  review_current_attempt: z.number().int().nullish().transform((v) => v ?? null),
+  review_max_attempts: z.number().int().nullish().transform((v) => v ?? null),
 });
 
 const FeedbackResponseSchema = z.object({ job_id: z.string() });
@@ -65,6 +72,7 @@ export interface BootstrapApi {
   discardDraft: (...args: [...string[], string]) => Promise<void>;
   cancelGeneration: (...scopeIds: string[]) => Promise<boolean>;
   resetTier: (...scopeIds: string[]) => Promise<ResetResult>;
+  retryReview: (...scopeIds: string[]) => Promise<{ job_id: string }>;
   getPromptPreview: (...args: [...string[], string]) => Promise<PromptPreview>;
 }
 
@@ -107,6 +115,10 @@ export function makeBootstrapApi(
     async resetTier(...scopeIds: string[]) {
       const { data } = await api.post(`${buildBase(...scopeIds)}/reset`);
       return ResetResponseSchema.parse(data);
+    },
+    async retryReview(...scopeIds: string[]) {
+      const { data } = await api.post(`${buildBase(...scopeIds)}/review/retry`);
+      return FeedbackResponseSchema.parse(data);
     },
     async getPromptPreview(...args: string[]) {
       const feedback = args[args.length - 1];

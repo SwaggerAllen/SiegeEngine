@@ -32,5 +32,8 @@ export const cancelGeneration = (projectId: string) =>
 export const resetRequirements = (projectId: string) =>
   requirementsApi.resetTier(projectId);
 
+export const retryReview = (projectId: string) =>
+  requirementsApi.retryReview(projectId);
+
 export const getPromptPreview = (projectId: string, feedback: string) =>
   requirementsApi.getPromptPreview(projectId, feedback);

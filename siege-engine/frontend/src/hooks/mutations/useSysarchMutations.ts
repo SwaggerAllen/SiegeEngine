@@ -10,6 +10,7 @@ const m = makeBootstrapMutations(
     discardDraft: (pid, did) => api.discardDraft(pid, did),
     cancelGeneration: (pid) => api.cancelGeneration(pid),
     resetTier: (pid) => api.resetSysarch(pid),
+    retryReview: (pid) => api.retryReview(pid),
   },
   sysarchKeys
 );
@@ -19,3 +20,4 @@ export const useApproveMutation = m.useApproveMutation;
 export const useDiscardMutation = m.useDiscardMutation;
 export const useCancelGenerationMutation = m.useCancelGenerationMutation;
 export const useResetMutation = m.useResetMutation;
+export const useReviewRetryMutation = m.useReviewRetryMutation;

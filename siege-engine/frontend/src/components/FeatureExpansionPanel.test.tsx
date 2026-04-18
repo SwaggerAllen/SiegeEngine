@@ -10,6 +10,7 @@ vi.mock('../api/expansion', () => ({
   postFeedback: vi.fn(),
   approveDraft: vi.fn(),
   cancelGeneration: vi.fn(),
+  retryReview: vi.fn(),
 }));
 
 import * as expansionApi from '../api/expansion';
@@ -19,6 +20,9 @@ const mockedPostFeedback = expansionApi.postFeedback as unknown as ReturnType<
   typeof vi.fn
 >;
 const mockedApprove = expansionApi.approveDraft as unknown as ReturnType<typeof vi.fn>;
+const mockedRetryReview = expansionApi.retryReview as unknown as ReturnType<
+  typeof vi.fn
+>;
 
 function renderPanel() {
   return render(
@@ -43,7 +47,12 @@ function makeResponse(overrides: Partial<ExpansionResponse> = {}): ExpansionResp
     generation_started_at: null,
     current_attempt: null,
     max_attempts: null,
-      failed_raw_output: null,
+    failed_raw_output: null,
+    review_text: '',
+    review_status: 'idle',
+    review_last_error: null,
+    review_current_attempt: null,
+    review_max_attempts: null,
     ...overrides,
   };
 }
@@ -237,5 +246,114 @@ describe('FeatureExpansionPanel', () => {
     await waitFor(() =>
       expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', '')
     );
+  });
+
+  // Phase 8 — AI self-review block render states.
+  describe('AI review block', () => {
+    it('renders the review markdown when present on a pending draft', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+          review_text:
+            '## Handles & structure\nHandles read cleanly.\n\n## Architectural decisions\nNo tech decisions at this tier.',
+        })
+      );
+      renderPanel();
+
+      const reviewBlock = await screen.findByTestId('review-text');
+      expect(reviewBlock).toBeInTheDocument();
+      expect(reviewBlock).toHaveTextContent(/AI Review/i);
+    });
+
+    it('renders the in-flight spinner + attempt counter when review_status=running', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+          review_status: 'running',
+          review_current_attempt: 2,
+          review_max_attempts: 3,
+        })
+      );
+      renderPanel();
+
+      const running = await screen.findByTestId('review-running');
+      expect(running).toHaveTextContent(/Reviewing/);
+      expect(running).toHaveTextContent(/attempt 2 \/ 3/);
+    });
+
+    it('renders the failed banner + retry button when review_status=failed', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+          review_status: 'failed',
+          review_last_error: 'review CLI timed out',
+        })
+      );
+      mockedRetryReview.mockResolvedValue({ job_id: 'job_review_retry' });
+      renderPanel();
+
+      const failed = await screen.findByTestId('review-failed');
+      expect(failed).toHaveTextContent(/AI review failed/);
+      expect(failed).toHaveTextContent(/review CLI timed out/);
+
+      fireEvent.click(screen.getByTestId('review-retry-button'));
+      await waitFor(() =>
+        expect(mockedRetryReview).toHaveBeenCalledWith('proj_1')
+      );
+    });
+
+    it('hides the block entirely when review_status=idle and review_text is empty', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+        })
+      );
+      renderPanel();
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument()
+      );
+      expect(screen.queryByTestId('review-text')).toBeNull();
+      expect(screen.queryByTestId('review-running')).toBeNull();
+      expect(screen.queryByTestId('review-failed')).toBeNull();
+    });
+
+    it('renders the review markdown alongside approved content', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          node: {
+            id: 'expn_1',
+            name: 'Feature Expansion',
+            content: '# Approved plan',
+            updated_at: '2026-04-12T00:00:00',
+          },
+          review_text:
+            '## Handles & structure\nReview landed after approval — still visible.',
+        })
+      );
+      renderPanel();
+
+      await waitFor(() =>
+        expect(screen.getByText(/Approved plan/)).toBeInTheDocument()
+      );
+      const reviewBlock = screen.getByTestId('review-text');
+      expect(reviewBlock).toHaveTextContent(/AI Review/);
+    });
   });
 });
