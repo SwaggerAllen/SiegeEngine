@@ -857,51 +857,179 @@ Bundle authors publish wherever they want — the upstream source can be GitHub,
 - **Composition.** A project inherits from exactly one bundle with per-project overrides on top. No combining two bundles into one. Composition requires conflict resolution between bundles that override the same tier's prompt, and the right design is unclear without real-world examples to test against.
 - **Runtime patching.** Schema changes to a bundle (new tiers, new fragment kinds, new edge types) require a project-level migration. No auto-migration of in-flight projects when a bundle's grammar evolves — the engine surfaces schema-version mismatch as an explicit error and the project owner runs a migration handler.
 
-### A.11.6 The closed vocabulary of operations
+### A.11.6 The bundle as a reactive schema
 
-The bundle DSL exposes a closed vocabulary of **seventeen primitive operations** across five categories. Every prompt, grammar, and mint spec a bundle ships is expressed as a declarative composition of these primitives. The vocabulary is deliberately small: it is learnable in an afternoon, bounded in surface area, and sufficient for the handler shapes the default design system needs. Nothing in a bundle requires arbitrary Turing-complete logic.
+**Design commitment: the bundle is a typed graph, not a program.** A bundle declares *tiers* (entity kinds), *edges* (typed relationships with cardinality), *fragments* (authored prose blocks), *handles* (the public surface each tier exposes), and *context* (what each tier's generator reads from the graph). The engine's scheduler is a reactive runtime over that schema: for every `(tier, scope)` pair, it evaluates "is every context source ready?" and enqueues when true. Nothing else is imperative — no `foreach`, no event handlers, no ordered mint-step lists. Every piece of engine behavior derives from the schema.
 
-**Graph queries (6).** The read surface over projection tables.
+This framing collapses iteration, alias resolution, fragment serialization, readiness gates, topology conditionals, post-commit enqueues, and projected fragments into four declarative primitives. The bundle's primary artifact, conceptually, is the graph of tiers and edges; its YAML serialization exists so git, LLMs, airgapped import, and text-first authoring all still work.
 
-- `get_node(id)` — single node by ID.
-- `get_fragment(owner_id, kind)` — single fragment by composite key.
-- `query_nodes(filters...)` — filter on tier, parent_id, project_id, kind, is_foundation; ordered by display_order and created_at.
-- `query_edges(filters...)` — filter on edge_type, source_id, target_id, project_id.
-- `walk_edges(start, edge_type, direction, depth?)` — single-hop at depth=1, transitive closure at depth=∞; covers subtree walks, sibling lookups, and reachability queries.
-- `edge_exists(edge_type, source, target)` — existence check for idempotency guards and conditional emissions.
+#### Tiers
 
-**Content parsing (2).** Every structured content blob (prose with tagged sections) goes through the same two primitives.
+A **tier** is a node kind in the generation graph. Each tier declares:
 
-- `parse_xml(raw_text, root_tag)` — extract a parse-tree from structured content.
-- `validate_grammar(tree, grammar, cross_refs)` — check a tree against a declared grammar plus known-ID sets for cross-reference validation.
+- `scope` — `singleton_under(X)` for one-per-X nodes; `per(X)` for per-parent-X instances; `child_of(X)` for tiers minted by a parent's fanout.
+- `scope_filter` — a predicate narrowing the set of scope-parents this tier attaches to (e.g., `fanin.scope_filter: self.parent.kind == domain AND count(self.parent.subcomponents) > 0`).
+- `permitted_parents` — a list when a tier attaches under more than one parent kind (e.g., `policy.permitted_parents: [sysarch, comp]`).
+- `identity` — which field downstream references resolve against (`name`, `id`, `alias`).
+- `fields` — scalar values populated from the tier's draft via `draft.<path>` expressions.
+- `handle` — the public surface other tiers see: a named subset of fields plus a named subset of fragments.
+- `draft` — root tag + grammar for parsing LLM output. Omitted when the tier has no generation step.
+- `generator` — `llm` (default), `git_commit`, `webhook`, `synthesis`, or other engine-supported generator plugins.
+- `context` — an ordered list of edge-walk expressions declaring what the generator reads.
+- `produces` — optional declarations for fragments this tier authors on other nodes (typically `self.parent`).
 
-**Cross-reference helpers (3).** Scaffolding for resolving LLM-authored aliases to real IDs before edge emission.
+A tier without a `draft` produces no content of its own; it exists purely as a join target. Most tiers have drafts.
 
-- `build_alias_map(collection, key_fn, id_fn)` — construct an alias→ID map during minting.
-- `resolve_alias(map, alias)` — look up, returning an ID or raising on miss.
-- `render_template(text, context)` — text templating for prompt rendering and inline-XML blob serialization.
+```yaml
+tiers:
+  comp:
+    scope: child_of(sysarch)
+    identity: alias
+    fields:
+      name:       draft.name
+      kind:       { from: draft.kind, enum: [domain, presentational] }
+      role:       draft.role
+      api_intent: draft.api-intent
+    handle:
+      fields:    [id, alias, name, kind, role, api_intent]
+      fragments: [techspec, pubapi, privapi]
+    # comp has no draft of its own — it's minted by sysarch's fanout;
+    # its fragments are written by comparch via `produces:`
+```
 
-**Event emission (4).** The write surface. All persistence goes through the reducer as events.
+#### Edges
 
-- `emit_node_created(tier, parent_id, kind?, name, content, display_order, extras...)` — `extras` covers optional fields like `group_label`, `is_implicit`, `is_foundation`.
-- `emit_edge_created(edge_type, source, target)`
-- `emit_fragment_updated(owner, kind, content)`
-- `emit_draft(action, target, content?, batch_id?)` — covers the full draft lifecycle (`DraftGenerated`, `DraftDiscarded`, `GenerationTelemetry`) as operations on a single draft object.
+Edges are typed relationships between tiers. Every edge declares source tier, target tier, cardinality on both endpoints, and where in some tier's draft the edge gets declared (`declared_in:`).
 
-**Scheduler / control flow (2).** Cross-handler glue.
+Six edge types cover the entire default system:
 
-- `enqueue_job(kind, params)` — post-commit enqueue for fan-out and downstream generation. Always runs in a separate transaction from the emitting commit so transient enqueue failures don't roll back the mint.
-- `bootstrap_singleton_node(tier, parent_id?)` — check-or-create for bootstrap nodes (reqs, sysarch, subreqs) that downstream tiers expect to exist. Desugars to `query_nodes(...).count == 0 ? emit_node_created(...) : noop`.
+| Type                 | Shape                                                                                 |
+|----------------------|---------------------------------------------------------------------------------------|
+| `fanout`             | A parent tier's draft property produces N children of a child tier                    |
+| `reference`          | Named pointer across tiers, resolved via target's `identity`                          |
+| `dependency`         | Same-tier or cross-tier data dependency; may carry `graph_constraint: [acyclic, ...]` |
+| `domain_parent`      | Cross-kind structural edge (presentational → domain) for fan-in subscription          |
+| `policy_application` | Cross-cutting application of a policy to a target, with reachability constraint       |
+| `synthesis`          | Reverse aggregation: bottom-up projection from children into a parent's synthesis view|
 
-**Declarative idioms layered on the primitives.** Three patterns are exposed as first-class shorthand in the mint-spec DSL rather than requiring bundle authors to express them from primitives every time:
+```yaml
+- fanout:
+    parent: sysarch
+    child: comp
+    property: draft.components
+    cardinality: { child: { min: 1 } }
 
-- **Idempotency guards.** Every mint begins with "if the tier's work is already done, halt." The DSL makes this a named field (`idempotency.skip_if: query_nodes(...)`).
-- **Fragment seeding + overwrite.** Some tiers write skeletal fragments at node creation time that downstream tiers overwrite on approval. The DSL supports declaring the seed content inline on the emission; downstream tiers declare their overwrite contract.
-- **Post-commit enqueue and singleton bootstrap.** Mint handlers end by bootstrapping a singleton for the next tier and enqueueing its generation. The DSL treats these as declared properties of the tier (`post_commit: [bootstrap, enqueue]`).
+- reference:
+    type: fulfills                              # comp → resp
+    source: comp
+    target: resp
+    declared_in: comp.draft.responsibilities[].@id
+    cardinality:
+      source: { min: 1 }                        # every comp fulfills ≥1 resp
+      target: { min: 1, max: 1 }                # every resp fulfilled by exactly 1 comp
 
-These idioms desugar into primitive operations but are load-bearing for ergonomics. Exposing only the raw primitives and forcing authors to re-derive the idioms every time produces bundles that are tedious to write and easy to get wrong.
+- dependency:
+    source: subcomp
+    target: subcomp
+    declared_in: comparch.draft.sub_dependencies[]
+    from: @from                                 # resolves via subcomp.identity (alias)
+    to:   @to
+    scope: within(comparch)                     # both endpoints in same comparch's fanout
+    graph_constraint: [acyclic, no_self_loop]
+```
 
-**Escape hatches** are bounded and explicit. A bundle that needs a custom validation invariant beyond what the grammar layer can express ships a small **named** function the engine calls by name; the function lives in a per-instance allowlist and the instance admin signs off on it during bundle approval. Bundles that need cross-event coordination (deferred fan-out, custom edge propagation) declare named handlers in the same allowlist. The escape hatches are **not** arbitrary code in the bundle — they are a name the engine looks up in an instance-controlled registry of approved code. This keeps bundle authoring in the data domain while still letting bundles reach for engine-level capabilities when the declarative layer falls short.
+Cardinality endpoints use `{ min, max }` bounds. `{ min: 1, max: 1 }` is exactly-one; `{ min: 1 }` is at-least-one; `{ min: 0 }` is optional; `max: many` is the default. Cardinality can be filtered (`when: kind == presentational`) and scoped (`per_source(subreqs)`). This single mechanism replaces every named structural invariant — bijections, coverage rules, partition properties — with uniform bounded-count declarations.
+
+#### Context
+
+A tier's `context:` is a list of typed edge walks its generator reads. Each entry yields handles, fragments, or synthesis views:
+
+```yaml
+comparch:
+  scope: per(comp)
+  context:
+    - self.parent.handle
+    - self.parent.fulfills → resp.handle
+    - self.parent.decomposed_by(subresp)
+    - self.parent.dependency → target.handle.fragments[pubapi]
+    - self.parent.domain_parent → target.synthesis
+```
+
+Context is the **only** readiness signal the scheduler needs. A `(tier, scope)` pair is ready when every traversal in its `context:` resolves to content in the *ready* state — meaning the producing tier's instance is approved (for authored content), or the underlying graph state has stabilized (for projected views). Cardinality-many traversals require *all* targets ready by default.
+
+Two scheduling mechanisms that would otherwise need dedicated machinery fall out of this rule:
+
+- **First-pass fan-in gate.** Fan-in generates when every child's impl is approved. This is not a special predicate — it's the default "cardinality-many traversal requires all targets ready" applied to `self.parent.decomposed_by(subcomp) → target.impl.code_diff`.
+- **Presentational comparch block.** A presentational comp waits for its domain parent's fan-in to publish `target.synthesis`. Again not a special predicate — it's the context entry `self.parent.domain_parent → target.synthesis` unable to resolve until synthesis exists.
+
+Context declarations make the system's scheduling inspectable. An editor renders each tier's context as a dashed overlay showing where a prompt's content comes from; missing or stale sources are the complete set of things blocking generation.
+
+#### Fragments: authored only
+
+Fragments are authored prose blocks. The draft writes them; the generator owns them; other tiers read them via `handle.fragments`. There is no second "projected fragment" category — every graph-derived view is expressible as a `context:` edge walk at read time, which makes materialization an engine-side caching decision rather than a bundle concern. Serialization templates that would have rendered tuples back to inline XML do not appear in the DSL.
+
+A tier can declare that its draft writes a fragment owned by a different node:
+
+```yaml
+comparch:
+  produces:
+    - fragment: { owner: self.parent, kind: techspec, authored: draft.techspec }
+    - fragment: { owner: self.parent, kind: pubapi,   authored: draft.pubapi }
+    - fragment: { owner: self.parent, kind: privapi,  authored: draft.privapi }
+```
+
+This is how comparch populates its parent comp's fragments without comparch and comp being the same tier.
+
+#### The predicate language
+
+Six operator families cover every conditional in the default system:
+
+- Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
+- Boolean: `AND`, `OR`, `NOT`
+- Edge counting: `has_edge(type)`, `count(edge_path) op N`
+- Existential: `exists(edge_path where predicate)`
+- Universal: `all(edge_path → field)`, `any(edge_path → field)`
+- Reachability: `reaches(source, target, via=[edge_types])`
+
+Field access is `self.field` for scalars, `self.edge(type).target.field` for traversals, `self.parent` for the scope-parent. Aggregates over traversals (`count`, `any`, `all`, `exists`) are permitted; arithmetic, string manipulation, and regex are not.
+
+The predicate language appears in exactly four places:
+
+- `scope_filter` — restrict which scope-parents a tier attaches to
+- `cardinality.when` — restrict which nodes a cardinality bound applies to
+- `constraint` on edges — value conditions (e.g., `source.kind == presentational AND target.kind == domain`)
+- `graph_constraint` on edges — named structural invariants (`acyclic`, `no_self_loop`, `tree`)
+
+#### The scheduler as a reactive runtime
+
+The entire scheduler is three rules:
+
+1. **Enumerate** every `(tier, scope_parent)` pair where `scope_parent` exists and satisfies `scope_filter`.
+2. **Evaluate readiness** — does every entry in the tier's `context:` resolve to a ready source?
+3. **Enqueue** ready instances, deduping on the `(tier, scope_parent)` key via the job queue's uniqueness constraint.
+
+State-driven (§A.3.2) because readiness is a query against the current projection, not a reaction to individual events. Phoenix.PubSub triggers the fast path; the sweeper loop (configurable 30–60s default) ensures consistency. The same query answers "is this ready now?" and "was this ready at time T?" — which makes replay, dry-run, and historical audit trivial.
+
+Staling is the reactive dual of readiness. When an approved node changes (re-approval, content edit, force-reset), the engine walks edges whose carried payload depends on the changed slice and marks dependents stale. A stale tier re-enters the scheduler's readiness loop on the next poll.
+
+#### Relationship to the level model (A.11.4)
+
+The four primitives (tiers, edges, fragments, context) plus the predicate language define **Level 2** — the level at which a bundle author can introduce a new tier without a platform feature request. **Level 0** overrides only prompts (a tier's prompt template). **Level 1** adds grammar overrides (the `draft.grammar` reference). **Level 2** is the full schema surface — new tiers, new edges, new cardinality constraints, new predicates. **Level 3** is reserved for redefining the scheduler's readiness rules themselves (e.g., swapping "all context ready" for a different reactive law); it remains deferred until real bundles reveal what L3 needs to express.
+
+#### Escape hatches
+
+Two bounded extension points preserve the "learnable in an afternoon" surface:
+
+- **Named predicates.** A bundle that needs a condition beyond the six operator families declares a name; the instance admin approves the name during bundle import, and a per-instance allowlist maps names to engine code. The name appears in the bundle as if it were a built-in predicate. The bundle itself contains no code.
+- **Named generators.** Tiers with non-LLM generation (`git_commit` for the code tier, `webhook` for external integrations, `synthesis` for aggregate-over-children) use a named generator plug-point. Bundled generators are part of the engine's public surface; custom generators go through the same named-allowlist approval as predicates.
+
+Neither escape hatch admits arbitrary code into the bundle's storage format. The bundle remains a schema; the allowlist is an instance-controlled registry of names the schema can reference.
+
+#### What this produces
+
+A complete default-system bundle — covering expansion through code, including presentational components, fan-in synthesis, and policy application — is roughly 220 lines of YAML across 16 tiers, 6 edge types in ~15 instances, the six-operator predicate language, and no imperative logic. The equivalent Python mint-and-schedule implementation is ~1700 lines. The compression ratio is not the load-bearing claim; the auditability is. A bundle reviewer checks typed edges and cardinality constraints on a diagram; a code reviewer reads 1700 lines of control flow.
+
+Because the bundle is a typed graph, it visualizes directly: tiers as boxes, edges as labeled arrows with crow's-foot cardinality, predicates as badges opening an expression builder, context as a dashed overlay on tier hover. Bundle diffs render as diagram diffs — "added tier X, changed cardinality on edge Y, added predicate Z to scope-filter W" — which makes bundle governance (§A.11.2, §A.22) workable without reading YAML.
 
 ### A.11.7 What is still TBD
 
