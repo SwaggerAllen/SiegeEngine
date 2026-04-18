@@ -178,14 +178,14 @@ def running_node_ids(db: Session, project_id: str) -> set[str]:
         if isinstance(p.get("owner_comp_id"), str)
     ]
     if fanin_comp_ids:
-        rows = db.execute(
+        fanin_node_ids = db.execute(
             select(Node.id).where(
                 Node.project_id == project_id,
                 Node.tier == "fanin",
                 Node.parent_id.in_(fanin_comp_ids),
             )
         ).scalars()
-        for node_id in rows:
+        for node_id in fanin_node_ids:
             running.add(node_id)
 
     # ── impl: payload.owner_id points at parent comp/sub;
@@ -196,14 +196,14 @@ def running_node_ids(db: Session, project_id: str) -> set[str]:
         if isinstance(p.get("owner_id"), str)
     ]
     if impl_owner_ids:
-        rows = db.execute(
+        impl_node_ids = db.execute(
             select(Node.id).where(
                 Node.project_id == project_id,
                 Node.tier == "impl",
                 Node.parent_id.in_(impl_owner_ids),
             )
         ).scalars()
-        for node_id in rows:
+        for node_id in impl_node_ids:
             running.add(node_id)
 
     # ── reference: payload.ref_id IS the ref node ─────────────────
