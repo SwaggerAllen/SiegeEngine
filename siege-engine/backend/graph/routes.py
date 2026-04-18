@@ -359,6 +359,7 @@ EXPANSION_CONFIG = BootstrapTierConfig(
         pending_reqs_draft(db, pid),
         pending_sysarch_draft(db, pid),
     ],
+    review_job_type="v2.review_expansion",
 )
 
 
@@ -504,6 +505,7 @@ REQUIREMENTS_CONFIG = BootstrapTierConfig(
     ),
     additional_nodes_to_clear=lambda db, pid: [get_sysarch_node(db, pid)],
     additional_drafts_to_discard=lambda db, pid: [pending_sysarch_draft(db, pid)],
+    review_job_type="v2.review_requirements",
 )
 
 
@@ -654,6 +656,7 @@ SYSARCH_CONFIG = BootstrapTierConfig(
         "v2.apply_top_level_policies",
         "v2.apply_component_local_policies",
     ),
+    review_job_type="v2.review_sysarch",
 )
 
 
@@ -740,6 +743,17 @@ def post_sysarch_reset(
     _user: User = Depends(get_current_user),
 ) -> ResetResponse:
     return ResetResponse(**bootstrap_reset(db, project_id, (), SYSARCH_CONFIG, _require_project))
+
+
+@router.post("/{project_id}/sysarch/review/retry", response_model=FeedbackResponse)
+def post_sysarch_review_retry(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    return FeedbackResponse(
+        **bootstrap_retry_review(db, project_id, (), SYSARCH_CONFIG, _require_project)
+    )
 
 
 # ── Prompt preview endpoints ─────────────────────────────────────────
@@ -974,6 +988,17 @@ def post_expansion_reset(
     return ResetResponse(**bootstrap_reset(db, project_id, (), EXPANSION_CONFIG, _require_project))
 
 
+@router.post("/{project_id}/expansion/review/retry", response_model=FeedbackResponse)
+def post_expansion_review_retry(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    return FeedbackResponse(
+        **bootstrap_retry_review(db, project_id, (), EXPANSION_CONFIG, _require_project)
+    )
+
+
 # ── Requirements reset ───────────────────────────────────────────────
 
 
@@ -985,6 +1010,17 @@ def post_reqs_reset(
 ) -> ResetResponse:
     return ResetResponse(
         **bootstrap_reset(db, project_id, (), REQUIREMENTS_CONFIG, _require_project)
+    )
+
+
+@router.post("/{project_id}/requirements/review/retry", response_model=FeedbackResponse)
+def post_reqs_review_retry(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    return FeedbackResponse(
+        **bootstrap_retry_review(db, project_id, (), REQUIREMENTS_CONFIG, _require_project)
     )
 
 
@@ -1333,6 +1369,7 @@ COMPARCH_CONFIG = BootstrapTierConfig(
     collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_comparch,
     collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
     downstream_job_types=per_comp_reset.comparch_downstream_job_types(),
+    review_job_type="v2.review_comparch",
 )
 
 
@@ -1459,6 +1496,28 @@ def post_comparch_reset(
     _require_top_level_comp(db, project_id, comp_id)
     return ResetResponse(
         **bootstrap_reset(
+            db,
+            project_id,
+            (comp_id,),
+            COMPARCH_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/comparch/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_comparch_review_retry(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return FeedbackResponse(
+        **bootstrap_retry_review(
             db,
             project_id,
             (comp_id,),
@@ -1606,6 +1665,7 @@ SUBCOMPARCH_CONFIG = BootstrapTierConfig(
     collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_subcomparch,
     collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
     downstream_job_types=per_comp_reset.subcomparch_downstream_job_types(),
+    review_job_type="v2.review_subcomparch",
 )
 
 
@@ -1745,6 +1805,29 @@ def post_subcomparch_reset(
     _require_subcomponent(db, project_id, parent_comp_id, sub_id)
     return ResetResponse(
         **bootstrap_reset(
+            db,
+            project_id,
+            (sub_id,),
+            SUBCOMPARCH_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/subcomparch/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_subcomparch_review_retry(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return FeedbackResponse(
+        **bootstrap_retry_review(
             db,
             project_id,
             (sub_id,),
@@ -2551,6 +2634,7 @@ IMPL_CONFIG = BootstrapTierConfig(
     collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_impl,
     collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
     downstream_job_types=per_comp_reset.impl_downstream_job_types(),
+    review_job_type="v2.review_impl",
 )
 
 
@@ -2720,6 +2804,28 @@ def post_impl_top_level_reset(
     )
 
 
+@router.post(
+    "/{project_id}/components/{comp_id}/impl/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_impl_top_level_review_retry(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_top_level_comp(db, project_id, comp_id)
+    return FeedbackResponse(
+        **bootstrap_retry_review(
+            db,
+            project_id,
+            (comp_id,),
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
 # ── Per-subcomponent impl routes ───────────────────────────────────
 
 
@@ -2856,6 +2962,29 @@ def post_impl_sub_reset(
     _require_subcomponent(db, project_id, parent_comp_id, sub_id)
     return ResetResponse(
         **bootstrap_reset(
+            db,
+            project_id,
+            (sub_id,),
+            IMPL_CONFIG,
+            _require_project,
+        )
+    )
+
+
+@router.post(
+    "/{project_id}/components/{parent_comp_id}/subcomponents/{sub_id}/impl/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_impl_sub_review_retry(
+    project_id: str,
+    parent_comp_id: str,
+    sub_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    _require_subcomponent(db, project_id, parent_comp_id, sub_id)
+    return FeedbackResponse(
+        **bootstrap_retry_review(
             db,
             project_id,
             (sub_id,),
@@ -3159,6 +3288,54 @@ def post_fanin_reset(
         drafts_discarded=0,
         jobs_cancelled=jobs_cancelled,
     )
+
+
+@router.post(
+    "/{project_id}/components/{comp_id}/fanin/review/retry",
+    response_model=FeedbackResponse,
+)
+def post_fanin_review_retry(
+    project_id: str,
+    comp_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackResponse:
+    """Manually re-enqueue the AI review for this fanin node.
+
+    Fanin has no draft, so the review targets the Node row. Cancels
+    any stuck review job for this fanin and enqueues a fresh one.
+    """
+    from backend.pipeline import queue as pipeline_queue
+
+    _require_project(db, project_id)
+    _require_top_level_comp(db, project_id, comp_id)
+    fanin_node = db.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "fanin",
+            Node.parent_id == comp_id,
+        )
+    ).scalar_one_or_none()
+    if fanin_node is None:
+        raise HTTPException(status_code=404, detail="Fan-in node missing for this comp.")
+    if not (fanin_node.content or "").strip():
+        raise HTTPException(status_code=409, detail="Fan-in has no content to review yet.")
+    pipeline_queue.cancel_jobs_by_type(
+        db,
+        "v2.review_fanin",
+        project_id=project_id,
+        node_id=fanin_node.id,
+    )
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type="v2.review_fanin",
+        payload={
+            "project_id": project_id,
+            "node_id": fanin_node.id,
+            "draft_id": None,
+        },
+    )
+    return FeedbackResponse(job_id=job_id)
 
 
 # ── Reference routes (Phase 6.6) ──────────────────────────────────
