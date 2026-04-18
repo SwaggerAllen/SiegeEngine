@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { formatSelectedAsFeedback, parseReview, type ParsedReview } from '../lib/reviewXml';
 import { CollapsibleMarkdown } from './editor/CollapsibleMarkdown';
+import { GenerationClock } from './GenerationClock';
 
 export type ReviewGenerationStatus = 'idle' | 'running' | 'failed';
 
@@ -8,6 +9,14 @@ export interface ReviewBlockProps {
   reviewText: string;
   reviewStatus: ReviewGenerationStatus;
   reviewLastError: string | null;
+  /**
+   * ISO-8601 UTC timestamp of when the currently-running review
+   * job was enqueued. Drives the review-duration clock — same
+   * component the draft generation spinner uses — so review and
+   * bootstrap loading states present the same elapsed / started
+   * / attempt triple. ``null`` when no review is running.
+   */
+  reviewStartedAt: string | null;
   reviewCurrentAttempt: number | null;
   reviewMaxAttempts: number | null;
   onRetryReview?: () => void;
@@ -59,6 +68,7 @@ export function ReviewBlock({
   reviewText,
   reviewStatus,
   reviewLastError,
+  reviewStartedAt,
   reviewCurrentAttempt,
   reviewMaxAttempts,
   onRetryReview,
@@ -68,17 +78,19 @@ export function ReviewBlock({
   emptyGenerateHint = 'No AI review yet — click to run one against this content.',
 }: ReviewBlockProps) {
   if (reviewStatus === 'running') {
-    const attemptLabel =
-      reviewCurrentAttempt && reviewMaxAttempts
-        ? ` · attempt ${reviewCurrentAttempt} / ${reviewMaxAttempts}`
-        : '';
     return (
       <div
         className="flex items-center gap-3 text-xs text-gray-400"
         data-testid="review-running"
       >
         <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-600 border-t-blue-400" />
-        <span>Reviewing…{attemptLabel}</span>
+        <span>Reviewing…</span>
+        <GenerationClock
+          startedAtIso={reviewStartedAt}
+          currentAttempt={reviewCurrentAttempt}
+          maxAttempts={reviewMaxAttempts}
+          testId="review-clock"
+        />
       </div>
     );
   }

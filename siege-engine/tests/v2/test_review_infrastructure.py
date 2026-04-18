@@ -259,6 +259,7 @@ class TestBootstrapGetStateReviewFields:
         assert state["review_text"] == ""
         assert state["review_status"] == "idle"
         assert state["review_last_error"] is None
+        assert state["review_started_at"] is None
         assert state["review_current_attempt"] is None
         assert state["review_max_attempts"] is None
 

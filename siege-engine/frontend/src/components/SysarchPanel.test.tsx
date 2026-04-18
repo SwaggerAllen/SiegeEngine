@@ -53,6 +53,7 @@ function makeResponse(overrides: Partial<SysarchResponse> = {}): SysarchResponse
     review_text: '',
     review_status: 'idle',
     review_last_error: null,
+    review_started_at: null,
     review_current_attempt: null,
     review_max_attempts: null,
     ...overrides,

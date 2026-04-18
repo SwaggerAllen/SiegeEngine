@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
 import { DocumentReviewTabs } from './DocumentReviewTabs';
+import { GenerationClock } from './GenerationClock';
 import { XmlDocument } from './xml';
 import type { XmlRendererMap } from './xml';
 
@@ -102,6 +103,13 @@ export interface BootstrapPanelData {
   review_text: string;
   review_status: BootstrapGenerationStatus;
   review_last_error: string | null;
+  /**
+   * ISO-8601 UTC timestamp (naive) of when the currently-running
+   * review job was enqueued. Drives the review-duration clock the
+   * ReviewBlock renders alongside the "Reviewing…" spinner —
+   * mirrors ``generation_started_at`` but for the review pass.
+   */
+  review_started_at: string | null;
   review_current_attempt: number | null;
   review_max_attempts: number | null;
 }
@@ -182,97 +190,6 @@ function TelemetryLine({ telemetry }: { telemetry: BootstrapPanelTelemetry | nul
       Last gen: {telemetry.prompt_tokens.toLocaleString()} →{' '}
       {telemetry.completion_tokens.toLocaleString()} tokens · {telemetry.model}
     </div>
-  );
-}
-
-/**
- * Format a duration in seconds as a short human-readable string:
- * ``45s``, ``2m 05s``, ``1h 03m``. Used by the regeneration
- * duration clock so the ticking counter stays compact next to
- * the Stop button.
- */
-function formatDuration(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rs = s % 60;
-  if (m < 60) return `${m}m ${rs.toString().padStart(2, '0')}s`;
-  const h = Math.floor(m / 60);
-  const rm = m % 60;
-  return `${h}h ${rm.toString().padStart(2, '0')}m`;
-}
-
-/**
- * Duration clock + PST start-time label rendered while a
- * generation is running. Ticks once a second via a
- * ``setInterval`` local to the component so the rest of the
- * panel doesn't re-render on every tick.
- *
- * ``startedAtIso`` is the backend-reported job created_at (naive
- * UTC ISO-8601). We parse it as UTC by appending ``Z`` if the
- * server didn't. If it's absent (e.g. in the regeneration
- * optimistic path before the first poll lands), we fall back to
- * an empty label so the UI stays stable.
- */
-function GenerationClock({
-  startedAtIso,
-  currentAttempt,
-  maxAttempts,
-  variant = 'inline',
-}: {
-  startedAtIso: string | null;
-  currentAttempt: number | null;
-  maxAttempts: number | null;
-  variant?: 'inline' | 'block';
-}) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!startedAtIso) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [startedAtIso]);
-
-  if (!startedAtIso) return null;
-
-  // Backend hands us a naive UTC ISO string (``datetime.utcnow``);
-  // append ``Z`` if it's missing a timezone so Date parses it as
-  // UTC rather than local.
-  const iso = /[Zz]|[+-]\d\d:?\d\d$/.test(startedAtIso)
-    ? startedAtIso
-    : `${startedAtIso}Z`;
-  const startMs = Date.parse(iso);
-  if (Number.isNaN(startMs)) return null;
-
-  const elapsed = (now - startMs) / 1000;
-  const duration = formatDuration(elapsed);
-  // PST per the user's request. ``America/Los_Angeles`` follows
-  // DST; label it "PT" to cover both PST/PDT without lying.
-  const startedLabel = new Date(startMs).toLocaleTimeString('en-US', {
-    timeZone: 'America/Los_Angeles',
-    hour: 'numeric',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true,
-  });
-  const attemptLabel =
-    currentAttempt && maxAttempts
-      ? `attempt ${currentAttempt} / ${maxAttempts}`
-      : null;
-
-  if (variant === 'block') {
-    return (
-      <div className="text-xs text-gray-400 text-center" data-testid="generation-clock">
-        <div>Elapsed: {duration}</div>
-        <div className="text-gray-500">started {startedLabel} PT</div>
-        {attemptLabel && <div className="text-gray-500">{attemptLabel}</div>}
-      </div>
-    );
-  }
-  return (
-    <span className="text-xs text-gray-400" data-testid="generation-clock">
-      {duration} · started {startedLabel} PT
-      {attemptLabel && <> · {attemptLabel}</>}
-    </span>
   );
 }
 
@@ -394,6 +311,7 @@ export function BootstrapDraftPanel({
     review_text,
     review_status,
     review_last_error,
+    review_started_at,
     review_current_attempt,
     review_max_attempts,
   } = data;
@@ -409,6 +327,7 @@ export function BootstrapDraftPanel({
     reviewText: review_text,
     reviewStatus: review_status,
     reviewLastError: review_last_error,
+    reviewStartedAt: review_started_at,
     reviewCurrentAttempt: review_current_attempt,
     reviewMaxAttempts: review_max_attempts,
     onRetryReview: callbacks.onRetryReview,

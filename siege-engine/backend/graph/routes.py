@@ -194,6 +194,7 @@ class ExpansionResponse(BaseModel):
     review_text: str = ""
     review_status: queries.GenerationStatus = "idle"
     review_last_error: str | None = None
+    review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
 
@@ -452,6 +453,7 @@ class ReqsResponse(BaseModel):
     review_text: str = ""
     review_status: queries.GenerationStatus = "idle"
     review_last_error: str | None = None
+    review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
 
@@ -607,6 +609,7 @@ class SysarchResponse(BaseModel):
     review_text: str = ""
     review_status: queries.GenerationStatus = "idle"
     review_last_error: str | None = None
+    review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
 
@@ -1056,6 +1059,7 @@ class SubreqsResponse(BaseModel):
     review_text: str = ""
     review_status: queries.GenerationStatus = "idle"
     review_last_error: str | None = None
+    review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
 
@@ -1312,6 +1316,7 @@ class ComparchResponse(BaseModel):
     review_text: str = ""
     review_status: queries.GenerationStatus = "idle"
     review_last_error: str | None = None
+    review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
 
@@ -1560,6 +1565,7 @@ class SubcomparchResponse(BaseModel):
     review_text: str = ""
     review_status: queries.GenerationStatus = "idle"
     review_last_error: str | None = None
+    review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
 
@@ -2582,6 +2588,7 @@ class ImplResponse(BaseModel):
     review_text: str = ""
     review_status: queries.GenerationStatus = "idle"
     review_last_error: str | None = None
+    review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
 
@@ -2660,6 +2667,7 @@ def _impl_response_from_state(state: dict) -> ImplResponse:
         review_text=state.get("review_text", ""),
         review_status=state.get("review_status", "idle"),
         review_last_error=state.get("review_last_error"),
+        review_started_at=state.get("review_started_at"),
         review_current_attempt=state.get("review_current_attempt"),
         review_max_attempts=state.get("review_max_attempts"),
     )
@@ -3036,6 +3044,7 @@ class FanInResponse(BaseModel):
     review_text: str = ""
     review_status: queries.GenerationStatus = "idle"
     review_last_error: str | None = None
+    review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
 
@@ -3083,7 +3092,7 @@ def _fanin_response(
     (
         _review_status,
         _review_last_error,
-        _,
+        _review_started_at,
         _review_current_attempt,
         _review_max_attempts,
         _,
@@ -3130,6 +3139,7 @@ def _fanin_response(
         review_text=fanin_node.review_text or "",
         review_status=_review_status,
         review_last_error=_review_last_error,
+        review_started_at=_review_started_at,
         review_current_attempt=_review_current_attempt,
         review_max_attempts=_review_max_attempts,
     )
@@ -3387,6 +3397,7 @@ class ReferenceDetailResponse(BaseModel):
     review_text: str = ""
     review_status: queries.GenerationStatus = "idle"
     review_last_error: str | None = None
+    review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
     outgoing_edges: list[ReferenceEdgeResponse]

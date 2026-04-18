@@ -216,7 +216,7 @@ def bootstrap_get_state(
         (
             review_status,
             review_last_error,
-            _review_started_at,
+            review_started_at,
             review_current_attempt,
             review_max_attempts,
             _review_raw_output,
@@ -229,6 +229,7 @@ def bootstrap_get_state(
     else:
         review_status = "idle"
         review_last_error = None
+        review_started_at = None
         review_current_attempt = None
         review_max_attempts = None
 
@@ -245,6 +246,7 @@ def bootstrap_get_state(
         "review_text": review_text,
         "review_status": review_status,
         "review_last_error": review_last_error,
+        "review_started_at": review_started_at,
         "review_current_attempt": review_current_attempt,
         "review_max_attempts": review_max_attempts,
     }
