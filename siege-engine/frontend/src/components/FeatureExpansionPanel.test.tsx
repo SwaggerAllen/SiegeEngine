@@ -314,7 +314,7 @@ describe('FeatureExpansionPanel', () => {
       );
     });
 
-    it('hides the block entirely when review_status=idle and review_text is empty', async () => {
+    it('renders the Generate review button on reviewable content with no review yet', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
           pending_draft: {
@@ -324,6 +324,7 @@ describe('FeatureExpansionPanel', () => {
           },
         })
       );
+      mockedRetryReview.mockResolvedValue({ job_id: 'job_review_new' });
       renderPanel();
 
       await waitFor(() =>
@@ -332,6 +333,36 @@ describe('FeatureExpansionPanel', () => {
       expect(screen.queryByTestId('review-text')).toBeNull();
       expect(screen.queryByTestId('review-running')).toBeNull();
       expect(screen.queryByTestId('review-failed')).toBeNull();
+
+      const generate = screen.getByTestId('review-generate-button');
+      fireEvent.click(generate);
+      await waitFor(() =>
+        expect(mockedRetryReview).toHaveBeenCalledWith('proj_1')
+      );
+    });
+
+    it('offers Generate review on grandfathered approved content', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          node: {
+            id: 'expn_1',
+            name: 'Feature Expansion',
+            content: '# Approved plan from before Phase 8',
+            updated_at: '2025-12-01T00:00:00',
+          },
+        })
+      );
+      mockedRetryReview.mockResolvedValue({ job_id: 'job_review_grand' });
+      renderPanel();
+
+      await waitFor(() =>
+        expect(screen.getByText(/Approved plan from before Phase 8/)).toBeInTheDocument()
+      );
+      const generate = screen.getByTestId('review-generate-button');
+      fireEvent.click(generate);
+      await waitFor(() =>
+        expect(mockedRetryReview).toHaveBeenCalledWith('proj_1')
+      );
     });
 
     it('renders the review markdown alongside approved content', async () => {

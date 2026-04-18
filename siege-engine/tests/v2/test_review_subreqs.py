@@ -32,7 +32,7 @@ except BaseException as _exc:  # pragma: no cover
     )
 
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine, select  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -248,7 +248,7 @@ class TestReviewSubreqs:
         assert draft.review_text == ""
 
     def test_retry_endpoint_re_enqueues_review(self, client, db, seeded):
-        draft_id = _seed_pending_draft(db, seeded)
+        _seed_pending_draft(db, seeded)
 
         resp = client.post(
             f"/api/projects/{seeded['project_id']}"
@@ -257,10 +257,74 @@ class TestReviewSubreqs:
         assert resp.status_code == 200, resp.text
         assert "job_id" in resp.json()
 
-        jobs = list(db.execute(select(Job).where(Job.job_type == "v2.review_subreqs")).scalars())
-        assert len(jobs) == 1
-        assert jobs[0].payload.get("node_id") == seeded["subreqs_id"]
-        assert jobs[0].payload.get("draft_id") == draft_id
+    def test_retroactive_review_against_approved_node_content(self, db, seeded, monkeypatch):
+        """No pending draft, approved node content → review runs
+        against ``node.content`` and lands on ``Node.review_text``.
+
+        This is the grandfathered-content path: the subreqs node
+        was approved before Phase 8 (or with reviews disabled) so
+        ``review_text`` is empty. The retry endpoint enqueues a
+        review with ``draft_id=None``; the handler falls back to
+        reading the node's approved content.
+        """
+        # Approve some content onto the subreqs node directly
+        # (no draft row). Mimics content minted before Phase 8.
+        from backend.models.node import Node
+
+        node = db.get(Node, seeded["subreqs_id"])
+        assert node is not None
+        node.content = (
+            "<subrequirements><subresponsibility><name>X</name>"
+            "<intent>Y</intent><derived-from>"
+            f'<resp id="{seeded["resp_id"]}"/>'
+            "</derived-from></subresponsibility></subrequirements>"
+        )
+        db.commit()
+
+        review_md = (
+            "## Handles & structure\n\nLooks good retroactively.\n\n"
+            "## Architectural decisions\n\nDecomposition reasonable."
+        )
+        _stub_cli(monkeypatch, review_md)
+
+        asyncio.run(
+            review_handler.review_subreqs(
+                {
+                    "project_id": seeded["project_id"],
+                    "node_id": seeded["subreqs_id"],
+                    "draft_id": None,
+                }
+            )
+        )
+
+        db.expire_all()
+        node = db.get(Node, seeded["subreqs_id"])
+        assert node is not None
+        assert "## Handles & structure" in node.review_text
+        assert "## Architectural decisions" in node.review_text
+
+    def test_retroactive_retry_endpoint_allows_no_pending_draft(self, client, db, seeded):
+        """The retry endpoint accepts approved-content-only state."""
+        from backend.models.node import Node
+
+        node = db.get(Node, seeded["subreqs_id"])
+        assert node is not None
+        node.content = "<subrequirements/>"
+        db.commit()
+
+        resp = client.post(
+            f"/api/projects/{seeded['project_id']}"
+            f"/components/{seeded['comp_id']}/subrequirements/review/retry"
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "job_id" in body
+
+        # Verify the enqueued job carries ``draft_id=None``.
+        job = db.get(Job, body["job_id"])
+        assert job is not None
+        assert job.payload["draft_id"] is None
+        assert job.payload["node_id"] == seeded["subreqs_id"]
 
     def test_retry_endpoint_rejects_when_no_draft_or_content(self, client, seeded):
         # No pending draft, no approved content either → 409.

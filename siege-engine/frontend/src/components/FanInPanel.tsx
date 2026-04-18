@@ -258,7 +258,28 @@ function FanInReviewBlock({
       </div>
     );
   }
-  return null;
+  // Idle + empty review_text: offer the retroactive review
+  // affordance. Only mounts from the content-present branch, so
+  // there's always something to review.
+  return (
+    <div
+      className="border-t border-gray-800 pt-3 flex items-center gap-3"
+      data-testid="review-generate"
+    >
+      <button
+        type="button"
+        onClick={onRetryReview}
+        disabled={isBusy}
+        className="px-3 py-1 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
+        data-testid="review-generate-button"
+      >
+        Generate review
+      </button>
+      <span className="text-xs text-gray-500">
+        No AI review yet — click to run one against this fan-in.
+      </span>
+    </div>
+  );
 }
 
 function FanInStatusRow({

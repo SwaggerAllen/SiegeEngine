@@ -277,8 +277,9 @@ function GenerationClock({
 }
 
 /**
- * Phase 8 — AI self-review surface. Four render states, driven
- * entirely by the review_* fields on BootstrapPanelData:
+ * Phase 8 — AI self-review surface. Five render states, driven
+ * entirely by the review_* fields on BootstrapPanelData plus an
+ * ``allowGenerate`` hint:
  *
  * - ``running``: spinner row + "Reviewing… attempt N/M" attempt
  *   counter. Reuses GenerationClock styling via a local
@@ -290,9 +291,13 @@ function GenerationClock({
  *   Default collapsed; the prompt's top-level headings
  *   (``## Handles & structure`` / ``## Architectural decisions``)
  *   give CollapsibleMarkdown its per-section controls.
- * - ``idle`` + empty ``review_text``: rendered null. Pre-Phase-8
- *   drafts, reviews-disabled mode, and approved content that
- *   never received a review all land here.
+ * - ``idle`` + empty ``review_text`` + ``allowGenerate``:
+ *   Retroactive-review affordance — "Generate review" button
+ *   wired to the same retry endpoint. Used by content minted
+ *   before Phase 8, and by drafts committed with
+ *   ``SIEGE_DISABLE_AI_REVIEW=1``.
+ * - ``idle`` + empty ``review_text`` + no ``allowGenerate``:
+ *   hidden (loading, pre-content state).
  */
 function ReviewBlock({
   reviewText,
@@ -301,6 +306,7 @@ function ReviewBlock({
   reviewCurrentAttempt,
   reviewMaxAttempts,
   onRetryReview,
+  allowGenerate,
   isBusy,
 }: {
   reviewText: string;
@@ -309,6 +315,7 @@ function ReviewBlock({
   reviewCurrentAttempt: number | null;
   reviewMaxAttempts: number | null;
   onRetryReview?: () => void;
+  allowGenerate: boolean;
   isBusy: boolean;
 }) {
   if (reviewStatus === 'running') {
@@ -361,6 +368,27 @@ function ReviewBlock({
         <CollapsibleMarkdown className="text-sm text-gray-300 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-200 [&_h2]:mt-2 [&_h2]:mb-1">
           {`# AI Review\n\n${reviewText}`}
         </CollapsibleMarkdown>
+      </div>
+    );
+  }
+  if (allowGenerate && onRetryReview) {
+    return (
+      <div
+        className="border-t border-gray-800 pt-3 flex items-center gap-3"
+        data-testid="review-generate"
+      >
+        <button
+          type="button"
+          onClick={onRetryReview}
+          disabled={isBusy}
+          className="px-3 py-1 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
+          data-testid="review-generate-button"
+        >
+          Generate review
+        </button>
+        <span className="text-xs text-gray-500">
+          No AI review yet — click to run one against this content.
+        </span>
       </div>
     );
   }
@@ -489,6 +517,12 @@ export function BootstrapDraftPanel({
     review_max_attempts,
   } = data;
 
+  // The review block is only mounted inside the pending-draft
+  // branch and the approved-content branch — both have
+  // reviewable content, so ``allowGenerate`` is always true at
+  // those mount points. The four empty-state branches (loading,
+  // generating-with-no-draft, failed-no-content, pre-bootstrap)
+  // don't render the block at all.
   const reviewBlock = (
     <ReviewBlock
       reviewText={review_text}
@@ -497,6 +531,7 @@ export function BootstrapDraftPanel({
       reviewCurrentAttempt={review_current_attempt}
       reviewMaxAttempts={review_max_attempts}
       onRetryReview={callbacks.onRetryReview}
+      allowGenerate={true}
       isBusy={callbacks.isBusy}
     />
   );

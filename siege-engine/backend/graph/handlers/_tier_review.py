@@ -44,9 +44,13 @@ async def run_tier_review(
     the tier's context dataclass. ``render_user_prompt(ctx,
     generated_output)`` builds the prompt.
     ``expected_node_tier`` guards against typo'd payloads (review
-    job fires against the wrong tier). ``draft_required`` is
-    ``True`` for every tier with a draft lifecycle and ``False``
-    for fanin (Node-backed content).
+    job fires against the wrong tier). ``draft_required`` marks
+    tiers with a draft lifecycle (every bootstrap tier except
+    fanin). When set, the review prefers the pending draft's
+    content; when the payload carries no ``draft_id``, the
+    review falls back to the approved ``node.content`` — this
+    is the retroactive-review path for content minted before
+    Phase 8.
     """
     project_id = payload.get("project_id")
     node_id = payload.get("node_id")
@@ -55,9 +59,8 @@ async def run_tier_review(
         raise TierReviewError(f"{log_handler_name} payload missing project_id")
     if not isinstance(node_id, str) or not node_id:
         raise TierReviewError(f"{log_handler_name} payload missing node_id")
-    if draft_required:
-        if not isinstance(draft_id, str) or not draft_id:
-            raise TierReviewError(f"{log_handler_name} payload missing draft_id")
+    # ``draft_id`` is optional even for draft-bearing tiers — absence
+    # flags the retroactive path (review approved node content).
 
     db = SessionLocal()
     try:
@@ -72,7 +75,8 @@ async def run_tier_review(
                 f"expected {expected_node_tier!r}"
             )
 
-        if draft_required:
+        resolved_draft_id: str | None = None
+        if draft_required and isinstance(draft_id, str) and draft_id:
             draft = db.get(Draft, draft_id)
             if draft is None or draft.project_id != project_id:
                 raise TierReviewError(
@@ -88,8 +92,12 @@ async def run_tier_review(
                 )
                 return
             generated_output = draft.content
+            resolved_draft_id = draft.id
         else:
-            # Fanin — content lives on the Node row.
+            # Either fanin (no draft lifecycle) or a draft-bearing
+            # tier reviewing approved content retroactively. Both
+            # read from the Node row; the resulting review lands
+            # on ``Node.review_text`` via the reducer.
             generated_output = node.content or ""
             if not generated_output.strip():
                 logger.info(
@@ -114,7 +122,7 @@ async def run_tier_review(
     await run_review(
         project_id=project_id,
         node_id=node_id,
-        draft_id=draft_id if draft_required else None,
+        draft_id=resolved_draft_id,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         cli_timeout_seconds=cli_timeout_seconds,

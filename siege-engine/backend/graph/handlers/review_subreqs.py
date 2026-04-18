@@ -52,10 +52,10 @@ async def review_subreqs(payload: dict) -> None:
         raise ReviewSubreqsError("review_subreqs payload missing project_id")
     if not isinstance(node_id, str) or not node_id:
         raise ReviewSubreqsError("review_subreqs payload missing node_id")
-    # ``draft_id`` is nullable in the event but every subreqs
-    # review targets a draft; enforce a string here.
-    if not isinstance(draft_id, str) or not draft_id:
-        raise ReviewSubreqsError("review_subreqs payload missing draft_id")
+    # ``draft_id`` is optional: present for the normal post-commit
+    # review path, absent for retroactive review against approved
+    # node content (pre-Phase-8 content, or a draft committed with
+    # ``SIEGE_DISABLE_AI_REVIEW=1``).
 
     db = SessionLocal()
     try:
@@ -74,18 +74,32 @@ async def review_subreqs(payload: dict) -> None:
                 f"Subreqs node {node_id!r} has no parent comp — can't gather context"
             )
 
-        draft = db.get(Draft, draft_id)
-        if draft is None or draft.project_id != project_id:
-            raise ReviewSubreqsError(f"Draft {draft_id!r} not found in project {project_id!r}")
-        if draft.status != "pending":
-            logger.info(
-                "review_subreqs project=%s draft=%s skipped (status=%s)",
-                project_id,
-                draft_id,
-                draft.status,
-            )
-            return
-        generated_output = draft.content
+        resolved_draft_id: str | None = None
+        if isinstance(draft_id, str) and draft_id:
+            draft = db.get(Draft, draft_id)
+            if draft is None or draft.project_id != project_id:
+                raise ReviewSubreqsError(f"Draft {draft_id!r} not found in project {project_id!r}")
+            if draft.status != "pending":
+                logger.info(
+                    "review_subreqs project=%s draft=%s skipped (status=%s)",
+                    project_id,
+                    draft_id,
+                    draft.status,
+                )
+                return
+            generated_output = draft.content
+            resolved_draft_id = draft.id
+        else:
+            # Retroactive path — review the approved node content
+            # directly. Event lands on ``Node.review_text``.
+            generated_output = subreqs_node.content or ""
+            if not generated_output.strip():
+                logger.info(
+                    "review_subreqs project=%s node=%s skipped (empty content)",
+                    project_id,
+                    node_id,
+                )
+                return
 
         ctx = gather_subreqs_context(db, project_id, comp_id)
         user_prompt = render_user_prompt(ctx, generated_output)
@@ -102,7 +116,7 @@ async def review_subreqs(payload: dict) -> None:
     await run_review(
         project_id=project_id,
         node_id=node_id,
-        draft_id=draft_id,
+        draft_id=resolved_draft_id,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         cli_timeout_seconds=cli_timeout_seconds,
