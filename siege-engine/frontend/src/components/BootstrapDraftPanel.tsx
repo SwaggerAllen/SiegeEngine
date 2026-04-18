@@ -489,7 +489,10 @@ export function BootstrapDraftPanel({
             document={
               <XmlDocument content={pending_draft.content} renderers={contentRenderers} />
             }
-            review={reviewProps}
+            review={{
+              ...reviewProps,
+              onApplyFeedback: (feedback) => callbacks.onFeedback(feedback),
+            }}
           />
           <TelemetryLine telemetry={latest_telemetry} />
         </div>

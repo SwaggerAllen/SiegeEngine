@@ -30,6 +30,7 @@ from backend.graph.handlers.feature_expansion import (
     CLI_MAX_TRANSIENT_RETRIES,
     _call_cli_with_transient_retry,
 )
+from backend.graph.parsers.review_xml import ReviewXMLError, parse_review
 from backend.graph.reducer import append_event
 from backend.models.telemetry import GenerationTelemetry
 
@@ -74,6 +75,16 @@ async def run_review(
     review_text = (result.text or "").strip()
     if not review_text:
         raise ReviewError("Review CLI returned empty output")
+
+    # Validate the structured format before committing. Malformed
+    # XML, missing sections, and findings without ids all raise
+    # ``ReviewXMLError`` with a user-readable message that surfaces
+    # on the tier detail as ``review_last_error`` — the user can
+    # hit "Retry review" to regenerate.
+    try:
+        parse_review(review_text)
+    except ReviewXMLError as e:
+        raise ReviewError(f"Review output failed validation: {e}") from e
 
     db = SessionLocal()
     try:

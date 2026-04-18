@@ -201,13 +201,17 @@ def _stub_cli(monkeypatch, review_markdown: str) -> None:
 class TestReviewSubreqs:
     def test_review_handler_commits_draft_review_updated(self, db, seeded, monkeypatch):
         draft_id = _seed_pending_draft(db, seeded)
-        review_md = (
-            "## Handles & structure\n\n"
-            "Names are specific; coverage is complete.\n\n"
-            "## Architectural decisions\n\n"
-            "Decomposition axis looks correct."
+        review_xml = (
+            "<review>"
+            "<handles-structure>"
+            '<finding id="h1">Names are specific; coverage is complete.</finding>'
+            "</handles-structure>"
+            "<architectural-decisions>"
+            '<finding id="a1">Decomposition axis looks correct.</finding>'
+            "</architectural-decisions>"
+            "</review>"
         )
-        _stub_cli(monkeypatch, review_md)
+        _stub_cli(monkeypatch, review_xml)
 
         asyncio.run(
             review_handler.review_subreqs(
@@ -222,8 +226,9 @@ class TestReviewSubreqs:
         db.expire_all()
         draft = db.get(Draft, draft_id)
         assert draft is not None
-        assert "## Handles & structure" in draft.review_text
-        assert "## Architectural decisions" in draft.review_text
+        assert "<handles-structure>" in draft.review_text
+        assert "<architectural-decisions>" in draft.review_text
+        assert 'id="h1"' in draft.review_text
 
     def test_review_handler_rejects_empty_cli_output(self, db, seeded, monkeypatch):
         draft_id = _seed_pending_draft(db, seeded)
@@ -281,11 +286,17 @@ class TestReviewSubreqs:
         )
         db.commit()
 
-        review_md = (
-            "## Handles & structure\n\nLooks good retroactively.\n\n"
-            "## Architectural decisions\n\nDecomposition reasonable."
+        review_xml = (
+            "<review>"
+            "<handles-structure>"
+            '<finding id="h1">Looks good retroactively.</finding>'
+            "</handles-structure>"
+            "<architectural-decisions>"
+            '<finding id="a1">Decomposition reasonable.</finding>'
+            "</architectural-decisions>"
+            "</review>"
         )
-        _stub_cli(monkeypatch, review_md)
+        _stub_cli(monkeypatch, review_xml)
 
         asyncio.run(
             review_handler.review_subreqs(
@@ -300,8 +311,8 @@ class TestReviewSubreqs:
         db.expire_all()
         node = db.get(Node, seeded["subreqs_id"])
         assert node is not None
-        assert "## Handles & structure" in node.review_text
-        assert "## Architectural decisions" in node.review_text
+        assert "<handles-structure>" in node.review_text
+        assert "<architectural-decisions>" in node.review_text
 
     def test_retroactive_retry_endpoint_allows_no_pending_draft(self, client, db, seeded):
         """The retry endpoint accepts approved-content-only state."""

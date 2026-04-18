@@ -257,7 +257,19 @@ describe('FeatureExpansionPanel', () => {
       fireEvent.click(reviewTab);
     }
 
-    it('renders the review markdown when present on a pending draft', async () => {
+    const STRUCTURED_REVIEW = (
+      '<review>' +
+      '<handles-structure>' +
+      '<finding id="h1">Feature names overlap between "Dashboard" and "Reports".</finding>' +
+      '<finding id="h2">Intent for X is a restated name.</finding>' +
+      '</handles-structure>' +
+      '<architectural-decisions>' +
+      '<finding id="a1">Decomposition axis split across two concerns.</finding>' +
+      '</architectural-decisions>' +
+      '</review>'
+    );
+
+    it('renders structured findings with checkboxes for a parseable review', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
           pending_draft: {
@@ -265,15 +277,94 @@ describe('FeatureExpansionPanel', () => {
             content: 'content',
             created_at: '2026-04-12T00:00:00',
           },
-          review_text:
-            '## Handles & structure\nHandles read cleanly.\n\n## Architectural decisions\nNo tech decisions at this tier.',
+          review_text: STRUCTURED_REVIEW,
         })
       );
       renderPanel();
 
       await openReviewTab();
-      const reviewBlock = await screen.findByTestId('review-text');
-      expect(reviewBlock).toHaveTextContent(/AI Review/i);
+
+      // All three findings render as checkboxes, checked by default.
+      const h1 = await screen.findByTestId('review-finding-h1');
+      const h2 = screen.getByTestId('review-finding-h2');
+      const a1 = screen.getByTestId('review-finding-a1');
+      expect(h1).toBeChecked();
+      expect(h2).toBeChecked();
+      expect(a1).toBeChecked();
+
+      // Finding text rendered inline.
+      expect(screen.getByText(/Feature names overlap/)).toBeInTheDocument();
+    });
+
+    it('falls back to markdown render for unparseable review text', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+          // Pre-Phase-8 markdown review — no <review> wrapper.
+          review_text: '## Handles & structure\nsome finding.',
+        })
+      );
+      renderPanel();
+
+      await openReviewTab();
+      const legacy = await screen.findByTestId('review-text-legacy');
+      expect(legacy).toHaveTextContent(/AI Review/);
+    });
+
+    it('Apply selected submits only checked findings as feedback', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+          review_text: STRUCTURED_REVIEW,
+        })
+      );
+      mockedPostFeedback.mockResolvedValue({ job_id: 'job_apply' });
+      renderPanel();
+
+      await openReviewTab();
+
+      // Uncheck h2 — we expect only h1 + a1 to feed forward.
+      const h2 = await screen.findByTestId('review-finding-h2');
+      fireEvent.click(h2);
+      expect(h2).not.toBeChecked();
+
+      fireEvent.click(screen.getByTestId('review-apply-button'));
+      await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalled());
+      const [, feedback] = mockedPostFeedback.mock.calls[0];
+      expect(feedback).toContain('Feature names overlap');
+      expect(feedback).toContain('Decomposition axis split');
+      expect(feedback).not.toContain('restated name');
+    });
+
+    it('Apply selected is disabled when nothing is checked', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+          review_text: STRUCTURED_REVIEW,
+        })
+      );
+      renderPanel();
+
+      await openReviewTab();
+
+      // Uncheck all three.
+      fireEvent.click(screen.getByTestId('review-finding-h1'));
+      fireEvent.click(screen.getByTestId('review-finding-h2'));
+      fireEvent.click(screen.getByTestId('review-finding-a1'));
+
+      expect(screen.getByTestId('review-apply-button')).toBeDisabled();
     });
 
     it('flags running review via a spinner on the tab and inside the panel', async () => {
@@ -382,7 +473,7 @@ describe('FeatureExpansionPanel', () => {
       );
     });
 
-    it('renders the review markdown alongside approved content', async () => {
+    it('renders structured findings alongside approved content, but no Apply button', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
           node: {
@@ -391,8 +482,7 @@ describe('FeatureExpansionPanel', () => {
             content: '# Approved plan',
             updated_at: '2026-04-12T00:00:00',
           },
-          review_text:
-            '## Handles & structure\nReview landed after approval — still visible.',
+          review_text: STRUCTURED_REVIEW,
         })
       );
       renderPanel();
@@ -402,8 +492,10 @@ describe('FeatureExpansionPanel', () => {
       );
 
       await openReviewTab();
-      const reviewBlock = await screen.findByTestId('review-text');
-      expect(reviewBlock).toHaveTextContent(/AI Review/);
+      // Findings render but the Apply button is hidden — approved
+      // content has no feedback regeneration path.
+      expect(await screen.findByTestId('review-finding-h1')).toBeInTheDocument();
+      expect(screen.queryByTestId('review-apply-button')).toBeNull();
     });
   });
 });

@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { formatSelectedAsFeedback, parseReview, type ParsedReview } from '../lib/reviewXml';
 import { CollapsibleMarkdown } from './editor/CollapsibleMarkdown';
 
 export type ReviewGenerationStatus = 'idle' | 'running' | 'failed';
@@ -10,6 +11,17 @@ export interface ReviewBlockProps {
   reviewCurrentAttempt: number | null;
   reviewMaxAttempts: number | null;
   onRetryReview?: () => void;
+  /**
+   * Submit a subset of findings back to the tier as feedback.
+   * When wired, the structured checkbox UI renders an
+   * "Apply selected as feedback" button that calls this with
+   * the concatenated text of the checked findings. Only wired
+   * on panel branches that regenerate from prose feedback —
+   * pending-draft branches in BootstrapDraftPanel. Omitted on
+   * approved-content, fan-in, and branches that don't take
+   * feedback.
+   */
+  onApplyFeedback?: (feedbackText: string) => void;
   /**
    * When true the idle-with-empty-review-text case renders a
    * "Generate review" CTA instead of rendering nothing.
@@ -33,8 +45,11 @@ export interface ReviewBlockProps {
  *
  * - ``running`` → spinner + "Reviewing… attempt N/M"
  * - ``failed`` → red error banner + Retry review button
- * - ``idle`` + non-empty ``reviewText`` → collapsible
- *   "AI Review" markdown (default collapsed)
+ * - ``idle`` + non-empty ``reviewText`` → structured findings
+ *   with checkboxes (and "Apply selected as feedback" when
+ *   ``onApplyFeedback`` is wired). Falls back to a collapsible
+ *   markdown render for pre-Phase-8 reviews that can't be
+ *   parsed into the structured format.
  * - ``idle`` + empty ``reviewText`` + ``allowGenerate`` →
  *   "Generate review" CTA
  * - ``idle`` + empty ``reviewText`` + no ``allowGenerate`` →
@@ -47,6 +62,7 @@ export function ReviewBlock({
   reviewCurrentAttempt,
   reviewMaxAttempts,
   onRetryReview,
+  onApplyFeedback,
   allowGenerate,
   isBusy,
   emptyGenerateHint = 'No AI review yet — click to run one against this content.',
@@ -91,11 +107,11 @@ export function ReviewBlock({
   }
   if (reviewText.trim()) {
     return (
-      <div data-testid="review-text">
-        <CollapsibleMarkdown className="text-sm text-gray-300 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-200 [&_h2]:mt-2 [&_h2]:mb-1">
-          {`# AI Review\n\n${reviewText}`}
-        </CollapsibleMarkdown>
-      </div>
+      <StructuredReview
+        reviewText={reviewText}
+        onApplyFeedback={onApplyFeedback}
+        isBusy={isBusy}
+      />
     );
   }
   if (allowGenerate && onRetryReview) {
@@ -115,6 +131,168 @@ export function ReviewBlock({
     );
   }
   return null;
+}
+
+/**
+ * Structured checkbox render for a parsed ``<review>`` block.
+ * Every finding gets a checkbox; by default all start checked
+ * (user selects out, not in — matches "apply the whole review"
+ * as the common case). If the XML doesn't parse, falls back to
+ * the legacy collapsible-markdown render so pre-Phase-8 reviews
+ * keep displaying.
+ */
+function StructuredReview({
+  reviewText,
+  onApplyFeedback,
+  isBusy,
+}: {
+  reviewText: string;
+  onApplyFeedback?: (feedbackText: string) => void;
+  isBusy: boolean;
+}) {
+  const parsed = useMemo<ParsedReview | null>(() => parseReview(reviewText), [reviewText]);
+  const allIds = useMemo(
+    () =>
+      parsed
+        ? [
+            ...parsed.handlesStructure.map((f) => f.id),
+            ...parsed.architecturalDecisions.map((f) => f.id),
+          ]
+        : [],
+    [parsed],
+  );
+  // Checkbox state keyed on finding ids. Reset whenever the
+  // review text changes so a regenerated review starts with
+  // every new finding selected.
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(allIds));
+  const prevIdsRef = useRef(allIds);
+  if (prevIdsRef.current !== allIds) {
+    prevIdsRef.current = allIds;
+    setSelected(new Set(allIds));
+  }
+
+  // Fall back to the legacy markdown render if the review
+  // doesn't parse (pre-Phase-8 content, or malformed output
+  // that somehow slipped past backend validation).
+  if (!parsed) {
+    return (
+      <div data-testid="review-text-legacy">
+        <CollapsibleMarkdown className="text-sm text-gray-300 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-200 [&_h2]:mt-2 [&_h2]:mb-1">
+          {`# AI Review\n\n${reviewText}`}
+        </CollapsibleMarkdown>
+      </div>
+    );
+  }
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleApply = () => {
+    if (!onApplyFeedback) return;
+    const feedback = formatSelectedAsFeedback(parsed, selected);
+    if (feedback) onApplyFeedback(feedback);
+  };
+
+  const selectedCount = selected.size;
+  const totalCount = allIds.length;
+
+  return (
+    <div className="space-y-4" data-testid="review-text">
+      {onApplyFeedback && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={handleApply}
+            disabled={isBusy || selectedCount === 0}
+            className="px-3 py-1 text-xs rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-40"
+            title="Regenerate the draft with the selected findings as feedback"
+            data-testid="review-apply-button"
+          >
+            Apply selected as feedback
+          </button>
+          <span className="text-xs text-gray-500">
+            {selectedCount} / {totalCount} selected
+          </span>
+        </div>
+      )}
+      <ReviewSection
+        heading="Handles & structure"
+        findings={parsed.handlesStructure}
+        selected={selected}
+        onToggle={toggle}
+        isBusy={isBusy}
+        testId="review-section-handles"
+      />
+      <ReviewSection
+        heading="Architectural decisions"
+        findings={parsed.architecturalDecisions}
+        selected={selected}
+        onToggle={toggle}
+        isBusy={isBusy}
+        testId="review-section-arch"
+      />
+    </div>
+  );
+}
+
+function ReviewSection({
+  heading,
+  findings,
+  selected,
+  onToggle,
+  isBusy,
+  testId,
+}: {
+  heading: string;
+  findings: ReadonlyArray<{ id: string; text: string }>;
+  selected: ReadonlySet<string>;
+  onToggle: (id: string) => void;
+  isBusy: boolean;
+  testId: string;
+}) {
+  return (
+    <section data-testid={testId}>
+      <h3 className="text-xs font-semibold text-gray-300 uppercase tracking-wide mb-2">
+        {heading}
+      </h3>
+      {findings.length === 0 ? (
+        <p className="text-xs text-gray-500 italic">No findings.</p>
+      ) : (
+        <ul className="space-y-2">
+          {findings.map((f) => {
+            const checked = selected.has(f.id);
+            return (
+              <li key={f.id} className="flex gap-2 items-start">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => onToggle(f.id)}
+                  disabled={isBusy}
+                  className="mt-1 h-3.5 w-3.5 rounded border-gray-600 bg-gray-900 text-blue-500 focus:ring-blue-400 cursor-pointer disabled:opacity-40 shrink-0"
+                  aria-label={`Finding ${f.id}`}
+                  data-testid={`review-finding-${f.id}`}
+                />
+                <label
+                  onClick={() => !isBusy && onToggle(f.id)}
+                  className={`text-sm ${
+                    checked ? 'text-gray-200' : 'text-gray-500 line-through'
+                  } cursor-pointer`}
+                >
+                  {f.text}
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 /**
