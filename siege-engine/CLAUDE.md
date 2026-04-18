@@ -136,6 +136,25 @@ See `docs/architecture/v2-rearchitecture.md` §The system as a
 meaning engine and `seed-docs/catapult-spec-v2.md` §A.3.1a for
 the full treatment.
 
+## Relationship to Catapult
+
+Siege-engine is the bootstrap implementation of Catapult's default
+bundle, written imperatively in Python. The spec at
+`seed-docs/catapult-spec-v2.md` describes Catapult — a production
+system whose engine interprets bundle schemas (§A.11.6 reactive
+schema model: tiers, edges with cardinality, fragments, handles,
+context, six-operator predicate language). Siege-engine's mint
+handlers, scheduler, and context assembly *are* that schema's
+behavior, just expressed in Python instead of YAML.
+
+Siege-engine will never interpret a YAML bundle directly. When
+Catapult's engine ships, it will interpret bundles, and the default
+bundle will be a YAML artifact. Siege-engine's handlers are the
+reference behavior that YAML default bundle has to match —
+changes to default-system semantics land as Python handler edits
+here and get encoded as YAML when Catapult's interpreter exists.
+No YAML bundle lives in this repo.
+
 ## Scheduling invariants (Phase 7.5)
 
 - **Presentational comparch gate**: a presentational comp's

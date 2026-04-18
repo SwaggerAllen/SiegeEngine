@@ -775,7 +775,7 @@ A project without code generation (design-only projects, hypothetical-future-pro
 - **Per-tier prompts.** System message, user-prompt template, context-assembly template, retry-on-parse-error instructions, AI-self-review criteria. Every generation tier (expansion, reqs, sysarch, subreqs, comparch, subcomparch, impl, plan, code) has a prompt bundle. Change plans and diagnosis nodes have their own prompt bundles.
 - **Validator schemas.** The parseable-arch-doc structure is data: section order, allowed children, fragment kinds, foundation rules, and dep-edge scoping are all specified in configuration, not hardcoded in a validator module. Adding a new fragment kind is a configuration edit and a migration, not a code change.
 - **Generation order.** The cold-start topological order (A.3.1) is configurable — a project could insert a new tier, reorder existing tiers, or replace a tier with a different shape.
-- **Scheduler queries.** The state queries that drive the state-driven scheduler (A.3.2) are data. Adding a new kind of regen trigger is a configuration edit, not a code change in the scheduler module.
+- **Scheduler behavior.** The scheduler enumerates `(tier, scope)` pairs and evaluates context readiness against the bundle schema (§A.11.6). Adding a new kind of regen trigger is a tier or context declaration, not a code change in the scheduler module — the scheduler itself has no configurable queries, because its behavior is fully derived from the schema.
 - **Edge type vocabulary.** The closed set of edge types (A.1.3) is configurable with appropriate migration support — adding a new edge type is explicit work, but it's possible without modifying the core codebase.
 
 ### A.11.2 Bundles
