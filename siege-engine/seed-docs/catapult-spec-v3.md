@@ -79,14 +79,32 @@ reader has internalized the default bundle's vocabulary.
 `produces`. From v2 §A.11.6.
 
 ### A.3.2 Edges
-Six edge types: `fanout`, `reference`, `dependency`,
-`domain_parent`, `policy_application`, `synthesis`. From v2
-§A.11.6. Note to revisit whether `domain_parent` and
-`policy_application` are properly engine-level or whether they
-belong in Part B as default-system edge specializations —
-current bet is engine-level (they're general patterns of
-cross-kind subscription and cross-cutting application) but this
-is the seam to interrogate carefully.
+
+Five engine-level edge **types**, each with its own cardinality,
+graph-constraint, and readiness semantics: `fanout`, `reference`,
+`dependency`, `policy_application`, `synthesis`. The engine
+declares the type vocabulary; bundles declare **named edge
+instances** typed against one of these types, with particular
+source and target tiers. From v2 §A.11.6.
+
+- `fanout` — parent-creates-children; how every tier decomposes.
+- `reference` — general-purpose advisory-context edge; acyclic.
+- `dependency` — data dependency with `graph_constraint: acyclic`
+  support; stays engine-level because the constraint machinery is
+  engine-owned.
+- `policy_application` — cross-cutting application of a policy
+  node to a target, with reachability. Engine-level; the general
+  "some nodes carry obligations that apply elsewhere" pattern is
+  bundle-agnostic.
+- `synthesis` — reverse aggregation. Engine declares the pattern
+  (a child-aggregating tier subscribed-to via named edges);
+  bundles declare which tier does the aggregating and which tier
+  subscribes. The default bundle's `fanin` tier and its
+  `domain_parent` edge are named instantiations in B.1.8 and
+  B.2.2 — the engine mints `fanin` instances, manages the
+  first-pass readiness gate and staling on subcomponent change,
+  and exposes the aggregated handle; the bundle says *which*
+  presentational tier subscribes via `domain_parent`.
 
 ### A.3.3 Fragments as authored-only content
 From v2 §A.11.6 — the "no projected-fragment category" point.
@@ -113,42 +131,146 @@ promises table. Cross-referenced from A.1.3.
 
 ## A.4 Flows
 
-### A.4.1 What a flow is, abstractly
-A flow is a **seed** (input or target set), an optional
-**phase-0 expansion** that shapes the seed into concrete
-tier-level work, a **graph walk** that produces a per-tier
-**change plan** and per-tier regen at every tier the walk
-touches, and an optional set of **structural operations**
-applied at the end of the run. This is bundle-parametric: the
-walk direction and the tiers touched are functions of the
-bundle's schema, not hardcoded.
+Flows are **bundle-declared orchestrations** over the graph.
+Engine owns the orchestration mechanics (walk, prompt sequencing,
+gating, scheduler composition); bundles declare the concrete
+flows — seed shape, direction, per-tier prompts — alongside their
+tier and edge declarations.
 
-### A.4.2 The six flow shapes
-Stated abstractly — direction, seed type, termination
-condition. Tier-specific walks move to B.10.
-- Scaffolding (seed: raw input; direction: downward along
-  generation order; termination: leaf tier)
-- Feature request (seed: feature-shaped prose; direction:
-  downward from fan-out point; termination: leaf tier)
-- Refactor (seed: structural-operation prose; direction:
-  downward with end-of-run structural ops)
-- Bug-fix propagation (seed: code diff; direction: upward with
-  merge-at-parent, then downward siblings)
-- Downward propagation (seed: accumulated feedback at a tier;
-  direction: downward from that tier)
-- Upward propagation (seed: accumulated feedback at a tier;
-  direction: upward with merge-at-parent, optionally continuing
-  downward)
+### A.4.1 What a flow is
+A flow declaration names:
+- a **seed** (prose input, code diff, node-set-with-feedback, …),
+- an optional **phase-zero** step (LLM call that shapes the seed
+  into a structured artifact at an entry tier),
+- a **direction** (`down` or `up_then_down`),
+- a **per-tier prompt pair**: planning + regeneration.
 
-### A.4.3 Change plans
-Per-flow-run, per-tier reviewable intent artifacts. Not
-structural DAG nodes; not projected into children. Persisted in
-the event log as provenance. From v2 §A.4.3.
+The engine runs the walk. At each visit, it runs the prompt pair
+(or the direction-appropriate subset), honors readiness from the
+reactive scheduler, and enqueues next-wave visits from the
+approved plan's implicated-children list.
 
-### A.4.4 Flows and deferred feedback
-Deferred feedback accumulates; flows consume. Verbatim
-refactoring of v2 §A.2.7, with the consumption list updated to
-reference the abstract flow shapes.
+### A.4.2 The two prompt pair per tier
+
+**Planning prompt.** Input: upstream context (parent's plan for
+downward flows; merged child plans for upward legs); the tier's
+normal regen context; the flow's seed. Output: a parseable plan
+artifact carrying two lists:
+
+- `<implicated-children>` — structured entries per child with
+  `disposition: visit | skip | trivial` and a one-line rationale.
+  Engine consumes this list to enqueue the next wave. This is the
+  reviewer's effect checklist.
+- `<structural-ops>` — optional. Proposed renames, reparents,
+  promotes, demotes, merges, splits, deletes. Queued for
+  end-of-run application per v2 §A.2.3.
+
+The plan artifact is the unified change-plan and split-decision
+node — v2's separate `changeplan_*` tier and a would-be
+"split output" collapse into one. One approval captures intent
+and child-routing together.
+
+**Regeneration prompt.** Input: the approved plan plus the
+tier's normal regen context. Output: a draft of the tier's
+content, parsed through the tier's existing `draft.grammar`.
+The draft review is diff-based against prior approved content,
+never a whole-doc re-read.
+
+### A.4.3 Walk direction
+
+**`down`** flows: plan → regen at every visit. Seed lands at the
+declared entry tier; engine enqueues from each approved plan's
+children list. Scaffolding, feature-request, refactor,
+downward-propagation are all `down`.
+
+**`up_then_down`** flows: upward leg runs **planning only**,
+walking from seed(s) up to the tree root (multiple seeds
+converge at common ancestors, where upward plans merge before
+the next ancestor's planning). Upward-leg plans are
+**advisory** — the engine does not enqueue from their
+`<implicated-children>` lists. At root, the flow pivots: the
+downward leg runs planning (fresh or reused from the seed-to-root
+spine) + regeneration at every visited tier, and *downward-leg*
+plans drive scheduling. Bug-fix propagation and
+upward-propagation are `up_then_down`.
+
+Split is always a downward-leg concern. There is no
+sibling-split prompt type.
+
+### A.4.4 Plan gating
+
+Plan approval follows the "approval gates only destructive
+operations" rule from A.8.2 / v2 §A.3.3:
+
+- Plan carries non-empty `<structural-ops>` → **human-gated**.
+  Refactor flows and any flow that proposes a rename / reparent /
+  promote / demote / merge / split / delete hit this path.
+- Plan carries only `<implicated-children>` → **auto-approved**.
+  The child-visit list is non-destructive (every visited child
+  produces a reviewable diff; every skipped child preserves
+  existing state). Scaffolding, feature-request, and propagation
+  flows typically auto-approve every plan they produce.
+
+Users correct auto-approved plans they later disagree with via
+the normal deferred-feedback loop — leave feedback on the
+affected node, kick a propagation flow.
+
+Bundles can opt any individual flow into stricter gating
+(`planning.gate: always`) for workflows that want hand-review
+of every tier's intent.
+
+### A.4.5 Review UX invariants
+
+These constrain how any bundle-declared flow presents approvals,
+so the review experience is consistent across flows and across
+bundles:
+
+- **Plan review surfaces the effect set, not the prompt output.**
+  The reviewer sees the structured `<implicated-children>` list
+  as a visit/skip/trivial checklist with rationales, editable
+  before approval. The raw plan text is for AI and debugging,
+  collapsed behind a "show reasoning" toggle.
+- **Regen review is a diff.** Every regen (flow-driven or
+  standalone) presents its review as a diff against the prior
+  approved content, never a full-document re-read. Per-fragment
+  diffing falls out naturally from the fragment model.
+
+### A.4.6 Abstract flow catalogue
+
+Stated bundle-agnostically; default-bundle instantiations in
+B.10.
+
+- **Scaffolding** — seed: raw input; direction: `down`;
+  termination: leaf tier.
+- **Feature request** — seed: feature-shaped prose; phase-zero
+  lands at the extraction tier; direction: `down`; termination:
+  leaf tier.
+- **Refactor** — seed: structural-op prose; phase-zero surfaces
+  the structural-ops list; direction: `down` with end-of-run
+  structural-ops application.
+- **Bug-fix propagation** — seed: code diff mapped to
+  `git_commit`-owning leaves via territory (A.16); direction:
+  `up_then_down`; no new code generated (input is already code).
+- **Downward propagation** — seed: node-set-with-feedback;
+  direction: `down`; scope-bounded propagation depth.
+- **Upward propagation** — seed: node-set-with-feedback;
+  direction: `up_then_down`.
+
+### A.4.7 Flows and deferred feedback
+Deferred feedback accumulates; flows consume. Refactoring of v2
+§A.2.7, with the consumption list referencing the abstract flow
+catalogue in A.4.6.
+
+### A.4.8 Flow composition with the scheduler
+
+Flows don't bypass readiness — a flow visit still waits for its
+tier's `context:` to resolve. Framing: an active flow restricts
+*which* `(tier, scope)` pairs the scheduler considers for its
+next enqueue, rather than enqueueing directly. Idle-mode
+scheduler fires everything ready; flow-mode scheduler fires
+only visits the flow has queued, still gated on context
+readiness. The lobby's one-flow-per-project rule (A.9.1) makes
+the composition unambiguous.
 
 ## A.5 Review, feedback, approval
 
@@ -273,12 +395,39 @@ moved to §A.6.
 
 v2 §A.15.
 
-## A.16 Code delivery substrate
+## A.16 Code delivery substrate and the `git_commit` generator
 
-v2 §A.10 (gitea, forge plugins, branch/PR model, one-commit-per-leaf,
-PR granularity, blocking-PR rule). The substrate is engine-level
-but its *shape* (one commit per leaf) is default-bundle and cross-
-references B.4 / B.9.
+v2 §A.10 reframed around the `git_commit` generator type
+declared in A.3.1. The substrate (gitea, forge plugins, branch
+model, PR granularity, blocking-PR rule) is engine-level; any
+tier whose bundle declaration picks `generator: git_commit`
+inherits it.
+
+### A.16.1 The `git_commit` generator contract
+On approval of a tier instance using this generator, the engine
+produces a commit whose scope is the instance's declared
+territory (a `{repository, folder}` tuple, addressable by the
+tier's fields), on the branch the active flow run owns, under
+the blocking-PR rule. One commit per instance of any tier using
+`git_commit`. Territory becomes engine-level because the
+substrate needs it; the *shape* of the territory (folder on
+disk) is bundle-level — the default bundle's `impl` tier maps
+territory to folders (B.6), but a bundle shipping documentation
+deliverables could map to files, and a bundle shipping binary
+artifacts could map differently.
+
+### A.16.2 Local gitea substrate
+v2 §A.10.1.
+
+### A.16.3 External forge integration via plugin adapters
+v2 §A.10.2.
+
+### A.16.4 Branch model, PR granularity, blocking-PR rule
+v2 §A.10.4, §A.10.5, §A.10.6 — all engine-level, part of the
+`git_commit` contract.
+
+### A.16.5 Git is only for code, not for design
+v2 §A.10.7.
 
 ## A.17 Admin and governance
 
@@ -390,24 +539,54 @@ Compression / rotation / expansion / articulation framing. v2
 ### B.9.3 Context assembly strategy
 v2 §A.3.5.
 
-## B.10 Flow walks on the default bundle
+## B.10 Flow declarations on the default bundle
 
-The tier-specific flow write-ups from v2 §A.2.1–§A.2.6, refiled
-from Part A into here. Each walk now reads as "the
-[scaffolding / feature request / …] flow shape (A.4.2)
-instantiated on the default bundle's tier hierarchy."
+The six default-bundle flows, each declared per A.4.1 with
+seed shape, optional phase-zero, direction, and the per-tier
+(planning, regeneration) prompt pair. Tier-specific prompt
+content is the bundle author's work; the shapes below describe
+which tiers each flow touches.
 
-### B.10.1 Scaffolding walk
-v2 §A.2.1.
-### B.10.2 Feature request walk
-v2 §A.2.2.
-### B.10.3 Refactor walk
-v2 §A.2.3.
-### B.10.4 Bug-fix propagation walk
-v2 §A.2.4.
-### B.10.5 Downward propagation walk
-v2 §A.2.5.
-### B.10.6 Upward propagation walk
+### B.10.1 Scaffolding
+Seed: raw input document. Phase-zero: none (input expansion is
+the first bootstrap). Direction: `down`. Tiers touched:
+expansion → reqs → sysarch → subreqs → comparch → subcomparch →
+impl → plan → code. Planning auto-approves at every tier (no
+structural ops). From v2 §A.2.1.
+
+### B.10.2 Feature request
+Seed: feature-shaped prose. Phase-zero: LLM call that splits the
+request into one or more concrete features and lands them at the
+expansion tier. Direction: `down` from the fan-out point.
+Planning auto-approves. From v2 §A.2.2.
+
+### B.10.3 Refactor
+Seed: structural-op prose. Phase-zero: LLM call that shapes the
+request into a `<structural-ops>` list plus downstream plan.
+Direction: `down`. **Planning human-gates at every tier whose
+plan carries structural-ops** — which is most of them for a
+refactor — matching the destructive-op approval rule.
+Structural-ops applied end-of-run. From v2 §A.2.3.
+
+### B.10.4 Bug-fix propagation
+Seed: code diff mapped to `git_commit`-owning leaves via
+territory (A.16). Direction: `up_then_down`. Upward leg
+produces planning-only diagnoses at each ancestor up to the
+project root; merge-at-parent applies when multiple seed leaves
+converge. Downward leg starts at root with regeneration and
+implicated-children splits. No new code — input is already
+code. From v2 §A.2.4.
+
+### B.10.5 Downward propagation
+Seed: node-set-with-accumulated-feedback. Direction: `down`.
+Scope-bounded propagation depth (v2 §A.2.5 retains the "stop
+before impl" affordance). Planning auto-approves. From v2
+§A.2.5.
+
+### B.10.6 Upward propagation
+Seed: node-set-with-accumulated-feedback. Direction:
+`up_then_down`. Same up-then-down shape as bug-fix propagation
+but seeded from deferred feedback rather than a code diff. From
 v2 §A.2.6.
 
 ## B.11 Default bundle as YAML
@@ -426,41 +605,61 @@ part in the v3 reorganization — it was already clearly scoped.
 
 ---
 
+# Resolved framing decisions
+
+- **Edge vocabulary split.** Engine owns the five edge **types**
+  (`fanout`, `reference`, `dependency`, `policy_application`,
+  `synthesis`); bundles declare named edge **instances** typed
+  against one of those. `domain_parent` is a bundle-level
+  instance typed as `synthesis`; the `fanin` tier pattern is
+  engine-level (engine mints and schedules synthesis-tier
+  aggregators), the specific `fanin` *kind* is bundle-level.
+- **Code delivery / gitea.** Engine-level, tied to the
+  `git_commit` generator type. Any tier declared with
+  `generator: git_commit` inherits the substrate contract:
+  one commit per tier instance, scope = declared territory,
+  under the blocking-PR rule. Default bundle's `impl` tier
+  picks `git_commit` and maps territory to folders (B.6).
+- **Flow orchestration vs. flow content.** Engine owns walk
+  mechanics, prompt sequencing, gating, scheduler composition.
+  Bundles declare concrete flows (seed, phase-zero, direction,
+  per-tier prompts). Two prompts per tier per flow: planning
+  (produces a plan with `<implicated-children>` and optional
+  `<structural-ops>`) and regeneration.
+- **Plan gating.** Human-gate iff `<structural-ops>` is
+  non-empty. Pure implicated-children plans auto-approve; users
+  correct disagreements via deferred feedback.
+- **Walk direction.** `down` or `up_then_down`. Upward leg is
+  planning-only and advisory; the downward leg's plans drive
+  scheduling. Split is always downward, always about children —
+  no sibling-split prompt.
+- **Review UX invariants.** Plan review = effect set (editable
+  visit/skip/trivial checklist); regen review = diff, not full
+  doc.
+
 # Open questions for the v3 rewrite
 
-Things that fall out of the split and are worth deciding before
-prose:
-
-1. **Edge vocabulary split.** Is `domain_parent` genuinely
-   engine-level (a general "cross-kind subscription" pattern) or
-   is it specific enough to the default bundle's domain /
-   presentational distinction to belong in B.2? Same question
-   for `policy_application`. My current bet is engine-level for
-   both, but the framing has to survive describing an L3 bundle
-   that has neither.
-2. **How long the engine flow descriptions can stay abstract.**
-   The six flow shapes are recognizably the v2 flows with tier
-   names elided, but some details (merge-at-parent in bug-fix
-   propagation, phase-0 expansion shape) may not generalize off
-   the default bundle cleanly. Worth trying to state abstractly
-   and falling back to "the default bundle's instantiation is
-   in B.10" where necessary.
-3. **Whether code delivery (A.16) should be default-bundle
-   content.** The gitea substrate is engine-level — every bundle
-   needs *some* way to ship artifacts — but the "one commit per
-   leaf, territory = folder" model is specific to the default
-   bundle's `impl` tier having a folder-on-disk semantics. An
-   L3 bundle for narrative writing wouldn't ship commits. The
-   split probably wants the substrate in A.16 and the specific
-   mapping in B.6 or a new B.12.
-4. **Vocabulary for what we call the two parts.** "Engine" vs
-   "default bundle" is clear but clunky; "core" vs "default
-   system" or "platform" vs "bundle" are alternatives. Worth
-   picking one before prose to keep the repeated framing snappy.
-5. **Whether CLAUDE.md and v2-rearchitecture.md need the same
-   reshuffling.** The CLAUDE.md phase-status summary implicitly
-   uses the v2 vocabulary (feat/resp/comp/subcomp) because
-   that's what's built. Not urgent — those docs describe the
-   current implementation, which is the default bundle — but
-   v3-style section cross-references from those docs will want
-   to hit the new B.* numbering once the rewrite lands.
+1. **Vocabulary for the two parts.** "Engine" vs "default
+   bundle" is clear but clunky; "core" vs "default system" or
+   "platform" vs "bundle" are alternatives. Worth picking one
+   before prose to keep the repeated framing snappy.
+2. **Scope of B.11 (default bundle as YAML).** How complete a
+   YAML sketch to ship — the ~220-line form from v2 §A.11.6
+   covered tiers and edges but not flow declarations. Flow YAML
+   shape needs to be sketched; ideally it's small enough that
+   B.11 shows the whole default bundle including all six flows
+   on one scrollable page.
+3. **Phase-zero prompt as a separate prompt type.** Flow
+   declarations name an optional `phase_zero` step. Is phase-zero
+   a third prompt type alongside planning and regeneration, or
+   a special-cased instance of planning ("plan at the entry
+   tier, seed-shape-dependent")? Leaning toward "third prompt
+   type, rare, runs once per flow" — planning at the entry tier
+   already has upstream-plan context that phase-zero doesn't.
+4. **Prompt-bundle naming / filesystem layout.** With flows
+   multiplying per-tier prompt count (from 1–2 prompts per tier
+   to 2–3 per tier per flow), the bundle's prompt directory
+   layout needs a clear convention. `prompts/<tier>/<flow>/plan.md`
+   and `prompts/<tier>/<flow>/regen.md` is the obvious shape but
+   worth checking it doesn't explode with 9 tiers × 6 flows = 54
+   directories for the default bundle.
