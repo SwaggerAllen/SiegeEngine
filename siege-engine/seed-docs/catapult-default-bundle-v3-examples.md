@@ -1525,8 +1525,262 @@ design-alignment, not refactor. If the diagnosis reveals a
 structural fix is needed, the reviewer cancels this flow
 and kicks refactor.
 
-Chunk 2: phase-zero + upward + downward prompts. Chunk 3:
-walked example + Part 3 updates.
+### 2.4.4 `flows/bug-fix-propagation/phase-zero.md`
+
+Phase-zero is a hybrid: the platform mechanically resolves
+diff paths to owning impl leaves via the manifest, and the
+LLM only writes per-leaf diagnosis-seeds as prose. The
+prompt receives a pre-populated skeleton.
+
+````markdown
+You are the phase-zero planning tier for a bug-fix
+propagation flow. The user has brought in a code diff that
+already modified the codebase; the platform has resolved
+each changed path to its owning impl leaf via the manifest.
+Your job is to write an initial diagnosis-seed for each
+affected leaf and a project-level intent summary.
+
+# The diff
+
+```
+{{ context.diff }}
+```
+
+# Territory resolution (platform-resolved)
+
+{% for leaf in context.affected_leaves %}
+## `{{ leaf.id }}` ({{ leaf.name }})
+
+Territory: `{{ leaf.territory.repository }}/{{ leaf.territory.folder }}`
+
+Changed paths:
+{% for path in leaf.changed_paths %}
+- `{{ path }}`
+{% endfor %}
+
+Leaf handle:
+{{ leaf.handle }}
+
+{% endfor %}
+
+# Your task
+
+For each affected leaf above, write a `<diagnosis-seed>` —
+factual prose framing what the diff at this leaf implies
+about the gap between the current impl content and what
+the code now does. Scope each to its leaf; don't merge
+observations across leaves.
+
+The `<intent>` summarizes the whole diff at project level
+— what subsystems are touched, what pattern the changes
+suggest, whether the refactor-is-actually-needed flag
+should get raised.
+
+# Output
+
+```xml
+<plan leg="phase-zero">
+  <intent>Project-level summary of what the diff changes.</intent>
+  <affected-leaves>
+    <leaf id="impl_...">
+      <changed-paths>
+        <path>...</path>
+      </changed-paths>
+      <diagnosis-seed>
+        What the diff at this leaf implies about the gap
+        between current impl content and what the code now
+        does. Factual, scoped to this leaf.
+      </diagnosis-seed>
+    </leaf>
+    ...
+  </affected-leaves>
+</plan>
+```
+
+Plan is **human-gated** — reviewer confirms the leaf set
+covers the diff (territory mapping is authoritative, but
+edge cases like newly-added files without owning leaves
+can slip through) and that the diagnosis-seeds are
+accurate framings.
+````
+
+### 2.4.5 `flows/bug-fix-propagation/upward-plan.md`
+
+Near-identical to upward-propagation's `upward-plan.md`
+(§2.5.3). Seed visits read `context.diagnosis_seed` from
+phase-zero instead of `context.seed_feedback`, and leaf
+visits additionally see their slice of the raw diff.
+
+````markdown
+You are planning an **upward-leg diagnosis** at the
+{{ scope.target.tier }} node at {{ scope.target.id }} as
+part of a bug-fix propagation flow run.
+
+The upward leg walks from the phase-zero affected leaves to
+the project root, diagnosing at each ancestor what the code
+changes imply for that tier. No regen runs on this leg; the
+downward leg consumes approved diagnoses after the
+pivot at root.
+
+{% if context.diagnosis_seed %}
+# Leaf visit — phase-zero diagnosis-seed
+
+This impl is one of phase-zero's affected leaves. The
+diagnosis-seed phase-zero wrote for it:
+
+> {{ context.diagnosis_seed }}
+
+Diff slice at this leaf's territory:
+
+```
+{{ context.diff_for_target }}
+```
+
+Interpret the diff against this impl's current content.
+What gap between the documented implementation and what
+shipped did the code change reveal? Be concrete — "the
+impl doc described single-threaded retry but the diff
+adds a mutex, suggesting thread-safety was
+under-specified."
+{% else %}
+# Ancestor visit — merging child diagnoses
+
+Upward-leg plans at direct children:
+
+{% for child in context.child_plans %}
+## From {{ child.target.tier }} `{{ child.target.id }}`
+
+> **Intent:** {{ child.intent }}
+>
+> **Diagnosis:** {{ child.diagnosis }}
+
+{% endfor %}
+
+Read across the diagnoses. Common thread this tier needs
+to reflect? Contract revision for this component or tier?
+If children diagnose independent issues that don't
+resolve at this tier, say so — the downward leg handles
+them independently.
+{% endif %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Discipline
+
+- Diagnosis is prose, not structural change. If code
+  changes reveal a structural problem (promote a subcomp,
+  split a comp), flag it in the intent and recommend the
+  user cancel this flow and run refactor.
+- No `<implicated-children>` on the upward leg.
+- Be specific: what does the current content say, and what
+  does the code now do? Vague diagnoses produce vague
+  downward plans.
+
+# Output
+
+```xml
+<plan leg="upward">
+  <intent>One-sentence summary.</intent>
+  <diagnosis>
+    Prose analysis of the gap between current content and
+    what the code change shows.
+  </diagnosis>
+</plan>
+```
+
+Plan is **human-gated**.
+````
+
+### 2.4.6 `flows/bug-fix-propagation/downward-plan.md`
+
+Near-identical to upward-propagation's `downward-plan.md`
+(§2.5.4), minus any reference to plan or code tiers —
+bug-fix's downward leg stops at impl.
+
+````markdown
+You are planning a **downward-leg regen** at the
+{{ scope.target.tier }} node at {{ scope.target.id }} as
+part of a bug-fix propagation flow run. The upward leg has
+completed; the flow has pivoted at root.
+
+{% if context.upstream_plan %}
+# Upstream plan
+
+The parent {{ scope.target.parent.tier }} regen's plan was
+approved. It implicated this node as a
+`{{ context.upstream_plan.disposition_for(scope.target) }}`
+visit because:
+
+> {{ context.upstream_plan.rationale_for(scope.target) }}
+
+Upstream intent:
+
+> {{ context.upstream_plan.intent }}
+{% else %}
+# Root visit
+
+No upstream parent. The upward-leg diagnosis at this node
+is your full input.
+{% endif %}
+
+{% if context.upward_plan %}
+# Upward-leg diagnosis for this node
+
+Reviewer-approved during the upward leg at
+`{{ scope.target.id }}`:
+
+> **Intent:** {{ context.upward_plan.intent }}
+>
+> **Diagnosis:** {{ context.upward_plan.diagnosis }}
+
+Authoritative framing for what should change at this node.
+Plan children based on it.
+{% else %}
+# Sideways visit
+
+Off the seed-to-root spine — reached because an upstream
+downward-leg plan implicated this node. No matching
+upward-leg diagnosis; plan from the upstream plan's intent.
+{% endif %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Your task
+
+Produce a plan. Standard disposition rules: visit / skip /
+trivial. Prefer trivial over visit when uncertain.
+
+No `<structural-ops>` — bug-fix is design alignment, not
+refactor.
+
+**Scope boundary.** This flow stops at impl. If your plan
+would naturally implicate a plan or code tier child, that's
+out-of-scope for bug-fix propagation — mark it as `skip`
+and note in the rationale that a follow-up feature-request
+or refactor flow may be needed to land the work-ahead
+implication in code.
+
+# Output
+
+```xml
+<plan leg="downward">
+  <intent>...</intent>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+````
+
+Chunk 3: walked example + Part 3 updates (likely minimal
+given bug-fix reuses upward-propagation's machinery).
 
 ## 2.5 Upward propagation
 
