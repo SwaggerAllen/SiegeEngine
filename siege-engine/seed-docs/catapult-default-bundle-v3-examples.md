@@ -127,34 +127,24 @@ without `comparch` and `comp` being the same tier.
 # Part 2 — Flow declaration sketches
 
 Working sketches for each of the default bundle's six flows.
-Each flow is declared per platform spec §A.4: a seed shape, an
-optional phase-zero tier, a direction, and the per-tier
-(planning, regeneration) prompt pair.
+Each flow is a **schema delta** per platform spec §A.4: a
+`flow.yaml` declaring additional tiers and edges the platform
+grafts onto the scaffold, plus prompt files the flow-declared
+tiers reference.
 
 Flows are sketched one at a time. Each sketch covers:
 
-- **Declaration YAML** — the bundle entry that names the flow
-  and its parts.
-- **Phase-zero tier declaration** (where applicable) — the
-  bundle-declared singleton-per-flow-run tier with its scope,
-  draft grammar, handle, and prompt template.
-- **Plan grammar** — the XML structure planning prompts emit,
-  including `<implicated-children>` and (where applicable)
-  `<structural-ops>`.
-- **Planning prompt template** — generic over tier; composes
-  with tier-specific instructions from `scaffold/`.
-- **Regeneration prompt template** — generic over tier.
-- **Walked example** — a worked single-tier visit showing what
-  the LLM sees and what it produces.
+- **`flow.yaml`** — the schema delta: seed shape, direction,
+  new tiers (planning tiers, phase-zero tiers), new edges
+  into the scaffold.
+- **Plan grammar** — the XML shape the planning tiers' drafts
+  conform to.
+- **Prompt files** — typically one shared `plan.md` Liquid
+  template referenced by every planning tier in the flow,
+  plus `phase-zero.md` where applicable.
+- **Walked example** — what the LLM sees at a representative
+  planning tier visit and the downstream scaffold tier regen.
 
-Open question to validate as we work through flows: the
-generic-over-tier prompt composition. The bet is that
-tier-specific framing (what does `comparch` produce; what's
-its draft grammar for) lives on the tier declaration in
-`scaffold/tiers/<tier>.yaml`, and the flow's plan/regen
-prompts reference those fields generically. If sketching a
-flow forces tier-specific copy into the flow prompt, the
-composition needs revisiting.
 
 ## 2.1 Downward propagation
 
@@ -166,165 +156,153 @@ nodes and propagate the implications downward." Mechanically
 the thinnest of the six flows — no phase-zero, no structural
 ops, no upward leg — and therefore the right starting sketch.
 
-### 2.1.1 Declaration
+### 2.1.1 `flows/downward-propagation/flow.yaml`
 
 ```yaml
-flows:
-  downward_propagation:
-    seed:
-      shape: node_set_with_feedback     # list of {node_id, feedback}
-    direction: down
-    phase_zero: null                    # seed is already structured
-    parameters:
-      max_depth:
-        type: int
-        default: null                   # null = walk to leaves
-        description: |
-          Cap on tiers below the seed the walk will visit.
-          Matches v2 §A.2.5's "propagate through comparch and
-          subcomparch but stop before impl" use case.
-    prompts:
-      plan: flows/downward_propagation/plan.md
-      regen: flows/downward_propagation/regen.md
-    plan_grammar:
-      structural_ops: forbidden         # this flow never proposes them
-      implicated_children: required
-    gating:
-      planning: auto                    # never destructive
-      regeneration: auto_unless_flagged
+flow:
+  name: downward-propagation
+  seed:
+    shape: node_set_with_feedback     # list of {node_id, feedback}
+  direction: down
+  parameters:
+    max_depth:
+      type: int
+      default: null                   # null = walk to leaves
+      description: |
+        Optional cap on tiers below the seed the walk visits.
+        Matches v2 §A.2.5's "propagate through comparch and
+        subcomparch but stop before impl" use case.
+
+# One planning tier per scaffold tier this flow visits. All
+# reference the same ./plan.md. Bundle authors who need per-
+# scaffold-tier prompt divergence point individual tiers at
+# different files.
+tiers:
+  dp_plan_expansion:
+    plans: expansion              # scaffold tier this plans for
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed_feedback: flow.seed.feedback_for(self.target)
+      scope_handle: self.target.handle
+      upstream_plan: self.target.parent.active_plan   # nil at seed
+
+  dp_plan_reqs:
+    plans: reqs
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed_feedback: flow.seed.feedback_for(self.target)
+      scope_handle: self.target.handle
+      upstream_plan: self.target.parent.active_plan
+
+  # … dp_plan_sysarch, dp_plan_subreqs, dp_plan_comparch,
+  #   dp_plan_subcomparch, dp_plan_impl, dp_plan_plan,
+  #   dp_plan_code — same pattern, 9 planning tier declarations.
+
+# Scope and edge semantics of `plans: <scaffold_tier>`:
+#   - scope = per(scaffold_tier) with scope_filter ensuring the
+#     target is in the flow's visit set (seed or implicated by an
+#     upstream approved plan).
+#   - establishes a 1:1 edge planning_tier → scaffold_tier, exposing
+#     the plan handle as context.active_plan on the scaffold tier
+#     regen when a flow is active. Idle: context.active_plan is nil.
 ```
 
-A few load-bearing fields:
+The flow doesn't declare edges explicitly — the `plans:` field
+on each planning tier implies both the scope and the edge
+pattern. Platform reads `plans: expansion` as "one instance of
+this planning tier per expansion node in the flow's visit set;
+the plan handle lands on that expansion node's regen context as
+`active_plan`."
 
-- **`seed.shape: node_set_with_feedback`** — the seed is a list
-  of `(node_id, feedback)` tuples, where `feedback` is whatever
-  accumulated on the deferred-feedback queue for that node.
-  Multi-seed: the platform processes seeds in topological order,
-  so feedback on a parent is consumed before its children's
-  visits inherit the regenerated parent.
-- **`phase_zero: null`** — the seed is already structured;
-  there's nothing to interpret before the walk starts. Most
-  flows that consume feedback won't need phase-zero.
-- **`plan_grammar.structural_ops: forbidden`** — declarative
-  way to say "this flow's planning prompt can't emit
-  `<structural-ops>` even if the LLM tries to." The platform's
-  plan parser rejects such output, the flow falls back to
-  re-planning. This is what makes the flow safe to auto-approve
-  every plan; there's no destructive payload possible.
-- **`gating.planning: auto`** — falls out of the structural-ops
-  prohibition. Bundles can still set
-  `gating.planning: always` for environments that want
-  hand-review of every change, but the default is auto since
-  there's no way for the plan to be destructive.
+### 2.1.2 `flows/downward-propagation/plan-grammar.xml`
 
-### 2.1.2 Plan grammar
-
-Standard plan grammar minus `<structural-ops>`:
+Standard plan grammar, no `<structural-ops>` block (this flow
+forbids them — plans auto-approve):
 
 ```xml
 <plan>
   <intent>
     Brief prose describing what changes in this tier's regen
-    given the upstream context (feedback at the seed visit;
-    parent's plan otherwise).
+    given the seed feedback or upstream plan.
   </intent>
   <implicated-children>
-    <child id="comp_abc12345" disposition="visit">
-      <rationale>The pubapi changes affect this child's
-        dependency surface.</rationale>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
     </child>
-    <child id="comp_def67890" disposition="skip">
-      <rationale>This child doesn't reach the changed
-        method.</rationale>
-    </child>
-    <child id="comp_xyz98765" disposition="trivial">
-      <rationale>The child references the changed name, but
-        the regen would produce no material content
-        change.</rationale>
-    </child>
+    ...
   </implicated-children>
 </plan>
 ```
 
-Three dispositions, each with explicit rationale that the
-review UI surfaces as the editable effect-list checklist
-(per platform spec §A.4.6).
+Plans with only `<implicated-children>` auto-approve per
+platform spec §A.4.6.
 
-### 2.1.3 Planning prompt — `flows/downward_propagation/plan.md`
+### 2.1.3 `flows/downward-propagation/plan.md`
 
-```jinja
-You are planning the regeneration of {{ tier.name }}
-at {{ scope.id }}.
+Shared Liquid template. Every `dp_plan_*` tier references it.
 
-# What this tier does
-{{ tier.purpose }}
+````markdown
+You are planning a regen of the {{ scope.target.tier }} node
+at {{ scope.target.id }} as part of a downward-propagation
+flow run.
 
-# What this tier produces
-{{ tier.output_summary }}
+{% if context.seed_feedback %}
+# Seed visit — feedback to incorporate
 
-Its draft grammar produces:
-{{ tier.draft.grammar_summary }}
+Accumulated feedback on this node:
 
-# Why this regen is happening
-This is a **downward propagation** flow run. {%
-if seed_feedback -%}
-This is the seed visit — accumulated deferred feedback was
-left on this node and is being consumed.
-{%- else -%}
-This is a downstream visit — the parent tier's plan
-implicated this child, and we're propagating the change.
-{%- endif %}
+> {{ context.seed_feedback }}
 
-{% if seed_feedback -%}
-## Feedback to incorporate
-{{ seed_feedback }}
-{%- endif %}
+Your task: plan a regen that incorporates the feedback, and
+identify which children need to inherit the change.
+{% else %}
+# Downstream visit — inheriting an upstream change
 
-{% if parent_plan -%}
-## Upstream plan
-The parent tier's plan has been approved. It implicated this
-node as a `{{ parent_plan.disposition_for_self }}` visit
-because:
+The upstream {{ scope.target.parent.tier }} regen's plan was
+approved. It implicated this node as a
+`{{ context.upstream_plan.disposition_for(scope.target) }}`
+visit because:
 
-> {{ parent_plan.rationale_for_self }}
+> {{ context.upstream_plan.rationale_for(scope.target) }}
 
 Full upstream plan intent:
 
-{{ parent_plan.intent }}
-{%- endif %}
+> {{ context.upstream_plan.intent }}
 
-# Standard regen context for {{ tier.name }}
-{{ tier.standard_context_rendering }}
+Your task: plan a regen that brings this node into line with
+the upstream change, and identify which children need to
+inherit it.
+{% endif %}
 
-# Your task
-Produce a plan in the grammar below.
+# Context
 
-The `<intent>` should describe in 2–4 sentences what changes
-in this tier's regen given the inputs above. Be specific
-about which fragments / fields / sections are affected.
+{{ context.scope_handle }}
 
-For each child of this node listed in the context, choose a
-disposition:
+# Plan grammar
 
-- **visit** — the child needs to regenerate to incorporate
-  the change. The platform will enqueue a downstream visit.
-- **skip** — the child is unaffected; preserve its existing
-  approved content. No work enqueued.
-- **trivial** — the change technically reaches the child
-  (e.g. it references a renamed field) but the regen would
-  produce no material content change. Preserve existing
-  content; the disposition is recorded in the audit trail.
+Produce a plan in the grammar below. Be precise about scope —
+plans in this flow auto-approve, so the implicated-children
+checklist you emit drives downstream scheduling directly.
 
-Be conservative: prefer **trivial** over **visit** when the
-material impact is unclear. A user can always kick a
-follow-up downward propagation flow on the children that
-turn out to need it.
+For each child, choose a disposition:
 
-You may NOT emit `<structural-ops>` in this flow — the
-platform will reject the plan and re-prompt if you do. If a
-change requires structural operations (rename, reparent,
-merge, etc.), the user is in the wrong flow and should run a
-refactor flow instead.
+- **visit** — the child needs to regenerate. Enqueued.
+- **skip** — the child is unaffected; preserve existing content.
+- **trivial** — the change reaches the child via a renamed
+  field or reformatted text but produces no material content
+  change. Preserve content; record the assessment.
+
+Prefer **trivial** over **visit** when the material impact is
+unclear. A follow-up downward-propagation flow can correct
+misclassifications cheaply; over-scheduled regens can't be
+uncreated.
+
+You may NOT emit `<structural-ops>`. The platform will reject
+the plan and re-prompt if you do. If a change requires
+renaming, reparenting, merging, or splitting, the user is in
+the wrong flow and should run a refactor instead.
 
 ```xml
 <plan>
@@ -337,52 +315,42 @@ refactor flow instead.
   </implicated-children>
 </plan>
 ```
+````
+
+No per-tier conditionals needed — tier-specific framing comes
+from `scope.target.tier` / `scope.target.parent.tier`
+interpolation and from `context.scope_handle` (which renders
+the scaffold tier's handle per its declaration). A bundle
+author who wanted tier-specific guidance could add
+`{% if scope.target.tier == 'comparch' %}…{% endif %}` blocks,
+or split one of the `dp_plan_*` tiers off to point at a
+different prompt file.
+
+### 2.1.4 Scaffold tier regen with flow active
+
+No new prompt file for regen. When the flow is active, each
+scaffold tier's generation prompt sees `context.active_plan`
+as an additional context entry. Scaffold tier prompts render
+it conditionally:
+
+```liquid
+{% if context.active_plan %}
+# Approved plan
+
+> {{ context.active_plan.intent }}
+
+The plan's intent is the scope contract for this regen. Don't
+change fragments the plan didn't name. If the regen needs to
+touch something the plan didn't anticipate, stop and indicate
+the plan needs revision; the platform will fail back to
+re-planning rather than silently expanding scope.
+{% endif %}
 ```
 
-### 2.1.4 Regeneration prompt — `flows/downward_propagation/regen.md`
-
-```jinja
-You are regenerating {{ tier.name }} at {{ scope.id }}.
-
-# What this tier does
-{{ tier.purpose }}
-
-# Why this regen is happening
-This is a downward propagation flow run. The plan for this
-regen has been approved:
-
-> {{ plan.intent }}
-
-{% if seed_feedback -%}
-The plan was produced in response to feedback left on this
-node:
-
-> {{ seed_feedback }}
-
-{%- endif %}
-
-# Standard regen context for {{ tier.name }}
-{{ tier.standard_context_rendering }}
-
-# Prior approved content
-The diff between your regen and the content below will be
-what the reviewer sees:
-
-```
-{{ prior_content }}
-```
-
-# Your task
-Produce a new draft for this tier per its grammar:
-
-{{ tier.draft.full_grammar }}
-
-The intent of the approved plan constrains what should
-change. Don't introduce changes outside that scope — if the
-regen needs to touch something the plan didn't name, stop
-and the platform will fail back to re-planning rather than
-silently expanding scope.
-```
+Idle (no flow): `context.active_plan` is nil, the block
+renders empty, the tier's generation prompt is its
+from-scratch default. Flow-active: plan guidance is present.
+One scaffold-tier prompt, two modes of use.
 
 ### 2.1.5 Walked example
 
@@ -390,14 +358,18 @@ User left feedback on `comparch_billing_abc`: "The public API
 should expose `process_batch(invoices)`, not one-at-a-time
 `process_one(invoice)`."
 
-**Seed visit at `comparch_billing_abc`:**
+**Seed visit — `dp_plan_comparch` instantiates on
+`comparch_billing_abc`:**
 
-Planning prompt sees:
-- `tier.name = "comparch"`,
-- `tier.purpose = "Comparch describes a component's tech spec, public API, private surface, dependencies, policy applications, and decomposition into subcomponents."`,
-- `seed_feedback = "The public API should expose process_batch(invoices), not one-at-a-time process_one(invoice)."`,
-- `parent_plan = null` (this is the seed),
-- standard context: the comp's handle, its `fulfills` resps, its dep targets' pubapis, its subreqs.
+Liquid renders `plan.md` with:
+- `scope.target.id = "comparch_billing_abc"`
+- `scope.target.tier = "comparch"`
+- `context.seed_feedback = "The public API should expose
+  process_batch(invoices), not one-at-a-time
+  process_one(invoice)."`
+- `context.scope_handle = <the comparch's handle: name,
+  kind, role, api_intent, fragments list>`
+- `context.upstream_plan = nil` (this is the seed)
 
 Plan output:
 
@@ -408,140 +380,102 @@ Plan output:
     (`process_one(invoice: Invoice) -> InvoiceResult`) with a
     batch endpoint
     (`process_batch(invoices: list[Invoice]) -> BatchResult`).
-    The pubapi fragment changes; the techspec gains a note
-    about batch semantics; the deps to BillingDb and
-    TelemetryService remain. The subcomponent decomposition
-    is unchanged — InvoiceProcessor still owns per-invoice
-    work, but its parent now hands it batches.
+    The pubapi fragment changes; the techspec gains a note on
+    batch semantics; the deps to BillingDb and TelemetryService
+    remain. The subcomponent decomposition is unchanged.
   </intent>
   <implicated-children>
     <child id="subcomp_invoiceprocessor_xyz" disposition="visit">
       <rationale>InvoiceProcessor's pubapi receives invoices
-        from comparch's API. With the API switching to
-        batches, the subcomp's input shape changes and its
-        own pubapi has to follow.</rationale>
+        from comparch's API; the batching change shifts its
+        input shape.</rationale>
     </child>
     <child id="subcomp_billingdb_xyz" disposition="skip">
       <rationale>BillingDb stores individual invoices;
-        whether it receives them one-at-a-time or in a
-        batch is upstream of its
+        batching is upstream of its
         responsibility.</rationale>
     </child>
     <child id="subcomp_telemetry_xyz" disposition="skip">
-      <rationale>TelemetryService's pubapi is unaffected by
-        the batching choice.</rationale>
+      <rationale>TelemetryService unaffected by the batching
+        choice.</rationale>
     </child>
   </implicated-children>
 </plan>
 ```
 
-Plan auto-approves. Regen runs, produces a new comparch
-draft with the updated pubapi. Regen auto-approves
-(diff-reviewed but not flagged).
+Plan auto-approves. Platform sets `has_pending_flow_visit =
+true` on `subcomp_invoiceprocessor_xyz` (scope_filter trigger
+for `dp_plan_subcomparch`).
 
-Platform enqueues one visit:
-`(subcomp, subcomp_invoiceprocessor_xyz)`.
+**Scaffold regen — `comparch_billing_abc`:**
 
-**Downstream visit at `subcomp_invoiceprocessor_xyz`:**
+The comparch generation prompt renders with
+`context.active_plan` populated. The
+`{% if context.active_plan %}` block includes the intent as
+scope guidance. The LLM produces a new comparch draft scoped
+to pubapi + techspec changes. Diff-reviewed, auto-approved.
 
-Planning prompt sees:
-- `seed_feedback = null`,
-- `parent_plan = the comparch plan above`,
-- `parent_plan.disposition_for_self = "visit"`,
-- `parent_plan.rationale_for_self = "InvoiceProcessor's pubapi receives invoices from comparch's API. With the API switching to batches, the subcomp's input shape changes and its own pubapi has to follow."`
+**Downstream visit — `dp_plan_subcomparch` instantiates on
+`subcomp_invoiceprocessor_xyz`:**
 
-Plan output (illustrative):
+Liquid renders `plan.md` with:
+- `scope.target.tier = "subcomparch"`
+- `context.seed_feedback = nil`
+- `context.upstream_plan = <the comparch plan above>`
+- `context.upstream_plan.disposition_for(scope.target) =
+  "visit"`
+- `context.upstream_plan.rationale_for(scope.target) =
+  "InvoiceProcessor's pubapi receives invoices from
+  comparch's API; the batching change shifts its input
+  shape."`
 
-```xml
-<plan>
-  <intent>
-    Update InvoiceProcessor's pubapi to accept a batch of
-    invoices and produce a BatchResult. The internal
-    decomposition stays the same — each invoice still
-    routes through the per-invoice processing pipeline —
-    but the entry point changes shape.
-  </intent>
-  <implicated-children>
-    <child id="impl_invoiceprocessor_xyz" disposition="visit">
-      <rationale>The implementation needs the new batch
-        entry point and the per-item iteration that was
-        previously the caller's
-        responsibility.</rationale>
-    </child>
-  </implicated-children>
-</plan>
-```
+Planning proceeds. The walk eventually terminates at the leaf
+impl, which regenerates a `git_commit`-tiered code diff; the
+cascade ends.
 
-Plan auto-approves; regen runs; impl visit enqueues; walk
-continues until impl produces a code diff (one commit per
-leaf via the `git_commit` generator) and the cascade
-terminates.
+### 2.1.6 What this validates / still to figure out
 
-### 2.1.6 What this validates / open questions
+**Validates** the schema-delta model: the flow is entirely
+expressible as a YAML declaration plus one Liquid prompt
+file. No flow-specific runtime. Bundle author surface area
+for adding downward-propagation is 3 files (`flow.yaml`,
+`plan-grammar.xml`, `plan.md`).
 
-**Validates** the generic-over-tier composition: the
-planning and regen prompts above don't have any tier-specific
-copy. The tier-specific content comes from
-`tier.purpose`, `tier.output_summary`,
-`tier.draft.grammar_summary`, `tier.draft.full_grammar`, and
-`tier.standard_context_rendering` — all of which are fields
-on the tier declaration in `scaffold/tiers/<tier>.yaml`.
-The flow prompts reference them by name. One plan template,
-one regen template, used at every tier the flow visits.
+**Validates** that per-scaffold-tier planning tiers stay
+simple: 9 near-identical declarations in `flow.yaml`, all
+pointing at the same prompt, differentiated only by which
+scaffold tier they plan for. Trades a few lines of repetitive
+YAML for explicit per-tier identity in the event log and
+straightforward scope expressions.
 
-**Implies** that tier declarations need additional metadata
-fields beyond what platform spec §A.3.1 currently lists:
+**Still to figure out:**
 
-- `purpose` — 1–2 sentence prose describing what the tier is
-  for. Authored once; reused everywhere.
-- `output_summary` — 1–2 sentence prose describing what the
-  tier produces.
-- `draft.grammar_summary` — short prose summary of the draft
-  grammar (for planning, where the LLM doesn't need the full
-  grammar yet).
-- `draft.full_grammar` — the canonical draft grammar (for
-  regen, where the LLM has to produce parseable output).
-- `standard_context_rendering` — the engine-rendered context
-  per the tier's `context:` declaration, formatted as prose
-  for the LLM.
-
-These extend the tier-declaration schema in §A.3.1; they
-should land in the platform spec as part of the reactive-
-schema chapter once the prompt-composition design is
-confirmed.
-
-**Open questions:**
-
-1. **Where does `parent_plan.disposition_for_self` come
-   from?** The platform has to surface "the parent's plan
-   implicated *me* with this disposition and rationale" as
-   structured context. That's a small extraction over the
-   parent plan's `<implicated-children>` list; routine but
-   worth declaring in the platform spec's flow runtime
-   section.
-2. **What happens if regen exceeds the plan's scope?** The
-   regen prompt says "stop and fail back to re-planning,"
-   but the actual mechanism for "regen detected scope creep"
-   isn't specified. Two options: rely on regen review
-   catching it (human says "this changed too much, kick a
-   re-plan"), or have a regen-side validator that rejects
-   drafts whose diff scope exceeds the plan's intent. Worth
-   nailing down later, doesn't block the sketch.
-3. **Multi-seed feedback merge.** If two seed nodes have
+1. **The `plans: <scaffold_tier>` syntactic sugar.** Need to
+   pin down exactly how it desugars — what scope expression,
+   what edge type, what `scope_filter` predicate for "target
+   is in the flow's visit set." Probably fits in platform
+   spec §A.3 (reactive-schema chapter) once a couple more
+   flows are worked through.
+2. **`context.upstream_plan.disposition_for(target)` and
+   `rationale_for(target)` helpers.** The upstream plan's
+   `<implicated-children>` structure needs convenience
+   helpers the Liquid template can call. Worth spec'ing in
+   A.4.5 alongside the base standard variable set.
+3. **Multi-seed feedback ordering.** If two seed nodes have
    feedback and one is the ancestor of the other, the
-   ancestor's regen will affect the descendant before its
-   own seed visit fires. Probably the right answer is "the
-   descendant's seed feedback is consumed at *its* seed
-   visit, in addition to whatever the ancestor's plan
-   implicated for it." Worth a note in the platform's flow
-   runtime section about feedback consumption ordering.
-4. **Conservatism bias in disposition choice.** The plan
-   prompt encourages "trivial over visit when uncertain."
-   Whether that's the right default is empirical — too
-   conservative and changes get dropped silently; too
-   liberal and downward propagation explodes the work
-   queue. Worth instrumenting and tuning per tier in
-   practice.
+   ancestor's regen affects the descendant before the
+   descendant's seed visit fires. The descendant's seed
+   feedback should be consumed at *its* seed visit, in
+   addition to whatever the ancestor's plan implicated.
+   Probably a note in A.4.10 about feedback consumption
+   ordering.
+4. **Regen scope-exceeds-plan detection.** The regen prompt
+   says "stop and indicate the plan needs revision," but the
+   mechanism for "regen detected scope creep" isn't spec'd.
+   Options: rely on regen review catching it, or a regen-side
+   validator comparing diff scope against plan intent. Worth
+   nailing in A.4 once more flows are worked through.
+
 
 ## 2.2 Feature request
 
