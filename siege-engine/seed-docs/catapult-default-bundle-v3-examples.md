@@ -1916,6 +1916,130 @@ what the flow declares is what gets visited.
 shape and a phase-zero tier. Everything it needs is
 already on the accumulated list.
 
+### 2.4.9 What bug-fix collapses to if upward-propagation becomes a platform primitive
+
+Exploratory sketch. If the platform absorbs the whole
+up-then-down walk (planning-only upward, pivot at root,
+plan-and-regen downward with spine + sideways fan-out) as
+a built-in orchestration rather than a bundle-declared
+pattern, bug-fix's `flow.yaml` collapses from ~100 lines
+to ~30:
+
+```yaml
+# flows/bug-fix-propagation/flow.yaml (primitive variant)
+
+flow:
+  name: bug-fix-propagation
+  seed:
+    shape: code_diff
+  preconditions:
+    - scaffold.manifest.is_populated
+
+# Phase-zero is still a bundle-declared tier — its job is
+# shaping the seed (a raw diff) into the shape the primitive
+# consumes (an affected-leaves set).
+tiers:
+  bf_phase_zero:
+    plans: manifest
+    phase_zero: true
+    prompt: ./phase-zero.md
+    draft: { root: plan, grammar: ./phase-zero-grammar.xml }
+    context:
+      diff:            flow.seed.diff
+      manifest_handle: scaffold.manifest.handle
+
+# After phase-zero approves, invoke the platform's
+# upward-propagation primitive. The primitive handles the
+# whole up-then-down walk — 14 planning tiers' worth of
+# declaration machinery replaced by one invocation.
+invokes:
+  upward_propagation:
+    seed_set:       context.phase_zero.affected_leaves
+    stop_at_tier:   impl                    # scope boundary
+    upward_prompt:   ./upward-plan.md       # optional override
+    downward_prompt: ./downward-plan.md     # optional override
+```
+
+What the bundle still owns:
+
+- `phase-zero.md` + `phase-zero-grammar.xml` — seed-shape-
+  specific interpretation (diff-to-leaves). Stays
+  bundle-level because the diff format and territory
+  mapping are bundle concerns.
+- `upward-plan.md` and `downward-plan.md` — **optional
+  overrides** of the primitive's default prompts. The
+  primitive ships tier-agnostic defaults; bug-fix can
+  override to add flow-specific framing ("you're
+  interpreting a code diff against design content"). If
+  omitted, the defaults are used unchanged.
+
+What the bundle no longer declares:
+
+- 7 `bf_up_plan_*` tiers
+- 7 `bf_dn_plan_*` tiers
+- The upward and downward plan grammars (platform-shipped)
+- `direction: up_then_down`, `leg:` fields, `matched_upward_plan`
+  context entries, pivot-at-root machinery
+- Implicitly: the `<diagnosis>` grammar element and its
+  `gate: always` annotation (platform-shipped)
+
+What collapses out of Part 3's core-changes list:
+
+- **A.6 Up-then-down direction semantics.** No longer a
+  bundle-author concern. The primitive implements the leg
+  field, edge inversion, upward-plan matching, and pivot
+  detection internally. Deleted from §A.4.3; moves into
+  the primitive's internal spec.
+- **A.8 Grammar-level `gate: always`.** The only grammar
+  element needing it was `<diagnosis>`, which is now
+  platform-shipped. §A.4.6 stays on its original
+  structural-ops-only rule.
+- **A.7 `<no-change/>` trivial-plan elision.** Still
+  useful — downward-propagation's auto-approved plans
+  benefit too. Stays in Part 3.
+
+What stays:
+
+- **A.1 Standard variable set.** Still needed for all
+  flows.
+- **A.2 `plans: <scaffold_tier>` sugar.** Feature-request
+  and refactor still use it.
+- **A.3 Multi-seed ordering**, **A.4 Preconditions**,
+  **A.5 Ready-to-apply state.** All still bundle-flow
+  lifecycle concerns.
+- **A.7 Trivial-plan elision.** General; both flow and
+  primitive regens benefit.
+
+Net: Part 3 compresses from 8 core changes to 6. Bundle
+author's surface area for a bug-fix equivalent drops from
+~14 planning tiers + 2 grammars + 3 prompts to 1 phase-zero
+tier + 1 grammar + 1-3 prompts.
+
+Tradeoff to notice: the primitive is only obviously
+right if every bundle's up-then-down walk looks the same.
+Upward-propagation (§2.5) and bug-fix's up-then-down legs
+are genuinely identical in shape — same diagnosis grammar,
+same pivot, same downward cascade. The primitive generalizes
+cleanly. If some future flow wanted subtly different
+upward semantics (e.g. don't walk to root, stop at the
+lowest common ancestor of multi-seed), it'd need either
+primitive parameters or bail to the current declarative
+approach.
+
+What a "subtly different upward" flow would need:
+
+- `stop_at_tier` — already sketched above (bug-fix stops
+  at impl on the *downward* leg; this would stop the
+  *upward* leg at something other than root).
+- `merge_at` — which ancestor tier to converge seeds at
+  (root by default).
+- `skip_legs` — run only upward or only downward (probably
+  not useful; downward-only is just downward-propagation).
+
+All three are small additive parameters on the primitive's
+invocation, not new mechanisms. The primitive stays one
+thing.
+
 ## 2.5 Upward propagation
 
 Seed is a node-set-with-feedback like downward propagation,
