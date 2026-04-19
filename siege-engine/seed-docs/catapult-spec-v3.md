@@ -23,56 +23,228 @@ bundle is loaded, it's platform content and goes in A.
 
 ## A.0 Vision
 
-Inherited verbatim from v2 §Vision. The vision is bundle-agnostic
-and doesn't need to be restated per bundle.
+Catapult is a **design memory** system. It is not just a
+documentation tool and not just a code generator — it is the
+machine that holds the *why* behind every architectural
+decision, the *shape* of every component boundary, and the
+*history* of every revision. When an AI generates code, it
+does so informed by the full context of human decisions that
+preceded it. When a human reviews output, they see exactly
+where it sits in the design hierarchy and what upstream
+thinking produced it.
+
+The core insight is that AI-generated code is only as good as
+the design thinking that guides it. A single massive prompt
+produces generic output. A structured graph of design
+entities — features feeding responsibilities feeding component
+architectures feeding plans feeding code — produces code that
+reflects genuine design intent. Catapult maintains this graph
+as a living artifact: event-sourced, reviewable, and always
+the authoritative source of truth for what the system is and
+why it was built that way.
+
+This makes Catapult a *plan-before-you-code* machine. The
+design graph isn't scaffolding to be discarded after
+generation — it is the persistent design memory of the
+project. Changes flow through it: new features are routed to
+the right components, bug fixes propagate upward from affected
+code, refinements cascade through dependent nodes. The
+structured model evolves with the codebase because it *is* the
+codebase's design substrate.
+
+For teams, this means onboarding becomes reading the graph.
+Architectural disputes become conversations anchored to
+specific nodes. Code review starts with design review. The
+system doesn't just generate — it remembers, and it holds
+teams accountable to their own design decisions.
 
 ## A.1 What Catapult is
 
 ### A.1.1 Design memory, not a code generator or documentation tool
-Lifted from v2 §Vision opening — the core framing about holding
-design intent. Reframed to make explicit that the design graph's
-*shape* is a bundle concern; only the commitment to hold the
-graph is platform-level.
+
+The distinction matters for every design decision that
+follows. Catapult doesn't *produce* documentation as a side
+effect of code generation; documentation is a rendering of the
+same structured model the code is generated from. Catapult
+doesn't *produce* code as a one-shot deliverable that the
+design graph then discards; the graph is the persistent
+substrate, and code generation is one of the rendering paths
+off it.
+
+The substrate is a **graph of typed nodes and typed edges**.
+What kinds of nodes, what kinds of edges, how they decompose,
+how they render into prose or code — all of those are
+configured by the active **bundle**. The platform doesn't know
+what a "component" or a "responsibility" is; it knows how to
+hold a typed graph with reviewed content at each node and
+deterministic projections from an event log.
+
+The default bundle (Part B) ships a specific graph shape for
+AI code generation — features decompose into responsibilities
+which decompose into components, and so on. That shape is what
+most users will encounter as "Catapult." But the shape is
+bundle-owned; the platform's commitment is to hold whatever
+graph the active bundle declares, with the invariants below
+(A.1.2, A.1.3).
 
 ### A.1.2 The two platform commitments
-One subsection stating both load-bearing invariants together:
-the model is an **event-sourced projection** (every write an
-event, state derived by reducer), and the scheduler is a
-**reactive runtime** over a typed graph declared in a bundle.
-These are the two sentences that define Catapult; everything
-else in Part A derives from them.
+
+Two load-bearing invariants define what Catapult *is* at the
+platform level. Everything in Part A derives from one or the
+other.
+
+**The model is an event-sourced projection.** Every write is
+an event appended to an ordered log; current state is
+materialized by a reducer applying events in order. Rebuilding
+state from the log must reproduce the same projection
+byte-for-byte, and this is tested. There is no database
+column that ever gets updated by anything other than the
+reducer. "Revert" is "append the inverse event"; "undo" is a
+query over the event log; "why does the graph look like this"
+is answerable as a replay from any point in history.
+
+**The scheduler is a reactive runtime over a typed graph
+declared in a bundle.** The bundle declares tiers (node
+kinds), edges (typed relationships), context walks (what each
+tier reads at generation time), and predicates. The scheduler's
+job is to evaluate, for every `(tier, scope)` pair, whether
+its declared context has resolved to a ready state, and
+enqueue generation when it has. The scheduler does not know
+what a "component" is any more than the projection does — it
+reads tier declarations and applies the same readiness rule
+uniformly.
+
+These two sentences are Catapult. The rest of Part A spells
+out what they imply: how writes route through the reducer
+(A.2, A.8), how the typed graph gets declared (A.3), how
+generation is staged (A.4, A.5, A.7), how the lifecycle
+composes (A.9), and the supporting infrastructure around it.
 
 ### A.1.3 Platform invariants vs. bundle invariants
-The organizing principle for the rest of the spec. Platform
-invariants are properties of the event-sourced reducer and the
-reactive-schema runtime (A.1.2) — true for every Catapult
-project regardless of bundle. Bundle invariants are properties
-of a specific schema (tier vocabulary, edge instances, flow
-declarations, structural rules) — true when that bundle is
-loaded. The invariants the platform ships with, stated
-concretely: append-only event log, reducer-materialized
-projections, instructions-as-the-only-write-path (A.2),
-typed-schema scheduling (A.3), one-flow-per-project lobby
-(A.9.1), review/feedback/regen lifecycle (A.5), change-plan
-provenance (A.4.3).
+
+The organizing principle for the rest of the spec is the
+distinction between what the platform guarantees regardless
+of bundle (platform invariants) and what a specific bundle
+asserts when loaded (bundle invariants).
+
+Platform invariants — true for every Catapult project, written
+down concretely once in Part A — are the append-only event
+log, the reducer-materialized projection, instructions as the
+only write path (A.2.3), typed-schema reactive scheduling
+(A.3), the one-flow-per-project lobby (A.9.1), the
+draft-review-feedback-regen lifecycle (A.5), and flow-as-
+schema-delta orchestration (A.4).
+
+Bundle invariants are the specific tier vocabulary, edge
+instances, fragment kinds, structural rules, flow
+declarations, and generation order the bundle ships. They
+hold for as long as the bundle is loaded; a different bundle
+asserts different invariants. Part B describes the default
+bundle's invariants in full.
+
+The test for whether a statement belongs in Part A or Part B:
+if changing the bundle could change the statement's behavior,
+it's a bundle invariant and goes in B. If the statement is
+true regardless of which bundle is loaded, it's a platform
+invariant and goes in A.
 
 ## A.2 The structured model
 
 ### A.2.1 Events, reducer, projections
-Refactor of v2 §A.1.1. Drops the tier-specific examples and
-states the reducer/projection invariants abstractly.
+
+Every write to a Catapult project is an **event** — a
+structured record with a type, a payload, a timestamp, and a
+monotonically-increasing sequence number — appended to the
+project's event log. The log is append-only; events are never
+mutated or deleted. A **reducer** consumes events in order and
+produces the **projection**: the set of nodes, edges,
+fragments, drafts, and other derived state the rest of the
+platform reads from.
+
+The reducer is pure: given the same event sequence it produces
+the same projection, byte-for-byte. This invariant is tested
+exhaustively — the test suite reconstructs the projection from
+each project's log and compares against the stored
+projection. Any drift is a bug in the reducer, never in the
+underlying state.
+
+There are no duplicate-status fields on parallel tables that
+could drift out of sync with the event log. The projection is
+the only place state lives, and reverting a change is "append
+events that undo the prior delta," never "reach into a table
+and change a row." Fields computed from projection state are
+queries against the projection, not stored state.
+
+All writes go through a single **reducer entrypoint** that
+validates the event, appends it to the log, and applies the
+projection delta in one transaction. A failing validation
+rejects the write atomically — no partial state lands. This
+makes event emission the one chokepoint every mutation passes
+through, which makes the reducer the load-bearing
+correctness boundary and the test suite's primary target.
 
 ### A.2.2 IDs as opaque lineage markers
-Refactor of v2 §A.1.4. Keep the `<kind>_<8 char>` shape as an
-platform-level convention; drop the `feat_*`/`comp_*` examples in
-favor of `<tier>_*` placeholders. Default-bundle tier names go
-to B.
+
+Every node in the projection carries a stable ID of the form
+`<tier>_<8 Crockford base32 chars>`. The `<tier>` prefix is
+the tier's declared name (from the bundle — `feat_*`,
+`comp_*`, or whatever the bundle calls its tiers); the
+suffix is opaque and random.
+
+IDs don't encode names. A rename changes the node's name
+field but not its ID. A node that's been renamed ten times
+has the same ID it started with, and downstream references
+continue to resolve. This is the point: IDs are for
+**lineage**, names are for **intent**. The LLM and the UI see
+both — IDs for stable reference, names for human
+comprehension — and the platform treats them as independent
+axes.
+
+Singleton nodes (one-per-project tiers like an expansion or
+sysarch bootstrap in the default bundle) use the same ID
+shape. The 8-char suffix is decorative for a one-per-project
+node, but uniform IDs mean uniform fragment keys, uniform
+lookup tables, and no special cases at call sites.
+
+An ID is stable for the lifetime of a node and gone when the
+node is deleted. IDs are never reused. Lineage across rename,
+promote, demote, reparent, merge, and split is tracked in the
+event log — the sequence of events on an ID tells the whole
+story of what happened to that node, not the name field's
+current value.
 
 ### A.2.3 Instructions as the only write path
-Pulled from scattered v2 mentions (§A.1.1, §A.1.3 tail). States
-the rule platform-abstractly: every write is either a draft
-approval or a structured instruction; nothing mutates rows
-directly.
+
+Nothing in Catapult mutates projection rows directly. Every
+write to the graph goes through one of two channels:
+
+- A **draft approval**. The generation pipeline produces
+  drafts, reviewers approve them, and the approval emits
+  events (typically `ContentCommitted` or similar) that the
+  reducer projects into node content, fragment updates, and
+  mint-derived children.
+- A **structured instruction**. Rename, reparent, promote,
+  demote, merge, split, create-edge, delete-edge, and similar
+  operations are expressed as instructions — named events
+  with validated payloads — that flow through the reducer
+  the same way approvals do.
+
+There is no text field anywhere in the UI that lets a user
+type characters into a generated document and have those
+characters become the stored content. Every change to
+generated content goes through a **prose feedback →
+regenerate → approve** cycle. A small set of structured UIs
+exists for operations that are miserable to express in prose
+(drag-drop assignments, edge editors, dependency graphs), but
+those produce **prose instructions** that flow through the
+regeneration pipeline on "apply," not direct state mutations.
+
+This is what makes the event log sufficient. Because the
+reducer is the only writer and instructions are fully
+structured, any point-in-time projection is reconstructable,
+any change is reviewable, and any "why" question is a replay
+query. The channel discipline is what lets the rest of the
+platform hold to the two commitments in A.1.2.
 
 ## A.3 The bundle as reactive schema
 
