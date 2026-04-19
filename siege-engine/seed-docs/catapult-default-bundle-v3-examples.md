@@ -879,7 +879,138 @@ minted nodes in context via the updated upstream handle.
 
 ## 2.3 Refactor
 
-To be sketched.
+Seed is prose describing a structural change the user wants
+("extract the caching layer out of the billing service into
+its own top-level component", "rename Policy to Rule
+throughout"). A phase-zero planning tier reads the prose and
+current expansion/sysarch, emits a plan whose `<structural-
+ops>` list names the destructive operations to apply. Each
+downstream planning tier inherits the structural-ops list as
+upstream context and adds its own operations where relevant.
+All operations queue through the flow; the platform applies
+them in one transaction at end-of-run per v2 §A.2.3.
+
+Every plan in this flow can carry `<structural-ops>`, so
+every plan is **human-gated** per platform spec §A.4.6. The
+bundle author doesn't set a flow-level "always gate" knob —
+the gate falls out of the planning tier's grammar allowing
+`<structural-ops>`.
+
+### 2.3.1 `flows/refactor/flow.yaml`
+
+```yaml
+flow:
+  name: refactor
+  seed:
+    shape: prose
+  direction: down
+  parameters:
+    max_depth:
+      type: int
+      default: null
+      description: |
+        Optional cap on tiers below expansion the walk
+        visits.
+
+  # Refactor is the one flow whose planning gate is
+  # always human; the gate actually falls out of the
+  # plan grammar allowing <structural-ops>, but we
+  # surface the flag here for UX affordances (the lobby
+  # can warn "this flow human-gates every tier's plan").
+  planning_gate_policy: always_human
+
+tiers:
+  rf_plan_expansion:
+    plans: expansion
+    phase_zero: true
+    prompt: ./phase-zero.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed: flow.seed
+      current_expansion: scope.target.handle
+      current_sysarch:   scaffold.sysarch.handle
+
+  rf_plan_reqs:
+    plans: reqs
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      scope_handle:  scope.target.handle
+      upstream_plan: scope.target.parent.active_plan
+
+  rf_plan_sysarch:
+    plans: sysarch
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      scope_handle:  scope.target.handle
+      upstream_plan: scope.target.parent.active_plan
+
+  # … rf_plan_subreqs, rf_plan_comparch, rf_plan_subcomparch,
+  #   rf_plan_impl, rf_plan_plan, rf_plan_code — same pattern.
+
+# End-of-run hook: after the walk terminates, apply every
+# approved plan's <structural-ops> in a single transaction,
+# in order (phase-zero first, then topologically). Ops are
+# applied by the instruction-vocabulary reducer per §A.8.1.
+end_of_run:
+  apply_structural_ops: true
+```
+
+### 2.3.2 `flows/refactor/plan-grammar.xml`
+
+Extends the feature-request grammar with a
+`<structural-ops>` block. Each op has a `type` and
+op-specific parameters. Op types match the platform's
+instruction vocabulary (§A.8.1): rename, reparent, promote,
+demote, merge, split, delete, plus per-edge-type
+create/delete.
+
+```xml
+<plan>
+  <intent>
+    Prose describing the structural change at this tier
+    and the reasoning for each structural op proposed.
+  </intent>
+  <structural-ops>
+    <op type="rename" target="policy_abc123" new-name="Rule"/>
+    <op type="promote" target="subcomp_caching_xyz"
+        new-parent="null"/>                      <!-- to top level -->
+    <op type="merge" targets="comp_x,comp_y" keep="comp_x"/>
+    <op type="split" target="comp_billing"
+        new-children="comp_billing_core,comp_billing_reporting"/>
+    <op type="delete" target="feat_legacy"/>
+    <!-- ... -->
+  </structural-ops>
+  <additions>
+    <child alias="..." name="...">
+      <rationale>Minted by the refactor (e.g., the
+        extracted component).</rationale>
+    </child>
+    ...
+  </additions>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>Existing child whose content changes
+        because of the structural ops above.</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+
+Op enumeration is bundle-specific — the default bundle's
+planning tiers accept the ops listed above because those
+match the default's instruction vocabulary. An L3 bundle
+with different structural operations would declare
+different op types in its grammar.
+
+Any non-empty `<structural-ops>` → **human-gated**. The
+review UI renders the ops list as a line-item checklist
+alongside the implicated-children checklist; reviewers can
+strike individual ops without rejecting the whole plan.
+Struck ops don't apply at end-of-run; struck plan
+children don't enqueue.
 
 ## 2.4 Bug-fix propagation
 
