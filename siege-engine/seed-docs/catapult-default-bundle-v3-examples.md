@@ -1779,8 +1779,142 @@ implication in code.
 ```
 ````
 
-Chunk 3: walked example + Part 3 updates (likely minimal
-given bug-fix reuses upward-propagation's machinery).
+### 2.4.7 Walked example
+
+A developer commits a mutex addition to the billing retry
+scheduler outside Catapult:
+
+```diff
+# billing/retry.py
++import threading
++
+ class RetryScheduler:
+     def __init__(self):
+-        self.pending = []
++        self._lock = threading.Lock()
++        self.pending = []
+     def schedule(self, task):
+-        self.pending.append(task)
++        with self._lock:
++            self.pending.append(task)
+```
+
+User invokes bug-fix-propagation with this diff as the seed.
+
+**Phase-zero — `bf_phase_zero` on the manifest singleton:**
+
+Platform resolves `billing/retry.py` → `impl_billingretry_xyz`
+(matching by territory prefix in the manifest). LLM sees the
+skeleton with one affected leaf and its diff slice, writes
+diagnosis-seed:
+
+```xml
+<plan leg="phase-zero">
+  <intent>
+    Single commit adds thread-safety to the billing retry
+    scheduler; only the retry impl is affected.
+  </intent>
+  <affected-leaves>
+    <leaf id="impl_billingretry_xyz">
+      <changed-paths>
+        <path>billing/retry.py</path>
+      </changed-paths>
+      <diagnosis-seed>
+        A threading.Lock was added around the pending list in
+        RetryScheduler.schedule. The current impl doesn't
+        mention thread-safety — suggests the scheduler was
+        under-specified for concurrent callers.
+      </diagnosis-seed>
+    </leaf>
+  </affected-leaves>
+</plan>
+```
+
+Reviewer approves.
+
+**Upward leg — `bf_up_plan_impl` on `impl_billingretry_xyz`**
+(seed visit, has diagnosis_seed + diff slice):
+
+Diagnosis: "Impl describes RetryScheduler as in-process with
+no concurrency model. The diff adds a mutex around pending,
+making schedule() thread-safe. Need to add thread-safety
+section to the impl doc — scope: callable from multiple
+threads, schedule() acquires lock before mutating pending."
+
+**Upward leg — `bf_up_plan_subcomparch`** (ancestor, merges
+impl's diagnosis):
+
+"Subcomparch's pubapi describes schedule(task) with no
+concurrency guarantee. The impl diagnosis reveals this is
+now a thread-safe contract. Pubapi contract should state
+'thread-safe: schedule() may be called from multiple
+threads.'"
+
+**Upward leg — `bf_up_plan_comparch` on `comp_billing`:**
+
+"Billing's comparch techspec names 'in-process scheduling'
+but not a concurrency model. The subcomparch diagnosis
+elevates thread-safety to a billing-level concern. Techspec
+should add a paragraph on concurrency: 'Subcomponents that
+accept callbacks from external code must be thread-safe;
+see RetryScheduler for the canonical pattern.'"
+
+**Upward leg — `bf_up_plan_sysarch` / `bf_up_plan_reqs` /
+`bf_up_plan_expansion`:** trivial diagnoses; concurrency is
+implementation-level, doesn't propagate to system-level reqs
+or feature-level decomposition.
+
+**Pivot at root. Downward leg starts.**
+
+Downward plans at expansion, reqs, sysarch are trivial
+(matched upward plans were trivial) — scaffold regens
+elide.
+
+**Downward leg — `bf_dn_plan_comparch` on `comp_billing`:**
+spine descendant. Plans techspec revision per the approved
+upward diagnosis. Implicated children: subcomp_billingretry
+visit, other billing subcomps trivial.
+
+**Downward leg — `bf_dn_plan_subcomparch`** on billing's
+retry subcomparch: plans pubapi contract update. Implicated
+children: impl_billingretry visit.
+
+**Downward leg — `bf_dn_plan_impl` on `impl_billingretry_xyz`:**
+plans impl doc revision per upward diagnosis. Implicated
+children list is empty — flow's scope boundary (no bf_dn_plan_plan
+or bf_dn_plan_code), plan/code tiers are not visited. The
+code is already committed; the design now matches it.
+
+**Flow terminates.** Three scaffold tier regens committed
+(comparch, subcomparch, impl); design graph is coherent
+with the code that shipped.
+
+### 2.4.8 What this validates / Part 3 check
+
+**Validates** the phase-zero hybrid pattern: platform
+mechanically resolves paths to leaves via the manifest
+handle; LLM only writes diagnosis-seeds as prose. Clean
+separation of deterministic-lookup work from
+interpretation work.
+
+**Validates** that bug-fix surfaces no new platform changes
+beyond what upward-propagation already needed. The entire
+upward-leg / pivot / downward-leg mechanism is reused; the
+only novelty is phase-zero's shape, and that's just a
+different prompt + grammar on a planning tier we already
+have sugar for (`plans: manifest`).
+
+**Validates** the flow-as-schema-delta model's
+expressiveness for scope-bounded flows. Bug-fix's "stops
+at impl" boundary is expressed declaratively — the flow
+simply doesn't declare downward planning tiers for plan or
+code. No new scope-boundary platform mechanism needed;
+what the flow declares is what gets visited.
+
+**No new items added to Part 3.** Bug-fix is as anticipated
+— a variant of upward-propagation with a different seed
+shape and a phase-zero tier. Everything it needs is
+already on the accumulated list.
 
 ## 2.5 Upward propagation
 
