@@ -1749,25 +1749,195 @@ deliverables could map to files, and a bundle shipping binary
 artifacts could map differently.
 
 ### A.16.2 Local gitea substrate
-v2 §A.10.1.
+
+Every Catapult instance ships with a bundled **gitea**
+server running as the default code-hosting substrate. Gitea
+handles repositories, branches, PRs, forks, and mirrors;
+Catapult drives gitea via its API for every `git_commit`
+operation.
+
+Gitea is the substrate by default, but the platform doesn't
+depend on gitea-specific features. The same operations route
+equally to an external forge via plugin adapters (A.16.3).
 
 ### A.16.3 External forge integration via plugin adapters
-v2 §A.10.2.
+
+Tenants that want generated code in GitHub, GitLab, or
+another external forge configure a **forge plugin adapter**
+pointing at their external repository. The adapter
+translates the platform's abstract operations (create
+branch, push commit, open PR, check CI status, merge) into
+the forge's API calls.
+
+Plugins are instance-admin-approved and implement a small
+contract:
+
+- `push_commit(repo, branch, paths, message) → commit_sha`
+- `open_pr(repo, branch, base) → pr_id`
+- `get_ci_status(pr_id) → pending | success | failure +
+  details`
+- `merge_pr(pr_id, strategy) → commit_sha`
+- `subscribe_ci_events(callback)` — optional; adapters
+  without push support fall back to polling.
+
+Adapter implementation lives outside the bundle (it's
+platform code, admin-approved like named generators in
+§A.11.6). Bundles don't know which forge is in use; they
+declare tiers with `generator: git_commit` and territory
+`{repository, folder}`, and the platform routes to whichever
+adapter is configured.
 
 ### A.16.4 Branch model, PR granularity, blocking-PR rule
-v2 §A.10.4, §A.10.5, §A.10.6 — all platform-level, part of the
-`git_commit` contract.
+
+Every flow that produces code owns a **feature branch**
+forked from the project's default base branch at flow start.
+The `git_commit` generator pushes one commit per approved
+instance of any tier using the generator (typically one
+commit per impl leaf, in the default bundle). Commits
+accumulate on the flow's branch through flow execution.
+
+**PR granularity is configurable** per project:
+
+- **One PR per flow** (default) — the whole flow commits
+  into one PR, reviewed and merged as a unit. Best for
+  small-to-medium flows.
+- **One PR per tier-group** — tier-groups defined by the
+  bundle produce separate PRs. Useful when a flow's scope
+  is large and reviewers want to merge in waves.
+- **One PR per leaf** — fine-grained; rarely desired
+  because it fragments review.
+
+**Blocking-PR rule.** At most one open code-generating flow
+per project at a time. Flow N+1 cannot push commits until
+flow N's PR is merged or abandoned. This keeps the flow
+lobby (A.9.1) aligned with the code-side delivery: the
+lobby ensures one active flow; the blocking-PR rule ensures
+one active delivery.
 
 ### A.16.5 Git is only for code, not for design
-v2 §A.10.7.
+
+The design graph — nodes, edges, fragments, drafts, reviews,
+events — lives entirely in Catapult's database. It is
+**never** committed to git.
+
+Git handles code because code is what tools outside
+Catapult (editors, CI, linters, production deploys)
+consume. The design graph is consumed by Catapult and by
+Catapult's UI; it has no external consumers that need a
+git-shaped artifact, and committing it to git would
+introduce a second source of truth that could drift from
+the event log.
+
+"Why did this design change?" is answered by replaying the
+event log. "Why did this code change?" is answered by
+looking at the PR. The two histories are linked via the
+flow run that produced both — the event log has the full
+design trail, and the code commits reference their source
+flow.
 
 ## A.17 Admin and governance
 
-v2 §A.21, §A.22.
+Operational surface for instance admins and project owners
+governing Catapult deployments.
+
+### A.17.1 Instance admin capabilities
+
+An instance admin can:
+
+- Curate the bundle library (A.11.2) — mirror new bundles,
+  approve version bumps, revoke bundles.
+- Approve named predicates and generators (A.11.6).
+- Manage SSO/SAML config (A.14.2).
+- Configure instance-wide credentials (A.12.1).
+- View admin dashboards — token usage rollups (A.12.3),
+  project list, user list, system health.
+- Rotate instance secrets (encryption keys, SSO cert, etc.)
+  through guided flows.
+
+Instance admin is a platform-level role with a hard-coded
+atom set; it's not bundle-overridable.
+
+### A.17.2 Project admin capabilities
+
+A project admin can:
+
+- Override bundle configuration at the project level
+  (A.11.3).
+- Manage project role bindings (A.6.2) — assign owners,
+  delegate scopes, revoke access.
+- Configure review SLA, gating policy, PR granularity, CI
+  integration per A.5, A.16.
+- Kick admin-privileged operations like force-reset (A.9.3).
+- View project-level token usage and flow history.
+
+The `admin` preset role carries these atoms at project
+scope. An instance admin has project-admin capabilities on
+every project implicitly.
+
+### A.17.3 Audit
+
+Every action — event commit, permission check, credential
+access, admin operation — is logged. Admin dashboards
+surface relevant slices (recent credential rotations,
+failed-permission checks by user, etc.). The audit log is
+read-only; there is no interface for editing or deleting
+audit entries.
 
 ## A.18 AI sandboxing
 
-v2 §A.18.
+The platform's LLM integrations run in sandboxes with
+constrained filesystem and network access, because
+generated code and intermediate AI reasoning can include
+unintended side effects if given unrestricted execution.
+
+### A.18.1 Generation-time sandbox
+
+LLM calls happen in a subprocess or container with:
+
+- No filesystem write access outside the generation's
+  scratch directory
+- No network access beyond the configured model-provider
+  endpoints
+- No ability to execute arbitrary shell commands beyond
+  what the generation tooling (Claude Code CLI, etc.)
+  explicitly permits
+
+The sandbox's scope is per-generation — each LLM call gets
+a fresh scratch directory, and the sandbox tears down at
+call end.
+
+### A.18.2 Coding-assistant sandboxing
+
+Tiers using the `git_commit` generator typically drive a
+coding assistant (Claude Code, or similar) to produce the
+actual code diff. The assistant runs in a sandbox
+constrained to the tier's declared territory (A.16.1) —
+file reads and writes outside the `{repository, folder}`
+pair are rejected.
+
+This is what makes territory a platform-level concept
+(A.16.1). The sandbox reads the tier's declared territory,
+scopes the assistant's filesystem view to it, and lets the
+assistant work freely within.
+
+### A.18.3 What the sandbox doesn't defend against
+
+The sandbox prevents accidental side effects and contains
+malicious instructions a prompt might try to execute via
+the assistant. It does not defend against:
+
+- A malicious bundle embedding instructions that exfiltrate
+  *model* content (prompt content, generation outputs).
+  Bundle curation (A.11.2) is the defense for this.
+- A malicious model provider returning outputs designed to
+  backdoor the generated code. CI and human code review
+  are the defenses — any diff the AI produces gets reviewed
+  before it merges.
+- An admin with valid credentials taking malicious actions.
+  Audit logging (A.17.3) is the post-hoc defense.
+
+The sandbox is a containment layer, not a trust boundary.
+Trust comes from curation, review, and audit.
 
 ---
 
