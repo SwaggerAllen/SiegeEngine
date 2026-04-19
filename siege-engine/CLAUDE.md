@@ -72,7 +72,7 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
 
 ## Phase status (as of last session)
 
-**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review).
+**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger).
 
 - **Phases 0-5.5** — v2 bootstrap chain end-to-end: project →
   expansion → features → requirements → sysarch → subreqs (per
@@ -113,13 +113,38 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
   Review failures carry their own transient-CLI retry counter
   and expose a manual "Retry review" button. See the
   "AI self-review" section below.
+- **Phase 9 (staleness ledger & fanout decision)** —
+  `staleness_ledger` projection table tracks which nodes are
+  stale w.r.t. which upstreams. Central fanout dispatcher in
+  `backend/graph/fanout.py` runs inside `append_event` after
+  each trigger, walks the edges table, and mutates the ledger
+  directly (derived state — not event-sourced, replay wipes
+  it). Non-destructive triggers auto-enqueue regens via
+  `regen_job_for_node`; destructive structural ops (delete /
+  merge / split / promote / demote / reparent) halt the cascade
+  so the user can review. Fuchsia stale dot in the sidebar tree
+  renders orthogonally to the existing amber/red/blue/green —
+  an approved-but-stale node shows green + fuchsia.
+  **Scope note**: the fanout dispatcher walks edges only. The
+  two bespoke hooks `on_impl_approved` (impl → owning domain
+  comp's fanin) and `_unblock_presentationals_on_fanin_commit`
+  (fanin → presentational comparchs gated on domain_parent)
+  traverse `parent_id` structural chains, not edges, so they
+  stay in place. Fanout is silent for those paths (no edges
+  exist in that direction), so docs come out identical — the
+  only consequence is those specific cascades don't populate
+  the ledger, so the fuchsia stale badge doesn't appear on the
+  fanin or presentational comparchs during the brief window
+  between the impl/fanin commit and the regen running; instead
+  they show pulsing-amber when the regen job picks up. Retiring
+  the hooks cleanly needs either synthetic edges at mint time
+  or parent-id walking in the dispatcher; deferred until a flow
+  beyond scaffolding actually needs that generality.
 
-**Next:** Phase 9 (staleness ledger & fanout decision) → Phase 10
-(layered DAG view) → Phase 11 (structural edit UIs). Earlier session
-notes had "next: Phase 11" skipping 9 and 10 — that was shorthand,
-not intentional sequencing; 9 and 10 come first. Phase 11's
-pending-change queue has storage + instruction types but the HTTP
-plumbing isn't exposed yet; that lands with Phase 11 itself.
+**Next:** Phase 10 (layered DAG view) → Phase 11 (structural edit
+UIs). Phase 11's pending-change queue has storage + instruction
+types but the HTTP plumbing isn't exposed yet; that lands with
+Phase 11 itself.
 
 ## V3 spec scope vs V2 implementation
 
