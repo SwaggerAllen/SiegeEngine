@@ -1518,8 +1518,202 @@ interpretation of downstream feedback. The grammar's
 annotation, which the platform picks up as the gate trigger
 alongside the structural-ops rule.
 
-Chunk 2 covers the two prompts and the downward-leg-finds-its-
-upward-plan mechanism; chunk 3 walks an example.
+### 2.5.3 `flows/upward-propagation/upward-plan.md`
+
+Used by every `up_plan_*` tier. The LLM's job varies by
+whether the visit is a seed or an ancestor merging child
+plans; one Liquid template handles both.
+
+````markdown
+You are planning an **upward-leg diagnosis** at the
+{{ scope.target.tier }} node at {{ scope.target.id }} as
+part of an upward-propagation flow run.
+
+The upward leg walks from seed nodes to the project root,
+producing a per-tier diagnosis of what leaf-level feedback
+implies for each ancestor. No regen runs on this leg — the
+downward leg will consume your approved diagnosis after the
+pivot at root.
+
+{% if context.seed_feedback %}
+# Seed visit — direct feedback
+
+Feedback left on this node:
+
+> {{ context.seed_feedback }}
+
+Interpret what this tier's current content is missing,
+framing wrongly, or scoping too broadly/narrowly to
+satisfy the feedback.
+{% else %}
+# Ancestor visit — merging child diagnoses
+
+Upward-leg plans at direct children:
+
+{% for child in context.child_plans %}
+## From {{ child.target.tier }} `{{ child.target.id }}`
+
+> **Intent:** {{ child.intent }}
+>
+> **Diagnosis:** {{ child.diagnosis }}
+
+{% endfor %}
+
+Read across the child diagnoses. What pattern do they
+share? Does this tier's content need to change to
+accommodate the common thread? If children diagnose
+distinct problems that don't resolve at this level, say
+so — the downward leg benefits from knowing which
+descendants need what.
+{% endif %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Discipline
+
+- Diagnosis is reviewable prose — not structural. If the
+  feedback reveals a structural problem (rename, merge,
+  split), flag it in the intent and recommend the user
+  cancel this flow and kick refactor instead. Upward
+  propagation refines content; refactor restructures.
+- No `<implicated-children>` on this leg — the downward
+  leg (consuming your diagnosis) decides what regenerates.
+- Be concrete. "The role paragraph is misleading" starts
+  it; "the role paragraph frames X as a dependency when
+  the feedback shows X is a delegate" is actionable.
+
+# Output
+
+```xml
+<plan leg="upward">
+  <intent>
+    One-sentence summary of what this tier needs to revise.
+  </intent>
+  <diagnosis>
+    Prose analysis — what's missing or wrong in the current
+    content and what a revised regen should establish. The
+    reviewer-approved payload the downward leg consumes.
+  </diagnosis>
+</plan>
+```
+
+Plan is **human-gated**. Reviewer approves, rejects to
+re-plan, or cancels the flow.
+````
+
+### 2.5.4 `flows/upward-propagation/downward-plan.md`
+
+Used by every `dn_plan_*` tier. Three cases the template
+handles conditionally: root visit, spine descendant,
+sideways fan-out.
+
+````markdown
+You are planning a **downward-leg regen** at the
+{{ scope.target.tier }} node at {{ scope.target.id }} as
+part of an upward-propagation flow run. The upward leg has
+completed and the flow has pivoted at root.
+
+{% if context.upstream_plan %}
+# Upstream plan
+
+The parent {{ scope.target.parent.tier }} regen's plan was
+approved. It implicated this node as a
+`{{ context.upstream_plan.disposition_for(scope.target) }}`
+visit because:
+
+> {{ context.upstream_plan.rationale_for(scope.target) }}
+
+Upstream intent:
+
+> {{ context.upstream_plan.intent }}
+{% else %}
+# Root visit
+
+No upstream parent — this is the root tier. The upward-leg
+diagnosis at this node is the full input to your planning.
+{% endif %}
+
+{% if context.upward_plan %}
+# Upward-leg diagnosis for this node
+
+Reviewer-approved during the upward leg at
+`{{ scope.target.id }}`:
+
+> **Intent:** {{ context.upward_plan.intent }}
+>
+> **Diagnosis:** {{ context.upward_plan.diagnosis }}
+
+This is the authoritative framing for what should change
+at this node — the reviewer already vetted the
+interpretation of downstream feedback. Plan children
+based on it; the regen that follows will operationalize
+it.
+{% else %}
+# Sideways visit
+
+This node is off the seed-to-root spine — reached because
+an upstream downward-leg plan implicated it. No matching
+upward-leg diagnosis for this specific node; plan from
+the upstream plan's intent.
+{% endif %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Your task
+
+Produce a plan. Standard downward-propagation disposition
+rules:
+
+- **visit** — child regenerates.
+- **skip** — child unaffected; preserve content.
+- **trivial** — change reaches the child via
+  rename/reformat but produces no material change.
+  Preserve content; record the assessment.
+
+Prefer **trivial** over **visit** when uncertain.
+
+You may NOT emit `<structural-ops>` — upward propagation
+is design refinement. If the regen needs structural
+changes, cancel the flow and run refactor.
+
+# Output
+
+```xml
+<plan leg="downward">
+  <intent>...</intent>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+````
+
+### 2.5.5 The downward leg finds its upward plan
+
+`matched_upward_plan` on each `dn_plan_*` tier's context is
+a platform-resolved reference to the upward-leg plan node
+whose `plans:` target matches this downward-leg tier's
+target. The resolver:
+
+1. Look up the flow run's approved upward-leg plans.
+2. For each, the plan node's scope target is a scaffold
+   node id.
+3. If any upward plan's target equals `scope.target.id`,
+   that's the match — resolve the handle and expose it.
+4. Otherwise `matched_upward_plan` is nil (sideways visit).
+
+Spine nodes have exactly one upward-leg plan; sideways
+fan-outs have none. The match is 1:0..1, computed lazily
+when the downward-leg planning tier's context resolves.
+
+Chunk 3 walks an example end-to-end.
 
 ---
 
