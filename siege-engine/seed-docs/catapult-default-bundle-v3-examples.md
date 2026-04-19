@@ -1340,7 +1340,193 @@ needed.
 
 ## 2.4 Bug-fix propagation
 
-To be sketched.
+Seed is a code diff — a commit, a PR, or a working-tree
+patch produced outside Catapult that's already modified the
+codebase. The job is to propagate the implications of the
+code change upward through the design graph so the model
+catches up to reality, then sideways through siblings the
+change affects. Same `up_then_down` shape as upward
+propagation with one added wrinkle: a phase-zero tier maps
+the diff to affected `impl_*` leaves via their territory
+declarations (platform §A.16), seeding the upward leg with
+the right set of leaf nodes.
+
+Shape contrast with upward propagation: same upward-leg
+diagnosis / pivot-at-root / downward-leg regen-with-split
+shape, same human-gated `<diagnosis>` grammar, same trivial-
+plan elision rules. Different seed (code diff vs. feedback
+set), different phase-zero (maps diff to leaves), and
+**no code is generated on the downward leg** — the input is
+already code; the output is design updates to match.
+
+### 2.4.1 `flows/bug-fix-propagation/flow.yaml`
+
+```yaml
+flow:
+  name: bug-fix-propagation
+  seed:
+    shape: code_diff            # unified diff over repository paths
+  direction: up_then_down
+  preconditions:
+    - scaffold.manifest.is_populated
+    # territory mapping must exist; without it, phase-zero
+    # can't route the diff to leaves.
+
+tiers:
+  # Phase-zero planning tier: maps the diff's changed paths
+  # to the impl_* leaves whose territory owns them via the
+  # manifest (§A.16). Output is a structured seed-set the
+  # upward leg consumes.
+  bf_phase_zero:
+    plans: manifest
+    phase_zero: true
+    prompt: ./phase-zero.md
+    draft: { root: plan, grammar: ./phase-zero-grammar.xml }
+    context:
+      diff:              flow.seed.diff
+      manifest_handle:   scaffold.manifest.handle
+
+  # Upward-leg planning tiers — one per tier that can be
+  # an affected-impl ancestor. Each is identical in shape
+  # to upward-propagation's up_plan_* tiers; the leaf set
+  # comes from phase-zero's implicated leaves rather than
+  # a user-submitted feedback set.
+  bf_up_plan_impl:
+    plans: impl
+    leg: upward
+    scope_filter: "self.target.in_phase_zero_leaf_set"
+    prompt: ./upward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      diagnosis_seed:   context.phase_zero.diagnosis_for(self.target)
+      diff_for_target:  flow.seed.diff_for(self.target.territory)
+      scope_handle:     self.target.handle
+      child_plans:      self.target.children.up_plan.handle
+
+  bf_up_plan_subcomparch:
+    plans: subcomparch
+    leg: upward
+    prompt: ./upward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      scope_handle:  self.target.handle
+      child_plans:   self.target.children.up_plan.handle
+
+  # … bf_up_plan_comparch, bf_up_plan_subreqs,
+  #   bf_up_plan_sysarch, bf_up_plan_reqs,
+  #   bf_up_plan_expansion — same pattern, all the way to
+  #   root.
+
+  # Downward-leg planning tiers — identical to
+  # upward-propagation's dn_plan_* shape. No code tier:
+  # bug-fix propagation doesn't regenerate code.
+  bf_dn_plan_expansion:
+    plans: expansion
+    leg: downward
+    prompt: ./downward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      upstream_plan:  scope.target.parent.active_plan
+      upward_plan:    scope.target.matched_upward_plan.handle
+      scope_handle:   scope.target.handle
+
+  # … bf_dn_plan_reqs, bf_dn_plan_sysarch, bf_dn_plan_subreqs,
+  #   bf_dn_plan_comparch, bf_dn_plan_subcomparch,
+  #   bf_dn_plan_impl. NO bf_dn_plan_plan or bf_dn_plan_code
+  #   because no code generation on this flow.
+
+pivot:
+  from: upward
+  to: downward
+  at: root
+```
+
+Two things worth highlighting against upward-propagation:
+
+- **`bf_phase_zero` replaces the seed-is-already-structured
+  pattern.** Upward-propagation's seed is a
+  `node_set_with_feedback` — already a structured list of
+  `{node, feedback}` pairs; planning tiers find targeted
+  feedback via `flow.seed.feedback_for(target)`. Bug-fix's
+  seed is raw diff; phase-zero parses paths, looks up
+  territory, and produces the `(leaf, per-leaf-diagnosis-
+  seed)` list the upward leg consumes. `flow.seed.diff` is
+  still available for upward-leg impls that want to see
+  their own slice of the diff (via `flow.seed.diff_for(
+  self.target.territory)`).
+- **No `bf_dn_plan_plan` or `bf_dn_plan_code` tiers.** The
+  downward leg stops at impl. Bug-fix is design-updates-
+  only; if the diagnosis reveals work that still needs to
+  happen, a follow-up feature-request or refactor flow
+  handles it, and that flow runs code generation through
+  the normal path.
+
+### 2.4.2 `flows/bug-fix-propagation/phase-zero-grammar.xml`
+
+Phase-zero's output is a structured leaf-set — one entry
+per affected impl, with a per-leaf diagnosis seed. The
+upward leg consumes this instead of `seed_feedback`.
+
+```xml
+<plan leg="phase-zero">
+  <intent>
+    Prose summary of what the diff changes across the
+    project — which subsystems are touched, what pattern
+    the changes suggest.
+  </intent>
+  <affected-leaves>
+    <leaf id="impl_invoicerenderer_xyz">
+      <changed-paths>
+        <path>billing/rendering/pdf.py</path>
+        <path>billing/rendering/templates.py</path>
+      </changed-paths>
+      <diagnosis-seed>
+        Initial prose framing of what the diff implies at
+        this leaf — what was changed, what the change
+        suggests about scope or contract.
+      </diagnosis-seed>
+    </leaf>
+    ...
+  </affected-leaves>
+</plan>
+```
+
+Phase-zero is human-gated — reviewer confirms the
+territory mapping picked the right leaves and that the
+diagnosis-seed framing is accurate before the upward leg
+fans out.
+
+### 2.4.3 `flows/bug-fix-propagation/plan-grammar.xml`
+
+Upward and downward grammars are **identical** to
+upward-propagation's (§2.5.2):
+
+```xml
+<!-- upward -->
+<plan leg="upward">
+  <intent>...</intent>
+  <diagnosis>...</diagnosis>
+</plan>
+
+<!-- downward -->
+<plan leg="downward">
+  <intent>...</intent>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+
+Both forbid `<structural-ops>` — bug-fix propagation is
+design-alignment, not refactor. If the diagnosis reveals a
+structural fix is needed, the reviewer cancels this flow
+and kicks refactor.
+
+Chunk 2: phase-zero + upward + downward prompts. Chunk 3:
+walked example + Part 3 updates.
 
 ## 2.5 Upward propagation
 
