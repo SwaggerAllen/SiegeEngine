@@ -170,7 +170,7 @@ flow:
   name: downward-propagation
   seed:
     shape: node_set_with_feedback     # list of {node_id, feedback}
-  direction: down
+  invokes: downward_cascade
   parameters:
     max_depth:
       type: int
@@ -505,7 +505,7 @@ flow:
   name: feature-request
   seed:
     shape: prose
-  direction: down
+  invokes: downward_cascade
   parameters:
     max_depth:
       type: int
@@ -887,8 +887,10 @@ current expansion/sysarch, emits a plan whose `<structural-
 ops>` list names the destructive operations to apply. Each
 downstream planning tier inherits the structural-ops list as
 upstream context and adds its own operations where relevant.
-All operations queue through the flow; the platform applies
-them in one transaction at end-of-run per v2 §A.2.3.
+**Structural ops apply immediately on plan approval** per
+platform spec §A.4.6 — each tier's regen sees the post-op
+state as current. No deferred end-of-run commit; no
+ready-to-apply state.
 
 Every plan in this flow can carry `<structural-ops>`, so
 every plan is **human-gated** per platform spec §A.4.6. The
@@ -903,7 +905,7 @@ flow:
   name: refactor
   seed:
     shape: prose
-  direction: down
+  invokes: downward_cascade
   parameters:
     max_depth:
       type: int
@@ -911,13 +913,6 @@ flow:
       description: |
         Optional cap on tiers below expansion the walk
         visits.
-
-  # Refactor is the one flow whose planning gate is
-  # always human; the gate actually falls out of the
-  # plan grammar allowing <structural-ops>, but we
-  # surface the flag here for UX affordances (the lobby
-  # can warn "this flow human-gates every tier's plan").
-  planning_gate_policy: always_human
 
 tiers:
   rf_plan_expansion:
@@ -949,12 +944,11 @@ tiers:
   # … rf_plan_subreqs, rf_plan_comparch, rf_plan_subcomparch,
   #   rf_plan_impl, rf_plan_plan, rf_plan_code — same pattern.
 
-# End-of-run hook: after the walk terminates, apply every
-# approved plan's <structural-ops> in a single transaction,
-# in order (phase-zero first, then topologically). Ops are
-# applied by the instruction-vocabulary reducer per §A.8.1.
-end_of_run:
-  apply_structural_ops: true
+# Structural ops apply immediately per platform spec §A.4.6
+# — no end_of_run hook, no batch commit. On each plan's
+# approval, the instruction-vocabulary reducer applies its
+# <structural-ops> list in order, and the flow continues
+# with the post-op state.
 ```
 
 ### 2.3.2 `flows/refactor/plan-grammar.xml`
@@ -1009,8 +1003,8 @@ Any non-empty `<structural-ops>` → **human-gated**. The
 review UI renders the ops list as a line-item checklist
 alongside the implicated-children checklist; reviewers can
 strike individual ops without rejecting the whole plan.
-Struck ops don't apply at end-of-run; struck plan
-children don't enqueue.
+Struck ops don't apply on approval; struck plan children
+don't enqueue.
 
 ### 2.3.3 `flows/refactor/phase-zero.md`
 
@@ -1039,9 +1033,10 @@ the expansion regen that launches the flow.
 # Your task
 
 Produce a plan whose `<structural-ops>` list names the
-operations the platform will apply at end-of-run.
-Downstream planning tiers see your plan as upstream
-context and reason from it.
+operations the platform will apply on approval. Each op
+commits immediately when the plan is approved; downstream
+planning tiers see your plan as upstream context, reason
+from it, and operate against the post-op state.
 
 ## Interpreting prose into structural ops
 
@@ -1270,26 +1265,26 @@ upstream plan's promote op in context. Plan output
 
 Reviewer approves. Sysarch regen writes a draft
 reflecting the post-promote shape; the regen prompt reads
-the pending structural ops from context and produces
-content consistent with the post-op state even though the
-promote hasn't been applied yet.
+each approved plan's `<structural-ops>` immediately;
+downstream regens read the post-op state directly from
+the projection.
 
 The walk continues through the implicated comparches
 (billing's loses the subcomp reference; caching's is
-minted fresh from the promoted subcomp's fragments). At
-end-of-run, the platform applies all approved
-`<structural-ops>` in one transaction: the promote op
-migrates subcomp_cachinglayer_xyz's content to
-comp_caching's new id, updates parent_id on descendants,
-and records the lineage in the event log.
+minted fresh from the promoted subcomp's fragments). Each
+approved plan along the way applies its ops via the
+instruction-vocabulary reducer as soon as approval lands,
+so by the time `rf_plan_comparch` fires on `comp_caching`,
+`comp_caching` is a real node in the projection rather
+than a pending addition.
 
 ### 2.3.6 What this validates / still to figure out
 
-**Validates** the structural-ops grammar and the end-of-run
-commit pattern. Regens during the flow reason about the
-post-op state via the plan in context; the reducer
-materializes structural changes in one transaction at
-flow end.
+**Validates** the structural-ops grammar plus the
+immediate-apply commit pattern. Regens during the flow
+read the current projection, which already reflects
+previously-approved ops. No pending-ops context overlay
+needed.
 
 **Validates** the grammar-level human-gate rule: every
 plan in this flow has a non-empty `<structural-ops>`
@@ -1299,15 +1294,7 @@ needed.
 
 **Still to figure out:**
 
-1. **`context.pending_ops` on scaffold tier regens.**
-   Regens during the flow need to see approved upstream
-   structural ops as context so they can write content
-   consistent with the post-op state. Probably a
-   well-known context entry `context.pending_ops` that
-   aggregates across approved upstream plans. Worth
-   spec'ing in platform §A.4.5 alongside the standard
-   variable set.
-2. **Name resolution in phase-zero.** Phase-zero
+1. **Name resolution in phase-zero.** Phase-zero
    resolves "caching layer" → `subcomp_cachinglayer_xyz`
    by scanning sysarch handle. Brittle when names are
    ambiguous; an LLM could confidently hit the wrong
@@ -1316,26 +1303,22 @@ needed.
    submission; or a guardrail that rejects plans whose
    resolved ops can't be uniquely traced to the prose.
    Worth a note but not blocking.
-3. **Partial op approval.** Reviewer strikes one of
+2. **Partial op approval.** Reviewer strikes one of
    several ops. The plan's intent may now describe a
    cascade that no longer holds. Options: re-plan from
    the struck state, or warn in the review UI about
    dependent ops when one is struck. Worth nailing once
-   refactor has real users.
-4. **Planning tiers for nodes that don't exist yet.**
-   `rf_plan_comparch` on `comp_caching` plans a comparch
-   for a comp that won't exist until end-of-run. The
-   platform has to treat pending `<additions>` as
-   virtual-but-visitable nodes during the flow — scope
-   filter "self.target exists OR is in pending additions
-   of an approved upstream plan." Worth spec'ing in A.4.2
-   alongside the `plans: <scaffold_tier>` desugar.
-5. **Flow termination and the "ready to apply" state.**
-   Refactor should have an explicit "all plans approved,
-   ops queued, waiting for final commit" state where
-   the reviewer sees the full ops list together before
-   end-of-run executes. Matches v2 §A.2.3's deferral
-   model. Worth a platform UX affordance in the lobby.
+   refactor has real users. (With immediate-apply,
+   struck ops simply don't commit — the cascade
+   proceeds against whichever ops did, and the reviewer
+   sees the actual post-op state rather than a
+   hypothetical one.)
+3. **Cancel semantics.** Cancelling a refactor mid-flow
+   doesn't auto-revert ops that already committed.
+   Users who want to undo a partial refactor run an
+   **inverse refactor** flow with prose describing the
+   undo. Worth UX affordance in the lobby: "this flow
+   committed N ops before cancel; run inverse-refactor?"
 
 
 ## 2.4 Bug-fix propagation
@@ -1366,7 +1349,7 @@ flow:
   name: bug-fix-propagation
   seed:
     shape: code_diff            # unified diff over repository paths
-  direction: up_then_down
+  invokes: up_then_down
   preconditions:
     - scaffold.manifest.is_populated
     # territory mapping must exist; without it, phase-zero
@@ -1978,8 +1961,9 @@ What the bundle no longer declares:
 - 7 `bf_up_plan_*` tiers
 - 7 `bf_dn_plan_*` tiers
 - The upward and downward plan grammars (platform-shipped)
-- `direction: up_then_down`, `leg:` fields, `matched_upward_plan`
-  context entries, pivot-at-root machinery
+- `invokes: up_then_down`'s `leg:` field semantics,
+  `matched_upward_plan` context entries, pivot-at-root
+  machinery
 - Implicitly: the `<assessment>` grammar element and its
   `gate: always` annotation (platform-shipped)
 
@@ -2069,7 +2053,7 @@ flow:
   name: upward-propagation
   seed:
     shape: node_set_with_feedback
-  direction: up_then_down
+  invokes: up_then_down
 
   # preconditions: the seed nodes must each have an ancestor
   # chain to the project root — trivially true for any non-
@@ -2600,7 +2584,7 @@ leg flows through naturally.
    tiers include a `scope_filter` that's false until the
    flow's upward-leg work queue drains and root's
    `up_plan_*` has committed. Mechanical; worth spec'ing as
-   part of the `direction: up_then_down` semantics in
+   part of the `up_then_down` primitive semantics in
    platform §A.4.3.
 5. **Sideways fan-out from downward leg.** The downward
    plan at `comp_billing` could implicate sibling comps (not
@@ -2677,12 +2661,17 @@ Flow sketches use two declarative-sugar fields
 pervasively:
 
 - **`plans: <scaffold_tier>`** expands to `scope:
-  per(<tier>)` + `scope_filter: "self.target.in_flow_visit_set"`
+  per(<tier>)` + a `scope_filter` that counts inbound
+  `implicates_visit` edges from approved upstream plans
+  in the active flow run (`exists(inbound(implicates_visit)
+  where source.approved AND source.flow_run == current)`)
   + an implicit 1:1 reference edge exposing the plan
   handle as `context.active_plan` on the scaffold tier.
-  `in_flow_visit_set` includes seed nodes,
-  `disposition=visit` implicated children, and
-  `<additions>` entries.
+  The `implicates_visit` edges are emitted by the walk
+  primitive at flow start (seed edges from the flow run
+  itself) and on plan approval (one edge per
+  `<implicated-children disposition="visit">` target and
+  per `<additions>` entry).
 - **`leg: upward | downward`** (used by `up_then_down`
   flows) tells the `up_then_down` primitive which tier's
   context walks to invert and which to run normally. Pairs
