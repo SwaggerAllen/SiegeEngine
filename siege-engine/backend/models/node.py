@@ -224,14 +224,18 @@ class StalenessLedger(Base):
     """Phase 9 — per-pair staleness marker.
 
     One row per ``(stale_node_id, source_node_id, reason)`` triple.
-    Written by ``_apply_staleness_marked`` in response to
-    ``StalenessMarked`` events emitted by the central fanout
-    dispatcher; deleted by ``_apply_staleness_cleared`` when the
-    stale node's regen commits.
+    Mutated by :func:`backend.graph.fanout.apply_staleness_changes`
+    directly from inside ``append_event`` — staleness is derived
+    state, not primary state, so it does **not** round-trip through
+    the event log. On replay the ledger starts empty and stays
+    empty; nothing is stale in a freshly-rebuilt projection because
+    nothing has happened after rebuild yet.
 
-    The unique constraint on the triple makes `StalenessMarked`
-    idempotent — re-appending the same marker before the
-    corresponding clear is a no-op at the projection level.
+    The unique constraint on the triple makes mark-insertion
+    idempotent — re-inserting the same marker before the
+    corresponding clear is a no-op (the dispatcher bumps
+    ``source_offset`` on the existing row instead of writing a
+    duplicate).
     """
 
     __tablename__ = "staleness_ledger"
