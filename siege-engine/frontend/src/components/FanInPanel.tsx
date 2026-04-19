@@ -172,6 +172,7 @@ export function FanInPanel({ projectId, compId, ownerName }: Props) {
               reviewText: data.review_text,
               reviewStatus: data.review_status,
               reviewLastError: data.review_last_error,
+              reviewStartedAt: data.review_started_at,
               reviewCurrentAttempt: data.review_current_attempt,
               reviewMaxAttempts: data.review_max_attempts,
               onRetryReview: () => retryReview.mutate(),

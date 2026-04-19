@@ -78,6 +78,7 @@ const ReferenceDetailRawSchema = z.object({
   review_text: z.string().default(''),
   review_status: z.enum(['idle', 'running', 'failed']).default('idle'),
   review_last_error: z.string().nullish().transform((v) => v ?? null),
+  review_started_at: z.string().nullish().transform((v) => v ?? null),
   review_current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   review_max_attempts: z.number().int().nullish().transform((v) => v ?? null),
   outgoing_edges: z.array(ReferenceEdgeSchema),

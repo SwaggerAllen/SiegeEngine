@@ -51,6 +51,7 @@ function makeResponse(overrides: Partial<ExpansionResponse> = {}): ExpansionResp
     review_text: '',
     review_status: 'idle',
     review_last_error: null,
+    review_started_at: null,
     review_current_attempt: null,
     review_max_attempts: null,
     ...overrides,
@@ -376,6 +377,7 @@ describe('FeatureExpansionPanel', () => {
             created_at: '2026-04-12T00:00:00',
           },
           review_status: 'running',
+          review_started_at: '2026-04-12T00:00:00',
           review_current_attempt: 2,
           review_max_attempts: 3,
         })

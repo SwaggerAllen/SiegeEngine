@@ -1,0 +1,2817 @@
+# Catapult — Default bundle examples and flow sketches
+
+**Status:** working file. YAML examples for tier, edge,
+fragment, context, and flow declarations, plus the working
+sketches for each of the default bundle's five flows. (The
+scaffold's baseline behavior — generation from an approved
+input doc with no active flow — is already illustrated end-
+to-end by the Part 1 schema examples; it doesn't need its
+own sketch.)
+
+This file is reference content for the platform spec
+(`catapult-spec-v3.md`) and the default bundle spec
+(`catapult-default-bundle-v3.md`). Feature_expansion and
+sysarch don't read it — examples and sketches burn tokens
+during extraction without informing it. Bundle authors read
+it; implementers read it; the platform's own components
+attach it via `reference` edges from the default-bundle
+feature node.
+
+---
+
+# Part 1 — Schema declaration examples
+
+YAML sketches illustrating the four reactive-schema primitives
+(tiers, edges, fragments, context) declared in platform spec
+§A.3. Examples use the default bundle's tier and edge names
+because they're concrete and recognizable; the same shapes
+apply to any bundle.
+
+## 1.1 Tier declaration
+
+A tier declaration sets the tier's scope, identity, fields,
+handle, and (optionally) draft grammar and generator.
+
+```yaml
+tiers:
+  comp:
+    scope: child_of(sysarch)
+    identity: alias
+    fields:
+      name:       draft.name
+      kind:       { from: draft.kind, enum: [domain, presentational] }
+      role:       draft.role
+      api_intent: draft.api-intent
+    handle:
+      fields:    [id, alias, name, kind, role, api_intent]
+      fragments: [techspec, pubapi, privapi]
+    # comp has no draft of its own — it's minted by sysarch's fanout;
+    # its fragments are written by comparch via `produces:`
+```
+
+A tier without a `draft` produces no content of its own; it
+exists purely as a join target. Most tiers have drafts.
+
+## 1.2 Edge declarations
+
+Five platform-level edge types: `fanout`, `reference`,
+`dependency`, `policy_application`, `synthesis`. Bundles
+declare named instances typed against one of these.
+
+```yaml
+- fanout:
+    parent: sysarch
+    child: comp
+    property: draft.components
+    cardinality: { child: { min: 1 } }
+
+- reference:
+    type: fulfills                              # comp → resp
+    source: comp
+    target: resp
+    declared_in: comp.draft.responsibilities[].@id
+    cardinality:
+      source: { min: 1 }                        # every comp fulfills ≥1 resp
+      target: { min: 1, max: 1 }                # every resp fulfilled by exactly 1 comp
+
+- dependency:
+    source: subcomp
+    target: subcomp
+    declared_in: comparch.draft.sub_dependencies[]
+    from: @from                                 # resolves via subcomp.identity (alias)
+    to:   @to
+    scope: within(comparch)                     # both endpoints in same comparch's fanout
+    graph_constraint: [acyclic, no_self_loop]
+```
+
+Cardinality endpoints use `{ min, max }` bounds. `{ min: 1,
+max: 1 }` is exactly-one; `{ min: 1 }` is at-least-one;
+`{ min: 0 }` is optional; `max: many` is the default.
+Cardinality can be filtered (`when: kind == presentational`)
+and scoped (`per_source(subreqs)`).
+
+## 1.3 Context walks
+
+A tier's `context:` is a list of typed edge walks its generator
+reads. Each entry yields handles, fragments, or synthesis views.
+
+```yaml
+comparch:
+  scope: per(comp)
+  context:
+    - self.parent.handle
+    - self.parent.fulfills → resp.handle
+    - self.parent.decomposed_by(subresp)
+    - self.parent.dependency → target.handle.fragments[pubapi]
+    - self.parent.domain_parent → target.synthesis
+```
+
+Context is the only readiness signal the scheduler needs. A
+`(tier, scope)` pair is ready when every traversal in its
+`context:` resolves to a ready source.
+
+## 1.4 Fragment production
+
+A tier can declare that its draft writes a fragment owned by a
+different node:
+
+```yaml
+comparch:
+  produces:
+    - fragment: { owner: self.parent, kind: techspec, authored: draft.techspec }
+    - fragment: { owner: self.parent, kind: pubapi,   authored: draft.pubapi }
+    - fragment: { owner: self.parent, kind: privapi,  authored: draft.privapi }
+```
+
+This is how `comparch` populates its parent `comp`'s fragments
+without `comparch` and `comp` being the same tier.
+
+---
+
+# Part 2 — Flow declaration sketches
+
+Working sketches for each of the default bundle's five flows.
+Each flow is a **schema delta** per platform spec §A.4: a
+`flow.yaml` declaring additional tiers and edges the platform
+grafts onto the scaffold, plus prompt files the flow-declared
+tiers reference. (Scaffolding is not a flow; it's the
+scaffold's baseline behavior with no delta active — see Part 1
+for how the scaffold's tiers schedule themselves from an
+approved input doc.)
+
+Flows are sketched one at a time. Each sketch covers:
+
+- **`flow.yaml`** — the schema delta: seed shape, direction,
+  new tiers (planning tiers, phase-zero tiers), new edges
+  into the scaffold.
+- **Plan grammar** — the XML shape the planning tiers' drafts
+  conform to.
+- **Prompt files** — typically one shared `plan.md` Liquid
+  template referenced by every planning tier in the flow,
+  plus `phase-zero.md` where applicable.
+- **Walked example** — what the LLM sees at a representative
+  planning tier visit and the downstream scaffold tier regen.
+
+
+## 2.1 Downward propagation
+
+The platform's reactive scheduler would cascade staling-driven
+regens through the dependent graph anyway; downward propagation
+is kept as an explicit flow so the bundle ships an editable,
+reviewable specification of "consume deferred feedback at these
+nodes and propagate the implications downward." Mechanically
+the thinnest of the five flows — no phase-zero, no structural
+ops, no upward leg — and therefore the right starting sketch.
+
+### 2.1.1 `flows/downward-propagation/flow.yaml`
+
+```yaml
+flow:
+  name: downward-propagation
+  seed:
+    shape: node_set_with_feedback     # list of {node_id, feedback}
+  invokes: downward_cascade
+  parameters:
+    max_depth:
+      type: int
+      default: null                   # null = walk to leaves
+      description: |
+        Optional cap on tiers below the seed the walk visits.
+        Matches v2 §A.2.5's "propagate through comparch and
+        subcomparch but stop before impl" use case.
+
+# One planning tier per scaffold tier this flow visits. All
+# reference the same ./plan.md. Bundle authors who need per-
+# scaffold-tier prompt divergence point individual tiers at
+# different files.
+tiers:
+  dp_plan_expansion:
+    plans: expansion              # scaffold tier this plans for
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed_feedback: flow.seed.feedback_for(self.target)
+      scope_handle: self.target.handle
+      upstream_plan: self.target.parent.active_plan   # nil at seed
+
+  dp_plan_reqs:
+    plans: reqs
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed_feedback: flow.seed.feedback_for(self.target)
+      scope_handle: self.target.handle
+      upstream_plan: self.target.parent.active_plan
+
+  # … dp_plan_sysarch, dp_plan_subreqs, dp_plan_comparch,
+  #   dp_plan_subcomparch, dp_plan_impl, dp_plan_plan,
+  #   dp_plan_code — same pattern, 9 planning tier declarations.
+
+# Scope and edge semantics of `plans: <scaffold_tier>`:
+#   - scope = per(scaffold_tier) with scope_filter ensuring the
+#     target is in the flow's visit set (seed or implicated by an
+#     upstream approved plan).
+#   - establishes a 1:1 edge planning_tier → scaffold_tier, exposing
+#     the plan handle as context.active_plan on the scaffold tier
+#     regen when a flow is active. Idle: context.active_plan is nil.
+```
+
+The flow doesn't declare edges explicitly — the `plans:` field
+on each planning tier implies both the scope and the edge
+pattern. Platform reads `plans: expansion` as "one instance of
+this planning tier per expansion node in the flow's visit set;
+the plan handle lands on that expansion node's regen context as
+`active_plan`."
+
+### 2.1.2 `flows/downward-propagation/plan-grammar.xml`
+
+Standard plan grammar, no `<structural-ops>` block (this flow
+forbids them — plans auto-approve):
+
+```xml
+<plan>
+  <intent>
+    Brief prose describing what changes in this tier's regen
+    given the seed feedback or upstream plan.
+  </intent>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+
+Plans with only `<implicated-children>` auto-approve per
+platform spec §A.4.6.
+
+### 2.1.3 `flows/downward-propagation/plan.md`
+
+Shared Liquid template. Every `dp_plan_*` tier references it.
+
+````markdown
+You are planning a regen of the {{ scope.target.tier }} node
+at {{ scope.target.id }} as part of a downward-propagation
+flow run.
+
+{% if context.seed_feedback %}
+# Seed visit — feedback to incorporate
+
+Accumulated feedback on this node:
+
+> {{ context.seed_feedback }}
+
+Your task: plan a regen that incorporates the feedback, and
+identify which children need to inherit the change.
+{% else %}
+# Downstream visit — inheriting an upstream change
+
+The upstream {{ scope.target.parent.tier }} regen's plan was
+approved. It implicated this node as a
+`{{ context.upstream_plan.disposition_for(scope.target) }}`
+visit because:
+
+> {{ context.upstream_plan.rationale_for(scope.target) }}
+
+Full upstream plan intent:
+
+> {{ context.upstream_plan.intent }}
+
+Your task: plan a regen that brings this node into line with
+the upstream change, and identify which children need to
+inherit it.
+{% endif %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Plan grammar
+
+Produce a plan in the grammar below. Be precise about scope —
+plans in this flow auto-approve, so the implicated-children
+checklist you emit drives downstream scheduling directly.
+
+For each child, choose a disposition:
+
+- **visit** — the child needs to regenerate. Enqueued.
+- **skip** — the child is unaffected; preserve existing content.
+- **trivial** — the change reaches the child via a renamed
+  field or reformatted text but produces no material content
+  change. Preserve content; record the assessment.
+
+Prefer **trivial** over **visit** when the material impact is
+unclear. A follow-up downward-propagation flow can correct
+misclassifications cheaply; over-scheduled regens can't be
+uncreated.
+
+You may NOT emit `<structural-ops>`. The platform will reject
+the plan and re-prompt if you do. If a change requires
+renaming, reparenting, merging, or splitting, the user is in
+the wrong flow and should run a refactor instead.
+
+```xml
+<plan>
+  <intent>...</intent>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+````
+
+No per-tier conditionals needed — tier-specific framing comes
+from `scope.target.tier` / `scope.target.parent.tier`
+interpolation and from `context.scope_handle` (which renders
+the scaffold tier's handle per its declaration). A bundle
+author who wanted tier-specific guidance could add
+`{% if scope.target.tier == 'comparch' %}…{% endif %}` blocks,
+or split one of the `dp_plan_*` tiers off to point at a
+different prompt file.
+
+### 2.1.4 Scaffold tier regen with flow active
+
+No new prompt file for regen. When the flow is active, each
+scaffold tier's generation prompt sees `context.active_plan`
+as an additional context entry. Scaffold tier prompts render
+it conditionally:
+
+```liquid
+{% if context.active_plan %}
+# Approved plan
+
+> {{ context.active_plan.intent }}
+
+The plan's intent is the scope contract for this regen. Don't
+change fragments the plan didn't name. If the regen needs to
+touch something the plan didn't anticipate, stop and indicate
+the plan needs revision; the platform will fail back to
+re-planning rather than silently expanding scope.
+{% endif %}
+```
+
+Idle (no flow): `context.active_plan` is nil, the block
+renders empty, the tier's generation prompt is its
+from-scratch default. Flow-active: plan guidance is present.
+One scaffold-tier prompt, two modes of use.
+
+### 2.1.5 Walked example
+
+User left feedback on `comparch_billing_abc`: "The public API
+should expose `process_batch(invoices)`, not one-at-a-time
+`process_one(invoice)`."
+
+**Seed visit — `dp_plan_comparch` instantiates on
+`comparch_billing_abc`:**
+
+Liquid renders `plan.md` with:
+- `scope.target.id = "comparch_billing_abc"`
+- `scope.target.tier = "comparch"`
+- `context.seed_feedback = "The public API should expose
+  process_batch(invoices), not one-at-a-time
+  process_one(invoice)."`
+- `context.scope_handle = <the comparch's handle: name,
+  kind, role, api_intent, fragments list>`
+- `context.upstream_plan = nil` (this is the seed)
+
+Plan output:
+
+```xml
+<plan>
+  <intent>
+    Replace the per-invoice public API
+    (`process_one(invoice: Invoice) -> InvoiceResult`) with a
+    batch endpoint
+    (`process_batch(invoices: list[Invoice]) -> BatchResult`).
+    The pubapi fragment changes; the techspec gains a note on
+    batch semantics; the deps to BillingDb and TelemetryService
+    remain. The subcomponent decomposition is unchanged.
+  </intent>
+  <implicated-children>
+    <child id="subcomp_invoiceprocessor_xyz" disposition="visit">
+      <rationale>InvoiceProcessor's pubapi receives invoices
+        from comparch's API; the batching change shifts its
+        input shape.</rationale>
+    </child>
+    <child id="subcomp_billingdb_xyz" disposition="skip">
+      <rationale>BillingDb stores individual invoices;
+        batching is upstream of its
+        responsibility.</rationale>
+    </child>
+    <child id="subcomp_telemetry_xyz" disposition="skip">
+      <rationale>TelemetryService unaffected by the batching
+        choice.</rationale>
+    </child>
+  </implicated-children>
+</plan>
+```
+
+Plan auto-approves. Platform sets `has_pending_flow_visit =
+true` on `subcomp_invoiceprocessor_xyz` (scope_filter trigger
+for `dp_plan_subcomparch`).
+
+**Scaffold regen — `comparch_billing_abc`:**
+
+The comparch generation prompt renders with
+`context.active_plan` populated. The
+`{% if context.active_plan %}` block includes the intent as
+scope guidance. The LLM produces a new comparch draft scoped
+to pubapi + techspec changes. Diff-reviewed, auto-approved.
+
+**Downstream visit — `dp_plan_subcomparch` instantiates on
+`subcomp_invoiceprocessor_xyz`:**
+
+Liquid renders `plan.md` with:
+- `scope.target.tier = "subcomparch"`
+- `context.seed_feedback = nil`
+- `context.upstream_plan = <the comparch plan above>`
+- `context.upstream_plan.disposition_for(scope.target) =
+  "visit"`
+- `context.upstream_plan.rationale_for(scope.target) =
+  "InvoiceProcessor's pubapi receives invoices from
+  comparch's API; the batching change shifts its input
+  shape."`
+
+Planning proceeds. The walk eventually terminates at the leaf
+impl, which regenerates a `git_commit`-tiered code diff; the
+cascade ends.
+
+### 2.1.6 What this validates / still to figure out
+
+**Validates** the schema-delta model: the flow is entirely
+expressible as a YAML declaration plus one Liquid prompt
+file. No flow-specific runtime. Bundle author surface area
+for adding downward-propagation is 3 files (`flow.yaml`,
+`plan-grammar.xml`, `plan.md`).
+
+**Validates** that per-scaffold-tier planning tiers stay
+simple: 9 near-identical declarations in `flow.yaml`, all
+pointing at the same prompt, differentiated only by which
+scaffold tier they plan for. Trades a few lines of repetitive
+YAML for explicit per-tier identity in the event log and
+straightforward scope expressions.
+
+**Still to figure out:**
+
+1. **The `plans: <scaffold_tier>` syntactic sugar.** Need to
+   pin down exactly how it desugars — what scope expression,
+   what edge type, what `scope_filter` predicate for "target
+   is in the flow's visit set." Probably fits in platform
+   spec §A.3 (reactive-schema chapter) once a couple more
+   flows are worked through.
+2. **`context.upstream_plan.disposition_for(target)` and
+   `rationale_for(target)` helpers.** The upstream plan's
+   `<implicated-children>` structure needs convenience
+   helpers the Liquid template can call. Worth spec'ing in
+   A.4.5 alongside the base standard variable set.
+3. **Multi-seed feedback ordering.** If two seed nodes have
+   feedback and one is the ancestor of the other, the
+   ancestor's regen affects the descendant before the
+   descendant's seed visit fires. The descendant's seed
+   feedback should be consumed at *its* seed visit, in
+   addition to whatever the ancestor's plan implicated.
+   Probably a note in A.4.10 about feedback consumption
+   ordering.
+4. **Regen scope-exceeds-plan detection.** The regen prompt
+   says "stop and indicate the plan needs revision," but the
+   mechanism for "regen detected scope creep" isn't spec'd.
+   Options: rely on regen review catching it, or a regen-side
+   validator comparing diff scope against plan intent. Worth
+   nailing in A.4 once more flows are worked through.
+
+
+## 2.2 Feature request
+
+Seed is prose describing new capability the user wants
+("add batch invoice processing"). A **phase-zero planning
+tier** reads the prose plus the current `expansion` and
+`sysarch` handles and produces the plan for `expansion`'s
+regen — intent prose plus an additions list naming new
+features to mint. The rest of the walk is structurally
+identical to downward-propagation: one planning tier per
+scaffold tier, all feeding the corresponding scaffold
+tier's regen. The novel piece is the phase-zero entry
+point that interprets prose seed into a structured
+starting plan.
+
+### 2.2.1 `flows/feature-request/flow.yaml`
+
+```yaml
+flow:
+  name: feature-request
+  seed:
+    shape: prose
+  invokes: downward_cascade
+  parameters:
+    max_depth:
+      type: int
+      default: null
+      description: |
+        Optional cap on tiers below expansion the walk
+        visits. Use for preview runs that stop at sysarch
+        to review architectural impact before committing
+        subcomponent-level work.
+
+tiers:
+  # Phase-zero — the entry-point planning tier. Plans
+  # the expansion regen from the user's prose seed.
+  # Labeled "phase-zero" conceptually; mechanically it's
+  # just a planning tier like any other.
+  fr_plan_expansion:
+    plans: expansion
+    phase_zero: true                 # marker, informational
+    prompt: ./phase-zero.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed: flow.seed                # the prose
+      current_expansion: scope.target.handle
+      current_sysarch:   scaffold.sysarch.handle
+
+  fr_plan_reqs:
+    plans: reqs
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      scope_handle:  scope.target.handle
+      upstream_plan: scope.target.parent.active_plan
+
+  fr_plan_sysarch:
+    plans: sysarch
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      scope_handle:  scope.target.handle
+      upstream_plan: scope.target.parent.active_plan
+
+  # … fr_plan_subreqs, fr_plan_comparch, fr_plan_subcomparch,
+  #   fr_plan_impl, fr_plan_plan, fr_plan_code — same pattern.
+```
+
+Two prompt files in this flow: `phase-zero.md` (entry-
+point, reads the prose seed) and `plan.md` (every
+downstream planning tier; reads upstream plan handle).
+Bundle author could have a single shared file with
+conditionals on `scope.target.tier` if they want fewer
+files; separate files are clearer.
+
+### 2.2.2 `flows/feature-request/plan-grammar.xml`
+
+Extends the downward-propagation grammar with an
+`<additions>` section — the regen at this tier is going
+to mint new children not yet in scaffold, and the plan
+needs to enumerate them so the review checklist and the
+downstream scheduler both have something concrete to
+latch onto.
+
+```xml
+<plan>
+  <intent>
+    Brief prose describing what this tier's regen will
+    change, including any new children being minted.
+  </intent>
+  <additions>
+    <child alias="batch_invoice_processing"
+           name="Batch invoice processing">
+      <rationale>New feature introduced by the flow's
+        seed prose.</rationale>
+    </child>
+    ...
+  </additions>
+  <implicated-children>
+    <child id="feat_existing_abc" disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+
+`<additions>` entries use aliases (not IDs) since the
+children don't exist at plan time. The scaffold tier's
+regen resolves aliases to minted IDs; downstream planning
+tier instances see the resulting real nodes in their
+context once the regen commits.
+
+No `<structural-ops>` block — feature-request doesn't
+propose renames / reparents / merges. Plans auto-approve.
+A user who wants structural reshaping alongside the new
+feature runs refactor instead (or runs feature-request
+first and refactor after).
+
+### 2.2.3 `flows/feature-request/phase-zero.md`
+
+Entry-point prompt — reads prose seed and produces the
+expansion regen's plan.
+
+````markdown
+You are the phase-zero planning tier for a feature-request
+flow. The user has given you prose describing new
+capability they want, and your job is to plan the
+regeneration of the project's expansion node: decide
+which features to add, and capture the shape of the
+resulting expansion regen.
+
+# User's request
+
+{{ context.seed }}
+
+# Current project state
+
+## Feature expansion (current)
+
+{{ context.current_expansion }}
+
+## System architecture (current)
+
+{{ context.current_sysarch }}
+
+# Your task
+
+Produce a plan in the grammar below. Your plan will drive
+the expansion regen, which will mint new `feat_*` nodes
+for each entry in your `<additions>` list and propagate
+downward through the rest of the flow.
+
+Guidance:
+
+- Split the user's request into one or more distinct
+  features if it implicates multiple concerns. "Add
+  billing and invoice delivery" is probably two features,
+  not one.
+- Name features for the capability they introduce, not for
+  the component they'd naturally live in. Downstream
+  sysarch decides component boundaries.
+- `<additions>` entries use aliases (not IDs) — the
+  expansion regen assigns real IDs at mint time.
+- `<implicated-children>` lists existing features this
+  request modifies. Usually empty for pure additions; may
+  have entries if the user's prose reframes or extends
+  an existing feature.
+- You may NOT emit `<structural-ops>`. If the user's
+  request requires renaming / reparenting / deleting
+  existing features, flag it in the intent and tell the
+  user to run refactor instead.
+
+```xml
+<plan>
+  <intent>...</intent>
+  <additions>
+    <child alias="..." name="...">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </additions>
+  <implicated-children>
+    <child id="feat_..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+````
+
+### 2.2.4 `flows/feature-request/plan.md`
+
+Downstream planning tiers. Structurally parallel to
+downward-propagation's `plan.md` — the downstream-visit
+branch — with the framing adjusted for "new features are
+entering the scaffold" rather than "feedback is being
+consumed."
+
+````markdown
+You are planning a regen of the {{ scope.target.tier }}
+node at {{ scope.target.id }} as part of a feature-request
+flow run.
+
+# Upstream plan
+
+The upstream {{ scope.target.parent.tier }} regen's plan
+was approved. It implicated this node as a
+`{{ context.upstream_plan.disposition_for(scope.target) }}`
+visit because:
+
+> {{ context.upstream_plan.rationale_for(scope.target) }}
+
+Full upstream plan intent:
+
+> {{ context.upstream_plan.intent }}
+
+New children minted upstream:
+
+{% for addition in context.upstream_plan.additions %}
+- `{{ addition.alias }}` — {{ addition.name }}
+{% endfor %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Your task
+
+Produce a plan for this tier's regen given the upstream
+changes. Identify:
+
+- `<additions>` — new children this tier's regen will
+  mint in response. For `reqs` seeing a new `feat_*`,
+  this is new `resp_*` nodes. For `sysarch` seeing new
+  resps, this may be new `comp_*` nodes (or existing
+  comps getting new resps assigned, captured in
+  `<implicated-children>`).
+- `<implicated-children>` — existing children whose
+  content changes. Use `disposition=visit|skip|trivial`
+  as in downward-propagation (§2.1).
+
+Prefer extending existing children over minting new ones
+when the new capability fits an existing responsibility
+or component. The user's request is phrased as capability
+("batch invoice processing"), not as architecture — it's
+this tier's job to decide whether that capability lives
+in a new structural home or extends an existing one.
+
+No `<structural-ops>`. Plans auto-approve.
+
+```xml
+<plan>
+  <intent>...</intent>
+  <additions>
+    <child alias="..." name="...">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </additions>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+````
+
+### 2.2.5 Scaffold tier regen with flow active
+
+Same mechanism as downward-propagation (§2.1.4). Each
+scaffold tier's generation prompt picks up
+`context.active_plan` and renders a
+`{% if context.active_plan %}` block with the plan's
+intent, additions, and implicated-children as regen
+scope guidance.
+
+The addition here: the scaffold tier's fanout now reads
+the plan's `<additions>` to know which new children to
+mint. For example, expansion's fanout over feat_*
+children normally draws from `draft.features[]`; with a
+flow active and a plan in context, expansion's regen
+writes a draft whose `features[]` reflects the additions
+from the plan, and normal fanout mints them.
+
+### 2.2.6 Walked example (partial)
+
+Seed: "add batch invoice processing — invoices should be
+processed in bulk instead of one at a time, to support
+high-volume customers."
+
+**Phase-zero — `fr_plan_expansion` on the expansion
+singleton:**
+
+Liquid renders `phase-zero.md` with:
+- `context.seed` = the prose above
+- `context.current_expansion` = current expansion handle
+- `context.current_sysarch` = current sysarch handle
+
+Plan output (elided):
+
+```xml
+<plan>
+  <intent>
+    Add a "Batch invoice processing" feature to the
+    project. The feature introduces bulk invoice
+    handling as a first-class capability, with
+    implications for high-volume customer support.
+  </intent>
+  <additions>
+    <child alias="batch_invoice_processing"
+           name="Batch invoice processing">
+      <rationale>Direct expansion of the user's
+        request.</rationale>
+    </child>
+  </additions>
+  <implicated-children/>
+</plan>
+```
+
+Auto-approves. Expansion regens, mints
+`feat_batchinvoiceprocessing_abc123`.
+
+**Downstream — `fr_plan_reqs` on the reqs singleton:**
+
+Liquid renders `plan.md` with:
+- `context.upstream_plan.additions` includes the new
+  feat
+- `context.upstream_plan.intent` reads through
+
+Plan output (elided): adds new `resp_*` entries for
+batch-throughput and batch-validation; implicates
+existing billing-related resps for visit.
+
+The walk continues through sysarch (assigning new resps
+to an existing Billing comp), that comp's subreqs,
+comparch, subcomparch, impl, plan, code.
+
+### 2.2.7 What this validates / still to figure out
+
+**Validates** phase-zero as a planning tier: `plans:
+expansion` + `phase_zero: true` + context reading
+`flow.seed` is all the mechanism needed. No special
+runtime for phase-zero.
+
+**Validates** `<additions>` in the plan grammar. The
+scaffold tier's fanout reads additions at mint time;
+aliases resolve to real IDs; downstream planning sees
+minted nodes in context via the updated upstream handle.
+
+**Still to figure out:**
+
+1. **Partial-visit fanout.** When a plan has both
+   `<additions>` and `<implicated-children>` with some
+   children dispositioned `skip`, the scaffold tier's
+   regen needs to write a draft that mints the
+   additions but leaves skipped children unchanged.
+   That's a property of the scaffold tier's draft
+   grammar and regen prompt — straightforward, worth a
+   note in A.4 about how regens compose plan outputs.
+2. **Phase-zero-reads-sysarch dependency.** Phase-zero
+   reads the current `sysarch` handle as context. What
+   happens during scaffolding when sysarch isn't
+   minted yet? Probably: feature-request is only valid
+   against a project that has completed scaffolding up
+   through sysarch. Enforce at flow-start: the flow
+   lobby rejects feature-request if sysarch is missing
+   or pending.
+3. **Interaction with downward propagation of existing
+   feedback.** If there's accumulated feedback on
+   `sysarch` and the user kicks a feature-request, the
+   fr_plan_sysarch plan ought to consider that feedback
+   alongside the new feature. Either: feature-request's
+   planning tiers read `scope.target.pending_feedback`
+   as part of context, or: the user should run
+   downward-propagation first to drain feedback, then
+   feature-request. The second is the v2 behavior
+   (one-flow-at-a-time lobby). Probably fine to keep;
+   worth a UX affordance in the lobby that says "this
+   node has pending feedback; consume it first?"
+4. **Phase-zero context on bundle-agnostic terms.** The
+   phase-zero declaration reads
+   `scaffold.sysarch.handle` by name — that's a default-
+   bundle-specific reference. A bundle without a
+   `sysarch` tier would need a different reference.
+   Phase-zero's context is genuinely bundle-specific,
+   which means phase-zero prompts aren't portable across
+   bundles. That's probably fine — phase-zero shapes
+   the seed into the specific schema the bundle uses —
+   but worth noting.
+
+## 2.3 Refactor
+
+Seed is prose describing a structural change the user wants
+("extract the caching layer out of the billing service into
+its own top-level component", "rename Policy to Rule
+throughout"). A phase-zero planning tier reads the prose and
+current expansion/sysarch, emits a plan whose `<structural-
+ops>` list names the destructive operations to apply. Each
+downstream planning tier inherits the structural-ops list as
+upstream context and adds its own operations where relevant.
+**Structural ops apply immediately on plan approval** per
+platform spec §A.4.6 — each tier's regen sees the post-op
+state as current. No deferred end-of-run commit; no
+ready-to-apply state.
+
+Every plan in this flow can carry `<structural-ops>`, so
+every plan is **human-gated** per platform spec §A.4.6. The
+bundle author doesn't set a flow-level "always gate" knob —
+the gate falls out of the planning tier's grammar allowing
+`<structural-ops>`.
+
+### 2.3.1 `flows/refactor/flow.yaml`
+
+```yaml
+flow:
+  name: refactor
+  seed:
+    shape: prose
+  invokes: downward_cascade
+  parameters:
+    max_depth:
+      type: int
+      default: null
+      description: |
+        Optional cap on tiers below expansion the walk
+        visits.
+
+tiers:
+  rf_plan_expansion:
+    plans: expansion
+    phase_zero: true
+    prompt: ./phase-zero.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed: flow.seed
+      current_expansion: scope.target.handle
+      current_sysarch:   scaffold.sysarch.handle
+
+  rf_plan_reqs:
+    plans: reqs
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      scope_handle:  scope.target.handle
+      upstream_plan: scope.target.parent.active_plan
+
+  rf_plan_sysarch:
+    plans: sysarch
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      scope_handle:  scope.target.handle
+      upstream_plan: scope.target.parent.active_plan
+
+  # … rf_plan_subreqs, rf_plan_comparch, rf_plan_subcomparch,
+  #   rf_plan_impl, rf_plan_plan, rf_plan_code — same pattern.
+
+# Structural ops apply immediately per platform spec §A.4.6
+# — no end_of_run hook, no batch commit. On each plan's
+# approval, the instruction-vocabulary reducer applies its
+# <structural-ops> list in order, and the flow continues
+# with the post-op state.
+```
+
+### 2.3.2 `flows/refactor/plan-grammar.xml`
+
+Extends the feature-request grammar with a
+`<structural-ops>` block. Each op has a `type` and
+op-specific parameters. Op types match the platform's
+instruction vocabulary (§A.8.1): rename, reparent, promote,
+demote, merge, split, delete, plus per-edge-type
+create/delete.
+
+```xml
+<plan>
+  <intent>
+    Prose describing the structural change at this tier
+    and the reasoning for each structural op proposed.
+  </intent>
+  <structural-ops>
+    <op type="rename" target="policy_abc123" new-name="Rule"/>
+    <op type="promote" target="subcomp_caching_xyz"
+        new-parent="null"/>                      <!-- to top level -->
+    <op type="merge" targets="comp_x,comp_y" keep="comp_x"/>
+    <op type="split" target="comp_billing"
+        new-children="comp_billing_core,comp_billing_reporting"/>
+    <op type="delete" target="feat_legacy"/>
+    <!-- ... -->
+  </structural-ops>
+  <additions>
+    <child alias="..." name="...">
+      <rationale>Minted by the refactor (e.g., the
+        extracted component).</rationale>
+    </child>
+    ...
+  </additions>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>Existing child whose content changes
+        because of the structural ops above.</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+
+Op enumeration is bundle-specific — the default bundle's
+planning tiers accept the ops listed above because those
+match the default's instruction vocabulary. A bundle with
+different structural operations would declare different op
+types in its grammar.
+
+Any non-empty `<structural-ops>` → **human-gated**. The
+review UI renders the ops list as a line-item checklist
+alongside the implicated-children checklist; reviewers can
+strike individual ops without rejecting the whole plan.
+Struck ops don't apply on approval; struck plan children
+don't enqueue.
+
+### 2.3.3 `flows/refactor/phase-zero.md`
+
+````markdown
+You are the phase-zero planning tier for a refactor flow.
+The user has given you prose describing a structural
+change — a rename, promotion, merge, extraction, deletion,
+or similar. Your job is to interpret the prose into
+concrete structural operations and produce the plan for
+the expansion regen that launches the flow.
+
+# User's request
+
+{{ context.seed }}
+
+# Current project state
+
+## Feature expansion
+
+{{ context.current_expansion }}
+
+## System architecture
+
+{{ context.current_sysarch }}
+
+# Your task
+
+Produce a plan whose `<structural-ops>` list names the
+operations the platform will apply on approval. Each op
+commits immediately when the plan is approved; downstream
+planning tiers see your plan as upstream context, reason
+from it, and operate against the post-op state.
+
+## Interpreting prose into structural ops
+
+Match the user's request to operations from the
+instruction vocabulary:
+
+- "rename X to Y" → `<op type="rename" target="X-id"
+  new-name="Y"/>`
+- "extract X out of Y into its own top-level component"
+  → `<op type="promote" target="X-id" new-parent="null"/>`
+- "merge X and Y into Z" → `<op type="merge"
+  targets="X-id,Y-id" keep="X-id"/>` (X's id survives,
+  Y's content folds in)
+- "split X into X_core and X_reporting" → `<op
+  type="split" target="X-id"
+  new-children="core-alias,reporting-alias"/>`
+- "delete X" → `<op type="delete" target="X-id"/>`
+
+Resolve names to stable IDs using the current expansion
+and sysarch handles above. If a name resolves ambiguously,
+flag it in the intent and propose one interpretation; the
+reviewer can adjust before approving.
+
+## Scope discipline
+
+- Don't propose structural ops on nodes the user didn't
+  name. One refactor run, one set of intents. Unrelated
+  cleanup belongs in a separate refactor run.
+- If the request requires non-structural changes (new
+  features, feedback consumption), flag it in the intent
+  and tell the user to run feature-request or
+  downward-propagation instead.
+- If the request is ambiguous ("clean up the billing
+  components"), return a plan whose intent describes the
+  ambiguity and an empty `<structural-ops>` list. The
+  reviewer either clarifies and re-kicks or cancels the
+  flow.
+
+## Cascading
+
+You don't enumerate downstream effects. Downstream
+planning tiers receive your `<structural-ops>` in their
+upstream context and decide what cascades at their level.
+
+## Output
+
+```xml
+<plan>
+  <intent>Prose explaining the refactor, which ops you
+    propose and why, and any ambiguity the reviewer
+    should resolve.</intent>
+  <structural-ops>
+    <op type="..." .../>
+    ...
+  </structural-ops>
+  <additions>
+    <child alias="..." name="...">
+      <rationale>e.g. the extracted new comp, minted by
+        the promote op.</rationale>
+    </child>
+    ...
+  </additions>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>Existing child implicated by the
+        refactor.</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+````
+
+### 2.3.4 `flows/refactor/plan.md`
+
+Downstream planning tiers. Receives the upstream plan's
+`<structural-ops>` in context, decides what the ops imply
+at this tier.
+
+````markdown
+You are planning a regen of the {{ scope.target.tier }}
+node at {{ scope.target.id }} as part of a refactor flow
+run.
+
+# Upstream plan
+
+The upstream {{ scope.target.parent.tier }} regen's plan
+was approved. It implicated this node as a
+`{{ context.upstream_plan.disposition_for(scope.target) }}`
+visit because:
+
+> {{ context.upstream_plan.rationale_for(scope.target) }}
+
+## Upstream structural ops
+
+The upstream plan proposed:
+
+{% for op in context.upstream_plan.structural_ops %}
+- `{{ op.type }}` on `{{ op.target }}`: {{ op.summary }}
+{% endfor %}
+
+Full upstream plan intent:
+
+> {{ context.upstream_plan.intent }}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Your task
+
+Produce a plan for this tier's regen. Identify:
+
+- `<structural-ops>` — operations **this** tier's regen
+  proposes. Usually empty. Structural decisions live at
+  structural tiers (sysarch, comparch); content tiers
+  (expansion, reqs, impl) rarely add ops. A content tier
+  should propose an op only when the upstream refactor
+  cascades into a structural decision at its level — e.g.,
+  if sysarch promotes a subcomp into a top-level comp,
+  the donor comp's comparch may need to promote one of
+  its remaining subcomponents to fill the foundation
+  role.
+- `<additions>` — new children this tier mints in
+  response (e.g., a new dependency edge to a promoted
+  comp).
+- `<implicated-children>` — existing children affected
+  by the upstream ops, with `visit | skip | trivial`
+  dispositions.
+
+## Discipline
+
+- Don't add structural ops the upstream didn't imply.
+  Refactor is scoped to the user's original intent;
+  unrelated structural cleanup belongs in a separate
+  run.
+- This plan is human-gated. Be precise about what you
+  propose — reviewers will edit or strike individual ops.
+
+## Output
+
+```xml
+<plan>
+  <intent>...</intent>
+  <structural-ops>
+    <op type="..." .../>
+    ...
+  </structural-ops>
+  <additions>...</additions>
+  <implicated-children>...</implicated-children>
+</plan>
+```
+````
+
+### 2.3.5 Walked example (partial)
+
+Seed: "Extract the caching layer out of the billing
+service into its own top-level component."
+
+**Phase-zero — `rf_plan_expansion` on the expansion
+singleton:**
+
+Liquid renders `phase-zero.md`. LLM resolves "caching
+layer" → `subcomp_cachinglayer_xyz` and "billing service"
+→ `comp_billing_abc` by scanning current sysarch. Plan
+output (elided):
+
+```xml
+<plan>
+  <intent>
+    Promote subcomp_cachinglayer_xyz out of comp_billing_abc
+    into a new top-level component. The caching layer
+    becomes comp_caching, sibling to comp_billing. Billing
+    loses a subcomp and gains a dependency on comp_caching.
+  </intent>
+  <structural-ops>
+    <op type="promote" target="subcomp_cachinglayer_xyz"
+        new-parent="null" new-alias="comp_caching"/>
+  </structural-ops>
+  <additions/>
+  <implicated-children/>
+</plan>
+```
+
+Reviewer opens the review panel, sees the structural-ops
+list as a line-item checklist (one op), accepts. Plan
+human-gate approved.
+
+Expansion regen runs but is effectively a no-op — the plan
+has empty `<additions>` and empty `<implicated-children>`,
+and expansion's draft doesn't change. The scaffold tier
+prompt's `{% if context.active_plan %}` block includes
+the plan but the tier's output stays the same.
+
+**`rf_plan_reqs` on the reqs singleton:** trivial plan;
+reqs content doesn't change because responsibilities don't
+move in this refactor. Reviewer approves a thin plan.
+
+**`rf_plan_sysarch` on the sysarch singleton:** sees the
+upstream plan's promote op in context. Plan output
+(elided):
+
+```xml
+<plan>
+  <intent>
+    Sysarch reflects post-promote state: comp_caching
+    joins the top-level components list; comp_billing's
+    subcomponent references drop subcomp_cachinglayer;
+    a new dependency edge billing → caching is declared
+    in billing's deps fragment.
+  </intent>
+  <structural-ops/>
+  <additions/>
+  <implicated-children>
+    <child id="comp_billing_abc" disposition="visit">
+      <rationale>Loses a subcomp, gains a dep; its
+        comparch regenerates.</rationale>
+    </child>
+    <child alias="comp_caching" disposition="visit">
+      <rationale>New top-level comp; its comparch is
+        minted post-promote.</rationale>
+    </child>
+  </implicated-children>
+</plan>
+```
+
+Reviewer approves. Sysarch regen writes a draft
+reflecting the post-promote shape; the regen prompt reads
+each approved plan's `<structural-ops>` immediately;
+downstream regens read the post-op state directly from
+the projection.
+
+The walk continues through the implicated comparches
+(billing's loses the subcomp reference; caching's is
+minted fresh from the promoted subcomp's fragments). Each
+approved plan along the way applies its ops via the
+instruction-vocabulary reducer as soon as approval lands,
+so by the time `rf_plan_comparch` fires on `comp_caching`,
+`comp_caching` is a real node in the projection rather
+than a pending addition.
+
+### 2.3.6 What this validates / still to figure out
+
+**Validates** the structural-ops grammar plus the
+immediate-apply commit pattern. Regens during the flow
+read the current projection, which already reflects
+previously-approved ops. No pending-ops context overlay
+needed.
+
+**Validates** the grammar-level human-gate rule: every
+plan in this flow has a non-empty `<structural-ops>`
+grammar block (even when the ops list itself is empty),
+which triggers the gate uniformly. No flow-level knob
+needed.
+
+**Still to figure out:**
+
+1. **Name resolution in phase-zero.** Phase-zero
+   resolves "caching layer" → `subcomp_cachinglayer_xyz`
+   by scanning sysarch handle. Brittle when names are
+   ambiguous; an LLM could confidently hit the wrong
+   node. Possible mitigations: a structured UI that
+   lets the user pick matching nodes before prose
+   submission; or a guardrail that rejects plans whose
+   resolved ops can't be uniquely traced to the prose.
+   Worth a note but not blocking.
+2. **Partial op approval.** Reviewer strikes one of
+   several ops. The plan's intent may now describe a
+   cascade that no longer holds. Options: re-plan from
+   the struck state, or warn in the review UI about
+   dependent ops when one is struck. Worth nailing once
+   refactor has real users. (With immediate-apply,
+   struck ops simply don't commit — the cascade
+   proceeds against whichever ops did, and the reviewer
+   sees the actual post-op state rather than a
+   hypothetical one.)
+3. **Cancel semantics.** Cancelling a refactor mid-flow
+   doesn't auto-revert ops that already committed.
+   Users who want to undo a partial refactor run an
+   **inverse refactor** flow with prose describing the
+   undo. Worth UX affordance in the lobby: "this flow
+   committed N ops before cancel; run inverse-refactor?"
+
+
+## 2.4 Bug-fix propagation
+
+Seed is a code diff — a commit, a PR, or a working-tree
+patch produced outside Catapult that's already modified the
+codebase. The job is to propagate the implications of the
+code change upward through the design graph so the model
+catches up to reality, then sideways through siblings the
+change affects. Same `up_then_down` shape as upward
+propagation with one added wrinkle: a phase-zero tier maps
+the diff to affected `impl_*` leaves via their territory
+declarations (platform §A.16), seeding the upward leg with
+the right set of leaf nodes.
+
+Shape contrast with upward propagation: same upward-leg
+assessment / pivot-at-root / downward-leg regen-with-split
+shape, same human-gated `<assessment>` grammar, same trivial-
+plan elision rules. Different seed (code diff vs. feedback
+set), different phase-zero (maps diff to leaves), and
+**no code is generated on the downward leg** — the input is
+already code; the output is design updates to match.
+
+### 2.4.1 `flows/bug-fix-propagation/flow.yaml`
+
+```yaml
+flow:
+  name: bug-fix-propagation
+  seed:
+    shape: code_diff            # unified diff over repository paths
+  invokes: up_then_down
+  preconditions:
+    - scaffold.manifest.is_populated
+    # territory mapping must exist; without it, phase-zero
+    # can't route the diff to leaves.
+
+tiers:
+  # Phase-zero planning tier: maps the diff's changed paths
+  # to the impl_* leaves whose territory owns them via the
+  # manifest (§A.16). Output is a structured seed-set the
+  # upward leg consumes.
+  bf_phase_zero:
+    plans: manifest
+    phase_zero: true
+    prompt: ./phase-zero.md
+    draft: { root: plan, grammar: ./phase-zero-grammar.xml }
+    context:
+      diff:              flow.seed.diff
+      manifest_handle:   scaffold.manifest.handle
+
+  # Upward-leg planning tiers — one per tier that can be
+  # an affected-impl ancestor. Each is identical in shape
+  # to upward-propagation's up_plan_* tiers; the leaf set
+  # comes from phase-zero's implicated leaves rather than
+  # a user-submitted feedback set.
+  bf_up_plan_impl:
+    plans: impl
+    leg: upward
+    scope_filter: "self.target.in_phase_zero_leaf_set"
+    prompt: ./upward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      assessment_seed:   context.phase_zero.assessment_for(self.target)
+      diff_for_target:  flow.seed.diff_for(self.target.territory)
+      scope_handle:     self.target.handle
+      child_plans:      self.target.children.up_plan.handle
+
+  bf_up_plan_subcomparch:
+    plans: subcomparch
+    leg: upward
+    prompt: ./upward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      scope_handle:  self.target.handle
+      child_plans:   self.target.children.up_plan.handle
+
+  # … bf_up_plan_comparch, bf_up_plan_subreqs,
+  #   bf_up_plan_sysarch, bf_up_plan_reqs,
+  #   bf_up_plan_expansion — same pattern, all the way to
+  #   root.
+
+  # Downward-leg planning tiers — identical to
+  # upward-propagation's dn_plan_* shape. No code tier:
+  # bug-fix propagation doesn't regenerate code.
+  bf_dn_plan_expansion:
+    plans: expansion
+    leg: downward
+    prompt: ./downward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      upstream_plan:  scope.target.parent.active_plan
+      upward_plan:    scope.target.matched_upward_plan.handle
+      scope_handle:   scope.target.handle
+
+  # … bf_dn_plan_reqs, bf_dn_plan_sysarch, bf_dn_plan_subreqs,
+  #   bf_dn_plan_comparch, bf_dn_plan_subcomparch,
+  #   bf_dn_plan_impl. NO bf_dn_plan_plan or bf_dn_plan_code
+  #   because no code generation on this flow.
+
+pivot:
+  from: upward
+  to: downward
+  at: root
+```
+
+Two things worth highlighting against upward-propagation:
+
+- **`bf_phase_zero` replaces the seed-is-already-structured
+  pattern.** Upward-propagation's seed is a
+  `node_set_with_feedback` — already a structured list of
+  `{node, feedback}` pairs; planning tiers find targeted
+  feedback via `flow.seed.feedback_for(target)`. Bug-fix's
+  seed is raw diff; phase-zero parses paths, looks up
+  territory, and produces the `(leaf, per-leaf-assessment-
+  seed)` list the upward leg consumes. `flow.seed.diff` is
+  still available for upward-leg impls that want to see
+  their own slice of the diff (via `flow.seed.diff_for(
+  self.target.territory)`).
+- **No `bf_dn_plan_plan` or `bf_dn_plan_code` tiers.** The
+  downward leg stops at impl. Bug-fix is design-updates-
+  only; if the assessment reveals work that still needs to
+  happen, a follow-up feature-request or refactor flow
+  handles it, and that flow runs code generation through
+  the normal path.
+
+### 2.4.2 `flows/bug-fix-propagation/phase-zero-grammar.xml`
+
+Phase-zero's output is a structured leaf-set — one entry
+per affected impl, with a per-leaf assessment seed. The
+upward leg consumes this instead of `seed_feedback`.
+
+```xml
+<plan leg="phase-zero">
+  <intent>
+    Prose summary of what the diff changes across the
+    project — which subsystems are touched, what pattern
+    the changes suggest.
+  </intent>
+  <affected-leaves>
+    <leaf id="impl_invoicerenderer_xyz">
+      <changed-paths>
+        <path>billing/rendering/pdf.py</path>
+        <path>billing/rendering/templates.py</path>
+      </changed-paths>
+      <assessment-seed>
+        Initial prose framing of what the diff implies at
+        this leaf — what was changed, what the change
+        suggests about scope or contract.
+      </assessment-seed>
+    </leaf>
+    ...
+  </affected-leaves>
+</plan>
+```
+
+Phase-zero is human-gated — reviewer confirms the
+territory mapping picked the right leaves and that the
+assessment-seed framing is accurate before the upward leg
+fans out.
+
+### 2.4.3 `flows/bug-fix-propagation/plan-grammar.xml`
+
+Upward and downward grammars are **identical** to
+upward-propagation's (§2.5.2):
+
+```xml
+<!-- upward -->
+<plan leg="upward">
+  <intent>...</intent>
+  <assessment>...</assessment>
+</plan>
+
+<!-- downward -->
+<plan leg="downward">
+  <intent>...</intent>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+
+Both forbid `<structural-ops>` — bug-fix propagation is
+design-alignment, not refactor. If the assessment reveals a
+structural fix is needed, the reviewer cancels this flow
+and kicks refactor.
+
+### 2.4.4 `flows/bug-fix-propagation/phase-zero.md`
+
+Phase-zero is a hybrid: the platform mechanically resolves
+diff paths to owning impl leaves via the manifest, and the
+LLM only writes per-leaf assessment-seeds as prose. The
+prompt receives a pre-populated skeleton.
+
+````markdown
+You are the phase-zero planning tier for a bug-fix
+propagation flow. The user has brought in a code diff that
+already modified the codebase; the platform has resolved
+each changed path to its owning impl leaf via the manifest.
+Your job is to write an initial assessment-seed for each
+affected leaf and a project-level intent summary.
+
+# The diff
+
+```
+{{ context.diff }}
+```
+
+# Territory resolution (platform-resolved)
+
+{% for leaf in context.affected_leaves %}
+## `{{ leaf.id }}` ({{ leaf.name }})
+
+Territory: `{{ leaf.territory.repository }}/{{ leaf.territory.folder }}`
+
+Changed paths:
+{% for path in leaf.changed_paths %}
+- `{{ path }}`
+{% endfor %}
+
+Leaf handle:
+{{ leaf.handle }}
+
+{% endfor %}
+
+# Your task
+
+For each affected leaf above, write a `<assessment-seed>` —
+factual prose framing what the diff at this leaf implies
+about the gap between the current impl content and what
+the code now does. Scope each to its leaf; don't merge
+observations across leaves.
+
+The `<intent>` summarizes the whole diff at project level
+— what subsystems are touched, what pattern the changes
+suggest, whether the refactor-is-actually-needed flag
+should get raised.
+
+# Output
+
+```xml
+<plan leg="phase-zero">
+  <intent>Project-level summary of what the diff changes.</intent>
+  <affected-leaves>
+    <leaf id="impl_...">
+      <changed-paths>
+        <path>...</path>
+      </changed-paths>
+      <assessment-seed>
+        What the diff at this leaf implies about the gap
+        between current impl content and what the code now
+        does. Factual, scoped to this leaf.
+      </assessment-seed>
+    </leaf>
+    ...
+  </affected-leaves>
+</plan>
+```
+
+Plan is **human-gated** — reviewer confirms the leaf set
+covers the diff (territory mapping is authoritative, but
+edge cases like newly-added files without owning leaves
+can slip through) and that the assessment-seeds are
+accurate framings.
+````
+
+### 2.4.5 `flows/bug-fix-propagation/upward-plan.md`
+
+Near-identical to upward-propagation's `upward-plan.md`
+(§2.5.3). Seed visits read `context.assessment_seed` from
+phase-zero instead of `context.seed_feedback`, and leaf
+visits additionally see their slice of the raw diff.
+
+````markdown
+You are planning an **upward-leg assessment** at the
+{{ scope.target.tier }} node at {{ scope.target.id }} as
+part of a bug-fix propagation flow run.
+
+The upward leg walks from the phase-zero affected leaves to
+the project root, assessing at each ancestor what the code
+changes imply for that tier. No regen runs on this leg; the
+downward leg consumes approved assessments after the
+pivot at root.
+
+{% if context.assessment_seed %}
+# Leaf visit — phase-zero assessment-seed
+
+This impl is one of phase-zero's affected leaves. The
+assessment-seed phase-zero wrote for it:
+
+> {{ context.assessment_seed }}
+
+Diff slice at this leaf's territory:
+
+```
+{{ context.diff_for_target }}
+```
+
+Interpret the diff against this impl's current content.
+What gap between the documented implementation and what
+shipped did the code change reveal? Be concrete — "the
+impl doc described single-threaded retry but the diff
+adds a mutex, suggesting thread-safety was
+under-specified."
+{% else %}
+# Ancestor visit — merging child assessments
+
+Upward-leg plans at direct children:
+
+{% for child in context.child_plans %}
+## From {{ child.target.tier }} `{{ child.target.id }}`
+
+> **Intent:** {{ child.intent }}
+>
+> **Assessment:** {{ child.assessment }}
+
+{% endfor %}
+
+Read across the assessments. Common thread this tier needs
+to reflect? Contract revision for this component or tier?
+If children assess independent issues that don't
+resolve at this tier, say so — the downward leg handles
+them independently.
+{% endif %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Discipline
+
+- Assessment is prose, not structural change. If code
+  changes reveal a structural problem (promote a subcomp,
+  split a comp), flag it in the intent and recommend the
+  user cancel this flow and run refactor.
+- No `<implicated-children>` on the upward leg.
+- Be specific: what does the current content say, and what
+  does the code now do? Vague assessments produce vague
+  downward plans.
+
+# Output
+
+```xml
+<plan leg="upward">
+  <intent>One-sentence summary.</intent>
+  <assessment>
+    Prose analysis of the gap between current content and
+    what the code change shows.
+  </assessment>
+</plan>
+```
+
+Plan is **human-gated**.
+````
+
+### 2.4.6 `flows/bug-fix-propagation/downward-plan.md`
+
+Near-identical to upward-propagation's `downward-plan.md`
+(§2.5.4), minus any reference to plan or code tiers —
+bug-fix's downward leg stops at impl.
+
+````markdown
+You are planning a **downward-leg regen** at the
+{{ scope.target.tier }} node at {{ scope.target.id }} as
+part of a bug-fix propagation flow run. The upward leg has
+completed; the flow has pivoted at root.
+
+{% if context.upstream_plan %}
+# Upstream plan
+
+The parent {{ scope.target.parent.tier }} regen's plan was
+approved. It implicated this node as a
+`{{ context.upstream_plan.disposition_for(scope.target) }}`
+visit because:
+
+> {{ context.upstream_plan.rationale_for(scope.target) }}
+
+Upstream intent:
+
+> {{ context.upstream_plan.intent }}
+{% else %}
+# Root visit
+
+No upstream parent. The upward-leg assessment at this node
+is your full input.
+{% endif %}
+
+{% if context.upward_plan %}
+# Upward-leg assessment for this node
+
+Reviewer-approved during the upward leg at
+`{{ scope.target.id }}`:
+
+> **Intent:** {{ context.upward_plan.intent }}
+>
+> **Assessment:** {{ context.upward_plan.assessment }}
+
+Authoritative framing for what should change at this node.
+Plan children based on it.
+{% else %}
+# Sideways visit
+
+Off the seed-to-root spine — reached because an upstream
+downward-leg plan implicated this node. No matching
+upward-leg assessment; plan from the upstream plan's intent.
+{% endif %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Your task
+
+Produce a plan. Standard disposition rules: visit / skip /
+trivial. Prefer trivial over visit when uncertain.
+
+No `<structural-ops>` — bug-fix is design alignment, not
+refactor.
+
+**Scope boundary.** This flow stops at impl. If your plan
+would naturally implicate a plan or code tier child, that's
+out-of-scope for bug-fix propagation — mark it as `skip`
+and note in the rationale that a follow-up feature-request
+or refactor flow may be needed to land the work-ahead
+implication in code.
+
+# Output
+
+```xml
+<plan leg="downward">
+  <intent>...</intent>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+````
+
+### 2.4.7 Walked example
+
+A developer commits a mutex addition to the billing retry
+scheduler outside Catapult:
+
+```diff
+# billing/retry.py
++import threading
++
+ class RetryScheduler:
+     def __init__(self):
+-        self.pending = []
++        self._lock = threading.Lock()
++        self.pending = []
+     def schedule(self, task):
+-        self.pending.append(task)
++        with self._lock:
++            self.pending.append(task)
+```
+
+User invokes bug-fix-propagation with this diff as the seed.
+
+**Phase-zero — `bf_phase_zero` on the manifest singleton:**
+
+Platform resolves `billing/retry.py` → `impl_billingretry_xyz`
+(matching by territory prefix in the manifest). LLM sees the
+skeleton with one affected leaf and its diff slice, writes
+assessment-seed:
+
+```xml
+<plan leg="phase-zero">
+  <intent>
+    Single commit adds thread-safety to the billing retry
+    scheduler; only the retry impl is affected.
+  </intent>
+  <affected-leaves>
+    <leaf id="impl_billingretry_xyz">
+      <changed-paths>
+        <path>billing/retry.py</path>
+      </changed-paths>
+      <assessment-seed>
+        A threading.Lock was added around the pending list in
+        RetryScheduler.schedule. The current impl doesn't
+        mention thread-safety — suggests the scheduler was
+        under-specified for concurrent callers.
+      </assessment-seed>
+    </leaf>
+  </affected-leaves>
+</plan>
+```
+
+Reviewer approves.
+
+**Upward leg — `bf_up_plan_impl` on `impl_billingretry_xyz`**
+(seed visit, has assessment_seed + diff slice):
+
+Assessment: "Impl describes RetryScheduler as in-process with
+no concurrency model. The diff adds a mutex around pending,
+making schedule() thread-safe. Need to add thread-safety
+section to the impl doc — scope: callable from multiple
+threads, schedule() acquires lock before mutating pending."
+
+**Upward leg — `bf_up_plan_subcomparch`** (ancestor, merges
+impl's assessment):
+
+"Subcomparch's pubapi describes schedule(task) with no
+concurrency guarantee. The impl assessment reveals this is
+now a thread-safe contract. Pubapi contract should state
+'thread-safe: schedule() may be called from multiple
+threads.'"
+
+**Upward leg — `bf_up_plan_comparch` on `comp_billing`:**
+
+"Billing's comparch techspec names 'in-process scheduling'
+but not a concurrency model. The subcomparch assessment
+elevates thread-safety to a billing-level concern. Techspec
+should add a paragraph on concurrency: 'Subcomponents that
+accept callbacks from external code must be thread-safe;
+see RetryScheduler for the canonical pattern.'"
+
+**Upward leg — `bf_up_plan_sysarch` / `bf_up_plan_reqs` /
+`bf_up_plan_expansion`:** trivial assessments; concurrency is
+implementation-level, doesn't propagate to system-level reqs
+or feature-level decomposition.
+
+**Pivot at root. Downward leg starts.**
+
+Downward plans at expansion, reqs, sysarch are trivial
+(matched upward plans were trivial) — scaffold regens
+elide.
+
+**Downward leg — `bf_dn_plan_comparch` on `comp_billing`:**
+spine descendant. Plans techspec revision per the approved
+upward assessment. Implicated children: subcomp_billingretry
+visit, other billing subcomps trivial.
+
+**Downward leg — `bf_dn_plan_subcomparch`** on billing's
+retry subcomparch: plans pubapi contract update. Implicated
+children: impl_billingretry visit.
+
+**Downward leg — `bf_dn_plan_impl` on `impl_billingretry_xyz`:**
+plans impl doc revision per upward assessment. Implicated
+children list is empty — flow's scope boundary (no bf_dn_plan_plan
+or bf_dn_plan_code), plan/code tiers are not visited. The
+code is already committed; the design now matches it.
+
+**Flow terminates.** Three scaffold tier regens committed
+(comparch, subcomparch, impl); design graph is coherent
+with the code that shipped.
+
+### 2.4.8 What this validates / Part 3 check
+
+**Validates** the phase-zero hybrid pattern: platform
+mechanically resolves paths to leaves via the manifest
+handle; LLM only writes assessment-seeds as prose. Clean
+separation of deterministic-lookup work from
+interpretation work.
+
+**Validates** that bug-fix surfaces no new platform changes
+beyond what upward-propagation already needed. The entire
+upward-leg / pivot / downward-leg mechanism is reused; the
+only novelty is phase-zero's shape, and that's just a
+different prompt + grammar on a planning tier we already
+have sugar for (`plans: manifest`).
+
+**Validates** the flow-as-schema-delta model's
+expressiveness for scope-bounded flows. Bug-fix's "stops
+at impl" boundary is expressed declaratively — the flow
+simply doesn't declare downward planning tiers for plan or
+code. No new scope-boundary platform mechanism needed;
+what the flow declares is what gets visited.
+
+**No new items added to Part 3.** Bug-fix is as anticipated
+— a variant of upward-propagation with a different seed
+shape and a phase-zero tier. Everything it needs is
+already on the accumulated list.
+
+### 2.4.9 What bug-fix collapses to if upward-propagation becomes a platform primitive
+
+Exploratory sketch. If the platform absorbs the whole
+up-then-down walk (planning-only upward, pivot at root,
+plan-and-regen downward with spine + sideways fan-out) as
+a built-in orchestration rather than a bundle-declared
+pattern, bug-fix's `flow.yaml` collapses from ~100 lines
+to ~30:
+
+```yaml
+# flows/bug-fix-propagation/flow.yaml (primitive variant)
+
+flow:
+  name: bug-fix-propagation
+  seed:
+    shape: code_diff
+  preconditions:
+    - scaffold.manifest.is_populated
+
+# Phase-zero is still a bundle-declared tier — its job is
+# shaping the seed (a raw diff) into the shape the primitive
+# consumes (an affected-leaves set).
+tiers:
+  bf_phase_zero:
+    plans: manifest
+    phase_zero: true
+    prompt: ./phase-zero.md
+    draft: { root: plan, grammar: ./phase-zero-grammar.xml }
+    context:
+      diff:            flow.seed.diff
+      manifest_handle: scaffold.manifest.handle
+
+# After phase-zero approves, invoke the platform's
+# upward-propagation primitive. The primitive handles the
+# whole up-then-down walk — 14 planning tiers' worth of
+# declaration machinery replaced by one invocation.
+invokes:
+  upward_propagation:
+    seed_set:       context.phase_zero.affected_leaves
+    stop_at_tier:   impl                    # scope boundary
+    upward_prompt:   ./upward-plan.md       # optional override
+    downward_prompt: ./downward-plan.md     # optional override
+```
+
+What the bundle still owns:
+
+- `phase-zero.md` + `phase-zero-grammar.xml` — seed-shape-
+  specific interpretation (diff-to-leaves). Stays
+  bundle-level because the diff format and territory
+  mapping are bundle concerns.
+- `upward-plan.md` and `downward-plan.md` — **optional
+  overrides** of the primitive's default prompts. The
+  primitive ships tier-agnostic defaults; bug-fix can
+  override to add flow-specific framing ("you're
+  interpreting a code diff against design content"). If
+  omitted, the defaults are used unchanged.
+
+What the bundle no longer declares:
+
+- 7 `bf_up_plan_*` tiers
+- 7 `bf_dn_plan_*` tiers
+- The upward and downward plan grammars (platform-shipped)
+- `invokes: up_then_down`'s `leg:` field semantics,
+  `matched_upward_plan` context entries, pivot-at-root
+  machinery
+- Implicitly: the `<assessment>` grammar element and its
+  `gate: always` annotation (platform-shipped)
+
+What collapses out of Part 3's core-changes list:
+
+- **A.6 Up-then-down direction semantics.** No longer a
+  bundle-author concern. The primitive implements the leg
+  field, edge inversion, upward-plan matching, and pivot
+  detection internally. Deleted from §A.4.3; moves into
+  the primitive's internal spec.
+- **A.8 Grammar-level `gate: always`.** The only grammar
+  element needing it was `<assessment>`, which is now
+  platform-shipped. §A.4.6 stays on its original
+  structural-ops-only rule.
+- **A.7 `<no-change/>` trivial-plan elision.** Still
+  useful — downward-propagation's auto-approved plans
+  benefit too. Stays in Part 3.
+
+What stays:
+
+- **A.1 Standard variable set.** Still needed for all
+  flows.
+- **A.2 `plans: <scaffold_tier>` sugar.** Feature-request
+  and refactor still use it.
+- **A.3 Multi-seed ordering**, **A.4 Preconditions**,
+  **A.5 Ready-to-apply state.** All still bundle-flow
+  lifecycle concerns.
+- **A.7 Trivial-plan elision.** General; both flow and
+  primitive regens benefit.
+
+Net: Part 3 compresses from 8 core changes to 6. Bundle
+author's surface area for a bug-fix equivalent drops from
+~14 planning tiers + 2 grammars + 3 prompts to 1 phase-zero
+tier + 1 grammar + 1-3 prompts.
+
+Tradeoff to notice: the primitive is only obviously
+right if every bundle's up-then-down walk looks the same.
+Upward-propagation (§2.5) and bug-fix's up-then-down legs
+are genuinely identical in shape — same assessment grammar,
+same pivot, same downward cascade. The primitive generalizes
+cleanly. If some future flow wanted subtly different
+upward semantics (e.g. don't walk to root, stop at the
+lowest common ancestor of multi-seed), it'd need either
+primitive parameters or bail to the current declarative
+approach.
+
+What a "subtly different upward" flow would need:
+
+- `stop_at_tier` — already sketched above (bug-fix stops
+  at impl on the *downward* leg; this would stop the
+  *upward* leg at something other than root).
+- `merge_at` — which ancestor tier to converge seeds at
+  (root by default).
+- `skip_legs` — run only upward or only downward (probably
+  not useful; downward-only is just downward-propagation).
+
+All three are small additive parameters on the primitive's
+invocation, not new mechanisms. The primitive stays one
+thing.
+
+## 2.5 Upward propagation
+
+Seed is a node-set-with-feedback like downward propagation,
+but the feedback is design-level observations best reconciled
+by revisiting ancestors — "examining this subcomp, I realize
+the parent comp's role paragraph is misleading," or
+"responsibilty X was scoped too broadly at reqs, seeing the
+leaf impls reveals it wants to split." The flow walks upward
+along the scaffold's structural edges to the project root,
+accumulating per-tier planning as it goes; at root it pivots
+and walks back down, regenerating every ancestor that's on the
+spine plus whatever the downward-leg plans implicate sideways.
+
+Shape contrast with bug-fix propagation: same `up_then_down`
+direction, same merge-at-parent discipline on the upward leg,
+same downward-leg-drives-scheduling rule. Different seed
+(feedback vs. code diff), different phase-zero behavior (none;
+feedback is already structured). Where bug-fix has external
+code as input and produces design updates to match reality,
+upward-propagation has internal observations as input and
+produces design updates to match revised thinking.
+
+### 2.5.1 `flows/upward-propagation/flow.yaml`
+
+```yaml
+flow:
+  name: upward-propagation
+  seed:
+    shape: node_set_with_feedback
+  invokes: up_then_down
+
+  # preconditions: the seed nodes must each have an ancestor
+  # chain to the project root — trivially true for any non-
+  # root scaffold node, so no explicit predicate needed.
+
+tiers:
+  # Upward-leg planning tiers. One per scaffold tier, all
+  # pointing at ./upward-plan.md. The up_then_down direction
+  # flag tells the platform to invert scaffold structural
+  # edges in the upward-leg planning tiers' context walks.
+  up_plan_impl:
+    plans: impl
+    leg: upward
+    prompt: ./upward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed_feedback:  flow.seed.feedback_for(self.target)
+      scope_handle:   self.target.handle
+      # children is cardinality-many: downstream plans from the
+      # upward leg's descendants, merged at this ancestor.
+      child_plans:    self.target.children.up_plan.handle
+
+  up_plan_subcomparch:
+    plans: subcomparch
+    leg: upward
+    prompt: ./upward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed_feedback:  flow.seed.feedback_for(self.target)
+      scope_handle:   self.target.handle
+      child_plans:    self.target.children.up_plan.handle
+
+  # … up_plan_comparch, up_plan_subreqs, up_plan_sysarch,
+  #   up_plan_reqs, up_plan_expansion — same pattern up to
+  #   the root. Seven upward planning tiers (no up_plan for
+  #   plan/code; those leaf tiers are seed candidates but
+  #   don't have children to aggregate from).
+
+  # Downward-leg planning tiers. Kick in after the upward
+  # leg completes at root. Same `plans:` attachment points
+  # as downward-propagation, but these plans *consume* the
+  # upward leg's plan handles for their corresponding
+  # scaffold nodes.
+  dn_plan_expansion:
+    plans: expansion
+    leg: downward
+    prompt: ./downward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      upstream_plan:  scope.target.parent.active_plan
+      upward_plan:    scope.target.matched_upward_plan.handle
+      scope_handle:   scope.target.handle
+
+  dn_plan_reqs:
+    plans: reqs
+    leg: downward
+    prompt: ./downward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      upstream_plan:  scope.target.parent.active_plan
+      upward_plan:    scope.target.matched_upward_plan.handle
+      scope_handle:   scope.target.handle
+
+  # … dn_plan_sysarch, dn_plan_subreqs, dn_plan_comparch,
+  #   dn_plan_subcomparch, dn_plan_impl, dn_plan_plan,
+  #   dn_plan_code.
+
+# Direction semantics — upward leg runs planning only; it
+# produces no regens. The downward leg runs planning + regen
+# per the usual down-flow pattern. Pivot happens automatically
+# when the reactive scheduler has nothing left to schedule on
+# the upward leg (root's up_plan_expansion has committed).
+pivot:
+  from: upward
+  to: downward
+  at: root
+```
+
+Two new fields worth highlighting: `leg: upward | downward`
+(explicit so the platform knows which context walks to
+invert), and `matched_upward_plan` on the downward-leg
+planning tier's context (the platform resolves it by looking
+up the upward-leg plan node whose target matches the
+downward-leg tier's scope target). For scaffold nodes that
+weren't on the seed-to-root spine — sideways fan-outs the
+downward leg reaches via `<implicated-children>` — the
+`upward_plan` field is nil, and the downward-leg plan.md
+handles that conditionally.
+
+### 2.5.2 `flows/upward-propagation/plan-grammar.xml`
+
+Two grammars — one for upward plans, one for downward plans.
+Upward grammar has no `<implicated-children>` because the
+upward leg's scope is the seed-to-root spine plus sideways
+fan-out deferred to the downward leg; there are no children
+to enqueue from an upward plan.
+
+```xml
+<!-- upward-plan-grammar.xml -->
+<plan leg="upward">
+  <intent>
+    What does the seed feedback (or merged child plans) imply
+    at this ancestor? Prose; this becomes context for the
+    downward-leg plan at this same node and for the next
+    ancestor upward.
+  </intent>
+  <assessment>
+    What the leaf/descendant feedback reveals about this tier's
+    current content — missing context, over-broad scope, stale
+    API contract, etc. This is the reviewable payload for the
+    upward leg.
+  </assessment>
+</plan>
+```
+
+Downward grammar is the standard downward-propagation plan
+shape (no structural ops):
+
+```xml
+<!-- downward-plan-grammar.xml -->
+<plan leg="downward">
+  <intent>...</intent>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+
+Both grammars forbid `<structural-ops>` — upward propagation
+is design refinement, not refactor. If feedback reveals a
+structural problem, the reviewer approves the assessment,
+cancels the flow, and kicks refactor with the structural
+change as its seed. Two flows, one concern each.
+
+Upward plans are **human-gated by default** despite carrying
+no structural ops, because the assessment is the reviewable
+artifact the whole flow is built around — gating it ensures
+the ancestor's regen isn't driven by an un-reviewed
+interpretation of downstream feedback. The grammar's
+`<assessment>` element declares `gate: always` in its schema
+annotation, which the platform picks up as the gate trigger
+alongside the structural-ops rule.
+
+### 2.5.3 `flows/upward-propagation/upward-plan.md`
+
+Used by every `up_plan_*` tier. The LLM's job varies by
+whether the visit is a seed or an ancestor merging child
+plans; one Liquid template handles both.
+
+````markdown
+You are planning an **upward-leg assessment** at the
+{{ scope.target.tier }} node at {{ scope.target.id }} as
+part of an upward-propagation flow run.
+
+The upward leg walks from seed nodes to the project root,
+producing a per-tier assessment of what leaf-level feedback
+implies for each ancestor. No regen runs on this leg — the
+downward leg will consume your approved assessment after the
+pivot at root.
+
+{% if context.seed_feedback %}
+# Seed visit — direct feedback
+
+Feedback left on this node:
+
+> {{ context.seed_feedback }}
+
+Interpret what this tier's current content is missing,
+framing wrongly, or scoping too broadly/narrowly to
+satisfy the feedback.
+{% else %}
+# Ancestor visit — merging child assessments
+
+Upward-leg plans at direct children:
+
+{% for child in context.child_plans %}
+## From {{ child.target.tier }} `{{ child.target.id }}`
+
+> **Intent:** {{ child.intent }}
+>
+> **Assessment:** {{ child.assessment }}
+
+{% endfor %}
+
+Read across the child assessments. What pattern do they
+share? Does this tier's content need to change to
+accommodate the common thread? If children assess
+distinct problems that don't resolve at this level, say
+so — the downward leg benefits from knowing which
+descendants need what.
+{% endif %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Discipline
+
+- Assessment is reviewable prose — not structural. If the
+  feedback reveals a structural problem (rename, merge,
+  split), flag it in the intent and recommend the user
+  cancel this flow and kick refactor instead. Upward
+  propagation refines content; refactor restructures.
+- No `<implicated-children>` on this leg — the downward
+  leg (consuming your assessment) decides what regenerates.
+- Be concrete. "The role paragraph is misleading" starts
+  it; "the role paragraph frames X as a dependency when
+  the feedback shows X is a delegate" is actionable.
+
+# Output
+
+```xml
+<plan leg="upward">
+  <intent>
+    One-sentence summary of what this tier needs to revise.
+  </intent>
+  <assessment>
+    Prose analysis — what's missing or wrong in the current
+    content and what a revised regen should establish. The
+    reviewer-approved payload the downward leg consumes.
+  </assessment>
+</plan>
+```
+
+Plan is **human-gated**. Reviewer approves, rejects to
+re-plan, or cancels the flow.
+````
+
+### 2.5.4 `flows/upward-propagation/downward-plan.md`
+
+Used by every `dn_plan_*` tier. Three cases the template
+handles conditionally: root visit, spine descendant,
+sideways fan-out.
+
+````markdown
+You are planning a **downward-leg regen** at the
+{{ scope.target.tier }} node at {{ scope.target.id }} as
+part of an upward-propagation flow run. The upward leg has
+completed and the flow has pivoted at root.
+
+{% if context.upstream_plan %}
+# Upstream plan
+
+The parent {{ scope.target.parent.tier }} regen's plan was
+approved. It implicated this node as a
+`{{ context.upstream_plan.disposition_for(scope.target) }}`
+visit because:
+
+> {{ context.upstream_plan.rationale_for(scope.target) }}
+
+Upstream intent:
+
+> {{ context.upstream_plan.intent }}
+{% else %}
+# Root visit
+
+No upstream parent — this is the root tier. The upward-leg
+assessment at this node is the full input to your planning.
+{% endif %}
+
+{% if context.upward_plan %}
+# Upward-leg assessment for this node
+
+Reviewer-approved during the upward leg at
+`{{ scope.target.id }}`:
+
+> **Intent:** {{ context.upward_plan.intent }}
+>
+> **Assessment:** {{ context.upward_plan.assessment }}
+
+This is the authoritative framing for what should change
+at this node — the reviewer already vetted the
+interpretation of downstream feedback. Plan children
+based on it; the regen that follows will operationalize
+it.
+{% else %}
+# Sideways visit
+
+This node is off the seed-to-root spine — reached because
+an upstream downward-leg plan implicated it. No matching
+upward-leg assessment for this specific node; plan from
+the upstream plan's intent.
+{% endif %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Your task
+
+Produce a plan. Standard downward-propagation disposition
+rules:
+
+- **visit** — child regenerates.
+- **skip** — child unaffected; preserve content.
+- **trivial** — change reaches the child via
+  rename/reformat but produces no material change.
+  Preserve content; record the assessment.
+
+Prefer **trivial** over **visit** when uncertain.
+
+You may NOT emit `<structural-ops>` — upward propagation
+is design refinement. If the regen needs structural
+changes, cancel the flow and run refactor.
+
+# Output
+
+```xml
+<plan leg="downward">
+  <intent>...</intent>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+````
+
+### 2.5.5 The downward leg finds its upward plan
+
+`matched_upward_plan` on each `dn_plan_*` tier's context is
+a platform-resolved reference to the upward-leg plan node
+whose `plans:` target matches this downward-leg tier's
+target. The resolver:
+
+1. Look up the flow run's approved upward-leg plans.
+2. For each, the plan node's scope target is a scaffold
+   node id.
+3. If any upward plan's target equals `scope.target.id`,
+   that's the match — resolve the handle and expose it.
+4. Otherwise `matched_upward_plan` is nil (sideways visit).
+
+Spine nodes have exactly one upward-leg plan; sideways
+fan-outs have none. The match is 1:0..1, computed lazily
+when the downward-leg planning tier's context resolves.
+
+### 2.5.6 Walked example
+
+Reviewer of `subcomp_invoicerenderer_xyz` (child of
+`comp_billing_abc`) leaves feedback: "Billing's role says
+'handles invoice lifecycle' but this subcomp does rendering
+and the parent orchestrates; scope at the comp level is
+more like 'orchestrates invoice processing, rendering
+delegated.'"
+
+**Upward leg — `up_plan_subcomparch` on
+`subcomp_invoicerenderer_xyz`** (seed visit):
+
+Liquid renders `upward-plan.md`. `context.seed_feedback` is
+populated; `context.child_plans` is empty. LLM produces:
+
+```xml
+<plan leg="upward">
+  <intent>
+    Parent comparch's role framing doesn't match how this
+    subcomp actually delegates; assessment needs to escalate
+    the scope narrowing request.
+  </intent>
+  <assessment>
+    This subcomp's pubapi exposes `render_invoice` and
+    `render_batch`; its privapi uses a template engine and a
+    layout pipeline. Nothing here manages invoice lifecycle —
+    creation, state transitions, persistence. The feedback is
+    correct: the parent comp frames its role as owning the
+    full lifecycle but implementations show it orchestrates
+    and delegates. The ancestor's role paragraph needs to
+    scope-narrow.
+  </assessment>
+</plan>
+```
+
+Reviewer approves the assessment.
+
+**Upward leg — `up_plan_comparch` on `comp_billing_abc`**
+(ancestor visit, child_plans has the subcomp's assessment):
+
+Liquid renders `upward-plan.md` in ancestor mode. LLM merges:
+
+```xml
+<plan leg="upward">
+  <intent>
+    Comparch role paragraph over-claims; billing orchestrates
+    rather than owning the full lifecycle.
+  </intent>
+  <assessment>
+    The InvoiceRenderer subcomp's assessment is consistent
+    with what the other subcomps do too: InvoiceState tracks
+    lifecycle transitions but billing delegates the actual
+    persistence to BillingDb; InvoiceValidator enforces
+    shape; the comp's role is coordination across these. The
+    role paragraph should read "orchestrates invoice
+    processing with rendering, state tracking, and
+    persistence delegated to subcomponents" rather than
+    "handles invoice lifecycle."
+  </assessment>
+</plan>
+```
+
+Reviewer approves.
+
+**Upward leg — `up_plan_sysarch`, `up_plan_reqs`,
+`up_plan_expansion`** (ancestor visits, all essentially
+trivial):
+
+Each gets `context.child_plans` with the relevant descendant
+plan. The LLM at each tier recognizes that the scope of the
+problem is comparch-level, not system-wide, and produces a
+trivial assessment:
+
+```xml
+<plan leg="upward">
+  <intent>No revision needed at this tier.</intent>
+  <assessment>
+    The downstream assessment concerns the billing comp's own
+    role framing, which doesn't implicate the sysarch-level
+    summary of billing (high-level role + API intent only).
+    No change at sysarch.
+  </assessment>
+</plan>
+```
+
+Reviewer sees thin assessment at each tier, clicks through
+quickly. Upward leg completes at the root.
+
+**Pivot — platform switches to downward-leg tiers.**
+
+**Downward leg — `dn_plan_expansion`** (root visit; has
+`upward_plan` that's trivial; no upstream):
+
+Plan intent: "No regen at this tier; cascade through reqs."
+`<implicated-children>` lists the reqs singleton with
+disposition=`trivial` (the upward assessment at reqs was
+also trivial, so nothing to propagate through reqs either
+— signal to the reqs downward plan to pass through).
+
+Expansion regen is skipped (the platform detects the plan's
+intent is "no regen at this tier" and elides the regen
+visit).
+
+**Downward leg — `dn_plan_comparch` on `comp_billing_abc`**
+(spine descendant; has both upstream and upward):
+
+Liquid renders `downward-plan.md` in spine mode. Upward
+plan is the non-trivial assessment; upstream plan is the
+trivial sysarch cascade. Plan:
+
+```xml
+<plan leg="downward">
+  <intent>
+    Revise comp_billing's role paragraph per the upward
+    assessment: "orchestrates invoice processing with
+    rendering, state tracking, and persistence delegated."
+    Techspec and pubapi are unchanged; the role-narrowing is
+    scoped to the role field in the sysarch's entry for this
+    comp and the role paragraph in comparch's techspec.
+  </intent>
+  <implicated-children>
+    <child id="subcomp_invoicerenderer_xyz"
+           disposition="trivial">
+      <rationale>The rendering subcomp's own content is
+        unchanged; the parent's role correction doesn't
+        require its regen.</rationale>
+    </child>
+    <child id="subcomp_invoicestate_xyz"
+           disposition="trivial">
+      <rationale>State-tracking subcomp unchanged.</rationale>
+    </child>
+    <child id="subcomp_billingdb_xyz"
+           disposition="trivial">
+      <rationale>Persistence subcomp unchanged.</rationale>
+    </child>
+  </implicated-children>
+</plan>
+```
+
+Auto-approves. Comparch regenerates with the revised role
+paragraph; diff-reviewed, accepted. Downstream subcomp
+visits run with trivial plans and are elided. Flow
+terminates.
+
+### 2.5.7 What this validates / still to figure out
+
+**Validates** the `up_then_down` direction model: the
+upward leg walks to root with planning-only visits,
+pivoting to the downward leg once no more upward work is
+enqueueable. Seed-to-root spine is the narrow upward trace;
+the downward leg cascades to siblings via
+`<implicated-children>` as needed.
+
+**Validates** the `matched_upward_plan` → spine reading
+pattern: the downward leg's plan at a spine node takes the
+upward-leg assessment as its primary input, and the upstream
+plan as secondary. Reviewer intent committed on the upward
+leg flows through naturally.
+
+**Still to figure out:**
+
+1. **Trivial upward assessments and downward elision.** Most
+   upward-leg plans above `comp_billing` ended up trivial.
+   The downward leg's planning tier still ran at each of
+   those ancestors, produced trivial plans, and the scaffold
+   tier regens should elide when the plan says "no regen."
+   Open: platform convention for "plan with intent = 'no
+   change at this tier'" that skips the regen visit. Option
+   A: intent-prose recognition (brittle). Option B: a
+   declarative `<no-change/>` element in the plan grammar.
+   Option C: trivial upward assessment short-circuits the
+   downward-leg tier entirely so no downward plan is even
+   produced. Worth picking before implementation.
+2. **Merge ordering at ancestor visits.** When multiple
+   descendants converge at an ancestor's upward plan,
+   `context.child_plans` is cardinality-many. Ordering
+   matters for LLM determinism. Simplest: topological
+   (creation) order; deterministic and matches the reactive
+   scheduler's readiness order.
+3. **Contradictory descendant assessments.** Two children
+   produce assessments that interpret the feedback in
+   incompatible ways. The ancestor's prompt needs to flag
+   this rather than silently picking. Worth a one-line
+   discipline note in the upward prompt.
+4. **Pivot detection.** Platform recognizes "upward leg is
+   done, enable downward-leg tiers." Simplest: downward-leg
+   tiers include a `scope_filter` that's false until the
+   flow's upward-leg work queue drains and root's
+   `up_plan_*` has committed. Mechanical; worth spec'ing as
+   part of the `up_then_down` primitive semantics in
+   platform §A.4.3.
+5. **Sideways fan-out from downward leg.** The downward
+   plan at `comp_billing` could implicate sibling comps (not
+   on the spine) with visits. Those siblings get downward
+   plans as sideways visits — no matching upward-leg
+   assessment. The prompt handles the `matched_upward_plan =
+   nil` case already. Worth confirming in §A.4.3 that
+   sideways fan-outs on the downward leg don't re-trigger
+   upward planning.
+
+
+---
+
+# Part 3 — Accumulated open platform-spec changes
+
+Two lists: **core platform changes** (six items needing spec
+absorption into platform §A.4 or adjacent) and **prompt and
+UI concerns** (six items that don't change the spec —
+they're bundle-author disciplines or UX affordances worth
+remembering but shouldn't clutter the core).
+
+The current design the list reflects:
+
+- **Flows are bundle-declared schema deltas.** Every flow
+  declares its own planning tiers, phase-zero tiers,
+  edges, and prompts. No platform-shipped default tiers.
+- **Two platform primitives** — `downward_cascade` and
+  `up_then_down` — are walk algorithms the scheduler
+  implements. Flows select one via an `invokes:` hook; the
+  primitive reads the flow's declared planning tiers and
+  applies its walk semantics against them.
+- **Structural ops apply immediately** on plan approval
+  (not deferred to end-of-run). No ready-to-apply state.
+- **`<assessment>` grammar** is declared by each flow that
+  uses it (upward-propagation, bug-fix-propagation); the
+  platform doesn't ship a built-in grammar, but ships the
+  `gate: always` annotation convention that makes the
+  human-gate fall out.
+
+## 3.A Core platform changes
+
+### A.1 Extend the standard variable set (A.4.5)
+
+§A.4.5 currently lists `scope`, `context`, `flow`. Flow
+sketches surfaced three new accessor families:
+
+- `context.upstream_plan.*` exposes the upstream plan's
+  parsed XML as dotted Liquid fields (intent, children,
+  additions, structural_ops, assessment,
+  disposition_for(target), rationale_for(target)). Platform
+  parses the plan grammar once and exposes fields — no
+  grammar-aware logic required.
+- `flow.seed.<accessor>(arg)` is seed-shape-routed. The
+  seed's declared shape determines which accessors resolve
+  — `node_set_with_feedback` gets `feedback_for(node)`;
+  `code_diff` gets `diff_for(territory)`. Platform routes
+  by shape.
+- `scaffold.<tier>.handle` exposes each scaffold tier's
+  current projection. Singletons resolve directly
+  (`scaffold.sysarch.handle`); non-singletons take an id
+  (`scaffold.comparch[id].handle`). Also hosts
+  platform-computed accessors like
+  `scaffold.manifest.resolve_paths(diff)` — territory
+  resolution via the manifest handle.
+
+`context.pending_ops` from the prior consolidation is
+gone: immediate-apply of structural ops means regens see
+the actual current state, never a pending-ops overlay.
+
+### A.2 Planning-tier declaration syntax (A.4.2)
+
+§A.4.2 currently describes planning tiers abstractly.
+Flow sketches use two declarative-sugar fields
+pervasively:
+
+- **`plans: <scaffold_tier>`** expands to `scope:
+  per(<tier>)` + a `scope_filter` that counts inbound
+  `implicates_visit` edges from approved upstream plans
+  in the active flow run (`exists(inbound(implicates_visit)
+  where source.approved AND source.flow_run == current)`)
+  + an implicit 1:1 reference edge exposing the plan
+  handle as `context.active_plan` on the scaffold tier.
+  The `implicates_visit` edges are emitted by the walk
+  primitive at flow start (seed edges from the flow run
+  itself) and on plan approval (one edge per
+  `<implicated-children disposition="visit">` target and
+  per `<additions>` entry).
+- **`leg: upward | downward`** (used by `up_then_down`
+  flows) tells the `up_then_down` primitive which tier's
+  context walks to invert and which to run normally. Pairs
+  with the flow-level `invokes: up_then_down`.
+
+### A.3 Multi-seed ordering (A.4.10)
+
+When a flow's seed set includes nodes in ancestor/
+descendant relationships, **seeds process in topological
+order**: ancestor's plan and regen commit before the
+descendant's seed visit fires. Descendant's seed-feedback
+is consumed at its own seed visit on top of whatever the
+ancestor's plan implicated for it.
+
+### A.4 Pre-flow preconditions (A.4.10)
+
+Each `flow.yaml` declares a `preconditions:` list —
+predicates over current scaffold state evaluated before
+the lobby kicks the flow. Example: feature-request
+requires `scaffold.sysarch.is_approved`; bug-fix requires
+`scaffold.manifest.is_populated`. Preflight failure
+surfaces in the lobby UI.
+
+### A.5 Plan grammar annotations (A.4.6 / A.4.7)
+
+Two grammar-element annotations that extend A.4.6's
+approval rules:
+
+- **`<no-change/>` element.** Plans carrying this element
+  tell the scaffold tier's regen to elide rather than
+  running a pointless cycle. Useful for upward-leg
+  trivial assessments and any future flow that wants a
+  "no revision at this tier" pass-through.
+- **`gate: always` annotation** on a grammar element.
+  Generalizes A.4.6 from "gate on non-empty
+  `<structural-ops>`" to "gate on any element declaring
+  `gate: always`." `<assessment>` carries this annotation
+  in the flows that declare it (upward-propagation,
+  bug-fix).
+
+### A.6 The `invokes:` hook and the primitive catalogue (A.4)
+
+§A.4 currently describes flows as schema deltas.
+`invokes:` is the new minimal syntax piece that tells the
+platform how to walk the merged DAG once the flow is
+active. Two primitives in the catalogue:
+
+- **`downward_cascade`** — standard forward walk. Seeds
+  planted at declared planning tiers; next-wave visits
+  enqueued from approved plans' implicated-children
+  lists. Used by downward-propagation, feature-request,
+  refactor.
+- **`up_then_down`** — upward leg with edge inversion on
+  `leg: upward` planning tiers, merge-at-parent implicit
+  via cardinality-many child_plans context, pivot-at-root
+  detection when the upward-leg work queue drains, then a
+  standard downward cascade from root. Used by
+  upward-propagation, bug-fix-propagation.
+
+Primitives ship no default tier declarations. Each flow
+declares its own planning tiers; the primitive reads the
+flow's declaration and applies its walk semantics. This
+keeps the `flow.yaml` self-contained and surfaces
+duplication between similar flows (bug-fix's upward-leg
+tiers ≈ upward-propagation's) as file-path-level prompt
+reuse rather than tier-declaration inheritance.
+
+## 3.B Prompt and UI concerns
+
+Not platform changes; captured here so they don't get
+lost when Part 3 absorbs into the spec.
+
+- **Partial-visit fanout** — scaffold regen prompts need
+  to handle plans mixing `<additions>` with
+  `disposition=skip` children: mint additions, preserve
+  skipped content. Prompt-level discipline.
+- **Scope-exceeds-plan detection** — regen diffs that
+  exceed plan intent. MVP: rely on regen review to catch
+  it. Post-MVP: a validator comparing diff scope to plan.
+- **Pending-feedback affordance in the lobby** — when a
+  user kicks a schema-delta flow on a node with pending
+  deferred feedback, the lobby shows a soft preflight
+  warning recommending downward-propagation first.
+- **Name-resolution brittleness in phase-zero**
+  (refactor). Reviewer catches bad name→id resolutions on
+  the structural-ops checklist. Post-MVP: a picker UI.
+- **Partial op approval cascade warning** — reviewer
+  strikes one op, downstream plans may be inconsistent.
+  Review UI warns "op referenced by N downstream plans"
+  but doesn't block.
+- **Contradictory-descendant discipline** — when multiple
+  children's upward assessments conflict, the ancestor's
+  planning prompt flags rather than silently picking.
+  One-line instruction in the bundle's upward-plan.md.
+
+## 3.C Non-load-bearing observations
+
+- **Phase-zero context is bundle-specific.** Phase-zero
+  prompts reference scaffold-specific tiers by name (e.g.
+  `scaffold.sysarch.handle` in feature-request). Not a
+  spec change — phase-zero's job is shaping the seed into
+  the bundle's schema. Worth a note in the bundle ref doc.
+- **Flows that use the same walk share prompts via
+  file-path, not tier-declaration.** Bug-fix's
+  upward-plan.md could be a symlink or direct reference
+  into upward-propagation's directory. Not a spec change —
+  a bundle-authoring convention.
+
+## 3.B Prompt and UI concerns
+
+Not platform changes; captured here so they don't get
+lost when Part 3 absorbs into the spec.
+
+- **Partial-visit fanout**  — scaffold regen prompts need
+  to handle plans mixing `<additions>` with
+  `disposition=skip` children: mint additions, preserve
+  skipped content. Prompt-level discipline.
+- **Scope-exceeds-plan detection** — regen diffs that
+  exceed plan intent. MVP: rely on regen review to catch
+  it. Post-MVP: a validator comparing diff scope to plan.
+- **Pending-feedback affordance in the lobby** — when a
+  user kicks a schema-delta flow on a node with pending
+  deferred feedback, the lobby shows a soft preflight
+  warning recommending downward-propagation first.
+- **Name-resolution brittleness in phase-zero**
+  (refactor). Reviewer catches bad name→id resolutions on
+  the structural-ops checklist. Post-MVP: a picker UI.
+- **Partial op approval cascade warning** — reviewer
+  strikes one op, downstream plans may be inconsistent.
+  Review UI warns "op referenced by N downstream plans"
+  but doesn't block.
+- **Contradictory-descendant discipline** — when multiple
+  children's upward assessments conflict, the ancestor's
+  planning prompt flags rather than silently picking.
+  One-line instruction in the bundle's upward-plan.md.
+
+## 3.C Non-load-bearing observations
+
+- **Phase-zero context is bundle-specific.** Phase-zero
+  prompts reference scaffold-specific tiers by name (e.g.
+  `scaffold.sysarch.handle` in feature-request). Not a
+  spec change — phase-zero's job is shaping the seed into
+  the bundle's schema. Worth a note in the bundle ref doc.
