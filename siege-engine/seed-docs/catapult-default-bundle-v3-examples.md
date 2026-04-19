@@ -1713,7 +1713,206 @@ Spine nodes have exactly one upward-leg plan; sideways
 fan-outs have none. The match is 1:0..1, computed lazily
 when the downward-leg planning tier's context resolves.
 
-Chunk 3 walks an example end-to-end.
+### 2.5.6 Walked example
+
+Reviewer of `subcomp_invoicerenderer_xyz` (child of
+`comp_billing_abc`) leaves feedback: "Billing's role says
+'handles invoice lifecycle' but this subcomp does rendering
+and the parent orchestrates; scope at the comp level is
+more like 'orchestrates invoice processing, rendering
+delegated.'"
+
+**Upward leg — `up_plan_subcomparch` on
+`subcomp_invoicerenderer_xyz`** (seed visit):
+
+Liquid renders `upward-plan.md`. `context.seed_feedback` is
+populated; `context.child_plans` is empty. LLM produces:
+
+```xml
+<plan leg="upward">
+  <intent>
+    Parent comparch's role framing doesn't match how this
+    subcomp actually delegates; diagnosis needs to escalate
+    the scope narrowing request.
+  </intent>
+  <diagnosis>
+    This subcomp's pubapi exposes `render_invoice` and
+    `render_batch`; its privapi uses a template engine and a
+    layout pipeline. Nothing here manages invoice lifecycle —
+    creation, state transitions, persistence. The feedback is
+    correct: the parent comp frames its role as owning the
+    full lifecycle but implementations show it orchestrates
+    and delegates. The ancestor's role paragraph needs to
+    scope-narrow.
+  </diagnosis>
+</plan>
+```
+
+Reviewer approves the diagnosis.
+
+**Upward leg — `up_plan_comparch` on `comp_billing_abc`**
+(ancestor visit, child_plans has the subcomp's diagnosis):
+
+Liquid renders `upward-plan.md` in ancestor mode. LLM merges:
+
+```xml
+<plan leg="upward">
+  <intent>
+    Comparch role paragraph over-claims; billing orchestrates
+    rather than owning the full lifecycle.
+  </intent>
+  <diagnosis>
+    The InvoiceRenderer subcomp's diagnosis is consistent
+    with what the other subcomps do too: InvoiceState tracks
+    lifecycle transitions but billing delegates the actual
+    persistence to BillingDb; InvoiceValidator enforces
+    shape; the comp's role is coordination across these. The
+    role paragraph should read "orchestrates invoice
+    processing with rendering, state tracking, and
+    persistence delegated to subcomponents" rather than
+    "handles invoice lifecycle."
+  </diagnosis>
+</plan>
+```
+
+Reviewer approves.
+
+**Upward leg — `up_plan_sysarch`, `up_plan_reqs`,
+`up_plan_expansion`** (ancestor visits, all essentially
+trivial):
+
+Each gets `context.child_plans` with the relevant descendant
+plan. The LLM at each tier recognizes that the scope of the
+problem is comparch-level, not system-wide, and produces a
+trivial diagnosis:
+
+```xml
+<plan leg="upward">
+  <intent>No revision needed at this tier.</intent>
+  <diagnosis>
+    The downstream diagnosis concerns the billing comp's own
+    role framing, which doesn't implicate the sysarch-level
+    summary of billing (high-level role + API intent only).
+    No change at sysarch.
+  </diagnosis>
+</plan>
+```
+
+Reviewer sees thin diagnosis at each tier, clicks through
+quickly. Upward leg completes at the root.
+
+**Pivot — platform switches to downward-leg tiers.**
+
+**Downward leg — `dn_plan_expansion`** (root visit; has
+`upward_plan` that's trivial; no upstream):
+
+Plan intent: "No regen at this tier; cascade through reqs."
+`<implicated-children>` lists the reqs singleton with
+disposition=`trivial` (the upward diagnosis at reqs was
+also trivial, so nothing to propagate through reqs either
+— signal to the reqs downward plan to pass through).
+
+Expansion regen is skipped (the platform detects the plan's
+intent is "no regen at this tier" and elides the regen
+visit).
+
+**Downward leg — `dn_plan_comparch` on `comp_billing_abc`**
+(spine descendant; has both upstream and upward):
+
+Liquid renders `downward-plan.md` in spine mode. Upward
+plan is the non-trivial diagnosis; upstream plan is the
+trivial sysarch cascade. Plan:
+
+```xml
+<plan leg="downward">
+  <intent>
+    Revise comp_billing's role paragraph per the upward
+    diagnosis: "orchestrates invoice processing with
+    rendering, state tracking, and persistence delegated."
+    Techspec and pubapi are unchanged; the role-narrowing is
+    scoped to the role field in the sysarch's entry for this
+    comp and the role paragraph in comparch's techspec.
+  </intent>
+  <implicated-children>
+    <child id="subcomp_invoicerenderer_xyz"
+           disposition="trivial">
+      <rationale>The rendering subcomp's own content is
+        unchanged; the parent's role correction doesn't
+        require its regen.</rationale>
+    </child>
+    <child id="subcomp_invoicestate_xyz"
+           disposition="trivial">
+      <rationale>State-tracking subcomp unchanged.</rationale>
+    </child>
+    <child id="subcomp_billingdb_xyz"
+           disposition="trivial">
+      <rationale>Persistence subcomp unchanged.</rationale>
+    </child>
+  </implicated-children>
+</plan>
+```
+
+Auto-approves. Comparch regenerates with the revised role
+paragraph; diff-reviewed, accepted. Downstream subcomp
+visits run with trivial plans and are elided. Flow
+terminates.
+
+### 2.5.7 What this validates / still to figure out
+
+**Validates** the `up_then_down` direction model: the
+upward leg walks to root with planning-only visits,
+pivoting to the downward leg once no more upward work is
+enqueueable. Seed-to-root spine is the narrow upward trace;
+the downward leg cascades to siblings via
+`<implicated-children>` as needed.
+
+**Validates** the `matched_upward_plan` → spine reading
+pattern: the downward leg's plan at a spine node takes the
+upward-leg diagnosis as its primary input, and the upstream
+plan as secondary. Reviewer intent committed on the upward
+leg flows through naturally.
+
+**Still to figure out:**
+
+1. **Trivial upward diagnoses and downward elision.** Most
+   upward-leg plans above `comp_billing` ended up trivial.
+   The downward leg's planning tier still ran at each of
+   those ancestors, produced trivial plans, and the scaffold
+   tier regens should elide when the plan says "no regen."
+   Open: platform convention for "plan with intent = 'no
+   change at this tier'" that skips the regen visit. Option
+   A: intent-prose recognition (brittle). Option B: a
+   declarative `<no-change/>` element in the plan grammar.
+   Option C: trivial upward diagnosis short-circuits the
+   downward-leg tier entirely so no downward plan is even
+   produced. Worth picking before implementation.
+2. **Merge ordering at ancestor visits.** When multiple
+   descendants converge at an ancestor's upward plan,
+   `context.child_plans` is cardinality-many. Ordering
+   matters for LLM determinism. Simplest: topological
+   (creation) order; deterministic and matches the reactive
+   scheduler's readiness order.
+3. **Contradictory descendant diagnoses.** Two children
+   produce diagnoses that interpret the feedback in
+   incompatible ways. The ancestor's prompt needs to flag
+   this rather than silently picking. Worth a one-line
+   discipline note in the upward prompt.
+4. **Pivot detection.** Platform recognizes "upward leg is
+   done, enable downward-leg tiers." Simplest: downward-leg
+   tiers include a `scope_filter` that's false until the
+   flow's upward-leg work queue drains and root's
+   `up_plan_*` has committed. Mechanical; worth spec'ing as
+   part of the `direction: up_then_down` semantics in
+   platform §A.4.3.
+5. **Sideways fan-out from downward leg.** The downward
+   plan at `comp_billing` could implicate sibling comps (not
+   on the spine) with visits. Those siblings get downward
+   plans as sideways visits — no matching upward-leg
+   diagnosis. The prompt handles the `matched_upward_plan =
+   nil` case already. Worth confirming in §A.4.3 that
+   sideways fan-outs on the downward leg don't re-trigger
+   upward planning.
+
 
 ---
 
@@ -1817,7 +2016,43 @@ absorption.
   **Simplest:** review UI warns "this op is referenced by
   N downstream plans" but doesn't block.
 
-## 3.5 Non-load-bearing observations
+## 3.5 Up-then-down direction (A.4.3)
+
+- **`leg: upward | downward` field** on planning tiers in
+  `up_then_down` flows. **Simplest:** the platform reads
+  `leg: upward` as "invert scaffold structural edges in this
+  tier's context walks" and `leg: downward` as "normal
+  direction." Pairs with the flow-level `direction`.
+- **`matched_upward_plan` resolver** for downward-leg
+  planning context. **Simplest:** 1:0..1 target-id match
+  against the flow run's approved upward-leg plans, lazy
+  at context resolution. Sideways fan-outs get nil.
+- **Pivot-at-root detection.** **Simplest:** downward-leg
+  tier `scope_filter` returns false until the flow's
+  upward-leg work queue has drained and the root's
+  `up_plan_*` has committed.
+- **Trivial-plan elision for regens.** Upward diagnoses
+  and their paired downward plans frequently say "no change
+  at this tier." Scaffold regens should elide rather than
+  running a pointless regen cycle. **Simplest:** declarative
+  `<no-change/>` element in the downward plan grammar; the
+  platform skips the scaffold tier's regen when the plan
+  carries it. (Option B from §2.5.7.)
+- **`<diagnosis>` grammar element with gate: always.**
+  Upward-leg plans gate on the presence of a diagnosis
+  even though they never carry structural-ops. **Simplest:**
+  the grammar element declares `gate: always` in its
+  schema annotation, which the platform picks up alongside
+  the structural-ops rule in A.4.6. Generalizes A.4.6 from
+  "gate on structural-ops" to "gate on any grammar
+  element declaring gate: always."
+- **Contradictory-descendant discipline.** When multiple
+  children's upward diagnoses conflict, the ancestor's
+  prompt flags rather than silently picking. **Simplest:**
+  a one-line instruction in the upward-plan.md prompt; no
+  platform mechanism.
+
+## 3.6 Non-load-bearing observations
 
 - **Phase-zero context is bundle-specific.** Phase-zero
   prompts reference scaffold-specific tiers by name; not
