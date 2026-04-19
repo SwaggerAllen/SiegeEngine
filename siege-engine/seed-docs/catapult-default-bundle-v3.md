@@ -123,50 +123,64 @@ v2 §A.3.5.
 
 ## 10. Flow declarations on the default bundle
 
-Five default-bundle flows, each declared per platform spec
-§A.4 as a schema delta the platform grafts onto the scaffold
-when the flow is active. Scaffolding is *not* in this list —
-it's the scaffold's baseline behavior when no flow is active
-(an approved input doc kicks the reactive scheduler; no
-planning tiers, no delta).
+Five default-bundle flows, each a **schema delta** per platform
+spec §A.4: the bundle declares planning tiers, edges, phase-zero
+tiers (where applicable), and prompt files; the platform merges
+them onto the scaffold when the flow is active. Each flow also
+declares an `invokes:` hook naming the walk algorithm that drives
+traversal — one of two platform primitives, `downward_cascade` or
+`up_then_down`. Scaffolding is *not* in this list — it's the
+scaffold's baseline behavior when no flow is active (an approved
+input doc kicks the reactive scheduler; no delta, no primitive
+invocation).
 
 Working sketches for each flow live in
 `catapult-default-bundle-v3-examples.md`; this section carries
 prose descriptions only.
 
 ### 10.1 Feature request
-Seed: feature-shaped prose. Phase-zero planning tier splits
-the request into one or more concrete features and lands them
-at the expansion tier. Direction: `down` from the fan-out
-point. Planning auto-approves. From v2 §A.2.2.
+Seed: feature-shaped prose. Phase-zero planning tier splits the
+request into one or more concrete features, expressed as
+`<additions>` in the expansion-tier plan. Invokes
+`downward_cascade`; walk fans out through reqs → sysarch →
+subreqs → comparch → subcomparch → impl → plan → code integrating
+the new features. Planning auto-approves. From v2 §A.2.2.
 
 ### 10.2 Refactor
 Seed: structural-op prose. Phase-zero planning tier shapes the
-request into a `<structural-ops>` list plus downstream plan.
-Direction: `down`. Planning tiers' grammars allow
-`<structural-ops>` → human-gated at any tier whose plan
-carries structural-ops. Structural-ops applied end-of-run.
-From v2 §A.2.3.
+request into a `<structural-ops>` list plus downstream intent.
+Invokes `downward_cascade`. Planning tier grammars allow
+`<structural-ops>` → plans carrying ops are human-gated per the
+`gate: non-empty-structural-ops` annotation. **Ops apply
+immediately on plan approval**; each tier's regen sees the
+post-op state as current. No deferred application, no
+ready-to-apply state. From v2 §A.2.3 (modified —
+immediate-apply replaces the v2 end-of-run deferral).
 
 ### 10.3 Bug-fix propagation
-Seed: code diff mapped to `git_commit`-owning leaves via
-territory (spec §A.16). Direction: `up_then_down`. Upward leg
-produces planning-only assessments at each ancestor up to the
-project root; merge-at-parent applies when multiple seed
-leaves converge. Downward leg starts at root with plans and
-regens, implicated-children splits fan out. No new code —
-input is already code. From v2 §A.2.4.
+Seed: code diff. A phase-zero tier maps the diff's changed paths
+to owning `impl_*` leaves via `scaffold.manifest.resolve_paths`
+(spec §A.16 / territory) and emits an `<affected-leaves>` set.
+Invokes `up_then_down`. Upward leg produces planning-only
+`<assessment>` at each ancestor up to the project root;
+merge-at-parent is implicit via the upward planning tiers'
+cardinality-many `child_plans` context. Downward leg starts at
+root with plans and regens, implicated-children splits fan out.
+No new code generated — input is already code. From v2 §A.2.4.
 
 ### 10.4 Downward propagation
-Seed: node-set-with-accumulated-feedback. Direction: `down`.
-Scope-bounded propagation depth (v2 §A.2.5 retains the "stop
-before impl" affordance via `max_depth`). Planning
-auto-approves. The mechanically-thinnest flow in the
-catalogue — kept as the worked example of consuming deferred
-feedback as a first-class operation. From v2 §A.2.5.
+Seed: node-set-with-accumulated-feedback. Invokes
+`downward_cascade` with default prompts; no phase-zero, no
+structural ops, no additions. Scope-bounded via a `max_depth`
+parameter (v2 §A.2.5's "stop before impl" affordance). Planning
+auto-approves. The mechanically-thinnest flow in the catalogue —
+kept as the reference implementation of feedback consumption.
+From v2 §A.2.5.
 
 ### 10.5 Upward propagation
-Seed: node-set-with-accumulated-feedback. Direction:
-`up_then_down`. Same up-then-down shape as bug-fix propagation
-but seeded from deferred feedback rather than a code diff.
-From v2 §A.2.6.
+Seed: node-set-with-accumulated-feedback. Invokes `up_then_down`
+with default prompts; no phase-zero. Upward leg produces
+`<assessment>` at each ancestor; downward leg cascades the
+revisions back through the seed-to-root spine plus sideways
+fan-outs. Reference implementation of the up-then-down pattern
+that bug-fix uses with a different seed shape. From v2 §A.2.6.

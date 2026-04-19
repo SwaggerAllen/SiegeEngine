@@ -137,11 +137,13 @@ them in two places because the reactive framing was late.
 Flows are **schema deltas** — additional tiers and edges a
 bundle grafts onto the scaffold when a flow is active. The
 platform merges them (`active_dag = scaffold ∪ flow`), the
-reactive scheduler runs normally against the merged DAG, and
-the flow ends when no more `(tier, scope)` pairs are
-enqueueable. No flow-specific runtime beyond the reactive
-scheduler: walk, gating, and prompt sequencing all fall out
-of the merged schema's structure.
+reactive scheduler runs against the merged DAG, and the
+flow ends when no more `(tier, scope)` pairs are
+enqueueable. Two **walk-algorithm primitives** the scheduler
+implements — `downward_cascade` and `up_then_down` — are
+selected per flow via an `invokes:` hook in the flow's
+declaration. Walk, gating, and prompt sequencing all fall
+out of the merged schema plus the selected primitive.
 
 ### A.4.1 Flows as schema deltas
 
@@ -150,82 +152,109 @@ prompt files. The YAML declares:
 
 - a **seed** shape (prose input, code diff,
   node-set-with-feedback, …),
-- a **direction** (`down` or `up_then_down`, see §A.4.3),
+- an **`invokes:`** hook naming the walk-algorithm
+  primitive (see §A.4.3),
+- optional **preconditions** — predicates over current
+  scaffold state evaluated before the lobby kicks the flow
+  (see §A.4.10),
 - new **tiers** — typically planning tiers whose output is
-  consumed as context by scaffold tier regens,
+  consumed as context by scaffold tier regens, plus
+  phase-zero tiers where the seed needs interpretation
+  before the walk starts,
 - new **edges** — connecting flow-added tiers to the
   scaffold, including which scaffold tiers read which
   planning outputs.
 
-At flow start the platform computes the merged DAG. Planning
-tier instances instantiate per scope; scaffold tier regens
-find planning handles in their merged context and consume
-them. At flow end the delta unmerges and the scaffold
-returns to baseline. Cancelling an in-flight flow discards
-unmerged pending visits.
+At flow start the platform computes the merged DAG.
+Planning tier instances instantiate per scope; scaffold
+tier regens find planning handles in their merged context
+and consume them. At flow end the delta unmerges and the
+scaffold returns to baseline. Cancelling an in-flight flow
+discards unmerged pending visits.
 
 ### A.4.2 Planning tiers
 
 A **planning tier** is a flow-declared tier whose draft
 grammar emits a plan — prose intent plus structured
-`<implicated-children>` and (for some flows)
-`<structural-ops>` lists.
+`<implicated-children>` and (for some flows) other
+elements like `<additions>`, `<structural-ops>`, or
+`<assessment>` (see §A.4.6 for grammar annotations and
+gating).
 
-Default convention: one planning tier per scaffold tier the
-flow visits, each referencing the same `plan.md` prompt.
-Distinct tier identities per scaffold tier give each plan
-its own event-log id and keep scope expressions simple
-(`scope: per(expansion)`, `per(sysarch)`, … — not
-polymorphic `per(scaffold_node)`). Bundles that want
-per-scaffold-tier prompt divergence point individual
-planning tiers at different files.
+Convention: one planning tier per scaffold tier the flow
+visits, each referencing the same prompt file. Distinct
+tier identities per scaffold tier give each plan its own
+event-log id and keep scope expressions simple
+(`scope: per(expansion)`, `per(sysarch)`, …). Bundles
+that want per-scaffold-tier prompt divergence point
+individual planning tiers at different files.
 
-Planning tiers participate in normal readiness gating: their
-`context:` declaration lists what they read, and the
-scheduler enqueues them when context resolves. Scaffold tier
-regens find the corresponding planning handle in their
-merged context; the scaffold tier's generation prompt is
-unchanged from baseline — it just has an additional context
-entry to reason over. No separate "regen prompt" per flow.
+Two declarative-sugar fields on planning-tier declarations:
 
-### A.4.3 Direction: `down` and `up_then_down`
+- **`plans: <scaffold_tier>`** expands to `scope:
+  per(<tier>)` + a `scope_filter` that ensures the target
+  is in the flow's visit set (seed nodes, plus
+  `disposition=visit` implicated children, plus
+  `<additions>` entries from approved upstream plans) + an
+  implicit 1:1 reference edge exposing the plan handle as
+  `context.active_plan` on the scaffold tier.
+- **`leg: upward | downward`** — only meaningful under
+  `invokes: up_then_down`. Tells the primitive which tiers
+  to walk in which direction (see §A.4.3).
 
-The scaffold's edges define downward data flow. Flows
-walking downward consume them as-is; flows walking upward
-need to invert them.
+Planning tiers participate in normal readiness gating:
+their `context:` declaration lists what they read, and the
+scheduler enqueues them when context resolves. Scaffold
+tier regens find the corresponding planning handle in
+their merged context; the scaffold tier's generation
+prompt is unchanged from baseline — it just has an
+additional context entry to reason over. No separate
+"regen prompt" per flow.
 
-**`down`** flows: planning tiers and scaffold regens walk
-scaffold edges in their declared direction. Scaffolding,
-feature-request, refactor, and downward-propagation.
+### A.4.3 Walk primitives: `downward_cascade` and `up_then_down`
 
-**`up_then_down`** flows: the upward leg's planning tiers
-invert scaffold structural edges in their context walks — a
-planning tier at `comp` reads its subcomps' handles rather
-than its parent's. Upward-leg planning produces artifacts at
-each ancestor up to project root; merge-at-parent is
-automatic because multiple upward instances converging on
-the same parent share that parent's planning tier. The
-downward leg then runs normally from root with planning +
-regeneration at each visited tier, and downward-leg plans
-drive scheduling. Bug-fix propagation and
-upward-propagation. Split is always a downward-leg concern;
-the upward leg narrows to the seed-to-root spine.
+The scheduler implements two walk algorithms. Flows select
+one via `invokes:` in the declaration. Primitives ship no
+default tier declarations — each flow declares its own
+planning tiers; the primitive reads the flow's declaration
+and applies its walk semantics.
 
-Bundle authors who want finer-grained edge inversion express
-it directly in flow YAML edge declarations; `direction` is
-the shortcut for "the whole upward leg walks scaffold
-structural edges in reverse."
+**`downward_cascade`.** Standard forward walk. Seeds land
+at declared planning tiers; next-wave visits are enqueued
+from approved plans' `<implicated-children>` (and minted
+from `<additions>` where the flow's grammar allows them).
+Used by feature-request, refactor, downward-propagation.
+
+**`up_then_down`.** The upward leg's `leg: upward`
+planning tiers invert scaffold structural edges in their
+context walks — a planning tier at `comp` reads its
+subcomps' handles rather than its parent's. Upward-leg
+planning produces artifacts at each ancestor up to project
+root; merge-at-parent is automatic because multiple upward
+instances converging on the same parent share that
+parent's planning tier. Once the upward-leg work queue
+drains (pivot detection at root), the downward leg runs
+normally — planning + regen at each visited tier,
+implicated-children fans out sideways, downward-leg plans
+drive scheduling. Used by bug-fix-propagation,
+upward-propagation. Split is always a downward-leg
+concern; the upward leg narrows to the seed-to-root spine.
+
+Bundle authors needing finer-grained edge inversion
+express it directly in flow YAML edge declarations; the
+`leg:` field is the shortcut for "this planning tier walks
+scaffold structural edges in reverse."
 
 ### A.4.4 Phase-zero is just a planning tier
 
 Flows whose seed needs interpretation declare a **phase-zero
 planning tier**: singleton-per-flow-run, fires once. Its
-context reads the seed plus platform-level scaffold handles
-(typically `expansion` and `sysarch` — "here's what this
-project already is, now shape this input into work against
-it"). Downstream planning tiers read phase-zero's handle
-like any other upstream dependency. No special machinery —
-it's a tier.
+context reads the seed plus platform-level scaffold
+handles (typically `expansion` and `sysarch` — "here's
+what this project already is, now shape this input into
+work against it"). Downstream planning tiers read
+phase-zero's handle like any other upstream dependency.
+No special machinery — it's a tier.
 
 ### A.4.5 Prompt templating with Liquid
 
@@ -240,9 +269,20 @@ across every prompt:
   the tier's `context:` declaration. Bundles walk into it
   (`context.feedback`, `context.upstream_plan`, …) based
   on the names their context entries define.
+  `context.upstream_plan` exposes the upstream plan's
+  parsed XML as dotted Liquid fields (intent, children,
+  additions, structural_ops, assessment,
+  disposition_for(target), rationale_for(target)).
 - `flow` — metadata about the active flow: `flow.name`,
   `flow.run_id`, `flow.parameters`, `flow.seed`. Nil when
-  no flow is active.
+  no flow is active. `flow.seed.<accessor>(arg)` is
+  seed-shape-routed: `node_set_with_feedback` gets
+  `feedback_for(node)`; `code_diff` gets
+  `diff_for(territory)`.
+- `scaffold` — each scaffold tier exposes a handle under
+  `scaffold.<name>` and may host platform-computed
+  accessors (e.g., `scaffold.manifest.resolve_paths(diff)`
+  for territory resolution).
 
 Most prompts use only variable substitution
 (`{{ scope.id }}`, `{{ context.feedback }}`). Liquid's
@@ -254,22 +294,34 @@ Document the hatch; don't require it.
 The LLM never sees Liquid — the platform renders templates
 before dispatch.
 
-### A.4.6 Plan gating via draft grammars
+### A.4.6 Plan grammar annotations and gating
 
 "Approval gates only destructive operations" (A.8.2 / v2
-§A.3.3) is a grammar-level rule in the schema-delta model:
+§A.3.3) is a grammar-level rule in the schema-delta model.
+Two grammar annotations extend it:
 
-- Planning tier grammar allows `<structural-ops>` →
-  plans with non-empty structural-ops are **human-gated**.
-  Refactor's planning tiers declare such grammars.
-- Planning tier grammar forbids `<structural-ops>` → plans
-  auto-approve. Scaffolding, feature-request, propagation
-  planning tiers declare restricted grammars.
+- **`gate: always`** — a grammar element declaring this
+  annotation gates plan approval whenever that element is
+  present and non-empty, regardless of what else the plan
+  contains. `<structural-ops>` carries this by default
+  (destructive-op gating). `<assessment>` carries it in
+  the upward-leg grammars used by upward-propagation and
+  bug-fix-propagation, because the assessment is itself
+  the reviewable payload.
+- **`<no-change/>`** — a plan element signaling "no
+  revision at this tier." The scaffold tier's regen
+  elides when the plan carries it. Useful for upward-leg
+  trivial assessments at ancestors well above the
+  feedback origin and any flow that wants a "pass
+  through" per-tier option.
 
-No flow-level gating knob. Bundles that want every plan
-human-reviewed either declare planning tiers with grammars
-requiring explicit reviewer acknowledgement, or opt the
-review lifecycle into human-gate-always at the tier level.
+**Structural ops apply immediately on plan approval** —
+not deferred to end-of-run. Each tier's regen sees the
+post-op state as current. This keeps refactor's regens on
+the same semantic footing as every other flow's: plan
+approved → ops applied → regen sees the new state.
+Rollback-of-a-past-op is an inverse refactor, not a flow
+cancel.
 
 ### A.4.7 Review UX invariants
 
@@ -299,44 +351,61 @@ sketches in `catapult-default-bundle-v3-examples.md` §2.
 Scaffolding is *not* in the catalogue — it's the platform's
 baseline behavior when no flow is active. A newly-created
 project with an approved input doc runs the scaffold's
-reactive scheduler directly; no schema delta, no planning
-tiers, no user-kicked flow action. The five flows below are
-the schema deltas bundles ship for operations the scaffold
-can't do alone.
+reactive scheduler directly; no schema delta, no `invokes:`.
+The five flows below are the schema deltas bundles ship
+for operations the scaffold can't do alone.
 
 - **Feature request** — seed: feature-shaped prose;
-  phase-zero tier shapes it into a feature list;
-  direction: `down`.
+  phase-zero shapes it into a feature list; invokes
+  `downward_cascade`; grammar allows `<additions>`.
 - **Refactor** — seed: structural-op prose; phase-zero
-  tier surfaces the structural-ops list; direction: `down`;
-  planning tier grammars allow `<structural-ops>` →
-  human-gated.
+  surfaces the structural-ops list; invokes
+  `downward_cascade`; grammar allows `<structural-ops>` —
+  plans carrying ops are human-gated; ops apply
+  immediately on approval.
 - **Bug-fix propagation** — seed: code diff mapped to
-  `git_commit`-owning leaves via territory (A.16);
-  direction: `up_then_down`; no new code generated.
+  `git_commit`-owning leaves via
+  `scaffold.manifest.resolve_paths` (A.16); invokes
+  `up_then_down`; no new code generated.
 - **Downward propagation** — seed: node-set-with-feedback;
-  direction: `down`; mechanically-thinnest flow in the
-  catalogue, kept as the worked example of consuming
-  deferred feedback as a first-class operation.
+  invokes `downward_cascade` with default prompts;
+  reference implementation of the cascade pattern. Kept
+  as a declared flow rather than folded into a platform
+  action so bundles ship a worked example of feedback
+  consumption.
 - **Upward propagation** — seed: node-set-with-feedback;
-  direction: `up_then_down`.
+  invokes `up_then_down` with default prompts; reference
+  implementation of the up-then-down pattern bug-fix uses
+  with a different seed.
 
 ### A.4.9 Flows and deferred feedback
 Deferred feedback accumulates; flows consume. Refactoring
 of v2 §A.2.7, referencing the catalogue in A.4.8. Downward
 and upward propagation have feedback as their explicit
-seed; other flows consume feedback on nodes they visit as a
-side effect.
+seed; other flows consume feedback on nodes they visit as
+a side effect.
 
-### A.4.10 Flow composition with the scheduler
+### A.4.10 Flow lifecycle: preconditions, multi-seed ordering, lobby composition
 
-Flows don't bypass readiness — the merged DAG's reactive
-scheduling is all the platform does. The lobby's
-one-flow-per-project rule (A.9.1) makes composition
-unambiguous: at most one active flow, so the merged DAG is
-well-defined at any moment. When an active flow ends its
-schema delta unmerges and the scaffold returns to
-baseline.
+Three lifecycle rules that apply to every flow:
+
+- **Preconditions.** Each `flow.yaml` declares a
+  `preconditions:` list — predicates over current scaffold
+  state evaluated before the lobby kicks the flow.
+  Preflight failure surfaces in the lobby UI.
+- **Multi-seed topological ordering.** When a flow's seed
+  set includes nodes in ancestor/descendant
+  relationships, seeds process in topological order:
+  ancestor's plan and regen commit before the
+  descendant's seed visit fires. Descendant's
+  seed-feedback is consumed at its own seed visit on top
+  of whatever the ancestor's plan implicated.
+- **One-flow-per-project lobby rule** (A.9.1). At most one
+  active flow, so the merged DAG is well-defined at any
+  moment. Flows don't bypass readiness — the merged DAG's
+  reactive scheduling is all the platform does. When an
+  active flow ends its schema delta unmerges and the
+  scaffold returns to baseline.
 
 ## A.5 Review, feedback, approval
 
