@@ -486,7 +486,396 @@ straightforward scope expressions.
 
 ## 2.2 Feature request
 
-To be sketched.
+Seed is prose describing new capability the user wants
+("add batch invoice processing"). A **phase-zero planning
+tier** reads the prose plus the current `expansion` and
+`sysarch` handles and produces the plan for `expansion`'s
+regen — intent prose plus an additions list naming new
+features to mint. The rest of the walk is structurally
+identical to downward-propagation: one planning tier per
+scaffold tier, all feeding the corresponding scaffold
+tier's regen. The novel piece is the phase-zero entry
+point that interprets prose seed into a structured
+starting plan.
+
+### 2.2.1 `flows/feature-request/flow.yaml`
+
+```yaml
+flow:
+  name: feature-request
+  seed:
+    shape: prose
+  direction: down
+  parameters:
+    max_depth:
+      type: int
+      default: null
+      description: |
+        Optional cap on tiers below expansion the walk
+        visits. Use for preview runs that stop at sysarch
+        to review architectural impact before committing
+        subcomponent-level work.
+
+tiers:
+  # Phase-zero — the entry-point planning tier. Plans
+  # the expansion regen from the user's prose seed.
+  # Labeled "phase-zero" conceptually; mechanically it's
+  # just a planning tier like any other.
+  fr_plan_expansion:
+    plans: expansion
+    phase_zero: true                 # marker, informational
+    prompt: ./phase-zero.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed: flow.seed                # the prose
+      current_expansion: scope.target.handle
+      current_sysarch:   scaffold.sysarch.handle
+
+  fr_plan_reqs:
+    plans: reqs
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      scope_handle:  scope.target.handle
+      upstream_plan: scope.target.parent.active_plan
+
+  fr_plan_sysarch:
+    plans: sysarch
+    prompt: ./plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      scope_handle:  scope.target.handle
+      upstream_plan: scope.target.parent.active_plan
+
+  # … fr_plan_subreqs, fr_plan_comparch, fr_plan_subcomparch,
+  #   fr_plan_impl, fr_plan_plan, fr_plan_code — same pattern.
+```
+
+Two prompt files in this flow: `phase-zero.md` (entry-
+point, reads the prose seed) and `plan.md` (every
+downstream planning tier; reads upstream plan handle).
+Bundle author could have a single shared file with
+conditionals on `scope.target.tier` if they want fewer
+files; separate files are clearer.
+
+### 2.2.2 `flows/feature-request/plan-grammar.xml`
+
+Extends the downward-propagation grammar with an
+`<additions>` section — the regen at this tier is going
+to mint new children not yet in scaffold, and the plan
+needs to enumerate them so the review checklist and the
+downstream scheduler both have something concrete to
+latch onto.
+
+```xml
+<plan>
+  <intent>
+    Brief prose describing what this tier's regen will
+    change, including any new children being minted.
+  </intent>
+  <additions>
+    <child alias="batch_invoice_processing"
+           name="Batch invoice processing">
+      <rationale>New feature introduced by the flow's
+        seed prose.</rationale>
+    </child>
+    ...
+  </additions>
+  <implicated-children>
+    <child id="feat_existing_abc" disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+
+`<additions>` entries use aliases (not IDs) since the
+children don't exist at plan time. The scaffold tier's
+regen resolves aliases to minted IDs; downstream planning
+tier instances see the resulting real nodes in their
+context once the regen commits.
+
+No `<structural-ops>` block — feature-request doesn't
+propose renames / reparents / merges. Plans auto-approve.
+A user who wants structural reshaping alongside the new
+feature runs refactor instead (or runs feature-request
+first and refactor after).
+
+### 2.2.3 `flows/feature-request/phase-zero.md`
+
+Entry-point prompt — reads prose seed and produces the
+expansion regen's plan.
+
+````markdown
+You are the phase-zero planning tier for a feature-request
+flow. The user has given you prose describing new
+capability they want, and your job is to plan the
+regeneration of the project's expansion node: decide
+which features to add, and capture the shape of the
+resulting expansion regen.
+
+# User's request
+
+{{ context.seed }}
+
+# Current project state
+
+## Feature expansion (current)
+
+{{ context.current_expansion }}
+
+## System architecture (current)
+
+{{ context.current_sysarch }}
+
+# Your task
+
+Produce a plan in the grammar below. Your plan will drive
+the expansion regen, which will mint new `feat_*` nodes
+for each entry in your `<additions>` list and propagate
+downward through the rest of the flow.
+
+Guidance:
+
+- Split the user's request into one or more distinct
+  features if it implicates multiple concerns. "Add
+  billing and invoice delivery" is probably two features,
+  not one.
+- Name features for the capability they introduce, not for
+  the component they'd naturally live in. Downstream
+  sysarch decides component boundaries.
+- `<additions>` entries use aliases (not IDs) — the
+  expansion regen assigns real IDs at mint time.
+- `<implicated-children>` lists existing features this
+  request modifies. Usually empty for pure additions; may
+  have entries if the user's prose reframes or extends
+  an existing feature.
+- You may NOT emit `<structural-ops>`. If the user's
+  request requires renaming / reparenting / deleting
+  existing features, flag it in the intent and tell the
+  user to run refactor instead.
+
+```xml
+<plan>
+  <intent>...</intent>
+  <additions>
+    <child alias="..." name="...">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </additions>
+  <implicated-children>
+    <child id="feat_..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+````
+
+### 2.2.4 `flows/feature-request/plan.md`
+
+Downstream planning tiers. Structurally parallel to
+downward-propagation's `plan.md` — the downstream-visit
+branch — with the framing adjusted for "new features are
+entering the scaffold" rather than "feedback is being
+consumed."
+
+````markdown
+You are planning a regen of the {{ scope.target.tier }}
+node at {{ scope.target.id }} as part of a feature-request
+flow run.
+
+# Upstream plan
+
+The upstream {{ scope.target.parent.tier }} regen's plan
+was approved. It implicated this node as a
+`{{ context.upstream_plan.disposition_for(scope.target) }}`
+visit because:
+
+> {{ context.upstream_plan.rationale_for(scope.target) }}
+
+Full upstream plan intent:
+
+> {{ context.upstream_plan.intent }}
+
+New children minted upstream:
+
+{% for addition in context.upstream_plan.additions %}
+- `{{ addition.alias }}` — {{ addition.name }}
+{% endfor %}
+
+# Context
+
+{{ context.scope_handle }}
+
+# Your task
+
+Produce a plan for this tier's regen given the upstream
+changes. Identify:
+
+- `<additions>` — new children this tier's regen will
+  mint in response. For `reqs` seeing a new `feat_*`,
+  this is new `resp_*` nodes. For `sysarch` seeing new
+  resps, this may be new `comp_*` nodes (or existing
+  comps getting new resps assigned, captured in
+  `<implicated-children>`).
+- `<implicated-children>` — existing children whose
+  content changes. Use `disposition=visit|skip|trivial`
+  as in downward-propagation (§2.1).
+
+Prefer extending existing children over minting new ones
+when the new capability fits an existing responsibility
+or component. The user's request is phrased as capability
+("batch invoice processing"), not as architecture — it's
+this tier's job to decide whether that capability lives
+in a new structural home or extends an existing one.
+
+No `<structural-ops>`. Plans auto-approve.
+
+```xml
+<plan>
+  <intent>...</intent>
+  <additions>
+    <child alias="..." name="...">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </additions>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+````
+
+### 2.2.5 Scaffold tier regen with flow active
+
+Same mechanism as downward-propagation (§2.1.4). Each
+scaffold tier's generation prompt picks up
+`context.active_plan` and renders a
+`{% if context.active_plan %}` block with the plan's
+intent, additions, and implicated-children as regen
+scope guidance.
+
+The addition here: the scaffold tier's fanout now reads
+the plan's `<additions>` to know which new children to
+mint. For example, expansion's fanout over feat_*
+children normally draws from `draft.features[]`; with a
+flow active and a plan in context, expansion's regen
+writes a draft whose `features[]` reflects the additions
+from the plan, and normal fanout mints them.
+
+### 2.2.6 Walked example (partial)
+
+Seed: "add batch invoice processing — invoices should be
+processed in bulk instead of one at a time, to support
+high-volume customers."
+
+**Phase-zero — `fr_plan_expansion` on the expansion
+singleton:**
+
+Liquid renders `phase-zero.md` with:
+- `context.seed` = the prose above
+- `context.current_expansion` = current expansion handle
+- `context.current_sysarch` = current sysarch handle
+
+Plan output (elided):
+
+```xml
+<plan>
+  <intent>
+    Add a "Batch invoice processing" feature to the
+    project. The feature introduces bulk invoice
+    handling as a first-class capability, with
+    implications for high-volume customer support.
+  </intent>
+  <additions>
+    <child alias="batch_invoice_processing"
+           name="Batch invoice processing">
+      <rationale>Direct expansion of the user's
+        request.</rationale>
+    </child>
+  </additions>
+  <implicated-children/>
+</plan>
+```
+
+Auto-approves. Expansion regens, mints
+`feat_batchinvoiceprocessing_abc123`.
+
+**Downstream — `fr_plan_reqs` on the reqs singleton:**
+
+Liquid renders `plan.md` with:
+- `context.upstream_plan.additions` includes the new
+  feat
+- `context.upstream_plan.intent` reads through
+
+Plan output (elided): adds new `resp_*` entries for
+batch-throughput and batch-validation; implicates
+existing billing-related resps for visit.
+
+The walk continues through sysarch (assigning new resps
+to an existing Billing comp), that comp's subreqs,
+comparch, subcomparch, impl, plan, code.
+
+### 2.2.7 What this validates / still to figure out
+
+**Validates** phase-zero as a planning tier: `plans:
+expansion` + `phase_zero: true` + context reading
+`flow.seed` is all the mechanism needed. No special
+runtime for phase-zero.
+
+**Validates** `<additions>` in the plan grammar. The
+scaffold tier's fanout reads additions at mint time;
+aliases resolve to real IDs; downstream planning sees
+minted nodes in context via the updated upstream handle.
+
+**Still to figure out:**
+
+1. **Partial-visit fanout.** When a plan has both
+   `<additions>` and `<implicated-children>` with some
+   children dispositioned `skip`, the scaffold tier's
+   regen needs to write a draft that mints the
+   additions but leaves skipped children unchanged.
+   That's a property of the scaffold tier's draft
+   grammar and regen prompt — straightforward, worth a
+   note in A.4 about how regens compose plan outputs.
+2. **Phase-zero-reads-sysarch dependency.** Phase-zero
+   reads the current `sysarch` handle as context. What
+   happens during scaffolding when sysarch isn't
+   minted yet? Probably: feature-request is only valid
+   against a project that has completed scaffolding up
+   through sysarch. Enforce at flow-start: the flow
+   lobby rejects feature-request if sysarch is missing
+   or pending.
+3. **Interaction with downward propagation of existing
+   feedback.** If there's accumulated feedback on
+   `sysarch` and the user kicks a feature-request, the
+   fr_plan_sysarch plan ought to consider that feedback
+   alongside the new feature. Either: feature-request's
+   planning tiers read `scope.target.pending_feedback`
+   as part of context, or: the user should run
+   downward-propagation first to drain feedback, then
+   feature-request. The second is the v2 behavior
+   (one-flow-at-a-time lobby). Probably fine to keep;
+   worth a UX affordance in the lobby that says "this
+   node has pending feedback; consume it first?"
+4. **Phase-zero context on bundle-agnostic terms.** The
+   phase-zero declaration reads
+   `scaffold.sysarch.handle` by name — that's a default-
+   bundle-specific reference. A bundle without a
+   `sysarch` tier would need a different reference.
+   Phase-zero's context is genuinely bundle-specific,
+   which means phase-zero prompts aren't portable across
+   bundles. That's probably fine — phase-zero shapes
+   the seed into the specific schema the bundle uses —
+   but worth noting.
 
 ## 2.3 Refactor
 
