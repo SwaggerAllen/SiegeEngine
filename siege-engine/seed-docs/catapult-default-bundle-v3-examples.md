@@ -1344,7 +1344,182 @@ To be sketched.
 
 ## 2.5 Upward propagation
 
-To be sketched.
+Seed is a node-set-with-feedback like downward propagation,
+but the feedback is design-level observations best reconciled
+by revisiting ancestors — "examining this subcomp, I realize
+the parent comp's role paragraph is misleading," or
+"responsibilty X was scoped too broadly at reqs, seeing the
+leaf impls reveals it wants to split." The flow walks upward
+along the scaffold's structural edges to the project root,
+accumulating per-tier planning as it goes; at root it pivots
+and walks back down, regenerating every ancestor that's on the
+spine plus whatever the downward-leg plans implicate sideways.
+
+Shape contrast with bug-fix propagation: same `up_then_down`
+direction, same merge-at-parent discipline on the upward leg,
+same downward-leg-drives-scheduling rule. Different seed
+(feedback vs. code diff), different phase-zero behavior (none;
+feedback is already structured). Where bug-fix has external
+code as input and produces design updates to match reality,
+upward-propagation has internal observations as input and
+produces design updates to match revised thinking.
+
+### 2.5.1 `flows/upward-propagation/flow.yaml`
+
+```yaml
+flow:
+  name: upward-propagation
+  seed:
+    shape: node_set_with_feedback
+  direction: up_then_down
+
+  # preconditions: the seed nodes must each have an ancestor
+  # chain to the project root — trivially true for any non-
+  # root scaffold node, so no explicit predicate needed.
+
+tiers:
+  # Upward-leg planning tiers. One per scaffold tier, all
+  # pointing at ./upward-plan.md. The up_then_down direction
+  # flag tells the platform to invert scaffold structural
+  # edges in the upward-leg planning tiers' context walks.
+  up_plan_impl:
+    plans: impl
+    leg: upward
+    prompt: ./upward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed_feedback:  flow.seed.feedback_for(self.target)
+      scope_handle:   self.target.handle
+      # children is cardinality-many: downstream plans from the
+      # upward leg's descendants, merged at this ancestor.
+      child_plans:    self.target.children.up_plan.handle
+
+  up_plan_subcomparch:
+    plans: subcomparch
+    leg: upward
+    prompt: ./upward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      seed_feedback:  flow.seed.feedback_for(self.target)
+      scope_handle:   self.target.handle
+      child_plans:    self.target.children.up_plan.handle
+
+  # … up_plan_comparch, up_plan_subreqs, up_plan_sysarch,
+  #   up_plan_reqs, up_plan_expansion — same pattern up to
+  #   the root. Seven upward planning tiers (no up_plan for
+  #   plan/code; those leaf tiers are seed candidates but
+  #   don't have children to aggregate from).
+
+  # Downward-leg planning tiers. Kick in after the upward
+  # leg completes at root. Same `plans:` attachment points
+  # as downward-propagation, but these plans *consume* the
+  # upward leg's plan handles for their corresponding
+  # scaffold nodes.
+  dn_plan_expansion:
+    plans: expansion
+    leg: downward
+    prompt: ./downward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      upstream_plan:  scope.target.parent.active_plan
+      upward_plan:    scope.target.matched_upward_plan.handle
+      scope_handle:   scope.target.handle
+
+  dn_plan_reqs:
+    plans: reqs
+    leg: downward
+    prompt: ./downward-plan.md
+    draft: { root: plan, grammar: ./plan-grammar.xml }
+    context:
+      upstream_plan:  scope.target.parent.active_plan
+      upward_plan:    scope.target.matched_upward_plan.handle
+      scope_handle:   scope.target.handle
+
+  # … dn_plan_sysarch, dn_plan_subreqs, dn_plan_comparch,
+  #   dn_plan_subcomparch, dn_plan_impl, dn_plan_plan,
+  #   dn_plan_code.
+
+# Direction semantics — upward leg runs planning only; it
+# produces no regens. The downward leg runs planning + regen
+# per the usual down-flow pattern. Pivot happens automatically
+# when the reactive scheduler has nothing left to schedule on
+# the upward leg (root's up_plan_expansion has committed).
+pivot:
+  from: upward
+  to: downward
+  at: root
+```
+
+Two new fields worth highlighting: `leg: upward | downward`
+(explicit so the platform knows which context walks to
+invert), and `matched_upward_plan` on the downward-leg
+planning tier's context (the platform resolves it by looking
+up the upward-leg plan node whose target matches the
+downward-leg tier's scope target). For scaffold nodes that
+weren't on the seed-to-root spine — sideways fan-outs the
+downward leg reaches via `<implicated-children>` — the
+`upward_plan` field is nil, and the downward-leg plan.md
+handles that conditionally.
+
+### 2.5.2 `flows/upward-propagation/plan-grammar.xml`
+
+Two grammars — one for upward plans, one for downward plans.
+Upward grammar has no `<implicated-children>` because the
+upward leg's scope is the seed-to-root spine plus sideways
+fan-out deferred to the downward leg; there are no children
+to enqueue from an upward plan.
+
+```xml
+<!-- upward-plan-grammar.xml -->
+<plan leg="upward">
+  <intent>
+    What does the seed feedback (or merged child plans) imply
+    at this ancestor? Prose; this becomes context for the
+    downward-leg plan at this same node and for the next
+    ancestor upward.
+  </intent>
+  <diagnosis>
+    What the leaf/descendant feedback reveals about this tier's
+    current content — missing context, over-broad scope, stale
+    API contract, etc. This is the reviewable payload for the
+    upward leg.
+  </diagnosis>
+</plan>
+```
+
+Downward grammar is the standard downward-propagation plan
+shape (no structural ops):
+
+```xml
+<!-- downward-plan-grammar.xml -->
+<plan leg="downward">
+  <intent>...</intent>
+  <implicated-children>
+    <child id="..." disposition="visit | skip | trivial">
+      <rationale>...</rationale>
+    </child>
+    ...
+  </implicated-children>
+</plan>
+```
+
+Both grammars forbid `<structural-ops>` — upward propagation
+is design refinement, not refactor. If feedback reveals a
+structural problem, the reviewer approves the diagnosis,
+cancels the flow, and kicks refactor with the structural
+change as its seed. Two flows, one concern each.
+
+Upward plans are **human-gated by default** despite carrying
+no structural ops, because the diagnosis is the reviewable
+artifact the whole flow is built around — gating it ensures
+the ancestor's regen isn't driven by an un-reviewed
+interpretation of downstream feedback. The grammar's
+`<diagnosis>` element declares `gate: always` in its schema
+annotation, which the platform picks up as the gate trigger
+alongside the structural-ops rule.
+
+Chunk 2 covers the two prompts and the downward-leg-finds-its-
+upward-plan mechanism; chunk 3 walks an example.
 
 ---
 
