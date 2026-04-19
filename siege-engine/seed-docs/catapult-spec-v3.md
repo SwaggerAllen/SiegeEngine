@@ -1014,26 +1014,164 @@ so the user knows what they're signing up for.
 ## A.6 Ownership and scoped roles
 
 ### A.6.1 Ownership as a scoped role
-v2 §A.5.4 and §A.14.2. Stated abstractly — an owner holds the
-`owner` role with scope pinned to a node ID. Scope-parent
-traversal rules are platform-level.
+
+Every node minted by a fanout or addition has an **owner** —
+the team member responsible for reviewing everything in that
+node's subtree. Ownership is not a separate binding from
+permissions; it's an instance of the **scoped-role system**
+(A.6.2) with the `owner` role scoped to a specific node ID.
+Permission checks against a node consult the role bindings
+that cover that node's subtree.
+
+**Fan-out is the natural assignment point.** When a
+decomposition fanout mints children (a sysarch minting
+top-level components in the default bundle, or a
+component-architecture minting subcomponents), the approval
+action that commits the mint also captures owner assignments
+for the new children. Ownership assignment is part of the
+approval, not a separate step.
+
+**Ownership flows down by scope.** An owner at scope `X`
+implicitly owns every descendant of `X` in the
+decomposition-edge sense. A sub-owner at scope `X.Y` can be
+assigned alongside the parent owner, in which case
+permission checks take the most-specific match — useful for
+"I own this component but delegate the auth subcomponent to
+Bob."
+
+Nodes without a single natural owner (features,
+responsibilities, policies in the default bundle) are
+reviewed by whoever owns the components that decompose them.
+Permission checks against those nodes fall through to
+project-scoped roles.
 
 ### A.6.2 Permission atoms and roles
-v2 §A.14.1, §A.14.3.
+
+Permissions are declared as **atoms** — small named
+capabilities (`review.approve`, `instruction.issue.rename`,
+`flow.kick.refactor`, etc.). A **role** is a named set of
+atoms with an optional scope. A user's **binding** is
+(user, role, scope): "Alice is owner of `comp_billing_abc`"
+is one binding; "Bob is project-admin of `proj_xyz`" is
+another.
+
+Permission checks are a reachability query: does any of
+the user's bindings grant the required atom at a scope that
+covers the target node? Scope coverage follows the
+decomposition edges — an owner at a comp covers its
+subcomponents, impls, and any other structural descendant.
+
+The platform ships a small set of **preset roles**: `owner`,
+`reviewer`, `commenter`, `admin`. Bundles can declare
+additional roles (the default bundle adds `architect` for
+reviewers who specifically approve architecture-doc tiers,
+see Part B §6). Roles are declarative — atom lists — not
+code.
 
 ### A.6.3 Review routing and SLA
-v2 §A.5.4 tail.
+
+Review notifications route to whoever holds the `owner`
+role at the narrowest scope covering the artifact. Bundles
+can declare **review-type routing** rules — architecture
+docs require a second reviewer with the `architect` role;
+PRs require component owner + optionally a domain expert;
+etc. Rules are bundle-scoped; the platform's contract is
+"consult the scoped-role system and the bundle's rules."
+
+**Notification batching.** Reviews are the pipeline's
+bottleneck. Notifications batch per-scope and per-tier:
+"You have 4 architecture docs ready in Authentication" is
+one notification, not four. In-app notifications are
+always available; webhook delivery (Slack, Teams, email) is
+configurable per user.
+
+Each user has a **review queue** — a unified view across
+every project of artifacts awaiting their action, with
+age, priority, and scope indicators.
+
+**SLA and escalation.** Each project configures a review
+timeout. After first timeout, the platform reminds the
+reviewer. After second timeout, it escalates to the parent
+scope's owner or the project admin. Projects can optionally
+enable auto-approve-with-flag after a third timeout, off by
+default.
+
+**Delegation.** Owners can reassign a specific review to
+another team member, delegate their entire scope (temporary
+or permanent), or split ownership within their subtree.
+Delegation is represented as scoped-role binding changes;
+the delegating user's binding is narrowed or transferred.
 
 ## A.7 Projection sources
 
+The projection — nodes, edges, fragments, drafts, and
+derived state — is materialized by the reducer from the
+event log (A.2.1). Two mechanisms commit events that lead
+to the projection changing: **draft approvals** and
+**structural instructions**. This section covers the first
+via bootstrap nodes, which are the canonical pattern for
+"authored prose that mints structured graph state."
+Structural instructions live in A.8.
+
 ### A.7.1 Bootstrap nodes
-Authored prose that mints structured children on approval.
-From v2 §A.4.1, §A.4.2. Platform-level mechanism; which tiers are
-bootstraps is a bundle decision.
+
+A **bootstrap node** is a tier whose approved content is
+parsed into child-mint events. The user reviews prose (or
+XML, or JSON — whatever the tier's draft grammar says);
+approval commits the content *and* emits fanout/edge events
+for every child the content declares. The reducer projects
+those events into the new children's nodes and into
+whatever edges the bundle declared between the bootstrap
+tier and its children.
+
+Bootstrap is a platform-level mechanism — the reducer knows
+how to interpret a bootstrap-approval event and apply the
+fanout — but **which tiers are bootstrap tiers is a bundle
+decision**. The default bundle declares expansion, reqs,
+sysarch, subreqs, and manifest as bootstrap tiers (Part B
+§1.11). A narrative-writing bundle could declare entirely
+different bootstrap tiers, or none at all if its generation
+doesn't need a "parse prose, mint children" step.
+
+The mint events a bootstrap approval emits are the same
+event types any structural instruction emits (A.8.1). There
+is no special "bootstrap event" vocabulary; bootstrap just
+happens to be a common trigger for mint events.
 
 ### A.7.2 Mint determinism from approved content
-Parsing → event emission → reducer projection must be
-deterministic. From v2 §A.4.
+
+The parse-to-events pipeline is **deterministic**. Approving
+the same bootstrap content twice produces the same event
+sequence; replaying those events reproduces the same
+projection. This is a reducer-level guarantee, not a
+convention — the mint logic lives in the reducer and is
+tested the same way every other reducer path is.
+
+Three sub-properties make this work:
+
+- **Parsing is pure** — a function from draft content to
+  an event sequence. No wall clock, no random IDs minted
+  in parser code; ID minting happens via a deterministic
+  sequence seeded by the approval event's id.
+- **Validation is grammar-driven** — the tier's declared
+  draft grammar is the contract; content that doesn't parse
+  never reaches the reducer. Validation failure bounces
+  back to regeneration with the parse error as additional
+  context (see A.5.5 retry loop).
+- **Ordering is projection-driven** — the events a mint
+  emits land in the log in a specific order (parent first,
+  then fanout children, then edges), chosen so the reducer
+  can apply them in sequence without ever needing to
+  reorder.
+
+The net effect is that an approved bootstrap node's content
+is the **source of truth** for its children. If the log is
+replayed from zero, the same children mint in the same
+order with the same IDs. Editing content post-approval is
+expressed as a rejection-plus-regenerate (new approval, new
+events); the reducer's idempotency rules govern what
+happens to children minted by the prior approval that the
+new approval no longer names.
 
 ## A.8 Structural operations
 
