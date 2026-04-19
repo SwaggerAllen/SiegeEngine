@@ -151,7 +151,7 @@ From v2 §A.2.3.
 ### 10.3 Bug-fix propagation
 Seed: code diff mapped to `git_commit`-owning leaves via
 territory (spec §A.16). Direction: `up_then_down`. Upward leg
-produces planning-only diagnoses at each ancestor up to the
+produces planning-only assessments at each ancestor up to the
 project root; merge-at-parent applies when multiple seed
 leaves converge. Downward leg starts at root with plans and
 regens, implicated-children splits fan out. No new code —

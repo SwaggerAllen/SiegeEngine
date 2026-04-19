@@ -1352,8 +1352,8 @@ declarations (platform §A.16), seeding the upward leg with
 the right set of leaf nodes.
 
 Shape contrast with upward propagation: same upward-leg
-diagnosis / pivot-at-root / downward-leg regen-with-split
-shape, same human-gated `<diagnosis>` grammar, same trivial-
+assessment / pivot-at-root / downward-leg regen-with-split
+shape, same human-gated `<assessment>` grammar, same trivial-
 plan elision rules. Different seed (code diff vs. feedback
 set), different phase-zero (maps diff to leaves), and
 **no code is generated on the downward leg** — the input is
@@ -1398,7 +1398,7 @@ tiers:
     prompt: ./upward-plan.md
     draft: { root: plan, grammar: ./plan-grammar.xml }
     context:
-      diagnosis_seed:   context.phase_zero.diagnosis_for(self.target)
+      assessment_seed:   context.phase_zero.assessment_for(self.target)
       diff_for_target:  flow.seed.diff_for(self.target.territory)
       scope_handle:     self.target.handle
       child_plans:      self.target.children.up_plan.handle
@@ -1449,14 +1449,14 @@ Two things worth highlighting against upward-propagation:
   `{node, feedback}` pairs; planning tiers find targeted
   feedback via `flow.seed.feedback_for(target)`. Bug-fix's
   seed is raw diff; phase-zero parses paths, looks up
-  territory, and produces the `(leaf, per-leaf-diagnosis-
+  territory, and produces the `(leaf, per-leaf-assessment-
   seed)` list the upward leg consumes. `flow.seed.diff` is
   still available for upward-leg impls that want to see
   their own slice of the diff (via `flow.seed.diff_for(
   self.target.territory)`).
 - **No `bf_dn_plan_plan` or `bf_dn_plan_code` tiers.** The
   downward leg stops at impl. Bug-fix is design-updates-
-  only; if the diagnosis reveals work that still needs to
+  only; if the assessment reveals work that still needs to
   happen, a follow-up feature-request or refactor flow
   handles it, and that flow runs code generation through
   the normal path.
@@ -1464,7 +1464,7 @@ Two things worth highlighting against upward-propagation:
 ### 2.4.2 `flows/bug-fix-propagation/phase-zero-grammar.xml`
 
 Phase-zero's output is a structured leaf-set — one entry
-per affected impl, with a per-leaf diagnosis seed. The
+per affected impl, with a per-leaf assessment seed. The
 upward leg consumes this instead of `seed_feedback`.
 
 ```xml
@@ -1480,11 +1480,11 @@ upward leg consumes this instead of `seed_feedback`.
         <path>billing/rendering/pdf.py</path>
         <path>billing/rendering/templates.py</path>
       </changed-paths>
-      <diagnosis-seed>
+      <assessment-seed>
         Initial prose framing of what the diff implies at
         this leaf — what was changed, what the change
         suggests about scope or contract.
-      </diagnosis-seed>
+      </assessment-seed>
     </leaf>
     ...
   </affected-leaves>
@@ -1493,7 +1493,7 @@ upward leg consumes this instead of `seed_feedback`.
 
 Phase-zero is human-gated — reviewer confirms the
 territory mapping picked the right leaves and that the
-diagnosis-seed framing is accurate before the upward leg
+assessment-seed framing is accurate before the upward leg
 fans out.
 
 ### 2.4.3 `flows/bug-fix-propagation/plan-grammar.xml`
@@ -1505,7 +1505,7 @@ upward-propagation's (§2.5.2):
 <!-- upward -->
 <plan leg="upward">
   <intent>...</intent>
-  <diagnosis>...</diagnosis>
+  <assessment>...</assessment>
 </plan>
 
 <!-- downward -->
@@ -1521,7 +1521,7 @@ upward-propagation's (§2.5.2):
 ```
 
 Both forbid `<structural-ops>` — bug-fix propagation is
-design-alignment, not refactor. If the diagnosis reveals a
+design-alignment, not refactor. If the assessment reveals a
 structural fix is needed, the reviewer cancels this flow
 and kicks refactor.
 
@@ -1529,7 +1529,7 @@ and kicks refactor.
 
 Phase-zero is a hybrid: the platform mechanically resolves
 diff paths to owning impl leaves via the manifest, and the
-LLM only writes per-leaf diagnosis-seeds as prose. The
+LLM only writes per-leaf assessment-seeds as prose. The
 prompt receives a pre-populated skeleton.
 
 ````markdown
@@ -1537,7 +1537,7 @@ You are the phase-zero planning tier for a bug-fix
 propagation flow. The user has brought in a code diff that
 already modified the codebase; the platform has resolved
 each changed path to its owning impl leaf via the manifest.
-Your job is to write an initial diagnosis-seed for each
+Your job is to write an initial assessment-seed for each
 affected leaf and a project-level intent summary.
 
 # The diff
@@ -1565,7 +1565,7 @@ Leaf handle:
 
 # Your task
 
-For each affected leaf above, write a `<diagnosis-seed>` —
+For each affected leaf above, write a `<assessment-seed>` —
 factual prose framing what the diff at this leaf implies
 about the gap between the current impl content and what
 the code now does. Scope each to its leaf; don't merge
@@ -1586,11 +1586,11 @@ should get raised.
       <changed-paths>
         <path>...</path>
       </changed-paths>
-      <diagnosis-seed>
+      <assessment-seed>
         What the diff at this leaf implies about the gap
         between current impl content and what the code now
         does. Factual, scoped to this leaf.
-      </diagnosis-seed>
+      </assessment-seed>
     </leaf>
     ...
   </affected-leaves>
@@ -1600,35 +1600,35 @@ should get raised.
 Plan is **human-gated** — reviewer confirms the leaf set
 covers the diff (territory mapping is authoritative, but
 edge cases like newly-added files without owning leaves
-can slip through) and that the diagnosis-seeds are
+can slip through) and that the assessment-seeds are
 accurate framings.
 ````
 
 ### 2.4.5 `flows/bug-fix-propagation/upward-plan.md`
 
 Near-identical to upward-propagation's `upward-plan.md`
-(§2.5.3). Seed visits read `context.diagnosis_seed` from
+(§2.5.3). Seed visits read `context.assessment_seed` from
 phase-zero instead of `context.seed_feedback`, and leaf
 visits additionally see their slice of the raw diff.
 
 ````markdown
-You are planning an **upward-leg diagnosis** at the
+You are planning an **upward-leg assessment** at the
 {{ scope.target.tier }} node at {{ scope.target.id }} as
 part of a bug-fix propagation flow run.
 
 The upward leg walks from the phase-zero affected leaves to
-the project root, diagnosing at each ancestor what the code
+the project root, assessing at each ancestor what the code
 changes imply for that tier. No regen runs on this leg; the
-downward leg consumes approved diagnoses after the
+downward leg consumes approved assessments after the
 pivot at root.
 
-{% if context.diagnosis_seed %}
-# Leaf visit — phase-zero diagnosis-seed
+{% if context.assessment_seed %}
+# Leaf visit — phase-zero assessment-seed
 
 This impl is one of phase-zero's affected leaves. The
-diagnosis-seed phase-zero wrote for it:
+assessment-seed phase-zero wrote for it:
 
-> {{ context.diagnosis_seed }}
+> {{ context.assessment_seed }}
 
 Diff slice at this leaf's territory:
 
@@ -1643,7 +1643,7 @@ impl doc described single-threaded retry but the diff
 adds a mutex, suggesting thread-safety was
 under-specified."
 {% else %}
-# Ancestor visit — merging child diagnoses
+# Ancestor visit — merging child assessments
 
 Upward-leg plans at direct children:
 
@@ -1652,13 +1652,13 @@ Upward-leg plans at direct children:
 
 > **Intent:** {{ child.intent }}
 >
-> **Diagnosis:** {{ child.diagnosis }}
+> **Assessment:** {{ child.assessment }}
 
 {% endfor %}
 
-Read across the diagnoses. Common thread this tier needs
+Read across the assessments. Common thread this tier needs
 to reflect? Contract revision for this component or tier?
-If children diagnose independent issues that don't
+If children assess independent issues that don't
 resolve at this tier, say so — the downward leg handles
 them independently.
 {% endif %}
@@ -1669,13 +1669,13 @@ them independently.
 
 # Discipline
 
-- Diagnosis is prose, not structural change. If code
+- Assessment is prose, not structural change. If code
   changes reveal a structural problem (promote a subcomp,
   split a comp), flag it in the intent and recommend the
   user cancel this flow and run refactor.
 - No `<implicated-children>` on the upward leg.
 - Be specific: what does the current content say, and what
-  does the code now do? Vague diagnoses produce vague
+  does the code now do? Vague assessments produce vague
   downward plans.
 
 # Output
@@ -1683,10 +1683,10 @@ them independently.
 ```xml
 <plan leg="upward">
   <intent>One-sentence summary.</intent>
-  <diagnosis>
+  <assessment>
     Prose analysis of the gap between current content and
     what the code change shows.
-  </diagnosis>
+  </assessment>
 </plan>
 ```
 
@@ -1721,19 +1721,19 @@ Upstream intent:
 {% else %}
 # Root visit
 
-No upstream parent. The upward-leg diagnosis at this node
+No upstream parent. The upward-leg assessment at this node
 is your full input.
 {% endif %}
 
 {% if context.upward_plan %}
-# Upward-leg diagnosis for this node
+# Upward-leg assessment for this node
 
 Reviewer-approved during the upward leg at
 `{{ scope.target.id }}`:
 
 > **Intent:** {{ context.upward_plan.intent }}
 >
-> **Diagnosis:** {{ context.upward_plan.diagnosis }}
+> **Assessment:** {{ context.upward_plan.assessment }}
 
 Authoritative framing for what should change at this node.
 Plan children based on it.
@@ -1742,7 +1742,7 @@ Plan children based on it.
 
 Off the seed-to-root spine — reached because an upstream
 downward-leg plan implicated this node. No matching
-upward-leg diagnosis; plan from the upstream plan's intent.
+upward-leg assessment; plan from the upstream plan's intent.
 {% endif %}
 
 # Context
@@ -1806,7 +1806,7 @@ User invokes bug-fix-propagation with this diff as the seed.
 Platform resolves `billing/retry.py` → `impl_billingretry_xyz`
 (matching by territory prefix in the manifest). LLM sees the
 skeleton with one affected leaf and its diff slice, writes
-diagnosis-seed:
+assessment-seed:
 
 ```xml
 <plan leg="phase-zero">
@@ -1819,12 +1819,12 @@ diagnosis-seed:
       <changed-paths>
         <path>billing/retry.py</path>
       </changed-paths>
-      <diagnosis-seed>
+      <assessment-seed>
         A threading.Lock was added around the pending list in
         RetryScheduler.schedule. The current impl doesn't
         mention thread-safety — suggests the scheduler was
         under-specified for concurrent callers.
-      </diagnosis-seed>
+      </assessment-seed>
     </leaf>
   </affected-leaves>
 </plan>
@@ -1833,19 +1833,19 @@ diagnosis-seed:
 Reviewer approves.
 
 **Upward leg — `bf_up_plan_impl` on `impl_billingretry_xyz`**
-(seed visit, has diagnosis_seed + diff slice):
+(seed visit, has assessment_seed + diff slice):
 
-Diagnosis: "Impl describes RetryScheduler as in-process with
+Assessment: "Impl describes RetryScheduler as in-process with
 no concurrency model. The diff adds a mutex around pending,
 making schedule() thread-safe. Need to add thread-safety
 section to the impl doc — scope: callable from multiple
 threads, schedule() acquires lock before mutating pending."
 
 **Upward leg — `bf_up_plan_subcomparch`** (ancestor, merges
-impl's diagnosis):
+impl's assessment):
 
 "Subcomparch's pubapi describes schedule(task) with no
-concurrency guarantee. The impl diagnosis reveals this is
+concurrency guarantee. The impl assessment reveals this is
 now a thread-safe contract. Pubapi contract should state
 'thread-safe: schedule() may be called from multiple
 threads.'"
@@ -1853,14 +1853,14 @@ threads.'"
 **Upward leg — `bf_up_plan_comparch` on `comp_billing`:**
 
 "Billing's comparch techspec names 'in-process scheduling'
-but not a concurrency model. The subcomparch diagnosis
+but not a concurrency model. The subcomparch assessment
 elevates thread-safety to a billing-level concern. Techspec
 should add a paragraph on concurrency: 'Subcomponents that
 accept callbacks from external code must be thread-safe;
 see RetryScheduler for the canonical pattern.'"
 
 **Upward leg — `bf_up_plan_sysarch` / `bf_up_plan_reqs` /
-`bf_up_plan_expansion`:** trivial diagnoses; concurrency is
+`bf_up_plan_expansion`:** trivial assessments; concurrency is
 implementation-level, doesn't propagate to system-level reqs
 or feature-level decomposition.
 
@@ -1872,7 +1872,7 @@ elide.
 
 **Downward leg — `bf_dn_plan_comparch` on `comp_billing`:**
 spine descendant. Plans techspec revision per the approved
-upward diagnosis. Implicated children: subcomp_billingretry
+upward assessment. Implicated children: subcomp_billingretry
 visit, other billing subcomps trivial.
 
 **Downward leg — `bf_dn_plan_subcomparch`** on billing's
@@ -1880,7 +1880,7 @@ retry subcomparch: plans pubapi contract update. Implicated
 children: impl_billingretry visit.
 
 **Downward leg — `bf_dn_plan_impl` on `impl_billingretry_xyz`:**
-plans impl doc revision per upward diagnosis. Implicated
+plans impl doc revision per upward assessment. Implicated
 children list is empty — flow's scope boundary (no bf_dn_plan_plan
 or bf_dn_plan_code), plan/code tiers are not visited. The
 code is already committed; the design now matches it.
@@ -1893,7 +1893,7 @@ with the code that shipped.
 
 **Validates** the phase-zero hybrid pattern: platform
 mechanically resolves paths to leaves via the manifest
-handle; LLM only writes diagnosis-seeds as prose. Clean
+handle; LLM only writes assessment-seeds as prose. Clean
 separation of deterministic-lookup work from
 interpretation work.
 
@@ -1980,7 +1980,7 @@ What the bundle no longer declares:
 - The upward and downward plan grammars (platform-shipped)
 - `direction: up_then_down`, `leg:` fields, `matched_upward_plan`
   context entries, pivot-at-root machinery
-- Implicitly: the `<diagnosis>` grammar element and its
+- Implicitly: the `<assessment>` grammar element and its
   `gate: always` annotation (platform-shipped)
 
 What collapses out of Part 3's core-changes list:
@@ -1991,7 +1991,7 @@ What collapses out of Part 3's core-changes list:
   detection internally. Deleted from §A.4.3; moves into
   the primitive's internal spec.
 - **A.8 Grammar-level `gate: always`.** The only grammar
-  element needing it was `<diagnosis>`, which is now
+  element needing it was `<assessment>`, which is now
   platform-shipped. §A.4.6 stays on its original
   structural-ops-only rule.
 - **A.7 `<no-change/>` trivial-plan elision.** Still
@@ -2018,7 +2018,7 @@ tier + 1 grammar + 1-3 prompts.
 Tradeoff to notice: the primitive is only obviously
 right if every bundle's up-then-down walk looks the same.
 Upward-propagation (§2.5) and bug-fix's up-then-down legs
-are genuinely identical in shape — same diagnosis grammar,
+are genuinely identical in shape — same assessment grammar,
 same pivot, same downward cascade. The primitive generalizes
 cleanly. If some future flow wanted subtly different
 upward semantics (e.g. don't walk to root, stop at the
@@ -2176,12 +2176,12 @@ to enqueue from an upward plan.
     downward-leg plan at this same node and for the next
     ancestor upward.
   </intent>
-  <diagnosis>
+  <assessment>
     What the leaf/descendant feedback reveals about this tier's
     current content — missing context, over-broad scope, stale
     API contract, etc. This is the reviewable payload for the
     upward leg.
-  </diagnosis>
+  </assessment>
 </plan>
 ```
 
@@ -2203,16 +2203,16 @@ shape (no structural ops):
 
 Both grammars forbid `<structural-ops>` — upward propagation
 is design refinement, not refactor. If feedback reveals a
-structural problem, the reviewer approves the diagnosis,
+structural problem, the reviewer approves the assessment,
 cancels the flow, and kicks refactor with the structural
 change as its seed. Two flows, one concern each.
 
 Upward plans are **human-gated by default** despite carrying
-no structural ops, because the diagnosis is the reviewable
+no structural ops, because the assessment is the reviewable
 artifact the whole flow is built around — gating it ensures
 the ancestor's regen isn't driven by an un-reviewed
 interpretation of downstream feedback. The grammar's
-`<diagnosis>` element declares `gate: always` in its schema
+`<assessment>` element declares `gate: always` in its schema
 annotation, which the platform picks up as the gate trigger
 alongside the structural-ops rule.
 
@@ -2223,14 +2223,14 @@ whether the visit is a seed or an ancestor merging child
 plans; one Liquid template handles both.
 
 ````markdown
-You are planning an **upward-leg diagnosis** at the
+You are planning an **upward-leg assessment** at the
 {{ scope.target.tier }} node at {{ scope.target.id }} as
 part of an upward-propagation flow run.
 
 The upward leg walks from seed nodes to the project root,
-producing a per-tier diagnosis of what leaf-level feedback
+producing a per-tier assessment of what leaf-level feedback
 implies for each ancestor. No regen runs on this leg — the
-downward leg will consume your approved diagnosis after the
+downward leg will consume your approved assessment after the
 pivot at root.
 
 {% if context.seed_feedback %}
@@ -2244,7 +2244,7 @@ Interpret what this tier's current content is missing,
 framing wrongly, or scoping too broadly/narrowly to
 satisfy the feedback.
 {% else %}
-# Ancestor visit — merging child diagnoses
+# Ancestor visit — merging child assessments
 
 Upward-leg plans at direct children:
 
@@ -2253,13 +2253,13 @@ Upward-leg plans at direct children:
 
 > **Intent:** {{ child.intent }}
 >
-> **Diagnosis:** {{ child.diagnosis }}
+> **Assessment:** {{ child.assessment }}
 
 {% endfor %}
 
-Read across the child diagnoses. What pattern do they
+Read across the child assessments. What pattern do they
 share? Does this tier's content need to change to
-accommodate the common thread? If children diagnose
+accommodate the common thread? If children assess
 distinct problems that don't resolve at this level, say
 so — the downward leg benefits from knowing which
 descendants need what.
@@ -2271,13 +2271,13 @@ descendants need what.
 
 # Discipline
 
-- Diagnosis is reviewable prose — not structural. If the
+- Assessment is reviewable prose — not structural. If the
   feedback reveals a structural problem (rename, merge,
   split), flag it in the intent and recommend the user
   cancel this flow and kick refactor instead. Upward
   propagation refines content; refactor restructures.
 - No `<implicated-children>` on this leg — the downward
-  leg (consuming your diagnosis) decides what regenerates.
+  leg (consuming your assessment) decides what regenerates.
 - Be concrete. "The role paragraph is misleading" starts
   it; "the role paragraph frames X as a dependency when
   the feedback shows X is a delegate" is actionable.
@@ -2289,11 +2289,11 @@ descendants need what.
   <intent>
     One-sentence summary of what this tier needs to revise.
   </intent>
-  <diagnosis>
+  <assessment>
     Prose analysis — what's missing or wrong in the current
     content and what a revised regen should establish. The
     reviewer-approved payload the downward leg consumes.
-  </diagnosis>
+  </assessment>
 </plan>
 ```
 
@@ -2330,18 +2330,18 @@ Upstream intent:
 # Root visit
 
 No upstream parent — this is the root tier. The upward-leg
-diagnosis at this node is the full input to your planning.
+assessment at this node is the full input to your planning.
 {% endif %}
 
 {% if context.upward_plan %}
-# Upward-leg diagnosis for this node
+# Upward-leg assessment for this node
 
 Reviewer-approved during the upward leg at
 `{{ scope.target.id }}`:
 
 > **Intent:** {{ context.upward_plan.intent }}
 >
-> **Diagnosis:** {{ context.upward_plan.diagnosis }}
+> **Assessment:** {{ context.upward_plan.assessment }}
 
 This is the authoritative framing for what should change
 at this node — the reviewer already vetted the
@@ -2353,7 +2353,7 @@ it.
 
 This node is off the seed-to-root spine — reached because
 an upstream downward-leg plan implicated it. No matching
-upward-leg diagnosis for this specific node; plan from
+upward-leg assessment for this specific node; plan from
 the upstream plan's intent.
 {% endif %}
 
@@ -2430,10 +2430,10 @@ populated; `context.child_plans` is empty. LLM produces:
 <plan leg="upward">
   <intent>
     Parent comparch's role framing doesn't match how this
-    subcomp actually delegates; diagnosis needs to escalate
+    subcomp actually delegates; assessment needs to escalate
     the scope narrowing request.
   </intent>
-  <diagnosis>
+  <assessment>
     This subcomp's pubapi exposes `render_invoice` and
     `render_batch`; its privapi uses a template engine and a
     layout pipeline. Nothing here manages invoice lifecycle —
@@ -2442,14 +2442,14 @@ populated; `context.child_plans` is empty. LLM produces:
     full lifecycle but implementations show it orchestrates
     and delegates. The ancestor's role paragraph needs to
     scope-narrow.
-  </diagnosis>
+  </assessment>
 </plan>
 ```
 
-Reviewer approves the diagnosis.
+Reviewer approves the assessment.
 
 **Upward leg — `up_plan_comparch` on `comp_billing_abc`**
-(ancestor visit, child_plans has the subcomp's diagnosis):
+(ancestor visit, child_plans has the subcomp's assessment):
 
 Liquid renders `upward-plan.md` in ancestor mode. LLM merges:
 
@@ -2459,8 +2459,8 @@ Liquid renders `upward-plan.md` in ancestor mode. LLM merges:
     Comparch role paragraph over-claims; billing orchestrates
     rather than owning the full lifecycle.
   </intent>
-  <diagnosis>
-    The InvoiceRenderer subcomp's diagnosis is consistent
+  <assessment>
+    The InvoiceRenderer subcomp's assessment is consistent
     with what the other subcomps do too: InvoiceState tracks
     lifecycle transitions but billing delegates the actual
     persistence to BillingDb; InvoiceValidator enforces
@@ -2469,7 +2469,7 @@ Liquid renders `upward-plan.md` in ancestor mode. LLM merges:
     processing with rendering, state tracking, and
     persistence delegated to subcomponents" rather than
     "handles invoice lifecycle."
-  </diagnosis>
+  </assessment>
 </plan>
 ```
 
@@ -2482,21 +2482,21 @@ trivial):
 Each gets `context.child_plans` with the relevant descendant
 plan. The LLM at each tier recognizes that the scope of the
 problem is comparch-level, not system-wide, and produces a
-trivial diagnosis:
+trivial assessment:
 
 ```xml
 <plan leg="upward">
   <intent>No revision needed at this tier.</intent>
-  <diagnosis>
-    The downstream diagnosis concerns the billing comp's own
+  <assessment>
+    The downstream assessment concerns the billing comp's own
     role framing, which doesn't implicate the sysarch-level
     summary of billing (high-level role + API intent only).
     No change at sysarch.
-  </diagnosis>
+  </assessment>
 </plan>
 ```
 
-Reviewer sees thin diagnosis at each tier, clicks through
+Reviewer sees thin assessment at each tier, clicks through
 quickly. Upward leg completes at the root.
 
 **Pivot — platform switches to downward-leg tiers.**
@@ -2506,7 +2506,7 @@ quickly. Upward leg completes at the root.
 
 Plan intent: "No regen at this tier; cascade through reqs."
 `<implicated-children>` lists the reqs singleton with
-disposition=`trivial` (the upward diagnosis at reqs was
+disposition=`trivial` (the upward assessment at reqs was
 also trivial, so nothing to propagate through reqs either
 — signal to the reqs downward plan to pass through).
 
@@ -2518,14 +2518,14 @@ visit).
 (spine descendant; has both upstream and upward):
 
 Liquid renders `downward-plan.md` in spine mode. Upward
-plan is the non-trivial diagnosis; upstream plan is the
+plan is the non-trivial assessment; upstream plan is the
 trivial sysarch cascade. Plan:
 
 ```xml
 <plan leg="downward">
   <intent>
     Revise comp_billing's role paragraph per the upward
-    diagnosis: "orchestrates invoice processing with
+    assessment: "orchestrates invoice processing with
     rendering, state tracking, and persistence delegated."
     Techspec and pubapi are unchanged; the role-narrowing is
     scoped to the role field in the sysarch's entry for this
@@ -2566,13 +2566,13 @@ the downward leg cascades to siblings via
 
 **Validates** the `matched_upward_plan` → spine reading
 pattern: the downward leg's plan at a spine node takes the
-upward-leg diagnosis as its primary input, and the upstream
+upward-leg assessment as its primary input, and the upstream
 plan as secondary. Reviewer intent committed on the upward
 leg flows through naturally.
 
 **Still to figure out:**
 
-1. **Trivial upward diagnoses and downward elision.** Most
+1. **Trivial upward assessments and downward elision.** Most
    upward-leg plans above `comp_billing` ended up trivial.
    The downward leg's planning tier still ran at each of
    those ancestors, produced trivial plans, and the scaffold
@@ -2581,7 +2581,7 @@ leg flows through naturally.
    change at this tier'" that skips the regen visit. Option
    A: intent-prose recognition (brittle). Option B: a
    declarative `<no-change/>` element in the plan grammar.
-   Option C: trivial upward diagnosis short-circuits the
+   Option C: trivial upward assessment short-circuits the
    downward-leg tier entirely so no downward plan is even
    produced. Worth picking before implementation.
 2. **Merge ordering at ancestor visits.** When multiple
@@ -2590,8 +2590,8 @@ leg flows through naturally.
    matters for LLM determinism. Simplest: topological
    (creation) order; deterministic and matches the reactive
    scheduler's readiness order.
-3. **Contradictory descendant diagnoses.** Two children
-   produce diagnoses that interpret the feedback in
+3. **Contradictory descendant assessments.** Two children
+   produce assessments that interpret the feedback in
    incompatible ways. The ancestor's prompt needs to flag
    this rather than silently picking. Worth a one-line
    discipline note in the upward prompt.
@@ -2606,7 +2606,7 @@ leg flows through naturally.
    plan at `comp_billing` could implicate sibling comps (not
    on the spine) with visits. Those siblings get downward
    plans as sideways visits — no matching upward-leg
-   diagnosis. The prompt handles the `matched_upward_plan =
+   assessment. The prompt handles the `matched_upward_plan =
    nil` case already. Worth confirming in §A.4.3 that
    sideways fan-outs on the downward leg don't re-trigger
    upward planning.
@@ -2728,7 +2728,7 @@ skips the scaffold tier's regen when the plan carries it.
 
 §A.4.6 currently gates plan approval on non-empty
 `<structural-ops>`. Upward-leg plans need human gating
-even without structural-ops, because `<diagnosis>` is
+even without structural-ops, because `<assessment>` is
 itself the reviewable payload. **Simplest:** a grammar
 element can declare `gate: always` in its schema
 annotation. The platform gates when that element is
@@ -2760,7 +2760,7 @@ lost when Part 3 absorbs into the spec.
   Review UI warns "op referenced by N downstream plans"
   but doesn't block.
 - **Contradictory-descendant discipline** — when multiple
-  children's upward diagnoses conflict, the ancestor's
+  children's upward assessments conflict, the ancestor's
   planning prompt flags rather than silently picking.
   One-line instruction in the bundle's upward-plan.md.
 
