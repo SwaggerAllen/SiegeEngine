@@ -233,6 +233,18 @@ def bootstrap_get_state(
         review_current_attempt = None
         review_max_attempts = None
 
+    # Phase 9 — staleness on the per-tier panel. The frontend
+    # surfaces "upstream X changed, this tier is stale" above the
+    # draft view so the user knows why the panel might re-regen.
+    # Read from the ledger directly rather than going through the
+    # bulk helper — one node lookup is cheaper than scanning the
+    # whole project.
+    staleness_rows = queries.staleness_entries_for(db, project_id, node.id)
+    stale_reasons: list[str] = []
+    for row in staleness_rows:
+        if row.reason not in stale_reasons:
+            stale_reasons.append(row.reason)
+
     return {
         "node": config.serialize_node(node),
         "pending_draft": config.serialize_draft(draft) if draft else None,
@@ -249,6 +261,8 @@ def bootstrap_get_state(
         "review_started_at": review_started_at,
         "review_current_attempt": review_current_attempt,
         "review_max_attempts": review_max_attempts,
+        "is_stale": bool(stale_reasons),
+        "staleness_reasons": stale_reasons,
     }
 
 

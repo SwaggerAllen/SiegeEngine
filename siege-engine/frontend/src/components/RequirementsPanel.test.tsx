@@ -49,6 +49,8 @@ function makeResponse(overrides: Partial<ReqsResponse> = {}): ReqsResponse {
     review_started_at: null,
     review_current_attempt: null,
     review_max_attempts: null,
+    is_stale: false,
+    staleness_reasons: [],
     ...overrides,
   };
 }

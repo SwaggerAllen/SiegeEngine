@@ -32,6 +32,15 @@ export const StructureNodeSchema = z.object({
   // replacement is queued. Drives the blue dot in the sidebar
   // tree — signals "idle but explicitly waiting on user retry".
   needs_user_action: z.boolean(),
+  // Phase 9 staleness. `is_stale` is true when the node has at
+  // least one active staleness marker; `staleness_reasons` lists
+  // the distinct reason codes (`content_changed`,
+  // `fragment_changed`, `edge_created`, `edge_deleted`,
+  // `structural_change`) across upstream markers. Drives the
+  // stale badge in the sidebar tree — "upstream changed, regen
+  // queued (or halted for destructive)".
+  is_stale: z.boolean(),
+  staleness_reasons: z.array(z.string()),
   // Sysarch-time techspec + pubapi fragments for ``comp`` tier
   // nodes — populated when sysarch_mint writes them, empty
   // string otherwise. Drives the component Overview tab so the

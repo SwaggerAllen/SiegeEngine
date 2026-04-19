@@ -1900,6 +1900,17 @@ class StructureNodeResponse(BaseModel):
     # are upstream-blocked — those sit idle waiting for the
     # chain, not the user.
     needs_user_action: bool
+    # Phase 9 — staleness ledger projection. True when this node has
+    # at least one active staleness marker: an upstream node changed
+    # and the ledger hasn't been cleared by this node's own regen
+    # yet. ``staleness_reasons`` carries the distinct reasons
+    # ("content_changed", "fragment_changed", "edge_created",
+    # "edge_deleted", "structural_change") across all active
+    # markers, so the sidebar tree can surface a stale badge and
+    # the per-tier panel can explain why. See
+    # ``backend/graph/fanout.py`` for how markers are produced.
+    is_stale: bool
+    staleness_reasons: list[str]
     # Sysarch-time fragments for ``comp`` tier nodes. Populated at
     # sysarch mint with the role paragraph (techspec) and api-intent
     # paragraph (pubapi) the LLM wrote in its ``<sysarch>`` output.
@@ -1982,6 +1993,7 @@ def get_project_structure(
         running_node_ids,
         user_action_needed_node_ids,
     )
+    from backend.graph.staleness import stale_node_reasons
 
     _require_project(db, project_id)
 
@@ -2028,6 +2040,7 @@ def get_project_structure(
     running_ids = running_node_ids(db, project_id)
     errored_ids = errored_node_ids(db, project_id)
     user_action_ids = user_action_needed_node_ids(db, project_id)
+    stale_reasons_by_id = stale_node_reasons(db, project_id)
     offset = queries.latest_offset(db, project_id) or 0
 
     # Tiers whose content is included inline. See the doc on
@@ -2071,6 +2084,8 @@ def get_project_structure(
                 generation_running=n.id in running_ids,
                 has_error=n.id in errored_ids,
                 needs_user_action=n.id in user_action_ids,
+                is_stale=n.id in stale_reasons_by_id,
+                staleness_reasons=stale_reasons_by_id.get(n.id, []),
                 techspec=fragment_by_id.get(fragment_id(n.id, FragmentKind.TECHSPEC), "")
                 if n.tier == "comp"
                 else "",

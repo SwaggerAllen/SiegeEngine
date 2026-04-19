@@ -81,6 +81,8 @@ const ReferenceDetailRawSchema = z.object({
   review_started_at: z.string().nullish().transform((v) => v ?? null),
   review_current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   review_max_attempts: z.number().int().nullish().transform((v) => v ?? null),
+  is_stale: z.boolean().default(false),
+  staleness_reasons: z.array(z.string()).default([]),
   outgoing_edges: z.array(ReferenceEdgeSchema),
   incoming_edges: z.array(ReferenceEdgeSchema),
 });
