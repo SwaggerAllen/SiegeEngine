@@ -366,6 +366,17 @@ at the bundle's `fanin` tier; the default bundle's sibling-
 dependency edge is a named `dependency` instance. See Part B
 §2 for the default bundle's full edge catalogue.
 
+**Platform-internal edge roles.** A few well-known `reference`
+edge roles are platform-shipped rather than bundle-declared,
+because they're emitted by platform primitives rather than by
+bundle-declared tier approvals. The most prominent is
+`implicates_visit`, which `downward_cascade` and `up_then_down`
+(§A.4.3) emit at plan approval to drive planning-tier scope
+filters (§A.4.2). Bundles don't declare these edges; they
+reference the role in scope filters and predicate expressions
+as if it were built-in vocabulary. Platform documents the
+full list of internal edge roles as they accrue.
+
 ### A.3.3 Fragments as authored-only content
 
 A **fragment** is a named, authored prose block owned by a
@@ -592,16 +603,46 @@ individual planning tiers at different files.
 
 Two declarative-sugar fields on planning-tier declarations:
 
-- **`plans: <scaffold_tier>`** expands to `scope:
-  per(<tier>)` + a `scope_filter` that ensures the target
-  is in the flow's visit set (seed nodes, plus
-  `disposition=visit` implicated children, plus
-  `<additions>` entries from approved upstream plans) + an
-  implicit 1:1 reference edge exposing the plan handle as
+- **`plans: <scaffold_tier>`** expands to three things: a
+  `scope: per(<tier>)` declaration; a `scope_filter`
+  predicate that counts inbound `implicates_visit` edges
+  from approved upstream plans in the active flow run
+  (`exists(inbound(implicates_visit) where
+  source.approved AND source.flow_run == current)`); and
+  an implicit 1:1 reference edge from the planning node to
+  its target scaffold node exposing the plan handle as
   `context.active_plan` on the scaffold tier.
 - **`leg: upward | downward`** — only meaningful under
   `invokes: up_then_down`. Tells the primitive which tiers
   to walk in which direction (see §A.4.3).
+
+**The `implicates_visit` edge.** When any planning tier's
+plan approves, the primitive auto-emits one
+`implicates_visit` edge per entry in the plan's
+`<implicated-children disposition="visit">` list and per
+entry in the plan's `<additions>` list (after minting the
+addition). The edge is typed as `reference` with a
+well-known `implicates_visit` role name. Downstream
+planning tiers' scope filters consult these edges to
+determine which scaffold nodes are in scope for the
+current flow run — nothing else. There is no hidden visit
+set; the graph's edges encode which nodes are queued next.
+
+At flow end, `implicates_visit` edges from that flow's
+plans don't survive into the baseline scaffold — they're
+flow-scoped, filtered out of the scaffold view by the
+`source.flow_run == current` predicate. The event log
+keeps them for audit; the live projection's scope filters
+stop matching once the flow closes.
+
+**Seed visits** — the initial node(s) the flow targets —
+are a special case the primitive handles by emitting a
+synthetic `implicates_visit` edge from the flow-run
+itself (treated as a virtual source for scope-filter
+purposes) to each seed node at flow start. Phase-zero
+planning tiers scope-match against these edges the same
+way downstream planning tiers match against plan-emitted
+edges; no special-case predicate needed.
 
 Planning tiers participate in normal readiness gating:
 their `context:` declaration lists what they read, and the
@@ -620,26 +661,38 @@ default tier declarations — each flow declares its own
 planning tiers; the primitive reads the flow's declaration
 and applies its walk semantics.
 
-**`downward_cascade`.** Standard forward walk. Seeds land
-at declared planning tiers; next-wave visits are enqueued
-from approved plans' `<implicated-children>` (and minted
-from `<additions>` where the flow's grammar allows them).
-Used by feature-request, refactor, downward-propagation.
+**`downward_cascade`.** Standard forward walk. At flow
+start, the primitive emits `implicates_visit` edges from
+the flow run to each seed node, which activates the
+first-wave planning tiers via their scope filters
+(§A.4.2). On every subsequent plan approval, the primitive
+auto-emits `implicates_visit` edges from the approved plan
+to each `<implicated-children disposition="visit">` target
+and each `<additions>` entry (after minting the addition).
+Scope filters at downstream planning tiers pick them up;
+the next wave fires. Used by feature-request, refactor,
+downward-propagation.
 
-**`up_then_down`.** The upward leg's `leg: upward`
-planning tiers invert scaffold structural edges in their
-context walks — a planning tier at `comp` reads its
-subcomps' handles rather than its parent's. Upward-leg
-planning produces artifacts at each ancestor up to project
-root; merge-at-parent is automatic because multiple upward
-instances converging on the same parent share that
-parent's planning tier. Once the upward-leg work queue
-drains (pivot detection at root), the downward leg runs
-normally — planning + regen at each visited tier,
-implicated-children fans out sideways, downward-leg plans
-drive scheduling. Used by bug-fix-propagation,
-upward-propagation. Split is always a downward-leg
-concern; the upward leg narrows to the seed-to-root spine.
+**`up_then_down`.** Upward leg: the primitive emits
+`implicates_visit` edges to seed nodes at flow start;
+`leg: upward` planning tiers activate via their scope
+filters. Those tiers invert scaffold structural edges in
+their context walks — a planning tier at `comp` reads its
+subcomps' handles rather than its parent's. When an
+upward-leg plan approves, the primitive emits
+`implicates_visit` edges up the structural chain (to the
+parent of the planned node) so the next ancestor's
+upward-leg planning tier fires. Multiple upward instances
+converging on a common ancestor share that ancestor's
+planning tier — merge-at-parent is automatic from scope
+uniqueness. Once the upward-leg work queue drains (pivot
+detection at root), the downward leg runs normally — it
+uses the same `implicates_visit` mechanism as
+`downward_cascade` to propagate through the
+seed-to-root spine and sideways fan-outs. Used by
+bug-fix-propagation, upward-propagation. Split is always a
+downward-leg concern; the upward leg narrows to the
+seed-to-root spine.
 
 Bundle authors needing finer-grained edge inversion
 express it directly in flow YAML edge declarations; the
