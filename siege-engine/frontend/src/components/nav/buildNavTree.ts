@@ -25,7 +25,7 @@ export interface NavItem {
     | 'sysarch'
     | 'vocabulary'
     | 'references'
-    | 'decomposition-graph'
+    | 'dag'
     | 'components-root'
     | 'component-top'
     | 'component-sub'
@@ -63,7 +63,10 @@ export interface NavItem {
 export const SYNTHETIC_IDS = {
   VOCABULARY: ':vocabulary',
   REFERENCES: ':references',
-  DECOMPOSITION_GRAPH: ':decomposition-graph',
+  // Phase 10 replaces the old narrow decomposition-graph view with
+  // the full layered DAG. Kept the user-facing label "Decomposition
+  // Graph" for continuity; the synthetic id reads `:dag` internally.
+  DAG: ':dag',
   COMPONENTS_ROOT: ':components',
 } as const;
 
@@ -199,10 +202,10 @@ export function buildNavTree(nodes: StructureNode[]): NavItem[] {
     status: { ...EMPTY_STATUS },
   });
   items.push({
-    id: SYNTHETIC_IDS.DECOMPOSITION_GRAPH,
+    id: SYNTHETIC_IDS.DAG,
     label: 'Decomposition Graph',
     node: null,
-    role: 'decomposition-graph',
+    role: 'dag',
     children: [],
     status: { ...EMPTY_STATUS },
   });

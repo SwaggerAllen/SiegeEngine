@@ -244,7 +244,7 @@ function breadcrumbForSyntheticId(selectedId: string | null): string | null {
       return 'Vocabulary';
     case ':references':
       return 'References';
-    case ':decomposition-graph':
+    case ':dag':
       return 'Decomposition Graph';
     default:
       return null;

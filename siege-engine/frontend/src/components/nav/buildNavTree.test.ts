@@ -41,7 +41,7 @@ describe('buildNavTree', () => {
     expect(ids).toEqual([
       SYNTHETIC_IDS.VOCABULARY,
       SYNTHETIC_IDS.REFERENCES,
-      SYNTHETIC_IDS.DECOMPOSITION_GRAPH,
+      SYNTHETIC_IDS.DAG,
     ]);
   });
 
@@ -58,7 +58,7 @@ describe('buildNavTree', () => {
       'sysarch_1',
       SYNTHETIC_IDS.VOCABULARY,
       SYNTHETIC_IDS.REFERENCES,
-      SYNTHETIC_IDS.DECOMPOSITION_GRAPH,
+      SYNTHETIC_IDS.DAG,
     ]);
   });
 

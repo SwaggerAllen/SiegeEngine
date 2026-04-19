@@ -146,7 +146,7 @@ export default function App() {
           path="/projects/:id/decomposition"
           element={
             <ProtectedRoute>
-              <RedirectToSynthetic target=":decomposition-graph" />
+              <RedirectToSynthetic target=":dag" />
             </ProtectedRoute>
           }
         />

@@ -72,7 +72,7 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
 
 ## Phase status (as of last session)
 
-**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger).
+**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger) + Phase 10 (layered DAG view).
 
 - **Phases 0-5.5** — v2 bootstrap chain end-to-end: project →
   expansion → features → requirements → sysarch → subreqs (per
@@ -141,10 +141,27 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
   or parent-id walking in the dispatcher; deferred until a flow
   beyond scaffolding actually needs that generality.
 
-**Next:** Phase 10 (layered DAG view) → Phase 11 (structural edit
-UIs). Phase 11's pending-change queue has storage + instruction
-types but the HTTP plumbing isn't exposed yet; that lands with
-Phase 11 itself.
+- **Phase 10 (layered DAG view)** — single navigable canvas for
+  the whole project graph. Features, top-level resps, top-level
+  policies, top-level comps with `dependency` topology arranged
+  by ELK's layered algorithm under cytoscape-elk. Double-click
+  a comp to drill into its internal subgraph (component-local
+  policies, subresps, subcomps, fan-in, revealed impls) plus an
+  external-context layer that traces back to the top-level
+  feats / resps / policies pointing at this comp. Single-click
+  selects a node and highlights its reachable-down (yellow) and
+  reachable-up (pink) subgraphs. Phase 9 staleness renders as a
+  fuchsia double-border overlay — same visual language as the
+  sidebar tree. Lives under `frontend/src/components/graph/`.
+  Replaces the old force-directed `DecompositionGraph.tsx`.
+  The DAG chunk is code-split (elkjs adds ~1.5MB), loaded lazily
+  when the user clicks the "Decomposition Graph" sidebar entry.
+  Sidebar synthetic id renamed from `:decomposition-graph` to
+  `:dag` — label stays "Decomposition Graph" for continuity.
+
+**Next:** Phase 11 (structural edit UIs). Phase 11's
+pending-change queue has storage + instruction types but the HTTP
+plumbing isn't exposed yet; that lands with Phase 11 itself.
 
 ## V3 spec scope vs V2 implementation
 
