@@ -1220,17 +1220,375 @@ the initial vocabulary layer.
 
 ## 8. Project references
 
-v2 §A.1.13 in full.
+Some Catapult projects ship first-class supplemental content
+alongside the code their components generate: a DSL spec for
+a bundle's custom grammar, an opinionated deployment runbook,
+a set of cross-component invariants that multiple components
+have to honor, a design-rationale memo the architecture has
+to stay consistent with. None of that content fits the tiers
+we already have. Components have public surfaces,
+responsibilities, and children — specs don't. Vocabulary
+entries are term definitions with a specific grammar — specs
+are prose, not terms. Fragments are subordinate to an owning
+arch doc and cascade on merge or split — a spec shouldn't
+get deleted when the component it describes is refactored.
+
+A dedicated tier for **reference documents** lets that
+content exist as first-class nodes with their own
+lifecycles, their own place in the audit trail, and their
+own participation in the regen-context graph.
+
+### 8.1 Refs as their own node tier
+
+Reference documents are modeled as `ref_*` nodes. They are
+**entities, not content** — they have titles, bodies,
+incoming and outgoing edges, edit/review lifecycles, and
+stable IDs. Modeling them as a node tier rather than as a
+fragment on another node is what gives them all of that:
+fragments are sections of a larger document reviewed as
+part of their owner, they cascade on merge, and they can't
+participate in edges. Refs can, and need to.
+
+### 8.2 No parent, ever
+
+The reducer enforces a hard invariant: `ref_*` nodes always
+have `parent_id = null`. `NodeCreated` and `NodeReparented`
+events whose target tier is `ref` and whose parent is
+non-null are rejected at event-apply time.
+
+This is a deliberate contrast with vocab (§7), which allows
+`parent_id = feat_*` for feature-local scope. Refs don't
+have a feature-local case, because their consumers can
+cross any tier boundary — a DSL spec might be read by the
+bundle-config component, by its subcomponents, by a
+presentational component that documents the bundle format,
+and by a policy that enforces DSL conformance. Rather than
+invent a scope that could accommodate all those cases,
+refs use explicit edges to declare their consumers.
+
+### 8.3 Generated and regeneratable, not frozen
+
+Refs run through the same four-state draft panel as
+component arch docs: generating → draft → review →
+approved. A `generate_ref` job (the `ref` tier's LLM
+generator) produces a draft from a user-supplied seed
+description plus the referenced-content partition (§8.5),
+the user leaves feedback or approves, and approved content
+lands on the node.
+
+**Unlike the bootstrap tiers** (expansion, reqs, sysarch,
+subreqs, manifest), refs are **not frozen after approval**.
+The `UpdateReference(ref_id, feedback)` instruction works
+on any ref in any state and triggers a fresh regen. The
+freeze rule on bootstrap nodes exists because their
+approval mints children that a later edit would desync;
+refs don't mint children, so the reason to freeze doesn't
+apply. This matches how comparch and subcomparch docs
+already work — approved content can be regenerated with
+feedback at any time.
+
+### 8.4 Consumption via `reference` edges
+
+Refs participate in the regen-context graph through
+`reference` edges — the same general-purpose
+advisory-context edge type any node can use (§2.5). A
+comp that wants to see a ref's content during regen draws
+a `reference` edge from itself to the ref. A ref that
+needs upstream context for its own regen — a comp's
+pubapi, a policy's rationale, another ref — draws a
+`reference` edge from itself to that target.
+
+The context assembler walks these edges in both directions
+(outgoing edges pull target content, incoming edges
+contribute reverse context), so a single edge between a
+comp and a ref gives both sides context from the other. No
+special bidirectional semantics — just edges. The
+`reference` edge graph must be acyclic, same constraint as
+`dependency` edges — a proposed edge that would close a
+cycle is rejected at create time.
+
+No reachability walk, no project-wide "always visible"
+bucket. Explicit is better than implicit: if a comp needs
+the DSL spec, it declares an edge to it.
+
+### 8.5 Edges are user-declared
+
+`CreateReference(seed_description, related_nodes)` takes
+one optional list of node IDs. The backend emits one
+`reference` edge per entry in the same transaction as the
+ref node is minted. Post-creation,
+`AddReference(source_id, target_id)` and
+`RemoveReference(source_id, target_id)` edit the edge set.
+Creating a ref from a comp's detail page pre-fills
+`related_nodes` with the current comp.
+
+Bundle-shipped reference material (platform §A.11.5) seeds
+refs plus their inbound `reference` edges at project
+creation. Once seeded, the refs are regeneratable and
+editable through the normal ref lifecycle — project owners
+can layer per-project feedback on top of bundle-shipped
+content without forking the bundle.
+
+### 8.6 Content shape is parseable XML
+
+Each ref's `Node.content` holds a `<reference>` block with
+two required children and one optional child:
+
+- `<title>` — short prose rendered as a heading.
+- `<body>` — free-form markdown prose. Not a tight
+  grammar, not bullet-structured; just readable text that
+  the LLM both authors and reads.
+- `<see-also>` (optional) — `<ref to="ref_..."/>` children
+  that cross-reference other refs by stable ID.
+
+The grammar is parseable, validated at authoring time, and
+fits the same family as component and subcomponent arch
+docs. `<see-also>` markers inside stored XML are
+human-readable annotations, separate from structural
+`reference` edges; a ref author can use either or both.
+
+### 8.7 Render-time transformation for prompts
+
+Storage is XML; prompts are prose. At context-assembly
+time, a formatter walks the stored `<reference>` XML and
+renders it as `# Title\n\nBody text...` markdown. The LLM
+sees readable content without paying prompt tokens for raw
+tags. Decoupling storage from prompt format means
+extending the grammar later is a formatter change rather
+than a stored-content rewrite.
+
+### 8.8 Context assembly
+
+Every regen at every tier sees the `referenced_content`
+partition: the rendered content of every node the regen
+target has an outgoing `reference` edge to. The context
+assembler walks that edge set and dispatches on each
+target's tier to extract the right chunk — `ref_*` → full
+body, `comp_*` → `pubapi` fragment, `policy_*` →
+rationale, etc.
+
+The partition has its own context-budget allocation
+separate from vocabulary, sibling pubapis, or policy
+candidates — references are content the user has
+**explicitly declared this node consumes**, and declared
+intent should not have to compete with derived context
+for budget.
+
+### 8.9 Staleness propagation
+
+When the staleness ledger lands, it follows `reference`
+edges the same way it follows comp→comp `dependency`
+edges: editing a node marks every node that references it
+as potentially stale. Until the ledger lands, ref edits
+are silently non-propagating, the same state of affairs as
+comp→comp dep changes today.
+
+### 8.10 Instruction vocabulary
+
+- `CreateReference(seed_description, related_nodes)` —
+  creates a ref and its initial edges.
+- `UpdateReference(ref_id, feedback)` — triggers a regen
+  regardless of approved state.
+- `AddReference(source_id, target_id)` — adds an edge.
+- `RemoveReference(source_id, target_id)` — removes one.
+- `NodeDeleted` (reused) — handles ref deletion.
+
+There is no `NodeReparented` for refs — the parent-is-null
+invariant (§8.2) makes it nonsensical.
+
+### 8.11 UI surfaces
+
+Dedicated "References" tab on the project dashboard,
+two-pane layout parallel to Vocabulary. Component,
+feature, and policy detail pages grow a "Create reference"
+affordance that pre-fills `related_nodes` with the current
+node. Refs are not shown in the decomposition graph or
+component tree — they're supplemental content, not
+architectural structure.
+
+### 8.12 Out of scope for MVP
+
+- LLM-driven `reference` edge declaration.
+- Project-level "always visible" reference bucket.
+- Staleness propagation across `reference` edges
+  (deferred to broader staleness work).
+- Cross-reference linking in rendered prose.
+- LLM-discovered references.
+- `<see-also>`-to-edge synchronization.
+
+All straightforward follow-ups.
 
 ## 9. Generation plan
 
 ### 9.1 Cold-start order
-v2 §A.3.1.
+
+The default bundle's scaffolding behavior (the scaffold's
+reactive scheduler running on an approved input doc with
+no active flow; §A.4.8) walks the scaffold's tier
+dependencies in this order:
+
+1. **Input document** — the raw prose the user brings in.
+   The only node the user authors directly.
+2. **Feature expansion (`expansion_*`)** — prose
+   decomposition of the input into features. Approved as
+   a standalone document before any feature nodes exist.
+   On approval, `feat_*` nodes project plus any `vocab_*`
+   entries from the `<vocabulary>` section.
+3. **Requirements (`reqs_*`)** — singleton. Decomposes the
+   approved feature set into top-level responsibilities.
+   On approval, top-level `resp_*` nodes plus `feat_* →
+   resp_*` decomposition edges project.
+4. **System architecture (`sysarch_*`)** — singleton.
+   Takes the top-level responsibilities and produces the
+   component graph: components (including the foundation),
+   API intent, top-level policies, dep edges (including
+   policy-induced edges), domain-parent edges, and a
+   system-level techspec. Approval mints `comp_*` nodes,
+   top-level `policy_*` nodes, dep/domain-parent edges,
+   and one `subreqs_*` bootstrap per top-level component.
+   Top-level policy_application edges are **not** yet
+   emitted — they're resolved against each component at
+   component-architecture time.
+5. **Subrequirements (`subreqs_*`)** — per top-level
+   component, minted at sysarch approval. Decomposes the
+   component's top-level responsibilities into
+   subresponsibilities. On approval, subresp `resp_*`
+   children and `top_level_resp → subresp` decomposition
+   edges project. Component-architecture generation for a
+   component cannot run until its subreqs is approved.
+6. **Component architecture docs** — generated in
+   dependency topological order after the owning
+   component's subreqs is approved. Each consumes the
+   sysarch's entry for it (role + API intent), the public
+   surfaces of its dependencies, and the pre-minted
+   subresponsibilities from step 5. Each also produces
+   component-local policies targeting those subresps, and
+   on approval is where top-level and component-local
+   policies are resolved against this component: the LLM
+   reads the now-detailed techspec and subresps and emits
+   `policy_application` edges for the policies that
+   actually apply. **Presentational components are
+   additionally gated on their domain parents' comparch
+   completion** — a presentational component's comparch
+   cannot start until all its `domain_parent` edge targets
+   have approved comparch content, so the presentational
+   comparch sees the full domain architecture as context.
+7. **Subcomponent architecture docs** — generated in
+   dependency topological order within each component.
+   Leaf tier — no further decomposition, no `<policies>`
+   section. Four fragments only: techspec, pubapi,
+   privapi, deps.
+8. **Domain fan-in synthesis nodes (`fanin_*`)** — minted
+   as part of sysarch for every domain component with
+   subcomponents (§4.4). First-pass generation fires once
+   every subcomponent's impl is approved and populated.
+9. **Implementation nodes (`impl_*`)** — one per
+   subcomponent and one per un-fanned-out component.
+   Carries the detailed design and build content, distinct
+   from the parent's abstract techspec.
+10. **Plan nodes (`plan_*`)** — per-impl, translating an
+    impl-level intent into a concrete code-change list.
+11. **Code** — generated as a final leaf pass, plan by
+    plan, in dependency topological order, limited to
+    the leaf's territory via the `git_commit` generator.
+
+The **two-tier decomposition split** (reqs/sysarch at the
+top, subreqs/comparch per component) is what resolves the
+chicken-and-egg of "component A's regen needs component
+B's public surface but B hasn't been generated yet." By
+committing to top-level responsibilities, then API intent,
+then each component's subresponsibilities up front,
+dependent components have stable IDs and bounded contracts
+to reference even before the downstream components have
+been generated in detail. Component architectures then
+flesh the intent into full public-surface detail, and the
+sysarch's API entry for each component is a transcluded
+fragment of the component arch (§3) so drift is detectable
+as a fragment diff.
+
 ### 9.2 The default bundle as a meaning engine
-Compression / rotation / expansion / articulation framing. v2
-§A.3.1a.
+
+The generation chain is a **meaning engine** — each tier
+produces compressed handles (names, roles, API intents,
+pubapi fragments) that downstream tiers reason from
+directly, not from the raw input. The chain alternates
+**compression**, **expansion**, and **rotation**:
+
+- **Feature expansion** — extraction from raw input into
+  named features. Axis transformation: prose → structured
+  features.
+- **Requirements** — rotation. Features are user-facing
+  capabilities; top-level responsibilities are
+  system-level obligations. Same underlying substance,
+  different axis.
+- **Sysarch** — compression. Responsibilities compress
+  into the minimal set of components that collectively
+  fulfill them, each with an API intent. The first tier
+  where the graph gets narrow.
+- **Subreqs** — scope-bounded expansion. Each component's
+  top-level responsibilities expand into subresponsibilities
+  that live inside the component.
+- **Comparch** — last compression before impl.
+  Subresponsibilities compress into subcomponents with
+  pubapis. Final refinement of the API contract.
+- **Subcomparch** — leaf articulation, no more tiers to
+  correct. The end of the design chain; the impl/plan/code
+  that follows is generation rather than design.
+
+Every prompt names its downstream reader, pushes against
+category-speak, and frames the tier's transformation type
+explicitly. **Handle quality** (meaning-per-token) is the
+load-bearing property — if a tier's output is vague, the
+fix is in that tier's prompt, not in passing more context
+downstream.
+
+The input doc only feeds **extraction tiers** (expansion,
+reqs, sysarch). Propagation tiers (comparch, subcomparch,
+impl) work from handles only — they see the compressed
+representation the extraction tiers produced, not the raw
+input. This is the load-bearing scoping that keeps prompts
+bounded as the project grows.
+
 ### 9.3 Context assembly strategy
-v2 §A.3.5.
+
+At each generation, the context assembler walks the tier's
+declared `context:` (§A.3.4) and produces a prose prompt
+stitched from multiple named partitions:
+
+- **Parent context** — the tier's direct upstream (its
+  parent handle plus the parent's plan if a flow is
+  active).
+- **Siblings (pubapis only)** — for tiers that read
+  sibling dependencies, the upstream's `pubapi` fragment
+  (not the whole arch doc).
+- **Synthesis views** — fan-in aggregates for
+  presentational tiers reading via `domain_parent` edges.
+- **Referenced content** — outgoing `reference` edge
+  targets, rendered as prose (§8.8).
+- **Vocabulary** — project-level vocab always; feature-
+  local vocab for features reachable from this tier
+  (§7.7).
+- **Change plans** — the active flow's plan for this node,
+  when a flow is active (platform §A.4.5's
+  `context.active_plan`).
+- **Feedback** — deferred feedback on this node if any has
+  accumulated since the last regen.
+
+Each partition has its own budget allocation. The
+assembler selects within each partition by relevance when
+a partition's raw content exceeds its budget (e.g., if a
+component has 30 sibling dependencies, the assembler pulls
+the most-relevant-N pubapis rather than truncating a
+single pubapi mid-signature). Budget tuning per-tier is a
+bundle configuration knob.
+
+**Fragment-level pulls** (§3.1) are the key to keeping
+prompts bounded. A dependent reading its upstream's pubapi
+never pulls the upstream's whole arch doc — only the
+pubapi fragment. As the project grows, prompts don't grow
+with it; they grow only with the **direct** context each
+tier reads, which is bounded by the bundle's `context:`
+declarations.
 
 ## 10. Flow declarations on the default bundle
 
