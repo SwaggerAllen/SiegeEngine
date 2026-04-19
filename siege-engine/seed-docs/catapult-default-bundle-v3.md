@@ -21,39 +21,319 @@ declarations live in the companion file
 ## Overview
 
 ### What the default bundle is for
-Graph-of-prompts design system for AI code generation. Takes a
-prose input document and produces a layered structured model —
-features, responsibilities, components, subcomponents,
-implementations, plans, code — through a reviewable pipeline.
+
+The default bundle is Catapult's **graph-of-prompts design
+system for AI code generation**. It takes a prose input
+document describing a project and produces a layered
+structured model — features, responsibilities, components,
+subcomponents, implementations, plans, code — through a
+reviewable pipeline that terminates in commits on a code
+repository.
+
+The bundle's shape is an opinionated answer to "how should
+AI generate code well?" The answer this bundle commits to:
+stage the design thinking in tiers before any code is
+produced, review each tier's output, and let downstream
+generation consume the approved upstream handles rather
+than trying to reason about the whole project in one
+prompt. Small well-scoped prompts produce better output
+than one massive prompt.
+
+Most Catapult users will encounter this bundle and think of
+it as "Catapult." The platform's generality (A.3) matters
+because the bundle's design commitments are choices, not
+laws — a different bundle could decompose differently — but
+the default bundle is what ships with Catapult and what
+most documentation references.
 
 ### Bundle summary at a glance
-One-page cheat sheet: the tier list, the edge list, the fragment
-kinds, the cold-start order, the meaning-engine framing. Gives
-a reader who only needs the default-bundle story something to
-anchor on before the rest unfolds.
+
+**Node tiers (12):** `feat`, `resp`, `comp`, `subcomp`,
+`impl`, `plan`, `policy`, `fanin`, `ref`, `vocab`,
+`changeplan`, plus the five bootstrap tiers `expansion`,
+`reqs`, `sysarch`, `subreqs`, `manifest`.
+
+**Edge instances (5):** `dependency`, `domain_parent`,
+`policy_application`, `decomposition`, `reference`.
+
+**Fragment kinds (5):** `techspec`, `pubapi`, `privapi`,
+`policies`, `deps`.
+
+**Structural rules:** foundation component at every
+structural level, two-level component depth cap, unified
+domain/presentational DAG with fan-in synthesis for
+fanned-out domain components.
+
+**Cold-start order:** input → expansion → reqs → sysarch →
+subreqs → comparch → subcomparch → impl → plan → code.
+
+**Flows (5):** feature-request, refactor, bug-fix
+propagation, downward propagation, upward propagation.
+Scaffolding is the scaffold's baseline behavior, not a
+flow.
 
 ## 1. Tier vocabulary
 
-One subsection per tier. Each is a refactoring of the
-corresponding v2 §A.1.2 bullet into a proper section with its
-scope, identity, handle, draft grammar reference, and generator.
+One subsection per tier. Each pins the tier's scope,
+identity, handle, draft grammar (where applicable), and
+generator.
 
 ### 1.1 `feat` — features
-### 1.2 `resp` — responsibilities (tier-agnostic IDs; top-level vs subresp lives in parent)
-### 1.3 `comp` — components (tier-agnostic IDs; domain vs presentational kind)
-### 1.4 `subcomp` — subcomponents (same kind as `comp`; structural tier only)
+
+The unit a user thinks in ("billing," "collaborative
+editing"). Features are **slices, not containers** — a
+single feature can implicate many components, and a single
+component can serve many features. The feature tier is
+where the LLM commits to the vocabulary a downstream
+reader uses to talk about the project's capabilities.
+
+- **Scope:** minted as children of `expansion`; multiple
+  per project.
+- **Identity:** `id` for downstream reference; `name` for
+  human intent.
+- **Handle:** `name`, one-paragraph summary, outgoing
+  `decomposition` edges to the responsibilities it
+  implicates.
+- **Draft:** none — feat is a join target minted by
+  expansion's fanout (see §1.11).
+- **Generator:** none; handle is composed from the
+  approved expansion content plus projected decomposition
+  edges.
+
+### 1.2 `resp` — responsibilities
+
+Features decompose into responsibilities — the
+system-level obligations that collectively fulfill a
+feature's user-facing intent. The `resp` tier is
+**tier-agnostic for ID purposes**: top-level
+responsibilities (minted by `reqs`) and per-component
+subresponsibilities (minted by each component's
+`subreqs`) both use the `resp_` prefix. The distinction
+between top-level and subresp lives in the parent
+assignment, not the kind — so promotion or demotion
+between the tiers preserves the ID.
+
+- **Scope:** minted as children of either `reqs`
+  (top-level) or `subreqs` (per-component subresp).
+- **Identity:** `id`.
+- **Handle:** `name`, prose summary, incoming decomposition
+  edges (from the parent or from `feat` for top-level).
+- **Draft:** none — join target.
+- **Generator:** none.
+
+### 1.3 `comp` — components
+
+A component. Every top-level responsibility maps to
+exactly one **domain** component (many-to-one). A
+responsibility may additionally appear in one
+presentational component if that presentational component
+has a `domain_parent` edge to the domain component that
+owns the responsibility. The presentational assignment is
+a mirror, not an independent ownership.
+
+The `comp` tier is also **tier-agnostic for ID purposes**
+— top-level components and subcomponents both use the
+`comp_` prefix. Structural tree is hard-capped at two
+component levels (see §4.2).
+
+- **Scope:** minted as children of `sysarch` (top-level)
+  or `subcomp` declarations (subcomponent; see §1.4).
+- **Identity:** `id`.
+- **Kind attribute:** `domain` or `presentational`. Set at
+  mint time based on the upstream declaration.
+- **Foundation attribute:** `true` or `false`. Set at mint
+  time; §4.1 covers the rule.
+- **Handle:** `name`, `kind`, role, api_intent, plus the
+  comparch-produced fragments (techspec, pubapi, privapi).
+- **Draft:** none — mint target. Content is authored by
+  the comparch tier via `produces:` (see §1.4 tail).
+- **Generator:** none.
+
+### 1.4 `subcomp` — subcomponents
+
+Subcomponents are a structural position, not a separate
+tier kind. A `comp_*` whose parent is another `comp_*` is
+a subcomponent. Same ID prefix, same field shape, same
+handle — the distinction is structural. Depth cap at
+two levels (§4.2) prevents sub-subcomponents.
+
+Content for both components and subcomponents is produced
+by tier-level architecture docs:
+
+- **Comparch** (`per(comp)` at the top level) produces
+  `techspec`, `pubapi`, `privapi`, `policies`, `deps`
+  fragments on its parent comp, plus fanout children
+  (new subcomponents), plus `policy_application` edges
+  against the comp's declared subresponsibilities.
+- **Subcomparch** (`per(subcomp)`) produces the same
+  fragments (minus `policies` — subcomponents don't mint
+  new policies; §4.2 tail) on its parent subcomp. Leaf
+  tier — no further decomposition.
+
+Both comparch and subcomparch:
+
+- **Scope:** singleton per their target `comp`.
+- **Identity:** `id`.
+- **Handle:** summary of the comp's role + API intent; the
+  fragments it wrote on the comp are read via the comp's
+  handle.
+- **Draft:** yes; grammar in bundle's
+  `scaffold/tiers/comparch/grammar.xml` etc. (root
+  `<comparch>` / `<subcomparch>`).
+- **Generator:** `llm`.
+
 ### 1.5 `impl` — implementation leaves
+
+Each subcomponent and each un-fanned-out top-level
+component gets exactly one `impl_*` node that carries the
+detailed design and build content the arch doc deliberately
+abstracts away. Impls map to folders on disk via the
+manifest (§6).
+
+- **Scope:** `singleton_under(comp)` where `comp` is a
+  leaf (a subcomponent, or an un-fanned-out top-level
+  component).
+- **Identity:** `id`.
+- **Handle:** content summary, territory (`{repository,
+  folder}` tuple).
+- **Draft:** yes; grammar declares the impl doc shape
+  (implementation overview, data models, interfaces, etc.
+  — see bundle's `scaffold/tiers/impl/grammar.xml`).
+- **Generator:** `llm` for the design doc; the actual
+  code diff is produced by the `plan` and `code` tiers
+  below.
+
 ### 1.6 `plan` — per-impl plan nodes
-### 1.7 `policy` — cross-cutting constraints (§5)
-### 1.8 `fanin` — domain fan-in synthesis (§4.4)
-### 1.9 `ref` — project reference documents (§8)
-### 1.10 `vocab` — project vocabulary terms (§7)
+
+Each impl has one `plan_*` that translates impl-level
+intent into a concrete list of code changes. Plans are the
+step between "what we're building" (impl) and "the actual
+diff" (code).
+
+- **Scope:** `singleton_under(impl)`.
+- **Identity:** `id`.
+- **Handle:** the structured change list (files, functions,
+  types to add/modify/delete).
+- **Draft:** yes; grammar declares the plan shape.
+- **Generator:** `llm`, reading the impl + surrounding
+  context.
+
+### 1.7 `policy` — cross-cutting constraints
+
+Policies are enforced-usage rules — "every LLM call records
+telemetry," "every DB write goes through the reducer." Full
+treatment in §5; this entry just catalogues the tier.
+
+- **Scope:** children of `sysarch` (top-level policies) or
+  of a specific comparch (component-local policies).
+- **Identity:** `id`.
+- **Handle:** trigger phrase, required responsibility,
+  rationale.
+- **Draft:** none — minted from the `<policies>` fragment
+  of the parent arch doc.
+- **Generator:** none.
+
+### 1.8 `fanin` — domain fan-in synthesis
+
+Every domain component with subcomponents gets a `fanin_*`
+node that aggregates the subtree's actual exposed surface
+for presentational counterparts to read. Full treatment in
+§4.4.
+
+- **Scope:** `singleton_under(comp)` where
+  `comp.kind == domain AND count(comp.subcomponents) > 0`.
+- **Identity:** `id`.
+- **Handle:** the aggregated synthesis content.
+- **Draft:** yes; grammar declares the synthesis shape.
+- **Generator:** `synthesis` (platform-shipped; A.3.2).
+
+### 1.9 `ref` — project reference documents
+
+First-class supplemental content — DSL specs, deployment
+runbooks, cross-component invariants, design-rationale
+memos. Full treatment in §8.
+
+- **Scope:** `parent_id = null`; project-scoped.
+- **Identity:** `id`.
+- **Handle:** title, body, outgoing `see-also` references.
+- **Draft:** yes; grammar is a `<reference>` root with
+  `<title>`, `<body>`, optional `<see-also>`.
+- **Generator:** `llm`, regen-on-feedback.
+
+### 1.10 `vocab` — project vocabulary terms
+
+Project-specific jargon with definitions. Full treatment
+in §7.
+
+- **Scope:** `parent_id = null` (project-level) or
+  `parent_id = feat_*` (feature-local).
+- **Identity:** `id`.
+- **Handle:** name, definition, disambiguation note, see-
+  also references.
+- **Draft:** yes; grammar is a `<vocab-entry>` root.
+- **Generator:** `llm` for initial mint and edits; user
+  can also author directly via the `CreateVocabEntry`
+  instruction.
+
 ### 1.11 Bootstrap tiers
-`expansion`, `reqs`, `sysarch`, `subreqs`, `manifest`. One
-subsubsection each, explaining which children each bootstrap
-mints. From v2 §A.1.2.
+
+Bootstrap tiers are the authored-prose nodes whose
+approval mints structured children (platform §A.7.1). Five
+of them in the default bundle, each a project-singleton:
+
+- **`expansion`** — the per-project prose decomposition of
+  the raw input into features. Approval mints `feat_*`
+  children and `vocab_*` entries (if the user wrote a
+  `<vocabulary>` section). Read-only after initial
+  approval in the scaffolding pass; re-editable via
+  feature-request or refactor flows.
+- **`reqs`** — the top-level requirements bootstrap.
+  Decomposes the approved feature set into top-level
+  `resp_*` nodes and mints `feat→resp` decomposition
+  edges. Read-only after approval.
+- **`sysarch`** — the system architecture bootstrap.
+  Produces the component graph: top-level `comp_*`
+  instances (with the foundation comp), a project-level
+  `<technical-specification>` section, `<policies>` that
+  mint top-level `policy_*` nodes, `<dependencies>` that
+  mint `dependency` edges (including speculative
+  policy-induced deps), and `<domain-parents>` that mint
+  `domain_parent` edges. Also mints one `subreqs_*`
+  bootstrap per top-level component. Read-only after
+  approval.
+- **`subreqs`** — per top-level component, decomposes the
+  component's top-level responsibilities into
+  subresponsibilities. Mints `resp_*` subresp children
+  and `top_level_resp → subresp` decomposition edges.
+  Read-only after approval.
+- **`manifest`** — project-singleton file-territory
+  mapping from repository paths to owning impl nodes.
+  Regenerated by the code-generation pipeline rather than
+  authored by the user; lives in the event log like every
+  other node. See §6 for territory.
+
 ### 1.12 `changeplan` — per-flow-run intent nodes
-Per v2 §A.4.3; explicitly not a structural DAG node.
+
+Change plans persist per-flow-run-per-affected-tier as
+reviewable prose artifacts documenting "what this change
+means at this tier." They're the unified change-plan and
+implicated-children-split artifact flows produce at every
+planning visit (platform §A.4.2).
+
+- **Scope:** per flow visit; singleton per (flow_run,
+  target_node).
+- **Identity:** `id`.
+- **Handle:** intent prose, `<implicated-children>`,
+  optional `<additions>` / `<structural-ops>` /
+  `<assessment>`.
+- **Draft:** yes; grammar varies per flow.
+- **Generator:** `llm`.
+
+Change plans are explicitly **not structural DAG nodes** —
+nothing depends on them via `dependency` edges, and they
+don't project structured children on approval. They're
+review surfaces that document intent, persisted for
+provenance (A.4.3).
 
 ## 2. Edge vocabulary
 
