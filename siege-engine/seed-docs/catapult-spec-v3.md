@@ -12,11 +12,10 @@ system that ships with Catapult for AI code generation. Part C
 carries the implementation architecture (v2 Part B, moved and
 otherwise unchanged).
 
-The test for whether a topic belongs in A vs. B: if an L3 bundle
-swapping the whole tier hierarchy would invalidate the paragraph,
-it's bundle content and goes in B. If the paragraph stays true
-regardless of which bundle is loaded, it's platform content and
-goes in A.
+The test for whether a topic belongs in A vs. B: if a different
+bundle could change the paragraph's behavior, it's bundle content
+and goes in B. If the paragraph stays true regardless of which
+bundle is loaded, it's platform content and goes in A.
 
 ---
 
@@ -44,10 +43,18 @@ These are the two sentences that define Catapult; everything
 else in Part A derives from them.
 
 ### A.1.3 Platform invariants vs. bundle invariants
-Promote the L0–L3 inheritance table from v2 §A.11.4 to this top
-slot and use it as the organizing principle for the whole
-document. Rows that hold at every level belong in Part A; rows
-that go bundle-owned at L3 belong in Part B.
+The organizing principle for the rest of the spec. Platform
+invariants are properties of the event-sourced reducer and the
+reactive-schema runtime (A.1.2) — true for every Catapult
+project regardless of bundle. Bundle invariants are properties
+of a specific schema (tier vocabulary, edge instances, flow
+declarations, structural rules) — true when that bundle is
+loaded. The invariants the platform ships with, stated
+concretely: append-only event log, reducer-materialized
+projections, instructions-as-the-only-write-path (A.2),
+typed-schema scheduling (A.3), one-flow-per-project lobby
+(A.9.1), review/feedback/regen lifecycle (A.5), change-plan
+provenance (A.4.3).
 
 ## A.2 The structured model
 
@@ -124,10 +131,6 @@ Enumerate / evaluate / enqueue; staling as the reactive dual.
 Merges v2 §A.3.2 and §A.11.6. The state-driven scheduler and
 the reactive-schema scheduler are the same machine; v2 described
 them in two places because the reactive framing was late.
-
-### A.3.7 Levels of abstraction (L0–L3)
-Full content from v2 §A.11.4, including the inheritance
-promises table. Cross-referenced from A.1.3.
 
 ## A.4 Flows
 
@@ -391,7 +394,7 @@ deterministic. From v2 §A.4.
 ### A.8.1 Instruction vocabulary
 Rename, reparent, promote, demote, merge, split, per-edge-type
 create/delete. From v2 §A.1.3 tail and §A.4.
-Bundle-parametric — an L2 bundle with new tiers inherits the
+Bundle-parametric — a bundle declaring new tiers inherits the
 instruction families automatically.
 
 ### A.8.2 Approval gates on destructive operations

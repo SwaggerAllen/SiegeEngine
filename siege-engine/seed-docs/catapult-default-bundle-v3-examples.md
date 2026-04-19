@@ -25,7 +25,7 @@ YAML sketches illustrating the four reactive-schema primitives
 (tiers, edges, fragments, context) declared in platform spec
 §A.3. Examples use the default bundle's tier and edge names
 because they're concrete and recognizable; the same shapes
-apply to any L2+ bundle.
+apply to any bundle.
 
 ## 1.1 Tier declaration
 
@@ -1001,9 +1001,9 @@ create/delete.
 
 Op enumeration is bundle-specific — the default bundle's
 planning tiers accept the ops listed above because those
-match the default's instruction vocabulary. An L3 bundle
-with different structural operations would declare
-different op types in its grammar.
+match the default's instruction vocabulary. A bundle with
+different structural operations would declare different op
+types in its grammar.
 
 Any non-empty `<structural-ops>` → **human-gated**. The
 review UI renders the ops list as a line-item checklist
