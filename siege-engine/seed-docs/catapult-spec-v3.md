@@ -1175,32 +1175,208 @@ new approval no longer names.
 
 ## A.8 Structural operations
 
+Bootstrap approvals (A.7) mint structured children; **structural
+operations** change the shape of state that already exists.
+Rename, reparent, promote, demote, merge, split, delete, and
+per-edge-type create/delete are the operations the reducer knows
+how to apply. Each is expressed as a **structured instruction**
+— an event with a validated payload — and flows through the
+reducer the same way any other write does.
+
 ### A.8.1 Instruction vocabulary
-Rename, reparent, promote, demote, merge, split, per-edge-type
-create/delete. From v2 §A.1.3 tail and §A.4.
-Bundle-parametric — a bundle declaring new tiers inherits the
-instruction families automatically.
+
+The platform ships an instruction vocabulary covering every
+operation the reducer can perform on projection state. For
+each tier the bundle declares, the platform derives the
+applicable instruction variants automatically:
+
+- **Rename** — change a node's `name` field. ID unchanged;
+  downstream references resolve through.
+- **Reparent** — move a node under a different parent. Valid
+  only when the new parent's tier accepts the child tier
+  (per `permitted_parents`).
+- **Promote** / **Demote** — change a node's tier (e.g.,
+  subcomponent → top-level component in the default bundle).
+  Only valid across bundle-declared promotion pairs.
+- **Merge** — combine two same-tier nodes into one; one id
+  survives, the other's content folds in, its inbound edges
+  redirect.
+- **Split** — split a node into multiple same-tier children;
+  outbound edges partition across the children per the
+  bundle's rules.
+- **Delete** — remove a node and its outgoing edges.
+  Dependents of its inbound edges are marked stale.
+- **Per-edge-type create/delete** — add or remove a named
+  edge instance. Edge-type-specific validation applies
+  (cycle rejection for acyclic types, cardinality checks,
+  etc.).
+
+The vocabulary is **bundle-parametric**. A bundle declaring
+new tiers inherits the instruction families automatically —
+the platform reads the tier declarations and generates the
+rename/reparent/promote/etc. variants that apply to that
+tier. Bundle authors don't write instruction handlers; they
+declare tiers and edges, and the platform derives the
+instructions.
+
+Instructions are how the structural-edit UI (drag-drop,
+edge editors, promotion dialogs) commits changes. The UI
+produces instructions; instructions route through the
+reducer. There is no path from UI to projection that skips
+this step.
 
 ### A.8.2 Approval gates on destructive operations
-v2 §A.3.3.
+
+Most instructions apply immediately on issuance — rename,
+create-edge, add-reference, and similar non-destructive
+operations land as soon as the user clicks submit. But
+**destructive operations** (delete, merge, split, promote,
+demote, reparent-with-descendant-implications) require
+explicit approval before the reducer commits them.
+
+The gate is **platform-level**, not bundle-configured — a
+project cannot opt out of it via bundle settings. The
+rationale: destructive operations can invalidate large
+subtrees of downstream state. A rename that goes out
+accidentally is trivially reversible; a delete is not.
+
+The approval UI surfaces what will be invalidated — "this
+delete removes N downstream nodes and marks M stale" —
+before the user confirms. Single-click confirms; cancel
+backs out without state change.
+
+Structural operations inside a flow (refactor's
+`<structural-ops>`) run through the same gate. Plan approval
+approves the ops; the reducer applies them immediately
+(A.4.6). The flow's plan-review UI surfaces the destructive
+consequences as part of plan approval.
 
 ### A.8.3 Fan-out pauses for review
-v2 §A.3.4.
+
+A **fanout event** mints multiple children from a parent's
+approved content. Every fanout pauses on commit — the
+newly-minted children enter `awaiting_review` status with
+their context marked ready, and the scheduler enqueues them
+for generation only after approval of the fanout itself.
+
+This matters because auto-approval settings (A.5.6) never
+skip fanout review. A project configured for
+auto-approve-everything-at-node-level still presents the
+fanout for human sign-off, because the fanout is the
+point where a reviewer confirms "yes, these N children are
+the right decomposition." Once approved, the children
+regenerate under whatever auto-approval rules apply to
+their tier.
+
+The review gate on fanout is the same platform-level
+hardline as A.8.2's destructive-op gate — bundles and
+projects can't opt out.
 
 ## A.9 Flow lobby and concurrency
 
 ### A.9.1 One active flow per project
-v2 §A.6, §A.7.
+
+Catapult enforces **at-most-one-active-flow-per-project** at
+the platform level. A flow's schema delta merges onto the
+scaffold at flow start, and the merged DAG is well-defined
+only as long as no other flow's delta is also trying to
+merge. The lobby mechanism (A.9.2) is what enforces this.
+
+Sub-runs within a flow don't count as separate flows — a
+regeneration sub-run triggered by rejected review feedback
+shares the parent flow's context and schema delta. Only
+whole-flow declarations consume the lobby slot.
+
+When a flow ends (completion, cancellation, or rejection
+past the retry limit), its schema delta unmerges and the
+scaffold returns to baseline. Other waiting flows become
+eligible to start.
 
 ### A.9.2 AI as read-only proposer
-v2 §A.6.2.
+
+AI-initiated flow suggestions (from @-mention conversations,
+automated monitoring, suggested refactors) never kick a
+flow directly. They enter the **lobby** — a queue of
+proposed flows the user reviews before execution begins.
+
+User-initiated flows can go straight to execution or enter
+the lobby at the user's choice. The lobby surfaces:
+
+- The proposed flow name, description, and seed
+- Estimated scope — which scaffold nodes the flow would
+  touch
+- Triggering context — the chat message, user request, or
+  detection event that proposed the flow
+- Any preconditions that would fail preflight (A.4.10)
+
+Users reorder, approve, reject, or modify proposed flows
+in the lobby before they execute. The one-flow-per-project
+rule (A.9.1) applies at execution start: approving a flow
+from the lobby queues it behind any currently-running one.
+
+This keeps AI strictly in a **proposer** role. The AI
+cannot cause structural or content changes without a human
+going through the lobby to approve the proposal. Catapult
+doesn't auto-run background flows, ever.
 
 ### A.9.3 Resumability and recoverability
-v2 §A.8.
+
+Flows are **resumable** across server restarts. Flow-run
+state lives in the event log — every plan approval,
+regeneration commit, and structural op is an event — so
+recovery is replay, not in-memory reconstruction.
+
+On server restart, the scheduler re-enumerates the active
+flow run's pending `(tier, scope)` pairs from projection
+state and resumes enqueueing work. Partial generations
+that were mid-LLM-call when the server went down are
+retried via the same transient-CLI retry loop the normal
+generation path uses.
+
+Explicit **cancel** discards the flow's remaining pending
+visits but preserves any approved plans and regens that
+already committed. The schema delta unmerges; downstream
+regens that were staged behind now-cancelled upstream plans
+return to their pre-flow state naturally (the staling
+rules from A.3.6 apply — their context is still ready, but
+the pending plan-approval is gone).
+
+**Force-reset** on a specific node clears its content and
+re-enqueues generation, cascading staling to dependents.
+This is a debugging/recovery affordance, not a normal
+workflow — it's available to project admins and used when
+a flow ends up in a state that's hard to reason about.
 
 ## A.10 Document storage model
 
-v2 §A.9.
+Generated documents — tier content, fragments, drafts, and
+reviews — live on the projection as prose (typically XML
+conforming to tier grammars) stored in the database.
+Rendering at read time converts them to HTML, markdown, or
+whatever the UI layer expects.
+
+The **event log is the source of truth**; projection rows
+are a cache. A projection column holding `content` isn't
+authoritative — it's materialized from `ContentCommitted`
+events applied in order. Replay reconstructs it. The
+database schema captures what the projection *currently*
+is; the log captures how it got there.
+
+Documents are **never** stored in git. Git is the code
+delivery substrate for tiers whose generator produces code
+(A.16); the design graph itself lives in Catapult's
+database. See A.16.5.
+
+**Fragment storage** follows the same rule — fragments are
+columns on their owning node, materialized from
+`FragmentUpdated` events. A fragment's current value is the
+last event's payload; its history is every event in order.
+
+Binary blobs (future feature) — images, attachments,
+generated assets — are stored out-of-band (object storage)
+with the projection holding a reference. Out of scope for
+the current spec; noted so the event model doesn't get
+designed to preclude it.
 
 ## A.11 Bundles (configuration system)
 
