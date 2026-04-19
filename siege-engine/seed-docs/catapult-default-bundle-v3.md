@@ -123,56 +123,50 @@ v2 §A.3.5.
 
 ## 10. Flow declarations on the default bundle
 
-The six default-bundle flows, each declared per platform spec
-§A.4 with seed shape, optional phase-zero, direction, and the
-per-tier (planning, regeneration) prompt pair. Tier-specific
-prompt content is the bundle author's work; the shapes below
-describe which tiers each flow touches.
+Five default-bundle flows, each declared per platform spec
+§A.4 as a schema delta the platform grafts onto the scaffold
+when the flow is active. Scaffolding is *not* in this list —
+it's the scaffold's baseline behavior when no flow is active
+(an approved input doc kicks the reactive scheduler; no
+planning tiers, no delta).
 
 Working sketches for each flow live in
 `catapult-default-bundle-v3-examples.md`; this section carries
 prose descriptions only.
 
-### 10.1 Scaffolding
-Seed: raw input document. Phase-zero: none (input expansion is
-the first bootstrap). Direction: `down`. Tiers touched:
-expansion → reqs → sysarch → subreqs → comparch → subcomparch →
-impl → plan → code. Planning auto-approves at every tier (no
-structural ops). From v2 §A.2.1.
+### 10.1 Feature request
+Seed: feature-shaped prose. Phase-zero planning tier splits
+the request into one or more concrete features and lands them
+at the expansion tier. Direction: `down` from the fan-out
+point. Planning auto-approves. From v2 §A.2.2.
 
-### 10.2 Feature request
-Seed: feature-shaped prose. Phase-zero: LLM call that splits the
-request into one or more concrete features and lands them at the
-expansion tier. Direction: `down` from the fan-out point.
-Planning auto-approves. From v2 §A.2.2.
-
-### 10.3 Refactor
-Seed: structural-op prose. Phase-zero: LLM call that shapes the
+### 10.2 Refactor
+Seed: structural-op prose. Phase-zero planning tier shapes the
 request into a `<structural-ops>` list plus downstream plan.
-Direction: `down`. **Planning human-gates at every tier whose
-plan carries structural-ops** — which is most of them for a
-refactor — matching the destructive-op approval rule.
-Structural-ops applied end-of-run. From v2 §A.2.3.
+Direction: `down`. Planning tiers' grammars allow
+`<structural-ops>` → human-gated at any tier whose plan
+carries structural-ops. Structural-ops applied end-of-run.
+From v2 §A.2.3.
 
-### 10.4 Bug-fix propagation
+### 10.3 Bug-fix propagation
 Seed: code diff mapped to `git_commit`-owning leaves via
 territory (spec §A.16). Direction: `up_then_down`. Upward leg
 produces planning-only diagnoses at each ancestor up to the
-project root; merge-at-parent applies when multiple seed leaves
-converge. Downward leg starts at root with regeneration and
-implicated-children splits. No new code — input is already
-code. From v2 §A.2.4.
+project root; merge-at-parent applies when multiple seed
+leaves converge. Downward leg starts at root with plans and
+regens, implicated-children splits fan out. No new code —
+input is already code. From v2 §A.2.4.
 
-### 10.5 Downward propagation
+### 10.4 Downward propagation
 Seed: node-set-with-accumulated-feedback. Direction: `down`.
 Scope-bounded propagation depth (v2 §A.2.5 retains the "stop
-before impl" affordance). Planning auto-approves. The
-mechanically-thinnest flow in the catalogue — kept as the worked
-example of consuming deferred feedback as a first-class
-operation. From v2 §A.2.5.
+before impl" affordance via `max_depth`). Planning
+auto-approves. The mechanically-thinnest flow in the
+catalogue — kept as the worked example of consuming deferred
+feedback as a first-class operation. From v2 §A.2.5.
 
-### 10.6 Upward propagation
+### 10.5 Upward propagation
 Seed: node-set-with-accumulated-feedback. Direction:
 `up_then_down`. Same up-then-down shape as bug-fix propagation
-but seeded from deferred feedback rather than a code diff. From
-v2 §A.2.6.
+but seeded from deferred feedback rather than a code diff.
+From v2 §A.2.6.

@@ -293,7 +293,14 @@ Stated bundle-agnostically; default-bundle instantiations
 live in `catapult-default-bundle-v3.md` §10 with per-flow
 sketches in `catapult-default-bundle-v3-examples.md` §2.
 
-- **Scaffolding** — seed: raw input; direction: `down`.
+Scaffolding is *not* in the catalogue — it's the platform's
+baseline behavior when no flow is active. A newly-created
+project with an approved input doc runs the scaffold's
+reactive scheduler directly; no schema delta, no planning
+tiers, no user-kicked flow action. The five flows below are
+the schema deltas bundles ship for operations the scaffold
+can't do alone.
+
 - **Feature request** — seed: feature-shaped prose;
   phase-zero tier shapes it into a feature list;
   direction: `down`.
@@ -580,13 +587,15 @@ part in the v3 reorganization — it was already clearly scoped.
   planning-only and advisory; the downward leg's plans drive
   scheduling. Split is always downward, always about children —
   no sibling-split prompt.
-- **Six flows in the default bundle.** Scaffolding,
-  feature-request, refactor, bug-fix-propagation,
-  downward-propagation, upward-propagation. Downward-propagation
-  is mechanically just regen-with-feedback (the platform's
-  reactive scheduler would do the cascade anyway), kept as an
-  explicit flow declaration so bundles ship a worked example of
-  consuming deferred feedback as a first-class operation.
+- **Five flows in the default bundle.** Feature-request,
+  refactor, bug-fix-propagation, downward-propagation,
+  upward-propagation. Scaffolding is *not* a flow — it's the
+  scaffold's baseline behavior when no flow is active.
+  Downward-propagation is mechanically just regen-with-feedback
+  (the platform's reactive scheduler would do the cascade
+  anyway), kept as an explicit flow declaration so bundles
+  ship a worked example of consuming deferred feedback as a
+  first-class operation.
 - **Review UX invariants.** Plan review = effect set (editable
   visit/skip/trivial checklist); regen review = diff, not full
   doc.

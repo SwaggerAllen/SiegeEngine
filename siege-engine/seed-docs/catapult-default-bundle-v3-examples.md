@@ -2,7 +2,11 @@
 
 **Status:** working file. YAML examples for tier, edge,
 fragment, context, and flow declarations, plus the working
-sketches for each of the default bundle's six flows.
+sketches for each of the default bundle's five flows. (The
+scaffold's baseline behavior — generation from an approved
+input doc with no active flow — is already illustrated end-
+to-end by the Part 1 schema examples; it doesn't need its
+own sketch.)
 
 This file is reference content for the platform spec
 (`catapult-spec-v3.md`) and the default bundle spec
@@ -126,11 +130,14 @@ without `comparch` and `comp` being the same tier.
 
 # Part 2 — Flow declaration sketches
 
-Working sketches for each of the default bundle's six flows.
+Working sketches for each of the default bundle's five flows.
 Each flow is a **schema delta** per platform spec §A.4: a
 `flow.yaml` declaring additional tiers and edges the platform
 grafts onto the scaffold, plus prompt files the flow-declared
-tiers reference.
+tiers reference. (Scaffolding is not a flow; it's the
+scaffold's baseline behavior with no delta active — see Part 1
+for how the scaffold's tiers schedule themselves from an
+approved input doc.)
 
 Flows are sketched one at a time. Each sketch covers:
 
@@ -153,7 +160,7 @@ regens through the dependent graph anyway; downward propagation
 is kept as an explicit flow so the bundle ships an editable,
 reviewable specification of "consume deferred feedback at these
 nodes and propagate the implications downward." Mechanically
-the thinnest of the six flows — no phase-zero, no structural
+the thinnest of the five flows — no phase-zero, no structural
 ops, no upward leg — and therefore the right starting sketch.
 
 ### 2.1.1 `flows/downward-propagation/flow.yaml`
@@ -492,10 +499,3 @@ To be sketched.
 ## 2.5 Upward propagation
 
 To be sketched.
-
-## 2.6 Scaffolding
-
-To be sketched. Likely the simplest because it has no
-phase-zero and no upstream context to merge — every visit
-runs plan + regen against the tier's standard regen context
-and the parent's plan, full stop.
