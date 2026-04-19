@@ -556,18 +556,401 @@ revise comparch upward.
 ## 4. Structural rules
 
 ### 4.1 Foundation components
-v2 §A.1.6.
+
+Every level of the structural tree has **shared files at
+its root** — build config, package init, cross-cutting
+utilities, top-level entry points — that don't logically
+belong to any one child. Without a dedicated owner, those
+files are orphaned by the file manifest and by code
+generation: no impl node produces them, no plan node
+touches them, and the resulting project isn't buildable.
+
+To fix this by construction, every structural decomposition
+pass is required to mint a **foundation component** as one
+of its children:
+
+- **Sysarch** always includes a foundation component in
+  its top-level component list. Its territory covers the
+  project's root folder minus whatever the other top-level
+  components claim.
+- **Each component-architecture pass** that decomposes a
+  component into subcomponents includes a foundation
+  subcomponent, **unless the component being decomposed is
+  itself a foundation component**.
+
+**Foundations don't nest.** When a foundation component —
+top-level or sub — is itself decomposed by a component-
+architecture pass, that pass does **not** mint another
+foundation subcomponent inside it. Instead, the generation
+prompt is told to **divide the foundation's territory
+exhaustively**: every file the foundation owned must be
+claimed by one of the concrete subcomponents it mints,
+with no residual catch-all. The reason is that "foundation"
+means "catch-all at this level"; a sub-foundation inside a
+foundation would be the catch-all of the catch-all, which
+collapses to the original.
+
+Whether a component is a foundation is persisted as a
+first-class attribute on the comp node, set at mint time
+by the sysarch and comparch mint handlers based on the
+parsed foundation marker in the upstream arch doc.
+Downstream passes read it directly rather than re-parsing
+upstream content.
+
+A foundation component is a normal `comp_*` in every other
+respect — it has its own responsibilities, its own
+fragments, its own dependencies, and it can have
+subcomponents if it decomposes further (subject to the
+depth cap and the nesting carve-out). Naming is free — the
+LLM defaults to "Foundation" but the user can rename.
+
+The foundation rule guarantees three things: manifest
+coverage (every file at every level has an owner, because
+foundations are the explicit catch-all remainder), code-
+generation buildability (the top-level foundation owns
+build config and entry points so the first code-gen pass
+produces a compilable project), and a natural home for
+cross-cutting utilities (shared types used by multiple
+subcomponents land in the foundation without having to be
+artificially extracted as a standalone top-level component).
+
 ### 4.2 Subcomponent depth cap
-v2 §A.1.7.
+
+The `comp_*` tier is tier-agnostic for ID purposes (§1.3) —
+promotion and demotion between top-level components and
+subcomponents must not change the ID, so both share the
+prefix. But the structural tree is **hard-capped at two
+levels**. A `comp_*` whose parent is another `comp_*`
+cannot itself be the parent of any `comp_*`. In other
+words: component → subcomponent → impl is the full allowed
+structural chain; no sub-subcomponents, ever.
+
+Three-level component trees are harder to review, harder
+to render, and add only marginal expressiveness beyond
+what "promote the middle layer to its own top-level
+component" already provides. Promotion is a single
+operation in the refactor flow's structural-ops list, and
+it's the right answer whenever a subcomponent's
+decomposition would need its own children.
+
+The cap is enforced by the reducer on every structural
+event whose target tier is `comp` — `NodeCreated`,
+`NodeReparented`, `NodePromoted`, `NodeDemoted`. If the
+chosen parent is itself a `comp_*` whose own parent is a
+`comp_*`, the event is rejected before it's applied. The
+comparch regen prompt is also told about the cap explicitly,
+with the escape hatch framed as: "if decomposition would
+require three levels, stop and recommend promoting the
+middle layer to a top-level component."
+
+Knock-on consequences:
+
+- **Subresponsibilities are a leaf responsibility tier.**
+  Subresp → subcomp is the full story; there are no sub-
+  subresps.
+- **Fan-in nodes never nest** (§4.4). A fan-in synthesizes
+  across one component's direct subcomponents, which is
+  also the only structural possibility.
+- **Policies have exactly two generation tiers**, matching
+  the two tiers where responsibilities are minted.
+  Top-level policies live in the sysarch's `<policies>`
+  fragment; component-local policies live in each
+  component's arch-doc `<policies>` fragment. No recursive
+  policy-generation pass.
+- **Subcomparch docs omit the `<policies>` section.**
+  Subcomponents are leaves; there are no new
+  responsibilities to target with new policies and no
+  subtree to scope new triggers against.
+
 ### 4.3 Unified domain/presentational DAG
-v2 §A.1.8.
+
+There is no separate domain graph and presentational graph.
+Domain and presentational nodes share the same shape —
+feature → responsibility → component → subcomponent →
+impl — and the distinction is a `kind` tag on the node,
+not a different data model. Presentational nodes are
+strictly layered *after* domain nodes in the generation
+order: a presentational component can depend on a domain
+component's public surface, but a domain component cannot
+depend on a presentational one.
+
+- **Dependency edges cross kinds.** A presentational
+  component depending on a domain component via the
+  latter's public surface is the normal "I import your
+  API" edge and behaves the same regardless of the kind
+  distinction.
+- **Domain-parent edges mark primary views.** These are
+  `presentational → domain`, 1:N, and indicate the domain
+  component(s) this presentational component is a primary
+  view *into*. Semantics differ from dependency: a primary
+  view needs to reflect what was actually built at the
+  domain side, not just the API contract, which is why
+  `domain_parent` edges feed fan-in synthesis nodes (§4.4)
+  while dependency edges feed only public surfaces.
+- **Sibling means "same parent / same level," not "same
+  kind."** A presentational component can have domain
+  components as dependency siblings in the context-assembly
+  sense. A notifications UI component, for example, may
+  have no domain parent (notifications isn't a primary
+  view into a single domain concept) but depends on
+  several domain components for the data it shows.
+- **Admin surfaces, docs pages, and UI features are
+  regular presentational features.** They are not a third
+  node kind. Each such surface is a presentational feature
+  with its own domain-parent edges where they make sense
+  and plain dependency edges everywhere else.
+
+Presentational generation prompts read two kinds of
+context from the domain side: the domain component's spec
+(the top-down intent) and the domain component's fan-in
+synthesis (the bottom-up "what exists"). If those two
+disagree, that's a meaningful signal that the domain side
+has drifted from its own contract, and the presentational
+regen is the natural place for it to surface.
+
 ### 4.4 Domain fan-in synthesis
-v2 §A.1.9.
+
+Domain-parent edges carry far more context than plain
+dependency edges. A dependent that just imports an API only
+needs the public surface; a presentational node that is a
+primary view into a domain component needs to faithfully
+reflect what was actually built underneath, not just the
+contract.
+
+To carry that load without inflating presentational regen
+prompts, **every domain component with subcomponents gets
+a fan-in synthesis node** sitting at the bottom of its
+subtree, regardless of whether a presentational counterpart
+currently exists. Always-minting is a deliberate
+simplification: adding a domain-parent edge later never
+has to retroactively materialize a fan-in, and the minting
+rule is purely a function of the domain subtree shape.
+The cost is a few extra regens for fan-ins nobody is
+reading yet, which is acceptable.
+
+Domain components without subcomponents don't need a
+fan-in — their own implementation node already is the
+synthesis, and a presentational counterpart reads it
+directly.
+
+```
+domain feature
+  → domain responsibility
+    → domain component (spec / contract)
+      → domain subcomponents
+        → subcomponent implementations
+          → fan-in synthesis           ← bottom of the domain accordion
+            → presentational counterpart (cross-tree, via domain_parent edge)
+```
+
+Properties of fan-in nodes:
+
+- **Strictly downstream of subcomponent implementations.**
+  They synthesize "given these subcomponent
+  implementations, here is what this component actually
+  exposes and does at the component level." They never
+  read their own domain component's spec directly — that
+  would be circular.
+- **Feed only presentational counterparts.** Current or
+  future, via domain-parent edges. Fan-ins are never read
+  by their own domain component, so domain-side
+  regeneration stays single-pass top-down with no upward
+  propagation.
+- **Real projection nodes with their own diffs and
+  staleness.** When a subcomponent implementation changes,
+  the fan-in regenerates, and *its* diff is what reaches
+  the presentational side. A presentational node reading
+  a fan-in never sees N subcomponent diffs directly — its
+  input set is bounded no matter how big the domain
+  subtree grows.
+- **One fan-in per domain component, not one per level.**
+  The synthesis collects the entire subtree below the
+  component in a single rollup. Subcomponents don't get
+  their own fan-ins.
+- **Not reviewed directly.** Fan-ins are mechanical
+  synthesis; real edits land at the subcomponent
+  implementations below them, and "does this reflect what
+  was built" is actually checked at the presentational
+  counterpart. Reviewing the fan-in itself would be
+  triple-counting the same diff. Fan-ins are excluded
+  from review scoping.
+- **Always-present even without a presentational
+  counterpart.** Minted unconditionally for any domain
+  component with subcomponents. Adding a domain-parent
+  edge later is then a pure edit, not a mint-on-the-fly.
+
+**Scheduling invariants.** Two gates matter:
+
+- **First-pass gate.** A fan-in generates for the first
+  time when every subcomponent's impl is approved and
+  populated. Before first-pass, partial impl coverage
+  leaves the gate closed. This falls out of the
+  synthesis edge's platform-shipped readiness rule
+  (§A.3.2).
+- **Presentational comparch gate.** A presentational
+  comp's comparch waits until every one of its
+  `domain_parent` targets has a populated fan-in node.
+  This falls out of the presentational tier's context
+  walk `self.domain_parent → target.synthesis` failing to
+  resolve until the synthesis exists.
+
+Both gates are reactive-schema defaults, not special-case
+bundle logic.
 
 ## 5. Policies
 
-v2 §A.1.10 in full. Shape, two-tier generation, application at
-component-architecture time, policy-induced dep edges.
+Some content isn't a capability, it's a constraint: "every
+LLM call records telemetry," "every DB write goes through
+the reducer," "every route checks the session." These
+aren't things *one* component does — they're things
+*every* component does, and they need to be both **stated**
+(so the LLM writing an implementation knows about them) and
+**reviewable** (so a human can confirm a cross-cutting
+invariant still holds).
+
+The capability a policy requires is still modeled as a
+normal component — `TelemetryService`, the reducer, the
+session check — reached via ordinary dependency edges.
+What's new is the *policy itself*: the statement that the
+capability must actually be used at every trigger site.
+
+### 5.1 Shape of a policy
+
+A `policy_*` node carries three fields:
+
+- **`trigger`** — a short semantic phrase identifying the
+  site type where the policy applies: "any LLM call,"
+  "any DB write," "any presentational route handler."
+  The policy-application pass reads this and decides
+  whether the trigger plausibly occurs in a given
+  component based on that component's techspec, public
+  surface, and subresponsibilities. It's semantic, not a
+  structural identifier, so the trigger vocabulary doesn't
+  need a central registry — a new kind of cross-cutting
+  concern is just a new policy with new trigger wording.
+- **`required`** — the ID of the responsibility (`resp_*`)
+  that must be fulfilled at every trigger site. Policies
+  reference responsibilities, not components directly,
+  because the resp → comp 1:1 mapping gives the
+  application pass the concrete component to call while
+  keeping the policy stable across component refactors:
+  if `TelemetryService` gets merged or split, the
+  `resp_telemetry` it fulfills moves with it and the
+  policy wording doesn't change.
+- **`rationale`** — prose explaining why the policy
+  exists. Shown in review and included in regen prompts
+  so the LLM understands intent. Carries real weight in
+  the application decision — "record latency for anything
+  a user waits on" tells the LLM what kind of trigger
+  sites to look for.
+
+Policies live in the `<policies>` fragment of an arch doc.
+On approval, the reducer parses the fragment and projects
+each entry into a `policy_*` node, the same way the
+`<dependencies>` fragment projects into dependency edges.
+The fragment is the authoring surface; the node is the
+identity that `policy_application` edges reference.
+
+### 5.2 Two generation tiers
+
+Matching the two responsibility tiers:
+
+1. **Top-level policies** — generated as part of the
+   sysarch joint-reasoning pass, alongside components,
+   API intent, and dep edges. Live in the sysarch's
+   `<policies>` fragment. Trigger phrases can match
+   against the full component set. The `required` field
+   references top-level `resp_*` nodes minted by the
+   requirements bootstrap.
+2. **Component-local policies** — generated as part of
+   each component's arch-doc pass, alongside
+   subcomponents and that component's deps. Live in the
+   component arch doc's `<policies>` fragment. Trigger
+   phrases match only against components in the minting
+   component's subtree. The `required` field references
+   either top-level responsibilities or this component's
+   own subresponsibilities, whichever the obligation
+   actually needs.
+
+Subcomparch docs have no `<policies>` section —
+subcomponents are leaves; no new responsibilities to
+target with new policies and no subtree to scope new
+triggers against.
+
+### 5.3 Application at component-architecture time
+
+"Does this policy apply to this component?" is an LLM
+decision that needs the candidate component's full
+techspec, public surface, and subresponsibilities
+available as input. At sysarch approval time, the
+sysarch's per-component summary is deliberately high-level
+— role plus API intent only — because the whole point of
+the sysarch/component-arch split is that sysarch entries
+stay stable as subcomponents iterate. At that level of
+detail, the application pass cannot confidently answer
+"does this component have trigger X."
+
+So the application pass runs at component-architecture
+generation time:
+
+1. **Sysarch generation** produces `<policies>` in its
+   output as normal. On approval, `policy_*` nodes are
+   projected from the fragment. **No `policy_application`
+   edges are emitted yet for top-level policies.** Policy
+   nodes exist; they have no application edges.
+2. **Sysarch emits speculative policy-induced dep edges**
+   in its `<dependencies>` section, based on role-level
+   inference against the per-component summaries it does
+   have ("this component's role involves generating
+   content, so it probably needs `TelemetryService`").
+   Best-effort. A missed dep at this stage can be patched
+   at component-architecture time.
+3. **Component architecture generation** receives the
+   full list of top-level `policy_*` nodes as candidates
+   in its regen prompt. The LLM reads the component's
+   techspec, subresponsibilities, and public surface, and
+   decides for this specific component which policies
+   actually apply. Component-local policies minted in the
+   same pass go through the same application step,
+   scoped to the component's own subtree.
+4. **`policy_application` edges are emitted on
+   component-architecture approval**, one per (policy,
+   this-component) pair the LLM marked as applicable. The
+   component arch's own `<dependencies>` list also gets a
+   chance to add any policy-induced dep that sysarch's
+   first pass missed.
+
+### 5.4 Policy-induced dependency edges
+
+A policy that says "at any trigger site, fulfill
+responsibility X" implicitly requires every applicable
+component to depend on whichever component owns X. Those
+dep edges have to exist or the generated code cannot reach
+the required capability. This is why `<policies>` comes
+*before* `<dependencies>` in the arch-doc section order:
+the LLM is expected to reason about policies first and
+then emit a dependency list that already reflects
+policy-induced edges.
+
+Policy-induced deps are ordinary `dependency` edges — the
+bundle doesn't distinguish them from user-intended deps at
+the edge level. The distinction lives in the `<policies>`
+fragment that motivated each edge; a reviewer can trace a
+dep back to the policy that implied it by looking at the
+fragment.
+
+### 5.5 Application edges are editable but not formally reviewed
+
+The instruction vocabulary includes operations to add or
+remove a policy application for cases where the LLM's
+decision is wrong (false positive or false negative). User
+overrides are normal structural edits.
+
+Application edges aren't reviewed separately because the
+*policies themselves* are reviewable — they're part of the
+arch doc's `<policies>` fragment — and if a policy turns
+out to be too broad or too narrow, the fix is to edit the
+policy wording or its trigger, not the edges one by one.
 
 ## 6. Ownership and repository territory
 
