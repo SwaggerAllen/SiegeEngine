@@ -114,10 +114,67 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
   and expose a manual "Retry review" button. See the
   "AI self-review" section below.
 
-**Next:** Phase 11 structural edit UIs (domain-parent editor,
-subresp → subcomp mapping editor). The pending-change queue has
-storage + instruction types but the HTTP plumbing isn't exposed
-yet — that lands with Phase 11.
+**Next:** Phase 9 (staleness ledger & fanout decision) → Phase 10
+(layered DAG view) → Phase 11 (structural edit UIs). Earlier session
+notes had "next: Phase 11" skipping 9 and 10 — that was shorthand,
+not intentional sequencing; 9 and 10 come first. Phase 11's
+pending-change queue has storage + instruction types but the HTTP
+plumbing isn't exposed yet; that lands with Phase 11 itself.
+
+## V3 spec scope vs V2 implementation
+
+Three new seed docs describe Catapult at a higher abstraction level
+than v2 implements:
+
+- `seed-docs/catapult-spec-v3.md` — platform spec (event-sourced
+  reducer, reactive schema, flows as schema deltas, two primitives,
+  review/feedback, bundles, etc.)
+- `seed-docs/catapult-default-bundle-v3.md` — the default bundle
+  (tier/edge/fragment/structural-rules vocabulary)
+- `seed-docs/catapult-default-bundle-v3-examples.md` — YAML schema
+  examples, per-flow sketches, running Part 3 open-changes list
+
+**The v2 siege engine implements the v3 default bundle's scaffolding
+walk imperatively in Python.** Everything past that is v3-spec
+territory, not v2 implementation.
+
+V2 tiers/edges/structural rules already done that match v3's default
+bundle:
+- `feat` / `resp` / `comp` / `subcomp` / `impl` tiers
+- `policy` tier + `policy_application` edges resolved at comparch
+- `vocab`, `ref`, `fanin` tiers
+- AI self-review
+- All five fragment kinds (techspec, pubapi, privapi, policies, deps)
+- All five edge instances (dependency, domain_parent,
+  policy_application, decomposition, reference)
+- Foundation rule, depth cap, domain/presentational DAG, fan-in
+  synthesis
+
+V2 remaining gaps in the scaffolding walk:
+- `plan` tier — Phase 14
+- `code` tier — Phase 14
+- `manifest` bootstrap — Phase 14
+
+V2 supporting work adjacent to scaffolding:
+- Phases 9–13 (staleness, DAG view, structural edit UIs, batched
+  review, change summaries)
+- Phase 15 (Catapult smoke test)
+- Phase 16 (project export)
+
+Explicit v3-spec items **out of v2 scope**:
+- Four non-scaffolding flows (feature-request, refactor, bug-fix,
+  downward propagation, upward propagation)
+- Bundle configuration system (platform spec §A.11)
+- Phase-zero tier machinery
+- `invokes:` primitive selector and the `downward_cascade` /
+  `up_then_down` walk primitives
+- `implicates_visit` edge mechanism
+- `<assessment>` grammar for up-then-down flows
+- Everything in the Part 3 core-platform-changes list
+- Cross-project references (meta-design escape hatch)
+
+If a future session touches anything on the out-of-scope list,
+flag it and confirm the scope change is intended.
 
 ## Meaning-engine model
 
