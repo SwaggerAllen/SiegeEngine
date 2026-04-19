@@ -1556,20 +1556,176 @@ workshops rather than speculated about in this spec:
 
 ## A.12 Credentials and token tracking
 
-v2 §A.12.
+Catapult orchestrates LLM calls on behalf of users; credentials
+for upstream model providers and tracking of token usage are
+platform concerns.
+
+### A.12.1 BYO credentials
+
+Every Catapult instance is **bring-your-own-credentials**. The
+platform does not embed API keys for any model provider; users
+or instance admins supply their own Anthropic / OpenAI / other
+provider keys at instance or project scope.
+
+Credentials are stored encrypted at rest, decrypted only at
+call time, and never logged. The credential management UI is
+scoped to admins at the appropriate level — instance admins
+for instance-wide credentials, project admins for project
+overrides.
+
+### A.12.2 Scoped credential assignment
+
+Credentials can be assigned at three scopes:
+
+- **Instance-wide** — default for every project on the
+  instance. Useful for single-tenant deployments or where a
+  central admin owns the billing relationship.
+- **Project-scoped** — overrides the instance default for a
+  specific project. A tenant that wants to pay for its own
+  token usage sets a project-scoped key.
+- **Per-tier** (rare) — overrides for a specific tier within
+  a project, typically for cost control on an expensive tier
+  or to route specific work to a different model.
+
+Most-specific binding wins. The scheduler resolves which key
+to use at call-time based on the tier and project the
+generation is for.
+
+### A.12.3 Token tracking
+
+Every LLM call records **token telemetry** against the
+resolved credential binding: prompt tokens, completion
+tokens, model, timestamp, and the node and tier the call
+was for.
+
+Telemetry is event-sourced like everything else — a
+`TelemetryRecorded` event lands through the reducer on
+every call. This gives a per-project, per-tier, per-time-
+window token usage view that replays deterministically.
+
+Admin dashboards surface the rollups: total tokens per
+project, per user, per tier over the last N days, broken
+down by credential binding. No per-dollar cost projection
+yet (pricing changes too often to hard-code); just token
+counts with the model name attached so rollups can be
+priced externally.
+
+### A.12.4 Cost projection — deferred
+
+A future iteration can layer per-token cost tables and
+surface dollar estimates in the admin UI. The telemetry
+model already captures everything needed (model name +
+token counts); only the pricing table and the UI are
+missing. Deferred to avoid coupling the spec to whatever
+each provider charges this quarter.
 
 ## A.13 Real-time updates and external integration
 
-v2 §A.13 (SSE live updates, webhooks, external API).
+Catapult's UI and external integrations both consume the
+same per-project event stream, with different delivery
+channels for different use cases.
+
+### A.13.1 Live updates
+
+The UI subscribes to a **Server-Sent Events** channel
+per project (`GET /projects/:id/events/stream`). Every
+event the reducer commits publishes to that channel; the
+frontend drives cache invalidations via an event-type →
+query-key dispatch table.
+
+The stream is tail-of-log — reconnecting gets new events
+from the point of reconnection. History is fetched
+separately from the standard REST endpoints or an explicit
+replay API. No guaranteed in-order delivery across
+reconnects; the UI's dispatch logic is idempotent.
+
+### A.13.2 External webhooks
+
+Integrators register **webhooks** per project or instance,
+filtered by event-type patterns ("fire on every
+`ContentApproved` for tier `comp`" or "fire on every
+`FlowCompleted`"). Delivery is at-least-once with
+exponential backoff retries; subscribers are responsible
+for deduping on event ID.
+
+Webhook payloads contain the event type, payload, and
+enough node context to resolve what changed without a
+follow-up fetch. A signed-secret header authenticates the
+delivery.
+
+### A.13.3 External API
+
+A REST API exposes every projection read the UI uses, plus
+controlled write operations (kick a flow, approve a draft,
+post a comment). API auth is per-project API tokens scoped
+to specific permission atoms (A.6.2); token issuance is
+admin-gated.
+
+Write operations flow through the same reducer entrypoint
+any UI write does — there is no "API-only" write path that
+bypasses validation or logging.
 
 ## A.14 Authentication and identity
 
-v2 §A.14.4, §A.14.5 (sessions, SSO). Permission atoms and roles
-moved to §A.6.
+Permission atoms and role bindings live in A.6. This
+section covers session management and federated identity.
+
+### A.14.1 Sessions and identity
+
+User sessions are managed via signed session cookies (or
+bearer tokens for the API). Session data holds the user's
+identity + the current project context; permission lookups
+resolve against the user's bindings.
+
+Passwords, where used, are hashed with a modern algorithm
+(argon2id or similar). Password reset, email verification,
+and similar identity flows follow standard patterns and
+aren't reinvented.
+
+### A.14.2 SSO and SAML
+
+Instance admins can configure **SSO** via SAML 2.0 or OIDC.
+User identity maps from the IdP's subject claim to a
+Catapult user ID; group claims can map to role bindings via
+configuration.
+
+SSO is an instance-wide capability, not per-project.
+Enterprise deployments typically enable it; self-hosted
+single-user deployments skip it.
+
+### A.14.3 API tokens
+
+For machine-to-machine access (CI jobs, external webhooks,
+integrators), the platform issues **API tokens** scoped to
+specific permission atoms and project scopes. Tokens are
+long-lived with explicit revocation; short-lived tokens are
+an option for higher-security integrations.
 
 ## A.15 Multi-project support
 
-v2 §A.15.
+A single Catapult instance hosts multiple projects. Projects
+are fully isolated at the data level — separate event logs,
+separate projections, separate bundle-override state — and
+selectively connected at the identity level (users can belong
+to multiple projects with different role bindings in each).
+
+### A.15.1 Project isolation
+
+Every write scopes to exactly one project. The reducer
+entrypoint takes `project_id` and every event carries it;
+the projection is partitioned by project. There is no
+query path that returns rows across projects.
+
+Bundle selection is per-project. Two projects on the same
+instance can run different bundles.
+
+### A.15.2 Cross-project references — out of scope
+
+Linking a node in project A to a node in project B is not
+supported. If it eventually ships, it'll be via a
+cross-project reference node kind or federation protocol;
+for now, projects are hermetic. Noted so we don't paint
+the data model into a corner that precludes it later.
 
 ## A.16 Code delivery substrate and the `git_commit` generator
 
