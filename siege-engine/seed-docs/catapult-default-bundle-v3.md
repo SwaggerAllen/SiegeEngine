@@ -337,28 +337,221 @@ provenance (A.4.3).
 
 ## 2. Edge vocabulary
 
-Named edge instances, each typed against one of the platform's
-five edge types (see platform spec §A.3.2).
+Five named edge instances, each typed against one of the
+platform's five edge types (platform §A.3.2). The bundle
+declares the specific source/target tiers and cardinality;
+the platform handles the type-level semantics (cycle
+detection, readiness contribution, etc.).
 
 ### 2.1 `dependency`
-v2 §A.1.3.
+
+Typed as the platform's `dependency`. Represents "A's
+public surface reaches into B's public surface" —
+component A imports or calls something from B.
+
+- **Shape:** `comp_* → comp_*` (both top-level and subcomp).
+- **Cardinality:** unbounded; a comp can depend on any
+  number of siblings.
+- **Declared in:** `comparch.draft.dependencies[]` for
+  top-level comp deps; `comparch.draft.sub_dependencies[]`
+  for subcomp-to-subcomp within the same parent.
+- **Graph constraint:** `acyclic`, `no_self_loop`.
+- **Scope:** top-level deps are project-wide; subcomp deps
+  are scoped `within(comparch)` (both endpoints in the
+  same parent's fanout).
+- **Context contribution:** a dependent's regen context
+  walks `self.dependency → target.handle.fragments[pubapi]`
+  — dependents see only the pubapi fragment, not the whole
+  arch doc.
+
+Policy-induced dependency edges (see §5) are declared in
+the same `<dependencies>` section — bundles don't distinguish
+them from ordinary deps at the edge level. The distinction
+lives in the `<policies>` fragment that motivated the edge.
+
 ### 2.2 `domain_parent`
-Bundle-level edge typed as `synthesis` — presentational comp
-subscribes to domain comp's `fanin` aggregator. v2 §A.1.3,
-§A.1.8.
+
+Typed as the platform's `synthesis` edge. "This
+presentational component is a primary view into this
+domain component's fan-in aggregator" — the presentational
+subscribes to the domain's synthesis handle.
+
+- **Shape:** `comp_* → comp_*` where source is
+  presentational and target is domain.
+- **Cardinality:** a presentational comp may have multiple
+  domain parents; a domain comp may have multiple
+  presentational counterparts.
+- **Declared in:** `sysarch.draft.domain_parents[]`.
+- **Graph constraint:** cross-kind
+  (`source.kind == presentational AND target.kind ==
+  domain`).
+- **Context contribution:** presentational comps' regen
+  context walks `self.domain_parent → target.synthesis`,
+  pulling the domain's fan-in aggregate rather than the
+  top-down spec. §4.4 covers why.
+
 ### 2.3 `policy_application`
-v2 §A.1.3, §A.1.10.
+
+Typed as the platform's `policy_application`. "This policy
+applies to this component at these trigger sites."
+
+- **Shape:** `policy_* → comp_*`.
+- **Cardinality:** a policy can apply to many components;
+  a component can be subject to many policies.
+- **Declared in:** `comparch.draft.policy_applications[]`
+  (component-architecture approval, not policy mint).
+  Declared at comparch time rather than policy mint
+  because applicability needs the full techspec and
+  subresps as input — see §5.
+- **Graph constraint:** reachability (the policy's
+  required responsibility must be reachable from the
+  target component via dep edges, so the capability the
+  policy requires is actually accessible).
+- **Context contribution:** when a comp's impl is
+  generating code, its context walks
+  `self.policy_application.inverse → source.handle` to
+  see which policies apply.
+
 ### 2.4 `decomposition`
-Both conventions (`feat→resp`, top-resp→subresp). v2 §A.1.3.
+
+Typed as the platform's `reference`. Many-to-many
+projection edges; two conventions share the type:
+
+- **`feat_* → resp_*`** — the feature implicates the
+  top-level responsibility. Emitted at reqs-approve time
+  based on the `<feature-implications>` section of the
+  reqs bootstrap.
+- **`resp_* → resp_*`** (top-level → subresp) — the
+  top-level responsibility decomposes into this subresp
+  within its owning component. Emitted at subreqs-approve
+  time.
+
+Both endpoint kinds use the tier-agnostic `resp_*`
+prefix; the distinction between top-level and subresp
+lives in the nodes' parent assignments (§1.2).
+
+- **Graph constraint:** acyclic (a resp can't decompose
+  into an ancestor resp).
+- **Context contribution:** various — features read their
+  implicated resps; subreqs regens read top-level resps;
+  comparch regens read their component's implicated resps.
+
 ### 2.5 `reference`
-v2 §A.1.3, §A.1.13.
+
+Typed as the platform's `reference`. General-purpose
+advisory-context edge any node can use to declare "during
+my regen, also read this node's handle."
+
+- **Shape:** `any_node → any_node`.
+- **Cardinality:** unbounded.
+- **Declared in:** `CreateReference` and `AddReference`
+  instructions (user-driven), plus bundle-seeded refs at
+  project creation (§8, platform §A.11.5).
+- **Graph constraint:** acyclic.
+- **Context contribution:** the source's regen context
+  walks the edge and dispatches on target tier —
+  `ref_*` → full body, `comp_*` → pubapi fragment,
+  `policy_*` → rationale, etc. Both outgoing and inbound
+  reference edges contribute to a node's context.
 
 ## 3. Fragments and transclusion
 
+Component and subcomponent architecture docs are not
+free-form prose. They have a stable section structure the
+model can parse, because sibling components' regeneration
+prompts pull each other's API surfaces out of these docs
+at context-assembly time, and stuffing the entire
+dependency doc into every dependent's prompt would blow up
+the context budget as the project grows.
+
 ### 3.1 Section vocabulary and order
-`techspec`, `pubapi`, `privapi`, `policies`, `deps`. v2 §A.1.5.
+
+Five fragment kinds, each a section in a parseable arch
+doc, **in this order**:
+
+- **`<technical-specification>`** (kind: `techspec`) — the
+  high-level "what are we building, with what" for this
+  component: technologies, major algorithmic choices,
+  cross-cutting invariants. Deliberately abstract — no
+  responsibility assignments, no per-subcomponent
+  sequencing. Its job is to let the LLM *think* about
+  the shape of the thing before it decomposes. A change
+  to a child's implementation does not regenerate the
+  techspec; the spec propagates downward, not upward.
+- **`<public-surface>`** (kind: `pubapi`) — the
+  component's API. Types, function signatures, methods,
+  events — anything a dependent is allowed to reach for.
+  This is what gets extracted and handed to dependents at
+  regen time.
+- **`<private-surface>`** (kind: `privapi`) — internal
+  types and helpers. Visible to the component's own
+  subcomponents during their regen, but not to sibling
+  dependents.
+- **`<policies>`** (kind: `policies`) — the policies this
+  arch doc mints, each a structured tuple of trigger +
+  required responsibility + rationale. Comes **before**
+  `<dependencies>` because a policy can induce a dep edge;
+  the LLM must decide which policies apply before
+  enumerating deps, so policy-induced deps land naturally
+  in `<dependencies>` rather than being backfilled.
+  Subcomponent arch docs omit this section — they
+  introduce no new responsibilities to target.
+- **`<dependencies>`** (kind: `deps`) — the list of
+  sibling components this one reaches for, by stable ID.
+  Parseable separately because it feeds dependency-edge
+  edits and cycle detection. Always generated *after*
+  `<policies>` in the same LLM call.
+
+The sysarch node has its own `<technical-specification>`
+section at the top-level tier, where project-wide
+concerns like language choice and runtime targets live.
+Subordinate tech specs inherit those constraints; child
+tech specs may narrow the parent's choices but not
+contradict them.
+
+**Fragments are transcluded.** Each parseable section is
+a **fragment** with its own stable ID of the form
+`<owner_id>_<fragment_kind>` — e.g.,
+`comp_a3f7k2m9_pubapi` is the public surface fragment
+owned by component `comp_a3f7k2m9`. Fragment kinds are
+required to be single-token (no underscores inside a kind
+name); the parser splits on the last underscore, so
+`<owner_id>` stays unambiguous.
+
+When a dependent component needs to know what its upstream
+exposes, its regen prompt pulls the upstream's `pubapi`
+fragment by ID. The upstream's full arch doc never enters
+the prompt — only the fragment. This is the load-bearing
+scoping that keeps prompts bounded as the project grows,
+and it also makes fragment-level diffs the natural unit of
+propagation: a change confined to `<technical-
+specification>` does not invalidate dependents that only
+read the `pubapi` fragment.
+
+Inside `<public-surface>` and `<private-surface>`,
+code-shaped content lives in language-agnostic fenced code
+blocks. The parser doesn't inspect the code — it just
+pulls the tagged section whole. This means the generated
+code can be in any language and the fragment machinery
+doesn't have to care.
+
 ### 3.2 Fragment-level diff as drift signal
-v2 §A.1.5 tail.
+
+**Disagreement detection is a fragment diff.** If the
+sysarch claimed a component would expose one API and the
+component arch ended up exposing a different one, the
+sysarch's copy of `comp_X_pubapi` (speculative, written at
+sysarch time) and the component arch's copy (authoritative,
+written at comparch time) diverge. That is the drift
+signal, surfaced naturally as a diff over two fragment
+instances with the same ID.
+
+The bundle doesn't need a separate "drift detection"
+mechanism — fragment equality against multiple authoritative
+sources handles it. When the sysarch-declared pubapi and
+the comparch-authored pubapi differ, the UI flags both; the
+reviewer decides whether to revise sysarch downstream or
+revise comparch upward.
 
 ## 4. Structural rules
 
