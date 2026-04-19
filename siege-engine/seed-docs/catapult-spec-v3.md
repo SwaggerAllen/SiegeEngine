@@ -1380,29 +1380,179 @@ designed to preclude it.
 
 ## A.11 Bundles (configuration system)
 
+§A.3 established that the platform's reactive runtime operates
+over a typed graph the **bundle** declares. This chapter covers
+the bundle as a configuration artifact: what's in one, how they
+get into a Catapult instance, how projects inherit and override
+them, and what happens when a bundle needs to change.
+
 ### A.11.1 What a bundle is
-A schema plus the prompts, grammars, and named generators the
-schema references. New — consolidates scattered v2 §A.11.1 and
-§A.11.2 opening.
+
+A bundle is a **schema plus the prompts, grammars, and named
+generators the schema references**. Concretely, a bundle
+repository contains:
+
+- A `scaffold/` directory declaring the baseline tier and
+  edge set (tier YAML declarations, edge instance
+  declarations, grammar files, prompt templates).
+- A `flows/` directory with one subdirectory per declared
+  flow — each holding a `flow.yaml`, plan grammars, phase-zero
+  tier declarations where applicable, and Liquid-templated
+  prompt files.
+- A `manifest.yaml` at the root declaring the bundle's name,
+  version, and any named-predicate / named-generator
+  references the platform needs to resolve.
+
+Everything the platform needs to run a project is in the
+bundle. There are no hidden bundle assets loaded from
+elsewhere.
+
+A bundle represents a complete configuration; projects
+inherit from a single bundle with per-project overrides
+layered on top (A.11.3).
 
 ### A.11.2 Bundle repositories and mirror-based approval
-v2 §A.11.2 (curation/security subsection).
+
+Bundles are distributed as **git repositories**. A Catapult
+instance's bundle library is a namespace in the instance's
+code-hosting substrate (see A.16 for the gitea default)
+containing mirrored copies of every bundle approved for use
+on the instance.
+
+**Curation is mandatory.** Bundles are a prompt-injection and
+supply-chain attack surface — a malicious bundle could embed
+instructions that exfiltrate model content, backdoor
+generated code, or manipulate the review flow. The approval
+mechanism is **mirror-based**: instance admins import a
+bundle by mirroring its upstream repository into the
+instance's bundle namespace, and the mirror's existence is
+the approval. Revocation is deleting the mirror. Version
+bumps are admin-initiated fetches against the upstream, with
+explicit approval of the new tag before projects can bump.
+
+This reuses git primitives (fork, mirror, fetch-upstream)
+rather than inventing a parallel approvals subsystem. The
+instance admin UI for bundles is the gitea admin UI, with a
+thin Catapult-side view that reads the namespace and
+surfaces manifest metadata.
 
 ### A.11.3 Per-project overrides
-v2 §A.11.3.
+
+A project inherits its full configuration from a bundle (or
+the instance default) and can override any specific piece at
+the project level. Override granularity:
+
+- **Per-tier prompt override** — the project edits a
+  specific tier's prompt while inheriting everything else.
+- **Per-model override** — different model or temperature
+  for a specific tier.
+- **Per-node override** — a single node's next regen uses
+  overridden prompt/model/grammar. Rare, mostly a debugging
+  affordance.
+
+Model and temperature are configurable at three levels with
+most-specific-wins fallback: project default, per-tier
+default, per-node override.
+
+**Override storage is event-sourced.** Overrides live as
+entries in the project's event log, so they're versioned,
+reviewable, and replayable alongside every other piece of
+project state. Reverting an override is a normal event-stream
+operation, not a separate config-rollback path.
+
+An override cannot expand the bundle's capability surface —
+a project can't introduce a new tier by override. That's a
+bundle change. Overrides adjust the existing surface.
 
 ### A.11.4 Instance bundle library
-v2 §A.11.2 (library subsection).
+
+Each Catapult instance ships with a **bundle library** — the
+namespace of approved bundles admins have mirrored. New
+projects pick a bundle from the library at creation. Without
+an explicit choice they inherit the instance default
+(configurable per-instance; usually the default bundle
+described in Part B).
+
+Self-hosted deployments curate their own library. Hosted
+deployments (if Catapult ships as a hosted product) start
+from a vendor-maintained default set and allow the tenant
+admin to mirror additional bundles subject to the platform's
+approval flow.
 
 ### A.11.5 Bundle-shipped reference material
-v2 §A.11.2 tail. Calls into Part B §B.8 for the `ref_*` tier
-the default bundle uses to hold such material.
+
+A bundle may ship with supplemental reference content — its
+own DSL spec, an opinionated deployment runbook, a set of
+cross-component invariants, a design-rationale memo. That
+material lives in the bundle as ordinary reference-tier
+content (see Part B §8 for the default bundle's `ref_*`
+tier, which is the canonical pattern for this).
+
+At project creation, bundle-shipped reference material seeds
+the project as nodes at the appropriate tier, with
+`reference` edges drawn from bundle-owned components and
+fragments to the seeded refs. Regeneration of those
+components sees the refs in context automatically.
+
+Once seeded, the refs are regeneratable and editable through
+the normal node lifecycle — project owners can layer
+per-project feedback on top of bundle-shipped content
+without forking the bundle.
 
 ### A.11.6 Named predicates and named generators
-Escape hatches — v2 §A.11.6 escape-hatches subsection.
 
-### A.11.7 What's still TBD (schema migration, override syntax)
-v2 §A.11.7.
+§A.3.5 described the predicate language's six operator
+families plus an escape hatch for conditions beyond them.
+This subsection pins down the escape hatch's approval model,
+which is the same as the generator plug-point's:
+
+- **Named predicates** — a bundle declares a predicate name
+  (e.g., `domain_parent_fanin_ready`) that doesn't compose
+  from the six operator families. Bundle import requires the
+  instance admin to approve the name against the instance's
+  allowlist; the allowlist maps names to platform code
+  implementing the predicate.
+- **Named generators** — tiers using non-LLM generation
+  (`git_commit` for code, `synthesis` for aggregators,
+  `webhook` for external integrations, etc.) reference a
+  named generator. Platform-shipped generators come
+  approved; custom generators go through the same allowlist
+  flow.
+
+Neither escape hatch admits arbitrary code into the bundle's
+storage format. The bundle remains a schema; the allowlist
+is an instance-controlled registry of names the schema can
+reference. Bundle authors who need custom computation work
+with the instance admin to get their name onto the
+allowlist — which typically means contributing the
+implementation upstream to the platform first.
+
+### A.11.7 What's still TBD
+
+A few bundle-system mechanics are deferred to dedicated
+workshops rather than speculated about in this spec:
+
+- **Schema migration language.** When a bundle's grammar
+  changes between versions, projects on the old version
+  need a migration path. The migration runs as a normal
+  event-sourced operation — emit corrective events that
+  bring projection state to the new shape — but the
+  *language* bundle authors use to describe migrations
+  isn't specified. The first few migrations can be
+  hand-written one-off handlers; a declarative migration
+  language can generalize from enough examples later.
+- **Override expression syntax.** Per-project overrides
+  (A.11.3) could be JSON patches, full-file replacements,
+  key-value dicts, or a small templating language. The
+  right answer depends on what overrides actually look like
+  in practice; deferred until real projects use them.
+- **Bundle versioning and compat guarantees.** How a bundle
+  version declares compatibility with project state it
+  minted in an earlier version, how the platform handles
+  in-flight flows when a version bump lands, what the
+  semver semantics are for bundle manifests. Deferred;
+  platform can ship with version-as-tag and no formal compat
+  story until something forces the issue.
 
 ## A.12 Credentials and token tracking
 
