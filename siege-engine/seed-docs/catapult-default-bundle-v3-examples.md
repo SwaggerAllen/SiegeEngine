@@ -1196,6 +1196,148 @@ Produce a plan for this tier's regen. Identify:
 ```
 ````
 
+### 2.3.5 Walked example (partial)
+
+Seed: "Extract the caching layer out of the billing
+service into its own top-level component."
+
+**Phase-zero — `rf_plan_expansion` on the expansion
+singleton:**
+
+Liquid renders `phase-zero.md`. LLM resolves "caching
+layer" → `subcomp_cachinglayer_xyz` and "billing service"
+→ `comp_billing_abc` by scanning current sysarch. Plan
+output (elided):
+
+```xml
+<plan>
+  <intent>
+    Promote subcomp_cachinglayer_xyz out of comp_billing_abc
+    into a new top-level component. The caching layer
+    becomes comp_caching, sibling to comp_billing. Billing
+    loses a subcomp and gains a dependency on comp_caching.
+  </intent>
+  <structural-ops>
+    <op type="promote" target="subcomp_cachinglayer_xyz"
+        new-parent="null" new-alias="comp_caching"/>
+  </structural-ops>
+  <additions/>
+  <implicated-children/>
+</plan>
+```
+
+Reviewer opens the review panel, sees the structural-ops
+list as a line-item checklist (one op), accepts. Plan
+human-gate approved.
+
+Expansion regen runs but is effectively a no-op — the plan
+has empty `<additions>` and empty `<implicated-children>`,
+and expansion's draft doesn't change. The scaffold tier
+prompt's `{% if context.active_plan %}` block includes
+the plan but the tier's output stays the same.
+
+**`rf_plan_reqs` on the reqs singleton:** trivial plan;
+reqs content doesn't change because responsibilities don't
+move in this refactor. Reviewer approves a thin plan.
+
+**`rf_plan_sysarch` on the sysarch singleton:** sees the
+upstream plan's promote op in context. Plan output
+(elided):
+
+```xml
+<plan>
+  <intent>
+    Sysarch reflects post-promote state: comp_caching
+    joins the top-level components list; comp_billing's
+    subcomponent references drop subcomp_cachinglayer;
+    a new dependency edge billing → caching is declared
+    in billing's deps fragment.
+  </intent>
+  <structural-ops/>
+  <additions/>
+  <implicated-children>
+    <child id="comp_billing_abc" disposition="visit">
+      <rationale>Loses a subcomp, gains a dep; its
+        comparch regenerates.</rationale>
+    </child>
+    <child alias="comp_caching" disposition="visit">
+      <rationale>New top-level comp; its comparch is
+        minted post-promote.</rationale>
+    </child>
+  </implicated-children>
+</plan>
+```
+
+Reviewer approves. Sysarch regen writes a draft
+reflecting the post-promote shape; the regen prompt reads
+the pending structural ops from context and produces
+content consistent with the post-op state even though the
+promote hasn't been applied yet.
+
+The walk continues through the implicated comparches
+(billing's loses the subcomp reference; caching's is
+minted fresh from the promoted subcomp's fragments). At
+end-of-run, the platform applies all approved
+`<structural-ops>` in one transaction: the promote op
+migrates subcomp_cachinglayer_xyz's content to
+comp_caching's new id, updates parent_id on descendants,
+and records the lineage in the event log.
+
+### 2.3.6 What this validates / still to figure out
+
+**Validates** the structural-ops grammar and the end-of-run
+commit pattern. Regens during the flow reason about the
+post-op state via the plan in context; the reducer
+materializes structural changes in one transaction at
+flow end.
+
+**Validates** the grammar-level human-gate rule: every
+plan in this flow has a non-empty `<structural-ops>`
+grammar block (even when the ops list itself is empty),
+which triggers the gate uniformly. No flow-level knob
+needed.
+
+**Still to figure out:**
+
+1. **`context.pending_ops` on scaffold tier regens.**
+   Regens during the flow need to see approved upstream
+   structural ops as context so they can write content
+   consistent with the post-op state. Probably a
+   well-known context entry `context.pending_ops` that
+   aggregates across approved upstream plans. Worth
+   spec'ing in platform §A.4.5 alongside the standard
+   variable set.
+2. **Name resolution in phase-zero.** Phase-zero
+   resolves "caching layer" → `subcomp_cachinglayer_xyz`
+   by scanning sysarch handle. Brittle when names are
+   ambiguous; an LLM could confidently hit the wrong
+   node. Possible mitigations: a structured UI that
+   lets the user pick matching nodes before prose
+   submission; or a guardrail that rejects plans whose
+   resolved ops can't be uniquely traced to the prose.
+   Worth a note but not blocking.
+3. **Partial op approval.** Reviewer strikes one of
+   several ops. The plan's intent may now describe a
+   cascade that no longer holds. Options: re-plan from
+   the struck state, or warn in the review UI about
+   dependent ops when one is struck. Worth nailing once
+   refactor has real users.
+4. **Planning tiers for nodes that don't exist yet.**
+   `rf_plan_comparch` on `comp_caching` plans a comparch
+   for a comp that won't exist until end-of-run. The
+   platform has to treat pending `<additions>` as
+   virtual-but-visitable nodes during the flow — scope
+   filter "self.target exists OR is in pending additions
+   of an approved upstream plan." Worth spec'ing in A.4.2
+   alongside the `plans: <scaffold_tier>` desugar.
+5. **Flow termination and the "ready to apply" state.**
+   Refactor should have an explicit "all plans approved,
+   ops queued, waiting for final commit" state where
+   the reviewer sees the full ops list together before
+   end-of-run executes. Matches v2 §A.2.3's deferral
+   model. Worth a platform UX affordance in the lobby.
+
+
 ## 2.4 Bug-fix propagation
 
 To be sketched.
