@@ -2616,60 +2616,77 @@ leg flows through naturally.
 
 # Part 3 — Accumulated open platform-spec changes
 
-Two lists: **core platform changes** (eight items needing
-spec absorption into platform §A.4 or adjacent) and
-**prompt and UI concerns** (six items that don't change
-the spec — they're bundle-author disciplines or UX
-affordances worth remembering but shouldn't clutter the
-core).
+Two lists: **core platform changes** (six items needing spec
+absorption into platform §A.4 or adjacent) and **prompt and
+UI concerns** (six items that don't change the spec —
+they're bundle-author disciplines or UX affordances worth
+remembering but shouldn't clutter the core).
+
+The current design the list reflects:
+
+- **Flows are bundle-declared schema deltas.** Every flow
+  declares its own planning tiers, phase-zero tiers,
+  edges, and prompts. No platform-shipped default tiers.
+- **Two platform primitives** — `downward_cascade` and
+  `up_then_down` — are walk algorithms the scheduler
+  implements. Flows select one via an `invokes:` hook; the
+  primitive reads the flow's declared planning tiers and
+  applies its walk semantics against them.
+- **Structural ops apply immediately** on plan approval
+  (not deferred to end-of-run). No ready-to-apply state.
+- **`<assessment>` grammar** is declared by each flow that
+  uses it (upward-propagation, bug-fix-propagation); the
+  platform doesn't ship a built-in grammar, but ships the
+  `gate: always` annotation convention that makes the
+  human-gate fall out.
 
 ## 3.A Core platform changes
 
 ### A.1 Extend the standard variable set (A.4.5)
 
 §A.4.5 currently lists `scope`, `context`, `flow`. Flow
-sketches surfaced four new accessors that all collapse
-into one change: **the standard variable set extends to
-cover upstream-plan accessors, pending-ops aggregation,
-seed-shape-routed helpers, and scaffold-tier handles.**
-Simplest:
+sketches surfaced three new accessor families:
 
 - `context.upstream_plan.*` exposes the upstream plan's
   parsed XML as dotted Liquid fields (intent, children,
-  additions, structural_ops, disposition_for(target),
-  rationale_for(target)). Platform parses the plan
-  grammar once and exposes fields — no grammar-aware
-  logic required.
-- `context.pending_ops` aggregates `<structural-ops>`
-  across approved upstream plans in the active run.
-  Liquid-iterable; nil when no flow is active.
+  additions, structural_ops, assessment,
+  disposition_for(target), rationale_for(target)). Platform
+  parses the plan grammar once and exposes fields — no
+  grammar-aware logic required.
 - `flow.seed.<accessor>(arg)` is seed-shape-routed. The
-  seed's declared shape determines which accessors
-  resolve — `node_set_with_feedback` gets
-  `feedback_for(node)`; `code_diff` gets
-  `diff_for(territory)`. Platform routes by shape.
+  seed's declared shape determines which accessors resolve
+  — `node_set_with_feedback` gets `feedback_for(node)`;
+  `code_diff` gets `diff_for(territory)`. Platform routes
+  by shape.
 - `scaffold.<tier>.handle` exposes each scaffold tier's
   current projection. Singletons resolve directly
   (`scaffold.sysarch.handle`); non-singletons take an id
-  (`scaffold.comparch[id].handle`).
+  (`scaffold.comparch[id].handle`). Also hosts
+  platform-computed accessors like
+  `scaffold.manifest.resolve_paths(diff)` — territory
+  resolution via the manifest handle.
 
-### A.2 Planning-tier sugar and scope (A.4.2)
+`context.pending_ops` from the prior consolidation is
+gone: immediate-apply of structural ops means regens see
+the actual current state, never a pending-ops overlay.
+
+### A.2 Planning-tier declaration syntax (A.4.2)
 
 §A.4.2 currently describes planning tiers abstractly.
-Flow sketches use a `plans: <scaffold_tier>` sugar
-pervasively. Simplest expansion:
+Flow sketches use two declarative-sugar fields
+pervasively:
 
-**`plans: <scaffold_tier>` is declarative sugar** that
-expands to `scope: per(<tier>)` +
-`scope_filter: "self.target.in_flow_visit_set"` + an
-implicit 1:1 reference edge exposing the plan handle as
-`context.active_plan` on the scaffold tier. The
-`in_flow_visit_set` predicate includes seed nodes,
-`disposition=visit` implicated children, `<additions>`
-entries, and nodes structural ops create — so planning
-against not-yet-minted virtual nodes (refactor's comp for
-a soon-to-be-promoted subcomp) falls out of the same
-predicate.
+- **`plans: <scaffold_tier>`** expands to `scope:
+  per(<tier>)` + `scope_filter: "self.target.in_flow_visit_set"`
+  + an implicit 1:1 reference edge exposing the plan
+  handle as `context.active_plan` on the scaffold tier.
+  `in_flow_visit_set` includes seed nodes,
+  `disposition=visit` implicated children, and
+  `<additions>` entries.
+- **`leg: upward | downward`** (used by `up_then_down`
+  flows) tells the `up_then_down` primitive which tier's
+  context walks to invert and which to run normally. Pairs
+  with the flow-level `invokes: up_then_down`.
 
 ### A.3 Multi-seed ordering (A.4.10)
 
@@ -2677,7 +2694,7 @@ When a flow's seed set includes nodes in ancestor/
 descendant relationships, **seeds process in topological
 order**: ancestor's plan and regen commit before the
 descendant's seed visit fires. Descendant's seed-feedback
-is consumed at its own seed visit, on top of whatever the
+is consumed at its own seed visit on top of whatever the
 ancestor's plan implicated for it.
 
 ### A.4 Pre-flow preconditions (A.4.10)
@@ -2689,52 +2706,90 @@ requires `scaffold.sysarch.is_approved`; bug-fix requires
 `scaffold.manifest.is_populated`. Preflight failure
 surfaces in the lobby UI.
 
-### A.5 Ready-to-apply state for deferred-op flows (A.4.10)
+### A.5 Plan grammar annotations (A.4.6 / A.4.7)
 
-Flows with `end_of_run.apply_structural_ops: true` (just
-refactor in the default bundle) enter a **ready-to-apply
-state** when the planning/regen DAG drains — "all plans
-approved, ops queued, waiting for final commit." A final
-human confirmation applies ops in one transaction. Cancel
-discards queued ops and regenerated content.
+Two grammar-element annotations that extend A.4.6's
+approval rules:
 
-### A.6 Up-then-down direction semantics (A.4.3)
+- **`<no-change/>` element.** Plans carrying this element
+  tell the scaffold tier's regen to elide rather than
+  running a pointless cycle. Useful for upward-leg
+  trivial assessments and any future flow that wants a
+  "no revision at this tier" pass-through.
+- **`gate: always` annotation** on a grammar element.
+  Generalizes A.4.6 from "gate on non-empty
+  `<structural-ops>`" to "gate on any element declaring
+  `gate: always`." `<assessment>` carries this annotation
+  in the flows that declare it (upward-propagation,
+  bug-fix).
 
-§A.4.3 currently describes `up_then_down` informally.
-Three items consolidate into the formal spec:
+### A.6 The `invokes:` hook and the primitive catalogue (A.4)
 
-- **`leg: upward | downward` field** on planning tiers.
-  `leg: upward` inverts scaffold structural edges in the
-  tier's context walks; `leg: downward` uses normal
-  direction. Pairs with the flow-level `direction`.
-- **`matched_upward_plan` resolver** for downward-leg
-  tiers. 1:0..1 target-id match against the run's approved
-  upward-leg plans, lazy at context resolution. Sideways
-  fan-outs get nil.
-- **Pivot-at-root detection** — downward-leg tier
-  `scope_filter` returns false until the upward-leg work
-  queue drains and the root's upward plan commits.
+§A.4 currently describes flows as schema deltas.
+`invokes:` is the new minimal syntax piece that tells the
+platform how to walk the merged DAG once the flow is
+active. Two primitives in the catalogue:
 
-### A.7 Trivial-plan elision for regens (A.4.6 / A.4.7)
+- **`downward_cascade`** — standard forward walk. Seeds
+  planted at declared planning tiers; next-wave visits
+  enqueued from approved plans' implicated-children
+  lists. Used by downward-propagation, feature-request,
+  refactor.
+- **`up_then_down`** — upward leg with edge inversion on
+  `leg: upward` planning tiers, merge-at-parent implicit
+  via cardinality-many child_plans context, pivot-at-root
+  detection when the upward-leg work queue drains, then a
+  standard downward cascade from root. Used by
+  upward-propagation, bug-fix-propagation.
 
-Plans frequently say "no change at this tier" — especially
-on upward-leg ancestors well above the feedback origin.
-Scaffold regens should elide in that case rather than
-running a pointless cycle. **Simplest:** declarative
-`<no-change/>` element in the plan grammar. Platform
-skips the scaffold tier's regen when the plan carries it.
+Primitives ship no default tier declarations. Each flow
+declares its own planning tiers; the primitive reads the
+flow's declaration and applies its walk semantics. This
+keeps the `flow.yaml` self-contained and surfaces
+duplication between similar flows (bug-fix's upward-leg
+tiers ≈ upward-propagation's) as file-path-level prompt
+reuse rather than tier-declaration inheritance.
 
-### A.8 Grammar-level `gate: always` annotation (A.4.6)
+## 3.B Prompt and UI concerns
 
-§A.4.6 currently gates plan approval on non-empty
-`<structural-ops>`. Upward-leg plans need human gating
-even without structural-ops, because `<assessment>` is
-itself the reviewable payload. **Simplest:** a grammar
-element can declare `gate: always` in its schema
-annotation. The platform gates when that element is
-present and non-empty, generalizing A.4.6 from "gate on
-structural-ops" to "gate on any element declaring
-gate: always."
+Not platform changes; captured here so they don't get
+lost when Part 3 absorbs into the spec.
+
+- **Partial-visit fanout** — scaffold regen prompts need
+  to handle plans mixing `<additions>` with
+  `disposition=skip` children: mint additions, preserve
+  skipped content. Prompt-level discipline.
+- **Scope-exceeds-plan detection** — regen diffs that
+  exceed plan intent. MVP: rely on regen review to catch
+  it. Post-MVP: a validator comparing diff scope to plan.
+- **Pending-feedback affordance in the lobby** — when a
+  user kicks a schema-delta flow on a node with pending
+  deferred feedback, the lobby shows a soft preflight
+  warning recommending downward-propagation first.
+- **Name-resolution brittleness in phase-zero**
+  (refactor). Reviewer catches bad name→id resolutions on
+  the structural-ops checklist. Post-MVP: a picker UI.
+- **Partial op approval cascade warning** — reviewer
+  strikes one op, downstream plans may be inconsistent.
+  Review UI warns "op referenced by N downstream plans"
+  but doesn't block.
+- **Contradictory-descendant discipline** — when multiple
+  children's upward assessments conflict, the ancestor's
+  planning prompt flags rather than silently picking.
+  One-line instruction in the bundle's upward-plan.md.
+
+## 3.C Non-load-bearing observations
+
+- **Phase-zero context is bundle-specific.** Phase-zero
+  prompts reference scaffold-specific tiers by name (e.g.
+  `scaffold.sysarch.handle` in feature-request). Not a
+  spec change — phase-zero's job is shaping the seed into
+  the bundle's schema. Worth a note in the bundle ref doc.
+- **Flows that use the same walk share prompts via
+  file-path, not tier-declaration.** Bug-fix's
+  upward-plan.md could be a symlink or direct reference
+  into upward-propagation's directory. Not a spec change —
+  a bundle-authoring convention.
 
 ## 3.B Prompt and UI concerns
 
