@@ -1345,3 +1345,113 @@ To be sketched.
 ## 2.5 Upward propagation
 
 To be sketched.
+
+---
+
+# Part 3 — Accumulated open platform-spec changes
+
+As each flow sketch surfaces a spec gap this list captures
+it: the problem, where in platform §A.4 (or wherever) it
+belongs, and the simplest-version resolution we'd propose
+if nothing else pushes back. Entries get ticked off or
+revised as we work through the remaining flows and spec
+absorption.
+
+## 3.1 Standard variable set additions (A.4.5)
+
+- **`context.upstream_plan.*` accessors**
+  `disposition_for(target)`, `rationale_for(target)`,
+  `additions`, `structural_ops`, `intent`, `children`.
+  **Simplest:** platform parses the plan grammar once and
+  exposes the parsed XML as dotted Liquid fields; helpers
+  are just getters over that tree. No platform-side
+  knowledge of the grammar beyond "parse and expose."
+- **`context.pending_ops`** — aggregated `<structural-ops>`
+  from all approved upstream plans in the current flow run.
+  Refactor regens read this to write post-op-consistent
+  content. **Simplest:** platform concatenates approved
+  plans' ops into a Liquid-iterable collection; nil/empty
+  when no flow is active.
+- **`flow.seed.feedback_for(node_id)`** — propagation
+  flows' planning tiers look up feedback targeted at the
+  current scope. **Simplest:** the seed's declared shape
+  (`node_set_with_feedback`) determines how `feedback_for`
+  resolves; platform routes by shape.
+- **`scaffold.<tier>.handle`** — phase-zero reads
+  `scaffold.sysarch.handle` and `scaffold.expansion.handle`
+  to see current project state. **Simplest:** every
+  scaffold tier exposes a handle under `scaffold.<name>`;
+  singletons resolve directly, non-singletons take an ID
+  (`scaffold.comparch[id].handle`).
+
+## 3.2 Planning tier sugar and scope (A.4.2)
+
+- **`plans: <scaffold_tier>` desugar** — planning tiers
+  throughout the sketches use this as shorthand.
+  **Simplest:** expands to `scope: per(<tier>)` +
+  `scope_filter: "self.target.in_flow_visit_set"` + an
+  implicit 1:1 reference edge exposing the plan handle as
+  `context.active_plan` on the scaffold tier. No new edge
+  types.
+- **Scope for pending additions** — planning tiers against
+  not-yet-minted nodes (refactor's `rf_plan_comparch` on
+  the yet-to-exist `comp_caching`). **Simplest:**
+  `in_flow_visit_set` returns true for seed nodes,
+  `disposition=visit` implicated-children, `<additions>`
+  entries, and nodes that structural ops create. Planning
+  against virtual nodes reads whatever proto-handle the
+  upstream plan described.
+
+## 3.3 Regen-during-flow behavior (A.4.6 / A.4.7)
+
+- **Partial-visit fanout** — plan mixes `<additions>`
+  with `<implicated-children disposition="skip">`. Regen
+  mints additions but preserves skipped children's
+  content. **Simplest:** scaffold tier regen prompt reads
+  the plan from context and writes a draft that reflects
+  both — no new platform mechanism, just a prompt-level
+  convention.
+- **Scope-exceeds-plan detection** — regen diff goes
+  beyond plan intent. **Simplest for MVP:** rely on regen
+  review catching it (reviewer sees diff, flags if scope
+  crept). A regen-side validator is post-MVP.
+
+## 3.4 Flow lifecycle and lobby (A.4.10 / A.9.1)
+
+- **Multi-seed ordering** — two seeds, one is
+  ancestor/descendant of the other. **Simplest:** seeds
+  process in topological order; descendant's seed-feedback
+  is consumed at its own seed visit on top of whatever the
+  ancestor's plan implicated for it.
+- **Pre-flow validation** — feature-request needs sysarch;
+  bug-fix needs impl territory mappings; etc.
+  **Simplest:** each `flow.yaml` declares `preconditions:`
+  — predicates over current scaffold state evaluated
+  before the lobby kicks the flow.
+- **Pending-feedback affordance** — user kicks
+  feature-request on a node with pending feedback.
+  **Simplest:** lobby shows "pending feedback on nodes X,
+  Y, Z — consume via downward-propagation first?" as a
+  soft preflight warning, not a hard block.
+- **Ready-to-apply state** — refactor reaches
+  "all plans approved, ops queued" before end-of-run.
+  **Simplest:** flows with `end_of_run.apply_structural_ops:
+  true` enter a ready-to-apply state when the planning/regen
+  DAG drains; a final human commit applies ops in one
+  transaction. Cancel discards queued ops.
+- **Name-resolution brittleness in phase-zero**
+  (refactor). **Simplest for MVP:** reviewer catches bad
+  resolutions on the structural-ops checklist. Post-MVP: a
+  picker UI before prose submission.
+- **Partial op approval cascade warning** — reviewer
+  strikes one op, downstream plans may be inconsistent.
+  **Simplest:** review UI warns "this op is referenced by
+  N downstream plans" but doesn't block.
+
+## 3.5 Non-load-bearing observations
+
+- **Phase-zero context is bundle-specific.** Phase-zero
+  prompts reference scaffold-specific tiers by name; not
+  portable across bundles. Not a spec change — phase-zero's
+  job is shaping the seed into the bundle's schema. Worth
+  noting in the bundle ref doc.
