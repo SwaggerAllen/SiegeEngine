@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -60,6 +61,15 @@ EDGE_TYPES = (
 FRAGMENT_KINDS = ("techspec", "pubapi", "privapi", "policies", "deps")
 DRAFT_TARGET_TYPES = ("node", "fragment")
 DRAFT_STATUSES = ("pending", "approved", "discarded")
+# Phase 9 staleness ledger reasons. Each marker records why a
+# downstream node became stale w.r.t. a specific upstream neighbor.
+STALENESS_REASONS = (
+    "content_changed",
+    "fragment_changed",
+    "edge_created",
+    "edge_deleted",
+    "structural_change",
+)
 
 
 class Node(Base):
@@ -208,3 +218,52 @@ class Draft(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+class StalenessLedger(Base):
+    """Phase 9 — per-pair staleness marker.
+
+    One row per ``(stale_node_id, source_node_id, reason)`` triple.
+    Written by ``_apply_staleness_marked`` in response to
+    ``StalenessMarked`` events emitted by the central fanout
+    dispatcher; deleted by ``_apply_staleness_cleared`` when the
+    stale node's regen commits.
+
+    The unique constraint on the triple makes `StalenessMarked`
+    idempotent — re-appending the same marker before the
+    corresponding clear is a no-op at the projection level.
+    """
+
+    __tablename__ = "staleness_ledger"
+    __table_args__ = (
+        CheckConstraint(
+            f"reason IN {STALENESS_REASONS}",
+            name="ck_staleness_ledger_reason",
+        ),
+        UniqueConstraint(
+            "project_id",
+            "stale_node_id",
+            "source_node_id",
+            "reason",
+            name="uq_staleness_ledger_triple",
+        ),
+        Index(
+            "ix_staleness_ledger_stale_node",
+            "project_id",
+            "stale_node_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    stale_node_id: Mapped[str] = mapped_column(
+        ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False
+    )
+    source_node_id: Mapped[str] = mapped_column(
+        ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False
+    )
+    source_offset: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

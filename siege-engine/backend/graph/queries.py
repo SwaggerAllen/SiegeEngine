@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from backend.graph.fragments import FragmentKind, fragment_id
 from backend.models.graph_event import GraphEvent
 from backend.models.job import Job
-from backend.models.node import Draft, Edge, Fragment, Node
+from backend.models.node import Draft, Edge, Fragment, Node, StalenessLedger
 
 GenerationStatus = Literal["idle", "running", "failed"]
 
@@ -821,3 +821,74 @@ def latest_generation_status(
         # completed
         return "idle", None, None, None, None, None
     return "idle", None, None, None, None, None
+
+
+# ── Phase 9: staleness ledger queries ────────────────────────────────
+
+
+def is_stale(session: Session, project_id: str, node_id: str) -> bool:
+    """Return True when ``node_id`` has any active staleness ledger rows.
+
+    A node is "stale" if at least one upstream change has invalidated
+    it since its last regen. Multiple reasons and multiple upstreams
+    collapse to a single boolean here; use
+    :func:`staleness_entries_for` when the full reason set matters.
+    """
+    return (
+        session.execute(
+            select(func.count()).select_from(
+                select(StalenessLedger.id)
+                .where(
+                    StalenessLedger.project_id == project_id,
+                    StalenessLedger.stale_node_id == node_id,
+                )
+                .subquery()
+            )
+        ).scalar()
+        or 0
+    ) > 0
+
+
+def stale_dependents_of(session: Session, project_id: str, node_id: str) -> list[str]:
+    """Return node ids currently stale w.r.t. ``node_id``.
+
+    Reads ledger rows where ``source_node_id == node_id`` and returns
+    the distinct dependents. Useful when the fanout module wants to
+    inspect what an upstream change has invalidated, or when the UI
+    shows "nodes waiting on this one to regenerate."
+    """
+    rows = (
+        session.execute(
+            select(StalenessLedger.stale_node_id)
+            .where(
+                StalenessLedger.project_id == project_id,
+                StalenessLedger.source_node_id == node_id,
+            )
+            .distinct()
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+def staleness_entries_for(session: Session, project_id: str, node_id: str) -> list[StalenessLedger]:
+    """Return every active staleness ledger row for ``node_id``.
+
+    Full detail — one row per ``(source_node_id, reason)`` pair this
+    node is stale against. The UI uses this to surface per-reason
+    stale markers on the per-tier draft panel.
+    """
+    rows = (
+        session.execute(
+            select(StalenessLedger)
+            .where(
+                StalenessLedger.project_id == project_id,
+                StalenessLedger.stale_node_id == node_id,
+            )
+            .order_by(StalenessLedger.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)

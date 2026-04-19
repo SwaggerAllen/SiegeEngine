@@ -5,7 +5,7 @@ from backend.models.auth import GitHubCredential, InviteLink, User
 from backend.models.graph_event import GraphEvent
 from backend.models.input_document import InputDocument
 from backend.models.job import Job
-from backend.models.node import Draft, Edge, Fragment, Node
+from backend.models.node import Draft, Edge, Fragment, Node, StalenessLedger
 from backend.models.pending_instruction import PendingInstruction, View
 from backend.models.project import Project
 from backend.models.telemetry import GenerationTelemetry
@@ -24,6 +24,7 @@ __all__ = [
     "Node",
     "PendingInstruction",
     "Project",
+    "StalenessLedger",
     "User",
     "View",
 ]
