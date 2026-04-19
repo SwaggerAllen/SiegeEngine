@@ -810,30 +810,206 @@ Three lifecycle rules that apply to every flow:
 
 ## A.5 Review, feedback, approval
 
-All sub-sections here are bundle-parametric. From v2 §A.5
-wholesale, with tier-specific examples replaced by
-`<bootstrap_tier>` / `<arch_tier>` placeholders.
+Every artifact the system produces — any tier's draft,
+fragment, plan, code diff, change plan — goes through review
+before its content lands in the projection. Review is the
+pipeline's discipline gate: the place where reviewer judgment
+shapes the LLM's output, where accumulated feedback gets
+consumed, and where the platform's invariant "approval is
+the only way content commits" is enforced.
+
+Two review surfaces exist — model-artifact review (markdown-
+style rendering with inline + summary comments, diffs,
+feedback panel) and code review (file-level diff, inline
+review comments, CI status) — but both use the same
+underlying status model and workflow. Which tiers use which
+surface is a bundle decision; the lifecycle and feedback
+machinery is the platform's.
 
 ### A.5.1 Draft → AI self-review → human review → approve
-v2 §A.5.1.
+
+The base lifecycle all reviewable tiers share. Status
+transitions:
+
+```
+pending → generating → ai_reviewing → awaiting_review → approved
+                                                     → rejected
+                                                     → stale
+```
+
+- **Generating.** The tier's generator (LLM, by default)
+  produces a draft against its declared context and prompt.
+- **AI self-review.** The draft runs through a short
+  self-review pass against structured criteria (quality
+  score, recommendation, notes). If the self-review
+  recommends revision, the platform regenerates
+  incorporating the self-review feedback, up to a
+  configurable loop limit. See A.5.2.
+- **Awaiting review.** After AI self-review, the draft
+  enters human-review state. Reviewers leave **inline
+  comments** anchored to specific sections or fragments,
+  and **summary feedback** for cross-cutting concerns.
+- **Approved.** Reviewer accepts. The approval event lands
+  through the reducer and the draft's content commits to
+  the projection.
+- **Rejected.** Reviewer rejects with feedback (inline +
+  summary). The platform regenerates the draft incorporating
+  the feedback.
+- **Stale.** Upstream context changed after approval.
+  Regeneration is enqueued; the current content remains as
+  fallback until the new draft approves.
+
+Code tiers add a `ci_validating` step after `ai_reviewing`:
+CI runs against the generated diff, and failure treats the
+generation as "wrong" rather than "needs fixing" — the
+generator retries with CI output as additional context. See
+A.5.5 for the full code-tier chain.
 
 ### A.5.2 AI self-review
-v2 §A.5 (AI self-review subsection) + CLAUDE.md summary.
+
+Every draft-producing tier has a second LLM pass that
+critiques the generator's output against the same context
+the generator saw. Reviews are **advisory only** — approving
+a draft doesn't wait on review completion, and a failed
+self-review doesn't block human approval.
+
+The review pass is **automatic** after every draft commit,
+gated off only by explicit project-level configuration (the
+full-bootstrap-chain integration test disables it to avoid
+doubling CLI call counts in CI).
+
+Review storage is per-tier: the review text lives on the
+draft row for draft-based tiers, or on the node row for
+tiers that commit content directly without a draft cycle.
+Re-generation cancels in-flight reviews — the new draft
+starts with empty review text.
+
+Review prompts follow the same Liquid-template model as
+any other generator prompt (A.4.5); they're declared in
+the bundle's tier spec alongside the main generation
+prompt. The review output is itself a draft that goes
+through the retry loop for transient CLI failures but
+doesn't re-enter human review — reviews are advisory and
+commit immediately on LLM success.
 
 ### A.5.3 Deferred feedback
-v2 §A.5.2.
+
+Users can leave inline comments and summary feedback on
+**any node at any time**, not just nodes currently awaiting
+review. This feedback accumulates as pending and is included
+automatically in the prompt context the next time the node
+is regenerated.
+
+Deferred feedback is the lightweight alternative to kicking
+a full flow every time someone notices something. Working
+deep in the tree reveals that an upstream node should
+incorporate a new consideration; a user leaves a comment on
+the upstream node and moves on. The comment waits until the
+next flow touches that node, at which point the regen picks
+it up. Deferred feedback does not trigger regeneration on
+its own — it waits until consumed by a flow.
+
+The dedicated consumption flows are the default bundle's
+downward-propagation and upward-propagation flows (A.4.8);
+any other flow that touches a node with pending feedback
+consumes it incidentally.
+
+**Comment lifecycle.** All comments can be edited or
+deleted by their author after posting. Edits and deletions
+are recorded in the event log (original content preserved
+in history, not destroyed). Comments already consumed by a
+regen are marked as such; deleting a consumed comment does
+not undo the regen it influenced. Pending comments can be
+freely edited or deleted until a flow picks them up.
+
+**Feedback visibility.** Each node displays a pending
+feedback counter. Counters roll up through parent edges —
+a collapsed parent shows the sum of its own pending
+feedback plus its descendants'. This gives an at-a-glance
+view of where attention has accumulated across the tree.
 
 ### A.5.4 Collaborative discussions
-v2 §A.5.3.
+
+Two conversation modes share the platform's chat
+infrastructure (see A.13):
+
+- **Private AI chat** — per-user, per-project. A user
+  converses with the AI about the project; the thread is
+  visible only to that user.
+- **Team discussions** — threaded conversations attached to
+  a specific artifact during review. Team-visible; members
+  with artifact access participate. Messages are attributed
+  to their author. Members can @-mention the AI in a thread
+  and it responds in-thread with citations, visible to all
+  participants. Discussion threads can culminate in review
+  actions (approve, reject with feedback, request changes).
+
+Team discussions persist alongside the artifact's review
+history and become part of the artifact's provenance trail.
+Future reviewers and the AI itself can reference prior
+discussions to understand why decisions were made.
 
 ### A.5.5 Status chains
-v2 §A.5.5.
+
+Explicit transitions for the two surface types.
+
+**Model artifacts:**
+
+```
+pending → generating → ai_reviewing → awaiting_review
+                                    → approved | rejected | stale
+```
+
+**Code artifacts:**
+
+```
+pending → generating → ai_reviewing → ci_validating → awaiting_review
+                                                    → approved | rejected | stale
+```
+
+`ci_validating` is specific to tiers using the `git_commit`
+generator (A.16). CI failure cycles back to `generating`
+with error output as additional context, up to a retry
+limit. Projects without CI configured skip the state
+entirely.
+
+Rejecting any artifact marks its downstream dependents
+`stale`, which the reactive scheduler (A.3.6) picks up as
+regen candidates on the next readiness sweep.
 
 ### A.5.6 Review granularity and batching
-v2 §A.5.6.
+
+Review gates are configurable per project: per-node,
+per-tier, leaves-only, or fully automatic with the
+destructive-operation carve-out (A.8.2) as a hard override
+no project setting can bypass. The default is sensible —
+review fan-out and destructive ops, auto-approve everything
+else at the node level — but the user controls it.
+
+The intended workflow is **batched**: a flow run produces
+N artifacts, pauses for human review of that batch, the
+reviewer reads and leaves feedback on some or all of them,
+rejected artifacts and their downstream dependents
+regenerate as a sub-run incorporating the feedback, and
+once the sub-run completes the parent flow resumes with
+the next batch. Produce–review–regenerate–resume is the
+cycle the lifecycle optimizes for.
 
 ### A.5.7 Restart semantics
-v2 §A.5.7.
+
+Flow runs support four restart granularities:
+
+- **Node-level** — regenerate a single node's output;
+  downstream nodes are marked stale and the scheduler picks
+  them up.
+- **Tier-level** — restart every instance of a tier (e.g.,
+  regenerate every component-architecture doc).
+- **Flow-level** — restart the whole flow from the seed.
+- **Partial retry** — retry only failed or rejected nodes
+  within a tier, leaving approved nodes intact.
+
+Each restart option names what gets invalidated in the UI
+so the user knows what they're signing up for.
 
 ## A.6 Ownership and scoped roles
 
