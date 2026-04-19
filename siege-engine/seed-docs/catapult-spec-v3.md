@@ -248,61 +248,290 @@ platform hold to the two commitments in A.1.2.
 
 ## A.3 The bundle as reactive schema
 
-The load-bearing chapter of v3. Everything here is currently in
-v2 §A.11.6 and needs to be promoted so it arrives before the
-reader has internalized the default bundle's vocabulary.
+The load-bearing chapter. A.1.2 named two commitments; this is
+where the second one — "the scheduler is a reactive runtime
+over a typed graph declared in a bundle" — lands concretely.
+The bundle is a **typed graph declaration**: tiers (node
+kinds), edges (typed relationships), fragments (authored
+sub-blocks), and context (what each tier reads from the graph
+at generation time). Everything the scheduler does derives
+from that declaration.
+
+This framing collapses iteration, readiness gates, topology
+conditionals, post-commit enqueues, and fan-in aggregation
+into four declarative primitives plus a small predicate
+language. The bundle's primary artifact, conceptually, is the
+graph of tiers and edges; its YAML serialization exists so git,
+LLMs, airgapped import, and text-first authoring all still
+work.
 
 ### A.3.1 Tiers
-`scope` / `scope_filter` / `permitted_parents` / `identity` /
-`fields` / `handle` / `draft` / `generator` / `context` /
-`produces`. From v2 §A.11.6.
+
+A **tier** is a node kind in the generation graph. Each tier
+declaration carries the following fields:
+
+- **`scope`** — how instances of the tier attach to the graph.
+  `singleton_under(X)` for one-per-X nodes; `per(X)` for
+  per-parent-X instances; `child_of(X)` for tiers minted by a
+  parent's fanout. The scope expression is what tells the
+  scheduler how many `(tier, scope_parent)` pairs to enumerate
+  for a given project state.
+- **`scope_filter`** — an optional predicate narrowing the set
+  of scope-parents this tier attaches to. E.g., "only
+  fan-in-aggregate under parents whose kind is `domain` and
+  which have at least one subcomponent." Predicate language in
+  A.3.5.
+- **`permitted_parents`** — a list when a tier attaches under
+  more than one parent kind (e.g., policy tiers allowed under
+  either a sysarch or a comp). Default is a single parent
+  inferred from `scope`.
+- **`identity`** — which field downstream references resolve
+  against. `name`, `id`, or `alias`. Default is `id`; `alias`
+  is what the default bundle uses for tiers that declare
+  new entities before IDs exist (see Part B).
+- **`fields`** — scalar values populated from the tier's draft
+  via `draft.<path>` expressions. Fields are what appear on
+  the node's projection row.
+- **`handle`** — the public surface other tiers see. A named
+  subset of fields plus a named subset of fragments. Whatever
+  downstream tiers walk context edges to pull, they receive
+  handle content, not raw draft content.
+- **`draft`** — root tag + grammar for parsing LLM output.
+  Omitted when the tier has no generation step (e.g., tiers
+  that exist purely as join targets for edges).
+- **`generator`** — the mechanism that produces the draft.
+  `llm` (default), `git_commit`, `webhook`, `synthesis`, or
+  other named generators the platform ships or the instance
+  admin approves. See A.16 for `git_commit` specifically.
+- **`context`** — an ordered list of edge-walk expressions
+  declaring what the generator reads before producing a draft.
+  See A.3.4.
+- **`produces`** — optional declarations for fragments this
+  tier's draft writes on other nodes (typically `self.parent`).
+  See A.3.3.
+
+A tier without a `draft` is a **join target** — it exists
+purely so edges can terminate on it. Most tiers have drafts.
 
 ### A.3.2 Edges
 
-Five platform-level edge **types**, each with its own cardinality,
-graph-constraint, and readiness semantics: `fanout`, `reference`,
-`dependency`, `policy_application`, `synthesis`. The platform
-declares the type vocabulary; bundles declare **named edge
-instances** typed against one of these types, with particular
-source and target tiers. From v2 §A.11.6.
+Five platform-level edge **types**, each with its own
+cardinality, graph-constraint, and readiness semantics:
+`fanout`, `reference`, `dependency`, `policy_application`,
+`synthesis`. The platform declares the type vocabulary;
+bundles declare **named edge instances** typed against one of
+these types, with particular source and target tiers.
 
-- `fanout` — parent-creates-children; how every tier decomposes.
-- `reference` — general-purpose advisory-context edge; acyclic.
-- `dependency` — data dependency with `graph_constraint: acyclic`
-  support; stays platform-level because the constraint machinery is
-  platform-owned.
-- `policy_application` — cross-cutting application of a policy
-  node to a target, with reachability. Platform-level; the general
-  "some nodes carry obligations that apply elsewhere" pattern is
-  bundle-agnostic.
-- `synthesis` — reverse aggregation. Platform declares the pattern
-  (a child-aggregating tier subscribed-to via named edges);
-  bundles declare which tier does the aggregating and which tier
-  subscribes. The default bundle's `fanin` tier and its
-  `domain_parent` edge are named instantiations in B.1.8 and
-  B.2.2 — the platform mints `fanin` instances, manages the
-  first-pass readiness gate and staling on subcomponent change,
-  and exposes the aggregated handle; the bundle says *which*
-  presentational tier subscribes via `domain_parent`.
+- **`fanout`** — parent-creates-children; how every tier
+  decomposes. A parent tier's draft property enumerates N
+  children of a child tier, and the reducer mints them at
+  parent approval.
+- **`reference`** — general-purpose advisory-context edge,
+  acyclic. Named pointer across tiers, resolved via the
+  target's `identity`. Used for any "this node reads that
+  node's handle" relationship that isn't a structural
+  dependency.
+- **`dependency`** — same-tier or cross-tier data dependency
+  with `graph_constraint: acyclic` support. Stays
+  platform-level because the cycle-detection machinery is
+  platform-owned and non-trivial.
+- **`policy_application`** — cross-cutting application of a
+  policy node to a target, with reachability. The general
+  "some nodes carry obligations that apply elsewhere" pattern
+  is bundle-agnostic; specific policy kinds are bundle content.
+- **`synthesis`** — reverse aggregation. A tier declared with
+  `generator: synthesis` aggregates its children and publishes
+  a handle that subscribers read via `reference`-style edges.
+  The platform manages the first-pass readiness gate (fires
+  once all children's required content is present) and the
+  staling-on-subcomponent-change behavior; the bundle declares
+  which tier does the aggregating and which tiers subscribe.
+
+Every edge instance declaration carries: source tier, target
+tier, `cardinality` on both endpoints, and `declared_in:` —
+where in some tier's draft the edge gets emitted (e.g.,
+`comp.draft.dependencies[].@to`). Cardinality endpoints use
+`{min, max}` bounds; `{min: 1, max: 1}` is exactly-one,
+`{min: 1}` is at-least-one, `max: many` is the default.
+Cardinality can be filtered (`when: kind == presentational`)
+and scoped (`per_source(subreqs)`). This single mechanism
+replaces every named structural invariant — bijections,
+coverage rules, partition properties — with uniform
+bounded-count declarations.
+
+Bundles instantiate edges by declaring concrete pairs of
+source and target tiers against a type. The default bundle's
+`domain_parent` edge is a named `synthesis` instance pointing
+at the bundle's `fanin` tier; the default bundle's sibling-
+dependency edge is a named `dependency` instance. See Part B
+§2 for the default bundle's full edge catalogue.
 
 ### A.3.3 Fragments as authored-only content
-From v2 §A.11.6 — the "no projected-fragment category" point.
-Keep the `produces:` mechanism.
+
+A **fragment** is a named, authored prose block owned by a
+specific node and readable by other tiers via
+`handle.fragments`. Fragments let a node expose sub-chunks of
+its content at finer granularity than the whole document —
+a dependent tier might only need the target's public API
+section, not its whole architecture doc.
+
+Fragments are **authored only**. There is no "projected
+fragment" category where the reducer derives fragment content
+from other state. Every graph-derived view a prompt needs
+is expressible as a `context:` edge walk at read time, which
+makes materialization an engine-side caching decision rather
+than a bundle concern. Serialization templates that would
+render tuples back to inline XML do not appear in the bundle
+DSL.
+
+A tier can declare that its draft writes fragments owned by a
+**different node**, typically its parent. This is what the
+`produces:` mechanism is for: an architecture-doc tier might
+declare `produces: [{owner: self.parent, kind: techspec,
+authored: draft.techspec}, ...]` so the doc tier's draft
+content lands as fragments on the parent node. Readers walking
+context edges to the parent pick up those fragments without
+knowing which tier authored them.
+
+Fragment kinds are a closed vocabulary per bundle — the
+default bundle declares `techspec`, `pubapi`, `privapi`,
+`policies`, `deps` (see Part B §3). Adding a new fragment kind
+is a bundle edit, not a platform change.
 
 ### A.3.4 Context walks
-From v2 §A.11.6. Context is the only readiness signal; all
-gating (fan-in first-pass, presentational-waits-for-fanin,
-etc.) falls out of context resolution.
+
+A tier's `context:` is an ordered list of typed edge walks its
+generator reads before producing a draft. Each entry yields
+handles, fragments, or synthesis views.
+
+```
+comparch:
+  scope: per(comp)
+  context:
+    - self.parent.handle
+    - self.parent.fulfills → resp.handle
+    - self.parent.decomposed_by(subresp)
+    - self.parent.dependency → target.handle.fragments[pubapi]
+    - self.parent.domain_parent → target.synthesis
+```
+
+Context is the **only** readiness signal the scheduler needs.
+A `(tier, scope)` pair is **ready** when every traversal in
+its `context:` resolves to content in the *ready* state —
+meaning the producing tier's instance is approved (for
+authored content), or the underlying graph state has
+stabilized (for projected views). Cardinality-many traversals
+require *all* targets ready by default.
+
+Two scheduling mechanisms that would otherwise need dedicated
+platform machinery fall out of this rule:
+
+- **First-pass synthesis gate.** A synthesis tier generates
+  when every child's required content is approved. This is
+  not a special predicate — it's the default "cardinality-
+  many traversal requires all targets ready" applied to
+  `self.parent.decomposed_by(child) → target.handle.content`.
+- **Cross-tier subscription gate.** A presentational tier
+  waiting for its domain parent's synthesis is just the
+  context entry `self.parent.domain_parent → target.synthesis`
+  failing to resolve until the synthesis tier's handle is
+  populated.
+
+Context declarations make scheduling **inspectable**. An
+editor can render each tier's context as a dashed overlay
+showing where a prompt's content comes from; missing or stale
+sources are the complete set of things blocking a generation.
 
 ### A.3.5 Predicate language
-Six operator families, the four slots predicates appear in, the
-named-predicate escape hatch. From v2 §A.11.6.
+
+Six operator families cover every conditional the platform
+needs. Bundle authors use these in `scope_filter`,
+`cardinality.when`, edge `constraint`, and edge
+`graph_constraint`:
+
+- **Comparison** — `==`, `!=`, `<`, `>`, `<=`, `>=`
+- **Boolean** — `AND`, `OR`, `NOT`
+- **Edge counting** — `has_edge(type)`, `count(edge_path) op N`
+- **Existential** — `exists(edge_path where predicate)`
+- **Universal** — `all(edge_path → field)`, `any(edge_path → field)`
+- **Reachability** — `reaches(source, target, via=[edge_types])`
+
+Field access is `self.field` for scalars,
+`self.edge(type).target.field` for traversals, `self.parent`
+for the scope-parent. Aggregates over traversals (`count`,
+`any`, `all`, `exists`) are permitted; arithmetic, string
+manipulation, and regex are not.
+
+The predicate language appears in exactly four slots:
+
+- **`scope_filter`** on a tier — restrict which scope-parents
+  the tier attaches to.
+- **`cardinality.when`** on an edge — restrict which nodes a
+  cardinality bound applies to.
+- **`constraint`** on an edge — value conditions on an edge's
+  endpoints (e.g., `source.kind == presentational AND
+  target.kind == domain`).
+- **`graph_constraint`** on an edge — named structural
+  invariants (`acyclic`, `no_self_loop`, `tree`).
+
+**Named-predicate escape hatch.** A bundle that needs a
+condition beyond the six operator families declares a name;
+the instance admin approves the name at bundle import, and a
+per-instance allowlist maps names to platform code. The name
+appears in the bundle as if it were a built-in predicate. The
+bundle itself contains no code. This preserves "bundles
+learnable in an afternoon" while allowing the rare case that
+genuinely needs computation.
 
 ### A.3.6 Scheduler as reactive runtime
-Enumerate / evaluate / enqueue; staling as the reactive dual.
-Merges v2 §A.3.2 and §A.11.6. The state-driven scheduler and
-the reactive-schema scheduler are the same machine; v2 described
-them in two places because the reactive framing was late.
+
+The scheduler is three rules:
+
+1. **Enumerate** every `(tier, scope_parent)` pair where
+   `scope_parent` exists in the current projection and
+   satisfies the tier's `scope_filter`.
+2. **Evaluate readiness** — does every entry in the tier's
+   `context:` resolve to a ready source?
+3. **Enqueue** ready instances for generation, deduping on the
+   `(tier, scope_parent)` key via the job queue's uniqueness
+   constraint.
+
+The scheduler is **state-driven**: readiness is a query
+against the current projection, not a reaction to individual
+events. This is what makes replay trivial — the same query
+that answers "is this ready now?" also answers "was this
+ready at time T?" by running against the projection state at
+sequence number T. And it's what keeps the scheduler stateless
+— no in-memory pending-set to corrupt, just a function from
+projection state to enqueueable work.
+
+Two triggers drive the readiness query in practice:
+
+- **Fast path.** An event commits that plausibly changes some
+  tier's readiness; the scheduler re-evaluates the affected
+  `(tier, scope_parent)` pairs immediately. Wired through a
+  per-project pub/sub channel.
+- **Sweeper.** A low-frequency background loop (30–60s
+  configurable) re-evaluates every enumerable pair against
+  current state. Catches anything the fast path missed and
+  provides an always-converging lower bound on correctness.
+
+**Staling is the reactive dual.** When an approved node
+changes (re-approval, content edit, force-reset), the
+scheduler walks edges whose carried payload depends on the
+changed slice and marks dependents stale. A stale tier
+re-enters the readiness loop on the next poll; if its context
+is still ready (or re-resolves after upstream regens), it
+generates again. Staling doesn't bypass review — a stale
+tier's next generation is a new draft that goes through the
+same approval lifecycle.
+
+Flow-aware behavior (A.4) adds one twist: when a flow is
+active, the scheduler runs against the merged `scaffold ∪
+flow` DAG rather than the scaffold alone. The three rules
+above are unchanged; the enumerated pairs just include the
+flow's planning tiers, and context walks see the flow's
+added edges.
 
 ## A.4 Flows
 
