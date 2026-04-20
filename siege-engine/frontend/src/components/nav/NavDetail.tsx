@@ -20,6 +20,7 @@ import { SubcomparchPanel } from '../SubcomparchPanel';
 import { SubreqsPanel } from '../SubreqsPanel';
 import { SysarchPanel } from '../SysarchPanel';
 import { VocabularyList } from '../VocabularyList';
+import { DependencyEditorPanel } from '../editors/DependencyEditorPanel';
 import { SYNTHETIC_IDS } from './buildNavTree';
 
 interface Props {
@@ -83,6 +84,23 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
         <QueuePanel projectId={projectId} />
       </div>
     );
+  }
+  if (selectedId === SYNTHETIC_IDS.EDIT_DEPS) {
+    return (
+      <div className="h-full overflow-auto">
+        <DependencyEditorPanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (
+    selectedId === SYNTHETIC_IDS.EDIT_ROOT ||
+    selectedId === SYNTHETIC_IDS.EDIT_DOMAIN_PARENTS ||
+    selectedId === SYNTHETIC_IDS.EDIT_DECOMPOSITION ||
+    selectedId === SYNTHETIC_IDS.EDIT_FEAT_RESP ||
+    selectedId === SYNTHETIC_IDS.EDIT_RESP_COMP ||
+    selectedId === SYNTHETIC_IDS.EDIT_SUBRESP_SUBCOMP
+  ) {
+    return <EditorComingSoon id={selectedId} />;
   }
 
   const node = nodes.find((n) => n.id === selectedId) ?? null;
@@ -258,3 +276,30 @@ function UnknownTier({ tier }: { tier: string }) {
     </div>
   );
 }
+
+function EditorComingSoon({ id }: { id: string }) {
+  // Phase 11 — placeholder for editor pages that ship in later
+  // PRs. The panel exists so the sidebar routing is complete and
+  // the user sees meaningful text rather than an empty pane.
+  const label = EDITOR_LABELS[id] ?? 'Edit';
+  return (
+    <div className="h-full flex items-center justify-center p-8 text-center max-w-md mx-auto">
+      <div>
+        <h2 className="text-sm font-semibold text-gray-300 mb-2">{label}</h2>
+        <p className="text-sm text-gray-400">
+          Coming in a later Phase 11 PR. Dependencies are available now under
+          the Edit group.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const EDITOR_LABELS: Record<string, string> = {
+  [SYNTHETIC_IDS.EDIT_ROOT]: 'Edit',
+  [SYNTHETIC_IDS.EDIT_DOMAIN_PARENTS]: 'Domain Parents',
+  [SYNTHETIC_IDS.EDIT_DECOMPOSITION]: 'Decomposition',
+  [SYNTHETIC_IDS.EDIT_FEAT_RESP]: 'Features → Responsibilities',
+  [SYNTHETIC_IDS.EDIT_RESP_COMP]: 'Responsibilities → Components',
+  [SYNTHETIC_IDS.EDIT_SUBRESP_SUBCOMP]: 'Subresps → Subcomponents',
+};

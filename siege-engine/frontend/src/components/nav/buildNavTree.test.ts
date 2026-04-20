@@ -43,6 +43,7 @@ describe('buildNavTree', () => {
       SYNTHETIC_IDS.REFERENCES,
       SYNTHETIC_IDS.DAG,
       SYNTHETIC_IDS.QUEUE,
+      SYNTHETIC_IDS.EDIT_ROOT,
     ]);
   });
 
@@ -61,6 +62,7 @@ describe('buildNavTree', () => {
       SYNTHETIC_IDS.REFERENCES,
       SYNTHETIC_IDS.DAG,
       SYNTHETIC_IDS.QUEUE,
+      SYNTHETIC_IDS.EDIT_ROOT,
     ]);
   });
 
