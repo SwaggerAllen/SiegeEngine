@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
+import { useEnqueueInstruction } from '../../hooks/queries/useProjectQueue';
 import { useProjectStructure } from '../../hooks/queries/useProjectStructure';
 // Registers cytoscape-elk side-effectfully. Imported here rather
 // than in main.tsx so the heavy ELK bundle only loads alongside
@@ -40,9 +41,15 @@ export function FullDagView({ projectId }: Props) {
   const drillCompId = searchParams.get('drill');
 
   const { data, isLoading, error } = useProjectStructure(projectId);
+  const enqueue = useEnqueueInstruction(projectId);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [revealedImpls, setRevealedImpls] = useState<Set<string>>(new Set());
+  // Phase 11 — inline rename: opens a mini text-box to capture the
+  // new name for the selected node and enqueues a Rename
+  // instruction on submit. First concrete edit affordance on the
+  // DAG; full edit-mode (create / delete / dep drawing) follows.
+  const [renamingDraft, setRenamingDraft] = useState<string | null>(null);
 
   // Reset local state when the view mode flips. Staying in drill
   // mode but switching which comp is drilled also resets.
@@ -206,6 +213,25 @@ export function FullDagView({ projectId }: Props) {
   const drillLabel = drillCompId
     ? data.nodes.find((n) => n.id === drillCompId)?.name ?? drillCompId
     : null;
+  const selectedNode = selectedId
+    ? data.nodes.find((n) => n.id === selectedId) ?? null
+    : null;
+
+  const submitRename = () => {
+    if (!selectedNode || renamingDraft === null) return;
+    const newName = renamingDraft.trim();
+    if (!newName || newName === selectedNode.name) {
+      setRenamingDraft(null);
+      return;
+    }
+    enqueue.mutate({
+      instruction_type: 'Rename',
+      node_id: selectedNode.id,
+      old_name: selectedNode.name,
+      new_name: newName,
+    });
+    setRenamingDraft(null);
+  };
 
   return (
     <div className="h-full w-full flex flex-col">
@@ -226,6 +252,49 @@ export function FullDagView({ projectId }: Props) {
           <span className="text-gray-400">
             Decomposition DAG — double-click a component to drill in
           </span>
+        )}
+        <div className="flex-1" />
+        {selectedNode && renamingDraft === null && (
+          <button
+            type="button"
+            onClick={() => setRenamingDraft(selectedNode.name)}
+            className="px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-xs"
+            title={`Queue a rename for ${selectedNode.name}`}
+          >
+            Rename…
+          </button>
+        )}
+        {selectedNode && renamingDraft !== null && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitRename();
+            }}
+            className="flex items-center gap-1"
+          >
+            <input
+              autoFocus
+              value={renamingDraft}
+              onChange={(e) => setRenamingDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setRenamingDraft(null);
+              }}
+              className="px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-xs text-gray-100 w-48"
+            />
+            <button
+              type="submit"
+              className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-xs text-white"
+            >
+              Queue
+            </button>
+            <button
+              type="button"
+              onClick={() => setRenamingDraft(null)}
+              className="px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 text-xs"
+            >
+              Cancel
+            </button>
+          </form>
         )}
       </div>
       <div className="flex-1 min-h-0 cursor-pointer">
