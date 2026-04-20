@@ -21,6 +21,7 @@ import { SubreqsPanel } from '../SubreqsPanel';
 import { SysarchPanel } from '../SysarchPanel';
 import { VocabularyList } from '../VocabularyList';
 import { DependencyEditorPanel } from '../editors/DependencyEditorPanel';
+import { DomainParentEditorPanel } from '../editors/DomainParentEditorPanel';
 import { SYNTHETIC_IDS } from './buildNavTree';
 
 interface Props {
@@ -92,9 +93,15 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
       </div>
     );
   }
+  if (selectedId === SYNTHETIC_IDS.EDIT_DOMAIN_PARENTS) {
+    return (
+      <div className="h-full overflow-auto">
+        <DomainParentEditorPanel projectId={projectId} />
+      </div>
+    );
+  }
   if (
     selectedId === SYNTHETIC_IDS.EDIT_ROOT ||
-    selectedId === SYNTHETIC_IDS.EDIT_DOMAIN_PARENTS ||
     selectedId === SYNTHETIC_IDS.EDIT_DECOMPOSITION ||
     selectedId === SYNTHETIC_IDS.EDIT_FEAT_RESP ||
     selectedId === SYNTHETIC_IDS.EDIT_RESP_COMP ||
