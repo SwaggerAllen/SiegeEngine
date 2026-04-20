@@ -215,19 +215,19 @@ rejected. Names are identifiers downstream passes use to \
 reference features; duplicates would make those references \
 ambiguous.
 
-# Vocabulary (required)
+# Vocabulary (optional but strongly encouraged)
 
-You **must** include a ``<vocabulary>`` block **after** \
-the ``<features>`` block, at the top level of your output — \
-at the same nesting as ``<features>``, not inside it. Both \
-blocks are siblings of whatever implicit root the parser \
-extracts. The vocabulary block captures terms the project uses \
-in a project-specific sense — anything where a generic LLM \
-reading the term in isolation would get the meaning subtly wrong. \
-Every project has some of these; if you genuinely can't find one, \
-define one clearly-project-specific term (e.g. the project's \
-name, the main domain object) so downstream tiers at least see \
-the vocabulary structure populated.
+You may include a ``<vocabulary>`` block **after** the \
+``<features>`` block, at the top level of your output — at the \
+same nesting as ``<features>``, not inside it. Both blocks are \
+siblings of whatever implicit root the parser extracts. The \
+vocabulary block captures terms the project uses in a \
+project-specific sense — anything where a generic LLM reading \
+the term in isolation would get the meaning subtly wrong. Emit \
+one whenever the input doc genuinely has project-specific \
+terminology; if the project is too generic for any term to \
+warrant defining, omit the block rather than padding it with \
+filler (the user can always add vocabulary entries later).
 
 The grammar:
 
@@ -264,9 +264,9 @@ The grammar:
 
 # Vocabulary rules
 
-* ``<vocabulary>`` is **required**. It comes after ``<features>`` \
-in the output, as a sibling block. The block must contain at \
-least one ``<term>`` entry.
+* ``<vocabulary>`` is optional. If you include it, it comes \
+after ``<features>`` in the output, as a sibling block, and \
+must contain at least one ``<term>`` entry.
 * Each ``<term>`` has a ``name`` attribute (the term being \
 defined) and a ``scope`` attribute that is exactly ``"project"`` \
 or ``"feature"``.

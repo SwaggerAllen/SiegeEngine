@@ -4,6 +4,7 @@ import { parseVocabEntry } from '../api/vocabulary';
 import { useProjectVocabulary } from '../hooks/queries/useVocabularyQueries';
 import { useDeleteVocabMutation } from '../hooks/mutations/useVocabularyMutations';
 import { CreateVocabEntryDialog } from './CreateVocabEntryDialog';
+import { PendingVocabularySection } from './PendingVocabularySection';
 import { VocabularyEntryDetail } from './VocabularyEntry';
 
 interface Props {
@@ -68,6 +69,8 @@ export function VocabularyList({ projectId }: Props) {
             + Add term
           </button>
         </div>
+
+        <PendingVocabularySection projectId={projectId} />
 
         {entries.length === 0 && (
           <p className="text-sm text-gray-500 italic">

@@ -319,16 +319,32 @@ function ReviewSection({
  * otherwise. Default active tab is always Document; the
  * indicator is how the user learns they should click Review.
  */
+export interface ExtraTab {
+  /** Unique id within this tab strip. Used for aria-controls. */
+  id: string;
+  /** Label rendered on the tab button. */
+  label: string;
+  /** Body rendered in the tabpanel when active. */
+  content: ReactNode;
+}
+
 export function DocumentReviewTabs({
   document,
   idPrefix,
   review,
+  extraTabs,
 }: {
   document: ReactNode;
   idPrefix: string;
   review: ReviewBlockProps;
+  /** Optional extra tabs inserted between Document and Review
+   * (left to right in the order supplied). Used by the expansion
+   * panel to surface a parsed "Features" list so users don't have
+   * to scroll past the introduction paragraph. */
+  extraTabs?: ExtraTab[];
 }) {
-  const [active, setActive] = useState<'document' | 'review'>('document');
+  type TabKey = 'document' | 'review' | `extra:${string}`;
+  const [active, setActive] = useState<TabKey>('document');
   const baseClasses =
     'px-3 py-1.5 text-xs border-b-2 -mb-px transition-colors shrink-0 whitespace-nowrap flex items-center gap-2';
   const activeClasses = 'border-blue-500 text-white';
@@ -378,6 +394,27 @@ export function DocumentReviewTabs({
         >
           Document
         </button>
+        {extraTabs?.map((tab) => {
+          const key: TabKey = `extra:${tab.id}`;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={active === key}
+              aria-controls={`subtabpanel-${idPrefix}-${tab.id}`}
+              onClick={() => setActive(key)}
+              className={
+                active === key
+                  ? `${baseClasses} ${activeClasses}`
+                  : `${baseClasses} ${idleClasses}`
+              }
+              data-testid={`${idPrefix}-${tab.id}-tab`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
         <button
           type="button"
           role="tab"
@@ -396,7 +433,7 @@ export function DocumentReviewTabs({
         </button>
       </nav>
       <div className="pt-3">
-        {active === 'document' ? (
+        {active === 'document' && (
           <div
             role="tabpanel"
             id={`subtabpanel-${idPrefix}-document`}
@@ -404,7 +441,22 @@ export function DocumentReviewTabs({
           >
             {document}
           </div>
-        ) : (
+        )}
+        {extraTabs?.map((tab) => {
+          const key: TabKey = `extra:${tab.id}`;
+          if (active !== key) return null;
+          return (
+            <div
+              key={tab.id}
+              role="tabpanel"
+              id={`subtabpanel-${idPrefix}-${tab.id}`}
+              data-testid={`${idPrefix}-${tab.id}-panel`}
+            >
+              {tab.content}
+            </div>
+          );
+        })}
+        {active === 'review' && (
           <div
             role="tabpanel"
             id={`subtabpanel-${idPrefix}-review`}
