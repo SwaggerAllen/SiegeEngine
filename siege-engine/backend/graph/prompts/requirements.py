@@ -185,6 +185,22 @@ relationship is many-to-many. A cross-cutting responsibility \
 like "Telemetry" will typically cover most features; a scoped \
 responsibility like "Billing" will cover only a handful. This \
 is expected.
+* **Responsibilities do not overlap.** Two responsibilities must \
+not claim ownership of the same system capability. Many \
+features can implicate the same responsibility (that's what \
+``<covers>`` being many-to-many is for), but each responsibility \
+owns its scope exclusively. If two responsibilities share scope \
+— two resps both claiming "produce end-of-month statements", \
+for example — collapse them into one, or redraw the boundary \
+by trigger or data set so each gets a disjoint slice. Example: \
+"Billing" and "Receipts" would overlap if both claimed "produce \
+end-of-month statements"; split by trigger instead — Billing \
+owns invoice lifecycle, Receipts owns post-payment \
+acknowledgments. Each intent paragraph's "does not cover" \
+clause should make the boundary between this resp and its \
+nearest sibling explicit. Overlapping resps are easy for a \
+human reviewer to miss and make sysarch's component boundary \
+calls messy downstream; this rule is load-bearing.
 * **Every feature in the input must be covered by at least one \
 responsibility.** Before emitting the list, mentally check that \
 each input feature ID appears in at least one ``<covers>`` block. \
