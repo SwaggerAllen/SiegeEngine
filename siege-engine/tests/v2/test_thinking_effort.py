@@ -70,6 +70,7 @@ def _seed_expansion(factory: sessionmaker) -> str:
 
 
 def _valid_features_xml() -> str:
+    # The sibling <vocabulary> block is mandatory per B2.
     return (
         "<features>"
         "<feature>"
@@ -77,6 +78,11 @@ def _valid_features_xml() -> str:
         "<intent>A new user completes first-run setup end-to-end.</intent>"
         "</feature>"
         "</features>"
+        "<vocabulary>"
+        '<term name="default" scope="project">'
+        "<vocab-entry><definition>Stub.</definition></vocab-entry>"
+        "</term>"
+        "</vocabulary>"
     )
 
 

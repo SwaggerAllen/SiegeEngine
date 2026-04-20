@@ -103,6 +103,18 @@ def seeded_project(shared_session_factory):
         session.close()
 
 
+# A minimal <vocabulary> block appended to every valid-features
+# mock output. Phase-11 followup B2 made the <vocabulary> sibling
+# block mandatory — without it, validate_features raises
+# ValidationError and the handler exhausts its retry budget.
+_VALID_VOCABULARY_XML = (
+    "<vocabulary>"
+    '<term name="default" scope="project">'
+    "<vocab-entry><definition>A stub term for tests.</definition></vocab-entry>"
+    "</term>"
+    "</vocabulary>"
+)
+
 # A minimal valid <features> block for use as the default CLI
 # output in tests that don't care about the specific feature set.
 # Under Phase 2's parse-validate retry loop, every mock CLI
@@ -116,7 +128,7 @@ _VALID_FEATURES_XML = (
     "for round-trip coverage.</intent>"
     "</feature>"
     "</features>"
-)
+) + _VALID_VOCABULARY_XML
 
 
 def _feature_xml(*features: tuple[str, str]) -> str:
@@ -125,7 +137,7 @@ def _feature_xml(*features: tuple[str, str]) -> str:
         f"<feature><name>{name}</name><intent>{intent}</intent></feature>"
         for name, intent in features
     )
-    return f"<features>{inner}</features>"
+    return f"<features>{inner}</features>" + _VALID_VOCABULARY_XML
 
 
 def _patch_cli(
