@@ -892,3 +892,81 @@ def staleness_entries_for(session: Session, project_id: str, node_id: str) -> li
         .all()
     )
     return list(rows)
+
+
+# ── Phase 11: edge lookup + cycle detection on live projections ──────
+
+
+def find_edge_by_endpoints(
+    session: Session,
+    project_id: str,
+    edge_type: str,
+    source_id: str,
+    target_id: str,
+) -> Edge | None:
+    """Return the edge of ``edge_type`` between the two endpoints, if any.
+
+    Used by the Phase 11 apply handler to resolve ``Remove*`` edge
+    instructions to a concrete edge id for deletion.
+    """
+    return session.execute(
+        select(Edge).where(
+            Edge.project_id == project_id,
+            Edge.edge_type == edge_type,
+            Edge.source_id == source_id,
+            Edge.target_id == target_id,
+        )
+    ).scalar_one_or_none()
+
+
+def would_create_cycle(
+    session: Session,
+    project_id: str,
+    source_id: str,
+    target_id: str,
+) -> list[str] | None:
+    """Check if adding ``source_id → target_id`` closes a dependency cycle.
+
+    DFS from ``target_id`` following outgoing ``dependency`` edges.
+    Returns the cycle path ``[source_id, …, target_id, source_id]``
+    if ``source_id`` is reachable from ``target_id``, otherwise
+    ``None``. ``source_id == target_id`` is treated as a trivial
+    self-cycle.
+
+    The parser layer has its own cycle detection over LLM-authored
+    aliases (``_detect_dep_cycles`` in ``parsers.validators``); this
+    helper operates on live projection ids and is reused by the
+    Phase 11 apply handler and the dependency editor's pre-check.
+    """
+    if source_id == target_id:
+        return [source_id, target_id]
+
+    adjacency: dict[str, list[str]] = {}
+    rows = session.execute(
+        select(Edge.source_id, Edge.target_id).where(
+            Edge.project_id == project_id,
+            Edge.edge_type == "dependency",
+        )
+    ).all()
+    for src, tgt in rows:
+        adjacency.setdefault(src, []).append(tgt)
+
+    parent: dict[str, str] = {}
+    stack: list[str] = [target_id]
+    visited: set[str] = set()
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        if current == source_id:
+            path: list[str] = [current]
+            while path[-1] in parent:
+                path.append(parent[path[-1]])
+            path.reverse()
+            return path + [target_id]
+        for nxt in adjacency.get(current, ()):
+            if nxt not in visited:
+                parent[nxt] = current
+                stack.append(nxt)
+    return None
