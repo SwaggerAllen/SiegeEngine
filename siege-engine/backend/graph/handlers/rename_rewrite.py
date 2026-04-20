@@ -33,26 +33,37 @@ intent was clear, and a stale name in a consumer's prose is
 less bad than a lost rename. The failed consumer is logged;
 the user can re-trigger a targeted regen on it.
 
-**MVP scope:** the rewrite uses word-boundary regex
-``\\b{old_name}\\b``. This is sufficient for the common case
-(single-word component / feature names). LLM-driven rewrite
-with cross-reference resolution is a follow-up that swaps the
-one ``_rewrite_text`` helper below.
+**Rewrite backend (D3):** the handler calls
+:func:`backend.cli.manager.cli_manager.generate_with_usage` with
+a per-document prompt (see
+``backend.graph.prompts.rename_rewrite``) and writes the LLM's
+reply back as the new content. If the LLM errors, the CLI is
+unavailable, or the env variable
+``SIEGE_DISABLE_LLM_RENAME_REWRITE=1`` is set (used by tests),
+the handler falls back to a word-boundary regex substitution —
+correct for simple single-word renames and deterministic for
+tests.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend.cli.manager import cli_manager
 from backend.database import SessionLocal
 from backend.graph import events as ev
 from backend.graph.broadcast import commit_and_publish
 from backend.graph.fragments import FragmentKind
+from backend.graph.prompts.rename_rewrite import (
+    SYSTEM_PROMPT,
+    render_rename_rewrite_prompt,
+)
 from backend.graph.reducer import append_event
 from backend.models.node import Edge, Fragment, Node
 from backend.pipeline import queue as pipeline_queue
@@ -62,13 +73,10 @@ logger = logging.getLogger(__name__)
 RENAME_REWRITE_JOB_TYPE = "v2.rename_rewrite"
 
 
-def _rewrite_text(text: str, old_name: str, new_name: str) -> str:
-    """Word-boundaried text replacement. No-op when text is empty.
-
-    Extension seam: swap this for an LLM call to rewrite prose with
-    cross-reference resolution (see Phase 11 plan PR #6 risk
-    callouts). The signature is stable so handler callers don't
-    change when the rewrite mechanism upgrades.
+def _rewrite_text_regex(text: str, old_name: str, new_name: str) -> str:
+    """Word-boundaried text replacement. Correct for simple
+    single-word renames and used as the fallback when the LLM
+    path is disabled or fails.
     """
     if not text:
         return text
@@ -76,7 +84,75 @@ def _rewrite_text(text: str, old_name: str, new_name: str) -> str:
     return pattern.sub(new_name, text)
 
 
-def _rewrite_node_and_fragments(
+def _llm_rename_rewrite_disabled() -> bool:
+    """True when the LLM rewrite path is opt-out disabled.
+
+    Tests set ``SIEGE_DISABLE_LLM_RENAME_REWRITE=1`` so the
+    rewrite path stays deterministic and doesn't attempt a CLI
+    subprocess call.
+    """
+    return bool(os.environ.get("SIEGE_DISABLE_LLM_RENAME_REWRITE"))
+
+
+async def _rewrite_text_llm(text: str, old_name: str, new_name: str) -> str:
+    """Call the CLI to rewrite prose; raise on failure.
+
+    Caller wraps this in a try/except and falls back to the
+    regex path if the CLI errors or the LLM output looks
+    malformed.
+    """
+    user_prompt = render_rename_rewrite_prompt(old_name=old_name, new_name=new_name, text=text)
+    result = await cli_manager.generate_with_usage(
+        prompt=user_prompt,
+        system_prompt=SYSTEM_PROMPT,
+    )
+    return result.text.strip()
+
+
+async def _rewrite_text(text: str, old_name: str, new_name: str) -> str:
+    """Rewrite ``text`` replacing references to ``old_name``.
+
+    Default path: call the LLM via
+    :func:`_rewrite_text_llm`. Fallback path: word-boundary
+    regex substitution. The fallback triggers on:
+
+    - empty input (no-op for both paths),
+    - ``SIEGE_DISABLE_LLM_RENAME_REWRITE=1`` env var,
+    - LLM call raising any exception,
+    - LLM output looking degenerate (empty, or a single-line
+      explanation that doesn't contain any of the original
+      source text tokens — detected by a naive length check).
+
+    A log warning lands on fallback so operators can spot
+    problematic renames.
+
+    Async because the LLM call is async and the handler is
+    already running inside the pipeline worker's event loop.
+    """
+    if not text:
+        return text
+    if _llm_rename_rewrite_disabled():
+        return _rewrite_text_regex(text, old_name, new_name)
+    try:
+        rewritten = await _rewrite_text_llm(text, old_name, new_name)
+    except Exception:
+        logger.warning(
+            "rename_rewrite: LLM call failed, falling back to regex rewrite",
+            exc_info=True,
+        )
+        return _rewrite_text_regex(text, old_name, new_name)
+    if not rewritten or len(rewritten) < max(4, len(text) // 3):
+        logger.warning(
+            "rename_rewrite: LLM returned degenerate output (len=%d, input=%d); "
+            "falling back to regex rewrite",
+            len(rewritten),
+            len(text),
+        )
+        return _rewrite_text_regex(text, old_name, new_name)
+    return rewritten
+
+
+async def _rewrite_node_and_fragments(
     db: Session,
     project_id: str,
     node: Node,
@@ -94,7 +170,7 @@ def _rewrite_node_and_fragments(
     # content rewrite; fragments carry their own events, but the
     # node body is a simple column update inside this transaction.
     if node.content:
-        new_content = _rewrite_text(node.content, old_name, new_name)
+        new_content = await _rewrite_text(node.content, old_name, new_name)
         if new_content != node.content:
             node.content = new_content
             node.updated_at = datetime.utcnow()
@@ -102,7 +178,7 @@ def _rewrite_node_and_fragments(
     # Fragments — each gets a FragmentUpdated if its content changes.
     fragments = db.execute(select(Fragment).where(Fragment.owner_id == node.id)).scalars().all()
     for frag in fragments:
-        new_content = _rewrite_text(frag.content or "", old_name, new_name)
+        new_content = await _rewrite_text(frag.content or "", old_name, new_name)
         if new_content == frag.content:
             continue
         # FragmentUpdated.fragment_kind is a FragmentKind enum value.
@@ -177,12 +253,12 @@ async def _handle(payload: dict) -> None:
             return
 
         # 1. Renamed node + its own fragments.
-        _rewrite_node_and_fragments(db, project_id, renamed, old_name, new_name)
+        await _rewrite_node_and_fragments(db, project_id, renamed, old_name, new_name)
 
         # 2. Direct consumers (reference / dependency edges at the renamed node).
         for consumer in _collect_consumers(db, project_id, node_id):
             try:
-                _rewrite_node_and_fragments(db, project_id, consumer, old_name, new_name)
+                await _rewrite_node_and_fragments(db, project_id, consumer, old_name, new_name)
             except Exception:
                 # Per the Phase 11 plan: consumer rewrite failures are
                 # logged + skipped; the rename itself must still commit.

@@ -4,13 +4,21 @@ Exercises ``v2.rename_rewrite`` directly — sets up a renamed node,
 a consumer wired via a reference edge, and asserts the handler
 rewrites both nodes' content + fragments before emitting
 ``NodeRenamed``.
+
+These tests set ``SIEGE_DISABLE_LLM_RENAME_REWRITE=1`` so the
+handler uses the deterministic word-boundary regex fallback
+instead of the LLM path. The LLM path has its own test
+coverage in the same file under :class:`TestLLMPath`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 
 import pytest
+
+os.environ.setdefault("SIEGE_DISABLE_LLM_RENAME_REWRITE", "1")
 
 from backend.graph import events as ev
 from backend.graph.fragments import FragmentKind, fragment_id
@@ -287,3 +295,96 @@ class TestRenameRewrite:
         c = db.get(Node, dep_consumer)
         assert c is not None
         assert "Payments" in c.content and "Billing" not in c.content
+
+
+class TestLLMPath:
+    """D3 — LLM-driven rewrite path, exercised by mocking the CLI.
+
+    These tests clear ``SIEGE_DISABLE_LLM_RENAME_REWRITE`` so the
+    handler hits :func:`_rewrite_text_llm`. The CLI manager's
+    ``generate_with_usage`` is stubbed so no subprocess runs.
+    """
+
+    def _enable_llm(self, monkeypatch):
+        monkeypatch.delenv("SIEGE_DISABLE_LLM_RENAME_REWRITE", raising=False)
+
+    def _stub_cli(self, monkeypatch, text: str):
+        from backend.cli.manager import GenerationResult
+
+        async def fake(**kwargs):
+            return GenerationResult(text=text, prompt_tokens=10, completion_tokens=5, model="stub")
+
+        monkeypatch.setattr(rr.cli_manager, "generate_with_usage", fake)
+
+    def test_llm_output_becomes_node_content(self, db, project, monkeypatch):
+        self._enable_llm(monkeypatch)
+        self._stub_cli(monkeypatch, "Payments handles invoices (LLM-rewritten).")
+
+        nid = _make_node(db, project.id, name="Billing", content="Billing handles invoices.")
+        _patch_session(monkeypatch, db)
+        asyncio.run(
+            rr._handle(
+                {
+                    "project_id": project.id,
+                    "node_id": nid,
+                    "old_name": "Billing",
+                    "new_name": "Payments",
+                }
+            )
+        )
+        node = db.get(Node, nid)
+        assert node is not None
+        assert node.content == "Payments handles invoices (LLM-rewritten)."
+
+    def test_falls_back_to_regex_when_cli_raises(self, db, project, monkeypatch):
+        self._enable_llm(monkeypatch)
+
+        async def fake(**kwargs):
+            raise RuntimeError("simulated CLI failure")
+
+        monkeypatch.setattr(rr.cli_manager, "generate_with_usage", fake)
+
+        nid = _make_node(db, project.id, name="Billing", content="Billing handles invoices.")
+        _patch_session(monkeypatch, db)
+        asyncio.run(
+            rr._handle(
+                {
+                    "project_id": project.id,
+                    "node_id": nid,
+                    "old_name": "Billing",
+                    "new_name": "Payments",
+                }
+            )
+        )
+        node = db.get(Node, nid)
+        # Fallback regex still produces a valid rewrite.
+        assert node is not None
+        assert node.content == "Payments handles invoices."
+
+    def test_falls_back_when_llm_output_is_degenerate(self, db, project, monkeypatch):
+        """LLM sometimes returns a short apology. Fallback catches it."""
+        self._enable_llm(monkeypatch)
+        # Output is shorter than input/3, triggers the fallback guard.
+        self._stub_cli(monkeypatch, "OK")
+
+        nid = _make_node(
+            db,
+            project.id,
+            name="Billing",
+            content="Billing handles invoices across the platform.",
+        )
+        _patch_session(monkeypatch, db)
+        asyncio.run(
+            rr._handle(
+                {
+                    "project_id": project.id,
+                    "node_id": nid,
+                    "old_name": "Billing",
+                    "new_name": "Payments",
+                }
+            )
+        )
+        node = db.get(Node, nid)
+        assert node is not None
+        # Regex fallback output.
+        assert node.content == "Payments handles invoices across the platform."
