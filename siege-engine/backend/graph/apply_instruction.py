@@ -97,6 +97,12 @@ def dispatch_instruction(
             _apply_add_policy_application(db, project_id, instruction)
         case instr.RemovePolicyApplication():
             _apply_remove_policy_application(db, project_id, instruction)
+        case instr.AddDecomposition():
+            _apply_add_edge(
+                db, project_id, instruction, edge_type="decomposition", check_cycle=False
+            )
+        case instr.RemoveDecomposition():
+            _apply_remove_edge(db, project_id, instruction, edge_type="decomposition")
         case _:
             raise InstructionApplyError(
                 f"No apply branch for instruction_type={instruction.instruction_type!r}"
@@ -236,7 +242,7 @@ def _apply_split(db: Session, project_id: str, ins: instr.Split) -> None:
 def _apply_add_edge(
     db: Session,
     project_id: str,
-    ins: instr.AddDependency | instr.AddDomainParent,
+    ins: instr.AddDependency | instr.AddDomainParent | instr.AddDecomposition,
     *,
     edge_type: str,
     check_cycle: bool,
@@ -275,7 +281,7 @@ def _apply_add_edge(
 def _apply_remove_edge(
     db: Session,
     project_id: str,
-    ins: instr.RemoveDependency | instr.RemoveDomainParent,
+    ins: instr.RemoveDependency | instr.RemoveDomainParent | instr.RemoveDecomposition,
     *,
     edge_type: str,
 ) -> None:

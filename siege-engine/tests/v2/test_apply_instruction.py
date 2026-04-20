@@ -298,6 +298,58 @@ class TestAddRemoveDomainParent:
         assert edge is not None
 
 
+class TestAddRemoveDecomposition:
+    def test_add_decomposition_emits_edge(self, db, project):
+        feat = _make_node(db, project.id, tier="feat", name="Billing")
+        resp = _make_node(db, project.id, tier="resp", name="persist")
+        apply_mod.dispatch_instruction(
+            db,
+            project.id,
+            instr.AddDecomposition(
+                source_id=feat,
+                source_name="Billing",
+                target_id=resp,
+                target_name="persist",
+            ),
+        )
+        edge = (
+            db.query(Edge)
+            .filter_by(source_id=feat, target_id=resp, edge_type="decomposition")
+            .one_or_none()
+        )
+        assert edge is not None
+
+    def test_remove_decomposition_emits_edge_deleted(self, db, project):
+        feat = _make_node(db, project.id, tier="feat", name="Billing")
+        resp = _make_node(db, project.id, tier="resp", name="persist")
+        apply_mod.dispatch_instruction(
+            db,
+            project.id,
+            instr.AddDecomposition(
+                source_id=feat,
+                source_name="Billing",
+                target_id=resp,
+                target_name="persist",
+            ),
+        )
+        apply_mod.dispatch_instruction(
+            db,
+            project.id,
+            instr.RemoveDecomposition(
+                source_id=feat,
+                source_name="Billing",
+                target_id=resp,
+                target_name="persist",
+            ),
+        )
+        edge = (
+            db.query(Edge)
+            .filter_by(source_id=feat, target_id=resp, edge_type="decomposition")
+            .one_or_none()
+        )
+        assert edge is None
+
+
 class TestPolicyApplication:
     def test_add_policy_application_emits_edge(self, db, project):
         policy = _make_node(db, project.id, tier="policy", name="Pol")

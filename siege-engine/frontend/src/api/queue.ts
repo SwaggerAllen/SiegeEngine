@@ -128,6 +128,16 @@ export const RemovePolicyApplicationInstrSchema = BasePolicyAppInstr.extend({
 });
 export type RemovePolicyApplicationInstr = z.infer<typeof RemovePolicyApplicationInstrSchema>;
 
+export const AddDecompositionInstrSchema = BaseEdgeInstr.extend({
+  instruction_type: z.literal('AddDecomposition'),
+});
+export type AddDecompositionInstr = z.infer<typeof AddDecompositionInstrSchema>;
+
+export const RemoveDecompositionInstrSchema = BaseEdgeInstr.extend({
+  instruction_type: z.literal('RemoveDecomposition'),
+});
+export type RemoveDecompositionInstr = z.infer<typeof RemoveDecompositionInstrSchema>;
+
 export const InstructionSchema = z.discriminatedUnion('instruction_type', [
   CreateInstrSchema,
   DeleteInstrSchema,
@@ -143,6 +153,8 @@ export const InstructionSchema = z.discriminatedUnion('instruction_type', [
   RemoveDomainParentInstrSchema,
   AddPolicyApplicationInstrSchema,
   RemovePolicyApplicationInstrSchema,
+  AddDecompositionInstrSchema,
+  RemoveDecompositionInstrSchema,
 ]);
 export type Instruction = z.infer<typeof InstructionSchema>;
 
@@ -268,6 +280,10 @@ export function renderInstruction(
       return `Apply policy "${s('policy_name')}" to "${s('component_name')}"`;
     case 'RemovePolicyApplication':
       return `Detach policy "${s('policy_name')}" from "${s('component_name')}"`;
+    case 'AddDecomposition':
+      return `Add decomposition: "${s('source_name')}" → "${s('target_name')}"`;
+    case 'RemoveDecomposition':
+      return `Remove decomposition: "${s('source_name')}" → "${s('target_name')}"`;
     default:
       return `${type} — ${JSON.stringify(payload)}`;
   }
@@ -316,6 +332,8 @@ export function affectedNodeIds(
     case 'RemoveDependency':
     case 'AddDomainParent':
     case 'RemoveDomainParent':
+    case 'AddDecomposition':
+    case 'RemoveDecomposition':
       add('source_id');
       add('target_id');
       break;

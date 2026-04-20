@@ -259,6 +259,53 @@ class RemovePolicyApplication(_InstructionBase):
         )
 
 
+class AddDecomposition(_InstructionBase):
+    """Add a ``decomposition`` edge between two nodes.
+
+    Used by the feature → responsibility and responsibility →
+    component structural edit UIs. The edge direction follows the
+    vocabulary in ``docs/architecture/v2-rearchitecture.md`` §Edge
+    type vocabulary:
+
+    * ``feat_* → resp_*`` — a feature implicates a top-level
+      responsibility (many-to-many).
+    * ``resp_* → comp_*`` — a top-level responsibility is assigned
+      to a component (1:1 per the arch doc; enforced in the UI
+      by swapping the existing edge out rather than the reducer).
+    * ``resp_* → resp_*`` — a top-level resp decomposes into a
+      subresp (normally emitted by subreqs mint; user-editable
+      via this instruction if the two tiers need manual stitching).
+    """
+
+    instruction_type: Literal["AddDecomposition"] = "AddDecomposition"
+    source_id: str
+    source_name: str
+    target_id: str
+    target_name: str
+
+    def render(self) -> str:
+        return (
+            f'- Add decomposition: "{self.source_name}" ({self.source_id}) '
+            f'→ "{self.target_name}" ({self.target_id})'
+        )
+
+
+class RemoveDecomposition(_InstructionBase):
+    """Remove a ``decomposition`` edge between two nodes."""
+
+    instruction_type: Literal["RemoveDecomposition"] = "RemoveDecomposition"
+    source_id: str
+    source_name: str
+    target_id: str
+    target_name: str
+
+    def render(self) -> str:
+        return (
+            f'- Remove decomposition: "{self.source_name}" ({self.source_id}) '
+            f'no longer decomposes to "{self.target_name}" ({self.target_id})'
+        )
+
+
 # ── Discriminated union + registry ───────────────────────────────────
 
 Instruction = Annotated[
@@ -277,6 +324,8 @@ Instruction = Annotated[
         RemoveDomainParent,
         AddPolicyApplication,
         RemovePolicyApplication,
+        AddDecomposition,
+        RemoveDecomposition,
     ],
     Field(discriminator="instruction_type"),
 ]
@@ -297,6 +346,8 @@ _INSTRUCTION_TYPES: dict[str, type[_InstructionBase]] = {
     "RemoveDomainParent": RemoveDomainParent,
     "AddPolicyApplication": AddPolicyApplication,
     "RemovePolicyApplication": RemovePolicyApplication,
+    "AddDecomposition": AddDecomposition,
+    "RemoveDecomposition": RemoveDecomposition,
 }
 
 
