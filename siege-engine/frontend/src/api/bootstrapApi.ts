@@ -43,6 +43,13 @@ const ResponseSchema = z.object({
   review_started_at: z.string().nullish().transform((v) => v ?? null),
   review_current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   review_max_attempts: z.number().int().nullish().transform((v) => v ?? null),
+  // Phase 9 — staleness flags. `is_stale` mirrors whether this
+  // tier has any active upstream staleness marker;
+  // `staleness_reasons` lists the distinct reason codes so the
+  // panel can surface "upstream X changed" context above the
+  // draft view.
+  is_stale: z.boolean().default(false),
+  staleness_reasons: z.array(z.string()).default([]),
 });
 
 const FeedbackResponseSchema = z.object({ job_id: z.string() });

@@ -72,7 +72,7 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
 
 ## Phase status (as of last session)
 
-**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review).
+**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger) + Phase 10 (layered DAG view).
 
 - **Phases 0-5.5** — v2 bootstrap chain end-to-end: project →
   expansion → features → requirements → sysarch → subreqs (per
@@ -113,11 +113,110 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
   Review failures carry their own transient-CLI retry counter
   and expose a manual "Retry review" button. See the
   "AI self-review" section below.
+- **Phase 9 (staleness ledger & fanout decision)** —
+  `staleness_ledger` projection table tracks which nodes are
+  stale w.r.t. which upstreams. Central fanout dispatcher in
+  `backend/graph/fanout.py` runs inside `append_event` after
+  each trigger, walks the edges table, and mutates the ledger
+  directly (derived state — not event-sourced, replay wipes
+  it). Non-destructive triggers auto-enqueue regens via
+  `regen_job_for_node`; destructive structural ops (delete /
+  merge / split / promote / demote / reparent) halt the cascade
+  so the user can review. Fuchsia stale dot in the sidebar tree
+  renders orthogonally to the existing amber/red/blue/green —
+  an approved-but-stale node shows green + fuchsia.
+  **Scope note**: the fanout dispatcher walks edges only. The
+  two bespoke hooks `on_impl_approved` (impl → owning domain
+  comp's fanin) and `_unblock_presentationals_on_fanin_commit`
+  (fanin → presentational comparchs gated on domain_parent)
+  traverse `parent_id` structural chains, not edges, so they
+  stay in place. Fanout is silent for those paths (no edges
+  exist in that direction), so docs come out identical — the
+  only consequence is those specific cascades don't populate
+  the ledger, so the fuchsia stale badge doesn't appear on the
+  fanin or presentational comparchs during the brief window
+  between the impl/fanin commit and the regen running; instead
+  they show pulsing-amber when the regen job picks up. Retiring
+  the hooks cleanly needs either synthetic edges at mint time
+  or parent-id walking in the dispatcher; deferred until a flow
+  beyond scaffolding actually needs that generality.
 
-**Next:** Phase 11 structural edit UIs (domain-parent editor,
-subresp → subcomp mapping editor). The pending-change queue has
-storage + instruction types but the HTTP plumbing isn't exposed
-yet — that lands with Phase 11.
+- **Phase 10 (layered DAG view)** — single navigable canvas for
+  the whole project graph. Features, top-level resps, top-level
+  policies, top-level comps with `dependency` topology arranged
+  by ELK's layered algorithm under cytoscape-elk. Double-click
+  a comp to drill into its internal subgraph (component-local
+  policies, subresps, subcomps, fan-in, revealed impls) plus an
+  external-context layer that traces back to the top-level
+  feats / resps / policies pointing at this comp. Single-click
+  selects a node and highlights its reachable-down (yellow) and
+  reachable-up (pink) subgraphs. Phase 9 staleness renders as a
+  fuchsia double-border overlay — same visual language as the
+  sidebar tree. Lives under `frontend/src/components/graph/`.
+  Replaces the old force-directed `DecompositionGraph.tsx`.
+  The DAG chunk is code-split (elkjs adds ~1.5MB), loaded lazily
+  when the user clicks the "Decomposition Graph" sidebar entry.
+  Sidebar synthetic id renamed from `:decomposition-graph` to
+  `:dag` — label stays "Decomposition Graph" for continuity.
+
+**Next:** Phase 11 (structural edit UIs). Phase 11's
+pending-change queue has storage + instruction types but the HTTP
+plumbing isn't exposed yet; that lands with Phase 11 itself.
+
+## V3 spec scope vs V2 implementation
+
+Three new seed docs describe Catapult at a higher abstraction level
+than v2 implements:
+
+- `seed-docs/catapult-spec-v3.md` — platform spec (event-sourced
+  reducer, reactive schema, flows as schema deltas, two primitives,
+  review/feedback, bundles, etc.)
+- `seed-docs/catapult-default-bundle-v3.md` — the default bundle
+  (tier/edge/fragment/structural-rules vocabulary)
+- `seed-docs/catapult-default-bundle-v3-examples.md` — YAML schema
+  examples, per-flow sketches, running Part 3 open-changes list
+
+**The v2 siege engine implements the v3 default bundle's scaffolding
+walk imperatively in Python.** Everything past that is v3-spec
+territory, not v2 implementation.
+
+V2 tiers/edges/structural rules already done that match v3's default
+bundle:
+- `feat` / `resp` / `comp` / `subcomp` / `impl` tiers
+- `policy` tier + `policy_application` edges resolved at comparch
+- `vocab`, `ref`, `fanin` tiers
+- AI self-review
+- All five fragment kinds (techspec, pubapi, privapi, policies, deps)
+- All five edge instances (dependency, domain_parent,
+  policy_application, decomposition, reference)
+- Foundation rule, depth cap, domain/presentational DAG, fan-in
+  synthesis
+
+V2 remaining gaps in the scaffolding walk:
+- `plan` tier — Phase 14
+- `code` tier — Phase 14
+- `manifest` bootstrap — Phase 14
+
+V2 supporting work adjacent to scaffolding:
+- Phases 9–13 (staleness, DAG view, structural edit UIs, batched
+  review, change summaries)
+- Phase 15 (Catapult smoke test)
+- Phase 16 (project export)
+
+Explicit v3-spec items **out of v2 scope**:
+- Four non-scaffolding flows (feature-request, refactor, bug-fix,
+  downward propagation, upward propagation)
+- Bundle configuration system (platform spec §A.11)
+- Phase-zero tier machinery
+- `invokes:` primitive selector and the `downward_cascade` /
+  `up_then_down` walk primitives
+- `implicates_visit` edge mechanism
+- `<assessment>` grammar for up-then-down flows
+- Everything in the Part 3 core-platform-changes list
+- Cross-project references (meta-design escape hatch)
+
+If a future session touches anything on the out-of-scope list,
+flag it and confirm the scope change is intended.
 
 ## Meaning-engine model
 

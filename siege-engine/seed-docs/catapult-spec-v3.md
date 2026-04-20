@@ -409,6 +409,35 @@ default bundle declares `techspec`, `pubapi`, `privapi`,
 `policies`, `deps` (see Part B §3). Adding a new fragment kind
 is a bundle edit, not a platform change.
 
+**Fragment as the unit of regeneration.** A regen's generator
+output is a **fragment-scoped delta**, not a full-document
+rewrite. When a flow's walk reaches a node, the generator
+emits new content only for the fragments its draft actually
+changes; untouched fragments stay at their prior approved
+values. Review UX inherits this shape (§A.4.7): the diff a
+reviewer sees is the generator's actual output, not a
+post-hoc comparison against a full-doc regen.
+
+This has three consequences the rest of the spec leans on:
+
+- **Cheap propagation.** Output tokens scale with the changed
+  fragments, not with the node's size. Prompt caching hits
+  the stable prefix (prior approved content + context).
+  Multi-flow sequential propagation — a refactor followed by
+  a feedback-propagation pass — stays affordable, which is
+  what lets §A.4.9 keep flow identity crisp without forcing
+  flows to bundle concerns together for efficiency.
+- **Crisp provenance.** Each fragment regen carries a single
+  driver record (flow, consumed feedback ids, upstream
+  staleness trigger) that the review surface attributes
+  without ambiguity. Fragments touched by distinct drivers
+  across successive runs preserve one driver per commit.
+- **Generator contract.** Custom generators (bundle-declared
+  or instance-approved; §A.11.6) must produce fragment-scoped
+  output. A generator that emits full-document rewrites
+  violates this invariant regardless of how the review layer
+  chooses to display it.
+
 ### A.3.4 Context walks
 
 A tier's `context:` is an ordered list of typed edge walks its
@@ -543,6 +572,126 @@ flow` DAG rather than the scaffold alone. The three rules
 above are unchanged; the enumerated pairs just include the
 flow's planning tiers, and context walks see the flow's
 added edges.
+
+## A.3a The platform `ref` tier
+
+The `ref` tier is one exception to A.3's "bundles declare
+tiers" rule: it ships with the platform itself, not with any
+bundle. Every project has refs regardless of bundle, and every
+bundle inherits the tier's shape without having to redeclare
+it. The placement is a little murky — it's the one platform-
+owned tier sitting alongside the bundle-owned catalogue —
+but refs are universal enough, and the motivation generic
+enough, that requiring every bundle to declare its own
+escape hatch would be worse.
+
+### A.3a.1 Why `ref` is platform-owned
+
+Bundles describe the intended decomposition of a project:
+tiers for the structured artifacts a domain produces, edges
+for the typed relationships among them. What bundles can't
+fully express is the long tail of supplemental content that
+accumulates around any real project — a DSL grammar a
+generator tier needs to reference, a deployment runbook
+nobody thought to tier out, a design-rationale memo pinning
+down a subtle invariant, a partial spec copy from an upstream
+project, cross-component glossary terms that don't fit the
+default bundle's `vocab` shape.
+
+Fitting this material into bundle-declared tiers either
+proliferates one-off tiers (one per shape of supplemental
+content) or stretches existing tiers past their intended
+semantics. A universal escape hatch solves both: a platform-
+owned tier whose contract is "free-form structured content,
+reviewable like any other artifact, referable from any other
+node via a standard edge type." Every bundle gets it for
+free; no bundle has to declare it, and no bundle can omit or
+redefine it.
+
+### A.3a.2 Tier shape
+
+`ref` uses the same field vocabulary A.3.1 establishes for
+bundle-declared tiers, fixed platform-wide:
+
+- **`scope`** — project-level. One ref pool per project;
+  instances have `parent_id = null`. Bundles do not nest
+  refs under their own tiers.
+- **`identity`** — `id`. Names are human affordances;
+  `reference`-edge targets resolve by ID.
+- **`handle`** — title, body, and outgoing `see-also`
+  reference edges. Downstream readers pull whichever
+  components they need via `context` expressions, same as
+  any other handle.
+- **`draft`** — root tag `<reference>` with `<title>`,
+  `<body>`, and optional repeated `<see-also target="..."/>`
+  elements. The grammar is deliberately minimal — the tier's
+  job is to hold content whose internal structure the
+  platform doesn't need to understand.
+- **`generator`** — `llm`, with the same draft → AI-review
+  → human-review → approve lifecycle (A.5.1) as any other
+  tier. Refs are first-class reviewable artifacts, not
+  free-text notes.
+
+Refs are targets of `reference`-type edges (A.3.2) from any
+other tier's draft that wants to pull ref content into its
+context walk. Refs themselves can `see-also` other refs,
+forming a reviewable cross-reference graph without committing
+the content to bundle schema.
+
+### A.3a.3 Authoring via private AI chat
+
+The user-facing path for creating and revising refs runs
+through the private AI chat surface (A.5.4), not through a
+dedicated editor tab. The motivation is that ref content is
+the material most likely to need the AI's full-project
+reasoning to compose well — a DSL summary that's consistent
+with the generator tiers referencing it, a runbook that
+reflects the component architecture as-approved, a rationale
+memo citing the specific decisions it explains — and the
+private chat already carries that context.
+
+The chat exposes a platform-provided tool that lets the AI:
+
+- **Mint** a new ref node with a draft title and body,
+  optionally with `see-also` edges to existing nodes by ID.
+- **Revise** an existing ref's draft pre-approval in
+  response to user feedback, reusing the normal feedback-
+  regen loop.
+- **Read** any node's handle so the AI can ground ref
+  content in the current project state before writing.
+
+**User-instigated only.** The AI does not mint refs as a
+side-effect of general conversation. A ref is minted when
+the user asks for one, or when the AI proposes one and the
+user accepts.
+
+**Landing state is unapproved.** Every minted ref enters the
+team-review surface at status `awaiting_review` (post AI
+self-review) — one person authored via chat, the rest of the
+team reviews via the standard lifecycle. Rejection marks the
+ref stale; downstream dependents inherit the staleness
+signal through the reactive scheduler (A.3.6) the same way
+any other rejection cascades.
+
+The tool itself is a platform capability. Bundles cannot
+disable it, override its behavior, or add parallel tool
+variants — doing so would violate the invariant that every
+project has an escape hatch regardless of bundle. A bundle
+*may* still declare its own tiers that happen to resemble
+refs (same draft grammar, same review lifecycle), but those
+would be bundle-specific tiers, not the platform `ref` tier.
+
+### A.3a.4 Bundle-shipped refs
+
+A.11.5 describes bundles shipping reference material. Those
+refs are **instances** of the platform tier, seeded at
+project creation, not redeclarations of the tier. Once
+seeded, bundle-shipped refs are indistinguishable from user-
+authored ones: same shape, same review pipeline, revisable
+through the same private-chat tool. The only operational
+distinction is that bundle-shipped refs arrive pre-populated
+at project creation, and their seed content is part of the
+bundle's version + review story rather than the project's.
 
 ## A.4 Flows
 
@@ -788,8 +937,10 @@ Consistent across flows and bundles:
   reasoning" toggle.
 - **Regen review is a diff.** Every regen presents as a
   diff against the prior approved content, never a
-  full-document re-read. Per-fragment diffing falls out of
-  the fragment model (A.3.3).
+  full-document re-read. The diff isn't cosmetic — per
+  A.3.3, the generator's output is already a fragment-scoped
+  delta, so what the reviewer sees is literally what the
+  generator emitted.
 
 Both invariants fall out of the draft grammar's shape —
 grammars with `<implicated-children>` render as
@@ -1537,15 +1688,15 @@ approval flow.
 A bundle may ship with supplemental reference content — its
 own DSL spec, an opinionated deployment runbook, a set of
 cross-component invariants, a design-rationale memo. That
-material lives in the bundle as ordinary reference-tier
-content (see Part B §8 for the default bundle's `ref_*`
-tier, which is the canonical pattern for this).
+material lives in the bundle as instances of the platform
+`ref` tier (§A.3a). Part B §8 covers how the default bundle
+wires ref content into its own context walks and UI.
 
 At project creation, bundle-shipped reference material seeds
-the project as nodes at the appropriate tier, with
-`reference` edges drawn from bundle-owned components and
-fragments to the seeded refs. Regeneration of those
-components sees the refs in context automatically.
+the project as `ref` nodes with `reference` edges drawn from
+bundle-owned components and fragments to the seeded refs.
+Regeneration of those components sees the refs in context
+automatically.
 
 Once seeded, the refs are regeneratable and editable through
 the normal node lifecycle — project owners can layer
@@ -2036,9 +2187,493 @@ docs.
 
 # Part C — Architecture
 
-v2 Part B carried over. Technologies, storage, HTTP, deployment,
-real-world tooling choices. No content moves into or out of this
-part in the v3 reorganization — it was already clearly scoped.
+The technology stack Catapult is built with. Part A sets the
+platform semantics; Part B names the default bundle; Part C
+fixes the concrete runtime choices so the implementation story
+doesn't drift across docs.
+
+At a glance — **Elixir / OTP** on the BEAM VM; **Commanded**
+for CQRS/event sourcing; **Oban** as the background job runner;
+**PostgreSQL** + **pgvector** as the single operational store
+and vector index; **libgraph** for in-memory DAG operations;
+**Solid** for Liquid prompt templating; **Phoenix / LiveView**
+for the web surface, with **cytoscape** plus the **cytoscape-elk**
+extension powering the DAG visualization; a bundled **gitea**
+sidecar for code delivery; **AI coding assistant adapters**
+(Claude Code, Cursor, etc.) for leaf-level code generation.
+Detail on each below.
+
+## C.1 Elixir / OTP
+
+The application is built in Elixir on the BEAM VM. OTP provides
+the concurrency primitives, supervision trees, and fault-tolerance
+model that underpin flow execution, real-time updates, process
+management, and the reactive scheduler (A.3.6). Supervision
+trees give crash-isolation by design: a failed flow run doesn't
+take down the review UI, a crashed LLM call doesn't take down
+the reducer, and reconciliation on startup rebuilds state from
+the event log regardless of how the system came down.
+
+The BEAM's soft-realtime scheduling is a good fit for a workload
+dominated by I/O-bound LLM calls and UI push notifications —
+many concurrent lightweight processes each handling one in-flight
+request without the thread-per-connection cost.
+
+## C.2 PostgreSQL
+
+Primary data store for all persistent state: the event log,
+projection tables (nodes, edges, fragments, drafts, change
+plans, policies, staleness ledger), users, credentials, bundle
+configuration, per-project overrides, auth audit log, review
+history, and token usage telemetry.
+
+No second data store for any of this — PostgreSQL is the single
+operational store. Vector embeddings live in the same database
+via pgvector (C.5), so there is no separate vector service to
+operate, monitor, or keep in sync with the primary store.
+
+**Migrations are forward-only.** Downgrade raises. Schema
+changes land with explicit migrations; the migration history is
+the audit trail for "when did this column / this edge type /
+this fragment kind enter the system." Multi-column constraints
+Postgres supports (partial unique indexes, check constraints
+with subqueries) are used where they encode real invariants.
+
+## C.3 Commanded (CQRS/ES) and the scheduler
+
+The core domain uses **Commanded** for command/query
+responsibility segregation and event sourcing. All state
+changes to the structured model are expressed as commands that
+produce events. Events are the source of truth; materialized
+read models are derived projections; rebuilding from zero
+must match incremental apply byte-for-byte.
+
+What Commanded gives us for free:
+
+- Complete audit trail of every action as the event log.
+- Time travel and revert by replaying events to a prior offset.
+- Resumability: a partially-completed flow picks up where it
+  left off when the process restarts.
+- Clean separation between "what happened" and "what the
+  current state looks like" — the two are never allowed to
+  drift, because the second is a deterministic function of the
+  first.
+
+Commanded's **aggregates** enforce per-project invariants:
+lobby's one-flow-per-project rule (A.9.1), status transitions
+(A.5.5), destructive-operation gating (A.8.2), and bundle-
+declared structural invariants (cardinality, depth caps, etc.).
+
+### C.3.1 State-driven scheduler module
+
+The scheduler is a first-class module, not an accidental
+consequence of Commanded's process managers. The platform spec
+describes it as a reactive runtime (A.3.6); Commanded gives it
+the event primitives it needs but not its shape.
+
+Commanded ships with **process managers** — stateful
+subscribers that react to events and emit commands. For many
+workflows this is the right shape; it is not what the scheduler
+wants. The scheduler reacts to *state*, not to events:
+"whenever the current projection satisfies condition X,
+enqueue job Y." Closer to a reactive materialized view than a
+stateful process manager.
+
+The scheduler module:
+
+- **Subscribes to reducer commits via `Phoenix.PubSub`.** The
+  reducer broadcasts a commit notification on a per-project
+  topic after every successful `append_event` transaction; the
+  scheduler subscribes to every project's topic. Every message
+  triggers the fast path: re-run the readiness queries against
+  the current projection for that project and enqueue any jobs
+  the queries identify as missing. Phoenix.PubSub is topic-
+  based, fire-and-forget, in-process in single-node deployments,
+  and automatically distributed across a BEAM cluster in
+  multi-node deployments.
+- **Runs a sweeper loop** on a configurable floor interval
+  (default 30–60 seconds) as the consistency guarantee. The
+  sweeper runs the same queries the fast path runs, catching
+  anything the fast path missed due to subscriber restart,
+  dropped signals, or transient races. The sweeper also picks
+  up missed work on process restart.
+- **Is stateless.** The scheduler holds no in-memory
+  coordination state; its inputs are the projection and the
+  current set of Oban jobs, and its output is a set of
+  `Oban.insert` calls. Multiple scheduler processes — on the
+  same node, on different nodes of a cluster — can run
+  concurrently without coordinating, because duplicate enqueues
+  are rejected at the Oban insert layer (C.4).
+- **Queries are data, not code.** The rules the scheduler
+  enforces are loaded from the bundle configuration (A.11), so
+  adding a new regen trigger is a bundle edit, not a scheduler
+  module change.
+- **Is the only path into the job queue.** No other handler
+  calls `Oban.insert` or equivalent. Mint handlers, regen
+  handlers, approval handlers, deferred feedback handlers, and
+  every other state-modifying path commits events and exits;
+  the scheduler reads the new state and decides what runs next.
+
+**Why not process managers.** Process managers are stateful by
+design and their coordination story is "one process per
+in-flight workflow," a different mental model from "one set of
+queries over current state." Splitting the scheduler across
+two idioms — process managers for the fast path, a polling
+loop for the sweeper — would put "what runs next" in two
+places with different debugging surfaces. `Phoenix.PubSub` +
+Oban's unique-job constraint lets the scheduler be a single
+module with two trigger paths into the same query rules.
+
+**Implications for the event stream.** Because handlers don't
+emit "next job" messages, the event stream is cleaner: every
+event is a real state change, not a workflow coordination
+signal. The event stream is the history of the project, not a
+bus for handler-to-handler messaging.
+
+## C.4 Oban
+
+**Oban** is the background job runner for every side-effectful
+operation that doesn't fit Commanded's event-driven model: LLM
+API calls, git operations against the code repository, CI
+polling, credential refresh, vector re-embedding, and anything
+else that needs retries, scheduling, and observability. Oban
+jobs are enqueued exclusively by the scheduler (C.3.1) and,
+on completion, emit events via Commanded commands back into
+the domain layer.
+
+Oban sits underneath the scheduler in the stack: the scheduler
+decides *what* to enqueue, Oban handles *how* to run it
+reliably — retries on transient failures, exponential backoff
+on rate limits, scheduled retries on rate-limit exhaustion,
+concurrency limits per queue.
+
+**Unique-job enforcement is load-bearing.** Every job the
+scheduler enqueues carries a uniqueness constraint (Oban's
+`unique` option) scoped to `(worker, args, queue, states)` —
+typically any job in `available`, `scheduled`, `executing`, or
+`retryable` states. Because the scheduler is stateless and
+runs concurrently across BEAM nodes (C.3.1), it relies on
+Oban's insert path to reject duplicate jobs via a Postgres
+unique index rather than on a scheduler-level lock. This
+keeps "two commit signals arriving simultaneously" from
+producing two copies of the same regen job, and it's the
+reason the scheduler can be safely restarted, sweeper-polled,
+and run on every node of a cluster without coordination.
+
+**Queue shape.** One Oban queue per LLM provider (so provider-
+specific rate limits can be respected independently), one for
+git operations, one for CI polling, one for general background
+tasks. Per-queue concurrency is configurable per project with
+conservative defaults.
+
+**Oban Pro is optional.** The core system depends only on Oban
+core (Apache 2.0, AGPL-compatible — see C.14). The unique-job
+constraint described above is available in Oban core. Oban
+Pro's more advanced features (batch processing, web dashboard,
+workflow orchestration primitives) are behind an optional
+module that is not required for core functionality; commercial
+licensees may use Oban Pro at their discretion.
+
+## C.5 pgvector
+
+Vector embeddings stored in PostgreSQL via **pgvector** for
+semantic retrieval during context assembly (A.3.4). Document
+chunks — fragments, implementation prose, responsibility
+descriptions, change summaries — are embedded and indexed so
+that deep nodes can retrieve relevant ancestor context by
+semantic similarity rather than consuming entire documents.
+The retrieval strategy varies by flow and tier.
+
+Embedding writes are triggered by fragment / node updates via
+the scheduler's query layer: "for every node or fragment whose
+content has changed since its last embedding, enqueue a
+re-embed job." Embedding is a background operation; it does
+not block the generation path.
+
+Vector search also powers parts of the private AI chat surface
+(A.5.4) when the AI needs to find relevant nodes for a
+question that isn't anchored to a specific artifact.
+
+## C.6 libgraph
+
+**libgraph** is the Elixir library Catapult uses for in-memory
+DAG operations: topological sort, cycle detection, reachability
+queries, and acyclicity enforcement on the edge types that
+carry `graph_constraint: acyclic` (A.3.2 `dependency`,
+`reference`, and any bundle-declared edge typed against them).
+
+Two load-bearing roles:
+
+- **Acyclicity enforcement at edge-create time.** Before any
+  instruction that emits a `dependency` or `reference` edge
+  commits, the reducer builds a candidate graph with the
+  proposed edge included and rejects the insert if libgraph
+  detects a cycle. Rejection surfaces back to the caller as an
+  instruction failure with the offending cycle named.
+- **Topological ordering for scheduler walks.** The walk
+  primitives (A.4.3 `downward_cascade` and `up_then_down`)
+  use libgraph topological sorts over the active merged DAG
+  to pick the next ready node under a flow. Ordering is
+  deterministic — libgraph returns a stable topological order
+  given stable input — so replayed runs visit nodes in the
+  same sequence.
+
+Graph construction is cheap because the inputs are the
+projection's edge table at read time; libgraph instances are
+scratch data structures the scheduler builds, queries, and
+discards per enqueue pass.
+
+## C.7 Solid (Liquid templating)
+
+Prompts are Liquid templates, rendered at generation time
+against the context assembled by the tier's `context:` walks
+(A.4.5). The Elixir implementation is **Solid** — a pure-
+Elixir Liquid renderer — so template rendering stays in the
+BEAM without a separate Ruby / Node runtime.
+
+Solid gives us:
+
+- Liquid's output-shaping grammar — `{{ variable }}`,
+  `{% if %}` / `{% for %}` / `{% capture %}` — which bundle
+  authors write directly. Bundle imports validate templates
+  against the Solid parser before the bundle is approvable.
+- Template rendering in the hot path of generation without
+  process-boundary crossings. Each render is a function call,
+  not a subprocess or an external service.
+- A deterministic expansion model: same template plus same
+  context produces the same rendered prompt. Important for
+  prompt caching, reproducibility of failed generations, and
+  replay equality.
+
+The LLM never sees Liquid syntax — it sees only the rendered
+prose. Escape hatches for tier- or flow-specific conditionals
+(A.4.5's `{% if tier.name == "impl" %}...{% endif %}`) compose
+with the rest of the grammar without needing a second
+templating layer.
+
+## C.8 Git backend for code shipping
+
+Every Catapult instance includes a **bundled gitea sidecar**
+that is the authoritative local git substrate (A.16.2). Gitea
+holds every project's code repository, every flow run's branch
+hierarchy, every approved leaf commit, and every imported
+bundle in the instance bundle library (A.11.4). External git
+hosts (GitHub, GitLab, other gitea instances) are reached only
+through the **forge adapter plugin layer** (A.16.3), which
+pushes approved branches and creates PRs on the external forge
+but does not touch local repository state. The git backend is
+**not** used to store or version design artifacts; the event
+log plus projections are the authoritative store for all
+model state.
+
+The local gitea substrate's role:
+
+- **Branch creation** for flow runs (run branch, per-component
+  branches, per-subcomponent branches — A.16.4). All branch
+  operations land in local gitea first.
+- **Commit composition** for leaf-level code changes. Each
+  impl leaf produces one commit per flow run, scoped to the
+  leaf's territory. Commits are authored directly via gitea's
+  HTTP API; no git CLI subprocess lives anywhere in the hot
+  path.
+- **PR lifecycle** on local branches — creation, review
+  comments, merge operations. Projects with no forge adapter
+  review and merge entirely against local gitea; projects with
+  an adapter mirror branches and PRs to the external forge via
+  `push_branch` / `create_pr`.
+- **Bundle storage** — the instance's bundle library is a
+  gitea namespace (`bundles/*`), each entry a mirror of the
+  bundle author's upstream. Bundle import, approval, version
+  pinning, and airgapped operation all reuse the same
+  substrate.
+- **Thread-safe concurrent access.** Gitea's API is
+  thread-safe by design, avoiding the git CLI's concurrency
+  problems and the immaturity of native Elixir git libraries.
+
+Bundled adapters for MVP: **gitea** (trivial, since the
+substrate is gitea) and **GitHub**. New adapters are ~200
+lines of Elixir against a fixed contract and do not reach into
+local repository state.
+
+For design-only projects, the code-shipping layer is inert —
+the local gitea still runs (bundle storage uses it), but no
+code repository is registered under the project's name and the
+code-generation tiers never fire.
+
+Avoiding a git mirror for documents is a major simplification:
+no "git commit at review boundary" concept, no run-branch
+hierarchy for docs, no two-store reconciliation problem, no
+"what happens if the git commit succeeds and the DB commit
+fails" failure mode for design state. The event log is the
+history; git is for code and bundle storage.
+
+## C.9 Phoenix / LiveView
+
+Web framework and real-time UI layer. **Phoenix Channels**
+provide WebSocket-based live updates for every client
+subscribed to a project. **LiveView** powers the artifact
+viewers, review interfaces, the flow lobby, change-plan review
+panels, and the private-chat UI (A.5.4). No separate frontend
+build — the UI is server-rendered with client-side
+interactivity via LiveView's DOM-patching protocol.
+
+LiveView's process-per-session model fits the real-time update
+story cleanly: each connected user has one process, that
+process subscribes to the project's reducer-commit stream, and
+DOM updates are pushed to the client as state changes. A user
+viewing a component's review page sees the review-queue
+counter tick down, the artifact's status transition, and other
+users' comments appear in-place, without an explicit refresh.
+
+## C.10 Cytoscape with the ELK extension (DAG visualization)
+
+The DAG view — the layered, navigable canvas showing every
+tier instance and edge in a project (see Part A's flow-lobby
+and review UIs for where it's surfaced) — is rendered with
+**cytoscape.js** plus the **cytoscape-elk** extension for
+Sugiyama-style layered layout. Cytoscape provides the rendering
+surface, element dispatch, and interaction model; cytoscape-elk
+drives node placement using the same ELK layout engine used in
+other design tools, giving the layered-by-dependency shape the
+DAG view needs without a custom layout algorithm in-house.
+
+Cytoscape runs as a JS component hosted inside LiveView via
+its JS-interop layer. LiveView handles server-authored state;
+the JS layer handles the graph interaction. Operations the
+user takes in the graph (double-click to drill into a
+component, single-click to highlight reachable sets, edge
+hover for edge metadata) produce either local view-state
+changes or instruction dispatches that flow back through the
+regen pipeline — the JS layer does not mutate domain state
+directly.
+
+Other visualizations that don't need graph layout (flat list
+views, detail panels, vocabulary drawers) are plain LiveView
+components without the cytoscape dependency.
+
+## C.11 AI coding assistant adapter
+
+Leaf-level code generation is delegated to AI coding assistants
+via an adapter interface (A.16.3). The adapter abstracts over
+the specific assistant — Claude Code, Cursor, Aider, or a
+future alternative — so the core pipeline stays decoupled from
+any one vendor. Adapters implement a common contract: given a
+plan node, a territory, and the current repository state,
+produce a code diff that realizes the plan.
+
+The adapter runs inside the AI sandbox (A.18): filesystem
+access scoped to the territory, no arbitrary network, no
+credential access, bounded resource limits, template isolation.
+The orchestrator injects LLM credentials into the assistant
+invocation at call time; the assistant never sees the
+credential store directly.
+
+**Multiple adapters can coexist** per project: a project could
+use Claude Code for complex refactor tasks and a cheaper
+adapter for well-defined plan executions. Per-tier
+configuration (A.11.3) controls which adapter runs for which
+node kind.
+
+## C.12 LLM integration
+
+- **BYO credentials** — customers supply their own API keys,
+  stored encrypted per user/project/instance (A.12).
+- **Multiple providers supported** behind a common interface.
+  The system ships with adapters for the major providers;
+  adding a new provider is an adapter module plus a
+  credential-scheme entry.
+- **Model and effort** are configurable at the project, tier,
+  and node-override levels (A.11.3).
+- **Token tracking** per call with model identifier recorded
+  alongside token counts (A.12.3). Synchronous with the
+  generating job handler. Missing telemetry is treated as a
+  generation failure for alerting purposes.
+- **Exponential backoff on rate-limit errors**: 3 attempts
+  with a 1-second base delay, doubling. Quota-exhaustion
+  errors do not retry; they escalate to the review UI with
+  the error context visible so the user can either provide
+  different credentials or wait.
+- **Adapter-level prompt injection defenses**: the adapter
+  rejects system-prompt manipulation attempts from within
+  user-supplied context (for example, text that tries to
+  override the template's output format instructions). This
+  is layered on top of template isolation in the sandbox
+  (A.18).
+
+## C.13 Observability
+
+System-level monitoring and observability for operating
+Catapult in production:
+
+- **Metrics** — Prometheus-compatible metrics: request
+  latency, LLM call success/failure rates, LLM call duration,
+  queue depths, active flow runs per project, git operation
+  latency, database connection pool utilization, vector
+  embedding query performance, scheduler query latency,
+  sweeper iteration latency.
+- **Structured logging** — all log output is structured (JSON)
+  with correlation IDs that trace a request through the full
+  pipeline: Commanded command → event → scheduler query →
+  Oban job → LLM call → git operation → reducer commit.
+  Single node execution can be traced across every system
+  component.
+- **Health checks** — liveness and readiness endpoints for
+  the Catapult service, the database, the git backend, and
+  the LLM provider health as reflected in recent success
+  rates. Suitable for orchestrator probes and uptime
+  monitoring.
+- **Scheduler introspection** — admin-visible view of the
+  scheduler's current query results: for each query rule,
+  what rows match right now, which of those already have
+  queued or running jobs, and which would be enqueued on the
+  next scheduler pass. The primary debugging surface for
+  "why isn't my flow running?" questions.
+- **Error panel** per project — aggregated errors from both
+  frontend and backend with timestamps, stack traces, and
+  source labels.
+
+## C.14 Licensing model
+
+Catapult uses a **dual-license model**:
+
+- **AGPL v3** for the public open-source release. Anyone can
+  use, modify, and deploy Catapult freely. Modifications to
+  the core must be published if the modified version is
+  offered as a network service. This closes the SaaS loophole
+  plain GPL leaves open — cloud providers cannot run a
+  modified Catapult as a managed service without contributing
+  back.
+- **Commercial license** available for organizations whose
+  legal or compliance requirements are incompatible with
+  AGPL. The commercial license permits proprietary
+  modifications, private deployment without source disclosure,
+  and use of proprietary optional dependencies.
+
+**Architectural implications for dual licensing:**
+
+- The core system (reducer, event sourcing, scheduler, review
+  workflow, LiveView UI, structured-model projections) is
+  AGPL and must not depend on any proprietary libraries.
+- **Oban**: the core depends only on Oban core (Apache 2.0,
+  AGPL-compatible). Oban Pro features are behind an optional
+  module not required for core functionality.
+- **Git backend sidecar**: Gitea is AGPL-compatible and
+  communicates over HTTP — a separate process, not a
+  derivative work.
+- **Plugin / extension boundary**: third-party tools
+  communicating with Catapult over HTTP/API are not
+  derivative works. Plugins loaded into the Elixir runtime
+  are derivative works under AGPL. This boundary must be
+  documented clearly for integrators.
+- **Contributor License Agreement (CLA)**: required for
+  contributions to the core repository, granting the project
+  the right to distribute contributions under both AGPL and
+  commercial licenses.
+
+Self-hosted AGPL deployments satisfy the entire feature set
+described in this document without any commercial components.
+The commercial license is an option for organizations that
+cannot use AGPL code, not a gate on functionality.
 
 ---
 

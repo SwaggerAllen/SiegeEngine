@@ -1,9 +1,17 @@
+import { lazy, Suspense } from 'react';
 import type { StructureNode } from '../../api/structure';
 import { ComparchPanel } from '../ComparchPanel';
 import { ComponentOverviewPanel } from '../ComponentOverviewPanel';
-import { DecompositionGraph } from '../DecompositionGraph';
 import { FanInPanel } from '../FanInPanel';
 import { FeatureExpansionPanel } from '../FeatureExpansionPanel';
+
+// Phase 10's DAG view pulls in elkjs (~1.5MB minified). Keep it
+// out of the initial bundle by code-splitting on the import — the
+// chunk only loads when the user selects the Decomposition Graph
+// entry in the sidebar.
+const FullDagView = lazy(() =>
+  import('../graph/FullDagView').then((m) => ({ default: m.FullDagView })),
+);
 import { ImplPanel } from '../ImplPanel';
 import { ReferencesList } from '../ReferencesList';
 import { RequirementsPanel } from '../RequirementsPanel';
@@ -11,7 +19,6 @@ import { SubcomparchPanel } from '../SubcomparchPanel';
 import { SubreqsPanel } from '../SubreqsPanel';
 import { SysarchPanel } from '../SysarchPanel';
 import { VocabularyList } from '../VocabularyList';
-import { useProjectStructure } from '../../hooks/queries/useProjectStructure';
 import { SYNTHETIC_IDS } from './buildNavTree';
 
 interface Props {
@@ -56,8 +63,18 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
       </div>
     );
   }
-  if (selectedId === SYNTHETIC_IDS.DECOMPOSITION_GRAPH) {
-    return <DecompositionGraphView projectId={projectId} />;
+  if (selectedId === SYNTHETIC_IDS.DAG) {
+    return (
+      <div className="h-full w-full">
+        <Suspense
+          fallback={
+            <div className="p-6 text-sm text-gray-400">Loading graph…</div>
+          }
+        >
+          <FullDagView projectId={projectId} />
+        </Suspense>
+      </div>
+    );
   }
 
   const node = nodes.find((n) => n.id === selectedId) ?? null;
@@ -183,24 +200,6 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
     default:
       return <UnknownTier tier={node.tier} />;
   }
-}
-
-function DecompositionGraphView({ projectId }: { projectId: string }) {
-  // Same snapshot that powers the sidebar — no extra fetch.
-  const { data, isLoading, error } = useProjectStructure(projectId);
-  if (isLoading) {
-    return <div className="p-6 text-sm text-gray-400">Loading graph…</div>;
-  }
-  if (error || !data) {
-    return (
-      <div className="p-6 text-sm text-red-400">Failed to load decomposition graph.</div>
-    );
-  }
-  return (
-    <div className="h-full w-full">
-      <DecompositionGraph graph={data} projectId={projectId} />
-    </div>
-  );
 }
 
 function EmptyState() {

@@ -75,6 +75,8 @@ function detail(overrides: Partial<ReferenceDetail> = {}): ReferenceDetail {
     review_started_at: null,
     review_current_attempt: null,
     review_max_attempts: null,
+    is_stale: false,
+    staleness_reasons: [],
     outgoing_edges: [],
     incoming_edges: [],
     ...overrides,

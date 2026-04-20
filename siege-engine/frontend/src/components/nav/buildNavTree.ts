@@ -25,7 +25,7 @@ export interface NavItem {
     | 'sysarch'
     | 'vocabulary'
     | 'references'
-    | 'decomposition-graph'
+    | 'dag'
     | 'components-root'
     | 'component-top'
     | 'component-sub'
@@ -40,6 +40,8 @@ export interface NavItem {
     generation_running: boolean;
     has_error: boolean;
     needs_user_action: boolean;
+    /** Phase 9 — this node has one or more active upstream staleness markers. */
+    is_stale: boolean;
     /** True if this item or any descendant has a pending draft. */
     descendant_has_pending_draft: boolean;
     /** True if any descendant has generation running (for the collapsed pulse). */
@@ -48,6 +50,8 @@ export interface NavItem {
     descendant_has_error: boolean;
     /** True if any descendant has a cancelled latest job (for the collapsed blue dot). */
     descendant_needs_user_action: boolean;
+    /** True if any descendant is stale (for the collapsed stale dot). */
+    descendant_is_stale: boolean;
   };
 }
 
@@ -59,7 +63,10 @@ export interface NavItem {
 export const SYNTHETIC_IDS = {
   VOCABULARY: ':vocabulary',
   REFERENCES: ':references',
-  DECOMPOSITION_GRAPH: ':decomposition-graph',
+  // Phase 10 replaces the old narrow decomposition-graph view with
+  // the full layered DAG. Kept the user-facing label "Decomposition
+  // Graph" for continuity; the synthetic id reads `:dag` internally.
+  DAG: ':dag',
   COMPONENTS_ROOT: ':components',
 } as const;
 
@@ -68,10 +75,12 @@ const EMPTY_STATUS = {
   generation_running: false,
   has_error: false,
   needs_user_action: false,
+  is_stale: false,
   descendant_has_pending_draft: false,
   descendant_generation_running: false,
   descendant_has_error: false,
   descendant_needs_user_action: false,
+  descendant_is_stale: false,
 };
 
 function singleNode(
@@ -87,10 +96,12 @@ function statusFor(n: StructureNode) {
     generation_running: n.generation_running,
     has_error: n.has_error,
     needs_user_action: n.needs_user_action,
+    is_stale: n.is_stale,
     descendant_has_pending_draft: n.has_pending_draft,
     descendant_generation_running: n.generation_running,
     descendant_has_error: n.has_error,
     descendant_needs_user_action: n.needs_user_action,
+    descendant_is_stale: n.is_stale,
   };
 }
 
@@ -99,11 +110,13 @@ function rollUpStatus(self: NavItem['status'], children: NavItem[]): NavItem['st
   let descRunning = self.generation_running;
   let descError = self.has_error;
   let descCancelled = self.needs_user_action;
+  let descStale = self.is_stale;
   for (const c of children) {
     if (c.status.descendant_has_pending_draft) descPending = true;
     if (c.status.descendant_generation_running) descRunning = true;
     if (c.status.descendant_has_error) descError = true;
     if (c.status.descendant_needs_user_action) descCancelled = true;
+    if (c.status.descendant_is_stale) descStale = true;
   }
   return {
     ...self,
@@ -111,6 +124,7 @@ function rollUpStatus(self: NavItem['status'], children: NavItem[]): NavItem['st
     descendant_generation_running: descRunning,
     descendant_has_error: descError,
     descendant_needs_user_action: descCancelled,
+    descendant_is_stale: descStale,
   };
 }
 
@@ -188,10 +202,10 @@ export function buildNavTree(nodes: StructureNode[]): NavItem[] {
     status: { ...EMPTY_STATUS },
   });
   items.push({
-    id: SYNTHETIC_IDS.DECOMPOSITION_GRAPH,
+    id: SYNTHETIC_IDS.DAG,
     label: 'Decomposition Graph',
     node: null,
-    role: 'decomposition-graph',
+    role: 'dag',
     children: [],
     status: { ...EMPTY_STATUS },
   });

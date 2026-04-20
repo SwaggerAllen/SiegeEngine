@@ -68,7 +68,7 @@ export function tabScope(
   if (
     selectedId === SYNTHETIC_IDS.VOCABULARY ||
     selectedId === SYNTHETIC_IDS.REFERENCES ||
-    selectedId === SYNTHETIC_IDS.DECOMPOSITION_GRAPH ||
+    selectedId === SYNTHETIC_IDS.DAG ||
     selectedId === SYNTHETIC_IDS.COMPONENTS_ROOT
   ) {
     return EMPTY_SCOPE;

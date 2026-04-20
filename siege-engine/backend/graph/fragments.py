@@ -66,6 +66,24 @@ def fragment_id(owner_id: str, kind: FragmentKind) -> str:
     return f"{owner_id}_{kind.value}"
 
 
+def fragment_changed(old_content: str, new_content: str) -> bool:
+    """Return True when a fragment's content changed materially.
+
+    Phase 9 MVP: whitespace-normalized string inequality. A
+    ``FragmentUpdated`` event whose payload matches the projection's
+    current content (modulo surrounding whitespace) is a no-op write
+    — the fanout dispatcher treats it as such and emits no
+    staleness markers for dependents.
+
+    Richer structured diffs (per-field or per-section) are a
+    post-MVP refinement. For the crude "regen all downstream" fanout
+    rule in Phase 9, any material content difference is enough to
+    invalidate every reader; the dispatcher doesn't need to know
+    exactly what changed.
+    """
+    return (old_content or "").strip() != (new_content or "").strip()
+
+
 def parse_fragment_id(fid: str) -> tuple[str, FragmentKind]:
     """Parse a fragment ID into its (owner_id, fragment_kind) parts.
 

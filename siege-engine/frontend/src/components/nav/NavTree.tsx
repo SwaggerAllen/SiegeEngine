@@ -124,6 +124,12 @@ function NavTreeRow({
     !showErrorSelf &&
     !showPendingSelf &&
     !showBlueSelf;
+  // Phase 9 — stale renders orthogonally to the other flags. An
+  // approved-but-stale node shows green + fuchsia; a stale draft
+  // shows amber + fuchsia. The distinction is "this node's own
+  // generation state" (running/pending/error/approved) vs. "an
+  // upstream changed since the last regen" (stale).
+  const showStaleSelf = item.status.is_stale;
   const showPendingDescendant =
     !isExpanded && item.status.descendant_has_pending_draft && !showPendingSelf;
   const showRunningDescendant =
@@ -132,6 +138,8 @@ function NavTreeRow({
     !isExpanded && item.status.descendant_has_error && !showErrorSelf;
   const showBlueDescendant =
     !isExpanded && item.status.descendant_needs_user_action && !showBlueSelf;
+  const showStaleDescendant =
+    !isExpanded && item.status.descendant_is_stale && !showStaleSelf;
 
   return (
     <li role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
@@ -195,10 +203,12 @@ function NavTreeRow({
           errored={showErrorSelf}
           needsUserAction={showBlueSelf}
           approved={showGreenSelf}
+          stale={showStaleSelf}
           descendantRunning={showRunningDescendant}
           descendantPending={showPendingDescendant}
           descendantErrored={showErrorDescendant}
           descendantNeedsUserAction={showBlueDescendant}
+          descendantStale={showStaleDescendant}
         />
       </div>
       {hasChildren && isExpanded && (
@@ -243,7 +253,7 @@ function RoleIcon({
       return <span className="shrink-0 w-4 text-center text-amber-300">A</span>;
     case 'references':
       return <span className="shrink-0 w-4 text-center text-amber-300">¶</span>;
-    case 'decomposition-graph':
+    case 'dag':
       return <span className="shrink-0 w-4 text-center text-cyan-300">◇</span>;
     case 'components-root':
       return <span className="shrink-0 w-4 text-center text-gray-500">⋯</span>;
@@ -267,20 +277,24 @@ function StatusBadges({
   errored,
   needsUserAction,
   approved,
+  stale,
   descendantRunning,
   descendantPending,
   descendantErrored,
   descendantNeedsUserAction,
+  descendantStale,
 }: {
   running: boolean;
   pending: boolean;
   errored: boolean;
   needsUserAction: boolean;
   approved: boolean;
+  stale: boolean;
   descendantRunning: boolean;
   descendantPending: boolean;
   descendantErrored: boolean;
   descendantNeedsUserAction: boolean;
+  descendantStale: boolean;
 }) {
   if (
     !running &&
@@ -288,10 +302,12 @@ function StatusBadges({
     !errored &&
     !needsUserAction &&
     !approved &&
+    !stale &&
     !descendantRunning &&
     !descendantPending &&
     !descendantErrored &&
-    !descendantNeedsUserAction
+    !descendantNeedsUserAction &&
+    !descendantStale
   )
     return null;
   return (
@@ -331,6 +347,13 @@ function StatusBadges({
           className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"
         />
       )}
+      {stale && (
+        <span
+          title="Stale — upstream changed"
+          aria-label="Stale — upstream changed"
+          className="inline-block w-1.5 h-1.5 rounded-full bg-fuchsia-400"
+        />
+      )}
       {descendantRunning && !running && (
         <span
           title="Descendant generating"
@@ -366,6 +389,13 @@ function StatusBadges({
             className="inline-block w-1 h-1 rounded-full bg-amber-400/50"
           />
         )}
+      {descendantStale && !stale && (
+        <span
+          title="Descendant stale — upstream changed"
+          aria-label="Descendant stale — upstream changed"
+          className="inline-block w-1 h-1 rounded-full bg-fuchsia-400/60"
+        />
+      )}
     </span>
   );
 }

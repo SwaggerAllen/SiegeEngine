@@ -22,6 +22,8 @@ function n(
     generation_running: false,
     has_error: false,
     needs_user_action: false,
+    is_stale: false,
+    staleness_reasons: [],
     techspec: '',
     pubapi: '',
     ...overrides,
@@ -39,7 +41,7 @@ describe('tabScope', () => {
 
   it('returns empty scope for synthetic ids', () => {
     expect(tabScope(SYNTHETIC_IDS.VOCABULARY, null, []).tabs).toEqual([]);
-    expect(tabScope(SYNTHETIC_IDS.DECOMPOSITION_GRAPH, null, []).tabs).toEqual([]);
+    expect(tabScope(SYNTHETIC_IDS.DAG, null, []).tabs).toEqual([]);
   });
 
   it('gives system tabs when a system-tier node is selected', () => {

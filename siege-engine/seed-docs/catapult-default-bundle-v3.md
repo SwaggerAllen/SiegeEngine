@@ -48,10 +48,14 @@ most documentation references.
 
 ### Bundle summary at a glance
 
-**Node tiers (12):** `feat`, `resp`, `comp`, `subcomp`,
-`impl`, `plan`, `policy`, `fanin`, `ref`, `vocab`,
-`changeplan`, plus the five bootstrap tiers `expansion`,
-`reqs`, `sysarch`, `subreqs`, `manifest`.
+**Node tiers (11 bundle-declared + 1 platform-owned):**
+`feat`, `resp`, `comp`, `subcomp`, `impl`, `plan`, `policy`,
+`fanin`, `vocab`, `changeplan`, plus the five bootstrap tiers
+`expansion`, `reqs`, `sysarch`, `subreqs`, `manifest`. The
+platform-owned `ref` tier (platform §A.3a) is available in
+every project regardless of bundle; the default bundle uses
+refs for supplemental content (DSL specs, runbooks, design
+memos) via `reference` edges from its own tiers.
 
 **Edge instances (5):** `dependency`, `domain_parent`,
 `policy_application`, `decomposition`, `reference`.
@@ -247,18 +251,24 @@ for presentational counterparts to read. Full treatment in
 - **Draft:** yes; grammar declares the synthesis shape.
 - **Generator:** `synthesis` (platform-shipped; A.3.2).
 
-### 1.9 `ref` — project reference documents
+### 1.9 `ref` — platform-owned, used by this bundle
 
-First-class supplemental content — DSL specs, deployment
-runbooks, cross-component invariants, design-rationale
-memos. Full treatment in §8.
+`ref` is not a bundle-declared tier. The platform ships it as
+a universal escape hatch (platform §A.3a); every project has
+refs regardless of which bundle it loads. Tier shape (scope,
+identity, `<reference>` draft grammar, draft → review →
+approve lifecycle) is fixed platform-wide and documented in
+§A.3a.2; the user-facing authoring path runs through the
+private AI chat tool described in §A.3a.3.
 
-- **Scope:** `parent_id = null`; project-scoped.
-- **Identity:** `id`.
-- **Handle:** title, body, outgoing `see-also` references.
-- **Draft:** yes; grammar is a `<reference>` root with
-  `<title>`, `<body>`, optional `<see-also>`.
-- **Generator:** `llm`, regen-on-feedback.
+The default bundle uses refs for supplemental content that
+doesn't fit its own tiers: DSL specs a generator tier needs
+to reference, deployment runbooks, cross-component
+invariants, design-rationale memos. §8 covers how this
+bundle's tiers wire refs into their regen context — which
+edges pull ref bodies, how the bundle renders stored
+`<reference>` XML as prompt prose, and how seeded bundle-
+shipped refs (platform §A.11.5) arrive at project creation.
 
 ### 1.10 `vocab` — project vocabulary terms
 
@@ -1218,92 +1228,47 @@ gives vocabulary its own first-class home.
 All straightforward follow-ups; none are load-bearing for
 the initial vocabulary layer.
 
-## 8. Project references
+## 8. How this bundle uses refs
 
-Some Catapult projects ship first-class supplemental content
-alongside the code their components generate: a DSL spec for
-a bundle's custom grammar, an opinionated deployment runbook,
-a set of cross-component invariants that multiple components
-have to honor, a design-rationale memo the architecture has
-to stay consistent with. None of that content fits the tiers
-we already have. Components have public surfaces,
-responsibilities, and children — specs don't. Vocabulary
-entries are term definitions with a specific grammar — specs
-are prose, not terms. Fragments are subordinate to an owning
-arch doc and cascade on merge or split — a spec shouldn't
-get deleted when the component it describes is refactored.
+Refs are a platform-owned tier (platform §A.3a) — not a
+bundle declaration. The tier's shape, lifecycle, and
+authoring path are fixed platform-wide: project-scoped
+nodes with the `<reference>` draft grammar, the standard
+draft → review → approve lifecycle, and the private-chat
+authoring tool described in §A.3a.3. This chapter covers
+the parts that are this bundle's responsibility: which
+edges pull ref content into regen context, how stored
+`<reference>` XML renders as prompt prose, and how
+bundle-shipped reference material arrives at project
+creation.
 
-A dedicated tier for **reference documents** lets that
-content exist as first-class nodes with their own
-lifecycles, their own place in the audit trail, and their
-own participation in the regen-context graph.
+The motivation for refs maps directly onto this bundle's
+tier catalogue: a DSL spec for a custom grammar, an
+opinionated deployment runbook, cross-component invariants
+that span the decomposition, a design-rationale memo the
+architecture has to stay consistent with — none of that
+fits `comp`, `policy`, or `vocab` cleanly. Components have
+public surfaces and children; specs don't. Vocabulary
+entries are tight term grammars; specs are prose. The
+platform ref tier exists to catch exactly this content.
 
-### 8.1 Refs as their own node tier
-
-Reference documents are modeled as `ref_*` nodes. They are
-**entities, not content** — they have titles, bodies,
-incoming and outgoing edges, edit/review lifecycles, and
-stable IDs. Modeling them as a node tier rather than as a
-fragment on another node is what gives them all of that:
-fragments are sections of a larger document reviewed as
-part of their owner, they cascade on merge, and they can't
-participate in edges. Refs can, and need to.
-
-### 8.2 No parent, ever
-
-The reducer enforces a hard invariant: `ref_*` nodes always
-have `parent_id = null`. `NodeCreated` and `NodeReparented`
-events whose target tier is `ref` and whose parent is
-non-null are rejected at event-apply time.
-
-This is a deliberate contrast with vocab (§7), which allows
-`parent_id = feat_*` for feature-local scope. Refs don't
-have a feature-local case, because their consumers can
-cross any tier boundary — a DSL spec might be read by the
-bundle-config component, by its subcomponents, by a
-presentational component that documents the bundle format,
-and by a policy that enforces DSL conformance. Rather than
-invent a scope that could accommodate all those cases,
-refs use explicit edges to declare their consumers.
-
-### 8.3 Generated and regeneratable, not frozen
-
-Refs run through the same four-state draft panel as
-component arch docs: generating → draft → review →
-approved. A `generate_ref` job (the `ref` tier's LLM
-generator) produces a draft from a user-supplied seed
-description plus the referenced-content partition (§8.5),
-the user leaves feedback or approves, and approved content
-lands on the node.
-
-**Unlike the bootstrap tiers** (expansion, reqs, sysarch,
-subreqs, manifest), refs are **not frozen after approval**.
-The `UpdateReference(ref_id, feedback)` instruction works
-on any ref in any state and triggers a fresh regen. The
-freeze rule on bootstrap nodes exists because their
-approval mints children that a later edit would desync;
-refs don't mint children, so the reason to freeze doesn't
-apply. This matches how comparch and subcomparch docs
-already work — approved content can be regenerated with
-feedback at any time.
-
-### 8.4 Consumption via `reference` edges
+### 8.1 Consumption via `reference` edges
 
 Refs participate in the regen-context graph through
-`reference` edges — the same general-purpose
-advisory-context edge type any node can use (§2.5). A
-comp that wants to see a ref's content during regen draws
-a `reference` edge from itself to the ref. A ref that
-needs upstream context for its own regen — a comp's
-pubapi, a policy's rationale, another ref — draws a
-`reference` edge from itself to that target.
+`reference` edges (§2.5), the same general-purpose
+advisory-context edge any node can use. A `comp` that wants
+to see a ref's content during regen draws a `reference`
+edge from itself to the ref. A ref that needs upstream
+context for its own regen — a comp's pubapi, a policy's
+rationale, another ref — draws a `reference` edge from
+itself to that target.
 
 The context assembler walks these edges in both directions
 (outgoing edges pull target content, incoming edges
 contribute reverse context), so a single edge between a
 comp and a ref gives both sides context from the other. No
 special bidirectional semantics — just edges. The
-`reference` edge graph must be acyclic, same constraint as
+`reference` edge graph is acyclic, same constraint as
 `dependency` edges — a proposed edge that would close a
 cycle is rejected at create time.
 
@@ -1311,13 +1276,14 @@ No reachability walk, no project-wide "always visible"
 bucket. Explicit is better than implicit: if a comp needs
 the DSL spec, it declares an edge to it.
 
-### 8.5 Edges are user-declared
+### 8.2 Edges are user-declared
 
-`CreateReference(seed_description, related_nodes)` takes
-one optional list of node IDs. The backend emits one
-`reference` edge per entry in the same transaction as the
-ref node is minted. Post-creation,
-`AddReference(source_id, target_id)` and
+The platform-level `CreateReference(seed_description,
+related_nodes)` instruction (the one the private-chat tool
+invokes on the user's behalf, §A.3a.3) takes an optional
+list of node IDs. The backend emits one `reference` edge
+per entry in the same transaction as the ref node is minted.
+Post-creation, `AddReference(source_id, target_id)` and
 `RemoveReference(source_id, target_id)` edit the edge set.
 Creating a ref from a comp's detail page pre-fills
 `related_nodes` with the current comp.
@@ -1325,47 +1291,36 @@ Creating a ref from a comp's detail page pre-fills
 Bundle-shipped reference material (platform §A.11.5) seeds
 refs plus their inbound `reference` edges at project
 creation. Once seeded, the refs are regeneratable and
-editable through the normal ref lifecycle — project owners
+editable through the normal ref lifecycle; project owners
 can layer per-project feedback on top of bundle-shipped
 content without forking the bundle.
 
-### 8.6 Content shape is parseable XML
+### 8.3 Render-time transformation for prompts
 
-Each ref's `Node.content` holds a `<reference>` block with
-two required children and one optional child:
+Storage is XML; prompts are prose. The platform's ref draft
+grammar is intentionally minimal — `<reference>` with
+`<title>`, `<body>`, and optional `<see-also
+target="..."/>` — and this bundle renders that content as
+`# Title\n\nBody text...` markdown at context-assembly
+time. The LLM sees readable content without paying prompt
+tokens for raw tags. Decoupling storage from prompt format
+means a future grammar extension is a formatter change
+rather than a stored-content rewrite.
 
-- `<title>` — short prose rendered as a heading.
-- `<body>` — free-form markdown prose. Not a tight
-  grammar, not bullet-structured; just readable text that
-  the LLM both authors and reads.
-- `<see-also>` (optional) — `<ref to="ref_..."/>` children
-  that cross-reference other refs by stable ID.
+`<see-also>` markers inside stored XML are human-readable
+annotations, separate from structural `reference` edges; a
+ref author can use either or both. The context assembler
+doesn't follow `<see-also>` — it walks edges.
 
-The grammar is parseable, validated at authoring time, and
-fits the same family as component and subcomponent arch
-docs. `<see-also>` markers inside stored XML are
-human-readable annotations, separate from structural
-`reference` edges; a ref author can use either or both.
-
-### 8.7 Render-time transformation for prompts
-
-Storage is XML; prompts are prose. At context-assembly
-time, a formatter walks the stored `<reference>` XML and
-renders it as `# Title\n\nBody text...` markdown. The LLM
-sees readable content without paying prompt tokens for raw
-tags. Decoupling storage from prompt format means
-extending the grammar later is a formatter change rather
-than a stored-content rewrite.
-
-### 8.8 Context assembly
+### 8.4 Context assembly
 
 Every regen at every tier sees the `referenced_content`
 partition: the rendered content of every node the regen
 target has an outgoing `reference` edge to. The context
 assembler walks that edge set and dispatches on each
 target's tier to extract the right chunk — `ref_*` → full
-body, `comp_*` → `pubapi` fragment, `policy_*` →
-rationale, etc.
+body, `comp_*` → `pubapi` fragment, `policy_*` → rationale,
+etc.
 
 The partition has its own context-budget allocation
 separate from vocabulary, sibling pubapis, or policy
@@ -1374,46 +1329,34 @@ candidates — references are content the user has
 intent should not have to compete with derived context
 for budget.
 
-### 8.9 Staleness propagation
+### 8.5 Staleness propagation
 
-When the staleness ledger lands, it follows `reference`
-edges the same way it follows comp→comp `dependency`
-edges: editing a node marks every node that references it
-as potentially stale. Until the ledger lands, ref edits
-are silently non-propagating, the same state of affairs as
-comp→comp dep changes today.
+The staleness ledger (platform §A.3.6 scheduler + bundle
+comp/policy behavior) follows `reference` edges the same
+way it follows comp→comp `dependency` edges: editing a ref
+marks every node that references it stale; editing a node
+that a ref reads marks the ref stale. The bundle doesn't
+special-case ref edges — they're ordinary edges in the
+ledger's fanout.
 
-### 8.10 Instruction vocabulary
-
-- `CreateReference(seed_description, related_nodes)` —
-  creates a ref and its initial edges.
-- `UpdateReference(ref_id, feedback)` — triggers a regen
-  regardless of approved state.
-- `AddReference(source_id, target_id)` — adds an edge.
-- `RemoveReference(source_id, target_id)` — removes one.
-- `NodeDeleted` (reused) — handles ref deletion.
-
-There is no `NodeReparented` for refs — the parent-is-null
-invariant (§8.2) makes it nonsensical.
-
-### 8.11 UI surfaces
+### 8.6 UI surfaces
 
 Dedicated "References" tab on the project dashboard,
 two-pane layout parallel to Vocabulary. Component,
-feature, and policy detail pages grow a "Create reference"
+feature, and policy detail pages carry a "Create reference"
 affordance that pre-fills `related_nodes` with the current
-node. Refs are not shown in the decomposition graph or
-component tree — they're supplemental content, not
+node and opens the private-chat surface (§A.3a.3) to
+compose the body. Refs do not appear in the decomposition
+graph or component tree — they're supplemental content, not
 architectural structure.
 
-### 8.12 Out of scope for MVP
+### 8.7 Out of scope for MVP
 
-- LLM-driven `reference` edge declaration.
 - Project-level "always visible" reference bucket.
-- Staleness propagation across `reference` edges
-  (deferred to broader staleness work).
 - Cross-reference linking in rendered prose.
-- LLM-discovered references.
+- LLM-discovered references (the AI proposing refs the
+  user hasn't asked for, beyond the chat-authoring flow
+  A.3a.3 already covers).
 - `<see-also>`-to-edge synchronization.
 
 All straightforward follow-ups.
@@ -1564,7 +1507,7 @@ stitched from multiple named partitions:
 - **Synthesis views** — fan-in aggregates for
   presentational tiers reading via `domain_parent` edges.
 - **Referenced content** — outgoing `reference` edge
-  targets, rendered as prose (§8.8).
+  targets, rendered as prose (§8.4).
 - **Vocabulary** — project-level vocab always; feature-
   local vocab for features reachable from this tier
   (§7.7).

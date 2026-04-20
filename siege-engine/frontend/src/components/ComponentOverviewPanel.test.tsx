@@ -17,6 +17,8 @@ function comp(overrides: Partial<StructureNode> = {}): StructureNode {
     generation_running: false,
     has_error: false,
     needs_user_action: false,
+    is_stale: false,
+    staleness_reasons: [],
     techspec: '',
     pubapi: '',
     ...overrides,

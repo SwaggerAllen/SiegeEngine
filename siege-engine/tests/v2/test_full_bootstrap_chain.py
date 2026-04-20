@@ -1184,11 +1184,14 @@ class TestFullBootstrapChain:
 
             # And every subcomparch prompt for a sub OF the
             # presentational comp must carry the grandparent block.
-            # The presentational comp decomposed into 2 subcomps at
-            # comparch time, so we expect exactly 2 subcomparch
-            # prompts carrying the grandparent section — one per
-            # presentational subcomponent. Subcomparch prompts for
-            # domain subs must NOT carry the section.
+            # At least one prompt per presentational subcomponent —
+            # with Phase 9 fanout, sibling-dependency cascades can
+            # trigger additional regens after first-pass approvals,
+            # so the count is a lower bound, not an exact. The
+            # per-prompt content invariant (every prompt has the
+            # section and cites the domain parent) is what actually
+            # matters. Subcomparch prompts for domain subs must NOT
+            # carry the section.
             subcomparch_prompts = stub_cli["prompts"]["subcomparch"]
             presentational_subcomps = [
                 sub for sub in subcomps if sub.parent_id == presentational_comp.id
@@ -1201,8 +1204,8 @@ class TestFullBootstrapChain:
             prompts_with_grandparent = [
                 p for p in subcomparch_prompts if "# Grandparent domain context" in p
             ]
-            assert len(prompts_with_grandparent) == len(presentational_subcomps), (
-                f"expected {len(presentational_subcomps)} subcomparch "
+            assert len(prompts_with_grandparent) >= len(presentational_subcomps), (
+                f"expected at least {len(presentational_subcomps)} subcomparch "
                 f"prompts with the grandparent section, got "
                 f"{len(prompts_with_grandparent)}"
             )
