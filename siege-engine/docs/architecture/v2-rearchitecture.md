@@ -68,6 +68,29 @@ The input doc is decomposed into a machine-readable breakdown of **features**, n
 - This asymmetry is load-bearing: it's what makes per-component review tractable, because all the diffs touching a component can be grouped naturally.
 - The full feature-to-subcomponent traversal goes through four hops: `feat_* ─decomp→ resp_* ─assigned→ comp_* (1:1 domain, optional presentational mirror) ─decomp→ resp_* ─assigned→ comp_* (1:1)`. The two decomposition hops are many-to-many; the two assignment hops are many-to-one (with the optional presentational mirror at the top level). A feature implicates every leaf in its reachable subgraph, and a component's full set of implicating features is computable by a reverse walk.
 
+### Implicit responsibilities
+
+Not every top-level responsibility traces back to a feature. System-facing architectural concerns — a central metric registry, a shared error-code taxonomy, a pubsub event-name registry, a shared config schema — exist because the system needs consistent cross-component machinery, not because any user asked for them. The `reqs_*` pass marks these with an `<implicit/>` child in place of `<covers>`:
+
+```xml
+<responsibility>
+  <name>Central Metric Registry</name>
+  <intent>Own the single authoritative vocabulary of metric names, types, and labels the whole system emits...</intent>
+  <implicit/>
+</responsibility>
+```
+
+The `<implicit/>` and `<covers>` markers are mutually exclusive: an implicit responsibility has no features to cover, and an explicit responsibility must list at least one. The feature-coverage invariant still holds — every feature must be covered by at least one *explicit* responsibility — so implicit resps can't be used to smuggle a feature past the rotation.
+
+At mint time, implicit resps land as `resp_*` nodes with `is_implicit=True` and no `decomposition` edges (there's no upstream feature to decompose from). Sysarch treats them exactly like explicit resps: they're still top-level responsibilities that get assigned 1:1 to a component. In practice they gravitate toward the foundation component because that's where cross-cutting machinery belongs, but the rule is left to sysarch's judgement rather than encoded in the mint.
+
+**Implicit responsibility vs. policy.** The two look adjacent but answer different questions:
+
+- An **implicit responsibility** declares that the system owns a piece of architectural machinery ("the system maintains a central metric registry"). It's responsibility-shaped: something the system must do. It gets assigned to a component that owns the registry.
+- A **policy** declares a cross-cutting obligation applied outward ("every component must register its metrics in this shape"). It's obligation-shaped: a rule that applies across components, enforced at policy-application time.
+
+Most architectural registries want both — an implicit resp that names and owns the registry, plus a policy that compels every component to use it. Confusing the two (putting the obligation in an implicit resp, or declaring the owner via a policy) erodes the separation between ownership and cross-cutting rule, which shows up downstream as sysarch not knowing which component owns the thing or policy application not knowing what to apply.
+
 ### Subrequirements decomposition
 
 The feature → responsibility decomposition happens twice, at two tiers:

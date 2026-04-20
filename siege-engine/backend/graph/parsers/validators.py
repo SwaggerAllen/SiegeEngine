@@ -293,10 +293,19 @@ class Responsibility:
     name: str
     intent: str
     covers: tuple[str, ...]
+    # True when the responsibility was marked ``<implicit/>`` in the
+    # reqs output. Implicit resps have no ``<covers>`` block — they
+    # aren't sourced from any feature. They exist to capture
+    # system-facing concerns (central registries, metric vocabulary,
+    # error-code taxonomy, etc.) that every project needs but that
+    # no user-facing feature names directly. Sysarch treats them
+    # like any other top-level resp, typically placing them in the
+    # foundation component.
+    is_implicit: bool = False
 
 
 _REQUIREMENTS_ALLOWED_CHILDREN = {"responsibility"}
-_RESPONSIBILITY_ALLOWED_CHILDREN = {"name", "intent", "covers"}
+_RESPONSIBILITY_ALLOWED_CHILDREN = {"name", "intent", "covers", "implicit"}
 _COVERS_ALLOWED_CHILDREN = {"feat"}
 
 
@@ -372,14 +381,22 @@ def validate_requirements(tree: TagNode, *, known_feature_ids: set[str]) -> list
 def _validate_responsibility(
     node: TagNode, index: int, *, known_feature_ids: set[str]
 ) -> Responsibility:
-    """Validate a single ``<responsibility>`` entry."""
+    """Validate a single ``<responsibility>`` entry.
+
+    Explicit responsibilities carry a ``<covers>`` block listing at
+    least one ``<feat id="..."/>`` child. Implicit responsibilities
+    (marked with ``<implicit/>``) MUST NOT carry ``<covers>`` —
+    they're system-facing concerns not sourced from any feature.
+    The two markers are mutually exclusive on a single responsibility.
+    """
     pos = f"<responsibility> at position {index}"
 
     for child in node.children:
         if child.tag not in _RESPONSIBILITY_ALLOWED_CHILDREN:
             raise ValidationError(
                 f"{pos} contains an unexpected child <{child.tag}>. "
-                "Only <name>, <intent>, and <covers> are allowed inside a <responsibility>."
+                "Only <name>, <intent>, <covers>, and an optional "
+                "<implicit/> marker are allowed inside a <responsibility>."
             )
 
     name_children = node.find_all("name")
@@ -403,18 +420,36 @@ def _validate_responsibility(
             f"{pos} has {len(intent_children)} <intent> children; exactly one is required."
         )
 
+    implicit_children = node.find_all("implicit")
+    if len(implicit_children) > 1:
+        raise ValidationError(
+            f"{pos} has {len(implicit_children)} <implicit/> markers; at most one is allowed."
+        )
+    is_implicit = len(implicit_children) == 1
+
     covers_children = node.find_all("covers")
-    if len(covers_children) == 0:
-        raise ValidationError(
-            f"{pos} is missing a <covers> child. Every responsibility "
-            "must have exactly one <covers> block listing at least one "
-            '<feat id="feat_..."/> child identifying the feature IDs '
-            "it serves."
-        )
-    if len(covers_children) > 1:
-        raise ValidationError(
-            f"{pos} has {len(covers_children)} <covers> children; exactly one is required."
-        )
+    if is_implicit:
+        if len(covers_children) > 0:
+            raise ValidationError(
+                f"{pos} is marked <implicit/> but also carries a <covers> block. "
+                "Implicit responsibilities are system-facing concerns not sourced "
+                "from any feature; drop the <covers> block or drop the <implicit/> "
+                "marker."
+            )
+    else:
+        if len(covers_children) == 0:
+            raise ValidationError(
+                f"{pos} is missing a <covers> child. Every explicit "
+                "responsibility must have exactly one <covers> block listing at "
+                'least one <feat id="feat_..."/> child identifying the feature '
+                "IDs it serves. If this responsibility is a system-facing "
+                "concern not sourced from any feature, mark it <implicit/> "
+                "instead."
+            )
+        if len(covers_children) > 1:
+            raise ValidationError(
+                f"{pos} has {len(covers_children)} <covers> children; exactly one is required."
+            )
 
     name_text = name_children[0].text
     if not name_text:
@@ -430,9 +465,16 @@ def _validate_responsibility(
             "must be a short paragraph describing the role and scope."
         )
 
-    covers = _validate_covers(covers_children[0], pos, known_feature_ids=known_feature_ids)
+    covers: tuple[str, ...] = ()
+    if not is_implicit:
+        covers = _validate_covers(covers_children[0], pos, known_feature_ids=known_feature_ids)
 
-    return Responsibility(name=name_text, intent=intent_text, covers=covers)
+    return Responsibility(
+        name=name_text,
+        intent=intent_text,
+        covers=covers,
+        is_implicit=is_implicit,
+    )
 
 
 def _validate_covers(

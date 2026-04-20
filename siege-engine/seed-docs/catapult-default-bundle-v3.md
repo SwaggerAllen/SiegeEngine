@@ -120,10 +120,33 @@ between the tiers preserves the ID.
 - **Scope:** minted as children of either `reqs`
   (top-level) or `subreqs` (per-component subresp).
 - **Identity:** `id`.
-- **Handle:** `name`, prose summary, incoming decomposition
-  edges (from the parent or from `feat` for top-level).
+- **Handle:** `name`, prose summary, `is_implicit` flag,
+  incoming decomposition edges (from the parent or from
+  `feat` for top-level).
 - **Draft:** none — join target.
 - **Generator:** none.
+
+**Implicit top-level responsibilities.** Not every
+top-level resp traces back to a feature. System-facing
+architectural concerns — a central metric registry, a
+shared error-code taxonomy, a pubsub event-name registry,
+a shared config schema — exist because the system needs
+consistent cross-component machinery, not because any user
+asked for them. The reqs pass marks these with an
+`<implicit/>` child in place of `<covers>`; the mint
+handler stores the flag on the node and skips the
+feature-decomposition edges (there's no upstream feature
+to decompose from). Sysarch treats implicit resps the
+same as explicit ones — they get assigned 1:1 to a
+component, typically the foundation component (§4.1)
+because that's where cross-cutting machinery naturally
+lives. The feature-coverage invariant still holds: every
+`feat_*` must be covered by at least one *explicit*
+responsibility. Implicit applies to top-level resps only;
+subresps are always sourced from top-level resps and can't
+be implicit. See §5.1 for the implicit-resp vs. policy
+distinction — an implicit resp names the owner of a
+registry; a policy compels every component to use it.
 
 ### 1.3 `comp` — components
 
@@ -860,6 +883,31 @@ each entry into a `policy_*` node, the same way the
 `<dependencies>` fragment projects into dependency edges.
 The fragment is the authoring surface; the node is the
 identity that `policy_application` edges reference.
+
+**Policy vs. implicit responsibility.** Policies and
+implicit responsibilities (§1.2) look adjacent but answer
+different questions:
+
+- An **implicit responsibility** declares that the system
+  owns a piece of architectural machinery ("the system
+  maintains a central metric registry"). It's
+  responsibility-shaped: something the system must do.
+  Sysarch assigns it 1:1 to a component, typically the
+  foundation.
+- A **policy** declares a cross-cutting obligation applied
+  outward ("every component must register its metrics in
+  this shape"). It's obligation-shaped: a rule applied
+  across components at policy-application time via a
+  `policy_application` edge.
+
+Most architectural registries want both: an implicit resp
+for the registry's existence and owner, plus a policy
+that compels every component to register through it.
+Confusing the two — putting the obligation inside an
+implicit resp, or declaring the registry's owner via a
+policy — erodes the separation between ownership and
+cross-cutting rule, and downstream passes lose a clear
+anchor for either.
 
 ### 5.2 Two generation tiers
 

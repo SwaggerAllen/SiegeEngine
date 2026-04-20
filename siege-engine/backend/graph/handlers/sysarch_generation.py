@@ -124,7 +124,15 @@ async def generate_sysarch(payload: dict) -> None:
             .all()
         )
         reqs_summary = format_reqs_summary(
-            [{"id": r.id, "name": r.name, "content": r.content} for r in resp_rows]
+            [
+                {
+                    "id": r.id,
+                    "name": r.name,
+                    "content": r.content,
+                    "is_implicit": r.is_implicit,
+                }
+                for r in resp_rows
+            ]
         )
         known_top_level_resp_ids: set[str] = {r.id for r in resp_rows}
 

@@ -59,7 +59,15 @@ def gather_sysarch_context(db: Session, project_id: str, node_id: str) -> Sysarc
         .all()
     )
     reqs_summary = format_reqs_summary(
-        [{"id": r.id, "name": r.name, "content": r.content} for r in resp_rows]
+        [
+            {
+                "id": r.id,
+                "name": r.name,
+                "content": r.content,
+                "is_implicit": r.is_implicit,
+            }
+            for r in resp_rows
+        ]
     )
     vocab_summary = render_vocab_summary_all(db, project_id)
     referenced_content_summary = render_referenced_content_summary(db, project_id, sysarch_node.id)

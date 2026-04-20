@@ -379,3 +379,68 @@ class TestSysarchBootstrapFanOut:
             assert len(sysarch_nodes) == 1  # not 2
         finally:
             s.close()
+
+
+class TestImplicitResponsibilities:
+    """Implicit resps mint as top-level resp nodes with
+    ``is_implicit=True`` and emit no decomposition edges."""
+
+    def test_implicit_resp_mints_node_with_flag_and_no_edges(self, shared_session_factory):
+        factory = shared_session_factory
+        s = factory()
+        try:
+            project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA"])
+            # Mix one explicit (covers FeatA) + one implicit resp.
+            content = (
+                "<requirements>"
+                "<responsibility>"
+                "<name>Auth</name><intent>Identify callers.</intent>"
+                f'<covers><feat id="{feat_ids[0]}"/></covers>'
+                "</responsibility>"
+                "<responsibility>"
+                "<name>Central Metric Registry</name>"
+                "<intent>Own the vocabulary of metric names.</intent>"
+                "<implicit/>"
+                "</responsibility>"
+                "</requirements>"
+            )
+            _set_reqs_content(s, project_id, content)
+        finally:
+            s.close()
+
+        asyncio.run(mint_requirements({"project_id": project_id}))
+
+        s = factory()
+        try:
+            resps = list(
+                s.execute(
+                    select(Node)
+                    .where(
+                        Node.project_id == project_id,
+                        Node.tier == "resp",
+                        Node.parent_id.is_(None),
+                    )
+                    .order_by(Node.display_order)
+                ).scalars()
+            )
+            assert len(resps) == 2
+            assert resps[0].name == "Auth"
+            assert resps[0].is_implicit is False
+            assert resps[1].name == "Central Metric Registry"
+            assert resps[1].is_implicit is True
+
+            # The implicit resp contributes zero decomposition edges;
+            # only the explicit resp's single cover edge lands.
+            edges = list(
+                s.execute(
+                    select(Edge).where(
+                        Edge.project_id == project_id,
+                        Edge.edge_type == "decomposition",
+                    )
+                ).scalars()
+            )
+            assert len(edges) == 1
+            assert edges[0].source_id == feat_ids[0]
+            assert edges[0].target_id == resps[0].id
+        finally:
+            s.close()

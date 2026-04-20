@@ -67,8 +67,10 @@ children listing the feature IDs each responsibility serves.
 
 Output a single ``<requirements>`` block. Nothing else. Inside \
 it, each responsibility has exactly one ``<name>``, exactly one \
-``<intent>``, and exactly one ``<covers>`` block containing one \
-or more ``<feat>`` children with an ``id`` attribute:
+``<intent>``, and **either** exactly one ``<covers>`` block \
+listing the feature IDs it serves **or** an ``<implicit/>`` \
+marker (see the implicit-responsibilities section below). \
+The two are mutually exclusive on a single responsibility:
 
     <requirements>
       <responsibility>
@@ -117,13 +119,27 @@ runtime state.</intent>
           <feat id="feat_invoice"/>
         </covers>
       </responsibility>
+      <responsibility>
+        <name>Central Metric Registry</name>
+        <intent>Own the single authoritative vocabulary of \
+metric names, types, and labels the whole system emits. \
+Components register their metrics through this registry at \
+boot; the registry enforces name uniqueness, stable labeling, \
+and the rule that no component emits an unregistered metric. \
+Failure surface: registry inconsistency produces silently \
+incompatible telemetry across components. This is a \
+system-facing architectural concern, not a user-facing \
+feature — mark it <implicit/>.</intent>
+        <implicit/>
+      </responsibility>
     </requirements>
 
 # Rules
 
 * Use the tag structure exactly as shown. Each ``<responsibility>`` \
-has exactly one ``<name>``, exactly one ``<intent>``, and exactly \
-one ``<covers>`` block. No other tags inside a responsibility.
+has exactly one ``<name>``, exactly one ``<intent>``, and either \
+exactly one ``<covers>`` block or exactly one ``<implicit/>`` \
+marker (see below). No other tags inside a responsibility.
 * ``<name>`` is a short identifier — typically 2 to 5 words, title \
 case. Name the system-level guarantee, not the engineering \
 category. "Credential Verification and Session Establishment" \
@@ -148,14 +164,14 @@ establish a session, and make the identity available to \
 downstream logic — covers sign-in, sign-out, token refresh, \
 and session invalidation, but not the specific credential \
 mechanism."
-* ``<covers>`` is **required** and must contain **at least one** \
-``<feat>`` child per responsibility. Each ``<feat>`` carries an \
-``id`` attribute matching exactly the feature ID shown in the \
-input list (the ``feat_*`` prefix plus the 8-character Crockford \
-suffix). Do not invent IDs, do not rewrite them, do not rename \
-them. A responsibility that covers no features is not a valid \
-top-level responsibility — either merge it into one that does \
-or drop it.
+* ``<covers>`` is **required for explicit responsibilities** and \
+must contain **at least one** ``<feat>`` child. Each ``<feat>`` \
+carries an ``id`` attribute matching exactly the feature ID \
+shown in the input list (the ``feat_*`` prefix plus the \
+8-character Crockford suffix). Do not invent IDs, do not \
+rewrite them, do not rename them. If a responsibility traces \
+to no features, it must be an **implicit** responsibility — \
+use the ``<implicit/>`` marker instead of ``<covers>``.
 * A feature may appear under multiple ``<covers>`` blocks — the \
 relationship is many-to-many. A cross-cutting responsibility \
 like "Telemetry" will typically cover most features; a scoped \
@@ -172,12 +188,41 @@ sub-decomposition happens in a later pass per component.
 * **Cross-cutting concerns are responsibilities too.** Logging, \
 telemetry, health checks, background job scheduling, rate \
 limiting, secrets handling — if the project needs them, name \
-them. They won't always appear in the feature list directly, but \
-they're real work the system has to do and the sysarch pass will \
-want them named up front so cross-cutting policies can target \
-them later. Cross-cutting responsibilities still need a \
-``<covers>`` block — list the features whose generation or \
-execution you'd expect to trigger the cross-cutting concern.
+them. They won't always appear in the feature list directly, \
+but they're real work the system has to do and the sysarch pass \
+will want them named up front so cross-cutting policies can \
+target them later. Ask which kind of cross-cutting each one is: \
+if the concern is triggered by feature execution (logging fires \
+during feature runs, rate-limiting guards feature endpoints), \
+it's an **explicit** responsibility whose ``<covers>`` lists the \
+features whose execution triggers it. If the concern is \
+architectural scaffolding that the system needs regardless of \
+which features exist (a central metric registry, an error-code \
+vocabulary, a pubsub event-name bus, a config-schema registry), \
+it's an **implicit** responsibility — see the next rule.
+* **Implicit responsibilities.** Use the ``<implicit/>`` marker \
+in place of ``<covers>`` for responsibilities that capture a \
+system-facing concern not sourced from any feature. The canonical \
+cases are architectural registries and vocabularies that every \
+component hooks into: a central metric registry, a shared \
+error-code taxonomy, a pubsub event-name registry, a shared \
+config schema, a logging-context registry. These exist because \
+the system needs consistent cross-component machinery, not \
+because any user asked for them — no feature "covers" them, and \
+forcing a ``<covers>`` block turns the resp into a lie about its \
+origin. Implicit resps are still real responsibilities: sysarch \
+will assign each one to a component (typically the foundation \
+component) exactly like explicit ones. **Distinction from \
+policies:** an implicit responsibility declares that the system \
+owns a piece of architectural machinery ("own the metric \
+registry"); a policy declares a cross-cutting obligation \
+applied outward ("every component must register its metrics in \
+this shape"). You often want both — an implicit resp for the \
+registry's existence + a policy enforcing its use — and the \
+policy pass handles the latter. Keep implicit resps scoped to \
+genuine architectural scaffolding; do not use ``<implicit/>`` as \
+an escape hatch for a responsibility that could reasonably be \
+tied back to features.
 * **Break feature boundaries — that is the point of this tier.** \
 A feature like "Accept card payments" touches payment \
 processing, account state management, audit logging, and \

@@ -149,6 +149,7 @@ async def mint_requirements(payload: dict) -> None:
                     name=resp.name,
                     display_order=index,
                     content=resp.intent,
+                    is_implicit=resp.is_implicit,
                 ),
             )
             minted_resp_ids.append(resp_id)
@@ -156,7 +157,9 @@ async def mint_requirements(payload: dict) -> None:
             # Emit one decomposition edge per covered feature.
             # Direction is upstream → downstream: feature is
             # the source, responsibility is the target, matching
-            # the "feat decomposes INTO resp" reading.
+            # the "feat decomposes INTO resp" reading. Implicit
+            # responsibilities have no covers (they aren't sourced
+            # from any feature) and get zero edges here.
             for feat_id in resp.covers:
                 edge_id = mint(db, Kind.EDGE)
                 append_event(

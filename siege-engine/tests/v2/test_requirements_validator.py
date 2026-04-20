@@ -308,3 +308,102 @@ class TestValidateCovers:
         )
         resps = validate_requirements(tree, known_feature_ids={"feat_abc12345", "feat_def67890"})
         assert len(resps) == 2
+
+
+class TestImplicitResponsibilities:
+    """Implicit responsibilities use <implicit/> in place of <covers>.
+
+    They capture system-facing architectural concerns (central
+    registries, error-code vocab, pubsub event-name bus) that no
+    feature sources but the system still needs. The validator
+    distinguishes them via the <implicit/> marker and accepts an
+    empty covers tuple only for implicit resps.
+    """
+
+    def test_accepts_implicit_marker_in_place_of_covers(self):
+        tree = _parse(
+            "<requirements>"
+            "<responsibility>"
+            "<name>Auth</name><intent>Identify callers.</intent>"
+            + _covers("feat_abc12345", "feat_def67890", "feat_xyz00001")
+            + "</responsibility>"
+            "<responsibility>"
+            "<name>Central Metric Registry</name>"
+            "<intent>Own the vocabulary of metric names.</intent>"
+            "<implicit/>"
+            "</responsibility>"
+            "</requirements>"
+        )
+        resps = validate_requirements(tree, known_feature_ids=KNOWN)
+        assert len(resps) == 2
+        assert resps[0].is_implicit is False
+        assert resps[0].covers  # has covers
+        assert resps[1].is_implicit is True
+        assert resps[1].covers == ()
+
+    def test_rejects_implicit_alongside_covers(self):
+        tree = _parse(
+            "<requirements>"
+            "<responsibility>"
+            "<name>Mixed</name><intent>Intent.</intent>"
+            "<implicit/>"
+            + _covers("feat_abc12345", "feat_def67890", "feat_xyz00001")
+            + "</responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="implicit.*also carries a <covers>"):
+            validate_requirements(tree, known_feature_ids=KNOWN)
+
+    def test_rejects_multiple_implicit_markers(self):
+        tree = _parse(
+            "<requirements>"
+            "<responsibility>"
+            "<name>Registry</name><intent>Own registry.</intent>"
+            "<implicit/>"
+            "<implicit/>"
+            "</responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="2 <implicit/> markers"):
+            validate_requirements(tree, known_feature_ids=set())
+
+    def test_implicit_resps_dont_contribute_to_coverage(self):
+        # Feature coverage still requires an explicit resp to cover
+        # every feature; an implicit resp alone can't satisfy the
+        # coverage rule.
+        tree = _parse(
+            "<requirements>"
+            "<responsibility>"
+            "<name>Registry</name><intent>Own registry.</intent>"
+            "<implicit/>"
+            "</responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="does not cover every feature"):
+            validate_requirements(tree, known_feature_ids={"feat_abc12345"})
+
+    def test_explicit_resp_still_requires_covers(self):
+        # Absent both <implicit/> and <covers>, the resp is invalid.
+        tree = _parse(
+            "<requirements>"
+            "<responsibility><name>Orphan</name><intent>No source.</intent></responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="missing a <covers> child"):
+            validate_requirements(tree, known_feature_ids=set())
+
+    def test_implicit_only_allowed_when_no_features_exist(self):
+        # A project with no features can legitimately consist of
+        # only implicit resps — the coverage rule is trivially
+        # satisfied because there are no features to cover.
+        tree = _parse(
+            "<requirements>"
+            "<responsibility>"
+            "<name>Registry</name><intent>Own registry.</intent>"
+            "<implicit/>"
+            "</responsibility>"
+            "</requirements>"
+        )
+        resps = validate_requirements(tree, known_feature_ids=set())
+        assert len(resps) == 1
+        assert resps[0].is_implicit is True

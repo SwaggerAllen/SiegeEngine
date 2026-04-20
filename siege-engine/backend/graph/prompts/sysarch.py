@@ -654,10 +654,14 @@ def format_reqs_summary(resps: list[dict]) -> str:
     """Render top-level ``resp_*`` nodes as prompt-ready markdown.
 
     Each entry must carry ``id``, ``name``, ``content`` (the intent
-    paragraph). The rendered list has IDs rendered prominently so
-    the LLM echoes them verbatim into ``<responsibilities>`` and
-    ``<required>`` blocks. Ordered by the input list — the caller
-    is expected to pass resps in display order.
+    paragraph), and ``is_implicit`` (flag indicating the resp was
+    marked ``<implicit/>`` at reqs time — a system-facing concern
+    not sourced from any feature, typically destined for the
+    foundation component). The rendered list has IDs rendered
+    prominently so the LLM echoes them verbatim into
+    ``<responsibilities>`` and ``<required>`` blocks. Ordered by
+    the input list — the caller is expected to pass resps in
+    display order.
     """
     if not resps:
         return "(no responsibilities minted yet)"
@@ -666,5 +670,6 @@ def format_reqs_summary(resps: list[dict]) -> str:
         rid = resp.get("id", "").strip() or "(unknown-id)"
         name = resp.get("name", "").strip() or "(unnamed)"
         intent = (resp.get("content") or "").strip()
-        lines.append(f"- `{rid}` **{name}**: {intent}")
+        implicit_marker = " _(implicit)_" if resp.get("is_implicit") else ""
+        lines.append(f"- `{rid}` **{name}**{implicit_marker}: {intent}")
     return "\n".join(lines)
