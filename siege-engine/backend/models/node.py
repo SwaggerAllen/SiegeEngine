@@ -109,6 +109,13 @@ class Node(Base):
     # rather than finding it in the user's input doc. Defaults
     # false and is ignored by non-feature tiers.
     is_implicit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Phase-11 followup B7. Whether a feat_* node is deferred —
+    # design-toward but skip in the current pipeline. Deferred
+    # features stay visible in the expansion and DAG; downstream
+    # generation tiers (reqs, sysarch) filter them out via
+    # ``list_features(include_deferred=False)``. Defaults false
+    # and is ignored by non-feature tiers.
+    is_deferred: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Whether a comp_* node was minted with the foundation role.
     # Set at mint time by sysarch_mint / comparch_mint from the
     # ``<foundation/>`` marker in the parsed arch doc. Defaults

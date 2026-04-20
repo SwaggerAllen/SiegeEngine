@@ -68,6 +68,7 @@ function node(id: string, name: string, parent_id: string | null = null) {
     staleness_reasons: [],
     techspec: '',
     pubapi: '',
+    is_deferred: false,
   };
 }
 

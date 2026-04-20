@@ -24,7 +24,12 @@ const mockedStructure = structureApi.getProjectStructure as unknown as ReturnTyp
 >;
 const mockedEnqueue = queueApi.enqueueInstruction as unknown as ReturnType<typeof vi.fn>;
 
-function node(id: string, name: string, tier: 'feat' | 'resp') {
+function node(
+  id: string,
+  name: string,
+  tier: 'feat' | 'resp',
+  opts: { is_deferred?: boolean } = {},
+) {
   return {
     id,
     name,
@@ -42,6 +47,7 @@ function node(id: string, name: string, tier: 'feat' | 'resp') {
     staleness_reasons: [],
     techspec: '',
     pubapi: '',
+    is_deferred: opts.is_deferred ?? false,
   };
 }
 
@@ -130,6 +136,56 @@ describe('FeatRespEditorPanel', () => {
       source_name: 'Billing',
       target_id: 'resp_1',
       target_name: 'persist_invoice',
+    });
+  });
+
+  it('enqueues SetFeatureDeferred when the Defer button is clicked', async () => {
+    mockedStructure.mockResolvedValue(structure());
+    mockedEnqueue.mockResolvedValue({ sequence: 3 });
+    render(
+      <TestQueryWrapper>
+        <FeatRespEditorPanel projectId="p1" />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Feature deferral/i)).toBeInTheDocument(),
+    );
+    // feat_A is "Billing" (not deferred). Clicking "Queue defer" flips it.
+    const deferButtons = screen.getAllByRole('button', { name: /Queue defer/ });
+    await userEvent.click(deferButtons[0]);
+    expect(mockedEnqueue).toHaveBeenCalledWith('p1', {
+      instruction_type: 'SetFeatureDeferred',
+      node_id: 'feat_A',
+      name: 'Billing',
+      is_deferred: true,
+    });
+  });
+
+  it('renders a deferred feature dimmed with an un-defer affordance', async () => {
+    mockedStructure.mockResolvedValue({
+      offset: 1,
+      nodes: [
+        node('feat_A', 'Billing', 'feat', { is_deferred: true }),
+        node('resp_1', 'persist_invoice', 'resp'),
+      ],
+      edges: [],
+    });
+    mockedEnqueue.mockResolvedValue({ sequence: 4 });
+    render(
+      <TestQueryWrapper>
+        <FeatRespEditorPanel projectId="p1" />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Billing \(deferred\)/)).toBeInTheDocument(),
+    );
+    const undeferBtn = screen.getByRole('button', { name: /Queue un-defer/ });
+    await userEvent.click(undeferBtn);
+    expect(mockedEnqueue).toHaveBeenCalledWith('p1', {
+      instruction_type: 'SetFeatureDeferred',
+      node_id: 'feat_A',
+      name: 'Billing',
+      is_deferred: false,
     });
   });
 });

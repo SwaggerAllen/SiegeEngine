@@ -47,6 +47,7 @@ function node(
     staleness_reasons: [],
     techspec: '',
     pubapi: '',
+    is_deferred: false,
   };
 }
 

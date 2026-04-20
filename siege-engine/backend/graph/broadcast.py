@@ -113,6 +113,7 @@ def _node_ids_for_event(event_type: str, payload: dict[str, Any]) -> tuple[str, 
             "NodeCreated"
             | "NodeRenamed"
             | "NodeReparented"
+            | "NodeDeferredUpdated"
             | "NodePromoted"
             | "NodeDemoted"
             | "NodeDeleted"

@@ -103,6 +103,8 @@ def dispatch_instruction(
             )
         case instr.RemoveDecomposition():
             _apply_remove_edge(db, project_id, instruction, edge_type="decomposition")
+        case instr.SetFeatureDeferred():
+            _apply_set_feature_deferred(db, project_id, instruction)
         case _:
             raise InstructionApplyError(
                 f"No apply branch for instruction_type={instruction.instruction_type!r}"
@@ -325,3 +327,20 @@ def _apply_remove_policy_application(
     if edge is None:
         return
     append_event(db, project_id, ev.EdgeDeleted(edge_id=edge.id))
+
+
+def _apply_set_feature_deferred(
+    db: Session, project_id: str, ins: instr.SetFeatureDeferred
+) -> None:
+    """Flip ``is_deferred`` on a feat_* node via ``NodeDeferredUpdated``."""
+    node = _require_node(db, project_id, ins.node_id)
+    if node.tier != "feat":
+        raise InstructionApplyError(
+            f"SetFeatureDeferred target {ins.node_id!r} is tier={node.tier!r}, "
+            "expected feat. Only feature nodes support the deferred flag."
+        )
+    append_event(
+        db,
+        project_id,
+        ev.NodeDeferredUpdated(node_id=ins.node_id, is_deferred=ins.is_deferred),
+    )

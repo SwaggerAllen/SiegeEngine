@@ -62,20 +62,30 @@ def list_nodes(session: Session, project_id: str) -> list[Node]:
     )
 
 
-def list_features(session: Session, project_id: str) -> list[Node]:
+def list_features(
+    session: Session,
+    project_id: str,
+    *,
+    include_deferred: bool = True,
+) -> list[Node]:
     """Return the project's ``feat_*`` nodes in document order.
 
     Document order is the order the features appeared in the
     approved ``<features>`` block at mint time, captured in
     ``Node.display_order`` (assigned by the feature-mint handler
     — see ``backend.graph.handlers.feature_mint``).
+
+    Phase-11 followup B7: callers that feed the generation
+    pipeline (requirements, sysarch) pass ``include_deferred=False``
+    to filter out features marked ``is_deferred``. Read-only
+    surfaces (DAG view, sidebar, feature-detail panels) keep the
+    default and show everything.
     """
+    query = select(Node).where(Node.project_id == project_id, Node.tier == "feat")
+    if not include_deferred:
+        query = query.where(Node.is_deferred.is_(False))
     return list(
-        session.execute(
-            select(Node)
-            .where(Node.project_id == project_id, Node.tier == "feat")
-            .order_by(Node.display_order.asc(), Node.id.asc())
-        ).scalars()
+        session.execute(query.order_by(Node.display_order.asc(), Node.id.asc())).scalars()
     )
 
 

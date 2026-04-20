@@ -1923,6 +1923,11 @@ class StructureNodeResponse(BaseModel):
     # them fresh without extra round-trips.
     techspec: str
     pubapi: str
+    # Phase-11 followup B7. Deferred features are visible in the
+    # DAG and sidebar but excluded from the reqs / sysarch
+    # generation inputs. Defaults false for every non-feat tier;
+    # the frontend renders deferred feats dimmed.
+    is_deferred: bool = False
 
 
 class StructureEdgeResponse(BaseModel):
@@ -2092,6 +2097,7 @@ def get_project_structure(
                 pubapi=fragment_by_id.get(fragment_id(n.id, FragmentKind.PUBAPI), "")
                 if n.tier == "comp"
                 else "",
+                is_deferred=n.is_deferred,
             )
             for n in node_rows
         ],

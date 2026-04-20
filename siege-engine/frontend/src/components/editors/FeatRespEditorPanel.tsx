@@ -97,6 +97,15 @@ export function FeatRespEditorPanel({ projectId }: Props) {
     });
   };
 
+  const onToggleDeferred = (feat: StructureNode) => {
+    enqueue.mutate({
+      instruction_type: 'SetFeatureDeferred',
+      node_id: feat.id,
+      name: feat.name,
+      is_deferred: !feat.is_deferred,
+    });
+  };
+
   if (isLoading) {
     return <div className="p-4 text-sm text-gray-400">Loading project structure…</div>;
   }
@@ -124,6 +133,40 @@ export function FeatRespEditorPanel({ projectId }: Props) {
           downstream regens read this graph via the many-to-many walk;
           changes mark affected components stale after apply.
         </p>
+      </section>
+
+      <section>
+        <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wide mb-2">
+          Feature deferral
+        </h4>
+        <p className="text-xs text-gray-400 mb-2">
+          Deferred features stay visible here and in the DAG, but reqs and
+          sysarch regens skip them. Use this for capabilities you're
+          designing toward but don't want the current pipeline to commit
+          structure for.
+        </p>
+        <ul className="space-y-1 text-sm">
+          {feats.map((f) => (
+            <li key={f.id} className="flex items-baseline gap-2">
+              <span
+                className={`flex-1 truncate ${
+                  f.is_deferred ? 'text-gray-500 italic' : 'text-gray-200'
+                }`}
+              >
+                {f.name}
+                {f.is_deferred ? ' (deferred)' : ''}
+              </span>
+              <button
+                type="button"
+                className="shrink-0 text-xs text-gray-400 hover:text-gray-200 disabled:text-gray-600"
+                disabled={enqueue.isPending}
+                onClick={() => onToggleDeferred(f)}
+              >
+                {f.is_deferred ? 'Queue un-defer' : 'Queue defer'}
+              </button>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className="rounded border border-gray-700 bg-gray-950 p-3 space-y-2">

@@ -306,6 +306,25 @@ class RemoveDecomposition(_InstructionBase):
         )
 
 
+class SetFeatureDeferred(_InstructionBase):
+    """Toggle a feature's ``is_deferred`` flag.
+
+    Phase-11 followup B7. Deferred features stay visible in the
+    expansion and DAG but are skipped by the reqs and sysarch
+    generation passes. Reversible — set deferred=False to
+    un-park a feature and include it in the next regen.
+    """
+
+    instruction_type: Literal["SetFeatureDeferred"] = "SetFeatureDeferred"
+    node_id: str
+    name: str
+    is_deferred: bool
+
+    def render(self) -> str:
+        verb = "Defer" if self.is_deferred else "Un-defer"
+        return f'- {verb} feature "{self.name}" ({self.node_id})'
+
+
 # ── Discriminated union + registry ───────────────────────────────────
 
 Instruction = Annotated[
@@ -326,6 +345,7 @@ Instruction = Annotated[
         RemovePolicyApplication,
         AddDecomposition,
         RemoveDecomposition,
+        SetFeatureDeferred,
     ],
     Field(discriminator="instruction_type"),
 ]
@@ -348,6 +368,7 @@ _INSTRUCTION_TYPES: dict[str, type[_InstructionBase]] = {
     "RemovePolicyApplication": RemovePolicyApplication,
     "AddDecomposition": AddDecomposition,
     "RemoveDecomposition": RemoveDecomposition,
+    "SetFeatureDeferred": SetFeatureDeferred,
 }
 
 

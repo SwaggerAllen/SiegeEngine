@@ -29,6 +29,7 @@ function n(
     staleness_reasons: [],
     techspec: '',
     pubapi: '',
+    is_deferred: false,
     ...overrides,
   };
 }

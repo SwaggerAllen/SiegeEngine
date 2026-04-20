@@ -138,6 +138,14 @@ export const RemoveDecompositionInstrSchema = BaseEdgeInstr.extend({
 });
 export type RemoveDecompositionInstr = z.infer<typeof RemoveDecompositionInstrSchema>;
 
+export const SetFeatureDeferredInstrSchema = z.object({
+  instruction_type: z.literal('SetFeatureDeferred'),
+  node_id: z.string(),
+  name: z.string(),
+  is_deferred: z.boolean(),
+});
+export type SetFeatureDeferredInstr = z.infer<typeof SetFeatureDeferredInstrSchema>;
+
 export const InstructionSchema = z.discriminatedUnion('instruction_type', [
   CreateInstrSchema,
   DeleteInstrSchema,
@@ -155,6 +163,7 @@ export const InstructionSchema = z.discriminatedUnion('instruction_type', [
   RemovePolicyApplicationInstrSchema,
   AddDecompositionInstrSchema,
   RemoveDecompositionInstrSchema,
+  SetFeatureDeferredInstrSchema,
 ]);
 export type Instruction = z.infer<typeof InstructionSchema>;
 
@@ -284,6 +293,10 @@ export function renderInstruction(
       return `Add decomposition: "${s('source_name')}" → "${s('target_name')}"`;
     case 'RemoveDecomposition':
       return `Remove decomposition: "${s('source_name')}" → "${s('target_name')}"`;
+    case 'SetFeatureDeferred': {
+      const verb = payload.is_deferred ? 'Defer' : 'Un-defer';
+      return `${verb} feature "${s('name')}" (${s('node_id')})`;
+    }
     default:
       return `${type} — ${JSON.stringify(payload)}`;
   }
@@ -341,6 +354,9 @@ export function affectedNodeIds(
     case 'RemovePolicyApplication':
       add('policy_id');
       add('component_id');
+      break;
+    case 'SetFeatureDeferred':
+      add('node_id');
       break;
   }
   return Array.from(out);

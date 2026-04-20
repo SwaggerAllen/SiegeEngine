@@ -99,9 +99,16 @@ async def generate_requirements(payload: dict) -> None:
 
         # The features the LLM will read out of the prompt. Ordered
         # by display_order so it mirrors the frontend's rendering.
+        # Phase-11 followup B7: filter out deferred features so
+        # requirements doesn't design structure for capabilities
+        # the user has parked.
         feature_rows = (
             db.query(Node)
-            .filter(Node.project_id == project_id, Node.tier == "feat")
+            .filter(
+                Node.project_id == project_id,
+                Node.tier == "feat",
+                Node.is_deferred.is_(False),
+            )
             .order_by(Node.display_order, Node.created_at)
             .all()
         )

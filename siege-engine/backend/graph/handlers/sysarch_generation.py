@@ -90,10 +90,16 @@ async def generate_sysarch(payload: dict) -> None:
 
         # Features summary — context only, the LLM reads them for
         # user-intent grounding but doesn't decompose them directly
-        # (reqs already did that).
+        # (reqs already did that). Phase-11 followup B7 filters out
+        # deferred features so sysarch doesn't draw component
+        # boundaries for capabilities the user has parked.
         feature_rows = (
             db.query(Node)
-            .filter(Node.project_id == project_id, Node.tier == "feat")
+            .filter(
+                Node.project_id == project_id,
+                Node.tier == "feat",
+                Node.is_deferred.is_(False),
+            )
             .order_by(Node.display_order, Node.created_at)
             .all()
         )
