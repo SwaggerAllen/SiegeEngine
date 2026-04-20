@@ -23,6 +23,7 @@ import { VocabularyList } from '../VocabularyList';
 import { DecompositionEditorPanel } from '../editors/DecompositionEditorPanel';
 import { DependencyEditorPanel } from '../editors/DependencyEditorPanel';
 import { DomainParentEditorPanel } from '../editors/DomainParentEditorPanel';
+import { SubrespSubcompEditorPanel } from '../editors/SubrespSubcompEditorPanel';
 import { SYNTHETIC_IDS } from './buildNavTree';
 
 interface Props {
@@ -108,11 +109,17 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
       </div>
     );
   }
+  if (selectedId === SYNTHETIC_IDS.EDIT_SUBRESP_SUBCOMP) {
+    return (
+      <div className="h-full overflow-auto">
+        <SubrespSubcompEditorPanel projectId={projectId} />
+      </div>
+    );
+  }
   if (
     selectedId === SYNTHETIC_IDS.EDIT_ROOT ||
     selectedId === SYNTHETIC_IDS.EDIT_FEAT_RESP ||
-    selectedId === SYNTHETIC_IDS.EDIT_RESP_COMP ||
-    selectedId === SYNTHETIC_IDS.EDIT_SUBRESP_SUBCOMP
+    selectedId === SYNTHETIC_IDS.EDIT_RESP_COMP
   ) {
     return <EditorComingSoon id={selectedId} />;
   }
@@ -292,18 +299,32 @@ function UnknownTier({ tier }: { tier: string }) {
 }
 
 function EditorComingSoon({ id }: { id: string }) {
-  // Phase 11 — placeholder for editor pages that ship in later
-  // PRs. The panel exists so the sidebar routing is complete and
-  // the user sees meaningful text rather than an empty pane.
+  // Phase 11 placeholders for the two mapping editors whose
+  // target edges (decomposition) aren't covered by the current
+  // instruction vocabulary — feat→resp and resp→comp both
+  // express as decomposition edges, which need an Add/Remove
+  // edge instruction that hasn't shipped yet. Users can edit
+  // these mappings today by rerunning requirements or sysarch
+  // with prose feedback describing the desired mapping.
   const label = EDITOR_LABELS[id] ?? 'Edit';
+  const isRoot = id === SYNTHETIC_IDS.EDIT_ROOT;
   return (
     <div className="h-full flex items-center justify-center p-8 text-center max-w-md mx-auto">
       <div>
         <h2 className="text-sm font-semibold text-gray-300 mb-2">{label}</h2>
-        <p className="text-sm text-gray-400">
-          Coming in a later Phase 11 PR. Dependencies are available now under
-          the Edit group.
-        </p>
+        {isRoot ? (
+          <p className="text-sm text-gray-400">
+            Select an editor from the sidebar: Decomposition, Subresps →
+            Subcomponents, Dependencies, or Domain Parents.
+          </p>
+        ) : (
+          <p className="text-sm text-gray-400">
+            This mapping is expressed as decomposition edges in the event log.
+            Editing it directly is post-MVP; for now, reopen the upstream
+            tier's draft panel and give prose feedback describing the desired
+            assignment.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -311,9 +332,6 @@ function EditorComingSoon({ id }: { id: string }) {
 
 const EDITOR_LABELS: Record<string, string> = {
   [SYNTHETIC_IDS.EDIT_ROOT]: 'Edit',
-  [SYNTHETIC_IDS.EDIT_DOMAIN_PARENTS]: 'Domain Parents',
-  [SYNTHETIC_IDS.EDIT_DECOMPOSITION]: 'Decomposition',
   [SYNTHETIC_IDS.EDIT_FEAT_RESP]: 'Features → Responsibilities',
   [SYNTHETIC_IDS.EDIT_RESP_COMP]: 'Responsibilities → Components',
-  [SYNTHETIC_IDS.EDIT_SUBRESP_SUBCOMP]: 'Subresps → Subcomponents',
 };
