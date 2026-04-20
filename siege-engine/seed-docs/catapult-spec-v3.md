@@ -1657,15 +1657,15 @@ approval flow.
 A bundle may ship with supplemental reference content — its
 own DSL spec, an opinionated deployment runbook, a set of
 cross-component invariants, a design-rationale memo. That
-material lives in the bundle as ordinary reference-tier
-content (see Part B §8 for the default bundle's `ref_*`
-tier, which is the canonical pattern for this).
+material lives in the bundle as instances of the platform
+`ref` tier (§A.3a). Part B §8 covers how the default bundle
+wires ref content into its own context walks and UI.
 
 At project creation, bundle-shipped reference material seeds
-the project as nodes at the appropriate tier, with
-`reference` edges drawn from bundle-owned components and
-fragments to the seeded refs. Regeneration of those
-components sees the refs in context automatically.
+the project as `ref` nodes with `reference` edges drawn from
+bundle-owned components and fragments to the seeded refs.
+Regeneration of those components sees the refs in context
+automatically.
 
 Once seeded, the refs are regeneratable and editable through
 the normal node lifecycle — project owners can layer
