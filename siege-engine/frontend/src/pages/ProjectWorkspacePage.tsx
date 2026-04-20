@@ -248,6 +248,8 @@ function breadcrumbForSyntheticId(selectedId: string | null): string | null {
       return 'Decomposition Graph';
     case ':queue':
       return 'Pending Changes';
+    case ':map-feat-resp':
+      return 'Feature → Responsibility';
     default:
       return null;
   }

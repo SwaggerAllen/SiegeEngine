@@ -12,6 +12,11 @@ import { FeatureExpansionPanel } from '../FeatureExpansionPanel';
 const FullDagView = lazy(() =>
   import('../graph/FullDagView').then((m) => ({ default: m.FullDagView })),
 );
+const FeatRespMapping = lazy(() =>
+  import('../mapping/FeatRespMapping').then((m) => ({
+    default: m.FeatRespMapping,
+  })),
+);
 import { ImplPanel } from '../ImplPanel';
 import { QueuePanelView } from '../queue/QueuePanelView';
 import { ReferencesList } from '../ReferencesList';
@@ -81,6 +86,17 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
     return (
       <div className="h-full w-full relative">
         <QueuePanelView projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.MAP_FEAT_RESP) {
+    return (
+      <div className="h-full w-full">
+        <Suspense
+          fallback={<div className="p-6 text-sm text-gray-400">Loading…</div>}
+        >
+          <FeatRespMapping projectId={projectId} />
+        </Suspense>
       </div>
     );
   }

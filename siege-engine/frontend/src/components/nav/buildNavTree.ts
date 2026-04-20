@@ -27,6 +27,7 @@ export interface NavItem {
     | 'references'
     | 'dag'
     | 'queue'
+    | 'map-feat-resp'
     | 'components-root'
     | 'component-top'
     | 'component-sub'
@@ -72,6 +73,9 @@ export const SYNTHETIC_IDS = {
   // it sits alongside the DAG in the sidebar; selecting it takes
   // over the right pane just like the other synthetic views.
   QUEUE: ':queue',
+  // Phase 11 structured mapping editors — each is a drag-drop
+  // list view that emits instructions into the queue.
+  MAP_FEAT_RESP: ':map-feat-resp',
   COMPONENTS_ROOT: ':components',
 } as const;
 
@@ -219,6 +223,14 @@ export function buildNavTree(nodes: StructureNode[]): NavItem[] {
     label: 'Pending Changes',
     node: null,
     role: 'queue',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.MAP_FEAT_RESP,
+    label: 'Feature → Responsibility',
+    node: null,
+    role: 'map-feat-resp',
     children: [],
     status: { ...EMPTY_STATUS },
   });
