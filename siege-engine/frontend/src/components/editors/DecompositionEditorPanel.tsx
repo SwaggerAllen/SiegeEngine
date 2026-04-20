@@ -110,6 +110,26 @@ export function DecompositionEditorPanel({ projectId }: Props) {
     });
   };
 
+  const onMove = (node: StructureNode, newParentId: string | null) => {
+    if (node.parent_id === newParentId) return;
+    // Moving to top-level (null) vs under another comp both map to
+    // ReassignMapping. Depth cap is enforced by the reducer: a
+    // subcomp can't be moved under another subcomp.
+    let newParentName: string | null = null;
+    if (newParentId !== null) {
+      const newParent = topLevelComps.find((c) => c.id === newParentId);
+      if (!newParent) return;
+      newParentName = newParent.name;
+    }
+    enqueue.mutate({
+      instruction_type: 'ReassignMapping',
+      node_id: node.id,
+      name: node.name,
+      new_parent_id: newParentId,
+      new_parent_name: newParentName,
+    });
+  };
+
   if (isLoading) {
     return <div className="p-4 text-sm text-gray-400">Loading project structure…</div>;
   }
@@ -176,6 +196,7 @@ export function DecompositionEditorPanel({ projectId }: Props) {
                 key={comp.id}
                 comp={comp}
                 subcomps={childrenByParent.get(comp.id) ?? []}
+                topLevelComps={topLevelComps}
                 createChildFor={createChildFor}
                 setCreateChildFor={setCreateChildFor}
                 childName={childName}
@@ -183,6 +204,7 @@ export function DecompositionEditorPanel({ projectId }: Props) {
                 onCreateChild={onCreateChild}
                 onRename={onRename}
                 onDelete={onDelete}
+                onMove={onMove}
                 busy={enqueue.isPending}
               />
             ))}
@@ -196,6 +218,7 @@ export function DecompositionEditorPanel({ projectId }: Props) {
 function CompRow({
   comp,
   subcomps,
+  topLevelComps,
   createChildFor,
   setCreateChildFor,
   childName,
@@ -203,10 +226,12 @@ function CompRow({
   onCreateChild,
   onRename,
   onDelete,
+  onMove,
   busy,
 }: {
   comp: StructureNode;
   subcomps: StructureNode[];
+  topLevelComps: StructureNode[];
   createChildFor: string | null;
   setCreateChildFor: (id: string | null) => void;
   childName: string;
@@ -214,6 +239,7 @@ function CompRow({
   onCreateChild: (parent: StructureNode) => void;
   onRename: (node: StructureNode) => void;
   onDelete: (node: StructureNode) => void;
+  onMove: (node: StructureNode, newParentId: string | null) => void;
   busy: boolean;
 }) {
   const showChildForm = createChildFor === comp.id;
@@ -227,6 +253,12 @@ function CompRow({
           aria-label={comp.kind}
         />
         <span className="flex-1 text-gray-100 font-medium">{comp.name}</span>
+        <MoveMenu
+          node={comp}
+          topLevelComps={topLevelComps}
+          onMove={onMove}
+          busy={busy}
+        />
         <NodeActions
           node={comp}
           onRename={onRename}
@@ -274,6 +306,12 @@ function CompRow({
                 }`}
               />
               <span className="flex-1 text-gray-200">{sub.name}</span>
+              <MoveMenu
+                node={sub}
+                topLevelComps={topLevelComps}
+                onMove={onMove}
+                busy={busy}
+              />
               <NodeActions
                 node={sub}
                 onRename={onRename}
@@ -285,6 +323,46 @@ function CompRow({
         </ul>
       )}
     </li>
+  );
+}
+
+function MoveMenu({
+  node,
+  topLevelComps,
+  onMove,
+  busy,
+}: {
+  node: StructureNode;
+  topLevelComps: StructureNode[];
+  onMove: (node: StructureNode, newParentId: string | null) => void;
+  busy: boolean;
+}) {
+  // Options for reparenting: null = top-level, or any OTHER top-level
+  // comp (to demote this node under it as a subcomp). The depth cap
+  // means a comp whose parent is itself a comp can't host further
+  // children, so we don't offer subcomps as move targets.
+  const currentValue = node.parent_id ?? '__top__';
+  const options = topLevelComps.filter((c) => c.id !== node.id);
+  return (
+    <label className="shrink-0 text-xs text-gray-400">
+      <span className="sr-only">Move {node.name}</span>
+      <select
+        className="bg-gray-900 border border-gray-700 rounded px-1 text-gray-300"
+        value={currentValue}
+        disabled={busy}
+        onChange={(e) => onMove(node, e.target.value === '__top__' ? null : e.target.value)}
+        aria-label={`Move ${node.name}`}
+      >
+        <option value="__top__">
+          {node.parent_id === null ? '(top-level)' : 'Move to top-level'}
+        </option>
+        {options.map((c) => (
+          <option key={c.id} value={c.id}>
+            Under {c.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

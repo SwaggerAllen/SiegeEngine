@@ -160,6 +160,62 @@ describe('DecompositionEditorPanel', () => {
     expect(mockedEnqueue).not.toHaveBeenCalled();
   });
 
+  it('enqueues ReassignMapping when the Move dropdown changes to a new parent', async () => {
+    mockedStructure.mockResolvedValue({
+      offset: 1,
+      nodes: [
+        node('comp_A', 'Billing'),
+        node('comp_B', 'Payments'),
+        node('comp_SUB', 'BillingStore', 'comp_A'),
+      ],
+      edges: [],
+    });
+    mockedEnqueue.mockResolvedValue({ sequence: 1 });
+    render(
+      <TestQueryWrapper>
+        <DecompositionEditorPanel projectId="p1" />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => expect(screen.getByText('BillingStore')).toBeInTheDocument());
+    // Move the subcomp "BillingStore" (currently under comp_A) under comp_B.
+    const moveSelect = screen.getByLabelText('Move BillingStore') as HTMLSelectElement;
+    await userEvent.selectOptions(moveSelect, 'comp_B');
+    expect(mockedEnqueue).toHaveBeenCalledWith('p1', {
+      instruction_type: 'ReassignMapping',
+      node_id: 'comp_SUB',
+      name: 'BillingStore',
+      new_parent_id: 'comp_B',
+      new_parent_name: 'Payments',
+    });
+  });
+
+  it('enqueues ReassignMapping with null parent when Move to top-level is picked', async () => {
+    mockedStructure.mockResolvedValue({
+      offset: 1,
+      nodes: [
+        node('comp_A', 'Billing'),
+        node('comp_SUB', 'BillingStore', 'comp_A'),
+      ],
+      edges: [],
+    });
+    mockedEnqueue.mockResolvedValue({ sequence: 1 });
+    render(
+      <TestQueryWrapper>
+        <DecompositionEditorPanel projectId="p1" />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => expect(screen.getByText('BillingStore')).toBeInTheDocument());
+    const moveSelect = screen.getByLabelText('Move BillingStore') as HTMLSelectElement;
+    await userEvent.selectOptions(moveSelect, '__top__');
+    expect(mockedEnqueue).toHaveBeenCalledWith('p1', {
+      instruction_type: 'ReassignMapping',
+      node_id: 'comp_SUB',
+      name: 'BillingStore',
+      new_parent_id: null,
+      new_parent_name: null,
+    });
+  });
+
   it('enqueues a child Create instruction with the parent id + name', async () => {
     mockedStructure.mockResolvedValue(structure());
     mockedEnqueue.mockResolvedValue({ sequence: 1 });
