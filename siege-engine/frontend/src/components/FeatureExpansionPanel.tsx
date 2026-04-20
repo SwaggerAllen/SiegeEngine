@@ -10,6 +10,7 @@ import {
   BootstrapDraftPanel,
   type BootstrapPanelLabels,
 } from './BootstrapDraftPanel';
+import { FeatureListTab } from './FeatureListTab';
 import { featureRenderers } from './xml';
 
 interface Props {
@@ -58,6 +59,15 @@ export function FeatureExpansionPanel({ projectId }: Props) {
         isBusy,
       }}
       contentRenderers={featureRenderers}
+      extraTabs={({ pendingContent, approvedContent }) => [
+        {
+          id: 'features',
+          label: 'Features',
+          content: (
+            <FeatureListTab content={pendingContent ?? approvedContent} />
+          ),
+        },
+      ]}
     />
   );
 }

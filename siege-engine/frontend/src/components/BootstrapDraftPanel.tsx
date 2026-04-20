@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
-import { DocumentReviewTabs } from './DocumentReviewTabs';
+import { DocumentReviewTabs, type ExtraTab } from './DocumentReviewTabs';
 import { FeedbackHistory } from './FeedbackHistory';
 import { GenerationClock } from './GenerationClock';
 import { XmlDocument } from './xml';
@@ -185,6 +185,14 @@ interface Props {
   /** Optional — when present, the B9 Feedback History panel is
    * mounted at the bottom of the panel for this project. */
   projectId?: string;
+  /** Optional additional tabs inserted between Document and
+   * Review. Callers typically derive these from the current
+   * content (pending draft or approved node) so the user can
+   * see a digested view alongside the raw XML. */
+  extraTabs?: (args: {
+    pendingContent: string | null;
+    approvedContent: string | null;
+  }) => ExtraTab[] | undefined;
 }
 
 function TelemetryLine({ telemetry }: { telemetry: BootstrapPanelTelemetry | null }) {
@@ -288,6 +296,7 @@ export function BootstrapDraftPanel({
   callbacks,
   contentRenderers,
   projectId,
+  extraTabs,
 }: Props) {
   const [feedback, setFeedback] = useState('');
 
@@ -413,6 +422,10 @@ export function BootstrapDraftPanel({
             document={
               <XmlDocument content={pending_draft.content} renderers={contentRenderers} />
             }
+            extraTabs={extraTabs?.({
+              pendingContent: pending_draft.content,
+              approvedContent: node.content || null,
+            })}
             review={{
               ...reviewProps,
               onApplyFeedback: (feedback) => callbacks.onFeedback(feedback),
@@ -505,6 +518,10 @@ export function BootstrapDraftPanel({
           document={
             <XmlDocument content={node.content} renderers={contentRenderers} />
           }
+          extraTabs={extraTabs?.({
+            pendingContent: null,
+            approvedContent: node.content,
+          })}
           review={reviewProps}
         />
         <div className="text-xs text-gray-500 italic">{labels.readOnlyExplanation}</div>

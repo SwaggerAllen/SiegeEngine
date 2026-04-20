@@ -188,20 +188,16 @@ async def generate_feature_expansion(payload: dict) -> None:
                 "<introduction> that captures the initial thinking. "
                 "Put it before the <features> block."
             )
-        # Phase-11 followup B2: the <vocabulary> sibling block is
-        # required. Cross-references against the feature name set
-        # need the validated features to resolve feature-name=
-        # attributes. Only name-form refs are accepted at cold-start
-        # time since referenced terms are being minted in the same
-        # pass and have no IDs yet.
+        # The <vocabulary> sibling block is optional. If the LLM
+        # emitted one, validate it — cross-references against the
+        # feature name set resolve feature-name= attributes, and
+        # only name-form refs are accepted at cold-start time since
+        # referenced terms are being minted in the same pass and
+        # have no IDs yet. Absence is fine; the user can view the
+        # pending block on the Vocabulary page and approve it to
+        # populate the projection.
         if "<vocabulary" not in raw_text:
-            raise ValidationError(
-                "Output is missing the required <vocabulary> block. "
-                "Every feature expansion must define at least one "
-                "project-specific term so the Vocabulary page is "
-                "populated at mint time. Add a <vocabulary> sibling "
-                "block after <features>."
-            )
+            return
         vocab_tree = extract_tag_tree(raw_text, "vocabulary")
         known_feature_names = {f.name for f in features}
         validate_vocabulary(
