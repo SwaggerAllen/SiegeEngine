@@ -39,6 +39,33 @@ interface DeltaPayload {
   node_ids: string[];
 }
 
+/**
+ * Phase 11 — ephemeral queue-state event types. These don't land
+ * in ``graph_events``; they're published directly to SSE
+ * subscribers with a negative offset so they never collide with
+ * real event offsets. The frontend handler invalidates just the
+ * queue list query on these; ``QueueApplied`` additionally
+ * invalidates structure + per-tier detail for mutated nodes.
+ */
+const QUEUE_EVENT_TYPES = new Set([
+  'QueueInstructionAppended',
+  'QueueInstructionDiscarded',
+  'QueueApplying',
+  'QueueApplied',
+  'QueueFailed',
+]);
+
+/**
+ * Query keys factory for the Phase 11 pending-change queue.
+ * Co-located with the SSE handler so the invalidation seam is
+ * visible here; the queue hooks (``useQueueList`` et al.) consume
+ * this factory from PR #3.
+ */
+export const queueKeys = {
+  all: ['queue'] as const,
+  project: (projectId: string) => ['queue', projectId] as const,
+};
+
 export function useProjectEventStream(projectId: string) {
   const queryClient = useQueryClient();
   const pushError = useErrorLogStore((s) => s.pushError);
@@ -79,12 +106,32 @@ export function useProjectEventStream(projectId: string) {
       void queryClient.invalidateQueries({ queryKey: key });
     };
 
+    const invalidateQueueList = () => {
+      void queryClient.invalidateQueries({
+        queryKey: queueKeys.project(projectId),
+      });
+    };
+
     const onDelta = (event: MessageEvent<string>) => {
       let delta: DeltaPayload;
       try {
         delta = JSON.parse(event.data) as DeltaPayload;
       } catch (err) {
         pushError('sse.parse', err);
+        return;
+      }
+      // Phase 11 — ephemeral queue-state events don't touch the
+      // structure projection; they only invalidate the queue list.
+      // ``QueueApplied`` additionally carries the set of mutated
+      // node_ids so tier detail panels refetch.
+      if (QUEUE_EVENT_TYPES.has(delta.event_type)) {
+        invalidateQueueList();
+        if (delta.event_type === 'QueueApplied') {
+          invalidateStructure();
+          for (const nid of delta.node_ids) {
+            invalidateTierDetailFor(nid);
+          }
+        }
         return;
       }
       // Structure is always invalidated — every event can

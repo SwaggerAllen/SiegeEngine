@@ -115,6 +115,17 @@ class TestApplyHandler:
     def _patch_session(self, db, monkeypatch):
         monkeypatch.setattr(q, "SessionLocal", lambda: _NoCloseProxy(db))
 
+    def _capture_broadcasts(self, monkeypatch):
+        """Capture published messages. Returns the list for assertions."""
+        import backend.graph.broadcast as broadcast_mod
+
+        captured: list = []
+        broadcaster = broadcast_mod.get_broadcaster()
+        original = broadcaster.publish
+        monkeypatch.setattr(broadcaster, "publish", lambda _pid, msg: captured.append(msg))
+        monkeypatch.setattr(broadcaster, "_original", original, raising=False)
+        return captured
+
     def test_marks_running_rows_applied(self, db, project, monkeypatch):
         # Create a real node so the Rename dispatch doesn't raise.
         node_id = mint(db, Kind.COMP)
@@ -207,6 +218,37 @@ class TestApplyHandler:
     def test_rejects_missing_project_id(self):
         with pytest.raises(ValueError, match="missing project_id"):
             asyncio.run(q._apply_instructions_handler({}))
+
+    def test_success_publishes_queue_applied_with_node_ids(self, db, project, monkeypatch):
+        nid = mint(db, Kind.COMP)
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(node_id=nid, tier="comp", kind="domain", name="Old"),
+        )
+        q.enqueue_instruction(db, project.id, _mk_rename(nid, "Old", "New"))
+        q.apply_pending_queue(db, project.id)
+
+        self._patch_session(db, monkeypatch)
+        captured = self._capture_broadcasts(monkeypatch)
+        asyncio.run(q._apply_instructions_handler({"project_id": project.id}))
+
+        # The last broadcast is the terminal QueueApplied / QueueFailed.
+        terminal = captured[-1]
+        assert terminal.event_type == "QueueApplied"
+        assert nid in terminal.node_ids
+
+    def test_failure_publishes_queue_failed(self, db, project, monkeypatch):
+        # Queue a Delete against a non-existent node so the dispatcher raises.
+        q.enqueue_instruction(db, project.id, Delete(node_id="comp_DEADBEEF", name="Gone"))
+        q.apply_pending_queue(db, project.id)
+
+        self._patch_session(db, monkeypatch)
+        captured = self._capture_broadcasts(monkeypatch)
+        asyncio.run(q._apply_instructions_handler({"project_id": project.id}))
+
+        terminal = captured[-1]
+        assert terminal.event_type == "QueueFailed"
 
 
 class _NoCloseProxy:

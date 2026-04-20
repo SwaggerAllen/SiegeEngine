@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from backend.auth.routes import get_current_user
 from backend.database import get_db
 from backend.graph import queue as queue_mod
+from backend.graph.broadcast import publish_queue_event
 from backend.graph.instructions import Instruction
 from backend.models import Project, User
 from backend.models.pending_instruction import PendingInstruction
@@ -172,6 +173,7 @@ def enqueue(
     _require_project(db, project_id)
     sequence = queue_mod.enqueue_instruction(db, project_id, body.instruction)
     db.commit()
+    publish_queue_event(project_id, "QueueInstructionAppended")
     return EnqueueResponse(sequence=sequence)
 
 
@@ -186,6 +188,8 @@ def discard(
     sequence = body.sequence if body is not None else None
     count = queue_mod.discard_pending(db, project_id, sequence=sequence)
     db.commit()
+    if count:
+        publish_queue_event(project_id, "QueueInstructionDiscarded")
     return DiscardResponse(discarded=count)
 
 
@@ -197,4 +201,6 @@ def apply(
 ) -> ApplyResponse:
     _require_project(db, project_id)
     job_id = queue_mod.apply_pending_queue(db, project_id)
+    if job_id is not None:
+        publish_queue_event(project_id, "QueueApplying")
     return ApplyResponse(job_id=job_id)

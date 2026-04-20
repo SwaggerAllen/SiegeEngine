@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 from backend.database import SessionLocal
 from backend.graph import apply_instruction as apply_mod
 from backend.graph import instructions as instr_mod
-from backend.graph.broadcast import commit_and_publish
+from backend.graph.broadcast import commit_and_publish, publish_queue_event
 from backend.models.pending_instruction import PendingInstruction
 from backend.pipeline import queue as pipeline_queue
 
@@ -175,7 +175,8 @@ async def _apply_instructions_handler(payload: dict) -> None:
 
         now = datetime.utcnow()
         halted = False
-        for idx, row in enumerate(rows):
+        affected_node_ids: set[str] = set()
+        for row in rows:
             if halted:
                 row.status = "queued"
                 row.error = None
@@ -199,8 +200,20 @@ async def _apply_instructions_handler(payload: dict) -> None:
             row.status = "applied"
             row.error = None
             row.updated_at = now
+            # Collect node_ids the frontend should invalidate when the
+            # apply completes. Each instruction payload carries them
+            # under one of these well-known keys.
+            for key in ("node_id", "source_id", "target_id", "policy_id", "component_id"):
+                val = (row.payload or {}).get(key)
+                if isinstance(val, str):
+                    affected_node_ids.add(val)
 
         commit_and_publish(db, project_id)
+        publish_queue_event(
+            project_id,
+            "QueueFailed" if halted else "QueueApplied",
+            node_ids=tuple(sorted(affected_node_ids)),
+        )
     finally:
         db.close()
 

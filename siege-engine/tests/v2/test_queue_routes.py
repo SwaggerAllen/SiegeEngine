@@ -29,6 +29,10 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from backend.auth.routes import get_current_user  # noqa: E402
 from backend.database import Base, get_db  # noqa: E402
+from backend.graph.broadcast import (  # noqa: E402
+    BroadcastMessage,
+    reset_broadcaster_for_tests,
+)
 from backend.main import app  # noqa: E402
 from backend.models import Project  # noqa: E402
 from backend.models.pending_instruction import PendingInstruction  # noqa: E402
@@ -214,3 +218,81 @@ class TestApply:
         assert resp.status_code == 200
         body = resp.json()
         assert body["job_id"] is not None
+
+
+class TestBroadcastWiring:
+    """Phase 11 — queue routes publish ephemeral SSE events."""
+
+    def _capture_broadcasts(self):
+        """Monkeypatch the broadcaster to capture published messages."""
+        import backend.graph.broadcast as broadcast_mod
+
+        captured: list[BroadcastMessage] = []
+        broadcast_mod.get_broadcaster().publish = lambda _pid, msg: captured.append(msg)  # type: ignore[method-assign]
+        return captured
+
+    def test_enqueue_publishes_queue_instruction_appended(self, client, project):
+        captured = self._capture_broadcasts()
+        try:
+            resp = client.post(
+                f"/api/projects/{project.id}/queue/enqueue",
+                json={"instruction": RENAME_PAYLOAD},
+            )
+            assert resp.status_code == 200
+        finally:
+            reset_broadcaster_for_tests()
+        assert len(captured) == 1
+        assert captured[0].event_type == "QueueInstructionAppended"
+
+    def test_discard_publishes_when_rows_actually_discarded(self, client, project, db):
+        from backend.graph import queue as q
+        from backend.graph.instructions import Rename
+
+        q.enqueue_instruction(
+            db, project.id, Rename(node_id="comp_A" + "A" * 7, old_name="A", new_name="B")
+        )
+        db.commit()
+
+        captured = self._capture_broadcasts()
+        try:
+            resp = client.post(f"/api/projects/{project.id}/queue/discard", json={})
+            assert resp.status_code == 200
+        finally:
+            reset_broadcaster_for_tests()
+        assert [m.event_type for m in captured] == ["QueueInstructionDiscarded"]
+
+    def test_discard_empty_does_not_publish(self, client, project):
+        captured = self._capture_broadcasts()
+        try:
+            resp = client.post(f"/api/projects/{project.id}/queue/discard", json={})
+            assert resp.status_code == 200
+        finally:
+            reset_broadcaster_for_tests()
+        # Nothing was actually discarded → no event.
+        assert captured == []
+
+    def test_apply_publishes_queue_applying(self, client, project, db):
+        from backend.graph import queue as q
+        from backend.graph.instructions import Rename
+
+        q.enqueue_instruction(
+            db, project.id, Rename(node_id="comp_A" + "A" * 7, old_name="A", new_name="B")
+        )
+        db.commit()
+
+        captured = self._capture_broadcasts()
+        try:
+            resp = client.post(f"/api/projects/{project.id}/queue/apply")
+            assert resp.status_code == 200
+        finally:
+            reset_broadcaster_for_tests()
+        assert [m.event_type for m in captured] == ["QueueApplying"]
+
+    def test_apply_empty_does_not_publish(self, client, project):
+        captured = self._capture_broadcasts()
+        try:
+            resp = client.post(f"/api/projects/{project.id}/queue/apply")
+            assert resp.status_code == 200
+        finally:
+            reset_broadcaster_for_tests()
+        assert captured == []
