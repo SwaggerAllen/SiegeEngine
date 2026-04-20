@@ -32,9 +32,11 @@ from sqlalchemy.orm import Session
 from backend.graph import events as ev
 from backend.graph import instructions as instr
 from backend.graph import queries
+from backend.graph.handlers.rename_rewrite import RENAME_REWRITE_JOB_TYPE
 from backend.graph.ids import Kind, mint
 from backend.graph.reducer import append_event
 from backend.models.node import Node
+from backend.pipeline import queue as pipeline_queue
 
 
 class InstructionApplyError(RuntimeError):
@@ -140,15 +142,24 @@ def _apply_delete(db: Session, project_id: str, ins: instr.Delete) -> None:
 
 
 def _apply_rename(db: Session, project_id: str, ins: instr.Rename) -> None:
-    # PR #6 will swap this for a ``v2.rename_rewrite`` job enqueue
-    # that rewrites prose in the renamed node + direct consumers
-    # before emitting NodeRenamed. Direct-emit for now so the queue
-    # pipeline is exercisable end-to-end in PR #1.
+    # Rename dispatches to a ``v2.rename_rewrite`` job rather than
+    # emitting ``NodeRenamed`` inline. The rewrite handler walks
+    # the renamed node's own fragments + every direct consumer
+    # (nodes with outgoing reference/dependency edges at the
+    # renamed one), rewrites word-boundaried occurrences of the
+    # old name, emits ``FragmentUpdated`` per changed fragment,
+    # and finally emits ``NodeRenamed`` so the name flips at the
+    # same commit as the prose.
     _require_node(db, project_id, ins.node_id)
-    append_event(
+    pipeline_queue.enqueue(
         db,
-        project_id,
-        ev.NodeRenamed(node_id=ins.node_id, new_name=ins.new_name),
+        job_type=RENAME_REWRITE_JOB_TYPE,
+        payload={
+            "project_id": project_id,
+            "node_id": ins.node_id,
+            "old_name": ins.old_name,
+            "new_name": ins.new_name,
+        },
     )
 
 

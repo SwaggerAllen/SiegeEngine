@@ -7,6 +7,7 @@ projection ORM models directly.
 
 Importing this package also registers the v2 job handlers:
   * ``v2.apply_instructions``
+  * ``v2.rename_rewrite``
   * ``v2.generate_feature_expansion``
   * ``v2.mint_features``
   * ``v2.generate_requirements``
@@ -36,6 +37,7 @@ from backend.graph.handlers import generate_reference as _generate_reference_han
 from backend.graph.handlers import impl_generation as _impl_gen_handler
 from backend.graph.handlers import policy_application_local as _policy_app_local_handler
 from backend.graph.handlers import policy_application_top as _policy_app_top_handler
+from backend.graph.handlers import rename_rewrite as _rename_rewrite_handler
 from backend.graph.handlers import requirements_generation as _requirements_gen_handler
 from backend.graph.handlers import requirements_mint as _requirements_mint_handler
 from backend.graph.handlers import review_comparch as _review_comparch_handler
@@ -54,6 +56,7 @@ from backend.graph.handlers import sysarch_generation as _sysarch_gen_handler
 from backend.graph.handlers import sysarch_mint as _sysarch_mint_handler
 
 _queue.register_apply_handler()
+_rename_rewrite_handler.register()
 _feature_expansion_handler.register()
 _feature_mint_handler.register()
 _requirements_gen_handler.register()

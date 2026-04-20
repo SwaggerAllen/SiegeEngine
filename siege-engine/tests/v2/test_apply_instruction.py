@@ -94,17 +94,33 @@ class TestDelete:
 
 
 class TestRename:
-    def test_emits_node_renamed_direct(self, db, project):
-        # PR #1 emits NodeRenamed directly; PR #6 swaps to a rewrite job enqueue.
+    def test_enqueues_rename_rewrite_job(self, db, project):
+        # PR #6 swaps the Rename dispatch to enqueue a
+        # v2.rename_rewrite job rather than emit NodeRenamed
+        # inline. The rewrite handler covers the renamed node's
+        # own content + direct consumers before emitting the
+        # canonical NodeRenamed event.
+        from backend.graph.handlers.rename_rewrite import RENAME_REWRITE_JOB_TYPE
+        from backend.models.job import Job
+
         nid = _make_node(db, project.id, name="Old")
         apply_mod.dispatch_instruction(
             db,
             project.id,
             instr.Rename(node_id=nid, old_name="Old", new_name="New"),
         )
-        node = db.get(Node, nid)
-        assert node is not None and node.name == "New"
-        assert "NodeRenamed" in _event_types(db, project.id)
+        # Dispatch did NOT emit NodeRenamed inline; that lands once
+        # the rewrite job runs.
+        assert "NodeRenamed" not in _event_types(db, project.id)
+        # And a rewrite job is queued with the payload.
+        jobs = db.query(Job).filter_by(job_type=RENAME_REWRITE_JOB_TYPE).all()
+        assert len(jobs) == 1
+        assert jobs[0].payload == {
+            "project_id": project.id,
+            "node_id": nid,
+            "old_name": "Old",
+            "new_name": "New",
+        }
 
 
 class TestReassignMapping:

@@ -18,7 +18,6 @@ from backend.graph.instructions import (
 from backend.graph.reducer import append_event
 from backend.models import Project
 from backend.models.job import Job
-from backend.models.node import Node
 from backend.models.pending_instruction import PendingInstruction
 
 
@@ -147,8 +146,14 @@ class TestApplyHandler:
 
         rows = db.query(PendingInstruction).filter_by(project_id=project.id).all()
         assert [r.status for r in rows] == ["applied"]
-        node = db.get(Node, node_id)
-        assert node is not None and node.name == "New"
+        # PR #6 — Rename enqueues a v2.rename_rewrite job; the name
+        # flip happens when the rewrite handler runs. Apply handler
+        # itself no longer mutates the node.
+        from backend.graph.handlers.rename_rewrite import RENAME_REWRITE_JOB_TYPE
+
+        rewrite_jobs = db.query(Job).filter_by(job_type=RENAME_REWRITE_JOB_TYPE).all()
+        assert len(rewrite_jobs) == 1
+        assert rewrite_jobs[0].payload["new_name"] == "New"
 
     def test_halts_on_first_failure_requeues_subsequent(self, db, project, monkeypatch):
         # Row 1 is a Delete of an existing node (succeeds).
@@ -220,13 +225,24 @@ class TestApplyHandler:
             asyncio.run(q._apply_instructions_handler({}))
 
     def test_success_publishes_queue_applied_with_node_ids(self, db, project, monkeypatch):
-        nid = mint(db, Kind.COMP)
-        append_event(
+        # Use AddDependency here — Rename now defers through a rewrite
+        # job, so the apply handler doesn't emit the affected-node
+        # signal for the renamed node until the rewrite job runs.
+        from backend.graph.instructions import AddDependency
+
+        a = mint(db, Kind.COMP)
+        b = mint(db, Kind.COMP)
+        for n, name in [(a, "A"), (b, "B")]:
+            append_event(
+                db,
+                project.id,
+                ev.NodeCreated(node_id=n, tier="comp", kind="domain", name=name),
+            )
+        q.enqueue_instruction(
             db,
             project.id,
-            ev.NodeCreated(node_id=nid, tier="comp", kind="domain", name="Old"),
+            AddDependency(source_id=a, source_name="A", target_id=b, target_name="B"),
         )
-        q.enqueue_instruction(db, project.id, _mk_rename(nid, "Old", "New"))
         q.apply_pending_queue(db, project.id)
 
         self._patch_session(db, monkeypatch)
@@ -236,7 +252,7 @@ class TestApplyHandler:
         # The last broadcast is the terminal QueueApplied / QueueFailed.
         terminal = captured[-1]
         assert terminal.event_type == "QueueApplied"
-        assert nid in terminal.node_ids
+        assert set(terminal.node_ids) >= {a, b}
 
     def test_failure_publishes_queue_failed(self, db, project, monkeypatch):
         # Queue a Delete against a non-existent node so the dispatcher raises.
