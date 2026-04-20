@@ -72,7 +72,7 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
 
 ## Phase status (as of last session)
 
-**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger) + Phase 10 (layered DAG view).
+**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger) + Phase 10 (layered DAG view) + Phase 11 (pending-change queue UX + first edit slices).
 
 - **Phases 0-5.5** — v2 bootstrap chain end-to-end: project →
   expansion → features → requirements → sysarch → subreqs (per
@@ -159,9 +159,39 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
   Sidebar synthetic id renamed from `:decomposition-graph` to
   `:dag` — label stays "Decomposition Graph" for continuity.
 
-**Next:** Phase 11 (structural edit UIs). Phase 11's
-pending-change queue has storage + instruction types but the HTTP
-plumbing isn't exposed yet; that lands with Phase 11 itself.
+- **Phase 11 (pending-change queue UX + edit UIs)** — wires the
+  `pending_instructions` table + 16 instruction types into the
+  frontend. Six queue HTTP endpoints land under
+  `/api/projects/{id}/queue` (GET, enqueue, apply, discard,
+  delete, retry); the backend replaces the stub
+  `v2.apply_instructions` handler with a real dispatcher that
+  maps each instruction type to an event emission via
+  `append_event`, letting Phase 9 fanout + staleness cascade for
+  free. Fanout now treats `NodeRenamed` as a content-change
+  trigger (self-mark + inbound walk) so renames refresh prose
+  the same way other content changes do. New instruction types
+  `AddDecomposition` / `RemoveDecomposition` cover
+  feat→resp / resp→subresp edge edits.
+
+  Frontend surfaces: a fuchsia `:queue` synthetic sidebar entry
+  opens QueuePanelView (queued / failed / recent-applied
+  sections + Apply / Discard-all toolbar). Two drag-drop mapping
+  editors on a shared `TwoColumnMapping` (@dnd-kit, with
+  tap-to-place mobile fallback): `:map-feat-resp`
+  (feat→resp via AddDecomposition) and `:map-resp-comp`
+  (resp→comp via ReassignMapping). FullDagView gains a first
+  edit affordance — a Rename… button in the toolbar that
+  enqueues a Rename instruction for the selected node.
+
+  Remaining for follow-up phases: Cytoscape-based create /
+  delete / edge-drawing on the DAG (roadmap UIs #3/#5/#6),
+  subresp → subcomp mapping (UI #4), mobile long-press context
+  menus, and deeper queue-event SSE invalidation.
+
+**Next:** Phase 12 (batched review flow) → Phase 13 (change
+summaries) → Phase 14 (file manifest / plan / code leaves).
+Remaining Phase 11 slices (graph editors, UI #4) land as
+follow-up commits on this branch when prioritized.
 
 ## V3 spec scope vs V2 implementation
 
