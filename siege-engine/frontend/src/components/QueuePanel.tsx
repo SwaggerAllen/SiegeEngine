@@ -211,7 +211,7 @@ function QueueRowLine({
       {row.status === 'queued' && (
         <button
           type="button"
-          className="shrink-0 text-xs text-gray-400 hover:text-gray-200 disabled:text-gray-600"
+          className="shrink-0 text-xs text-gray-400 hover:text-gray-200 disabled:text-gray-600 min-h-[32px] px-2"
           disabled={disabled}
           onClick={onDiscard}
         >
