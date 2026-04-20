@@ -17,6 +17,11 @@ const FeatRespMapping = lazy(() =>
     default: m.FeatRespMapping,
   })),
 );
+const RespCompMapping = lazy(() =>
+  import('../mapping/RespCompMapping').then((m) => ({
+    default: m.RespCompMapping,
+  })),
+);
 import { ImplPanel } from '../ImplPanel';
 import { QueuePanelView } from '../queue/QueuePanelView';
 import { ReferencesList } from '../ReferencesList';
@@ -96,6 +101,17 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
           fallback={<div className="p-6 text-sm text-gray-400">Loading…</div>}
         >
           <FeatRespMapping projectId={projectId} />
+        </Suspense>
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.MAP_RESP_COMP) {
+    return (
+      <div className="h-full w-full">
+        <Suspense
+          fallback={<div className="p-6 text-sm text-gray-400">Loading…</div>}
+        >
+          <RespCompMapping projectId={projectId} />
         </Suspense>
       </div>
     );

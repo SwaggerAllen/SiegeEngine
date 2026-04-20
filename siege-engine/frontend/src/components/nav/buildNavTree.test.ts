@@ -44,6 +44,7 @@ describe('buildNavTree', () => {
       SYNTHETIC_IDS.DAG,
       SYNTHETIC_IDS.QUEUE,
       SYNTHETIC_IDS.MAP_FEAT_RESP,
+      SYNTHETIC_IDS.MAP_RESP_COMP,
     ]);
   });
 
@@ -63,6 +64,7 @@ describe('buildNavTree', () => {
       SYNTHETIC_IDS.DAG,
       SYNTHETIC_IDS.QUEUE,
       SYNTHETIC_IDS.MAP_FEAT_RESP,
+      SYNTHETIC_IDS.MAP_RESP_COMP,
     ]);
   });
 

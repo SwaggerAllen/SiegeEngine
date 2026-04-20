@@ -258,6 +258,7 @@ function RoleIcon({
     case 'queue':
       return <span className="shrink-0 w-4 text-center text-fuchsia-300">☰</span>;
     case 'map-feat-resp':
+    case 'map-resp-comp':
       return <span className="shrink-0 w-4 text-center text-emerald-300">⇄</span>;
     case 'components-root':
       return <span className="shrink-0 w-4 text-center text-gray-500">⋯</span>;

@@ -250,6 +250,8 @@ function breadcrumbForSyntheticId(selectedId: string | null): string | null {
       return 'Pending Changes';
     case ':map-feat-resp':
       return 'Feature → Responsibility';
+    case ':map-resp-comp':
+      return 'Responsibility → Component';
     default:
       return null;
   }

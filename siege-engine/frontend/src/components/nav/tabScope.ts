@@ -71,6 +71,7 @@ export function tabScope(
     selectedId === SYNTHETIC_IDS.DAG ||
     selectedId === SYNTHETIC_IDS.QUEUE ||
     selectedId === SYNTHETIC_IDS.MAP_FEAT_RESP ||
+    selectedId === SYNTHETIC_IDS.MAP_RESP_COMP ||
     selectedId === SYNTHETIC_IDS.COMPONENTS_ROOT
   ) {
     return EMPTY_SCOPE;

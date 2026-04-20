@@ -28,6 +28,7 @@ export interface NavItem {
     | 'dag'
     | 'queue'
     | 'map-feat-resp'
+    | 'map-resp-comp'
     | 'components-root'
     | 'component-top'
     | 'component-sub'
@@ -76,6 +77,7 @@ export const SYNTHETIC_IDS = {
   // Phase 11 structured mapping editors — each is a drag-drop
   // list view that emits instructions into the queue.
   MAP_FEAT_RESP: ':map-feat-resp',
+  MAP_RESP_COMP: ':map-resp-comp',
   COMPONENTS_ROOT: ':components',
 } as const;
 
@@ -231,6 +233,14 @@ export function buildNavTree(nodes: StructureNode[]): NavItem[] {
     label: 'Feature → Responsibility',
     node: null,
     role: 'map-feat-resp',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.MAP_RESP_COMP,
+    label: 'Responsibility → Component',
+    node: null,
+    role: 'map-resp-comp',
     children: [],
     status: { ...EMPTY_STATUS },
   });
