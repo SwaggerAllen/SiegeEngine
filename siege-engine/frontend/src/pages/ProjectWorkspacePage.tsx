@@ -246,6 +246,8 @@ function breadcrumbForSyntheticId(selectedId: string | null): string | null {
       return 'References';
     case ':dag':
       return 'Decomposition Graph';
+    case ':queue':
+      return 'Pending Changes';
     default:
       return null;
   }

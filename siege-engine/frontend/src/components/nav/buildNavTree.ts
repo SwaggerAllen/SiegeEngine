@@ -26,6 +26,7 @@ export interface NavItem {
     | 'vocabulary'
     | 'references'
     | 'dag'
+    | 'queue'
     | 'components-root'
     | 'component-top'
     | 'component-sub'
@@ -67,6 +68,8 @@ export const SYNTHETIC_IDS = {
   // the full layered DAG. Kept the user-facing label "Decomposition
   // Graph" for continuity; the synthetic id reads `:dag` internally.
   DAG: ':dag',
+  // Phase 11 — the pending-change queue panel.
+  QUEUE: ':queue',
   COMPONENTS_ROOT: ':components',
 } as const;
 
@@ -206,6 +209,14 @@ export function buildNavTree(nodes: StructureNode[]): NavItem[] {
     label: 'Decomposition Graph',
     node: null,
     role: 'dag',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.QUEUE,
+    label: 'Pending Changes',
+    node: null,
+    role: 'queue',
     children: [],
     status: { ...EMPTY_STATUS },
   });

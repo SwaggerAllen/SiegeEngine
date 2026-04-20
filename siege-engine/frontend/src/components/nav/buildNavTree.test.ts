@@ -42,6 +42,7 @@ describe('buildNavTree', () => {
       SYNTHETIC_IDS.VOCABULARY,
       SYNTHETIC_IDS.REFERENCES,
       SYNTHETIC_IDS.DAG,
+      SYNTHETIC_IDS.QUEUE,
     ]);
   });
 
@@ -59,6 +60,7 @@ describe('buildNavTree', () => {
       SYNTHETIC_IDS.VOCABULARY,
       SYNTHETIC_IDS.REFERENCES,
       SYNTHETIC_IDS.DAG,
+      SYNTHETIC_IDS.QUEUE,
     ]);
   });
 
