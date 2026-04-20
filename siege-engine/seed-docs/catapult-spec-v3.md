@@ -544,6 +544,126 @@ above are unchanged; the enumerated pairs just include the
 flow's planning tiers, and context walks see the flow's
 added edges.
 
+## A.3a The platform `ref` tier
+
+The `ref` tier is one exception to A.3's "bundles declare
+tiers" rule: it ships with the platform itself, not with any
+bundle. Every project has refs regardless of bundle, and every
+bundle inherits the tier's shape without having to redeclare
+it. The placement is a little murky — it's the one platform-
+owned tier sitting alongside the bundle-owned catalogue —
+but refs are universal enough, and the motivation generic
+enough, that requiring every bundle to declare its own
+escape hatch would be worse.
+
+### A.3a.1 Why `ref` is platform-owned
+
+Bundles describe the intended decomposition of a project:
+tiers for the structured artifacts a domain produces, edges
+for the typed relationships among them. What bundles can't
+fully express is the long tail of supplemental content that
+accumulates around any real project — a DSL grammar a
+generator tier needs to reference, a deployment runbook
+nobody thought to tier out, a design-rationale memo pinning
+down a subtle invariant, a partial spec copy from an upstream
+project, cross-component glossary terms that don't fit the
+default bundle's `vocab` shape.
+
+Fitting this material into bundle-declared tiers either
+proliferates one-off tiers (one per shape of supplemental
+content) or stretches existing tiers past their intended
+semantics. A universal escape hatch solves both: a platform-
+owned tier whose contract is "free-form structured content,
+reviewable like any other artifact, referable from any other
+node via a standard edge type." Every bundle gets it for
+free; no bundle has to declare it, and no bundle can omit or
+redefine it.
+
+### A.3a.2 Tier shape
+
+`ref` uses the same field vocabulary A.3.1 establishes for
+bundle-declared tiers, fixed platform-wide:
+
+- **`scope`** — project-level. One ref pool per project;
+  instances have `parent_id = null`. Bundles do not nest
+  refs under their own tiers.
+- **`identity`** — `id`. Names are human affordances;
+  `reference`-edge targets resolve by ID.
+- **`handle`** — title, body, and outgoing `see-also`
+  reference edges. Downstream readers pull whichever
+  components they need via `context` expressions, same as
+  any other handle.
+- **`draft`** — root tag `<reference>` with `<title>`,
+  `<body>`, and optional repeated `<see-also target="..."/>`
+  elements. The grammar is deliberately minimal — the tier's
+  job is to hold content whose internal structure the
+  platform doesn't need to understand.
+- **`generator`** — `llm`, with the same draft → AI-review
+  → human-review → approve lifecycle (A.5.1) as any other
+  tier. Refs are first-class reviewable artifacts, not
+  free-text notes.
+
+Refs are targets of `reference`-type edges (A.3.2) from any
+other tier's draft that wants to pull ref content into its
+context walk. Refs themselves can `see-also` other refs,
+forming a reviewable cross-reference graph without committing
+the content to bundle schema.
+
+### A.3a.3 Authoring via private AI chat
+
+The user-facing path for creating and revising refs runs
+through the private AI chat surface (A.5.4), not through a
+dedicated editor tab. The motivation is that ref content is
+the material most likely to need the AI's full-project
+reasoning to compose well — a DSL summary that's consistent
+with the generator tiers referencing it, a runbook that
+reflects the component architecture as-approved, a rationale
+memo citing the specific decisions it explains — and the
+private chat already carries that context.
+
+The chat exposes a platform-provided tool that lets the AI:
+
+- **Mint** a new ref node with a draft title and body,
+  optionally with `see-also` edges to existing nodes by ID.
+- **Revise** an existing ref's draft pre-approval in
+  response to user feedback, reusing the normal feedback-
+  regen loop.
+- **Read** any node's handle so the AI can ground ref
+  content in the current project state before writing.
+
+**User-instigated only.** The AI does not mint refs as a
+side-effect of general conversation. A ref is minted when
+the user asks for one, or when the AI proposes one and the
+user accepts.
+
+**Landing state is unapproved.** Every minted ref enters the
+team-review surface at status `awaiting_review` (post AI
+self-review) — one person authored via chat, the rest of the
+team reviews via the standard lifecycle. Rejection marks the
+ref stale; downstream dependents inherit the staleness
+signal through the reactive scheduler (A.3.6) the same way
+any other rejection cascades.
+
+The tool itself is a platform capability. Bundles cannot
+disable it, override its behavior, or add parallel tool
+variants — doing so would violate the invariant that every
+project has an escape hatch regardless of bundle. A bundle
+*may* still declare its own tiers that happen to resemble
+refs (same draft grammar, same review lifecycle), but those
+would be bundle-specific tiers, not the platform `ref` tier.
+
+### A.3a.4 Bundle-shipped refs
+
+A.11.5 describes bundles shipping reference material. Those
+refs are **instances** of the platform tier, seeded at
+project creation, not redeclarations of the tier. Once
+seeded, bundle-shipped refs are indistinguishable from user-
+authored ones: same shape, same review pipeline, revisable
+through the same private-chat tool. The only operational
+distinction is that bundle-shipped refs arrive pre-populated
+at project creation, and their seed content is part of the
+bundle's version + review story rather than the project's.
+
 ## A.4 Flows
 
 Flows are **schema deltas** — additional tiers and edges a
