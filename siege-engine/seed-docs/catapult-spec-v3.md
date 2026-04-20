@@ -409,6 +409,35 @@ default bundle declares `techspec`, `pubapi`, `privapi`,
 `policies`, `deps` (see Part B §3). Adding a new fragment kind
 is a bundle edit, not a platform change.
 
+**Fragment as the unit of regeneration.** A regen's generator
+output is a **fragment-scoped delta**, not a full-document
+rewrite. When a flow's walk reaches a node, the generator
+emits new content only for the fragments its draft actually
+changes; untouched fragments stay at their prior approved
+values. Review UX inherits this shape (§A.4.7): the diff a
+reviewer sees is the generator's actual output, not a
+post-hoc comparison against a full-doc regen.
+
+This has three consequences the rest of the spec leans on:
+
+- **Cheap propagation.** Output tokens scale with the changed
+  fragments, not with the node's size. Prompt caching hits
+  the stable prefix (prior approved content + context).
+  Multi-flow sequential propagation — a refactor followed by
+  a feedback-propagation pass — stays affordable, which is
+  what lets §A.4.9 keep flow identity crisp without forcing
+  flows to bundle concerns together for efficiency.
+- **Crisp provenance.** Each fragment regen carries a single
+  driver record (flow, consumed feedback ids, upstream
+  staleness trigger) that the review surface attributes
+  without ambiguity. Fragments touched by distinct drivers
+  across successive runs preserve one driver per commit.
+- **Generator contract.** Custom generators (bundle-declared
+  or instance-approved; §A.11.6) must produce fragment-scoped
+  output. A generator that emits full-document rewrites
+  violates this invariant regardless of how the review layer
+  chooses to display it.
+
 ### A.3.4 Context walks
 
 A tier's `context:` is an ordered list of typed edge walks its
@@ -908,8 +937,10 @@ Consistent across flows and bundles:
   reasoning" toggle.
 - **Regen review is a diff.** Every regen presents as a
   diff against the prior approved content, never a
-  full-document re-read. Per-fragment diffing falls out of
-  the fragment model (A.3.3).
+  full-document re-read. The diff isn't cosmetic — per
+  A.3.3, the generator's output is already a fragment-scoped
+  delta, so what the reviewer sees is literally what the
+  generator emitted.
 
 Both invariants fall out of the draft grammar's shape —
 grammars with `<implicated-children>` render as
