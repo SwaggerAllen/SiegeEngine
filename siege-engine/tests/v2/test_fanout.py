@@ -596,3 +596,92 @@ class TestComputeChangesDirect:
         changes = compute_staleness_changes(db, project.id, trigger, 10)
         assert changes.marks == []
         assert changes.clears == []
+
+
+# ── NodeRenamed fanout (Phase 11) ────────────────────────────────────
+
+
+class TestNodeRenamedFanout:
+    """Phase 11 added NodeRenamed to the fanout dispatcher.
+
+    A rename marks the renamed node itself stale (so auto-enqueue
+    regenerates its content with the new name) and marks every
+    inbound-edge source stale (dependents read the node's handle
+    and need to refresh).
+    """
+
+    def test_rename_marks_self_and_inbound_dependents(self, db, project):
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="comp_SRCREN01",
+                tier="comp",
+                kind="domain",
+                name="Src",
+                content="<comparch>approved</comparch>",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="comp_TGTREN01",
+                tier="comp",
+                kind="domain",
+                name="Tgt",
+                content="<comparch>approved</comparch>",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.EdgeCreated(
+                edge_id="edge_RENE0001",
+                edge_type="dependency",
+                source_id="comp_SRCREN01",
+                target_id="comp_TGTREN01",
+            ),
+        )
+        db.query(StalenessLedger).filter_by(project_id=project.id).delete()
+        db.flush()
+
+        append_event(
+            db,
+            project.id,
+            ev.NodeRenamed(node_id="comp_TGTREN01", new_name="Renamed"),
+        )
+        db.flush()
+
+        rows = db.query(StalenessLedger).filter_by(project_id=project.id).all()
+        pairs = {(r.stale_node_id, r.source_node_id, r.reason) for r in rows}
+        # Self-mark so the renamed node's content gets refreshed.
+        assert ("comp_TGTREN01", "comp_TGTREN01", "content_changed") in pairs
+        # Inbound dependent marked stale w.r.t. the renamed node.
+        assert ("comp_SRCREN01", "comp_TGTREN01", "content_changed") in pairs
+
+    def test_rename_on_unapproved_node_produces_no_marks(self, db, project):
+        # Unapproved nodes (empty content) are filtered out by
+        # _has_approved_content so no stale marks land — the normal
+        # scheduler still handles their first-pass generation.
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="comp_FRESH001",
+                tier="comp",
+                kind="domain",
+                name="Fresh",
+            ),
+        )
+        db.query(StalenessLedger).filter_by(project_id=project.id).delete()
+        db.flush()
+
+        append_event(
+            db,
+            project.id,
+            ev.NodeRenamed(node_id="comp_FRESH001", new_name="Freshly"),
+        )
+        db.flush()
+
+        assert _count_stale(db, project.id) == 0

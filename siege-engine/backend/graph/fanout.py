@@ -157,6 +157,8 @@ def compute_staleness_changes(
         _fanout_content_change(
             session, project_id, trigger.node_id, trigger_offset, "content_changed", changes
         )
+    elif isinstance(trigger, ev.NodeRenamed):
+        _fanout_node_renamed(session, project_id, trigger, trigger_offset, changes)
     elif isinstance(trigger, ev.EdgeCreated):
         _fanout_edge_change(
             session,
@@ -386,6 +388,64 @@ def _fanout_edge_change(
             reason=reason,
         )
     )
+
+
+def _fanout_node_renamed(
+    session: Session,
+    project_id: str,
+    event: ev.NodeRenamed,
+    offset: int,
+    changes: StalenessChanges,
+) -> None:
+    """A rename changes the node's handle.
+
+    Two consequences:
+    - The renamed node itself likely has content still mentioning
+      the old name and wants a regen to refresh prose. Mark it
+      stale with source = itself so auto-enqueue fires a
+      ``v2.regen_<tier>`` for it.
+    - Every inbound-edge source reads this node's handle in its
+      regen context. Those dependents are now stale w.r.t. the
+      renamed node.
+
+    Unlike ``_fanout_content_change``, we deliberately do NOT
+    clear the renamed node's prior staleness — a rename isn't
+    the node catching up with its upstreams; it's an orthogonal
+    structural op, and any pending staleness is still real.
+    """
+    changes.marks.append(
+        _Mark(
+            stale_node_id=event.node_id,
+            source_node_id=event.node_id,
+            source_offset=offset,
+            reason="content_changed",
+        )
+    )
+    inbound = (
+        session.execute(
+            select(Edge).where(
+                Edge.project_id == project_id,
+                Edge.target_id == event.node_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    marked: set[str] = set()
+    for edge in inbound:
+        if edge.source_id == event.node_id:
+            continue
+        if edge.source_id in marked:
+            continue
+        marked.add(edge.source_id)
+        changes.marks.append(
+            _Mark(
+                stale_node_id=edge.source_id,
+                source_node_id=event.node_id,
+                source_offset=offset,
+                reason="content_changed",
+            )
+        )
 
 
 def _fanout_structural_change(

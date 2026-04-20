@@ -259,6 +259,44 @@ class RemovePolicyApplication(_InstructionBase):
         )
 
 
+class AddDecomposition(_InstructionBase):
+    """Add a ``decomposition`` edge from source to target.
+
+    Used by Structured UI #1 (feat → resp) and the subreqs
+    layer (resp → subresp). The apply handler resolves the
+    edge-type to ``decomposition`` and mints an ``EdgeCreated``
+    event.
+    """
+
+    instruction_type: Literal["AddDecomposition"] = "AddDecomposition"
+    source_id: str
+    source_name: str
+    target_id: str
+    target_name: str
+
+    def render(self) -> str:
+        return (
+            f'- Add decomposition: "{self.source_name}" ({self.source_id}) '
+            f'decomposes into "{self.target_name}" ({self.target_id})'
+        )
+
+
+class RemoveDecomposition(_InstructionBase):
+    """Remove a ``decomposition`` edge from source to target."""
+
+    instruction_type: Literal["RemoveDecomposition"] = "RemoveDecomposition"
+    source_id: str
+    source_name: str
+    target_id: str
+    target_name: str
+
+    def render(self) -> str:
+        return (
+            f'- Remove decomposition: "{self.source_name}" ({self.source_id}) '
+            f'no longer decomposes into "{self.target_name}" ({self.target_id})'
+        )
+
+
 # ── Discriminated union + registry ───────────────────────────────────
 
 Instruction = Annotated[
@@ -277,6 +315,8 @@ Instruction = Annotated[
         RemoveDomainParent,
         AddPolicyApplication,
         RemovePolicyApplication,
+        AddDecomposition,
+        RemoveDecomposition,
     ],
     Field(discriminator="instruction_type"),
 ]
@@ -297,6 +337,8 @@ _INSTRUCTION_TYPES: dict[str, type[_InstructionBase]] = {
     "RemoveDomainParent": RemoveDomainParent,
     "AddPolicyApplication": AddPolicyApplication,
     "RemovePolicyApplication": RemovePolicyApplication,
+    "AddDecomposition": AddDecomposition,
+    "RemoveDecomposition": RemoveDecomposition,
 }
 
 
