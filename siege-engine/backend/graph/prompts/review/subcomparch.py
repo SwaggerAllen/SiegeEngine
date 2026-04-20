@@ -8,6 +8,15 @@ from backend.graph.prompts.review._shared import (
 )
 from backend.graph.review_context.subcomparch import SubcomparchContext
 
+_HANDLES_INTRO = """\
+Subcomparch is the leaf articulation — no more tiers will \
+correct it. Impl reads its public / private surface split and \
+writes code that matches. Watch for techspec that just copies \
+the parent comparch verbatim (no actual narrowing), pubapi \
+that skimps on signatures or error shapes, and privapi that's \
+leaked API in disguise.
+"""
+
 _HANDLES = """\
 - ``<technical-specification>`` narrows the parent comparch \
 techspec to this sub's slice — doesn't duplicate it verbatim. \
@@ -24,6 +33,14 @@ parent-sibling deps, local aliases for same-parent sibling \
 subs. Flag unknown IDs or invalid alias syntax.
 - Is the sub's scope (what its role says vs what it actually \
 builds via public + private surface) coherent?
+"""
+
+_ARCHITECTURE_INTRO = """\
+Tech drift at the sub level shows up as the sub's pubapi \
+contradicting the parent comparch's techspec (sync vs. async, \
+mutable vs. immutable, error style). Also watch for sibling \
+dep fan-out cycles and bundles of unrelated scope inside one \
+sub.
 """
 
 _ARCHITECTURE = """\
@@ -43,6 +60,8 @@ def render_system_prompt() -> str:
         scope_label="this subcomponent",
         handles_criteria=_HANDLES,
         architecture_criteria=_ARCHITECTURE,
+        handles_intro=_HANDLES_INTRO,
+        architecture_intro=_ARCHITECTURE_INTRO,
     )
 
 

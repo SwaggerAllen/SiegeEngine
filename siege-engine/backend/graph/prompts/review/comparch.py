@@ -8,6 +8,16 @@ from backend.graph.prompts.review._shared import (
 )
 from backend.graph.review_context.comparch import ComparchContext
 
+_HANDLES_INTRO = """\
+Comparch is the last compression before impl. Subcomponent \
+names, roles, api-intents, and the pubapi / privapi split are \
+the handles impl (and sibling subcomponents) reason against. \
+Vague handles here — "Manager", "Service", unsigned api-intent \
+prose — let impl ship generic code that misses the specifics. \
+The pubapi/privapi split matters: a bloated pubapi leaks \
+internals across sibling boundaries.
+"""
+
 _HANDLES = """\
 - Are subcomponent names distinctive and domain-specific? Flag \
 anti-patterns (Manager / Helper / Utils / Service) and names \
@@ -32,6 +42,15 @@ just method names.
 the subs of this comp call), not re-exported public API.
 """
 
+_ARCHITECTURE_INTRO = """\
+Tech-stack drift across components makes the project \
+inconsistent; foundation misuse (dumping ground) makes it \
+un-navigable; axis misfit (subcomponents that don't slice \
+along the component's real grain) makes every sub touch \
+every concern. Flag any of these directly, naming the \
+specific subcomponent and what should change.
+"""
+
 _ARCHITECTURE = """\
 - Is the subcomponent decomposition axis right (task / data / \
 workflow) for this component's work?
@@ -54,6 +73,8 @@ def render_system_prompt() -> str:
         scope_label="this component",
         handles_criteria=_HANDLES,
         architecture_criteria=_ARCHITECTURE,
+        handles_intro=_HANDLES_INTRO,
+        architecture_intro=_ARCHITECTURE_INTRO,
     )
 
 

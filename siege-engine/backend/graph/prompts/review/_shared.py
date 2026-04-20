@@ -64,11 +64,19 @@ placeholder "no issues" finding.
 ``<finding>``. Avoid bullet lists within a single finding — \
 split into multiple findings instead.
 
-Criteria for ``<handles-structure>``:
+Handles & structure review.
+
+{handles_intro}
+
+Specific checks under ``<handles-structure>``:
 
 {handles_criteria}
 
-Criteria for ``<architectural-decisions>``:
+Architectural-decisions review.
+
+{architecture_intro}
+
+Specific checks under ``<architectural-decisions>``:
 
 {architecture_criteria}
 """
@@ -80,6 +88,8 @@ def render_review_system_prompt(
     scope_label: str,
     handles_criteria: str,
     architecture_criteria: str,
+    handles_intro: str = "",
+    architecture_intro: str = "",
 ) -> str:
     """Build a review system prompt from per-tier criteria text.
 
@@ -88,12 +98,30 @@ def render_review_system_prompt(
     names the reviewed context ("this project" / "this component").
     The two criteria strings are tier-specific bullet lists that
     fill out each section's guidance.
+
+    ``handles_intro`` and ``architecture_intro`` are short prose
+    paragraphs (2–3 sentences) that frame *why* each section
+    matters — downstream implication, specific risks to catch —
+    before the bulleted criteria. Per-tier prompts supply these;
+    an empty default keeps backward compatibility with tiers
+    that haven't migrated yet.
     """
+    intro_handles = handles_intro.strip() or (
+        "Audit the artifact's handle quality and structural hygiene. "
+        "Look for issues a downstream tier would hit when consuming "
+        "this block."
+    )
+    intro_architecture = architecture_intro.strip() or (
+        "Audit the artifact's architectural choices. Flag decisions "
+        "that will compound badly if carried forward."
+    )
     return _SYSTEM_PROMPT_TEMPLATE.format(
         artifact_label=artifact_label.strip(),
         scope_label=scope_label.strip(),
         handles_criteria=handles_criteria.strip(),
         architecture_criteria=architecture_criteria.strip(),
+        handles_intro=intro_handles,
+        architecture_intro=intro_architecture,
     )
 
 

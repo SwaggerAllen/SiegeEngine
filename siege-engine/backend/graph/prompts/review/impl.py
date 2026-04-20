@@ -8,6 +8,16 @@ from backend.graph.prompts.review._shared import (
 )
 from backend.graph.review_context.impl import ImplContext
 
+_HANDLES_INTRO = """\
+Impl is where handles stop and code starts. The plan needs to \
+name concrete files, functions, and sequence steps — not \
+hand-wavy prose that leaves every decision open. A plan that \
+doesn't cover every element of the owner's public surface is \
+a plan that will ship a missing method later. Watch for \
+happy-path-only flows: the failure modes upstream tiers named \
+must all appear here.
+"""
+
 _HANDLES = """\
 - Does the implementation plan name concrete files / modules \
 / functions, or does it stay at a hand-wavy level?
@@ -22,6 +32,15 @@ leak internals into public paths?
 happy path?
 - Are tests described at a meaningful granularity — not just \
 "unit tests will be written"?
+"""
+
+_ARCHITECTURE_INTRO = """\
+Impl inherits every decision upstream tiers made. Silent \
+drift from the owner's techspec (techspec says pure functions, \
+impl introduces stateful singletons) or the deps' pubapi \
+shapes (impl calls an API that doesn't exist) is the most \
+common and most expensive failure here. Flag any drift by \
+naming the specific contradiction.
 """
 
 _ARCHITECTURE = """\
@@ -45,6 +64,8 @@ def render_system_prompt() -> str:
         scope_label="this leaf",
         handles_criteria=_HANDLES,
         architecture_criteria=_ARCHITECTURE,
+        handles_intro=_HANDLES_INTRO,
+        architecture_intro=_ARCHITECTURE_INTRO,
     )
 
 

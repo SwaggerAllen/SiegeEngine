@@ -16,6 +16,17 @@ from backend.graph.prompts.review._shared import (
 )
 from backend.graph.review_context.subreqs import SubreqsContext
 
+_HANDLES_INTRO = """\
+Subreqs is scope-bounded expansion: one component's top-level \
+responsibilities become subresponsibilities its comparch will \
+map to subcomponents. The pass is local to one component, so \
+cross-component leaks (derived-from references to another \
+component's resps) and vague subresp intents hurt most. \
+Comparch reads these to draw subcomponent boundaries; if the \
+subresps don't slice along a coherent axis, comparch can't \
+produce clean subcomponent ownership.
+"""
+
 _HANDLES = """\
 - Are subresp names distinctive enough for the comparch pass \
 to draw clean subcomponent boundaries? Flag names that restate \
@@ -41,6 +52,15 @@ view-state / feedback-affordance dimensions of the parent \
 resps, not duplicate the domain side's mechanism slicing.
 """
 
+_ARCHITECTURE_INTRO = """\
+The subresp decomposition axis must match the component's \
+coherent axis of work. Two patterns fail here: subresps that \
+slice orthogonally to the component's real grain (producing \
+subcomponents that each touch every concern), and scope \
+bleed (a subresp that belongs in a sibling dependency's \
+component). Flag both.
+"""
+
 _ARCHITECTURE = """\
 - Is the decomposition axis the right one for this component? \
 A component does one kind of work; its subresps should slice \
@@ -62,6 +82,8 @@ def render_system_prompt() -> str:
         scope_label="a single component in a larger system",
         handles_criteria=_HANDLES,
         architecture_criteria=_ARCHITECTURE,
+        handles_intro=_HANDLES_INTRO,
+        architecture_intro=_ARCHITECTURE_INTRO,
     )
 
 
