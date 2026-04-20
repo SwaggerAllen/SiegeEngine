@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
 import { DocumentReviewTabs } from './DocumentReviewTabs';
+import { FeedbackHistory } from './FeedbackHistory';
 import { GenerationClock } from './GenerationClock';
 import { XmlDocument } from './xml';
 import type { XmlRendererMap } from './xml';
@@ -181,6 +182,9 @@ interface Props {
   labels: BootstrapPanelLabels;
   callbacks: BootstrapPanelCallbacks;
   contentRenderers: XmlRendererMap;
+  /** Optional — when present, the B9 Feedback History panel is
+   * mounted at the bottom of the panel for this project. */
+  projectId?: string;
 }
 
 function TelemetryLine({ telemetry }: { telemetry: BootstrapPanelTelemetry | null }) {
@@ -283,6 +287,7 @@ export function BootstrapDraftPanel({
   labels,
   callbacks,
   contentRenderers,
+  projectId,
 }: Props) {
   const [feedback, setFeedback] = useState('');
 
@@ -507,6 +512,7 @@ export function BootstrapDraftPanel({
           <CopyButton content={node.content} />
           <TelemetryLine telemetry={latest_telemetry} />
         </div>
+        {projectId && <FeedbackHistory projectId={projectId} nodeId={node.id} />}
         {callbacks.onReset && (
           <ResetApprovedStateControl
             onReset={callbacks.onReset}

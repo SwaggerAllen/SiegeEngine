@@ -978,3 +978,140 @@ def would_create_cycle(
                 parent[nxt] = current
                 stack.append(nxt)
     return None
+
+
+# ── Phase-11 followup B9: aggregate feedback history ──────────────────
+
+
+@dataclass(frozen=True)
+class FeedbackEntry:
+    """One prose entry in the aggregated feedback history for a node.
+
+    ``source`` is ``"user"`` for user-authored regeneration feedback
+    pulled from ``Job.payload['feedback']``, or ``"ai_review"`` for
+    AI self-review output pulled from ``Draft.review_text``. Either
+    way the entry is a timestamped piece of prose the user can
+    hand back to the LLM (or to a human reviewer) to pattern-match
+    what the prompts are missing.
+    """
+
+    created_at: str  # ISO-8601
+    source: Literal["user", "ai_review"]
+    text: str
+
+
+# Maps bootstrap / singleton tier -> generation job_type. These tiers
+# have one target per project, so job payload matching is by
+# ``project_id`` alone. Per-scope tiers (comp, subreqs, impl, fanin)
+# need the node_id to appear in the payload somewhere; we handle
+# that via a tier-specific key lookup below.
+_TIER_TO_JOB_TYPE: dict[str, str] = {
+    "expansion": "v2.generate_feature_expansion",
+    "reqs": "v2.generate_requirements",
+    "sysarch": "v2.generate_sysarch",
+    "subreqs": "v2.generate_subrequirements",
+    "comp": "v2.generate_comparch",  # default; subs use v2.generate_subcomparch
+    "fanin": "v2.generate_fanin",
+    "impl": "v2.generate_impl",
+}
+
+# For per-scope tiers, the payload key that carries the target id.
+_TIER_TO_PAYLOAD_KEY: dict[str, str] = {
+    "subreqs": "component_id",
+    "fanin": "owner_comp_id",
+    "impl": "owner_comp_id",
+}
+
+
+def feedback_history(session: Session, project_id: str, target_node_id: str) -> list[FeedbackEntry]:
+    """Return every prose feedback entry for ``target_node_id`` in chronological order.
+
+    Combines two sources:
+
+    * **User feedback** — the ``feedback`` string from each
+      ``Job.payload`` for this tier's generation job_type, filtered
+      by ``payload['project_id']`` and (for per-scope tiers) the
+      appropriate node id key.
+    * **AI review text** — ``Draft.review_text`` for every draft
+      targeting this node that carries non-empty review output.
+
+    Returns an empty list when the target has no history yet.
+    Used by the Phase-11 followup B9 "Feedback History" panel.
+    """
+    node = session.get(Node, target_node_id)
+    if node is None or node.project_id != project_id:
+        return []
+
+    entries: list[FeedbackEntry] = []
+
+    # ── User feedback from jobs ──────────────────────────────────
+    job_type = _TIER_TO_JOB_TYPE.get(node.tier)
+    if job_type is not None:
+        # Subcomponents go through v2.generate_subcomparch, not v2.generate_comparch.
+        if node.tier == "comp" and node.parent_id is not None:
+            job_type = "v2.generate_subcomparch"
+        payload_key = _TIER_TO_PAYLOAD_KEY.get(node.tier)
+        # For subcomparch, the payload key is sub_comp_id.
+        if node.tier == "comp" and node.parent_id is not None:
+            payload_key = "sub_comp_id"
+
+        jobs = (
+            session.execute(
+                select(Job).where(Job.job_type == job_type).order_by(Job.created_at.asc())
+            )
+            .scalars()
+            .all()
+        )
+        for job in jobs:
+            payload = job.payload or {}
+            if payload.get("project_id") != project_id:
+                continue
+            if payload_key and payload.get(payload_key) != target_node_id:
+                continue
+            feedback_text = payload.get("feedback")
+            if not isinstance(feedback_text, str) or not feedback_text.strip():
+                continue
+            entries.append(
+                FeedbackEntry(
+                    created_at=job.created_at.isoformat() if job.created_at else "",
+                    source="user",
+                    text=feedback_text.strip(),
+                )
+            )
+
+    # ── AI review text from drafts ───────────────────────────────
+    drafts = (
+        session.execute(
+            select(Draft)
+            .where(Draft.project_id == project_id, Draft.target_id == target_node_id)
+            .order_by(Draft.created_at.asc())
+        )
+        .scalars()
+        .all()
+    )
+    for draft in drafts:
+        review = (draft.review_text or "").strip()
+        if not review:
+            continue
+        entries.append(
+            FeedbackEntry(
+                created_at=draft.created_at.isoformat() if draft.created_at else "",
+                source="ai_review",
+                text=review,
+            )
+        )
+
+    # Fan-in writes review_text directly on the node, not a draft.
+    if node.tier == "fanin":
+        node_review = (getattr(node, "review_text", "") or "").strip()
+        if node_review:
+            entries.append(
+                FeedbackEntry(
+                    created_at=node.updated_at.isoformat() if node.updated_at else "",
+                    source="ai_review",
+                    text=node_review,
+                )
+            )
+
+    entries.sort(key=lambda e: e.created_at)
+    return entries

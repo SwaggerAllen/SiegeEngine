@@ -82,6 +82,7 @@ export function SubcomparchPanel({
 
   return (
     <BootstrapDraftPanel
+      projectId={projectId}
       data={data}
       isLoading={isLoading}
       error={error}

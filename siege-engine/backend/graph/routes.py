@@ -3892,3 +3892,45 @@ def post_remove_reference_edge(
     append_event(db, project_id, ev.EdgeDeleted(edge_id=edge.id))
     commit_and_publish(db, project_id)
     return DiscardResponse(ok=True)
+
+
+# ── Phase-11 followup B9: aggregate feedback history ──────────────
+
+
+class FeedbackHistoryEntryResponse(BaseModel):
+    created_at: str
+    source: str  # 'user' | 'ai_review'
+    text: str
+
+
+class FeedbackHistoryResponse(BaseModel):
+    entries: list[FeedbackHistoryEntryResponse]
+
+
+@router.get(
+    "/{project_id}/nodes/{node_id}/feedback-history",
+    response_model=FeedbackHistoryResponse,
+)
+def get_feedback_history(
+    project_id: str,
+    node_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> FeedbackHistoryResponse:
+    """Return every prose feedback entry ever left on the target node.
+
+    Combines user-authored regeneration feedback (pulled from the
+    matching tier's job payloads) with AI self-review text (pulled
+    from draft rows). Chronological ascending. Used by the B9
+    "Feedback History" panel so the user can scan everything that's
+    been said about this tier and pattern-match what prompts are
+    missing.
+    """
+    _require_project(db, project_id)
+    entries = queries.feedback_history(db, project_id, node_id)
+    return FeedbackHistoryResponse(
+        entries=[
+            FeedbackHistoryEntryResponse(created_at=e.created_at, source=e.source, text=e.text)
+            for e in entries
+        ]
+    )

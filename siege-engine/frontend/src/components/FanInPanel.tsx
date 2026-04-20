@@ -8,6 +8,7 @@ import {
 } from '../hooks/mutations/useFanInMutations';
 import { describeApiError } from '../lib/describeApiError';
 import { DocumentReviewTabs } from './DocumentReviewTabs';
+import { FeedbackHistory } from './FeedbackHistory';
 import { XmlDocument, faninRenderers } from './xml';
 
 interface Props {
@@ -195,6 +196,7 @@ export function FanInPanel({ projectId, compId, ownerName }: Props) {
           </p>
         </section>
       )}
+      <FeedbackHistory projectId={projectId} nodeId={data.node.id} />
     </div>
   );
 }

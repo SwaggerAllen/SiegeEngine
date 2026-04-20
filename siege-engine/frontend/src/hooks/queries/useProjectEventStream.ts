@@ -104,6 +104,13 @@ export function useProjectEventStream(projectId: string) {
       const key = tierDetailKeyFor(projectId, node, snap?.nodes ?? []);
       if (!key) return;
       void queryClient.invalidateQueries({ queryKey: key });
+      // Phase-11 followup B9: the feedback history panel for this
+      // node should refresh whenever a new review lands or a new
+      // generation job runs against it, so any node-scoped event
+      // also invalidates its feedback-history query.
+      void queryClient.invalidateQueries({
+        queryKey: ['feedbackHistory', projectId, nodeId],
+      });
     };
 
     const invalidateQueueList = () => {

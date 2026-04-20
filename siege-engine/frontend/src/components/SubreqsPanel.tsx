@@ -58,6 +58,7 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
       <ResponsibilityCoverage projectId={projectId} compId={componentId} />
       <div className="flex-1 min-h-0">
         <BootstrapDraftPanel
+      projectId={projectId}
           data={data}
           isLoading={isLoading}
           error={error}

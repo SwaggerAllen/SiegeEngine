@@ -89,6 +89,7 @@ export function SysarchPanel({ projectId }: Props) {
 
   return (
     <BootstrapDraftPanel
+      projectId={projectId}
       data={data}
       isLoading={isLoading}
       error={error}

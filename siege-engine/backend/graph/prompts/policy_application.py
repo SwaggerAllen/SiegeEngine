@@ -230,8 +230,7 @@ def format_candidate_policies(policies: list[dict]) -> str:
             required_line = f"- *required*: `{required_raw.strip()}`"
         else:
             required_line = (
-                "- *required*: (none — universal-scope policy, "
-                "applies to every matching component)"
+                "- *required*: (none — universal-scope policy, applies to every matching component)"
             )
         rationale = (p.get("rationale") or "").strip() or "(no rationale)"
         parts.append(
