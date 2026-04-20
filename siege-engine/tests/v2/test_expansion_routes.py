@@ -149,11 +149,12 @@ def _valid_features_xml(label: str = "Default") -> str:
 
     Route tests don't care about the specific feature set — they
     just need the expansion handler's parse-validate loop to
-    accept the mocked CLI output as valid. Phase-11 followup B2
-    made the sibling <vocabulary> block mandatory, so this helper
-    appends a stub vocabulary entry too.
+    accept the mocked CLI output as valid. Phase-11 followups B2
+    and B4 made the sibling <vocabulary> and <introduction> blocks
+    mandatory; both are appended here.
     """
     return (
+        f"<introduction>Stub intro for route tests.</introduction>"
         f"<features>"
         f"<feature>"
         f"<name>{label}</name>"

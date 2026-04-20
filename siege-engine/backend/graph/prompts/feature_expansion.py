@@ -83,7 +83,21 @@ project obviously needs.
 
 # Output format
 
-Output a single ``<features>`` block. Nothing else. Inside it, \
+Output three top-level blocks in this order: \
+``<introduction>``, ``<features>``, ``<vocabulary>``. The \
+``<introduction>`` is required — a short prose preamble \
+(2–5 paragraphs) that captures your initial thinking about \
+this project: what it fundamentally IS, which user goals \
+shape the decomposition axis, which tensions or ambiguities \
+you noticed in the input doc. Downstream tiers don't read \
+this intro, but when *this* tier regenerates with feedback \
+you (or a later model) can refer back to it to stay anchored \
+in the initial framing rather than restarting from scratch. \
+Write it like a memo to your future self working on the \
+next revision.
+
+After ``<introduction>``, output a single ``<features>`` \
+block. Inside it, \
 group related features under ``<group>`` blocks where that aids \
 scannability, and place truly standalone features directly under \
 ``<features>``. Each ``<feature>`` has exactly one ``<name>`` and \
@@ -92,6 +106,20 @@ exactly one ``<intent>`` child, and may optionally be marked \
 ``<group>`` has exactly one ``<name>`` (the theme label) and at \
 least one ``<feature>``.
 
+    <introduction>
+      This project is a SaaS tenant-billing platform. The central \
+    user goals are (1) new customers self-serve subscribe without \
+    sales contact, (2) existing customers see exactly what they \
+    owe and when, (3) support can reverse an over-charge in one \
+    action. Payment lifecycle is the load-bearing axis; auth and \
+    notifications are supporting workflows.
+
+      Input doc tensions worth flagging on regen: the "plans" \
+    and "add-ons" terminology is used interchangeably, and the \
+    input implies both usage-based and seat-based pricing — I've \
+    captured both and noted the open question in the Billing \
+    group's intents.
+    </introduction>
     <features>
       <group>
         <name>User Management</name>

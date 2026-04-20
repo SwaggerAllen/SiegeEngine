@@ -176,6 +176,18 @@ async def generate_feature_expansion(payload: dict) -> None:
 
     def _validate(tree, raw_text) -> None:  # type: ignore[no-untyped-def]
         features = validate_features(tree)
+        # Phase-11 followup B4: the <introduction> sibling block is
+        # required. It carries this pass's initial thinking forward
+        # into later regenerations (prior_pending / prior_approved)
+        # so subsequent feedback iterations don't restate framing
+        # from scratch.
+        if "<introduction" not in raw_text:
+            raise ValidationError(
+                "Output is missing the required <introduction> block. "
+                "Every feature expansion must open with a short prose "
+                "<introduction> that captures the initial thinking. "
+                "Put it before the <features> block."
+            )
         # Phase-11 followup B2: the <vocabulary> sibling block is
         # required. Cross-references against the feature name set
         # need the validated features to resolve feature-name=

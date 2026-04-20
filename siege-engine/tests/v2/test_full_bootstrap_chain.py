@@ -144,6 +144,7 @@ _FEAT_ID_RE = re.compile(r"feat_[A-Za-z0-9]+")
 
 def _features_xml() -> str:
     return (
+        "<introduction>Chain integration test: stub intro.</introduction>"
         "<features>"
         "<feature><name>Billing</name><intent>Users pay for plans.</intent></feature>"
         "<feature><name>Auth</name><intent>Users sign in.</intent></feature>"
@@ -188,7 +189,10 @@ def _requirements_xml(session, project_id: str) -> str:
         f"<responsibility><name>{name}</name><intent>{intent}</intent>{covers}</responsibility>"
         for name, intent in entries
     )
-    return f"<requirements>{inner}</requirements>"
+    return (
+        "<introduction>Chain integration test: stub intro.</introduction>"
+        f"<requirements>{inner}</requirements>"
+    )
 
 
 def _sysarch_xml(session, project_id: str) -> str:
@@ -270,6 +274,7 @@ def _sysarch_xml(session, project_id: str) -> str:
             f'<parent from="{pres_alias}" to="{resp_name_to_alias[presentational_domain_target]}"/>'
         )
     return (
+        "<introduction>Chain integration test: stub intro.</introduction>"
         "<sysarch>"
         "<techspec>Python + FastAPI + PostgreSQL event-sourced stack.</techspec>"
         f"<components>{''.join(components)}</components>"

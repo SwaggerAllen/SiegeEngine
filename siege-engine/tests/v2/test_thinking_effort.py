@@ -70,8 +70,10 @@ def _seed_expansion(factory: sessionmaker) -> str:
 
 
 def _valid_features_xml() -> str:
-    # The sibling <vocabulary> block is mandatory per B2.
+    # Sibling <introduction> (B4) and <vocabulary> (B2) blocks
+    # are both mandatory.
     return (
+        "<introduction>Stub intro.</introduction>"
         "<features>"
         "<feature>"
         "<name>Onboarding</name>"

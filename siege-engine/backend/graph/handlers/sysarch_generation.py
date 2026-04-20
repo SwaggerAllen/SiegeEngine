@@ -35,7 +35,7 @@ from backend.graph.handlers._bootstrap_generation import (
     persist_draft,
     run_parse_validate_loop,
 )
-from backend.graph.parsers.validators import validate_sysarch
+from backend.graph.parsers.validators import ValidationError, validate_sysarch
 from backend.graph.prompts.requirements import format_features_summary
 from backend.graph.prompts.sysarch import (
     format_reqs_summary,
@@ -194,7 +194,17 @@ async def generate_sysarch(payload: dict) -> None:
             referenced_content_summary=referenced_content_summary,
         )
 
-    def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
+    def _validate(tree, raw_text) -> None:  # type: ignore[no-untyped-def]
+        # Phase-11 followup B4: <introduction> sibling block is
+        # required so subsequent regens have the tier's own initial
+        # thinking available.
+        if "<introduction" not in raw_text:
+            raise ValidationError(
+                "Output is missing the required <introduction> block. "
+                "Every sysarch draft must open with a short prose "
+                "<introduction> capturing the initial component-boundary "
+                "thinking. Put it before the <sysarch> block."
+            )
         validate_sysarch(tree, known_top_level_resp_ids=known_top_level_resp_ids)
 
     validated_output, attempts = await run_parse_validate_loop(

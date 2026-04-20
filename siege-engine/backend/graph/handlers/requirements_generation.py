@@ -42,7 +42,7 @@ from backend.graph.handlers._bootstrap_generation import (
     persist_draft,
     run_parse_validate_loop,
 )
-from backend.graph.parsers.validators import validate_requirements
+from backend.graph.parsers.validators import ValidationError, validate_requirements
 from backend.graph.prompts.requirements import (
     format_features_summary,
     render_system_prompt,
@@ -190,7 +190,17 @@ async def generate_requirements(payload: dict) -> None:
             referenced_content_summary=referenced_content_summary,
         )
 
-    def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
+    def _validate(tree, raw_text) -> None:  # type: ignore[no-untyped-def]
+        # Phase-11 followup B4: <introduction> sibling block is
+        # required so subsequent regens have the tier's own initial
+        # thinking available via prior_pending / prior_approved.
+        if "<introduction" not in raw_text:
+            raise ValidationError(
+                "Output is missing the required <introduction> block. "
+                "Every requirements draft must open with a short prose "
+                "<introduction> capturing the initial decomposition "
+                "thinking. Put it before the <requirements> block."
+            )
         validate_requirements(tree, known_feature_ids=known_feature_ids)
 
     validated_output, attempts = await run_parse_validate_loop(

@@ -65,11 +65,35 @@ children listing the feature IDs each responsibility serves.
 
 # Output format
 
-Output a single ``<requirements>`` block. Nothing else. Inside \
-it, each responsibility has exactly one ``<name>``, exactly one \
-``<intent>``, and exactly one ``<covers>`` block containing one \
-or more ``<feat>`` children with an ``id`` attribute:
+Output two top-level blocks in this order: ``<introduction>`` \
+and ``<requirements>``. The ``<introduction>`` is required — a \
+2–5 paragraph prose preamble capturing your initial thinking \
+about the decomposition: which axes of system work you \
+identified, which responsibilities you considered and rejected, \
+which ambiguities in the feature set you had to resolve (or \
+flagged as open). Downstream tiers don't read this intro, but \
+when requirements regenerates with feedback you (or a later \
+model) can refer back to it to stay anchored in your initial \
+framing instead of restarting from scratch.
 
+After ``<introduction>``, output a single ``<requirements>`` \
+block. Inside it, each responsibility has exactly one \
+``<name>``, exactly one ``<intent>``, and exactly one \
+``<covers>`` block containing one or more ``<feat>`` children \
+with an ``id`` attribute:
+
+    <introduction>
+      The central axis here is control-plane vs data-plane: \
+    identity + authz on one side, invoice lifecycle + payment \
+    settlement on the other. Kept them as two top-level resps \
+    because sysarch will almost certainly assign them to \
+    separate components with different durability profiles.
+
+      Open question I flagged in passing: the input doc says \
+    "admin override" without specifying whether it produces \
+    audit entries. I assumed yes (operational necessity) and \
+    captured it in the Authorization resp's intent.
+    </introduction>
     <requirements>
       <responsibility>
         <name>Credential Verification and Session Establishment</name>

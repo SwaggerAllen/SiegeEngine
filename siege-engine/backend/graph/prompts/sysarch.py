@@ -105,10 +105,37 @@ structural errors are fed back to you on retry.
 
 # Output format
 
-Emit exactly one ``<sysarch>`` block with these five children in \
-this order: ``<techspec>``, ``<components>``, ``<policies>``, \
-``<dependencies>``, ``<domain-parent>``. Example:
+Emit two top-level blocks in this order: ``<introduction>`` \
+and ``<sysarch>``. The ``<introduction>`` is required — a \
+2–5 paragraph prose preamble that captures your initial \
+thinking before the structured output: how you read the \
+responsibility set into component boundaries, which tensions \
+or tradeoffs the input makes visible, which alternative cuts \
+you considered and rejected. Downstream tiers don't read this \
+intro, but when sysarch regenerates with feedback you (or a \
+later model) can refer back to it to stay anchored in your \
+initial framing instead of restarting from scratch.
 
+After ``<introduction>``, emit exactly one ``<sysarch>`` block \
+with these five children in this order: ``<techspec>``, \
+``<components>``, ``<policies>``, ``<dependencies>``, \
+``<domain-parent>``. Example:
+
+    <introduction>
+      The responsibility set cleanly partitions into three \
+    top-level cuts: identity + authorization, billing + payment \
+    lifecycle, and notification delivery. I kept the \
+    domain/presentational split narrow — only Billing has a \
+    presentational counterpart (the customer-facing invoices \
+    view); auth and notifications are purely internal.
+
+      Tradeoffs worth flagging on regen: I considered folding \
+    notifications into Billing since most notifications are \
+    payment-triggered, but kept it separate because the project \
+    doc implies non-billing notifications (support responses) \
+    are coming. Also went with Postgres + event sourcing on the \
+    Billing side for audit reasons.
+    </introduction>
     <sysarch>
       <techspec>
     Python 3.11 backend on FastAPI with a PostgreSQL primary \

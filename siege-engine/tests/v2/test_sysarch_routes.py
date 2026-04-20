@@ -199,6 +199,8 @@ def _resp_ids(db, project_id):
 def _valid_sysarch(resp_ids: list[str]) -> str:
     auth_id, billing_id, foundation_id = resp_ids
     return (
+        # B4 — <introduction> sibling block required.
+        "<introduction>Stub intro for sysarch route tests.</introduction>"
         "<sysarch>"
         "<techspec>Typical Python + React stack.</techspec>"
         "<components>"
