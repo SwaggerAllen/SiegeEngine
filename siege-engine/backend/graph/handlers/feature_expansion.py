@@ -205,6 +205,10 @@ async def generate_feature_expansion(payload: dict) -> None:
         validate=_validate,
         exhausted_exception_cls=FeatureExpansionParseRetryExhausted,
         log_handler_name="generate_feature_expansion",
+        # Phase-11 followup B6: the three top-of-chain tiers run at
+        # max thinking effort because their output quality shapes
+        # every downstream tier. Propagation tiers stay on default.
+        thinking_effort="max",
     )
 
     persist_draft(

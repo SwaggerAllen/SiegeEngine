@@ -167,6 +167,31 @@ _semaphore: asyncio.Semaphore | None = None
 _semaphore_loop: asyncio.AbstractEventLoop | None = None
 
 
+def _build_subprocess_env(thinking_effort: str | None) -> dict[str, str]:
+    """Construct the env dict for a CLI subprocess invocation.
+
+    Copies the parent process environment, strips SIEGE-specific
+    secrets (``ANTHROPIC_API_KEY``, ``CLAUDECODE`` signal) the CLI
+    must not inherit, and sets / clears ``CLAUDE_CODE_EFFORT_LEVEL``
+    based on the per-call ``thinking_effort`` argument.
+
+    Phase-11 followup B6: the three top-of-chain tiers (expansion,
+    reqs, sysarch) pass ``thinking_effort="max"`` so their single
+    calls run at max effort; propagation tiers leave it unset so
+    their CLI budget isn't consumed by thinking tokens. Scoping
+    via this per-call env (not the process env) means concurrent
+    handler calls don't race each other's settings.
+    """
+    env = {**os.environ}
+    env.pop("CLAUDECODE", None)
+    env.pop("ANTHROPIC_API_KEY", None)
+    if thinking_effort is not None:
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = thinking_effort
+    else:
+        env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
+    return env
+
+
 def _get_semaphore() -> asyncio.Semaphore:
     global _semaphore, _semaphore_loop
     loop = asyncio.get_running_loop()
@@ -189,6 +214,7 @@ class CLIManager:
         tools: str | None = None,
         timeout: int | None = None,
         max_budget_usd: float | None = None,
+        thinking_effort: str | None = None,
     ) -> str:
         """
         Run claude CLI with a prompt and return the output text.
@@ -203,6 +229,15 @@ class CLIManager:
                    None = CLI default (all tools).
             timeout: Timeout in seconds. Defaults to cli_timeout setting.
             max_budget_usd: Maximum dollar amount for API calls.
+            thinking_effort: When set (e.g. ``"max"``), forwarded to
+                the CLI subprocess as ``CLAUDE_CODE_EFFORT_LEVEL``.
+                Scoped to the single call — doesn't affect other
+                concurrent invocations or the parent process env.
+                Used on the first three tiers (expansion, reqs,
+                sysarch) where deep thinking materially improves
+                downstream quality; deliberately unset on propagation
+                tiers to keep their budgets from blowing up (see
+                Phase-11 followup B6).
         """
         if timeout is None:
             timeout = settings.cli_timeout
@@ -217,6 +252,7 @@ class CLIManager:
                 timeout,
                 max_budget_usd,
                 output_format="text",
+                thinking_effort=thinking_effort,
             )
 
     async def generate_with_usage(
@@ -228,6 +264,7 @@ class CLIManager:
         tools: str | None = None,
         timeout: int | None = None,
         max_budget_usd: float | None = None,
+        thinking_effort: str | None = None,
     ) -> GenerationResult:
         """Run claude CLI with ``--output-format json`` and return text + usage.
 
@@ -237,6 +274,10 @@ class CLIManager:
         handlers that want to record telemetry for the UI
         (``docs/architecture/v2-rearchitecture.md`` §Generation
         telemetry).
+
+        ``thinking_effort`` — same semantics as :meth:`generate`.
+        When set, forwarded to the CLI subprocess as
+        ``CLAUDE_CODE_EFFORT_LEVEL``; scoped to the single call.
 
         Token-usage extraction is best-effort: if the CLI's JSON
         shape omits the usage fields or parse fails, we log a warning
@@ -257,6 +298,7 @@ class CLIManager:
                 timeout,
                 max_budget_usd,
                 output_format="json",
+                thinking_effort=thinking_effort,
             )
         return _parse_json_result(raw, fallback_model=model)
 
@@ -270,6 +312,7 @@ class CLIManager:
         timeout: int,
         max_budget_usd: float | None,
         output_format: str = "text",
+        thinking_effort: str | None = None,
     ) -> str:
         args = ["claude", "-p", "--output-format", output_format]
 
@@ -294,21 +337,7 @@ class CLIManager:
         # Don't persist sessions for pipeline generation
         args.append("--no-session-persistence")
 
-        # Pass full env with CLAUDECODE stripped; CLI uses its own login credentials
-        env = {**os.environ}
-        env.pop("CLAUDECODE", None)
-        env.pop("ANTHROPIC_API_KEY", None)
-        # Note: we used to force CLAUDE_CODE_EFFORT_LEVEL=max here
-        # on the theory that pipeline generations are worth burning
-        # extra thinking budget on. In practice that blew past the
-        # flat CLI_MAX_BUDGET_USD budget for decomposition tasks
-        # (requirements, sysarch, subreqs) because max-effort
-        # thinking tokens bill at output rates and eat most of the
-        # budget before the LLM finishes reasoning. Leave the env
-        # var alone so the CLI falls back to its default effort
-        # level. If we want the extra-thinking knob back later we
-        # can either bump per-handler budgets or reintroduce this
-        # override behind a feature flag.
+        env = _build_subprocess_env(thinking_effort)
 
         logger.info(
             "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds (using CLI login credentials)",

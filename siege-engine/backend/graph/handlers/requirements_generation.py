@@ -203,6 +203,8 @@ async def generate_requirements(payload: dict) -> None:
         validate=_validate,
         exhausted_exception_cls=RequirementsParseRetryExhausted,
         log_handler_name="generate_requirements",
+        # B6 — top-of-chain tier runs at max thinking effort.
+        thinking_effort="max",
     )
 
     persist_draft(

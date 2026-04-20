@@ -218,6 +218,23 @@ Explicit v3-spec items **out of v2 scope**:
 If a future session touches anything on the out-of-scope list,
 flag it and confirm the scope change is intended.
 
+## Thinking effort per tier (B6)
+
+The three top-of-chain tiers (feature expansion, requirements,
+sysarch) pass ``thinking_effort="max"`` to
+``cli_manager.generate_with_usage``. The CLI manager forwards
+that as ``CLAUDE_CODE_EFFORT_LEVEL=max`` on the single
+subprocess invocation (scoped per-call via
+``_build_subprocess_env``, not process-wide).
+
+Propagation tiers (comparch, subcomparch, impl, fanin,
+references, reviews) deliberately leave ``thinking_effort``
+unset so ``CLI_MAX_BUDGET_USD`` isn't consumed by thinking
+tokens before the real reasoning finishes. Handle quality
+upstream is the investment that pays off downstream; the
+compression tiers don't need deep thinking because the handles
+they read are already the compressed form.
+
 ## Meaning-engine model
 
 The generation chain is a meaning engine — each tier produces
