@@ -84,9 +84,7 @@ def list_features(
     query = select(Node).where(Node.project_id == project_id, Node.tier == "feat")
     if not include_deferred:
         query = query.where(Node.is_deferred.is_(False))
-    return list(
-        session.execute(query.order_by(Node.display_order.asc(), Node.id.asc())).scalars()
-    )
+    return list(session.execute(query.order_by(Node.display_order.asc(), Node.id.asc())).scalars())
 
 
 def top_level_resps_assigned_to(session: Session, comp_id: str) -> list[Node]:

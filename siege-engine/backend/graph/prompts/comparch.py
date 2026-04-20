@@ -257,8 +257,9 @@ nested XML tags inside them — only prose and fenced code blocks.
 ## Policies
 
 * ``<policies>`` is zero or more component-local ``<policy>`` \
-entries. Each policy has exactly one ``<name>``, \
-``<trigger>``, ``<required>``, and ``<rationale>`` child.
+entries. Each policy has exactly one ``<name>``, one \
+``<trigger>``, one ``<rationale>``, and **zero or one** \
+``<required>``.
 * ``<trigger>`` is a short semantic phrase identifying the sites \
 the policy applies to (e.g. "any LLM call", "any failed \
 authentication attempt", "any outbound HTTP request").
@@ -267,7 +268,12 @@ authentication attempt", "any outbound HTTP request").
 or (b) the pre-minted subresponsibilities this component owns. \
 Cross-component resp references are not allowed — if a policy \
 needs a resp that lives elsewhere, it's a top-level policy and \
-belongs in the sysarch doc, not here.
+belongs in the sysarch doc, not here. **Omit ``<required>`` \
+entirely** for universal-scope policies that every subcomponent \
+in this component's subtree should honor without any single \
+sub owning enforcement (e.g. a cross-cutting invariant that all \
+sub-comp code must satisfy). The application pass then attaches \
+the policy to every subcomp candidate in scope.
 * ``<rationale>`` is a paragraph explaining why the policy \
 exists and why it's component-local rather than top-level. \
 Carries weight in the policy application pass that runs after \

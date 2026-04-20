@@ -461,14 +461,25 @@ unless the project has a more specific convention.
 permitted; if the project has no cross-cutting invariants that \
 need explicit statement, emit ``<policies></policies>`` empty.
 * Each ``<policy>`` contains exactly one ``<name>``, one \
-``<trigger>``, one ``<required>``, and one ``<rationale>``.
+``<trigger>``, one ``<rationale>``, and **zero or one** \
+``<required>``. Most policies have a ``<required>``; universal-\
+scope policies (see below) omit it.
 * ``<trigger>`` is a short semantic phrase identifying where the \
 policy applies: ``any LLM call``, ``any domain write``, \
 ``any authenticated request handler``. Semantic, not structural \
 — different projects phrase triggers differently.
 * ``<required>`` is a bare ``resp_*`` ID referencing the \
 responsibility that must be fulfilled at every trigger site. \
-The ID must be in the input top-level responsibility list.
+The ID must be in the input top-level responsibility list. \
+**Omit ``<required>`` entirely** for universal-scope policies \
+— obligations that don't map to a single enforcing \
+responsibility. Examples: an AGPL license obligation, an \
+organization-wide naming convention, a cross-cutting security \
+requirement that every component must honor without any one \
+component owning "the security resp". The application pass \
+treats these as "applies to every candidate component in \
+scope" rather than patching a dep edge to a specific resp's \
+owning component.
 * ``<rationale>`` is a paragraph explaining why the policy \
 exists. Carries real weight — the LLM applying policies later \
 reads this to decide which components the policy actually \

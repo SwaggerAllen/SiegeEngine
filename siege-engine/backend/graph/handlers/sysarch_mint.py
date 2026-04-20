@@ -108,19 +108,17 @@ def _serialize_policy_blob(p: Policy) -> str:
     ``content`` column. Comparch (Phase 4) re-parses it via
     :func:`validate_policy_blob` when deciding applicability.
 
-    Kept simple and deterministic — the only escaping we do is
-    via the parser's leniency at read time. Policies rarely
-    contain ``<`` or ``&``; if they ever do, the BS4 html parser
-    will still accept it.
+    Phase-11 followup B8: universal-scope policies have
+    ``required_resp_id is None`` and emit no ``<required>``
+    child at all (as opposed to an empty tag). The validator
+    accepts both forms; omission is the canonical rendering.
     """
-    return (
-        "<policy>"
-        f"<name>{p.name}</name>"
-        f"<trigger>{p.trigger}</trigger>"
-        f"<required>{p.required_resp_id}</required>"
-        f"<rationale>{p.rationale}</rationale>"
-        "</policy>"
-    )
+    parts = ["<policy>", f"<name>{p.name}</name>", f"<trigger>{p.trigger}</trigger>"]
+    if p.required_resp_id is not None:
+        parts.append(f"<required>{p.required_resp_id}</required>")
+    parts.append(f"<rationale>{p.rationale}</rationale>")
+    parts.append("</policy>")
+    return "".join(parts)
 
 
 async def mint_sysarch(payload: dict) -> None:
