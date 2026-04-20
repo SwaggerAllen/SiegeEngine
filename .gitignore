@@ -1,0 +1,9 @@
+# Repo root ignores. The real project lives under siege-engine/
+# with its own .gitignore covering Python + frontend build output;
+# this file only guards against stray tool output landing at the
+# wrong cwd (e.g. a misdirected vite or npm invocation creating
+# node_modules/ here).
+node_modules/
+.vite/
+__pycache__/
+*.pyc
