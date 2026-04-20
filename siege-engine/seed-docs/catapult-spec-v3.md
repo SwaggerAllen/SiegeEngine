@@ -1992,6 +1992,83 @@ the assistant. It does not defend against:
 The sandbox is a containment layer, not a trust boundary.
 Trust comes from curation, review, and audit.
 
+## A.19 Implementation guardrails
+
+Operational concerns orthogonal to the platform's declared
+behavior but load-bearing for whether the implementation
+holds to its invariants under real load. Each names a
+specific test, architectural commitment, or pre-ship
+decision.
+
+### A.19.1 Staling-graph convergence
+
+The dependency graph is acyclic by construction (§A.3.2).
+The *staling* graph is not necessarily — fan-in plus
+presentational comparch (default bundle §4.4) is exactly
+the shape where A stales B and B stales A can sneak in
+through a synthesis-handle update. Platform invariant:
+after any finite set of approvals, the scheduler's
+enqueueable set eventually empties. The regression test
+for this is a convergence harness that approves
+representative work batches and asserts the queue drains
+within a bounded step count.
+
+### A.19.2 Sweeper SLO vs. fast-path latency
+
+The fast path (§A.3.6) is pub/sub over reducer commits;
+the sweeper is the convergence guarantee. An
+implementation that relies entirely on the fast path has
+an unbounded bug — any dropped broadcast is a
+permanently stuck node. Either ship the sweeper with a
+stated maximum interval (and an alert when a node has
+been enqueueable longer than that), or make broadcast
+delivery durable. Pick one explicitly; don't implicitly
+rely on the fast path being reliable.
+
+### A.19.3 Scheduler as a pure function
+
+The scheduler's core — "given projection state, produce
+enqueueable set" — is a pure function. Test it that way:
+snapshot in, set out, no workers, no queues, no clocks.
+The worker-loop concurrency path is a separate test
+covering dispatch mechanics only, not readiness logic.
+Conflating the two into a single integration test yields
+fragile coverage and slow signals when either layer
+breaks.
+
+### A.19.4 Cascade burst bounds
+
+A single upstream rejection can stale thousands of
+descendants. Correctness (dedup-on-payload) and
+throughput (burst capacity) are independent concerns; the
+first doesn't imply the second. A load test that
+deliberately rejects a high-fan-out upstream node and
+measures queue depth plus convergence time is the only
+way to catch regressions here — unit tests won't see the
+spike. Establish a baseline empirically; alert on
+regression.
+
+### A.19.5 Schema migration posture
+
+When a bundle's grammar or a tier's fields change between
+versions, projects on the old version need a migration
+path. Two postures work; the implementation picks one
+before the bundle system ships:
+
+- **Rewrite the log.** Migrations emit corrective events
+  that bring projection state to the new shape. Old
+  events remain in the log for audit but are logically
+  superseded.
+- **Version the reducer.** Old events replay against
+  their era's reducer code; current code applies only to
+  events emitted after the version bump.
+
+Each has costs — rewrite complicates audit; versioning
+ossifies reducer code behind a growing set of
+version-gated branches. The wrong answer isn't as bad as
+no answer; the trap is discovering the need mid-migration
+with the decision still unmade.
+
 ---
 
 # Part B — Default bundle
