@@ -434,3 +434,48 @@ class TestMintGroupsAndImplicit:
             assert feat.is_implicit is True
         finally:
             session.close()
+
+
+class TestBroadcast:
+    """B1 — Mint must fan-out NodeCreated events over SSE so the
+    frontend's Requirements tab appears without a manual refresh.
+    """
+
+    def test_mint_publishes_node_created_via_broadcast(self, shared_session_factory, monkeypatch):
+        import backend.graph.broadcast as broadcast_mod
+        from backend.graph.broadcast import (
+            BroadcastMessage,
+            reset_broadcaster_for_tests,
+        )
+
+        captured: list[BroadcastMessage] = []
+        reset_broadcaster_for_tests()
+        broadcast_mod.get_broadcaster().publish = (  # type: ignore[method-assign]
+            lambda _pid, msg: captured.append(msg)
+        )
+
+        try:
+            approved = _features_xml(
+                ("Billing", "Users pay for tiered plans."),
+            )
+            pid = _seed_project_with_approved_expansion(shared_session_factory, approved)
+            asyncio.run(mint_features({"project_id": pid}))
+
+            event_types = [m.event_type for m in captured]
+            # The feat_* mint and the reqs bootstrap both emit
+            # NodeCreated events that must broadcast.
+            assert "NodeCreated" in event_types
+            # Assert the reqs-tier bootstrap specifically broadcast —
+            # that's what drives the Requirements tab to appear.
+            reqs_broadcasts = [
+                m
+                for m in captured
+                if m.event_type == "NodeCreated"
+                and any(nid.startswith("reqs_") for nid in m.node_ids)
+            ]
+            assert reqs_broadcasts, (
+                "NodeCreated(tier=reqs) was not broadcast — the frontend "
+                "Requirements tab won't appear without a manual refresh."
+            )
+        finally:
+            reset_broadcaster_for_tests()

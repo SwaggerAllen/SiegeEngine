@@ -42,6 +42,7 @@ import logging
 
 from backend.database import SessionLocal
 from backend.graph import events as ev
+from backend.graph.broadcast import commit_and_publish
 from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
     ValidationError,
@@ -178,7 +179,9 @@ async def mint_requirements(payload: dict) -> None:
         if should_enqueue_sysarch_generation:
             bootstrap_sysarch_node(db, project_id)
 
-        db.commit()
+        # commit_and_publish so the NodeCreated events broadcast and
+        # the Sysarch tab appears without a manual refresh (B1).
+        commit_and_publish(db, project_id)
 
         # Enqueue sysarch generation after the commit. Transient
         # enqueue failure leaves a sysarch bootstrap node without

@@ -72,6 +72,7 @@ import logging
 
 from backend.database import SessionLocal
 from backend.graph import events as ev
+from backend.graph.broadcast import commit_and_publish
 from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
@@ -327,7 +328,10 @@ async def mint_sysarch(payload: dict) -> None:
                 bootstrap_subreqs_node(db, project_id, comp_id)
                 subreqs_targets.append(comp_id)
 
-        db.commit()
+        # commit_and_publish so the NodeCreated events for comp_* /
+        # policy_* / subreqs_* broadcast over SSE and the sidebar +
+        # Components tab update without a manual refresh (B1).
+        commit_and_publish(db, project_id)
 
         # ── Phase 8b: enqueue subreqs generation post-commit ────
         # Transient enqueue failure leaves a bootstrap node without

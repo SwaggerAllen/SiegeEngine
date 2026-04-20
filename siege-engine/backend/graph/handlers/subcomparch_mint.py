@@ -47,6 +47,7 @@ from typing import Any
 
 from backend.database import SessionLocal
 from backend.graph import events as ev
+from backend.graph.broadcast import commit_and_publish
 from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
@@ -176,7 +177,11 @@ async def mint_subcomparch(payload: dict) -> None:
                 ),
             )
 
-        db.commit()
+        # commit_and_publish so the subcomp's NodeCreated +
+        # FragmentUpdated + EdgeCreated events broadcast and the
+        # impl node appears in the sidebar without a manual refresh
+        # (B1).
+        commit_and_publish(db, project_id)
 
         # ── Phase 8: post-commit impl generation enqueue ────────
         # The subcomponent's arch doc just committed (its

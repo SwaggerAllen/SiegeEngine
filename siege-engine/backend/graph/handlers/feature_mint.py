@@ -44,6 +44,7 @@ import logging
 
 from backend.database import SessionLocal
 from backend.graph import events as ev
+from backend.graph.broadcast import commit_and_publish
 from backend.graph.expansion import get_expansion_node
 from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
@@ -215,7 +216,12 @@ async def mint_features(payload: dict) -> None:
         if should_enqueue_reqs_generation:
             bootstrap_reqs_node(db, project_id)
 
-        db.commit()
+        # Use commit_and_publish so the NodeCreated events fan out over
+        # SSE. The frontend keys the Requirements tab on the reqs node
+        # existing in the structure snapshot — if the broadcast is
+        # swallowed, the tab doesn't appear until a manual refresh
+        # (Phase-11 followup B1).
+        commit_and_publish(db, project_id)
 
         # Enqueue the initial requirements generation after the
         # commit so a transient enqueue failure doesn't roll back
