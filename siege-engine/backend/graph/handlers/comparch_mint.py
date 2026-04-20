@@ -56,6 +56,7 @@ import logging
 
 from backend.database import SessionLocal
 from backend.graph import events as ev
+from backend.graph.broadcast import commit_and_publish
 from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.handlers.sysarch_mint import _serialize_policy_blob
 from backend.graph.ids import Kind, mint
@@ -306,7 +307,11 @@ async def mint_comparch(payload: dict) -> None:
         if comp_node.kind == "domain" and minted_sub_ids:
             _mint_fanin_shell(db, project_id, component_id, comp_node.name)
 
-        db.commit()
+        # commit_and_publish so the NodeCreated events for subcomps +
+        # policies + fanin shells + the EdgeCreated events broadcast,
+        # keeping the sidebar + DAG in sync without a manual refresh
+        # (B1).
+        commit_and_publish(db, project_id)
 
         # ── Phase 6: post-commit policy application fan-out ─────
         pipeline_queue.enqueue(

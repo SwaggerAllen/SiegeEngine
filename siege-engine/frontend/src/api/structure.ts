@@ -48,6 +48,10 @@ export const StructureNodeSchema = z.object({
   // triggering comparch. Empty for non-comp tiers.
   techspec: z.string(),
   pubapi: z.string(),
+  // Phase-11 followup B7. Deferred features are visible in the
+  // DAG and sidebar but excluded from reqs / sysarch generation.
+  // Defaults to false for every non-feat tier.
+  is_deferred: z.boolean().default(false),
 });
 export type StructureNode = z.infer<typeof StructureNodeSchema>;
 

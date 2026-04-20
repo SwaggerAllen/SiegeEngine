@@ -87,6 +87,11 @@ class NodeCreated(_EventBase):
     # See ``docs/architecture/v2-rearchitecture.md`` §Foundation
     # components for why this is persisted.
     is_foundation: bool = False
+    # Phase-11 followup B7. Whether a feat_* node is deferred —
+    # visible in the expansion and DAG but skipped by reqs and
+    # sysarch generation (``list_features(include_deferred=False)``).
+    # Defaults false; non-feat tiers leave it false and ignore it.
+    is_deferred: bool = False
 
 
 class NodeRenamed(_EventBase):
@@ -99,6 +104,21 @@ class NodeReparented(_EventBase):
     event_type: Literal["NodeReparented"] = "NodeReparented"
     node_id: str
     new_parent_id: str | None
+
+
+class NodeDeferredUpdated(_EventBase):
+    """Toggle a feat_* node's ``is_deferred`` flag.
+
+    Phase-11 followup B7. Deferred features stay in the expansion
+    + DAG but are filtered out of the reqs / sysarch generation
+    inputs — used for "design-toward but skip for now" items.
+    Non-destructive and reversible; the reducer just flips the
+    column.
+    """
+
+    event_type: Literal["NodeDeferredUpdated"] = "NodeDeferredUpdated"
+    node_id: str
+    is_deferred: bool
 
 
 class NodePromoted(_EventBase):
@@ -305,6 +325,7 @@ Event = Annotated[
         NodeCreated,
         NodeRenamed,
         NodeReparented,
+        NodeDeferredUpdated,
         NodePromoted,
         NodeDemoted,
         NodesMerged,
@@ -329,6 +350,7 @@ _EVENT_TYPES: dict[str, type[_EventBase]] = {
     "NodeCreated": NodeCreated,
     "NodeRenamed": NodeRenamed,
     "NodeReparented": NodeReparented,
+    "NodeDeferredUpdated": NodeDeferredUpdated,
     "NodePromoted": NodePromoted,
     "NodeDemoted": NodeDemoted,
     "NodesMerged": NodesMerged,

@@ -65,11 +65,35 @@ children listing the feature IDs each responsibility serves.
 
 # Output format
 
-Output a single ``<requirements>`` block. Nothing else. Inside \
-it, each responsibility has exactly one ``<name>``, exactly one \
-``<intent>``, and exactly one ``<covers>`` block containing one \
-or more ``<feat>`` children with an ``id`` attribute:
+Output two top-level blocks in this order: ``<introduction>`` \
+and ``<requirements>``. The ``<introduction>`` is required — a \
+2–5 paragraph prose preamble capturing your initial thinking \
+about the decomposition: which axes of system work you \
+identified, which responsibilities you considered and rejected, \
+which ambiguities in the feature set you had to resolve (or \
+flagged as open). Downstream tiers don't read this intro, but \
+when requirements regenerates with feedback you (or a later \
+model) can refer back to it to stay anchored in your initial \
+framing instead of restarting from scratch.
 
+After ``<introduction>``, output a single ``<requirements>`` \
+block. Inside it, each responsibility has exactly one \
+``<name>``, exactly one ``<intent>``, and exactly one \
+``<covers>`` block containing one or more ``<feat>`` children \
+with an ``id`` attribute:
+
+    <introduction>
+      The central axis here is control-plane vs data-plane: \
+    identity + authz on one side, invoice lifecycle + payment \
+    settlement on the other. Kept them as two top-level resps \
+    because sysarch will almost certainly assign them to \
+    separate components with different durability profiles.
+
+      Open question I flagged in passing: the input doc says \
+    "admin override" without specifying whether it produces \
+    audit entries. I assumed yes (operational necessity) and \
+    captured it in the Authorization resp's intent.
+    </introduction>
     <requirements>
       <responsibility>
         <name>Credential Verification and Session Establishment</name>
@@ -161,6 +185,22 @@ relationship is many-to-many. A cross-cutting responsibility \
 like "Telemetry" will typically cover most features; a scoped \
 responsibility like "Billing" will cover only a handful. This \
 is expected.
+* **Responsibilities do not overlap.** Two responsibilities must \
+not claim ownership of the same system capability. Many \
+features can implicate the same responsibility (that's what \
+``<covers>`` being many-to-many is for), but each responsibility \
+owns its scope exclusively. If two responsibilities share scope \
+— two resps both claiming "produce end-of-month statements", \
+for example — collapse them into one, or redraw the boundary \
+by trigger or data set so each gets a disjoint slice. Example: \
+"Billing" and "Receipts" would overlap if both claimed "produce \
+end-of-month statements"; split by trigger instead — Billing \
+owns invoice lifecycle, Receipts owns post-payment \
+acknowledgments. Each intent paragraph's "does not cover" \
+clause should make the boundary between this resp and its \
+nearest sibling explicit. Overlapping resps are easy for a \
+human reviewer to miss and make sysarch's component boundary \
+calls messy downstream; this rule is load-bearing.
 * **Every feature in the input must be covered by at least one \
 responsibility.** Before emitting the list, mentally check that \
 each input feature ID appears in at least one ``<covers>`` block. \

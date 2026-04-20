@@ -8,6 +8,16 @@ from backend.graph.prompts.review._shared import (
 )
 from backend.graph.review_context.fanin import FanInContext
 
+_HANDLES_INTRO = """\
+Fan-in is the bottom-up synthesis — it summarizes what the \
+subcomponents as-built actually do, which presentational \
+counterparts read for their rotation. If the synthesis drifts \
+from the sub impls (claiming behavior the code doesn't \
+actually implement), presentational components inherit that \
+drift and ship UI for capabilities the domain doesn't have. \
+Flag claims not grounded in the sub impls directly.
+"""
+
 _HANDLES = """\
 - Does the fan-in synthesis faithfully summarize what the \
 subcomponents as-built actually do? Flag claims not grounded \
@@ -18,6 +28,15 @@ captured accurately? Flag omissions.
 contract, or does it drift?
 - Is the synthesis specific about observed behavior (what \
 the code does) rather than just restating the sub roles?
+"""
+
+_ARCHITECTURE_INTRO = """\
+Fan-in has no tech decisions of its own — it's a pure rollup \
+of what the subs built. The architectural read here is about \
+the gap between top-down intent (comparch + subcomparch \
+pubapis) and bottom-up reality (impls). Surface patterns \
+worth promoting; flag mismatches worth regenerating the \
+upstream tier for.
 """
 
 _ARCHITECTURE = """\
@@ -37,6 +56,8 @@ def render_system_prompt() -> str:
         scope_label="this fanned-out domain component",
         handles_criteria=_HANDLES,
         architecture_criteria=_ARCHITECTURE,
+        handles_intro=_HANDLES_INTRO,
+        architecture_intro=_ARCHITECTURE_INTRO,
     )
 
 

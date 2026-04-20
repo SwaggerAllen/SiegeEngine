@@ -148,13 +148,20 @@ def _covers_all(feat_ids: list[str]) -> str:
 
 def _reqs_xml(feat_ids: list[str], *entries: tuple[str, str]) -> str:
     """Build a valid ``<requirements>`` block where every entry
-    covers every feature in ``feat_ids``."""
+    covers every feature in ``feat_ids``.
+
+    Phase-11 followup B4 made ``<introduction>`` a required
+    sibling block; this helper prepends a stub intro.
+    """
     covers = _covers_all(feat_ids)
     inner = "".join(
         f"<responsibility><name>{name}</name><intent>{intent}</intent>{covers}</responsibility>"
         for name, intent in entries
     )
-    return f"<requirements>{inner}</requirements>"
+    return (
+        "<introduction>Stub intro for requirements handler tests.</introduction>"
+        f"<requirements>{inner}</requirements>"
+    )
 
 
 def _valid_xml(feat_ids: list[str]) -> str:
@@ -345,6 +352,7 @@ class TestParseValidateRetry:
         # First attempt: no <covers> block (regression of the v2
         # retrofit — the LLM forgot to include it).
         first_bad = (
+            "<introduction>stub</introduction>"
             "<requirements>"
             "<responsibility><name>Auth</name><intent>Ok.</intent></responsibility>"
             "</requirements>"
@@ -364,6 +372,7 @@ class TestParseValidateRetry:
         # the second uncovered.
         partial_covers = "<covers>" + f'<feat id="{seeded_feat_ids[0]}"/>' + "</covers>"
         first_bad = (
+            "<introduction>stub</introduction>"
             "<requirements>"
             f"<responsibility><name>Auth</name><intent>Ok.</intent>{partial_covers}</responsibility>"
             "</requirements>"
@@ -382,6 +391,7 @@ class TestParseValidateRetry:
     ):
         fake_covers = '<covers><feat id="feat_bogus01"/></covers>'
         first_bad = (
+            "<introduction>stub</introduction>"
             "<requirements>"
             f"<responsibility><name>Auth</name><intent>Ok.</intent>{fake_covers}</responsibility>"
             "</requirements>"

@@ -45,7 +45,11 @@ import uuid
 from backend.cli.manager import CliTransientError, cli_manager
 from backend.database import SessionLocal
 from backend.graph.expansion import get_expansion_node, pending_expansion_draft
-from backend.graph.parsers.validators import validate_features, validate_vocabulary
+from backend.graph.parsers.validators import (
+    ValidationError,
+    validate_features,
+    validate_vocabulary,
+)
 from backend.graph.parsers.xml_sections import extract_tag_tree
 from backend.graph.prompts.feature_expansion import (
     render_system_prompt,
@@ -172,16 +176,32 @@ async def generate_feature_expansion(payload: dict) -> None:
 
     def _validate(tree, raw_text) -> None:  # type: ignore[no-untyped-def]
         features = validate_features(tree)
-        # If the LLM emitted a sibling <vocabulary> block, validate
-        # it too — cross-references against the feature name set
+        # Phase-11 followup B4: the <introduction> sibling block is
+        # required. It carries this pass's initial thinking forward
+        # into later regenerations (prior_pending / prior_approved)
+        # so subsequent feedback iterations don't restate framing
+        # from scratch.
+        if "<introduction" not in raw_text:
+            raise ValidationError(
+                "Output is missing the required <introduction> block. "
+                "Every feature expansion must open with a short prose "
+                "<introduction> that captures the initial thinking. "
+                "Put it before the <features> block."
+            )
+        # Phase-11 followup B2: the <vocabulary> sibling block is
+        # required. Cross-references against the feature name set
         # need the validated features to resolve feature-name=
-        # attributes. The <vocabulary> block is optional, but if
-        # the LLM emitted one it must parse cleanly; we don't
-        # silently skip malformed vocabulary. Only name-form refs
-        # are accepted at cold-start time since referenced terms
-        # are being minted in the same pass and have no IDs yet.
+        # attributes. Only name-form refs are accepted at cold-start
+        # time since referenced terms are being minted in the same
+        # pass and have no IDs yet.
         if "<vocabulary" not in raw_text:
-            return  # Absent — skip validation entirely.
+            raise ValidationError(
+                "Output is missing the required <vocabulary> block. "
+                "Every feature expansion must define at least one "
+                "project-specific term so the Vocabulary page is "
+                "populated at mint time. Add a <vocabulary> sibling "
+                "block after <features>."
+            )
         vocab_tree = extract_tag_tree(raw_text, "vocabulary")
         known_feature_names = {f.name for f in features}
         validate_vocabulary(
@@ -205,6 +225,10 @@ async def generate_feature_expansion(payload: dict) -> None:
         validate=_validate,
         exhausted_exception_cls=FeatureExpansionParseRetryExhausted,
         log_handler_name="generate_feature_expansion",
+        # Phase-11 followup B6: the three top-of-chain tiers run at
+        # max thinking effort because their output quality shapes
+        # every downstream tier. Propagation tiers stay on default.
+        thinking_effort="max",
     )
 
     persist_draft(

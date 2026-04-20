@@ -219,15 +219,24 @@ def format_candidate_policies(policies: list[dict]) -> str:
         return ""
     parts: list[str] = []
     for p in policies:
-        pid = p.get("id", "").strip() or "(unknown-id)"
-        name = p.get("name", "").strip() or "(unnamed)"
-        trigger = p.get("trigger", "").strip() or "(no trigger)"
-        required = p.get("required", "").strip() or "(no required resp)"
-        rationale = p.get("rationale", "").strip() or "(no rationale)"
+        pid = (p.get("id") or "").strip() or "(unknown-id)"
+        name = (p.get("name") or "").strip() or "(unnamed)"
+        trigger = (p.get("trigger") or "").strip() or "(no trigger)"
+        # Phase-11 followup B8: universal-scope policies have no
+        # ``required`` resp; mark them explicitly so the LLM
+        # doesn't hallucinate one.
+        required_raw = p.get("required")
+        if isinstance(required_raw, str) and required_raw.strip():
+            required_line = f"- *required*: `{required_raw.strip()}`"
+        else:
+            required_line = (
+                "- *required*: (none — universal-scope policy, applies to every matching component)"
+            )
+        rationale = (p.get("rationale") or "").strip() or "(no rationale)"
         parts.append(
             f"## `{pid}` **{name}**\n"
             f"- *trigger*: {trigger}\n"
-            f"- *required*: `{required}`\n"
+            f"{required_line}\n"
             f"- *rationale*: {rationale}"
         )
     return "\n\n".join(parts)

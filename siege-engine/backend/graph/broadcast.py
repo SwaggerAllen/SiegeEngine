@@ -113,6 +113,7 @@ def _node_ids_for_event(event_type: str, payload: dict[str, Any]) -> tuple[str, 
             "NodeCreated"
             | "NodeRenamed"
             | "NodeReparented"
+            | "NodeDeferredUpdated"
             | "NodePromoted"
             | "NodeDemoted"
             | "NodeDeleted"
@@ -158,6 +159,25 @@ def _node_ids_for_event(event_type: str, payload: dict[str, Any]) -> tuple[str, 
             # will invalidate structure and let downstream
             # refetches settle the state.
             return ()
+        case (
+            "QueueInstructionAppended"
+            | "QueueInstructionDiscarded"
+            | "QueueApplying"
+            | "QueueFailed"
+        ):
+            # Phase 11 — queue-state transitions don't
+            # invalidate specific nodes. The frontend refetches
+            # ``GET /queue`` on receipt. ``QueueApplied`` does
+            # carry affected node_ids (see publish_queue_event).
+            return ()
+        case "QueueApplied":
+            # Phase 11 — queue-apply completion. Affected node_ids
+            # are carried on the published message directly (see
+            # ``publish_queue_event``); this branch is defensive
+            # for the payload-based reconstruction path but
+            # normally never hit.
+            ids = payload.get("node_ids") or []
+            return tuple(i for i in ids if isinstance(i, str))
         case _:
             return ()
 
@@ -335,3 +355,54 @@ def commit_and_publish(db: Session, project_id: str) -> None:
             )
     except Exception:
         logger.exception("broadcast: publish failed for project %s offsets %s", project_id, offsets)
+
+
+# ── Phase 11: ephemeral queue-state events ─────────────────────────
+#
+# Queue-state transitions (instruction appended / discarded / apply
+# started / applied / failed) are not durable events — they don't
+# land in ``graph_events``. They're published directly to live SSE
+# subscribers so the frontend's queue panel can refresh without
+# polling. Offsets are negative so they never collide with real
+# event offsets, and the ring buffer's ``since=<N>`` replay filter
+# ``msg.offset > since`` naturally drops them on reconnect (which
+# is correct — the frontend re-fetches ``GET /queue`` on reconnect
+# anyway, so replaying transient state isn't useful).
+
+
+_QUEUE_EVENT_OFFSET = -1
+
+
+def publish_queue_event(
+    project_id: str,
+    event_type: str,
+    node_ids: tuple[str, ...] = (),
+) -> None:
+    """Publish a Phase 11 queue-state transition to live SSE subscribers.
+
+    Accepted ``event_type`` values: ``QueueInstructionAppended``,
+    ``QueueInstructionDiscarded``, ``QueueApplying``, ``QueueApplied``,
+    ``QueueFailed``. ``node_ids`` is populated only for
+    ``QueueApplied`` — the set of nodes mutated during the apply run,
+    so the frontend can invalidate per-tier detail keys in one sweep.
+
+    Publish failure is logged and swallowed (same policy as
+    :func:`commit_and_publish`): broadcast problems must never
+    bubble back into the caller.
+    """
+    try:
+        broadcaster = get_broadcaster()
+        broadcaster.publish(
+            project_id,
+            BroadcastMessage(
+                offset=_QUEUE_EVENT_OFFSET,
+                event_type=event_type,
+                node_ids=tuple(node_ids),
+            ),
+        )
+    except Exception:
+        logger.exception(
+            "broadcast: publish_queue_event failed for project %s event %s",
+            project_id,
+            event_type,
+        )

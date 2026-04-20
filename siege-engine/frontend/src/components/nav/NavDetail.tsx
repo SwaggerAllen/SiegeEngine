@@ -13,12 +13,19 @@ const FullDagView = lazy(() =>
   import('../graph/FullDagView').then((m) => ({ default: m.FullDagView })),
 );
 import { ImplPanel } from '../ImplPanel';
+import { QueuePanel } from '../QueuePanel';
 import { ReferencesList } from '../ReferencesList';
 import { RequirementsPanel } from '../RequirementsPanel';
 import { SubcomparchPanel } from '../SubcomparchPanel';
 import { SubreqsPanel } from '../SubreqsPanel';
 import { SysarchPanel } from '../SysarchPanel';
 import { VocabularyList } from '../VocabularyList';
+import { DecompositionEditorPanel } from '../editors/DecompositionEditorPanel';
+import { DependencyEditorPanel } from '../editors/DependencyEditorPanel';
+import { DomainParentEditorPanel } from '../editors/DomainParentEditorPanel';
+import { FeatRespEditorPanel } from '../editors/FeatRespEditorPanel';
+import { RespCompEditorPanel } from '../editors/RespCompEditorPanel';
+import { SubrespSubcompEditorPanel } from '../editors/SubrespSubcompEditorPanel';
 import { SYNTHETIC_IDS } from './buildNavTree';
 
 interface Props {
@@ -75,6 +82,58 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
         </Suspense>
       </div>
     );
+  }
+  if (selectedId === SYNTHETIC_IDS.QUEUE) {
+    return (
+      <div className="h-full overflow-auto">
+        <QueuePanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.EDIT_DEPS) {
+    return (
+      <div className="h-full overflow-auto">
+        <DependencyEditorPanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.EDIT_DOMAIN_PARENTS) {
+    return (
+      <div className="h-full overflow-auto">
+        <DomainParentEditorPanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.EDIT_DECOMPOSITION) {
+    return (
+      <div className="h-full overflow-auto">
+        <DecompositionEditorPanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.EDIT_SUBRESP_SUBCOMP) {
+    return (
+      <div className="h-full overflow-auto">
+        <SubrespSubcompEditorPanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.EDIT_FEAT_RESP) {
+    return (
+      <div className="h-full overflow-auto">
+        <FeatRespEditorPanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.EDIT_RESP_COMP) {
+    return (
+      <div className="h-full overflow-auto">
+        <RespCompEditorPanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.EDIT_ROOT) {
+    return <EditorComingSoon id={selectedId} />;
   }
 
   const node = nodes.find((n) => n.id === selectedId) ?? null;
@@ -247,6 +306,24 @@ function UnknownTier({ tier }: { tier: string }) {
       <p className="text-sm text-gray-500">
         No detail view for tier <code>{tier}</code> yet.
       </p>
+    </div>
+  );
+}
+
+function EditorComingSoon({ id }: { id: string }) {
+  // Landing page for the Edit-group root node. Individual editors
+  // route to their own panels.
+  const label = id === SYNTHETIC_IDS.EDIT_ROOT ? 'Edit' : 'Editor';
+  return (
+    <div className="h-full flex items-center justify-center p-8 text-center max-w-md mx-auto">
+      <div>
+        <h2 className="text-sm font-semibold text-gray-300 mb-2">{label}</h2>
+        <p className="text-sm text-gray-400">
+          Select an editor from the sidebar: Features → Responsibilities,
+          Responsibilities → Components, Decomposition, Subresps →
+          Subcomponents, Dependencies, or Domain Parents.
+        </p>
+      </div>
     </div>
   );
 }

@@ -26,6 +26,14 @@ export interface NavItem {
     | 'vocabulary'
     | 'references'
     | 'dag'
+    | 'queue'
+    | 'edit-root'
+    | 'edit-dependencies'
+    | 'edit-domain-parents'
+    | 'edit-decomposition'
+    | 'edit-feat-resp'
+    | 'edit-resp-comp'
+    | 'edit-subresp-subcomp'
     | 'components-root'
     | 'component-top'
     | 'component-sub'
@@ -67,6 +75,17 @@ export const SYNTHETIC_IDS = {
   // the full layered DAG. Kept the user-facing label "Decomposition
   // Graph" for continuity; the synthetic id reads `:dag` internally.
   DAG: ':dag',
+  // Phase 11 — the pending-change queue panel.
+  QUEUE: ':queue',
+  // Phase 11 structured-edit UIs. Each synthetic id routes to a
+  // dedicated editor page in NavDetail.
+  EDIT_ROOT: ':edit',
+  EDIT_DEPS: ':edit-dependencies',
+  EDIT_DOMAIN_PARENTS: ':edit-domain-parents',
+  EDIT_DECOMPOSITION: ':edit-decomposition',
+  EDIT_FEAT_RESP: ':edit-feat-resp',
+  EDIT_RESP_COMP: ':edit-resp-comp',
+  EDIT_SUBRESP_SUBCOMP: ':edit-subresp-subcomp',
   COMPONENTS_ROOT: ':components',
 } as const;
 
@@ -207,6 +226,71 @@ export function buildNavTree(nodes: StructureNode[]): NavItem[] {
     node: null,
     role: 'dag',
     children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.QUEUE,
+    label: 'Pending Changes',
+    node: null,
+    role: 'queue',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.EDIT_ROOT,
+    label: 'Edit',
+    node: null,
+    role: 'edit-root',
+    children: [
+      {
+        id: SYNTHETIC_IDS.EDIT_FEAT_RESP,
+        label: 'Features → Responsibilities',
+        node: null,
+        role: 'edit-feat-resp',
+        children: [],
+        status: { ...EMPTY_STATUS },
+      },
+      {
+        id: SYNTHETIC_IDS.EDIT_RESP_COMP,
+        label: 'Responsibilities → Components',
+        node: null,
+        role: 'edit-resp-comp',
+        children: [],
+        status: { ...EMPTY_STATUS },
+      },
+      {
+        id: SYNTHETIC_IDS.EDIT_DECOMPOSITION,
+        label: 'Decomposition',
+        node: null,
+        role: 'edit-decomposition',
+        children: [],
+        status: { ...EMPTY_STATUS },
+      },
+      {
+        id: SYNTHETIC_IDS.EDIT_SUBRESP_SUBCOMP,
+        label: 'Subresps → Subcomponents',
+        node: null,
+        role: 'edit-subresp-subcomp',
+        children: [],
+        status: { ...EMPTY_STATUS },
+      },
+      {
+        id: SYNTHETIC_IDS.EDIT_DEPS,
+        label: 'Dependencies',
+        node: null,
+        role: 'edit-dependencies',
+        children: [],
+        status: { ...EMPTY_STATUS },
+      },
+      {
+        id: SYNTHETIC_IDS.EDIT_DOMAIN_PARENTS,
+        label: 'Domain Parents',
+        node: null,
+        role: 'edit-domain-parents',
+        children: [],
+        status: { ...EMPTY_STATUS },
+      },
+    ],
     status: { ...EMPTY_STATUS },
   });
 

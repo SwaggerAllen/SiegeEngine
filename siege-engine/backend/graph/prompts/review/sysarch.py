@@ -8,6 +8,17 @@ from backend.graph.prompts.review._shared import (
 )
 from backend.graph.review_context.sysarch import SysarchContext
 
+_HANDLES_INTRO = """\
+Sysarch is the compression pass — it collapses responsibilities \
+into components, fixes component boundaries, and picks the \
+tech stack. Every downstream tier reads these handles as \
+read-only: names / role / api-intent / policies are the \
+compressed form comparch thinks against. If names are generic \
+("Service", "Manager", "Hub") or role prose is category-speak \
+("manages X", "handles Y"), comparch reasons against empty \
+handles and produces generic techspecs. Be strict here.
+"""
+
 _HANDLES = """\
 - Are component names distinctive, domain-shaped, and free of \
 anti-patterns (Workspace / Dashboard / Console / UI / Hub / \
@@ -28,6 +39,18 @@ name the user-facing slice, not the mechanism?
 - Is the 1-2 domain-parent cap per presentational respected?
 - Are policies' ``<required>`` references valid top-level \
 resp ids?
+"""
+
+_ARCHITECTURE_INTRO = """\
+Component boundaries and tech-stack choices land here and are \
+expensive to undo — comparch, subcomparch, and impl all inherit \
+them. Watch for components that bundle unrelated work (no \
+coherent axis), foundation components used as a dumping ground, \
+and techspec prose that's thin ("Python, React") rather than \
+specific about persistence / concurrency / testing / \
+deployment. Also audit policies: an AGPL-style universal policy \
+shouldn't have a ``<required>`` responsibility; a policy that \
+targets a specific capability should.
 """
 
 _ARCHITECTURE = """\
@@ -53,6 +76,8 @@ def render_system_prompt() -> str:
         scope_label="this project",
         handles_criteria=_HANDLES,
         architecture_criteria=_ARCHITECTURE,
+        handles_intro=_HANDLES_INTRO,
+        architecture_intro=_ARCHITECTURE_INTRO,
     )
 
 

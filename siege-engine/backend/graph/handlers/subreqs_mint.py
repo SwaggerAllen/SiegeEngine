@@ -38,6 +38,7 @@ import logging
 
 from backend.database import SessionLocal
 from backend.graph import events as ev
+from backend.graph.broadcast import commit_and_publish
 from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
     ValidationError,
@@ -167,7 +168,10 @@ async def mint_subreqs(payload: dict) -> None:
                 )
                 minted_edge_ids.append(edge_id)
 
-        db.commit()
+        # commit_and_publish so the NodeCreated + EdgeCreated events
+        # broadcast and the sidebar's subresp children show up under
+        # their owning comp without a manual refresh (B1).
+        commit_and_publish(db, project_id)
 
         # Phase 4 hook: now that subresps are minted, enqueue
         # comparch generation for this component. The comparch

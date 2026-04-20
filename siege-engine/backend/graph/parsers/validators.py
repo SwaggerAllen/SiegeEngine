@@ -526,11 +526,18 @@ class Policy:
     on the minted ``policy_*`` node's ``content`` column; comparch
     (Phase 4) re-parses it when deciding which components the
     policy applies to.
+
+    Phase-11 followup B8: ``required_resp_id`` is now optional
+    (``None``) for universal-scope policies — AGPL license
+    obligations, organization-wide conventions — that don't
+    have a single enforcing responsibility. The application
+    pass emits ``policy_application`` edges to every candidate
+    component in scope when ``required_resp_id`` is None.
     """
 
     name: str
     trigger: str
-    required_resp_id: str
+    required_resp_id: str | None
     rationale: str
 
 
@@ -1029,8 +1036,28 @@ def _validate_policy(node: TagNode, *, index: int, known_resp_ids: set[str]) -> 
 
     name = (_require_one("name").text or "").strip()
     trigger = (_require_one("trigger").text or "").strip()
-    required = (_require_one("required").text or "").strip()
     rationale = (_require_one("rationale").text or "").strip()
+    # Phase-11 followup B8: <required> is optional. Universal-scope
+    # policies (AGPL, org-wide conventions) omit it; the application
+    # pass then emits policy_application edges to every candidate
+    # component in scope.
+    required_nodes = node.find_all("required")
+    if len(required_nodes) > 1:
+        raise ValidationError(
+            f"{pos} has {len(required_nodes)} <required> children; at most one is allowed."
+        )
+    required: str | None
+    if required_nodes:
+        candidate = (required_nodes[0].text or "").strip()
+        if not candidate:
+            # Empty <required></required> is indistinguishable from
+            # omission for intent but easier to typo. Treat it as
+            # "omitted" (universal) rather than a hard error.
+            required = None
+        else:
+            required = candidate
+    else:
+        required = None
 
     if not name:
         raise ValidationError(f"{pos} has an empty <name>.")
@@ -1046,17 +1073,12 @@ def _validate_policy(node: TagNode, *, index: int, known_resp_ids: set[str]) -> 
             "explains why the policy exists and carries weight when the "
             "application pass decides which components it applies to."
         )
-    if not required:
-        raise ValidationError(
-            f"{pos} has an empty <required>. It must contain a single "
-            "resp_* ID referencing the responsibility that must be "
-            "fulfilled at every trigger site."
-        )
-    if required not in known_resp_ids:
+    if required is not None and required not in known_resp_ids:
         raise ValidationError(
             f"{pos} has <required>{required}</required> referencing an "
             f"unknown responsibility. Valid IDs: "
-            f"{', '.join(sorted(known_resp_ids))}."
+            f"{', '.join(sorted(known_resp_ids))}. "
+            "(Omit <required> entirely for a universal-scope policy.)"
         )
 
     return Policy(name=name, trigger=trigger, required_resp_id=required, rationale=rationale)

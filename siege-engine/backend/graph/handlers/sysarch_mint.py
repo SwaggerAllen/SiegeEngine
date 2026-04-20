@@ -72,6 +72,7 @@ import logging
 
 from backend.database import SessionLocal
 from backend.graph import events as ev
+from backend.graph.broadcast import commit_and_publish
 from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
@@ -107,19 +108,17 @@ def _serialize_policy_blob(p: Policy) -> str:
     ``content`` column. Comparch (Phase 4) re-parses it via
     :func:`validate_policy_blob` when deciding applicability.
 
-    Kept simple and deterministic — the only escaping we do is
-    via the parser's leniency at read time. Policies rarely
-    contain ``<`` or ``&``; if they ever do, the BS4 html parser
-    will still accept it.
+    Phase-11 followup B8: universal-scope policies have
+    ``required_resp_id is None`` and emit no ``<required>``
+    child at all (as opposed to an empty tag). The validator
+    accepts both forms; omission is the canonical rendering.
     """
-    return (
-        "<policy>"
-        f"<name>{p.name}</name>"
-        f"<trigger>{p.trigger}</trigger>"
-        f"<required>{p.required_resp_id}</required>"
-        f"<rationale>{p.rationale}</rationale>"
-        "</policy>"
-    )
+    parts = ["<policy>", f"<name>{p.name}</name>", f"<trigger>{p.trigger}</trigger>"]
+    if p.required_resp_id is not None:
+        parts.append(f"<required>{p.required_resp_id}</required>")
+    parts.append(f"<rationale>{p.rationale}</rationale>")
+    parts.append("</policy>")
+    return "".join(parts)
 
 
 async def mint_sysarch(payload: dict) -> None:
@@ -327,7 +326,10 @@ async def mint_sysarch(payload: dict) -> None:
                 bootstrap_subreqs_node(db, project_id, comp_id)
                 subreqs_targets.append(comp_id)
 
-        db.commit()
+        # commit_and_publish so the NodeCreated events for comp_* /
+        # policy_* / subreqs_* broadcast over SSE and the sidebar +
+        # Components tab update without a manual refresh (B1).
+        commit_and_publish(db, project_id)
 
         # ── Phase 8b: enqueue subreqs generation post-commit ────
         # Transient enqueue failure leaves a bootstrap node without

@@ -306,6 +306,7 @@ def _apply_node_created(session: Session, project_id: str, event: ev.NodeCreated
             group_label=event.group_label,
             is_implicit=event.is_implicit,
             is_foundation=event.is_foundation,
+            is_deferred=event.is_deferred,
             created_at=now,
             updated_at=now,
         )
@@ -333,6 +334,15 @@ def _apply_node_reparented(session: Session, project_id: str, event: ev.NodeRepa
     )
     _enforce_reference_parent_constraint(node.tier, event.new_parent_id, event.node_id)
     node.parent_id = event.new_parent_id
+    node.updated_at = datetime.utcnow()
+
+
+def _apply_node_deferred_updated(
+    session: Session, project_id: str, event: ev.NodeDeferredUpdated
+) -> None:
+    """Flip the ``is_deferred`` flag on a feat_* node (B7)."""
+    node = _require_node(session, project_id, event.node_id)
+    node.is_deferred = event.is_deferred
     node.updated_at = datetime.utcnow()
 
 
@@ -661,6 +671,7 @@ _HANDLERS: dict[str, Callable[[Session, str, Any], None]] = {
     "NodeCreated": _apply_node_created,
     "NodeRenamed": _apply_node_renamed,
     "NodeReparented": _apply_node_reparented,
+    "NodeDeferredUpdated": _apply_node_deferred_updated,
     "NodePromoted": _apply_node_promoted,
     "NodeDemoted": _apply_node_demoted,
     "NodesMerged": _apply_nodes_merged,

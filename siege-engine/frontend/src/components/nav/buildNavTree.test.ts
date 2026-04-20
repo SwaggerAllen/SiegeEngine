@@ -30,6 +30,7 @@ function n(
     staleness_reasons: [],
     techspec: '',
     pubapi: '',
+    is_deferred: false,
     ...overrides,
   };
 }
@@ -42,6 +43,8 @@ describe('buildNavTree', () => {
       SYNTHETIC_IDS.VOCABULARY,
       SYNTHETIC_IDS.REFERENCES,
       SYNTHETIC_IDS.DAG,
+      SYNTHETIC_IDS.QUEUE,
+      SYNTHETIC_IDS.EDIT_ROOT,
     ]);
   });
 
@@ -59,6 +62,8 @@ describe('buildNavTree', () => {
       SYNTHETIC_IDS.VOCABULARY,
       SYNTHETIC_IDS.REFERENCES,
       SYNTHETIC_IDS.DAG,
+      SYNTHETIC_IDS.QUEUE,
+      SYNTHETIC_IDS.EDIT_ROOT,
     ]);
   });
 

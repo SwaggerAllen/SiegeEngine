@@ -51,17 +51,53 @@ handles** the entire generation chain will build on — the \
 requirements pass downstream will redistribute your features \
 into system-level responsibilities, and it needs each feature's \
 intent to name specific enough capabilities that it can identify \
-what the system must guarantee. A feature called "User \
-Management" gives requirements nothing to redistribute; a \
-feature that names invite flows, session lifecycle, and \
-credential reset gives requirements three concrete obligations \
-to work with. Prefer specific, user-visible capabilities over \
-engineering categories. Your features should also include things \
-the user didn't explicitly name but the project obviously needs.
+what the system must guarantee.
+
+**Features are workflows and persona stories, not engineering \
+categories.** A feature names what a user (or persona) \
+accomplishes end-to-end; it does not name a layer, service, or \
+technology choice. Keep a sharp eye on which axis you're on:
+
+* Features: "a new customer completes onboarding end-to-end", \
+"an admin flags suspicious activity and removes it", "a logged-in \
+user sees their recent orders and re-orders one in two taps", \
+"a teammate invites a colleague via email and the colleague \
+accepts from a mobile browser".
+* Not features (these are sysarch concerns — they show up later, \
+redistributed as responsibilities assigned to components): \
+"storage layer", "API gateway", "authentication service", \
+"caching layer", "database schema", "session service", \
+"notification queue".
+* Not features (these are implementation details — they show up \
+at component-arch time at the earliest): "use Redis for sessions", \
+"Postgres table design", "React component tree", "GraphQL vs \
+REST", "specific framework choice".
+
+A feature called "User Management" gives requirements nothing to \
+redistribute; a feature that names invite flows, session \
+lifecycle, and credential reset gives requirements three concrete \
+obligations to work with. Prefer specific, user-visible \
+capabilities over engineering categories. Your features should \
+also include things the user didn't explicitly name but the \
+project obviously needs.
 
 # Output format
 
-Output a single ``<features>`` block. Nothing else. Inside it, \
+Output three top-level blocks in this order: \
+``<introduction>``, ``<features>``, ``<vocabulary>``. The \
+``<introduction>`` is required — a short prose preamble \
+(2–5 paragraphs) that captures your initial thinking about \
+this project: what it fundamentally IS, which user goals \
+shape the decomposition axis, which tensions or ambiguities \
+you noticed in the input doc. Downstream tiers don't read \
+this intro, but when *this* tier regenerates with feedback \
+you (or a later model) can refer back to it to stay anchored \
+in the initial framing rather than restarting from scratch. \
+Write it like a memo to your future self working on the \
+next revision.
+
+After ``<introduction>``, output a single ``<features>`` \
+block. Inside it, \
 group related features under ``<group>`` blocks where that aids \
 scannability, and place truly standalone features directly under \
 ``<features>``. Each ``<feature>`` has exactly one ``<name>`` and \
@@ -70,6 +106,20 @@ exactly one ``<intent>`` child, and may optionally be marked \
 ``<group>`` has exactly one ``<name>`` (the theme label) and at \
 least one ``<feature>``.
 
+    <introduction>
+      This project is a SaaS tenant-billing platform. The central \
+    user goals are (1) new customers self-serve subscribe without \
+    sales contact, (2) existing customers see exactly what they \
+    owe and when, (3) support can reverse an over-charge in one \
+    action. Payment lifecycle is the load-bearing axis; auth and \
+    notifications are supporting workflows.
+
+      Input doc tensions worth flagging on regen: the "plans" \
+    and "add-ons" terminology is used interchangeably, and the \
+    input implies both usage-based and seat-based pricing — I've \
+    captured both and noted the open question in the Billing \
+    group's intents.
+    </introduction>
     <features>
       <group>
         <name>User Management</name>
@@ -165,16 +215,19 @@ rejected. Names are identifiers downstream passes use to \
 reference features; duplicates would make those references \
 ambiguous.
 
-# Vocabulary (optional)
+# Vocabulary (required)
 
-You may optionally include a ``<vocabulary>`` block **after** \
+You **must** include a ``<vocabulary>`` block **after** \
 the ``<features>`` block, at the top level of your output — \
 at the same nesting as ``<features>``, not inside it. Both \
 blocks are siblings of whatever implicit root the parser \
-extracts. The vocabulary block is strongly encouraged for any \
-term the project uses in a project-specific sense — anything \
-where a generic LLM reading the term in isolation would get \
-the meaning subtly wrong.
+extracts. The vocabulary block captures terms the project uses \
+in a project-specific sense — anything where a generic LLM \
+reading the term in isolation would get the meaning subtly wrong. \
+Every project has some of these; if you genuinely can't find one, \
+define one clearly-project-specific term (e.g. the project's \
+name, the main domain object) so downstream tiers at least see \
+the vocabulary structure populated.
 
 The grammar:
 
@@ -211,9 +264,9 @@ The grammar:
 
 # Vocabulary rules
 
-* ``<vocabulary>`` is optional but strongly encouraged. If you \
-include it, it comes after ``<features>`` in the output, as a \
-sibling block.
+* ``<vocabulary>`` is **required**. It comes after ``<features>`` \
+in the output, as a sibling block. The block must contain at \
+least one ``<term>`` entry.
 * Each ``<term>`` has a ``name`` attribute (the term being \
 defined) and a ``scope`` attribute that is exactly ``"project"`` \
 or ``"feature"``.

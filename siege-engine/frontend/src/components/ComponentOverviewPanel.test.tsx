@@ -21,6 +21,7 @@ function comp(overrides: Partial<StructureNode> = {}): StructureNode {
     staleness_reasons: [],
     techspec: '',
     pubapi: '',
+    is_deferred: false,
     ...overrides,
   };
 }

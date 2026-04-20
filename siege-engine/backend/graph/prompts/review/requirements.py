@@ -8,7 +8,22 @@ from backend.graph.prompts.review._shared import (
 )
 from backend.graph.review_context.requirements import RequirementsContext
 
+_HANDLES_INTRO = """\
+Requirements rotates user-facing features into system-level \
+responsibilities. Sysarch then reads each responsibility and \
+decides which component owns it. Two failure modes hurt most: \
+overlapping responsibilities (two resps both claim ownership of \
+the same system capability, making component boundaries \
+ambiguous), and responsibilities that restate their source \
+feature (no rotation happened — sysarch can't distinguish user \
+intent from system obligation). Flag both aggressively.
+"""
+
 _HANDLES = """\
+- **Overlap first.** Are any two responsibilities claiming \
+ownership of the same system capability? Multiple features can \
+share a resp; two resps owning the same scope is a bug. Flag \
+overlaps by naming the specific capability both claim.
 - Are responsibility names distinctive and specific to the \
 system-level work? Flag names that restate a feature, names \
 too abstract for sysarch to map to a component, or names that \
@@ -17,13 +32,24 @@ collide with siblings.
 data / guarantee) rather than user-facing behavior the \
 features already describe? Flag intents that just paraphrase a \
 feature.
+- Does each intent name what the resp explicitly does *not* \
+cover, so sysarch knows where boundaries lie?
 - Does the responsibility set cover the feature set? Every \
 feature's system-side needs should map to at least one \
 responsibility (possibly shared across features). Flag missing \
 coverage.
 - Are ``<covers>`` references valid? Every feat_* id must exist \
 in the feature set.
-- Are there responsibilities that duplicate or overlap?
+"""
+
+_ARCHITECTURE_INTRO = """\
+The rotation axis is the load-bearing decision here. If \
+responsibilities still read as user-facing outcomes, \
+requirements didn't rotate — sysarch will struggle to map them \
+to components because they're still on the feature side of the \
+axis. Cross-cutting concerns (auth, audit, observability) \
+deserve their own resps so sysarch can consolidate them, \
+rather than feature-by-feature duplicates.
 """
 
 _ARCHITECTURE = """\
@@ -45,6 +71,8 @@ def render_system_prompt() -> str:
         scope_label="this project",
         handles_criteria=_HANDLES,
         architecture_criteria=_ARCHITECTURE,
+        handles_intro=_HANDLES_INTRO,
+        architecture_intro=_ARCHITECTURE_INTRO,
     )
 
 

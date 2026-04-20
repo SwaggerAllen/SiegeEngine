@@ -103,20 +103,34 @@ def seeded_project(shared_session_factory):
         session.close()
 
 
+# Phase-11 followups B2 + B4: every valid expansion output must
+# have a sibling <introduction> and <vocabulary> block. Keep the
+# stubs minimal so tests don't care about their content.
+_VALID_INTRODUCTION_XML = (
+    "<introduction>Test intro paragraph capturing initial thinking.</introduction>"
+)
+_VALID_VOCABULARY_XML = (
+    "<vocabulary>"
+    '<term name="default" scope="project">'
+    "<vocab-entry><definition>A stub term for tests.</definition></vocab-entry>"
+    "</term>"
+    "</vocabulary>"
+)
+
 # A minimal valid <features> block for use as the default CLI
 # output in tests that don't care about the specific feature set.
 # Under Phase 2's parse-validate retry loop, every mock CLI
 # response must parse and validate as a <features> block or the
 # handler will retry until its budget is exhausted.
 _VALID_FEATURES_XML = (
-    "<features>"
+    _VALID_INTRODUCTION_XML + "<features>"
     "<feature>"
     "<name>Default Feature</name>"
     "<intent>A default test feature with paragraph-length intent "
     "for round-trip coverage.</intent>"
     "</feature>"
     "</features>"
-)
+) + _VALID_VOCABULARY_XML
 
 
 def _feature_xml(*features: tuple[str, str]) -> str:
@@ -125,7 +139,7 @@ def _feature_xml(*features: tuple[str, str]) -> str:
         f"<feature><name>{name}</name><intent>{intent}</intent></feature>"
         for name, intent in features
     )
-    return f"<features>{inner}</features>"
+    return _VALID_INTRODUCTION_XML + f"<features>{inner}</features>" + _VALID_VOCABULARY_XML
 
 
 def _patch_cli(

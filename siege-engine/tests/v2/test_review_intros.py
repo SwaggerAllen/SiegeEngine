@@ -1,0 +1,80 @@
+"""B3 — Every per-tier review prompt supplies a prose intro for each section.
+
+Pins the invariant that review system prompts include the
+``_HANDLES_INTRO`` / ``_ARCHITECTURE_INTRO`` paragraphs before
+the bullet criteria. The shared template still renders correctly
+when tiers omit the kwargs (uses a safe default) so older code
+paths stay backward compatible.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from backend.graph.prompts.review import (
+    comparch,
+    expansion,
+    fanin,
+    impl,
+    requirements,
+    subcomparch,
+    subreqs,
+    sysarch,
+)
+from backend.graph.prompts.review._shared import render_review_system_prompt
+
+
+@pytest.mark.parametrize(
+    "tier_module, tier_name",
+    [
+        (expansion, "expansion"),
+        (requirements, "requirements"),
+        (sysarch, "sysarch"),
+        (subreqs, "subreqs"),
+        (comparch, "comparch"),
+        (subcomparch, "subcomparch"),
+        (impl, "impl"),
+        (fanin, "fanin"),
+    ],
+)
+def test_tier_review_prompt_includes_prose_intros(tier_module, tier_name):
+    system_prompt = tier_module.render_system_prompt()
+    # Both section headers are present.
+    assert "Handles & structure review" in system_prompt
+    assert "Architectural-decisions review" in system_prompt
+    # Intros land before criteria — each tier's intro is more than
+    # one sentence; use a length heuristic to guard against a tier
+    # accidentally dropping its intro.
+    handles_idx = system_prompt.find("Handles & structure review")
+    architecture_idx = system_prompt.find("Architectural-decisions review")
+    handles_body = system_prompt[handles_idx:architecture_idx]
+    architecture_body = system_prompt[architecture_idx:]
+    # Strip the "Specific checks under..." line to count intro length.
+    handles_intro_body = handles_body.split("Specific checks under")[0]
+    architecture_intro_body = architecture_body.split("Specific checks under")[0]
+    # Intros should be prose paragraphs, not empty placeholders.
+    # 120 chars ≈ a 2-sentence paragraph.
+    assert len(handles_intro_body.strip()) > 120, (
+        f"{tier_name} handles intro too short — add prose framing before the "
+        f"bullet criteria. Got: {handles_intro_body!r}"
+    )
+    assert len(architecture_intro_body.strip()) > 120, (
+        f"{tier_name} architecture intro too short — add prose framing. "
+        f"Got: {architecture_intro_body!r}"
+    )
+
+
+def test_shared_template_renders_with_default_intros_when_absent():
+    """Backward compatibility: tiers that omit the intro kwargs
+    get a safe generic paragraph rather than an empty section."""
+    rendered = render_review_system_prompt(
+        artifact_label="``<x>``",
+        scope_label="this scope",
+        handles_criteria="- check A\n- check B\n",
+        architecture_criteria="- axis check\n",
+    )
+    assert "Handles & structure review" in rendered
+    assert "Architectural-decisions review" in rendered
+    # Default intros are non-empty.
+    assert "Audit the artifact's handle quality" in rendered
+    assert "Audit the artifact's architectural choices" in rendered

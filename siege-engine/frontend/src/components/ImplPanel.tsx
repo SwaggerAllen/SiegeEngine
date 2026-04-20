@@ -93,6 +93,7 @@ function ImplPanelTopLevel({
 
   return (
     <BootstrapDraftPanel
+      projectId={projectId}
       data={data}
       isLoading={isLoading}
       error={error}

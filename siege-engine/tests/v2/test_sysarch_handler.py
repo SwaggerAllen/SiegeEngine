@@ -165,9 +165,13 @@ def _valid_sysarch(resp_ids: list[str]) -> str:
 
     Three components matching the three seeded resps; foundation on
     the third. Deterministic so retry-prompt tests can inspect it.
+
+    Phase-11 followup B4 made ``<introduction>`` a required sibling
+    block; this helper prepends a stub intro.
     """
     auth_id, billing_id, foundation_id = resp_ids
     return (
+        "<introduction>Stub intro for sysarch handler tests.</introduction>"
         "<sysarch>"
         "<techspec>A typical Python + React stack with event-sourced writes.</techspec>"
         "<components>"
