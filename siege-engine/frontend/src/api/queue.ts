@@ -327,3 +327,22 @@ export function affectedNodeIds(
   }
   return Array.from(out);
 }
+
+// ── Client-side ID minter ──────────────────────────────────────────
+//
+// Mirrors ``backend.graph.ids.mint`` — 8 Crockford base32 chars
+// appended to the kind prefix. The server validates the format
+// on every ``Create`` instruction; collisions are vanishingly
+// rare with a 40-bit suffix and the apply handler detects
+// ``already exists`` failures at event-apply time, so no
+// pre-emptive server round-trip is needed.
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+export function mintClientId(kind: 'feat' | 'resp' | 'comp' | 'impl'): string {
+  const crypto = globalThis.crypto;
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  let suffix = '';
+  for (const b of bytes) suffix += CROCKFORD[b % CROCKFORD.length];
+  return `${kind}_${suffix}`;
+}

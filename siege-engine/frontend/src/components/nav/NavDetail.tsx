@@ -20,6 +20,7 @@ import { SubcomparchPanel } from '../SubcomparchPanel';
 import { SubreqsPanel } from '../SubreqsPanel';
 import { SysarchPanel } from '../SysarchPanel';
 import { VocabularyList } from '../VocabularyList';
+import { DecompositionEditorPanel } from '../editors/DecompositionEditorPanel';
 import { DependencyEditorPanel } from '../editors/DependencyEditorPanel';
 import { DomainParentEditorPanel } from '../editors/DomainParentEditorPanel';
 import { SYNTHETIC_IDS } from './buildNavTree';
@@ -100,9 +101,15 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
       </div>
     );
   }
+  if (selectedId === SYNTHETIC_IDS.EDIT_DECOMPOSITION) {
+    return (
+      <div className="h-full overflow-auto">
+        <DecompositionEditorPanel projectId={projectId} />
+      </div>
+    );
+  }
   if (
     selectedId === SYNTHETIC_IDS.EDIT_ROOT ||
-    selectedId === SYNTHETIC_IDS.EDIT_DECOMPOSITION ||
     selectedId === SYNTHETIC_IDS.EDIT_FEAT_RESP ||
     selectedId === SYNTHETIC_IDS.EDIT_RESP_COMP ||
     selectedId === SYNTHETIC_IDS.EDIT_SUBRESP_SUBCOMP
