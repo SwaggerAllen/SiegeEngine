@@ -244,6 +244,7 @@ class TestRebuildWipesLedger:
                 tier="comp",
                 kind="domain",
                 name="Src",
+                content="<comparch>approved</comparch>",
             ),
         )
         append_event(

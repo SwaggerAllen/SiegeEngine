@@ -132,12 +132,16 @@ def compute_staleness_changes(
     ledger captures "stale w.r.t. neighbor N at offset O" per the
     Phase 9 roadmap bullet.
     """
-    etype = trigger.event_type
     changes = StalenessChanges()
 
-    if etype == "DraftApproved":
+    # isinstance dispatch narrows the type on each branch so mypy
+    # can verify the per-event attribute accesses below. String-
+    # based dispatch on trigger.event_type works at runtime but
+    # doesn't give mypy the narrowing it needs under strict
+    # configs used in CI.
+    if isinstance(trigger, ev.DraftApproved):
         _fanout_draft_approved(session, project_id, trigger, trigger_offset, changes)
-    elif etype == "FragmentUpdated":
+    elif isinstance(trigger, ev.FragmentUpdated):
         # Post-MVP refinement: peek pre-apply fragment content and
         # call fragment_changed() to skip no-op idempotent writes.
         # For Phase 9 crude fanout, any FragmentUpdated emits
@@ -145,15 +149,15 @@ def compute_staleness_changes(
         _fanout_content_change(
             session, project_id, trigger.owner_id, trigger_offset, "fragment_changed", changes
         )
-    elif etype == "FanInContentUpdated":
+    elif isinstance(trigger, ev.FanInContentUpdated):
         _fanout_content_change(
             session, project_id, trigger.node_id, trigger_offset, "content_changed", changes
         )
-    elif etype == "BootstrapNodeContentCleared":
+    elif isinstance(trigger, ev.BootstrapNodeContentCleared):
         _fanout_content_change(
             session, project_id, trigger.node_id, trigger_offset, "content_changed", changes
         )
-    elif etype == "EdgeCreated":
+    elif isinstance(trigger, ev.EdgeCreated):
         _fanout_edge_change(
             session,
             project_id,
@@ -163,7 +167,7 @@ def compute_staleness_changes(
             "edge_created",
             changes,
         )
-    elif etype == "EdgeDeleted":
+    elif isinstance(trigger, ev.EdgeDeleted):
         # EdgeDeleted carries only edge_id; the edge row is gone
         # from the projection by the time fanout runs, so we can't
         # resolve its source/target here. Phase 9 MVP: skip
@@ -172,10 +176,37 @@ def compute_staleness_changes(
         # deletes that remove edges fan out staleness via the
         # structural-change branch on the deleted node.
         pass
-    elif etype in _DESTRUCTIVE_EVENT_TYPES:
+    elif trigger.event_type in _DESTRUCTIVE_EVENT_TYPES:
         _fanout_structural_change(session, project_id, trigger, trigger_offset, changes)
 
+    # Drop marks whose target has no approved content yet — those
+    # nodes aren't "stale" in the Phase 9 sense, they're pre-first-
+    # pass and the regular scheduler will handle them once their
+    # prerequisites are met. Without this filter, fanout auto-
+    # enqueues regens on never-generated nodes, which the tier
+    # handlers' readiness gates then hard-fail (e.g., a comparch
+    # regen firing before the comp's subreqs have been approved).
+    # Clears are kept regardless — removing a ledger entry is
+    # harmless.
+    changes.marks = [m for m in changes.marks if _has_approved_content(session, m.stale_node_id)]
+
     return changes
+
+
+def _has_approved_content(session: Session, node_id: str) -> bool:
+    """Return True when ``node_id`` has non-empty approved content.
+
+    Used by :func:`compute_staleness_changes` to skip marks for
+    nodes that haven't had their first-pass generation yet. An
+    empty content field is the platform signal for "not approved"
+    on every tier whose generator writes to ``Node.content``; for
+    draft-target tiers, approval writes content, and reset paths
+    explicitly clear it back to the empty string.
+    """
+    node = session.get(Node, node_id)
+    if node is None:
+        return False
+    return bool((node.content or "").strip())
 
 
 def apply_staleness_changes(

@@ -102,11 +102,19 @@ class TestContentCommitFanout:
     should mark every inbound-edge source as stale w.r.t. that node."""
 
     def test_fragment_update_marks_inbound_sources_stale(self, db, project):
-        # src --dependency--> dst
+        # src --dependency--> dst. Give src approved content so it's
+        # eligible for staleness marking; pre-first-pass nodes don't
+        # get marked.
         append_event(
             db,
             project.id,
-            ev.NodeCreated(node_id="comp_SRC00001", tier="comp", kind="domain", name="Src"),
+            ev.NodeCreated(
+                node_id="comp_SRC00001",
+                tier="comp",
+                kind="domain",
+                name="Src",
+                content="<comparch>approved</comparch>",
+            ),
         )
         append_event(
             db,
@@ -226,7 +234,13 @@ class TestEdgeCreatedFanout:
         append_event(
             db,
             project.id,
-            ev.NodeCreated(node_id="comp_SRC00002", tier="comp", kind="domain", name="Src"),
+            ev.NodeCreated(
+                node_id="comp_SRC00002",
+                tier="comp",
+                kind="domain",
+                name="Src",
+                content="<comparch>approved</comparch>",
+            ),
         )
         append_event(
             db,
@@ -259,7 +273,13 @@ class TestDestructiveStructural:
         append_event(
             db,
             project.id,
-            ev.NodeCreated(node_id="comp_SRC00003", tier="comp", kind="domain", name="Src"),
+            ev.NodeCreated(
+                node_id="comp_SRC00003",
+                tier="comp",
+                kind="domain",
+                name="Src",
+                content="<comparch>approved</comparch>",
+            ),
         )
         append_event(
             db,
@@ -305,7 +325,13 @@ class TestDestructiveStructural:
         append_event(
             db,
             project.id,
-            ev.NodeCreated(node_id="comp_SRCTPK01", tier="comp", kind="domain", name="Src"),
+            ev.NodeCreated(
+                node_id="comp_SRCTPK01",
+                tier="comp",
+                kind="domain",
+                name="Src",
+                content="<comparch>approved</comparch>",
+            ),
         )
         append_event(
             db,
@@ -345,7 +371,13 @@ class TestAutoEnqueue:
         append_event(
             db,
             project.id,
-            ev.NodeCreated(node_id="comp_SRCTPK02", tier="comp", kind="domain", name="Src"),
+            ev.NodeCreated(
+                node_id="comp_SRCTPK02",
+                tier="comp",
+                kind="domain",
+                name="Src",
+                content="<comparch>approved</comparch>",
+            ),
         )
         append_event(
             db,
