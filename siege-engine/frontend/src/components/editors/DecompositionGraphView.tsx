@@ -22,8 +22,13 @@ import { useEditableGraphSelection } from './graph/useEditableGraphSelection';
  * No two-tap edge-add path — decomposition edges are implicit from
  * the tree structure. Instead, tapping a comp opens the
  * ``NodeActionSidebar`` with per-node actions: Create child,
- * Rename, Delete, Move under…. Multi-select (for Merge in PR-11b)
- * lands next.
+ * Rename, Delete, Move under…, Split into….
+ *
+ * **Multi-select** (PR-11b). A "Select multiple" toolbar toggle
+ * flips the graph into multi-select mode. Taps add/remove nodes
+ * from the selection set; when 2+ same-parent same-tier comps
+ * are selected, a "Merge selected…" action appears in the
+ * sidebar and opens a Merge modal.
  */
 
 interface Props {
@@ -39,7 +44,11 @@ export function DecompositionGraphView({ projectId, allComps }: Props) {
     | { kind: 'create-child'; parent: StructureNode; initialName: string }
     | { kind: 'rename'; node: StructureNode; initialName: string }
     | { kind: 'move'; node: StructureNode }
+    | { kind: 'merge'; nodes: StructureNode[] }
+    | { kind: 'split'; node: StructureNode }
   >(null);
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const compById = useMemo(() => {
     const m = new Map<string, StructureNode>();
@@ -81,7 +90,31 @@ export function DecompositionGraphView({ projectId, allComps }: Props) {
   // returns false so the selection hook never transitions to
   // edge-staged. Node taps stay in source-selected for the
   // sidebar to pick up.
-  const selection = useEditableGraphSelection({ canConnect: () => false });
+  const singleSelection = useEditableGraphSelection({ canConnect: () => false });
+
+  // When multiSelect is active, we hijack tap routing so taps
+  // toggle ids in `selectedIds` instead of going to the
+  // single-select state machine. The selection object exposed to
+  // EditableGraph is still the single-select one (for its class
+  // application behavior around selected-source), but the tap
+  // handlers it sees are replaced.
+  const selection = useMemo(() => {
+    if (!multiSelect) return singleSelection;
+    return {
+      ...singleSelection,
+      onNodeTap: (id: string) => {
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+      },
+      onEdgeTap: () => {},
+      onBackgroundTap: () => {},
+      state: { kind: 'idle' as const },
+    };
+  }, [multiSelect, singleSelection]);
 
   const stylesheet = useMemo(
     () => [
@@ -129,7 +162,61 @@ export function DecompositionGraphView({ projectId, allComps }: Props) {
     [allComps, isDescendant],
   );
 
+  // Multi-select sidebar — appears whenever multiSelect mode is
+  // active. Shows the current count and, when ≥ 2 same-parent
+  // same-tier comps are selected, a Merge action.
+  const mergeCandidates = useMemo(() => {
+    const picked = Array.from(selectedIds)
+      .map((id) => compById.get(id))
+      .filter((n): n is StructureNode => !!n);
+    if (picked.length < 2) return null;
+    const firstParent = picked[0].parent_id;
+    const firstTier = picked[0].tier;
+    const allMatch = picked.every(
+      (n) => n.parent_id === firstParent && n.tier === firstTier,
+    );
+    return allMatch ? picked : null;
+  }, [selectedIds, compById]);
+
+  const multiSelectSidebar =
+    multiSelect ? (
+      <NodeActionSidebar
+        title={`${selectedIds.size} selected`}
+        subtitle="Multi-select mode"
+        onCancel={() => {
+          setSelectedIds(new Set());
+        }}
+        actions={
+          <div className="space-y-1.5">
+            {mergeCandidates ? (
+              <SidebarActionButton
+                label="Merge selected…"
+                variant="primary"
+                testId="decomp-action-merge"
+                onClick={() =>
+                  setActiveModal({ kind: 'merge', nodes: mergeCandidates })
+                }
+              />
+            ) : (
+              <p className="text-xs text-gray-400">
+                Select 2+ sibling comps of the same tier to enable Merge.
+              </p>
+            )}
+            <SidebarActionButton
+              label="Exit multi-select"
+              testId="decomp-action-exit-multi"
+              onClick={() => {
+                setMultiSelect(false);
+                setSelectedIds(new Set());
+              }}
+            />
+          </div>
+        }
+      />
+    ) : null;
+
   const sidebar = (() => {
+    if (multiSelect) return multiSelectSidebar;
     if (selection.state.kind !== 'source-selected') return null;
     const node = compById.get(selection.state.sourceId);
     if (!node) return null;
@@ -165,6 +252,11 @@ export function DecompositionGraphView({ projectId, allComps }: Props) {
               onClick={() => setActiveModal({ kind: 'move', node })}
             />
             <SidebarActionButton
+              label="Split into…"
+              testId="decomp-action-split"
+              onClick={() => setActiveModal({ kind: 'split', node })}
+            />
+            <SidebarActionButton
               label="Delete"
               variant="destructive"
               testId="decomp-action-delete"
@@ -198,8 +290,26 @@ export function DecompositionGraphView({ projectId, allComps }: Props) {
           >
             + New top-level comp
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMultiSelect((v) => !v);
+              setSelectedIds(new Set());
+            }}
+            className={`rounded px-2 py-0.5 ${
+              multiSelect
+                ? 'bg-amber-600 text-white hover:bg-amber-500'
+                : 'bg-gray-800 text-gray-200 hover:bg-gray-700'
+            }`}
+            data-testid="decomp-toggle-multi"
+            aria-pressed={multiSelect}
+          >
+            {multiSelect ? 'Exit multi-select' : 'Select multiple'}
+          </button>
           <span className="text-gray-500">
-            Tap a comp to open actions.
+            {multiSelect
+              ? `Tap comps to build a merge set. ${selectedIds.size} selected.`
+              : 'Tap a comp to open actions.'}
           </span>
         </div>
         <div className="flex-1 min-h-0">
@@ -213,12 +323,59 @@ export function DecompositionGraphView({ projectId, allComps }: Props) {
               stylesheet={stylesheet}
               selection={selection}
               layoutKey={String(allComps.length)}
+              multiSelectIds={multiSelect ? selectedIds : undefined}
             />
           )}
         </div>
       </div>
       {sidebar}
-      {activeModal && (
+      {activeModal?.kind === 'merge' && (
+        <MergeModal
+          nodes={activeModal.nodes}
+          onCancel={() => setActiveModal(null)}
+          onSubmit={({ destId, destName }) => {
+            const ins: Instruction = {
+              instruction_type: 'Merge',
+              source_ids: activeModal.nodes.map((n) => n.id),
+              source_names: activeModal.nodes.map((n) => n.name),
+              dest_id: destId,
+              dest_name: destName,
+            };
+            enqueue.mutate(ins, {
+              onSuccess: () => {
+                setActiveModal(null);
+                setSelectedIds(new Set());
+                setMultiSelect(false);
+              },
+            });
+          }}
+        />
+      )}
+      {activeModal?.kind === 'split' && (
+        <SplitModal
+          node={activeModal.node}
+          onCancel={() => setActiveModal(null)}
+          onSubmit={(destNames) => {
+            const destIds = destNames.map(() => mintClientId('comp'));
+            const ins: Instruction = {
+              instruction_type: 'Split',
+              source_id: activeModal.node.id,
+              source_name: activeModal.node.name,
+              dest_ids: destIds,
+              dest_names: destNames,
+            };
+            enqueue.mutate(ins, {
+              onSuccess: () => {
+                setActiveModal(null);
+                selection.commit();
+              },
+            });
+          }}
+        />
+      )}
+      {activeModal &&
+        activeModal.kind !== 'merge' &&
+        activeModal.kind !== 'split' && (
         <NameModal
           title={
             activeModal.kind === 'create-top'
@@ -428,6 +585,193 @@ function NameModal({
             data-testid="decomp-modal-submit"
           >
             OK
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Merge modal — pick destination identity (reuse one of the
+ * selected sources' IDs, or mint a brand new one) and a name.
+ * The backend ``Merge`` handler rewrites children / edges from
+ * the discarded sources to the dest. Downstream cascade halts
+ * per Phase 9.
+ */
+function MergeModal({
+  nodes,
+  onCancel,
+  onSubmit,
+}: {
+  nodes: StructureNode[];
+  onCancel: () => void;
+  onSubmit: (args: { destId: string; destName: string }) => void;
+}) {
+  const [destChoice, setDestChoice] = useState<string>(nodes[0].id);
+  const [name, setName] = useState<string>(nodes[0].name);
+  const destId = destChoice === '__new__' ? mintClientId('comp') : destChoice;
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+      onClick={onCancel}
+      data-testid="decomp-merge-modal"
+    >
+      <div
+        className="bg-gray-900 border border-gray-700 rounded p-4 w-96 space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h4 className="text-sm font-semibold text-gray-100">
+          Merge {nodes.length} components
+        </h4>
+        <p className="text-xs text-gray-400">
+          Sources: {nodes.map((n) => `"${n.name}"`).join(', ')}.
+        </p>
+        <label className="block text-xs text-gray-300">
+          Destination identity
+          <select
+            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 mt-1"
+            value={destChoice}
+            onChange={(e) => {
+              const v = e.target.value;
+              setDestChoice(v);
+              if (v !== '__new__') {
+                const keep = nodes.find((n) => n.id === v);
+                if (keep) setName(keep.name);
+              }
+            }}
+            data-testid="decomp-merge-dest-choice"
+          >
+            {nodes.map((n) => (
+              <option key={n.id} value={n.id}>
+                Keep "{n.name}" ({n.id})
+              </option>
+            ))}
+            <option value="__new__">New node (mint fresh id)</option>
+          </select>
+        </label>
+        <label className="block text-xs text-gray-300">
+          Destination name
+          <input
+            type="text"
+            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 mt-1"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            data-testid="decomp-merge-dest-name"
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded px-3 py-1 text-xs text-gray-300 hover:bg-gray-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!name.trim()}
+            onClick={() => onSubmit({ destId, destName: name.trim() })}
+            className="rounded bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-500 disabled:opacity-40"
+            data-testid="decomp-merge-submit"
+          >
+            Queue merge
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Split modal — one source comp splits into N new comps.
+ * Backend halts the downstream cascade; user resolves mapping
+ * by regenerating child tiers after approval.
+ */
+function SplitModal({
+  node,
+  onCancel,
+  onSubmit,
+}: {
+  node: StructureNode;
+  onCancel: () => void;
+  onSubmit: (destNames: string[]) => void;
+}) {
+  const [names, setNames] = useState<string[]>([`${node.name} A`, `${node.name} B`]);
+  const addRow = () => setNames((prev) => [...prev, '']);
+  const setRow = (i: number, v: string) =>
+    setNames((prev) => prev.map((n, idx) => (idx === i ? v : n)));
+  const removeRow = (i: number) =>
+    setNames((prev) => prev.filter((_, idx) => idx !== i));
+  const cleaned = names.map((n) => n.trim()).filter((n) => n.length > 0);
+  const disabled = cleaned.length < 2;
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+      onClick={onCancel}
+      data-testid="decomp-split-modal"
+    >
+      <div
+        className="bg-gray-900 border border-gray-700 rounded p-4 w-96 space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h4 className="text-sm font-semibold text-gray-100">
+          Split "{node.name}" into…
+        </h4>
+        <p className="text-xs text-gray-400">
+          Mints {cleaned.length || '?'} new components. The downstream
+          cascade halts so you can resolve which child / covered
+          features map to which split target by regenerating child
+          tiers after the queue applies.
+        </p>
+        <div className="space-y-1.5">
+          {names.map((n, i) => (
+            <div key={i} className="flex gap-2">
+              <input
+                type="text"
+                value={n}
+                onChange={(e) => setRow(i, e.target.value)}
+                className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                placeholder={`Split target ${i + 1} name`}
+                data-testid={`decomp-split-name-${i}`}
+              />
+              {names.length > 2 && (
+                <button
+                  type="button"
+                  onClick={() => removeRow(i)}
+                  className="text-xs text-gray-500 hover:text-red-300"
+                  aria-label={`Remove split target ${i + 1}`}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addRow}
+            className="text-xs text-gray-400 hover:text-gray-200"
+            data-testid="decomp-split-add-row"
+          >
+            + Add another
+          </button>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded px-3 py-1 text-xs text-gray-300 hover:bg-gray-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onSubmit(cleaned)}
+            className="rounded bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-500 disabled:opacity-40"
+            data-testid="decomp-split-submit"
+          >
+            Queue split
           </button>
         </div>
       </div>

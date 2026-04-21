@@ -63,6 +63,11 @@ export interface EditableGraphProps {
   /** Opaque key — when this changes, the graph is relayed out.
    * Use for material structural changes that ELK should re-fit. */
   layoutKey?: string;
+  /** When present, these node IDs get the ``multi-selected``
+   * class applied on top of the normal selection classes. Used by
+   * the Decomposition editor to style nodes added to a multi-
+   * select set for the Merge action. */
+  multiSelectIds?: ReadonlySet<string>;
 }
 
 const DEFAULT_LAYOUT = {
@@ -92,6 +97,7 @@ export function EditableGraph({
   invalidTargets,
   layout,
   layoutKey,
+  multiSelectIds,
 }: EditableGraphProps) {
   const cyRef = useRef<cytoscape.Core | null>(null);
   const resolvedLayout = useMemo(() => layout ?? DEFAULT_LAYOUT, [layout]);
@@ -105,6 +111,20 @@ export function EditableGraph({
     if (!cy) return;
     applySelectionClasses(cy, selection.state, candidates, invalidTargets);
   }, [selection.state, elements, candidates, invalidTargets]);
+
+  // Apply the `multi-selected` class to nodes in ``multiSelectIds``.
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.batch(() => {
+      cy.nodes().removeClass('multi-selected');
+      if (!multiSelectIds) return;
+      multiSelectIds.forEach((id) => {
+        const node = cy.$id(id);
+        if (node.length) node.addClass('multi-selected');
+      });
+    });
+  }, [multiSelectIds, elements]);
 
   // Wire tap / background / edge-tap handlers.
   useEffect(() => {

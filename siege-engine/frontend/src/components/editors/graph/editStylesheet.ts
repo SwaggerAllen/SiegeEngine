@@ -65,4 +65,16 @@ export const editStylesheet: StylesheetCSS[] = [
       'target-arrow-color': '#f87171',
     },
   },
+  // Multi-select class for the Decomposition editor's Merge flow.
+  // Applied independently of the single-select state machine so
+  // users can build up a set without losing the highlight when
+  // they tap another node.
+  {
+    selector: 'node.multi-selected',
+    css: {
+      'border-width': 3,
+      'border-color': '#f59e0b',
+      'background-color': '#78350f',
+    },
+  },
 ];

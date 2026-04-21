@@ -36,7 +36,7 @@ vi.mock('react-cytoscapejs', () => ({
       },
       batch: (fn) => fn(),
       elements: () => ({ removeClass: () => {} }),
-      nodes: () => ({ forEach: () => {} }),
+      nodes: () => ({ forEach: () => {}, removeClass: () => {} }),
       $id: () => ({ length: 0, addClass: () => {}, removeClass: () => {} }),
       layout: () => ({ run: () => {} }),
     };
