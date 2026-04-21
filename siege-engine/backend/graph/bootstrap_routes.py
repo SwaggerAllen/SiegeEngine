@@ -675,7 +675,17 @@ def _latest_telemetry(
     project_id: str,
     node_id: str,
 ) -> dict[str, Any] | None:
-    """Return the most recent telemetry row for a node, or None."""
+    """Return the most recent *generation* telemetry row for a node.
+
+    ``GenerationTelemetry`` rows are written by both the generation
+    pass (``section=<tier>``: ``expansion`` / ``requirements`` /
+    ``sysarch`` / etc.) and the AI self-review pass
+    (``section="review"``). The review pass runs right after
+    generation, so if the filter didn't exclude review rows the
+    "Last gen" display would show review token counts instead of
+    the real generation's counts. Explicitly skip review rows so
+    the panel reports what the label claims.
+    """
     from backend.models.telemetry import GenerationTelemetry
 
     row = (
@@ -683,6 +693,7 @@ def _latest_telemetry(
         .filter(
             GenerationTelemetry.project_id == project_id,
             GenerationTelemetry.node_id == node_id,
+            GenerationTelemetry.section != "review",
         )
         .order_by(GenerationTelemetry.created_at.desc())
         .first()
