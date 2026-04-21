@@ -1,3 +1,4 @@
+import { sliceXmlBlock } from '../lib/sliceXmlBlock';
 import { XmlDocument } from './xml';
 import { featureRenderers } from './xml';
 
@@ -13,20 +14,16 @@ import { featureRenderers } from './xml';
  * node's content. Returns a short "no content yet" message
  * when the input is empty or the features block is missing.
  */
-const FEATURES_BLOCK_RE = /<features[\s\S]*?<\/features>/i;
-
 export function FeatureListTab({ content }: { content: string | null | undefined }) {
-  const trimmed = (content ?? '').trim();
-  if (!trimmed) {
+  if (!content || !content.trim()) {
     return (
       <p className="text-xs text-gray-500 italic">
         No content yet — feature list will appear here once a draft lands.
       </p>
     );
   }
-
-  const match = FEATURES_BLOCK_RE.exec(trimmed);
-  if (!match) {
+  const slice = sliceXmlBlock(content, 'features');
+  if (!slice) {
     return (
       <p className="text-xs text-gray-500 italic">
         Draft output is missing a <code>&lt;features&gt;</code> block, so
@@ -35,6 +32,5 @@ export function FeatureListTab({ content }: { content: string | null | undefined
       </p>
     );
   }
-
-  return <XmlDocument content={match[0]} renderers={featureRenderers} />;
+  return <XmlDocument content={slice} renderers={featureRenderers} />;
 }

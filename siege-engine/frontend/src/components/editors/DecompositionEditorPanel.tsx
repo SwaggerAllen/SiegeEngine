@@ -4,6 +4,7 @@ import { mintClientId, type Instruction } from '../../api/queue';
 import { useProjectStructure } from '../../hooks/queries/useProjectStructure';
 import { useEnqueueInstructionMutation } from '../../hooks/mutations/useQueueMutations';
 import { describeApiError } from '../../lib/describeApiError';
+import { DecompositionGraphView } from './DecompositionGraphView';
 
 interface Props {
   projectId: string;
@@ -12,11 +13,10 @@ interface Props {
 /**
  * Phase 11 Structured UI #3 — decomposition editor.
  *
- * List-based MVP covering the three most-used operations:
- * ``Create`` (a new top-level or child comp), ``Rename``, and
- * ``Delete``. Promote / Demote / Merge / Split ship in follow-up
- * PRs — the instruction types already exist in the queue
- * vocabulary, so adding them later is additive.
+ * Primary view: Cytoscape tree (``DecompositionGraphView``) —
+ * tap a comp to open per-node actions (Create child, Rename,
+ * Delete, Move). Fallback: the original list-based editor
+ * preserved below for accessibility.
  *
  * Renames enqueue a ``Rename`` instruction that the apply
  * handler routes through ``v2.rename_rewrite`` (see PR #6),
@@ -28,6 +28,71 @@ interface Props {
  * nodes flip to stale but aren't regenerated automatically.
  */
 export function DecompositionEditorPanel({ projectId }: Props) {
+  const [view, setView] = useState<'graph' | 'list'>('graph');
+  const { data } = useProjectStructure(projectId);
+  const allComps = useMemo(
+    () =>
+      (data?.nodes ?? [])
+        .filter((n) => n.tier === 'comp')
+        .sort((a, b) => a.display_order - b.display_order),
+    [data],
+  );
+
+  return (
+    <div className="flex flex-col h-full">
+      <header className="flex items-baseline gap-3 border-b border-gray-800 px-4 py-2">
+        <h3 className="text-sm font-semibold text-gray-200">Decomposition</h3>
+        <p className="text-xs text-gray-400 flex-1">
+          {view === 'graph'
+            ? 'Tap a component to open actions (Create child, Rename, Move, Delete). Parent → child edges render dashed.'
+            : 'Tree-style list view. Accessibility fallback for the graph view.'}
+        </p>
+        <DecompViewToggle view={view} onChange={setView} />
+      </header>
+      <div className="flex-1 min-h-0 overflow-auto">
+        {view === 'graph' ? (
+          <DecompositionGraphView projectId={projectId} allComps={allComps} />
+        ) : (
+          <DecompositionListView projectId={projectId} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DecompViewToggle({
+  view,
+  onChange,
+}: {
+  view: 'graph' | 'list';
+  onChange: (v: 'graph' | 'list') => void;
+}) {
+  const btn = (val: 'graph' | 'list', label: string) => (
+    <button
+      type="button"
+      onClick={() => onChange(val)}
+      className={`px-2 py-0.5 text-xs ${
+        view === val ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-200'
+      }`}
+      data-testid={`decomp-view-${val}`}
+      aria-pressed={view === val}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div
+      role="group"
+      aria-label="Decomposition view toggle"
+      className="flex rounded border border-gray-700 overflow-hidden"
+    >
+      {btn('graph', 'Graph')}
+      {btn('list', 'List')}
+    </div>
+  );
+}
+
+function DecompositionListView({ projectId }: Props) {
   const { data, error, isLoading } = useProjectStructure(projectId);
   const enqueue = useEnqueueInstructionMutation(projectId);
   const [newTopName, setNewTopName] = useState('');

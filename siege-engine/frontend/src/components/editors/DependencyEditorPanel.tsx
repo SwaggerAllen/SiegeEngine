@@ -3,6 +3,7 @@ import type { Instruction } from '../../api/queue';
 import { useProjectStructure } from '../../hooks/queries/useProjectStructure';
 import { useEnqueueInstructionMutation } from '../../hooks/mutations/useQueueMutations';
 import { describeApiError } from '../../lib/describeApiError';
+import { DependencyGraphView } from './DependencyGraphView';
 
 interface Props {
   projectId: string;
@@ -11,19 +12,108 @@ interface Props {
 /**
  * Phase 11 Structured UI #5 — dependency editor.
  *
- * List-based MVP (Cytoscape drag-to-connect is a post-MVP polish).
- * Shows every ``dependency`` edge in the project plus an "add"
- * form at the top. Edits don't mutate the model directly — they
- * enqueue ``AddDependency`` / ``RemoveDependency`` instructions
- * that the user applies via the Pending Changes panel.
- *
- * Scope: operates on top-level ``comp_*`` nodes and subcomponents.
- * The scope of "which comp can depend on which" is enforced
- * server-side (see sysarch parser cycle detection + the Phase 11
- * ``would_create_cycle`` helper).
+ * Primary view: Cytoscape graph (``DependencyGraphView``) — tap
+ * source → tap target → Queue add, with client-side cycle
+ * blocking. Fallback: the original list-based editor preserved
+ * below for accessibility, narrow widths, and screen readers.
+ * Both views share the same ``useEnqueueInstructionMutation``
+ * hook and instruction payloads.
  */
 export function DependencyEditorPanel({ projectId }: Props) {
   const { data, error, isLoading } = useProjectStructure(projectId);
+  const [view, setView] = useState<'graph' | 'list'>('graph');
+
+  const topLevelComps = useMemo(
+    () =>
+      (data?.nodes ?? [])
+        .filter((n) => n.tier === 'comp' && n.parent_id === null)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [data],
+  );
+
+  const depEdges = useMemo(
+    () => (data?.edges ?? []).filter((e) => e.edge_type === 'dependency'),
+    [data],
+  );
+
+  if (isLoading) {
+    return <div className="p-4 text-sm text-gray-400">Loading project structure…</div>;
+  }
+  if (error) {
+    return (
+      <div className="p-4 max-w-md">
+        <h3 className="text-sm font-semibold text-red-400">Failed to load structure</h3>
+        <p className="text-xs text-gray-400 mt-1">
+          {describeApiError(error, 'Unknown error')}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <header className="flex items-baseline gap-3 border-b border-gray-800 px-4 py-2">
+        <h3 className="text-sm font-semibold text-gray-200">Dependencies</h3>
+        <p className="text-xs text-gray-400 flex-1">
+          {view === 'graph'
+            ? 'Tap a component to pick it as source, then tap a target to stage a dependency. Dashed-red borders mark targets that would close a cycle.'
+            : 'Every dependency edge in the project. Add new deps via the form. The graph view is an alternative; the list is the accessibility fallback.'}
+        </p>
+        <ViewToggle view={view} onChange={setView} />
+      </header>
+      <div className="flex-1 min-h-0 overflow-auto">
+        {view === 'graph' ? (
+          <DependencyGraphView
+            projectId={projectId}
+            topLevelComps={topLevelComps}
+            depEdges={depEdges}
+          />
+        ) : (
+          <DependencyListView projectId={projectId} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: 'graph' | 'list';
+  onChange: (v: 'graph' | 'list') => void;
+}) {
+  const btn = (val: 'graph' | 'list', label: string) => (
+    <button
+      type="button"
+      onClick={() => onChange(val)}
+      className={`px-2 py-0.5 text-xs ${
+        view === val
+          ? 'bg-gray-700 text-white'
+          : 'text-gray-400 hover:text-gray-200'
+      }`}
+      data-testid={`dep-view-${val}`}
+      aria-pressed={view === val}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div
+      role="group"
+      aria-label="Dependency view toggle"
+      className="flex rounded border border-gray-700 overflow-hidden"
+    >
+      {btn('graph', 'Graph')}
+      {btn('list', 'List')}
+    </div>
+  );
+}
+
+// ── List fallback (preserved from the pre-graph MVP) ───────────────
+
+function DependencyListView({ projectId }: { projectId: string }) {
+  const { data } = useProjectStructure(projectId);
   const enqueue = useEnqueueInstructionMutation(projectId);
   const [sourceId, setSourceId] = useState('');
   const [targetId, setTargetId] = useState('');
@@ -89,33 +179,8 @@ export function DependencyEditorPanel({ projectId }: Props) {
     });
   };
 
-  if (isLoading) {
-    return <div className="p-4 text-sm text-gray-400">Loading project structure…</div>;
-  }
-  if (error) {
-    return (
-      <div className="p-4 max-w-md">
-        <h3 className="text-sm font-semibold text-red-400">Failed to load structure</h3>
-        <p className="text-xs text-gray-400 mt-1">
-          {describeApiError(error, 'Unknown error')}
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="p-4 max-w-3xl space-y-6">
-      <section>
-        <h3 className="text-sm font-semibold text-gray-200 mb-1">Dependencies</h3>
-        <p className="text-xs text-gray-400">
-          Dependencies declare that one component reaches into another's public
-          surface. Changes queue as <code>AddDependency</code> /{' '}
-          <code>RemoveDependency</code> instructions — apply them from the
-          Pending Changes panel. Adding an edge that would close a cycle is
-          rejected by the apply handler with the cycle path highlighted.
-        </p>
-      </section>
-
       <section className="rounded border border-gray-700 bg-gray-950 p-3 space-y-2">
         <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">
           Add dependency
@@ -165,9 +230,7 @@ export function DependencyEditorPanel({ projectId }: Props) {
           <p className="text-xs text-amber-300">Source and target must differ.</p>
         )}
         {sourceId && targetId && alreadyExists(sourceId, targetId) && (
-          <p className="text-xs text-gray-400">
-            This dependency already exists.
-          </p>
+          <p className="text-xs text-gray-400">This dependency already exists.</p>
         )}
       </section>
 
@@ -187,9 +250,7 @@ export function DependencyEditorPanel({ projectId }: Props) {
               const src = compById.get(e.source_id);
               const tgt = compById.get(e.target_id);
               const label =
-                src && tgt
-                  ? `${src.name} → ${tgt.name}`
-                  : `${e.source_id} → ${e.target_id}`;
+                src && tgt ? `${src.name} → ${tgt.name}` : `${e.source_id} → ${e.target_id}`;
               return (
                 <li key={e.id} className="flex items-baseline gap-2">
                   <span className="flex-1 truncate text-gray-200">{label}</span>

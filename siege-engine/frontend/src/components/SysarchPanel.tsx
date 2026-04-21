@@ -12,6 +12,7 @@ import {
   BootstrapDraftPanel,
   type BootstrapPanelLabels,
 } from './BootstrapDraftPanel';
+import { SysarchComponentsTab } from './SysarchComponentsTab';
 import { makeSysarchRenderers } from './xml';
 
 interface Props {
@@ -104,6 +105,18 @@ export function SysarchPanel({ projectId }: Props) {
         isBusy,
       }}
       contentRenderers={renderers}
+      extraTabs={({ pendingContent, approvedContent }) => [
+        {
+          id: 'components',
+          label: 'Components',
+          content: (
+            <SysarchComponentsTab
+              content={pendingContent ?? approvedContent}
+              renderers={renderers}
+            />
+          ),
+        },
+      ]}
     />
   );
 }

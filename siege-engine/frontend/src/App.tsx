@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { QueueAnnounceRegion } from './components/QueueAnnounce';
 import { debugLog } from './lib/debugLog';
 import { LoginPage } from './pages/LoginPage';
 import { ProjectListPage } from './pages/ProjectListPage';
@@ -56,6 +57,7 @@ export default function App() {
     <ErrorBoundary>
     <BrowserRouter>
       <NavigationLogger />
+      <QueueAnnounceRegion />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/github/callback" element={<GitHubCallbackPage />} />

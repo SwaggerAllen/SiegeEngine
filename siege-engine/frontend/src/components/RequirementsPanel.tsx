@@ -12,6 +12,7 @@ import {
   BootstrapDraftPanel,
   type BootstrapPanelLabels,
 } from './BootstrapDraftPanel';
+import { RequirementsListTab } from './RequirementsListTab';
 import { makeRequirementsRenderers } from './xml';
 
 interface Props {
@@ -60,13 +61,18 @@ export function RequirementsPanel({ projectId }: Props) {
     resetMutation.isPending ||
     reviewRetryMutation.isPending;
 
-  const renderers = useMemo(() => {
-    const featureNames: Record<string, string> = {};
+  const featureNames = useMemo(() => {
+    const map: Record<string, string> = {};
     for (const f of featuresData?.features ?? []) {
-      featureNames[f.id] = f.name;
+      map[f.id] = f.name;
     }
-    return makeRequirementsRenderers(featureNames);
+    return map;
   }, [featuresData]);
+
+  const renderers = useMemo(
+    () => makeRequirementsRenderers(featureNames),
+    [featureNames],
+  );
 
   return (
     <BootstrapDraftPanel
@@ -85,6 +91,18 @@ export function RequirementsPanel({ projectId }: Props) {
         isBusy,
       }}
       contentRenderers={renderers}
+      extraTabs={({ pendingContent, approvedContent }) => [
+        {
+          id: 'requirements',
+          label: 'Responsibilities',
+          content: (
+            <RequirementsListTab
+              content={pendingContent ?? approvedContent}
+              featureNames={featureNames}
+            />
+          ),
+        },
+      ]}
     />
   );
 }

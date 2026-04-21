@@ -475,24 +475,49 @@ double-clicked or long-pressed:
   naturally: nodes with pending upstream changes get a visual
   marker on the DAG.
 
-## Phase 11 — Pending-change queue UX + structured edit UIs
+## Phase 11 — Pending-change queue UX + structured edit UIs ✅ complete
 
-The foundation already has the queue primitive. This phase is building
-all six structured edit UIs on top of the minted model from Phases 3
-and 4, and wiring them into the pending-change queue. **No UI mutates
-the model directly — every action produces prose instructions.**
+The foundation already had the queue primitive. This phase built all
+six structured edit UIs on top of the minted model from Phases 3 and
+4, and wired them into the pending-change queue. **No UI mutates the
+model directly — every action produces prose instructions.**
 
-- [ ] Queue panel: list queued instructions, discard button (free undo), "Apply changes" button
-- [ ] "Apply" enqueues a single `v2.apply_instructions` job; sequential execution invariant
-- [ ] Rename instructions rewrite prose via the LLM, not direct DB update
-- [ ] Structured UI #1: feature → responsibility mapping (drag-drop, assign-only)
-- [ ] Structured UI #2: responsibility → component mapping (drag-drop, assign-only)
-- [ ] Structured UI #3: component / subcomponent decomposition (Cytoscape, create/move/delete)
-- [ ] Structured UI #4: subresponsibility → subcomponent mapping (drag-drop)
-- [ ] Structured UI #5: dependency editor (Cytoscape, with cycle prevention)
-- [ ] Structured UI #6: domain-parent editor (same Cytoscape, different edge type / color)
-- [ ] Mobile interaction: tap-to-select + tap-to-place for drag-drop, tap-two-nodes for graph editors
-- [ ] All six UIs support promotion / demotion between tiers without changing IDs
+- [x] Queue panel: list queued instructions, discard button (free undo), "Apply changes" button
+- [x] "Apply" enqueues a single `v2.apply_instructions` job; sequential execution invariant
+- [x] Rename instructions rewrite prose via the LLM, not direct DB update
+- [x] Structured UI #1: feature → responsibility mapping (list + multi-select deferral)
+- [x] Structured UI #2: responsibility → component mapping (list + Promote/Demote)
+- [x] Structured UI #3: component / subcomponent decomposition (Cytoscape tree; Create / Rename / Move / Delete / Split / Promote / Demote / Merge via `NodeActionSidebar`)
+- [x] Structured UI #4: subresponsibility → subcomponent mapping (list)
+- [x] Structured UI #5: dependency editor (Cytoscape, with client-side cycle prevention)
+- [x] Structured UI #6: domain-parent editor (Cytoscape, 1-2 parent cap enforced client-side)
+- [x] Mobile interaction: tap-two-nodes on graph editors (native Cytoscape `tap`); long-press `taphold` enters multi-select on the Decomposition graph; `NodeActionSidebar` drops to a bottom sheet below 768px via `useIsNarrowViewport`
+- [x] All six UIs support promotion / demotion between tiers without changing IDs (backend Promote/Demote preserve node_id)
+
+**Shipping notes.**
+
+- Each of the three graph editors carries a `Graph | List` toggle. The
+  Cytoscape view is primary; the list view is the accessibility
+  fallback (screen reader, narrow viewport, keyboard-only users).
+  Both views share the same mutation hooks and instruction payloads
+  so there's no dual-maintenance of business logic.
+- `EditableGraph`, `useEditableGraphSelection`, `editStylesheet`, and
+  `NodeActionSidebar` are shared under
+  `frontend/src/components/editors/graph/`.
+- `Merge` takes multi-select ≥ 2 same-parent same-tier comps. `Split`
+  takes a single comp and ≥ 2 new names. Both halt the downstream
+  cascade (Phase 9 fanout semantics); copy in the modals calls that
+  out explicitly.
+- A single `<QueueAnnounceRegion>` aria-live region mounted at the app
+  root reads out every successful enqueue via the shared
+  `announceInstruction` helper wired into `useEnqueueInstructionMutation`.
+  Keyboard / screen-reader users get verbal confirmation without
+  having to find the queue panel.
+- Deliberately skipped: drag-to-connect (HTML5 pointer-event drag on
+  Cytoscape nodes is flaky; two-tap is the working pattern on both
+  desktop and touch) and node drag-repositioning (ELK layout is
+  authoritative). Listed under "Things to not relitigate" in
+  CLAUDE.md.
 
 ## Phase 12 — Batched review flow
 

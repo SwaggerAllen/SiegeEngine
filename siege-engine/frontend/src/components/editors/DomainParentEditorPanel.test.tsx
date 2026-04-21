@@ -16,6 +16,12 @@ vi.mock('../../api/queue', async () => {
   return { ...actual, enqueueInstruction: vi.fn() };
 });
 
+// Graph view needs a real canvas (cytoscape); these list-fallback
+// tests stub it out and flip into List view explicitly.
+vi.mock('./DomainParentGraphView', () => ({
+  DomainParentGraphView: () => null,
+}));
+
 import * as structureApi from '../../api/structure';
 import * as queueApi from '../../api/queue';
 
@@ -73,7 +79,12 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('DomainParentEditorPanel', () => {
+async function flipToListView() {
+  const listToggle = await screen.findByTestId('dp-view-list');
+  await userEvent.click(listToggle);
+}
+
+describe('DomainParentEditorPanel (list fallback)', () => {
   it('lists existing domain-parent edges by name', async () => {
     mockedStructure.mockResolvedValue(makeStructure());
     render(
@@ -81,6 +92,7 @@ describe('DomainParentEditorPanel', () => {
         <DomainParentEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() =>
       expect(screen.getByText(/BillingUI presents Billing/)).toBeInTheDocument(),
     );
@@ -94,15 +106,16 @@ describe('DomainParentEditorPanel', () => {
         <DomainParentEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Queue add/ })).toBeInTheDocument(),
     );
     await userEvent.selectOptions(
-      screen.getByLabelText(/Presentational/) as HTMLSelectElement,
+      screen.getByLabelText(/^Presentational$/) as HTMLSelectElement,
       'comp_USERUI',
     );
     await userEvent.selectOptions(
-      screen.getByLabelText(/Domain/) as HTMLSelectElement,
+      screen.getByLabelText(/^Domain$/) as HTMLSelectElement,
       'comp_BILL',
     );
     await userEvent.click(screen.getByRole('button', { name: /Queue add/ }));
@@ -124,6 +137,7 @@ describe('DomainParentEditorPanel', () => {
         <DomainParentEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() =>
       expect(screen.getByText(/BillingUI presents Billing/)).toBeInTheDocument(),
     );
@@ -148,6 +162,7 @@ describe('DomainParentEditorPanel', () => {
         <DomainParentEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() =>
       expect(
         screen.getByText(/No presentational components exist yet/),
