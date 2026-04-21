@@ -129,6 +129,7 @@ export function ReviewBlock({
       <StructuredReview
         reviewText={reviewText}
         onSelectionChanged={onSelectionChanged}
+        onRetryReview={onRetryReview}
         isBusy={isBusy}
       />
     );
@@ -170,10 +171,18 @@ export function ReviewBlock({
 function StructuredReview({
   reviewText,
   onSelectionChanged,
+  onRetryReview,
   isBusy,
 }: {
   reviewText: string;
   onSelectionChanged?: (feedbackText: string) => void;
+  /** When wired, a "Regenerate review" button appears inline
+   * with the select-all affordance. Points at the same
+   * ``/review/retry`` endpoint the failed-state Retry button
+   * uses — the backend cancels the prior review job and
+   * enqueues a fresh one, landing the result on this draft
+   * (or node for fanin) when it completes. */
+  onRetryReview?: () => void;
   isBusy: boolean;
 }) {
   const parsed = useMemo<ParsedReview | null>(() => parseReview(reviewText), [reviewText]);
@@ -251,8 +260,20 @@ function StructuredReview({
           <span>
             {selectedCount} / {totalCount} selected
           </span>
+          {onRetryReview && (
+            <button
+              type="button"
+              onClick={onRetryReview}
+              disabled={isBusy}
+              className="px-2 py-0.5 rounded border border-gray-700 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-40 ml-auto"
+              title="Discard this review and run a fresh one against the current draft"
+              data-testid="review-regenerate-button"
+            >
+              Regenerate review
+            </button>
+          )}
           {onSelectionChanged && (
-            <span className="text-gray-500 italic">
+            <span className="text-gray-500 italic w-full">
               Selected findings ride along when you Reject &amp; Regenerate
               below.
             </span>

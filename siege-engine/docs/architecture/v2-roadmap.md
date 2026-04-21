@@ -499,6 +499,25 @@ the model directly — every action produces prose instructions.**
 Review pass = component. MVP ships a simple per-component walk; the
 polished combined-navigable-diff UI is post-MVP.
 
+Two diff scopes land in this phase — don't conflate them:
+
+1. **Regen-time draft-vs-approved diff** — per-tier, shows how
+   the current pending draft differs from the last-approved
+   content. Scoped to a single node's before/after. Preempts the
+   "why do I have to re-read the whole XML to tell what changed?"
+   friction that shows up today on every Reject & Regenerate.
+2. **Batched-review cross-version diff** — per-component walk
+   over every affected tier in a pending-change batch. Scoped to
+   the full batch of nodes a destructive upstream edit marks
+   stale. Uses the event-offset pin so the walk is stable while
+   the reviewer moves through it.
+
+The data plumbing for fragment-level diffs already landed in
+Phase 4 (before/after per fragment). Phase 12 is the UI + the
+batch-scoping work on top of it.
+
+Scope items:
+
 - [ ] **AI self-review pass.** Every generated draft runs through an
   AI review step before landing in the human review queue. The status
   chain becomes `generating → ai_reviewing → awaiting_review`. The
@@ -512,6 +531,17 @@ polished combined-navigable-diff UI is post-MVP.
   `awaiting_review` anyway but carry a "self-review flagged" marker
   so the reviewer knows the AI wasn't satisfied. Self-review
   criteria are bundle-configurable per tier.
+- [ ] **Regen-time draft-vs-approved diff on the tier panel.**
+  When a `pending_draft.content` exists alongside non-empty
+  `node.content`, the Document tab renders a side-by-side (or
+  inline-toggle) diff of approved → pending instead of the raw
+  pending XML. First regen against an empty approved node is the
+  exception — nothing to diff against, falls back to the current
+  raw render. Scoped to a single tier's before/after; no event
+  pinning or snapshot cache needed. Reuses the state the
+  `BootstrapDraftPanel` already has. Lands ahead of the
+  batched-walk work below because it's cheap and the user value
+  is immediate on every regen.
 - [ ] `ViewRecorded` event is already in the vocabulary — use it
 - [ ] Pin event offset on first review open per batch
 - [ ] Point-in-time reconstruction via `rebuild_projections(up_to_offset=...)`

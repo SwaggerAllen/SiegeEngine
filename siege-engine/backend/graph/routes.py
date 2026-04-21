@@ -281,7 +281,14 @@ def _serialize_node(node) -> ExpansionNodeResponse:
 
 
 def _latest_telemetry(db: Session, project_id: str, node_id: str) -> TelemetrySummary | None:
-    """Return the most recent telemetry row for a node, or None."""
+    """Return the most recent *generation* telemetry row for a node.
+
+    Must exclude ``section="review"`` rows — review runs right
+    after each generation and writes its own telemetry, so if the
+    filter doesn't skip it the "Last gen" display shows review
+    tokens (much smaller than generation tokens) instead of the
+    generation's.
+    """
     from sqlalchemy import select
 
     row = db.execute(
@@ -289,6 +296,7 @@ def _latest_telemetry(db: Session, project_id: str, node_id: str) -> TelemetrySu
         .where(
             GenerationTelemetry.project_id == project_id,
             GenerationTelemetry.node_id == node_id,
+            GenerationTelemetry.section != "review",
         )
         .order_by(GenerationTelemetry.created_at.desc())
         .limit(1)
