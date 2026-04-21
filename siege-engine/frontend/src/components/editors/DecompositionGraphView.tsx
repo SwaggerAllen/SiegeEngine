@@ -257,6 +257,46 @@ export function DecompositionGraphView({ projectId, allComps }: Props) {
               onClick={() => setActiveModal({ kind: 'split', node })}
             />
             <SidebarActionButton
+              label="Promote to resp"
+              testId="decomp-action-promote"
+              title="Treat this component as a top-level responsibility instead. Rarely useful — only when sysarch picked the wrong axis and a would-be comp is really a resp."
+              onClick={() => {
+                if (
+                  !confirm(
+                    `Promote "${node.name}" from comp to resp? The node's tier changes; its ID is preserved.`,
+                  )
+                )
+                  return;
+                const ins: Instruction = {
+                  instruction_type: 'Promote',
+                  node_id: node.id,
+                  name: node.name,
+                  new_tier: 'resp',
+                };
+                enqueue.mutate(ins, { onSuccess: selection.commit });
+              }}
+            />
+            <SidebarActionButton
+              label="Demote to impl"
+              testId="decomp-action-demote"
+              title="Collapse this component into an implementation leaf. Useful when a comp turned out to be a single impl with no structure to decompose."
+              onClick={() => {
+                if (
+                  !confirm(
+                    `Demote "${node.name}" from comp to impl? The node's tier changes; any subcomps stay parented underneath but will need a separate reparent.`,
+                  )
+                )
+                  return;
+                const ins: Instruction = {
+                  instruction_type: 'Demote',
+                  node_id: node.id,
+                  name: node.name,
+                  new_tier: 'impl',
+                };
+                enqueue.mutate(ins, { onSuccess: selection.commit });
+              }}
+            />
+            <SidebarActionButton
               label="Delete"
               variant="destructive"
               testId="decomp-action-delete"

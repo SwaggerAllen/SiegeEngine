@@ -139,6 +139,44 @@ describe('FeatRespEditorPanel', () => {
     });
   });
 
+  it('enqueues a Promote instruction (feat → resp) on Queue promote', async () => {
+    mockedStructure.mockResolvedValue(structure());
+    mockedEnqueue.mockResolvedValue({ sequence: 5 });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(
+      <TestQueryWrapper>
+        <FeatRespEditorPanel projectId="p1" />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Feature deferral/i)).toBeInTheDocument(),
+    );
+    const promoteButtons = screen.getAllByRole('button', { name: /Queue promote/ });
+    await userEvent.click(promoteButtons[0]);
+    expect(mockedEnqueue).toHaveBeenCalledWith('p1', {
+      instruction_type: 'Promote',
+      node_id: 'feat_A',
+      name: 'Billing',
+      new_tier: 'resp',
+    });
+  });
+
+  it('Promote skips when the confirm dialog is cancelled', async () => {
+    mockedStructure.mockResolvedValue(structure());
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(
+      <TestQueryWrapper>
+        <FeatRespEditorPanel projectId="p1" />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Feature deferral/i)).toBeInTheDocument(),
+    );
+    const promoteButtons = screen.getAllByRole('button', { name: /Queue promote/ });
+    await userEvent.click(promoteButtons[0]);
+    expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+
   it('enqueues SetFeatureDeferred when the Defer button is clicked', async () => {
     mockedStructure.mockResolvedValue(structure());
     mockedEnqueue.mockResolvedValue({ sequence: 3 });

@@ -106,6 +106,21 @@ export function FeatRespEditorPanel({ projectId }: Props) {
     });
   };
 
+  const onPromoteFeat = (feat: StructureNode) => {
+    if (
+      !confirm(
+        `Promote "${feat.name}" from feature to top-level responsibility? The node's tier changes; its ID is preserved.`,
+      )
+    )
+      return;
+    enqueue.mutate({
+      instruction_type: 'Promote',
+      node_id: feat.id,
+      name: feat.name,
+      new_tier: 'resp',
+    });
+  };
+
   if (isLoading) {
     return <div className="p-4 text-sm text-gray-400">Loading project structure…</div>;
   }
@@ -163,6 +178,15 @@ export function FeatRespEditorPanel({ projectId }: Props) {
                 onClick={() => onToggleDeferred(f)}
               >
                 {f.is_deferred ? 'Queue un-defer' : 'Queue defer'}
+              </button>
+              <button
+                type="button"
+                className="shrink-0 text-xs text-gray-400 hover:text-gray-200 disabled:text-gray-600"
+                disabled={enqueue.isPending}
+                onClick={() => onPromoteFeat(f)}
+                title="Promote this feature to a top-level responsibility. Rarely useful — only when expansion named something that's really a system obligation."
+              >
+                Queue promote
               </button>
             </li>
           ))}

@@ -98,6 +98,36 @@ export function RespCompEditorPanel({ projectId }: Props) {
     enqueue.mutate(addIns);
   };
 
+  const onPromoteResp = (resp: StructureNode) => {
+    if (
+      !confirm(
+        `Promote "${resp.name}" from responsibility to component? The node's tier changes; its ID is preserved.`,
+      )
+    )
+      return;
+    enqueue.mutate({
+      instruction_type: 'Promote',
+      node_id: resp.id,
+      name: resp.name,
+      new_tier: 'comp',
+    });
+  };
+
+  const onDemoteResp = (resp: StructureNode) => {
+    if (
+      !confirm(
+        `Demote "${resp.name}" from responsibility to feature? The node's tier changes; any decomposition edges will need to be cleaned up separately.`,
+      )
+    )
+      return;
+    enqueue.mutate({
+      instruction_type: 'Demote',
+      node_id: resp.id,
+      name: resp.name,
+      new_tier: 'feat',
+    });
+  };
+
   if (isLoading) {
     return <div className="p-4 text-sm text-gray-400">Loading project structure…</div>;
   }
@@ -159,6 +189,26 @@ export function RespCompEditorPanel({ projectId }: Props) {
                       ))}
                     </select>
                   </label>
+                  <button
+                    type="button"
+                    className="shrink-0 text-xs text-gray-400 hover:text-gray-200 disabled:text-gray-600"
+                    disabled={enqueue.isPending}
+                    onClick={() => onPromoteResp(resp)}
+                    title="Promote this responsibility to a top-level component."
+                    data-testid={`respcomp-promote-${resp.id}`}
+                  >
+                    Queue promote
+                  </button>
+                  <button
+                    type="button"
+                    className="shrink-0 text-xs text-gray-400 hover:text-gray-200 disabled:text-gray-600"
+                    disabled={enqueue.isPending}
+                    onClick={() => onDemoteResp(resp)}
+                    title="Demote this responsibility to a feature."
+                    data-testid={`respcomp-demote-${resp.id}`}
+                  >
+                    Queue demote
+                  </button>
                 </li>
               );
             })}

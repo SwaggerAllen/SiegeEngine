@@ -201,6 +201,61 @@ describe('DecompositionGraphView — Merge', () => {
   });
 });
 
+describe('DecompositionGraphView — Promote / Demote', () => {
+  it('Promote enqueues a Promote instruction with new_tier="resp"', async () => {
+    mockedEnqueue.mockResolvedValue({ sequence: 1 });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const comps = [node('comp_X', 'Billing')];
+    render(
+      <TestQueryWrapper>
+        <DecompositionGraphView projectId="p1" allComps={comps} />
+      </TestQueryWrapper>,
+    );
+    tapNode('comp_X');
+    await userEvent.click(await screen.findByTestId('decomp-action-promote'));
+    expect(mockedEnqueue).toHaveBeenCalledWith('p1', {
+      instruction_type: 'Promote',
+      node_id: 'comp_X',
+      name: 'Billing',
+      new_tier: 'resp',
+    });
+  });
+
+  it('Demote enqueues a Demote instruction with new_tier="impl"', async () => {
+    mockedEnqueue.mockResolvedValue({ sequence: 1 });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const comps = [node('comp_X', 'Billing')];
+    render(
+      <TestQueryWrapper>
+        <DecompositionGraphView projectId="p1" allComps={comps} />
+      </TestQueryWrapper>,
+    );
+    tapNode('comp_X');
+    await userEvent.click(await screen.findByTestId('decomp-action-demote'));
+    expect(mockedEnqueue).toHaveBeenCalledWith('p1', {
+      instruction_type: 'Demote',
+      node_id: 'comp_X',
+      name: 'Billing',
+      new_tier: 'impl',
+    });
+  });
+
+  it('Promote / Demote skip when the user cancels the confirm dialog', async () => {
+    mockedEnqueue.mockResolvedValue({ sequence: 1 });
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const comps = [node('comp_X', 'Billing')];
+    render(
+      <TestQueryWrapper>
+        <DecompositionGraphView projectId="p1" allComps={comps} />
+      </TestQueryWrapper>,
+    );
+    tapNode('comp_X');
+    await userEvent.click(await screen.findByTestId('decomp-action-promote'));
+    await userEvent.click(await screen.findByTestId('decomp-action-demote'));
+    expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+});
+
 describe('DecompositionGraphView — Split', () => {
   it('enqueues a Split instruction with the entered names', async () => {
     mockedEnqueue.mockResolvedValue({ sequence: 1 });

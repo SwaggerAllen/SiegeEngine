@@ -144,4 +144,56 @@ describe('RespCompEditorPanel', () => {
       target_name: 'Auth',
     });
   });
+
+  it('enqueues Promote (resp → comp) on Queue promote', async () => {
+    mockedStructure.mockResolvedValue(structure());
+    mockedEnqueue.mockResolvedValue({ sequence: 1 });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(
+      <TestQueryWrapper>
+        <RespCompEditorPanel projectId="p1" />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => expect(screen.getByText('persist_invoice')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('respcomp-promote-resp_1'));
+    expect(mockedEnqueue).toHaveBeenCalledWith('p1', {
+      instruction_type: 'Promote',
+      node_id: 'resp_1',
+      name: 'persist_invoice',
+      new_tier: 'comp',
+    });
+  });
+
+  it('enqueues Demote (resp → feat) on Queue demote', async () => {
+    mockedStructure.mockResolvedValue(structure());
+    mockedEnqueue.mockResolvedValue({ sequence: 1 });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(
+      <TestQueryWrapper>
+        <RespCompEditorPanel projectId="p1" />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => expect(screen.getByText('persist_invoice')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('respcomp-demote-resp_1'));
+    expect(mockedEnqueue).toHaveBeenCalledWith('p1', {
+      instruction_type: 'Demote',
+      node_id: 'resp_1',
+      name: 'persist_invoice',
+      new_tier: 'feat',
+    });
+  });
+
+  it('Promote / Demote skip when the confirm dialog is cancelled', async () => {
+    mockedStructure.mockResolvedValue(structure());
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(
+      <TestQueryWrapper>
+        <RespCompEditorPanel projectId="p1" />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() => expect(screen.getByText('persist_invoice')).toBeInTheDocument());
+    await userEvent.click(screen.getByTestId('respcomp-promote-resp_1'));
+    await userEvent.click(screen.getByTestId('respcomp-demote-resp_1'));
+    expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
 });
