@@ -272,6 +272,32 @@ describe('FeatureExpansionPanel', () => {
       '</review>'
     );
 
+    it('Regenerate review button on the success-state calls the retry endpoint', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+          review_text: STRUCTURED_REVIEW,
+        })
+      );
+      mockedRetryReview.mockResolvedValue({ job_id: 'job_regen_review' });
+      renderPanel();
+
+      await openReviewTab();
+      await screen.findByTestId('review-finding-h1');
+      // The regenerate-review button is visible on the success
+      // state (reviewText present + onRetryReview wired) so the
+      // user doesn't have to wait for a failure to rerun it.
+      const regen = screen.getByTestId('review-regenerate-button');
+      fireEvent.click(regen);
+      await waitFor(() =>
+        expect(mockedRetryReview).toHaveBeenCalledWith('proj_1')
+      );
+    });
+
     it('renders structured findings with checkboxes for a parseable review', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({

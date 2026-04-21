@@ -300,6 +300,36 @@ def bootstrap_feedback(
         db, project_id, *scope_ids
     ):
         raise HTTPException(status_code=409, detail=config.feedback_readonly_detail)
+
+    # Clear the currently-pending draft's review_text and cancel
+    # any in-flight review job for it. The old review is about to
+    # become a review of content no longer on the pending slot, so
+    # surfacing it during the regen window is confusing — the user
+    # sees critique that doesn't apply to the draft that will
+    # actually land. ``persist_draft`` already cancels the stale
+    # review job when it discards the prior pending draft; doing
+    # it here too keeps the UI honest during the enqueue→commit
+    # window.
+    current_pending = config.get_pending_draft(db, project_id, *scope_ids)
+    if current_pending is not None and (current_pending.review_text or "").strip():
+        append_event(
+            db,
+            project_id,
+            ev.DraftReviewUpdated(
+                draft_id=current_pending.id,
+                node_id=node.id,
+                review_text="",
+            ),
+        )
+        if config.review_job_type:
+            pipeline_queue.cancel_jobs_by_type(
+                db,
+                config.review_job_type,
+                project_id=project_id,
+                draft_id=current_pending.id,
+            )
+        commit_and_publish(db, project_id)
+
     feedback = (feedback_text or "").strip() or None
     job_id = pipeline_queue.enqueue(
         db,
