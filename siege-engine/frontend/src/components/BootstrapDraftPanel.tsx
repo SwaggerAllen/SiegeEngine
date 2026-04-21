@@ -299,6 +299,11 @@ export function BootstrapDraftPanel({
   extraTabs,
 }: Props) {
   const [feedback, setFeedback] = useState('');
+  // Formatted prose pushed up from the AI-review checkbox UI.
+  // Empty string means "no findings selected (or no parsed
+  // review yet)". Rebuilds on every checkbox toggle so the
+  // Reject & Regenerate click always sees the latest set.
+  const [reviewSelection, setReviewSelection] = useState('');
 
   if (isLoading) {
     return <div className="p-6 text-gray-400 text-sm">{labels.loadingMessage}</div>;
@@ -350,15 +355,24 @@ export function BootstrapDraftPanel({
   };
 
   const submitFeedback = () => {
-    // Passes through whatever is in the textarea, trimmed — empty
-    // string OK. The feedback endpoint always uses the current
-    // pending draft as ``prior_pending``, so an empty feedback
-    // still gives the LLM a do-over with its own prior attempt
-    // visible. This merges the former split between "Regenerate
-    // with feedback" (required text) and "Reject & Regenerate"
-    // (silently discard and start over) into one affordance.
-    const trimmed = feedback.trim();
-    callbacks.onFeedback(trimmed);
+    // Combines the two feedback sources into one regen payload:
+    // the user's textarea prose at the top (if any) followed by
+    // the formatted checked findings from the AI review (if
+    // any). Either source can be empty — an empty payload still
+    // gives the LLM a do-over with the pending draft visible as
+    // ``prior_pending``. This folds the former "Apply selected
+    // as feedback" button (review-only regen) into the Reject &
+    // Regenerate affordance so both sources always land in the
+    // same regeneration context.
+    const userPart = feedback.trim();
+    const reviewPart = reviewSelection.trim();
+    let combined: string;
+    if (userPart && reviewPart) {
+      combined = `${userPart}\n\nSelected AI-review findings:\n\n${reviewPart}`;
+    } else {
+      combined = userPart || reviewPart;
+    }
+    callbacks.onFeedback(combined);
     setFeedback('');
   };
 
@@ -428,7 +442,7 @@ export function BootstrapDraftPanel({
             })}
             review={{
               ...reviewProps,
-              onApplyFeedback: (feedback) => callbacks.onFeedback(feedback),
+              onSelectionChanged: setReviewSelection,
             }}
           />
           <TelemetryLine telemetry={latest_telemetry} />
@@ -459,9 +473,9 @@ export function BootstrapDraftPanel({
               disabled={callbacks.isBusy || isRegenerating}
               className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
               title={
-                feedback.trim()
-                  ? 'Regenerate this draft with the feedback above; the LLM sees the current draft as its starting point'
-                  : 'Regenerate this draft (LLM sees the current draft as starting point; add feedback above for targeted guidance)'
+                'Regenerate this draft. The LLM sees the current draft as ' +
+                'its starting point, plus any textarea feedback above and ' +
+                'the findings checked on the Review tab.'
               }
             >
               Reject &amp; Regenerate

@@ -87,6 +87,20 @@ bundle-owned; the platform's commitment is to hold whatever
 graph the active bundle declares, with the invariants below
 (A.1.2, A.1.3).
 
+**Catapult is an umbrella app shipped as a single monorepo.**
+The platform code (Part A) and the default bundle (Part B)
+live together in the Catapult source repository and are
+released as one artifact. This is deliberate: the default
+bundle is the reference implementation of what a Catapult
+bundle looks like, and keeping it co-located with the platform
+it targets means schema changes, grammar changes, and prompt
+changes land in the same commits as the platform changes that
+motivate them. Third-party bundles are separate git
+repositories mirrored into an instance's bundle library
+(A.11.2); the default bundle is the one exception and is the
+one bundle every Catapult instance is guaranteed to have
+available without any mirroring step.
+
 ### A.1.2 The two platform commitments
 
 Two load-bearing invariants define what Catapult *is* at the
@@ -1623,22 +1637,35 @@ code-hosting substrate (see A.16 for the gitea default)
 containing mirrored copies of every bundle approved for use
 on the instance.
 
-**Curation is mandatory.** Bundles are a prompt-injection and
-supply-chain attack surface — a malicious bundle could embed
-instructions that exfiltrate model content, backdoor
-generated code, or manipulate the review flow. The approval
-mechanism is **mirror-based**: instance admins import a
-bundle by mirroring its upstream repository into the
-instance's bundle namespace, and the mirror's existence is
-the approval. Revocation is deleting the mirror. Version
-bumps are admin-initiated fetches against the upstream, with
-explicit approval of the new tag before projects can bump.
+**The default bundle is the one exception.** It lives in the
+Catapult monorepo alongside the platform code (A.1.1) and is
+built into every Catapult release artifact. No mirror step,
+no separate upstream — the same commit that ships a platform
+change ships any matching default-bundle change. From the
+instance admin's perspective, the default bundle appears in
+the library as a pre-seeded entry that can't be deleted but
+behaves identically to any mirrored bundle for all other
+purposes (projects select it, override it, replay against
+it). Upgrading the default bundle happens by upgrading the
+Catapult instance itself.
+
+**Third-party bundles require curation.** Bundles are a
+prompt-injection and supply-chain attack surface — a malicious
+bundle could embed instructions that exfiltrate model content,
+backdoor generated code, or manipulate the review flow. The
+approval mechanism for third-party bundles is **mirror-based**:
+instance admins import a bundle by mirroring its upstream
+repository into the instance's bundle namespace, and the
+mirror's existence is the approval. Revocation is deleting the
+mirror. Version bumps are admin-initiated fetches against the
+upstream, with explicit approval of the new tag before
+projects can bump.
 
 This reuses git primitives (fork, mirror, fetch-upstream)
 rather than inventing a parallel approvals subsystem. The
-instance admin UI for bundles is the gitea admin UI, with a
-thin Catapult-side view that reads the namespace and
-surfaces manifest metadata.
+instance admin UI for third-party bundles is the gitea admin
+UI, with a thin Catapult-side view that reads the namespace
+and surfaces manifest metadata.
 
 ### A.11.3 Per-project overrides
 
@@ -1671,17 +1698,20 @@ bundle change. Overrides adjust the existing surface.
 ### A.11.4 Instance bundle library
 
 Each Catapult instance ships with a **bundle library** — the
-namespace of approved bundles admins have mirrored. New
-projects pick a bundle from the library at creation. Without
-an explicit choice they inherit the instance default
-(configurable per-instance; usually the default bundle
-described in Part B).
+namespace of approved bundles. The library always contains
+the default bundle (bundled into the platform release per
+A.1.1 / A.11.2) plus whatever third-party bundles the
+instance admin has mirrored. New projects pick a bundle from
+the library at creation. Without an explicit choice they
+inherit the instance default, which is itself configurable
+per-instance and ships defaulting to the default bundle
+described in Part B.
 
-Self-hosted deployments curate their own library. Hosted
-deployments (if Catapult ships as a hosted product) start
-from a vendor-maintained default set and allow the tenant
-admin to mirror additional bundles subject to the platform's
-approval flow.
+Self-hosted deployments curate their own library on top of
+the always-present default bundle. Hosted deployments (if
+Catapult ships as a hosted product) start from that same base
+and allow the tenant admin to mirror additional bundles
+subject to the platform's approval flow.
 
 ### A.11.5 Bundle-shipped reference material
 
