@@ -318,7 +318,7 @@ describe('FeatureExpansionPanel', () => {
       expect(legacy).toHaveTextContent(/AI Review/);
     });
 
-    it('Apply selected submits only checked findings as feedback', async () => {
+    it('Reject & Regenerate folds only checked findings into the feedback payload', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
           pending_draft: {
@@ -339,7 +339,9 @@ describe('FeatureExpansionPanel', () => {
       fireEvent.click(h2);
       expect(h2).not.toBeChecked();
 
-      fireEvent.click(screen.getByTestId('review-apply-button'));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Reject & Regenerate' })
+      );
       await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalled());
       const [, feedback] = mockedPostFeedback.mock.calls[0];
       expect(feedback).toContain('Feature names overlap');
@@ -347,7 +349,43 @@ describe('FeatureExpansionPanel', () => {
       expect(feedback).not.toContain('restated name');
     });
 
-    it('Apply selected is disabled when nothing is checked', async () => {
+    it('Reject & Regenerate still runs when nothing is checked (empty AI part)', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+          review_text: STRUCTURED_REVIEW,
+        })
+      );
+      mockedPostFeedback.mockResolvedValue({ job_id: 'job_empty' });
+      renderPanel();
+
+      await openReviewTab();
+
+      // Uncheck every finding via the toggle-all button.
+      fireEvent.click(screen.getByTestId('review-toggle-all-button'));
+      // All three finding checkboxes should now be unchecked.
+      expect(screen.getByTestId('review-finding-h1')).not.toBeChecked();
+      expect(screen.getByTestId('review-finding-h2')).not.toBeChecked();
+      expect(screen.getByTestId('review-finding-a1')).not.toBeChecked();
+
+      // The bottom-bar button is still enabled — "no findings
+      // selected" is a valid regen state (equivalent to the
+      // pre-Phase-11 empty Reject & Regenerate).
+      const regen = screen.getByRole('button', { name: 'Reject & Regenerate' });
+      expect(regen).not.toBeDisabled();
+
+      fireEvent.click(regen);
+      await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalled());
+      const [, feedback] = mockedPostFeedback.mock.calls[0];
+      // With no findings + no textarea, the payload is empty.
+      expect(feedback).toBe('');
+    });
+
+    it('toggle-all flips every checkbox in one click', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
           pending_draft: {
@@ -362,12 +400,49 @@ describe('FeatureExpansionPanel', () => {
 
       await openReviewTab();
 
-      // Uncheck all three.
-      fireEvent.click(screen.getByTestId('review-finding-h1'));
-      fireEvent.click(screen.getByTestId('review-finding-h2'));
-      fireEvent.click(screen.getByTestId('review-finding-a1'));
+      // Start: all three selected → toggle-all deselects.
+      expect(await screen.findByTestId('review-finding-h1')).toBeChecked();
+      fireEvent.click(screen.getByTestId('review-toggle-all-button'));
+      expect(screen.getByTestId('review-finding-h1')).not.toBeChecked();
+      expect(screen.getByTestId('review-finding-a1')).not.toBeChecked();
 
-      expect(screen.getByTestId('review-apply-button')).toBeDisabled();
+      // Toggle-all again → reselect.
+      fireEvent.click(screen.getByTestId('review-toggle-all-button'));
+      expect(screen.getByTestId('review-finding-h1')).toBeChecked();
+      expect(screen.getByTestId('review-finding-a1')).toBeChecked();
+    });
+
+    it('combines textarea feedback with checked findings under a "Selected AI-review findings:" divider', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+          review_text: STRUCTURED_REVIEW,
+        })
+      );
+      mockedPostFeedback.mockResolvedValue({ job_id: 'job_combined' });
+      renderPanel();
+
+      // Visit the Review tab so the default-all-checked selection
+      // state pushes up to the panel, then return to the bottom.
+      await openReviewTab();
+      await screen.findByTestId('review-finding-h1');
+
+      // Type some user feedback.
+      const textarea = screen.getAllByRole('textbox')[0] as HTMLTextAreaElement;
+      fireEvent.change(textarea, { target: { value: 'Also tighten auth' } });
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Reject & Regenerate' })
+      );
+      await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalled());
+      const [, feedback] = mockedPostFeedback.mock.calls[0];
+      expect(feedback).toContain('Also tighten auth');
+      expect(feedback).toContain('Selected AI-review findings:');
+      expect(feedback).toContain('Feature names overlap');
     });
 
     it('flags running review via a spinner on the tab and inside the panel', async () => {
@@ -496,10 +571,13 @@ describe('FeatureExpansionPanel', () => {
       );
 
       await openReviewTab();
-      // Findings render but the Apply button is hidden — approved
-      // content has no feedback regeneration path.
+      // Findings render. The "rides along with Reject & Regenerate"
+      // hint is hidden on approved content because that branch has
+      // no feedback regeneration path (no onSelectionChanged wiring).
       expect(await screen.findByTestId('review-finding-h1')).toBeInTheDocument();
-      expect(screen.queryByTestId('review-apply-button')).toBeNull();
+      expect(
+        screen.queryByText(/ride along when you Reject/i)
+      ).toBeNull();
     });
   });
 });

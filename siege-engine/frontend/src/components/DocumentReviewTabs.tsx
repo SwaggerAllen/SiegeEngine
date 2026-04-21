@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { formatSelectedAsFeedback, parseReview, type ParsedReview } from '../lib/reviewXml';
 import { CollapsibleMarkdown } from './editor/CollapsibleMarkdown';
 import { GenerationClock } from './GenerationClock';
@@ -21,16 +21,21 @@ export interface ReviewBlockProps {
   reviewMaxAttempts: number | null;
   onRetryReview?: () => void;
   /**
-   * Submit a subset of findings back to the tier as feedback.
-   * When wired, the structured checkbox UI renders an
-   * "Apply selected as feedback" button that calls this with
-   * the concatenated text of the checked findings. Only wired
-   * on panel branches that regenerate from prose feedback —
-   * pending-draft branches in BootstrapDraftPanel. Omitted on
-   * approved-content, fan-in, and branches that don't take
-   * feedback.
+   * Push the currently-checked review findings up as formatted
+   * prose so the panel shell can fold them into the next
+   * regeneration alongside any user-authored feedback. Called
+   * on every toggle / select-all so the parent always has the
+   * latest selection string without plumbing a ref. Empty
+   * string means "no findings selected" (user unchecked
+   * everything); receivers should treat that as "user feedback
+   * only" rather than a regen-blocker.
+   *
+   * Only wired on panel branches that regenerate from prose
+   * feedback — pending-draft branches in BootstrapDraftPanel.
+   * Omitted on approved-content, fan-in, and branches that
+   * don't take feedback.
    */
-  onApplyFeedback?: (feedbackText: string) => void;
+  onSelectionChanged?: (feedbackText: string) => void;
   /**
    * When true the idle-with-empty-review-text case renders a
    * "Generate review" CTA instead of rendering nothing.
@@ -55,10 +60,12 @@ export interface ReviewBlockProps {
  * - ``running`` → spinner + "Reviewing… attempt N/M"
  * - ``failed`` → red error banner + Retry review button
  * - ``idle`` + non-empty ``reviewText`` → structured findings
- *   with checkboxes (and "Apply selected as feedback" when
- *   ``onApplyFeedback`` is wired). Falls back to a collapsible
- *   markdown render for pre-Phase-8 reviews that can't be
- *   parsed into the structured format.
+ *   with checkboxes. The selected findings are pushed up via
+ *   ``onSelectionChanged`` so the panel shell's Reject &
+ *   Regenerate button can fold them in alongside textarea
+ *   feedback. Falls back to a collapsible markdown render for
+ *   pre-Phase-8 reviews that can't be parsed into the
+ *   structured format.
  * - ``idle`` + empty ``reviewText`` + ``allowGenerate`` →
  *   "Generate review" CTA
  * - ``idle`` + empty ``reviewText`` + no ``allowGenerate`` →
@@ -72,7 +79,7 @@ export function ReviewBlock({
   reviewCurrentAttempt,
   reviewMaxAttempts,
   onRetryReview,
-  onApplyFeedback,
+  onSelectionChanged,
   allowGenerate,
   isBusy,
   emptyGenerateHint = 'No AI review yet — click to run one against this content.',
@@ -121,7 +128,7 @@ export function ReviewBlock({
     return (
       <StructuredReview
         reviewText={reviewText}
-        onApplyFeedback={onApplyFeedback}
+        onSelectionChanged={onSelectionChanged}
         isBusy={isBusy}
       />
     );
@@ -149,17 +156,24 @@ export function ReviewBlock({
  * Structured checkbox render for a parsed ``<review>`` block.
  * Every finding gets a checkbox; by default all start checked
  * (user selects out, not in — matches "apply the whole review"
- * as the common case). If the XML doesn't parse, falls back to
- * the legacy collapsible-markdown render so pre-Phase-8 reviews
- * keep displaying.
+ * as the common case). A Select all / Select none toggle at
+ * the top flips the whole set. The panel shell reads the
+ * current selection via ``onSelectionChanged`` and folds the
+ * formatted findings into its Reject & Regenerate path along
+ * with the user's textarea feedback, so both sources land in
+ * the same regeneration context.
+ *
+ * If the XML doesn't parse, falls back to the legacy
+ * collapsible-markdown render so pre-Phase-8 reviews keep
+ * displaying.
  */
 function StructuredReview({
   reviewText,
-  onApplyFeedback,
+  onSelectionChanged,
   isBusy,
 }: {
   reviewText: string;
-  onApplyFeedback?: (feedbackText: string) => void;
+  onSelectionChanged?: (feedbackText: string) => void;
   isBusy: boolean;
 }) {
   const parsed = useMemo<ParsedReview | null>(() => parseReview(reviewText), [reviewText]);
@@ -183,6 +197,15 @@ function StructuredReview({
     setSelected(new Set(allIds));
   }
 
+  // Push the formatted selection up whenever it changes so the
+  // parent panel's Reject & Regenerate button can fold it into
+  // the regen payload alongside any textarea feedback.
+  useEffect(() => {
+    if (!onSelectionChanged) return;
+    if (!parsed) return;
+    onSelectionChanged(formatSelectedAsFeedback(parsed, selected));
+  }, [onSelectionChanged, parsed, selected]);
+
   // Fall back to the legacy markdown render if the review
   // doesn't parse (pre-Phase-8 content, or malformed output
   // that somehow slipped past backend validation).
@@ -205,32 +228,35 @@ function StructuredReview({
     });
   };
 
-  const handleApply = () => {
-    if (!onApplyFeedback) return;
-    const feedback = formatSelectedAsFeedback(parsed, selected);
-    if (feedback) onApplyFeedback(feedback);
-  };
-
   const selectedCount = selected.size;
   const totalCount = allIds.length;
+  const allSelected = selectedCount === totalCount && totalCount > 0;
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(allIds));
+  };
 
   return (
     <div className="space-y-4" data-testid="review-text">
-      {onApplyFeedback && (
-        <div className="flex items-center gap-3 flex-wrap">
+      {totalCount > 0 && (
+        <div className="flex items-center gap-3 flex-wrap text-xs text-gray-400">
           <button
             type="button"
-            onClick={handleApply}
-            disabled={isBusy || selectedCount === 0}
-            className="px-3 py-1 text-xs rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-40"
-            title="Regenerate the draft with the selected findings as feedback"
-            data-testid="review-apply-button"
+            onClick={toggleAll}
+            disabled={isBusy}
+            className="px-2 py-0.5 rounded border border-gray-700 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-40"
+            data-testid="review-toggle-all-button"
           >
-            Apply selected as feedback
+            {allSelected ? 'Deselect all' : 'Select all'}
           </button>
-          <span className="text-xs text-gray-500">
+          <span>
             {selectedCount} / {totalCount} selected
           </span>
+          {onSelectionChanged && (
+            <span className="text-gray-500 italic">
+              Selected findings ride along when you Reject &amp; Regenerate
+              below.
+            </span>
+          )}
         </div>
       )}
       <ReviewSection
