@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
+import { formatSelectedAsFeedback, parseReview } from '../lib/reviewXml';
 import { DocumentReviewTabs } from './DocumentReviewTabs';
 import { GenerationClock } from './GenerationClock';
 import { XmlDocument } from './xml';
@@ -286,6 +287,55 @@ export function BootstrapDraftPanel({
 }: Props) {
   const [feedback, setFeedback] = useState('');
 
+  // Parse the AI review once per review_text change so both the
+  // review block (to render findings) and submitFeedback (to fold
+  // selected findings into the regen payload) work from the same
+  // parsed shape.
+  const reviewText = data?.review_text ?? '';
+  const parsedReview = useMemo(() => parseReview(reviewText), [reviewText]);
+
+  // Selected finding ids default to "all selected" — the common
+  // case is "apply the whole review," with the user curating out
+  // anything they disagree with. Reset to all-selected whenever
+  // a new review lands (parsedReview identity changes on review_text
+  // mutation via useMemo above).
+  const [selectedFindingIds, setSelectedFindingIds] = useState<Set<string>>(
+    () => new Set<string>(),
+  );
+  useEffect(() => {
+    if (!parsedReview) {
+      setSelectedFindingIds(new Set());
+      return;
+    }
+    const all = [
+      ...parsedReview.handlesStructure.map((f) => f.id),
+      ...parsedReview.architecturalDecisions.map((f) => f.id),
+    ];
+    setSelectedFindingIds(new Set(all));
+  }, [parsedReview]);
+
+  const handleToggleFinding = useCallback((id: string) => {
+    setSelectedFindingIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleSelectAllFindings = useCallback(() => {
+    if (!parsedReview) return;
+    const all = [
+      ...parsedReview.handlesStructure.map((f) => f.id),
+      ...parsedReview.architecturalDecisions.map((f) => f.id),
+    ];
+    setSelectedFindingIds(new Set(all));
+  }, [parsedReview]);
+
+  const handleUnselectAllFindings = useCallback(() => {
+    setSelectedFindingIds(new Set());
+  }, []);
+
   if (isLoading) {
     return <div className="p-6 text-gray-400 text-sm">{labels.loadingMessage}</div>;
   }
@@ -331,20 +381,27 @@ export function BootstrapDraftPanel({
     reviewCurrentAttempt: review_current_attempt,
     reviewMaxAttempts: review_max_attempts,
     onRetryReview: callbacks.onRetryReview,
+    selectedFindingIds,
+    onToggleFinding: handleToggleFinding,
+    onSelectAllFindings: handleSelectAllFindings,
+    onUnselectAllFindings: handleUnselectAllFindings,
     allowGenerate: true,
     isBusy: callbacks.isBusy,
   };
 
   const submitFeedback = () => {
-    // Passes through whatever is in the textarea, trimmed — empty
-    // string OK. The feedback endpoint always uses the current
-    // pending draft as ``prior_pending``, so an empty feedback
-    // still gives the LLM a do-over with its own prior attempt
-    // visible. This merges the former split between "Regenerate
-    // with feedback" (required text) and "Reject & Regenerate"
-    // (silently discard and start over) into one affordance.
+    // Compose the regen payload from two sources: the user's
+    // free-form textarea input (optional) and whatever AI review
+    // findings are currently selected (optional). The feedback
+    // endpoint always uses the current pending draft as
+    // ``prior_pending``, so even an empty combined string gives
+    // the LLM a do-over with its own prior attempt visible.
     const trimmed = feedback.trim();
-    callbacks.onFeedback(trimmed);
+    const reviewFeedback = parsedReview
+      ? formatSelectedAsFeedback(parsedReview, selectedFindingIds)
+      : '';
+    const combined = [trimmed, reviewFeedback].filter(Boolean).join('\n\n');
+    callbacks.onFeedback(combined);
     setFeedback('');
   };
 
@@ -408,10 +465,7 @@ export function BootstrapDraftPanel({
             document={
               <XmlDocument content={pending_draft.content} renderers={contentRenderers} />
             }
-            review={{
-              ...reviewProps,
-              onApplyFeedback: (feedback) => callbacks.onFeedback(feedback),
-            }}
+            review={reviewProps}
           />
           <TelemetryLine telemetry={latest_telemetry} />
         </div>
@@ -440,11 +494,7 @@ export function BootstrapDraftPanel({
               onClick={submitFeedback}
               disabled={callbacks.isBusy || isRegenerating}
               className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
-              title={
-                feedback.trim()
-                  ? 'Regenerate this draft with the feedback above; the LLM sees the current draft as its starting point'
-                  : 'Regenerate this draft (LLM sees the current draft as starting point; add feedback above for targeted guidance)'
-              }
+              title="Regenerate this draft. The LLM sees the current draft as its starting point plus any textarea feedback above and the selected AI review findings from the Review tab."
             >
               Reject &amp; Regenerate
             </button>

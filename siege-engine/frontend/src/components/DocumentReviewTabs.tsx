@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { formatSelectedAsFeedback, parseReview, type ParsedReview } from '../lib/reviewXml';
+import { parseReview, type ParsedReview } from '../lib/reviewXml';
 import { CollapsibleMarkdown } from './editor/CollapsibleMarkdown';
 import { GenerationClock } from './GenerationClock';
 
@@ -21,16 +21,21 @@ export interface ReviewBlockProps {
   reviewMaxAttempts: number | null;
   onRetryReview?: () => void;
   /**
-   * Submit a subset of findings back to the tier as feedback.
-   * When wired, the structured checkbox UI renders an
-   * "Apply selected as feedback" button that calls this with
-   * the concatenated text of the checked findings. Only wired
-   * on panel branches that regenerate from prose feedback —
-   * pending-draft branches in BootstrapDraftPanel. Omitted on
-   * approved-content, fan-in, and branches that don't take
-   * feedback.
+   * Optional controlled selection for the structured review
+   * findings. When all four of ``selectedFindingIds``,
+   * ``onToggleFinding``, ``onSelectAllFindings``, and
+   * ``onUnselectAllFindings`` are supplied, the checkbox UI is
+   * controlled by the parent — typically so the parent can
+   * fold the current selection into a regeneration payload
+   * alongside textarea feedback. When omitted, the block
+   * manages selection state locally (useful on branches that
+   * don't consume selection, like fan-in's always-visible
+   * review).
    */
-  onApplyFeedback?: (feedbackText: string) => void;
+  selectedFindingIds?: ReadonlySet<string>;
+  onToggleFinding?: (id: string) => void;
+  onSelectAllFindings?: () => void;
+  onUnselectAllFindings?: () => void;
   /**
    * When true the idle-with-empty-review-text case renders a
    * "Generate review" CTA instead of rendering nothing.
@@ -55,10 +60,11 @@ export interface ReviewBlockProps {
  * - ``running`` → spinner + "Reviewing… attempt N/M"
  * - ``failed`` → red error banner + Retry review button
  * - ``idle`` + non-empty ``reviewText`` → structured findings
- *   with checkboxes (and "Apply selected as feedback" when
- *   ``onApplyFeedback`` is wired). Falls back to a collapsible
- *   markdown render for pre-Phase-8 reviews that can't be
- *   parsed into the structured format.
+ *   with checkboxes and a Select-all / Unselect-all toggle.
+ *   Selection feeds into the parent panel's regeneration
+ *   payload when controlled-selection props are wired. Falls
+ *   back to a collapsible markdown render for pre-Phase-8
+ *   reviews that can't be parsed into the structured format.
  * - ``idle`` + empty ``reviewText`` + ``allowGenerate`` →
  *   "Generate review" CTA
  * - ``idle`` + empty ``reviewText`` + no ``allowGenerate`` →
@@ -72,7 +78,10 @@ export function ReviewBlock({
   reviewCurrentAttempt,
   reviewMaxAttempts,
   onRetryReview,
-  onApplyFeedback,
+  selectedFindingIds,
+  onToggleFinding,
+  onSelectAllFindings,
+  onUnselectAllFindings,
   allowGenerate,
   isBusy,
   emptyGenerateHint = 'No AI review yet — click to run one against this content.',
@@ -121,7 +130,10 @@ export function ReviewBlock({
     return (
       <StructuredReview
         reviewText={reviewText}
-        onApplyFeedback={onApplyFeedback}
+        selectedFindingIds={selectedFindingIds}
+        onToggleFinding={onToggleFinding}
+        onSelectAllFindings={onSelectAllFindings}
+        onUnselectAllFindings={onUnselectAllFindings}
         isBusy={isBusy}
       />
     );
@@ -149,17 +161,27 @@ export function ReviewBlock({
  * Structured checkbox render for a parsed ``<review>`` block.
  * Every finding gets a checkbox; by default all start checked
  * (user selects out, not in — matches "apply the whole review"
- * as the common case). If the XML doesn't parse, falls back to
- * the legacy collapsible-markdown render so pre-Phase-8 reviews
- * keep displaying.
+ * as the common case) and the Select-all / Unselect-all toggle
+ * flips the whole set in one click. Selection state can be
+ * controlled by the parent (so selections fold into the parent's
+ * regeneration payload) or managed locally as a fallback.
+ * If the XML doesn't parse, falls back to the legacy
+ * collapsible-markdown render so pre-Phase-8 reviews keep
+ * displaying.
  */
 function StructuredReview({
   reviewText,
-  onApplyFeedback,
+  selectedFindingIds,
+  onToggleFinding,
+  onSelectAllFindings,
+  onUnselectAllFindings,
   isBusy,
 }: {
   reviewText: string;
-  onApplyFeedback?: (feedbackText: string) => void;
+  selectedFindingIds?: ReadonlySet<string>;
+  onToggleFinding?: (id: string) => void;
+  onSelectAllFindings?: () => void;
+  onUnselectAllFindings?: () => void;
   isBusy: boolean;
 }) {
   const parsed = useMemo<ParsedReview | null>(() => parseReview(reviewText), [reviewText]);
@@ -173,15 +195,19 @@ function StructuredReview({
         : [],
     [parsed],
   );
-  // Checkbox state keyed on finding ids. Reset whenever the
-  // review text changes so a regenerated review starts with
-  // every new finding selected.
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(allIds));
+  // Uncontrolled-fallback selection state for callers that don't
+  // wire controlled props (e.g. fan-in review). Reset to "all
+  // selected" whenever the review text changes so a regenerated
+  // review starts fresh.
+  const [localSelected, setLocalSelected] = useState<Set<string>>(() => new Set(allIds));
   const prevIdsRef = useRef(allIds);
   if (prevIdsRef.current !== allIds) {
     prevIdsRef.current = allIds;
-    setSelected(new Set(allIds));
+    setLocalSelected(new Set(allIds));
   }
+
+  const isControlled = selectedFindingIds !== undefined;
+  const selected: ReadonlySet<string> = isControlled ? selectedFindingIds : localSelected;
 
   // Fall back to the legacy markdown render if the review
   // doesn't parse (pre-Phase-8 content, or malformed output
@@ -197,7 +223,11 @@ function StructuredReview({
   }
 
   const toggle = (id: string) => {
-    setSelected((prev) => {
+    if (isControlled) {
+      onToggleFinding?.(id);
+      return;
+    }
+    setLocalSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -205,28 +235,43 @@ function StructuredReview({
     });
   };
 
-  const handleApply = () => {
-    if (!onApplyFeedback) return;
-    const feedback = formatSelectedAsFeedback(parsed, selected);
-    if (feedback) onApplyFeedback(feedback);
+  const selectAll = () => {
+    if (isControlled) {
+      onSelectAllFindings?.();
+      return;
+    }
+    setLocalSelected(new Set(allIds));
+  };
+
+  const unselectAll = () => {
+    if (isControlled) {
+      onUnselectAllFindings?.();
+      return;
+    }
+    setLocalSelected(new Set());
   };
 
   const selectedCount = selected.size;
   const totalCount = allIds.length;
+  const allSelected = totalCount > 0 && selectedCount === totalCount;
 
   return (
     <div className="space-y-4" data-testid="review-text">
-      {onApplyFeedback && (
+      {totalCount > 0 && (
         <div className="flex items-center gap-3 flex-wrap">
           <button
             type="button"
-            onClick={handleApply}
-            disabled={isBusy || selectedCount === 0}
-            className="px-3 py-1 text-xs rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-40"
-            title="Regenerate the draft with the selected findings as feedback"
-            data-testid="review-apply-button"
+            onClick={allSelected ? unselectAll : selectAll}
+            disabled={isBusy}
+            className="px-3 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
+            title={
+              allSelected
+                ? 'Uncheck every finding'
+                : 'Check every finding'
+            }
+            data-testid="review-select-all-button"
           >
-            Apply selected as feedback
+            {allSelected ? 'Unselect all' : 'Select all'}
           </button>
           <span className="text-xs text-gray-500">
             {selectedCount} / {totalCount} selected

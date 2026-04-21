@@ -318,7 +318,7 @@ describe('FeatureExpansionPanel', () => {
       expect(legacy).toHaveTextContent(/AI Review/);
     });
 
-    it('Apply selected submits only checked findings as feedback', async () => {
+    it('Reject & Regenerate folds selected findings into the payload alongside textarea feedback', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
           pending_draft: {
@@ -339,15 +339,54 @@ describe('FeatureExpansionPanel', () => {
       fireEvent.click(h2);
       expect(h2).not.toBeChecked();
 
-      fireEvent.click(screen.getByTestId('review-apply-button'));
+      // Add free-form textarea feedback so we can confirm both
+      // streams arrive in the combined payload.
+      const textarea = screen.getByPlaceholderText(/Add reporting/i);
+      fireEvent.change(textarea, { target: { value: 'Split Reports into its own feature' } });
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Reject & Regenerate' })
+      );
       await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalled());
       const [, feedback] = mockedPostFeedback.mock.calls[0];
+      expect(feedback).toContain('Split Reports into its own feature');
       expect(feedback).toContain('Feature names overlap');
       expect(feedback).toContain('Decomposition axis split');
       expect(feedback).not.toContain('restated name');
     });
 
-    it('Apply selected is disabled when nothing is checked', async () => {
+    it('Reject & Regenerate sends only textarea feedback when every finding is unselected', async () => {
+      mockedGet.mockResolvedValue(
+        makeResponse({
+          pending_draft: {
+            id: 'draft_1',
+            content: 'content',
+            created_at: '2026-04-12T00:00:00',
+          },
+          review_text: STRUCTURED_REVIEW,
+        })
+      );
+      mockedPostFeedback.mockResolvedValue({ job_id: 'job_nosel' });
+      renderPanel();
+
+      await openReviewTab();
+
+      // Unselect all via the toggle — one click flips from "all
+      // selected" to "none selected".
+      fireEvent.click(screen.getByTestId('review-select-all-button'));
+
+      const textarea = screen.getByPlaceholderText(/Add reporting/i);
+      fireEvent.change(textarea, { target: { value: 'just text' } });
+
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Reject & Regenerate' })
+      );
+      await waitFor(() =>
+        expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', 'just text')
+      );
+    });
+
+    it('Select all / Unselect all toggles every finding in one click', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
           pending_draft: {
@@ -362,12 +401,21 @@ describe('FeatureExpansionPanel', () => {
 
       await openReviewTab();
 
-      // Uncheck all three.
-      fireEvent.click(screen.getByTestId('review-finding-h1'));
-      fireEvent.click(screen.getByTestId('review-finding-h2'));
-      fireEvent.click(screen.getByTestId('review-finding-a1'));
+      const toggle = await screen.findByTestId('review-select-all-button');
+      // Default state is all-selected — button offers "Unselect all".
+      expect(toggle).toHaveTextContent(/Unselect all/);
 
-      expect(screen.getByTestId('review-apply-button')).toBeDisabled();
+      fireEvent.click(toggle);
+      expect(screen.getByTestId('review-finding-h1')).not.toBeChecked();
+      expect(screen.getByTestId('review-finding-h2')).not.toBeChecked();
+      expect(screen.getByTestId('review-finding-a1')).not.toBeChecked();
+      expect(toggle).toHaveTextContent(/Select all/);
+
+      fireEvent.click(toggle);
+      expect(screen.getByTestId('review-finding-h1')).toBeChecked();
+      expect(screen.getByTestId('review-finding-h2')).toBeChecked();
+      expect(screen.getByTestId('review-finding-a1')).toBeChecked();
+      expect(toggle).toHaveTextContent(/Unselect all/);
     });
 
     it('flags running review via a spinner on the tab and inside the panel', async () => {
@@ -477,7 +525,7 @@ describe('FeatureExpansionPanel', () => {
       );
     });
 
-    it('renders structured findings alongside approved content, but no Apply button', async () => {
+    it('renders structured findings alongside approved content with no Apply button', async () => {
       mockedGet.mockResolvedValue(
         makeResponse({
           node: {
@@ -496,9 +544,12 @@ describe('FeatureExpansionPanel', () => {
       );
 
       await openReviewTab();
-      // Findings render but the Apply button is hidden — approved
-      // content has no feedback regeneration path.
+      // Findings render and the Select-all toggle is available —
+      // the standalone Apply button no longer exists anywhere in
+      // the tree since submission now flows through the pending-
+      // draft Reject & Regenerate button.
       expect(await screen.findByTestId('review-finding-h1')).toBeInTheDocument();
+      expect(screen.getByTestId('review-select-all-button')).toBeInTheDocument();
       expect(screen.queryByTestId('review-apply-button')).toBeNull();
     });
   });
