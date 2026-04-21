@@ -21,6 +21,12 @@ vi.mock('../../api/queue', async () => {
   };
 });
 
+// Graph view needs a real canvas; these list-fallback tests stub
+// it out and flip into List view explicitly.
+vi.mock('./DecompositionGraphView', () => ({
+  DecompositionGraphView: () => null,
+}));
+
 import * as structureApi from '../../api/structure';
 import * as queueApi from '../../api/queue';
 
@@ -71,7 +77,13 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('DecompositionEditorPanel', () => {
+
+async function flipToListView() {
+  const listToggle = await screen.findByTestId('decomp-view-list');
+  await userEvent.click(listToggle);
+}
+
+describe('DecompositionEditorPanel (list fallback)', () => {
   it('renders the top-level comp tree with its subcomps', async () => {
     mockedStructure.mockResolvedValue(structure());
     render(
@@ -79,6 +91,7 @@ describe('DecompositionEditorPanel', () => {
         <DecompositionEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() => expect(screen.getByText('Billing')).toBeInTheDocument());
     expect(screen.getByText('BillingStore')).toBeInTheDocument();
   });
@@ -91,6 +104,7 @@ describe('DecompositionEditorPanel', () => {
         <DecompositionEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Queue create/ })).toBeInTheDocument(),
     );
@@ -118,6 +132,7 @@ describe('DecompositionEditorPanel', () => {
         <DecompositionEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() => expect(screen.getByText('Billing')).toBeInTheDocument());
     // First Rename button is for the top-level 'Billing' comp.
     await userEvent.click(screen.getAllByRole('button', { name: /^Rename$/ })[0]);
@@ -138,6 +153,7 @@ describe('DecompositionEditorPanel', () => {
         <DecompositionEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() => expect(screen.getByText('Billing')).toBeInTheDocument());
     await userEvent.click(screen.getAllByRole('button', { name: /^Delete$/ })[0]);
     expect(mockedEnqueue).toHaveBeenCalledWith('p1', {
@@ -156,6 +172,7 @@ describe('DecompositionEditorPanel', () => {
         <DecompositionEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() => expect(screen.getByText('Billing')).toBeInTheDocument());
     await userEvent.click(screen.getAllByRole('button', { name: /^Delete$/ })[0]);
     expect(mockedEnqueue).not.toHaveBeenCalled();
@@ -177,6 +194,7 @@ describe('DecompositionEditorPanel', () => {
         <DecompositionEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() => expect(screen.getByText('BillingStore')).toBeInTheDocument());
     // Move the subcomp "BillingStore" (currently under comp_A) under comp_B.
     const moveSelect = screen.getByLabelText('Move BillingStore') as HTMLSelectElement;
@@ -205,6 +223,7 @@ describe('DecompositionEditorPanel', () => {
         <DecompositionEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() => expect(screen.getByText('BillingStore')).toBeInTheDocument());
     const moveSelect = screen.getByLabelText('Move BillingStore') as HTMLSelectElement;
     await userEvent.selectOptions(moveSelect, '__top__');
@@ -225,6 +244,7 @@ describe('DecompositionEditorPanel', () => {
         <DecompositionEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() => expect(screen.getByText('Billing')).toBeInTheDocument());
     // Click "Add child" on the top-level Billing comp.
     await userEvent.click(screen.getByRole('button', { name: /Add child/ }));

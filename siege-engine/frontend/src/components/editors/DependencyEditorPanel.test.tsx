@@ -22,6 +22,13 @@ vi.mock('../../api/queue', async () => {
   };
 });
 
+// The graph view renders Cytoscape, which requires a real canvas
+// jsdom doesn't provide. These list-fallback tests don't exercise
+// the graph path, so stub the component with a null renderer.
+vi.mock('./DependencyGraphView', () => ({
+  DependencyGraphView: () => null,
+}));
+
 import * as structureApi from '../../api/structure';
 import * as queueApi from '../../api/queue';
 
@@ -76,7 +83,18 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('DependencyEditorPanel', () => {
+// The existing tests cover the List view (the accessibility
+// fallback). The Graph view is the primary UX; its interactions
+// are covered by the selection-hook + EditableGraph tests under
+// `graph/` and by `DependencyGraphView` integration in the panel.
+// Here we flip to List explicitly so the dropdown assertions hit
+// the fallback DOM.
+async function flipToListView() {
+  const listToggle = await screen.findByTestId('dep-view-list');
+  await userEvent.click(listToggle);
+}
+
+describe('DependencyEditorPanel (list fallback)', () => {
   it('lists existing dependency edges by name', async () => {
     mockedStructure.mockResolvedValue(makeStructure());
     render(
@@ -84,6 +102,7 @@ describe('DependencyEditorPanel', () => {
         <DependencyEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() =>
       expect(screen.getByText(/A → B/)).toBeInTheDocument(),
     );
@@ -98,6 +117,7 @@ describe('DependencyEditorPanel', () => {
         <DependencyEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Queue add/ })).toBeInTheDocument(),
     );
@@ -128,6 +148,7 @@ describe('DependencyEditorPanel', () => {
         <DependencyEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() =>
       expect(screen.getByText(/A → B/)).toBeInTheDocument(),
     );
@@ -150,6 +171,7 @@ describe('DependencyEditorPanel', () => {
         <DependencyEditorPanel projectId="p1" />
       </TestQueryWrapper>,
     );
+    await flipToListView();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Queue add/ })).toBeInTheDocument(),
     );

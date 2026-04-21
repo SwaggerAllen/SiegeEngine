@@ -3,6 +3,7 @@ import type { Instruction } from '../../api/queue';
 import { useProjectStructure } from '../../hooks/queries/useProjectStructure';
 import { useEnqueueInstructionMutation } from '../../hooks/mutations/useQueueMutations';
 import { describeApiError } from '../../lib/describeApiError';
+import { DomainParentGraphView } from './DomainParentGraphView';
 
 interface Props {
   projectId: string;
@@ -11,20 +12,106 @@ interface Props {
 /**
  * Phase 11 Structured UI #6 — domain-parent editor.
  *
- * Domain-parent edges mark a presentational component as a primary
- * view into a domain component. Direction is presentational →
- * domain, many-to-many (one presentational can map to multiple
- * domain parents). Not a dependency edge; the regen-context path
- * for presentational comparch walks these edges via
- * ``all_domain_parents_have_populated_fanin`` (Phase 7.5) to block
- * until the domain fan-ins exist.
- *
- * Cycle detection is **not** run on domain-parent edges —
- * presentational comps are strictly layered after domain comps,
- * so by construction these can't close a cycle with dep edges.
+ * Primary view: Cytoscape graph (``DomainParentGraphView``) —
+ * tap presentational source → tap domain target → Queue add.
+ * Enforces the 1-2 domain-parents-per-presentational cap
+ * client-side. Fallback: the original list-based editor
+ * preserved below for accessibility.
  */
 export function DomainParentEditorPanel({ projectId }: Props) {
   const { data, error, isLoading } = useProjectStructure(projectId);
+  const [view, setView] = useState<'graph' | 'list'>('graph');
+
+  const topLevelComps = useMemo(
+    () =>
+      (data?.nodes ?? [])
+        .filter((n) => n.tier === 'comp' && n.parent_id === null)
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [data],
+  );
+  const domainParentEdges = useMemo(
+    () => (data?.edges ?? []).filter((e) => e.edge_type === 'domain_parent'),
+    [data],
+  );
+
+  if (isLoading) {
+    return <div className="p-4 text-sm text-gray-400">Loading project structure…</div>;
+  }
+  if (error) {
+    return (
+      <div className="p-4 max-w-md">
+        <h3 className="text-sm font-semibold text-red-400">Failed to load structure</h3>
+        <p className="text-xs text-gray-400 mt-1">
+          {describeApiError(error, 'Unknown error')}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <header className="flex items-baseline gap-3 border-b border-gray-800 px-4 py-2">
+        <h3 className="text-sm font-semibold text-gray-200">Domain parents</h3>
+        <p className="text-xs text-gray-400 flex-1">
+          {view === 'graph'
+            ? 'Tap a presentational component to pick a source, then tap a domain comp to stage a domain-parent edge. Cap: 1-2 domain parents per presentational.'
+            : 'Every domain-parent edge in the project. Add via the form; the list is the accessibility fallback for the graph view.'}
+        </p>
+        <ViewToggle view={view} onChange={setView} />
+      </header>
+      <div className="flex-1 min-h-0 overflow-auto">
+        {view === 'graph' ? (
+          <DomainParentGraphView
+            projectId={projectId}
+            topLevelComps={topLevelComps}
+            domainParentEdges={domainParentEdges}
+          />
+        ) : (
+          <DomainParentListView projectId={projectId} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: 'graph' | 'list';
+  onChange: (v: 'graph' | 'list') => void;
+}) {
+  const btn = (val: 'graph' | 'list', label: string) => (
+    <button
+      type="button"
+      onClick={() => onChange(val)}
+      className={`px-2 py-0.5 text-xs ${
+        view === val
+          ? 'bg-gray-700 text-white'
+          : 'text-gray-400 hover:text-gray-200'
+      }`}
+      data-testid={`dp-view-${val}`}
+      aria-pressed={view === val}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div
+      role="group"
+      aria-label="Domain-parent view toggle"
+      className="flex rounded border border-gray-700 overflow-hidden"
+    >
+      {btn('graph', 'Graph')}
+      {btn('list', 'List')}
+    </div>
+  );
+}
+
+// ── List fallback (preserved from the pre-graph MVP) ───────────────
+
+function DomainParentListView({ projectId }: { projectId: string }) {
+  const { data } = useProjectStructure(projectId);
   const enqueue = useEnqueueInstructionMutation(projectId);
   const [sourceId, setSourceId] = useState('');
   const [targetId, setTargetId] = useState('');
@@ -44,13 +131,11 @@ export function DomainParentEditorPanel({ projectId }: Props) {
     () => allComps.filter((c) => c.kind === 'domain'),
     [allComps],
   );
-
   const compById = useMemo(() => {
     const m = new Map<string, (typeof allComps)[number]>();
     for (const c of allComps) m.set(c.id, c);
     return m;
   }, [allComps]);
-
   const edges = useMemo(
     () => (data?.edges ?? []).filter((e) => e.edge_type === 'domain_parent'),
     [data],
@@ -97,32 +182,8 @@ export function DomainParentEditorPanel({ projectId }: Props) {
     });
   };
 
-  if (isLoading) {
-    return <div className="p-4 text-sm text-gray-400">Loading project structure…</div>;
-  }
-  if (error) {
-    return (
-      <div className="p-4 max-w-md">
-        <h3 className="text-sm font-semibold text-red-400">Failed to load structure</h3>
-        <p className="text-xs text-gray-400 mt-1">
-          {describeApiError(error, 'Unknown error')}
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="p-4 max-w-3xl space-y-6">
-      <section>
-        <h3 className="text-sm font-semibold text-gray-200 mb-1">Domain parents</h3>
-        <p className="text-xs text-gray-400">
-          Mark a presentational component as a primary view into a domain
-          component. The presentational comparch sees the domain's fan-in
-          synthesis as context; adding a domain parent here gates the
-          presentational's comparch on the domain's first-pass completion.
-        </p>
-      </section>
-
       <section className="rounded border border-gray-700 bg-gray-950 p-3 space-y-2">
         <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">
           Add domain parent
