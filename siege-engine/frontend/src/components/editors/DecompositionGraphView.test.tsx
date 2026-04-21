@@ -110,6 +110,19 @@ function tapNode(id: string) {
   });
 }
 
+function holdNode(id: string) {
+  (latestCy as unknown as { _fire: (ev: string, e: unknown) => void })._fire(
+    'taphold',
+    {
+      target: {
+        isNode: () => true,
+        isEdge: () => false,
+        id: () => id,
+      },
+    },
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   latestCy = null;
@@ -253,6 +266,32 @@ describe('DecompositionGraphView — Promote / Demote', () => {
     await userEvent.click(await screen.findByTestId('decomp-action-promote'));
     await userEvent.click(await screen.findByTestId('decomp-action-demote'));
     expect(mockedEnqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe('DecompositionGraphView — long-press multi-select', () => {
+  it('taphold on a comp enters multi-select mode with that comp seeded', async () => {
+    const comps = [
+      node('comp_TOP', 'Top'),
+      node('comp_A', 'A', 'comp_TOP'),
+      node('comp_B', 'B', 'comp_TOP'),
+    ];
+    render(
+      <TestQueryWrapper>
+        <DecompositionGraphView projectId="p1" allComps={comps} />
+      </TestQueryWrapper>,
+    );
+    holdNode('comp_A');
+    // Sidebar flips to multi-select mode with 1 selected; adding
+    // one more via a normal tap should build toward the Merge
+    // affordance.
+    await waitFor(() =>
+      expect(screen.getByText(/Multi-select mode/i)).toBeInTheDocument(),
+    );
+    tapNode('comp_B');
+    await waitFor(() =>
+      expect(screen.getByTestId('decomp-action-merge')).toBeInTheDocument(),
+    );
   });
 });
 

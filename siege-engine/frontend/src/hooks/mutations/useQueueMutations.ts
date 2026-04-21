@@ -8,6 +8,7 @@ import {
   type EnqueueResponse,
   type Instruction,
 } from '../../api/queue';
+import { announceInstruction } from '../../lib/queueAnnounce';
 import { queueKeys } from '../queries/useQueueQueries';
 
 /**
@@ -23,8 +24,11 @@ export function useEnqueueInstructionMutation(projectId: string) {
   const qc = useQueryClient();
   return useMutation<EnqueueResponse, unknown, Instruction>({
     mutationFn: (instruction) => enqueueInstruction(projectId, instruction),
-    onSuccess: () => {
+    onSuccess: (_resp, instruction) => {
       void qc.invalidateQueries({ queryKey: queueKeys.project(projectId) });
+      // PR-11c — screen-reader-friendly confirmation for the
+      // graph editors' tap-driven enqueues.
+      announceInstruction(instruction);
     },
   });
 }

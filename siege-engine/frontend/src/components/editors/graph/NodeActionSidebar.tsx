@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
+import { useIsNarrowViewport } from '../../../hooks/useMatchMedia';
 
 /**
- * Right-drawer sidebar for the PR-11a editable graph surfaces.
+ * Right-drawer (desktop) / bottom-sheet (mobile) sidebar for the
+ * editable graph surfaces.
  *
  * Shown when the user has tapped a node, an edge, or staged a
  * new edge. The caller passes in:
@@ -14,10 +16,11 @@ import type { ReactNode } from 'react';
  * - `onCancel` — invoked by the sidebar's "Close" button and
  *   on ESC.
  *
- * Kept deliberately dumb — no internal state, no action
- * registration. Each editor passes its own actions based on
- * what operations its graph supports. Mobile layout (bottom
- * sheet below 768px) lands in PR-11c.
+ * Layout switch is gated by a ``(max-width: 768px)`` media
+ * query (see ``useIsNarrowViewport``). On narrow viewports the
+ * sidebar renders as a fixed bottom sheet with ``max-height:
+ * 60vh`` and independent scroll so the graph canvas stays
+ * usable above.
  */
 export interface NodeActionSidebarProps {
   title: string;
@@ -32,10 +35,15 @@ export function NodeActionSidebar({
   actions,
   onCancel,
 }: NodeActionSidebarProps) {
+  const narrow = useIsNarrowViewport();
+  const containerClass = narrow
+    ? 'fixed inset-x-0 bottom-0 z-40 max-h-[60vh] border-t border-gray-800 bg-gray-950 flex flex-col shadow-xl'
+    : 'w-72 shrink-0 border-l border-gray-800 bg-gray-950 flex flex-col';
   return (
     <aside
-      className="w-72 shrink-0 border-l border-gray-800 bg-gray-950 flex flex-col"
+      className={containerClass}
       data-testid="node-action-sidebar"
+      data-layout={narrow ? 'bottom-sheet' : 'side-drawer'}
     >
       <header className="px-3 py-2 border-b border-gray-800 flex items-baseline justify-between gap-2">
         <div className="min-w-0">

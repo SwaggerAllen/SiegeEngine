@@ -72,7 +72,7 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
 
 ## Phase status (as of last session)
 
-**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger) + Phase 10 (layered DAG view).
+**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger) + Phase 10 (layered DAG view) + Phase 11 (pending-change queue + structured edit UIs).
 
 - **Phases 0-5.5** — v2 bootstrap chain end-to-end: project →
   expansion → features → requirements → sysarch → subreqs (per
@@ -159,9 +159,27 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
   Sidebar synthetic id renamed from `:decomposition-graph` to
   `:dag` — label stays "Decomposition Graph" for continuity.
 
-**Next:** Phase 11 (structural edit UIs). Phase 11's
-pending-change queue has storage + instruction types but the HTTP
-plumbing isn't exposed yet; that lands with Phase 11 itself.
+- **Phase 11 (pending-change queue + structured edit UIs)** —
+  All six structured edit UIs shipped. Queue panel
+  (list / discard / apply with halt-on-failure sequential
+  invariant) lives at `QueuePanel.tsx` + `queue_routes.py`.
+  Rename routes through `v2.rename_rewrite` (LLM prose rewrite).
+  Graph view primary on UIs #3 / #5 / #6 via a shared
+  `EditableGraph` wrapper (`components/editors/graph/`) with a
+  two-tap edge-add state machine; list view preserved as the
+  accessibility fallback (`Graph | List` toggle on each panel).
+  `NodeActionSidebar` centralizes per-node actions (Create /
+  Rename / Delete / Move / Promote / Demote / Split) on the
+  Decomposition graph; Merge lives on multi-select triggered
+  either by toolbar toggle or long-press (`taphold`). Sidebar
+  drops to a bottom sheet below 768px via `useIsNarrowViewport`.
+  A single `<QueueAnnounceRegion>` aria-live region reads out
+  every successful enqueue for screen-reader users.
+  Deliberately deferred (noted in "Things to not relitigate"):
+  drag-to-connect and node drag-repositioning — two-tap is the
+  working pattern and ELK layout is authoritative.
+
+**Next:** Phase 12 (batched review flow + regen-time diff).
 
 ## V3 spec scope vs V2 implementation
 
@@ -430,14 +448,24 @@ delegating. Not a code change.
 
 ## Things to not relitigate
 
-- Decomposition graph layering (L0/L1/L2/L3+ with reachability)
-  is Phase 11 territory. Don't try to add it earlier.
-- Structured UI #4 (subresp → subcomp mapping editor) is
-  deferred to Phase 11 structural-edit territory. The read-only
-  view is already visible via the decomposition graph.
+- Phase 11 closure: structured edit UIs 1–6 all shipped. Graph
+  view primary on UIs #3 / #5 / #6; list view is the a11y
+  fallback, not a different product. Don't add list-only
+  affordances that the graph view can't reach, and don't add
+  graph-only affordances that break the list fallback.
 - Playwright / full browser E2E testing is deferred until the UI
   stops churning. The full bootstrap chain integration test gets
   most of the value at 5% of the maintenance cost.
+- **Drag-to-connect on graph editors.** HTML5 pointer-event drag
+  on Cytoscape nodes is flaky — flaky enough that two-tap is the
+  working pattern on both desktop and touch. Don't try to
+  reintroduce drag semantics; if someone wants a visual
+  "connecting" affordance during the two-tap, draw a ghost edge
+  from the selected-source instead.
+- **Node drag-repositioning against ELK.** ELK is authoritative
+  for layout on every graph editor. Users adjusting positions
+  manually fights the layout engine and the adjustments don't
+  persist through re-layouts.
 
 ## Deployment
 

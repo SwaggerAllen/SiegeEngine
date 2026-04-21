@@ -68,6 +68,10 @@ export interface EditableGraphProps {
    * the Decomposition editor to style nodes added to a multi-
    * select set for the Merge action. */
   multiSelectIds?: ReadonlySet<string>;
+  /** Cytoscape ``taphold`` callback — fires on long-press (600ms
+   * default). Touch-first entry point for the Decomposition
+   * editor's multi-select mode. Receives the held node's id. */
+  onNodeHold?: (nodeId: string) => void;
 }
 
 const DEFAULT_LAYOUT = {
@@ -98,6 +102,7 @@ export function EditableGraph({
   layout,
   layoutKey,
   multiSelectIds,
+  onNodeHold,
 }: EditableGraphProps) {
   const cyRef = useRef<cytoscape.Core | null>(null);
   const resolvedLayout = useMemo(() => layout ?? DEFAULT_LAYOUT, [layout]);
@@ -145,11 +150,20 @@ export function EditableGraph({
       }
     };
 
+    const onHold = (event: cytoscape.EventObject) => {
+      if (!onNodeHold) return;
+      if (event.target === cy) return;
+      if (!event.target.isNode?.()) return;
+      onNodeHold(event.target.id());
+    };
+
     cy.on('tap', onTap);
+    cy.on('taphold', onHold);
     return () => {
       cy.off('tap', onTap);
+      cy.off('taphold', onHold);
     };
-  }, [selection]);
+  }, [selection, onNodeHold]);
 
   // Re-run layout on `layoutKey` change. ELK only auto-fits on
   // initial mount; structural edits need an explicit re-layout.

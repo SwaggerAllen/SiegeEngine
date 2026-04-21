@@ -364,6 +364,14 @@ export function DecompositionGraphView({ projectId, allComps }: Props) {
               selection={selection}
               layoutKey={String(allComps.length)}
               multiSelectIds={multiSelect ? selectedIds : undefined}
+              onNodeHold={(nodeId) => {
+                // Long-press enters multi-select mode (touch-first
+                // entry point that doesn't need the toolbar toggle).
+                // Seed with the held node so the user's first gesture
+                // counts as one of the merge sources.
+                setMultiSelect(true);
+                setSelectedIds(new Set([nodeId]));
+              }}
             />
           )}
         </div>
