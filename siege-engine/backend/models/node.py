@@ -221,6 +221,14 @@ class Draft(Base):
     # Overwritten on ``DraftReviewUpdated`` events. Reset to empty
     # when a new draft replaces this one.
     review_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Phase 12 auto-revision — ``user_regen`` if the discard came
+    # from a user-initiated Reject & Regenerate, ``auto_revision``
+    # if it came from the AI-driven revision loop (draft generated,
+    # AI-reviewed, discarded without the user seeing it as pending).
+    # ``NULL`` while the draft is still pending / applied, and on
+    # legacy discarded drafts that predate the field (all of which
+    # are user-initiated by construction).
+    discard_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

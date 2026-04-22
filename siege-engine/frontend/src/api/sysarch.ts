@@ -15,8 +15,14 @@ export { GenerationStatusSchema, TelemetrySummarySchema };
 
 export const getSysarch = (projectId: string) => sysarchApi.getState(projectId);
 
-export const postFeedback = (projectId: string, feedback: string) =>
-  sysarchApi.postFeedback(projectId, feedback);
+export const postFeedback = (
+  projectId: string,
+  feedback: string,
+  autoRevisionsRequested?: number,
+) =>
+  autoRevisionsRequested && autoRevisionsRequested > 0
+    ? sysarchApi.postFeedback(projectId, feedback, autoRevisionsRequested)
+    : sysarchApi.postFeedback(projectId, feedback);
 
 export const approveDraft = (projectId: string, draftId: string) =>
   sysarchApi.approveDraft(projectId, draftId);

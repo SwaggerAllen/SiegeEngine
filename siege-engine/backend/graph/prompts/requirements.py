@@ -1,26 +1,29 @@
+# ruff: noqa: E501
 """Prompt template for the requirements (``reqs_*``) draft.
 
 The requirements pass consumes the approved feature set (the
 ``feat_*`` nodes minted from the feature expansion) and produces a
-structured, tag-based list of **top-level responsibilities** that
-downstream passes will map onto concrete components. The
-feature → responsibility relationship splits into two roles:
-``<owns>`` (primary system-side owner — exactly one per feature
-across the whole doc) and ``<supports>`` (responsibilities that
-contribute infrastructure or a composed slice without taking
-primary ownership — zero or more per feature). Both feed the
-many-to-many ``decomposition`` edges the mint handler emits on
-approval; the split is a correctness gate against scope
-collisions, not a downstream topology change.
+compact, structured list of **top-level responsibilities** that
+downstream passes map onto concrete components. The schema is
+machine-first: scope phrases and deferral cross-references that
+make overlap mechanically detectable, not prose that has to be
+re-read every regen.
 
-Output format (parsed by :mod:`backend.graph.parsers.xml_sections`
-and validated by :func:`backend.graph.parsers.validators.validate_requirements`):
+Responsibility grammar (parsed by
+:mod:`backend.graph.parsers.xml_sections` and validated by
+:func:`backend.graph.parsers.validators.validate_requirements`):
 
     <requirements>
       <responsibility>
         <name>User Authentication</name>
-        <intent>…paragraph-length description of what this
-        responsibility covers, framed at the role level…</intent>
+        <scope>
+          <item>password + session state</item>
+          <item>sign-in rate limit</item>
+        </scope>
+        <does-not-own>
+          <defers to="Per-Request Authorization">permission checks</defers>
+        </does-not-own>
+        <failure-surface>Broken verifier blocks all sign-ins; session-store bug silently degrades authenticated state.</failure-surface>
         <owns>
           <feat id="feat_abc12345"/>
         </owns>
@@ -31,10 +34,13 @@ and validated by :func:`backend.graph.parsers.validators.validate_requirements`)
       …
     </requirements>
 
-Parallel shape to the feature expansion prompt on purpose:
-``<requirements>`` is to ``reqs_*`` what ``<features>`` is to
-``expansion_*``. A shared parse-validate retry loop lives in the
-generation handler.
+Each responsibility is: name + scope (short noun phrases) +
+explicit deferrals (boundary work as structured entries) + one-
+sentence failure surface + owns/supports feature lists. No prose
+intent paragraph — the structured fields carry the same signal
+with roughly 70% fewer tokens and make cross-responsibility
+overlap mechanically detectable at validation time rather than
+after sysarch reads the doc.
 
 See ``docs/architecture/v2-rearchitecture.md`` §Subrequirements
 decomposition and §Feature → Responsibility → Component.
@@ -56,66 +62,57 @@ system-level obligation.
 Your downstream reader is the **sysarch pass**, which will \
 assign each responsibility to exactly one component by \
 clustering responsibilities that share data ownership and \
-failure modes. Write responsibility handles that sysarch can \
-cluster without guessing which component should own them. A \
-responsibility whose intent could describe two different \
-components' work is cut too broadly; a responsibility whose \
-intent duplicates another's data concern under a different \
-feature label hasn't left the feature axis behind.
+failure modes. Your output is structured, not prose: short \
+noun phrases naming the concerns each responsibility owns, \
+explicit deferrals to peers for boundary work, and a one-\
+sentence failure-surface statement. The structure is the \
+primary signal — sysarch reads scope and failure mode, not \
+a narrative.
 
-You will be given a list of features (approved in an upstream \
-pass, each with a stable ``feat_*`` ID) and must produce a \
-structured responsibility list. Each feature appears in \
-**exactly one** responsibility's ``<owns>`` block (its primary \
-system-side owner) and in zero or more responsibilities' \
-``<supports>`` blocks (responsibilities that contribute \
-infrastructure or composition without taking primary ownership).
+Each feature appears in **exactly one** responsibility's \
+``<owns>`` block (its primary system-side owner) and in zero or \
+more responsibilities' ``<supports>`` blocks (responsibilities \
+that contribute infrastructure or composition without taking \
+primary ownership).
 
 # Output format
 
 Output two top-level blocks in this order: ``<introduction>`` \
 and ``<requirements>``. The ``<introduction>`` is required — a \
-2–5 paragraph prose preamble capturing your initial thinking \
-about the decomposition: which axes of system work you \
-identified, which responsibilities you considered and rejected, \
-which ambiguities in the feature set you had to resolve (or \
-flagged as open). Downstream tiers don't read this intro, but \
-when requirements regenerates with feedback you (or a later \
-model) can refer back to it to stay anchored in your initial \
-framing instead of restarting from scratch.
+short prose preamble (5–15 sentences, a couple of paragraphs) \
+capturing your initial thinking about the decomposition: which \
+axes of system work you identified, which responsibilities you \
+considered and rejected, which ambiguities in the feature set \
+you had to resolve. This is the only prose in the doc; the \
+responsibilities themselves are fully structured. Keep the \
+introduction compact — it exists so a later regen can re-anchor, \
+not as a place to extend each responsibility's rationale.
 
 After ``<introduction>``, output a single ``<requirements>`` \
-block. Inside it, each responsibility has exactly one \
-``<name>``, exactly one ``<intent>``, exactly one ``<owns>`` \
-block, and at most one ``<supports>`` block. Each of those \
-blocks contains one or more ``<feat>`` children with an ``id`` \
-attribute (``<supports>`` may be omitted or empty):
+block. Inside it, each responsibility has this exact shape (no \
+``<intent>`` paragraph, no other tags):
 
     <introduction>
       The central axis here is control-plane vs data-plane: \
     identity + authz on one side, invoice lifecycle + payment \
-    settlement on the other. Kept them as two top-level resps \
-    because sysarch will almost certainly assign them to \
+    settlement on the other. I kept them as two top-level \
+    resps because sysarch will almost certainly assign them to \
     separate components with different durability profiles.
-
-      Open question I flagged in passing: the input doc says \
-    "admin override" without specifying whether it produces \
-    audit entries. I assumed yes (operational necessity) and \
-    captured it in the Authorization resp's intent.
     </introduction>
     <requirements>
       <responsibility>
         <name>Credential Verification and Session Establishment</name>
-        <intent>Verify the identity of a human or service \
-interacting with the system, establish a session, and make the \
-identity available to downstream logic. Owns the session state \
-lifecycle: creation on successful verification, refresh on \
-activity, invalidation on sign-out or timeout. Covers sign-in, \
-sign-out, token refresh, and session invalidation, but not the \
-specific credential mechanism (password, SSO, passkey) — that's \
-an implementation choice settled later. Failure surface: a \
-broken verifier blocks all sign-ins; a broken session store \
-silently degrades authenticated state.</intent>
+        <scope>
+          <item>password hash storage</item>
+          <item>session state lifecycle</item>
+          <item>sign-in rate limit</item>
+          <item>token refresh</item>
+        </scope>
+        <does-not-own>
+          <defers to="Per-Request Permission Checks">permission-to-role mapping</defers>
+          <defers to="Subscription State and Payment Collection">account activation state</defers>
+        </does-not-own>
+        <failure-surface>Broken verifier blocks all sign-ins; session-store bug silently degrades authenticated state.</failure-surface>
         <owns>
           <feat id="feat_login01"/>
           <feat id="feat_pwdrst2"/>
@@ -124,13 +121,14 @@ silently degrades authenticated state.</intent>
       </responsibility>
       <responsibility>
         <name>Per-Request Permission Checks</name>
-        <intent>Decide whether an authenticated principal may \
-perform a given action on a given resource. Separate from \
-credential verification because the checks apply at every \
-request, not just at sign-in, and because the policy surface \
-grows independently of the identity surface. Owns the \
-permission-to-role mapping data; does not own user records or \
-session state.</intent>
+        <scope>
+          <item>permission-to-role mapping</item>
+          <item>per-request access decision</item>
+        </scope>
+        <does-not-own>
+          <defers to="Credential Verification and Session Establishment">user identity records</defers>
+        </does-not-own>
+        <failure-surface>A permission check bug is either a denial-of-service (false negatives) or a privilege escalation (false positives).</failure-surface>
         <owns>
           <feat id="feat_admin99"/>
         </owns>
@@ -140,13 +138,16 @@ session state.</intent>
       </responsibility>
       <responsibility>
         <name>Subscription State and Payment Collection</name>
-        <intent>Maintain the billing state of each account: \
-active plan, payment method on file, grace-period countdown. \
-Collect payment via provider API, emit invoices, schedule \
-retries on failure, and suspend accounts when retries exhaust. \
-Owns subscription records and invoice history. Does not own \
-pricing-model decisions — those are configuration, not \
-runtime state.</intent>
+        <scope>
+          <item>account plan state</item>
+          <item>payment-method record</item>
+          <item>grace-period countdown</item>
+          <item>invoice emission</item>
+        </scope>
+        <does-not-own>
+          <defers to="Bundle Configuration">pricing model</defers>
+        </does-not-own>
+        <failure-surface>Payment-collector outage stalls account activation; invoice emission bug charges the wrong customer.</failure-surface>
         <owns>
           <feat id="feat_plans00"/>
           <feat id="feat_invoice"/>
@@ -156,10 +157,11 @@ runtime state.</intent>
 
 # Rules
 
-* Use the tag structure exactly as shown. Each ``<responsibility>`` \
-has exactly one ``<name>``, exactly one ``<intent>``, exactly one \
-``<owns>`` block, and at most one ``<supports>`` block. No other \
-tags inside a responsibility.
+* Each ``<responsibility>`` has exactly one ``<name>``, exactly \
+one ``<scope>`` block, at most one ``<does-not-own>`` block, \
+exactly one ``<failure-surface>``, exactly one ``<owns>`` block, \
+and at most one ``<supports>`` block. No ``<intent>`` tag, no \
+other tags. The structure is the spec.
 * ``<name>`` is a short identifier — typically 2 to 5 words, title \
 case. Name the system-level guarantee, not the engineering \
 category. "Credential Verification and Session Establishment" \
@@ -168,42 +170,43 @@ Payment Collection" is sharper than "Billing"; "Background \
 Retry Scheduling" is sharper than "Job Execution". If the name \
 could label a responsibility in any software project without \
 modification, push toward what makes this project's version \
-distinctive. The name is sysarch's shortest handle for \
-assigning this responsibility to a component — it has to earn \
-its brevity by being specific.
-* ``<intent>`` is a paragraph — typically 2 to 5 sentences. The \
-sysarch pass will read this intent to decide which component \
-owns this responsibility. Name the specific data this \
-responsibility governs, the specific operations it performs, \
-and the failure surfaces it has. Also name what it explicitly \
-does **not** cover, so sysarch knows where boundaries lie. \
-Avoid prescribing implementation (no "we will use JWT", no \
-"this service will expose a REST API"). A good intent reads \
-like a system-level contract: "Verify the identity of a caller, \
-establish a session, and make the identity available to \
-downstream logic — covers sign-in, sign-out, token refresh, \
-and session invalidation, but not the specific credential \
-mechanism."
+distinctive.
+* ``<scope>`` is **required** and must contain **at least one** \
+``<item>`` child. Each ``<item>`` is a short noun phrase (2–8 \
+words, system-side) naming a concrete concern this \
+responsibility owns. Think "persistent-state handles" and \
+"durable-invariant labels", not "user activities" — scope \
+phrases should read as system concerns sysarch can assign to \
+a module. Good examples: "append-only event log", "pure reducer \
+entrypoint", "staleness cascade edge walk", "per-generation \
+sandbox filesystem scope", "review SLA timer". Bad examples: \
+"users can log in" (feature axis), "secure session handling" \
+(vague), "authentication".
+* ``<does-not-own>`` is optional and contains ``<defers>`` \
+entries with a ``to="Other Responsibility Name"`` attribute and \
+a scope-phrase body. Each entry records a concern this \
+responsibility explicitly defers to another responsibility in \
+this doc, making the boundary between the two explicit. The \
+``to`` attribute must match another responsibility's ``<name>`` \
+exactly — the validator rejects unresolved references. Use this \
+generously where boundaries are easy to get wrong; an empty \
+``<does-not-own>`` is fine when the boundary is obvious from the \
+scope alone.
+* ``<failure-surface>`` is **required** and is a single sentence \
+naming the concrete failure mode (data loss, invariant violation, \
+silent degradation, security breach). Example: "Reducer drift is \
+a platform-integrity incident; a non-reducer write path is an \
+invariant violation; log corruption is project data loss." \
+Name the specific failure, not the impact category.
 * ``<owns>`` is **required** and must contain **at least one** \
-``<feat>`` child per responsibility. ``<owns>`` declares the \
-features this responsibility is the primary system-side owner \
-of — the single responsibility that carries the feature's \
-system-level guarantee. A responsibility that owns no features \
-is not a valid top-level responsibility — either merge it into \
-one that does or drop it.
+``<feat>`` child. ``<owns>`` declares the features this \
+responsibility is the primary system-side owner of — the single \
+responsibility that carries each feature's system-level guarantee.
 * ``<supports>`` is optional and may contain zero or more \
 ``<feat>`` children. ``<supports>`` declares features where this \
 responsibility contributes infrastructure, composition, or a \
-read-dependency slice, but another responsibility is the \
-primary owner. Example: a "Background Job Queue" responsibility \
-supports every feature that needs async work (it provides the \
-execution substrate) but owns none of them (the scheduler, \
-generation pipeline, etc. are the owners). Example: a \
-"Multi-Project Workspace" view supports a cross-project \
-feature by composing data from the review-routing and \
-project-provisioning owners — it supports, they own. Use \
-``<supports>`` generously when the distinction is real; the \
-sysarch pass reads it as a signal of cross-cutting dependency.
+read-dependency slice, but another responsibility is the primary \
+owner. Use it generously when the dependency is real.
 * Each ``<feat>`` inside ``<owns>`` or ``<supports>`` carries an \
 ``id`` attribute matching exactly the feature ID shown in the \
 input list (the ``feat_*`` prefix plus the 8-character Crockford \
@@ -218,50 +221,18 @@ responsibilities really do both want a feature, one of them \
 owns it and the other declares ``<supports>`` — or the \
 boundary between the two responsibilities is drawn wrong and \
 needs redrawing.
-* **A feature may appear in many ``<supports>`` blocks.** A \
-cross-cutting feature ("authentication protects every request") \
-may be supported by many responsibilities even though one \
-responsibility owns it. This is expected — use ``<supports>`` \
-to make the dependency visible rather than hiding it.
-* **A feature must not appear in both ``<owns>`` and \
-``<supports>`` of the same responsibility.** ``<owns>`` already \
-implies supporting presence; duplicating is redundant.
-* **Responsibilities do not overlap in scope.** Two \
-responsibilities must not claim ownership of the same \
-system-side scope even through different feature coverage. The \
-single-owner rule catches per-feature collisions; this rule is \
-about prose scope. If two resps' intent paragraphs both say \
-they own "produce end-of-month statements", that's overlap even \
-if they own different features — collapse them into one, or \
-redraw the boundary by trigger or data set. Example: "Billing" \
-and "Receipts" would overlap if both claimed "produce \
-end-of-month statements"; split by trigger instead — Billing \
-owns invoice lifecycle, Receipts owns post-payment \
-acknowledgments. Each intent paragraph's "does not cover" \
-clause should make the boundary between this resp and its \
-nearest sibling explicit.
+* **Scope-dedup rule (load-bearing).** No two responsibilities \
+may share a scope phrase (case- and whitespace-insensitive). If \
+two responsibilities both list "event-log retention" in their \
+scope, the validator rejects the draft — rename one, collapse \
+them into a single responsibility, or split the phrase by the \
+real boundary ("event-log retention window" vs "audit-log \
+retention policy"). The scope list is the primary dedup target; \
+drafting short distinct phrases for each responsibility is the \
+entire point of the grammar.
 * **Every feature in the input must be owned by some \
-responsibility.** Before emitting the list, mentally check that \
-each input feature ID appears in exactly one ``<owns>`` block. \
-A feature that appears only in ``<supports>`` (or nowhere) is a \
-coverage gap — the validator rejects it.
-* **Granularity.** Aim for a responsibility list that's coarser \
-than the feature list but finer than the project description. \
-Err on the side of fewer, coarser responsibilities — \
-sub-decomposition happens in a later pass per component.
-* **Cross-cutting concerns are responsibilities too.** Logging, \
-telemetry, health checks, background job scheduling, rate \
-limiting, secrets handling — if the project needs them, name \
-them. They won't always appear in the feature list directly, \
-but they're real work the system has to do and the sysarch \
-pass will want them named up front so cross-cutting policies \
-can target them later. Cross-cutting responsibilities still \
-need an ``<owns>`` block listing at least one feature they are \
-the primary owner of (for purely infrastructural \
-responsibilities this may be narrow — a telemetry responsibility \
-might own the one "system observability" feature). They \
-typically have a large ``<supports>`` block listing every \
-feature whose execution they touch.
+responsibility.** A feature that appears only in ``<supports>`` \
+(or nowhere) is a coverage gap — the validator rejects it.
 * **Break feature boundaries — that is the point of this tier.** \
 A feature like "Accept card payments" touches payment \
 processing, account state management, audit logging, and \
@@ -271,26 +242,24 @@ mirror the feature structure — redistribute it. If your \
 responsibility list looks like the feature list with different \
 names, you haven't rotated.
 * **Group into one responsibility concerns that share data \
-ownership and fail together.** Separate into different \
-responsibilities concerns that touch different data or have \
-different failure surfaces, even if they serve the same \
-user-facing feature. Sysarch will cluster resps into components \
-along these same lines, so the closer your responsibility \
-boundaries match data-ownership boundaries, the cleaner \
-sysarch's component assignments will be.
+ownership and fail together.** Separate concerns that touch \
+different data or have different failure surfaces. Sysarch \
+clusters resps into components along these same lines, so the \
+closer your responsibility boundaries match data-ownership \
+boundaries, the cleaner sysarch's component assignments will be.
+* **Cross-cutting concerns are responsibilities too.** Logging, \
+telemetry, health checks, background job scheduling, rate \
+limiting, secrets handling — if the project needs them, name \
+them. Cross-cutting responsibilities still need an ``<owns>`` \
+block listing at least one feature they are the primary owner of.
 * **Responsibilities are system-level guarantees, not UI/backend \
-splits.** Do not split a feature into "backend mechanics" and \
-"user-facing layer" as separate responsibilities — that split \
-is a structural decision the sysarch pass makes when it assigns \
-responsibilities to domain and presentational components. A \
-single responsibility like "Payment Collection" covers both the \
-backend mechanics and whatever UI surface presents it; sysarch \
-decides which components handle which side.
-* Do not include meta-commentary about what you are doing, what \
-the tags mean, or how you arrived at the list. Output only the \
-``<requirements>`` block.
-* Unescaped ``&`` and ``<`` in the intent text are fine — the \
-parser tolerates them.
+splits.** A single responsibility like "Payment Collection" \
+covers both backend mechanics and UI; sysarch decides which \
+components handle which side.
+* Do not include meta-commentary. Output only ``<introduction>`` \
+followed by ``<requirements>``.
+* Unescaped ``&`` and ``<`` in scope / defers / failure-surface \
+text are fine — the parser tolerates them.
 """
 
 

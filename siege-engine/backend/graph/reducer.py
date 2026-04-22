@@ -563,6 +563,14 @@ def _apply_draft_discarded(session: Session, project_id: str, event: ev.DraftDis
     if draft.status != "pending":
         raise ReducerError(f"Draft {event.draft_id!r} is {draft.status!r}, cannot discard")
     draft.status = "discarded"
+    # Phase 12 auto-revision projection: record *why* the discard
+    # happened so ``most_recent_discarded_draft_content`` can skip
+    # auto-revision intermediates when computing the regen-time
+    # diff baseline. Legacy events lack ``reason`` — Pydantic
+    # defaults that to ``None``, which we read as "user-initiated
+    # by construction" downstream (auto-revision didn't exist when
+    # those events were emitted).
+    draft.discard_reason = event.reason
     draft.updated_at = datetime.utcnow()
 
 

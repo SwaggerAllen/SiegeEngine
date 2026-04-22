@@ -5,7 +5,7 @@ import { subcomparchKeys } from '../queries/useSubcomparchQueries';
 const m = makeBootstrapMutations(
   'subcomparch',
   {
-    postFeedback: (pid, pcid, sid, fb) => api.postFeedback(pid, pcid, sid, fb),
+    postFeedback: (...args: Array<string | number>) => api.postFeedback(...(args as Parameters<typeof api.postFeedback>)),
     approveDraft: (pid, pcid, sid, did) => api.approveDraft(pid, pcid, sid, did),
     discardDraft: (pid, pcid, sid, did) => api.discardDraft(pid, pcid, sid, did),
     cancelGeneration: (pid, pcid, sid) => api.cancelGeneration(pid, pcid, sid),

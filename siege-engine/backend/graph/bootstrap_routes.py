@@ -259,11 +259,30 @@ def bootstrap_get_state(
         project_id,
         node.id,
     )
+    # Phase 12 auto-revision — intermediates produced by the AI-
+    # driven revision loop, scoped to the current regen run. Empty
+    # list on drafts generated before the loop shipped or when
+    # auto_revisions_requested=0. The frontend renders these as
+    # additional entries in the diff's "Compare against" dropdown
+    # below the default "Pre-regen" baseline.
+    intermediates = queries.auto_revision_intermediates(
+        db,
+        project_id,
+        node.id,
+    )
 
     return {
         "node": config.serialize_node(node),
         "pending_draft": config.serialize_draft(draft) if draft else None,
         "previous_draft_content": previous_draft_content,
+        "auto_revision_intermediates": [
+            {
+                "label": it.label,
+                "content": it.content,
+                "auto_revision_pass": it.auto_revision_pass,
+            }
+            for it in intermediates
+        ],
         "generation_status": status,
         "last_error": last_error,
         "latest_telemetry": telemetry,
@@ -303,8 +322,18 @@ def bootstrap_feedback(
     feedback_text: str,
     config: BootstrapTierConfig,
     require_project: Callable,
+    *,
+    auto_revisions_requested: int = 0,
 ) -> dict[str, str]:
-    """Generic POST feedback handler."""
+    """Generic POST feedback handler.
+
+    ``auto_revisions_requested`` (Phase 12) — forwarded verbatim
+    into the generate job payload as ``auto_revisions_remaining``
+    along with ``auto_revision_pass=0`` (user-initiated). Tiers
+    that support the auto-revision loop read those fields and
+    drive inline review passes from the handler. Tiers that don't
+    yet react to the fields carry them harmlessly.
+    """
     require_project(db, project_id)
     node = config.get_node(db, project_id, *scope_ids)
     if node is None:
@@ -316,6 +345,11 @@ def bootstrap_feedback(
         db, project_id, *scope_ids
     ):
         raise HTTPException(status_code=409, detail=config.feedback_readonly_detail)
+    if auto_revisions_requested < 0:
+        raise HTTPException(
+            status_code=422,
+            detail="auto_revisions_requested must be >= 0",
+        )
 
     # Clear the currently-pending draft's review_text and cancel
     # any in-flight review job for it. The old review is about to
@@ -347,15 +381,22 @@ def bootstrap_feedback(
         commit_and_publish(db, project_id)
 
     feedback = (feedback_text or "").strip() or None
+    payload = build_job_payload(
+        project_id,
+        scope_ids,
+        feedback,
+        scope_payload_keys=config.scope_payload_keys,
+    )
+    if auto_revisions_requested > 0:
+        # Seed the auto-revision loop. Tiers that handle the fields
+        # (requirements today) read them in their generate handler;
+        # others carry them harmlessly.
+        payload["auto_revision_pass"] = 0
+        payload["auto_revisions_remaining"] = auto_revisions_requested
     job_id = pipeline_queue.enqueue(
         db,
         job_type=config.generate_job_type,
-        payload=build_job_payload(
-            project_id,
-            scope_ids,
-            feedback,
-            scope_payload_keys=config.scope_payload_keys,
-        ),
+        payload=payload,
     )
     return {"job_id": job_id}
 
@@ -453,7 +494,11 @@ def bootstrap_discard(
             status_code=409,
             detail=f"Draft is {draft.status!r}, not pending",
         )
-    append_event(db, project_id, ev.DraftDiscarded(draft_id=draft_id))
+    append_event(
+        db,
+        project_id,
+        ev.DraftDiscarded(draft_id=draft_id, reason="user_regen"),
+    )
     commit_and_publish(db, project_id)
     pipeline_queue.enqueue(
         db,
@@ -597,10 +642,18 @@ def bootstrap_reset(
 
     drafts_discarded = 0
     for draft in pending_drafts:
-        append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+        append_event(
+            db,
+            project_id,
+            ev.DraftDiscarded(draft_id=draft.id, reason="user_regen"),
+        )
         drafts_discarded += 1
     if own_pending is not None:
-        append_event(db, project_id, ev.DraftDiscarded(draft_id=own_pending.id))
+        append_event(
+            db,
+            project_id,
+            ev.DraftDiscarded(draft_id=own_pending.id, reason="user_regen"),
+        )
         drafts_discarded += 1
 
     additional_drafts = (
@@ -610,7 +663,11 @@ def bootstrap_reset(
     )
     for maybe_draft in additional_drafts:
         if maybe_draft is not None:
-            append_event(db, project_id, ev.DraftDiscarded(draft_id=maybe_draft.id))
+            append_event(
+                db,
+                project_id,
+                ev.DraftDiscarded(draft_id=maybe_draft.id, reason="user_regen"),
+            )
             drafts_discarded += 1
 
     for dn in downstream_nodes:

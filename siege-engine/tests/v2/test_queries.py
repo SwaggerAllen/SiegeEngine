@@ -413,8 +413,16 @@ def _seed_and_discard_draft(
     project_id: str,
     target_id: str,
     content: str,
+    *,
+    reason: str | None = "user_regen",
 ) -> str:
-    """Emit DraftGenerated + DraftDiscarded so the row lands as discarded."""
+    """Emit DraftGenerated + DraftDiscarded so the row lands as discarded.
+
+    ``reason`` defaults to ``"user_regen"`` — the discard path all
+    tests exercised pre-auto-revision. Pass ``None`` to simulate
+    a legacy event (no reason recorded) or ``"auto_revision"`` to
+    simulate an AI-revision intermediate.
+    """
     import secrets
 
     draft_id = f"draft_{secrets.token_hex(8)}"
@@ -429,7 +437,11 @@ def _seed_and_discard_draft(
             batch_id=f"batch_{secrets.token_hex(8)}",
         ),
     )
-    append_event(session, project_id, ev.DraftDiscarded(draft_id=draft_id))
+    append_event(
+        session,
+        project_id,
+        ev.DraftDiscarded(draft_id=draft_id, reason=reason),
+    )
     return draft_id
 
 
@@ -549,3 +561,173 @@ class TestMostRecentDiscardedDraftContent:
             )
             is None
         )
+
+    def test_skips_auto_revision_discards(self, db, seeded):
+        # Phase 12 auto-revision: intermediate passes are discarded
+        # with ``reason="auto_revision"``. The diff helper must skip
+        # them and return the previous user-visible discard instead.
+        import time
+
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>user-visible v1</sysarch>",
+            reason="user_regen",
+        )
+        time.sleep(1.1)
+        # Auto-revision intermediate landed after — most recent by
+        # timestamp, but must be filtered out.
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>mid-loop intermediate</sysarch>",
+            reason="auto_revision",
+        )
+        db.commit()
+        assert (
+            most_recent_discarded_draft_content(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            == "<sysarch>user-visible v1</sysarch>"
+        )
+
+    def test_accepts_legacy_discards_with_null_reason(self, db, seeded):
+        # Events emitted before the reason field was added have
+        # ``reason=None``; the reducer projects NULL. Those are all
+        # user-initiated by construction and must still qualify as
+        # the diff baseline.
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>legacy</sysarch>",
+            reason=None,
+        )
+        db.commit()
+        assert (
+            most_recent_discarded_draft_content(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            == "<sysarch>legacy</sysarch>"
+        )
+
+
+class TestAutoRevisionIntermediates:
+    def test_returns_empty_when_no_discards(self, db, seeded):
+        from backend.graph.queries import auto_revision_intermediates
+
+        assert (
+            auto_revision_intermediates(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            == []
+        )
+
+    def test_returns_empty_when_only_user_regen_discards(self, db, seeded):
+        from backend.graph.queries import auto_revision_intermediates
+
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>v1</sysarch>",
+            reason="user_regen",
+        )
+        db.commit()
+        assert (
+            auto_revision_intermediates(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            == []
+        )
+
+    def test_returns_only_intermediates_since_last_user_regen(self, db, seeded):
+        # Shape: user_regen (baseline) → auto_rev x2 → next user_regen.
+        # Only auto_revs after the MOST RECENT user_regen count.
+        import time
+
+        from backend.graph.queries import auto_revision_intermediates
+
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>old baseline</sysarch>",
+            reason="user_regen",
+        )
+        time.sleep(1.1)
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>old intermediate 1</sysarch>",
+            reason="auto_revision",
+        )
+        time.sleep(1.1)
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>new baseline</sysarch>",
+            reason="user_regen",
+        )
+        time.sleep(1.1)
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>new intermediate 1</sysarch>",
+            reason="auto_revision",
+        )
+        time.sleep(1.1)
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>new intermediate 2</sysarch>",
+            reason="auto_revision",
+        )
+        db.commit()
+
+        items = auto_revision_intermediates(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+        )
+        assert [it.content for it in items] == [
+            "<sysarch>new intermediate 1</sysarch>",
+            "<sysarch>new intermediate 2</sysarch>",
+        ]
+        assert [it.label for it in items] == ["After pass 1", "After pass 2"]
+        assert [it.auto_revision_pass for it in items] == [1, 2]
+
+    def test_returns_all_intermediates_when_no_user_regen_baseline(self, db, seeded):
+        # Brand-new bootstrap path: no user_regen discard exists yet,
+        # so every auto_revision discard is from the current run.
+        from backend.graph.queries import auto_revision_intermediates
+
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>i1</sysarch>",
+            reason="auto_revision",
+        )
+        db.commit()
+        items = auto_revision_intermediates(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+        )
+        assert len(items) == 1
+        assert items[0].label == "After pass 1"

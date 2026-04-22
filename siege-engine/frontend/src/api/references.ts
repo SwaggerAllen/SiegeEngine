@@ -62,6 +62,15 @@ const ReferenceDetailRawSchema = z.object({
     })
     .nullable(),
   previous_draft_content: z.string().nullish().transform((v) => v ?? null),
+  auto_revision_intermediates: z
+    .array(
+      z.object({
+        label: z.string(),
+        content: z.string(),
+        auto_revision_pass: z.number().int(),
+      }),
+    )
+    .default([]),
   generation_status: z.enum(['idle', 'running', 'failed']),
   last_error: z.string().nullable(),
   latest_telemetry: z

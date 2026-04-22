@@ -27,6 +27,15 @@ export const SubcomparchResponseSchema = z.object({
   // ResponseSchema for the full story on why this exists and when
   // it's null.
   previous_draft_content: z.string().nullish().transform((v) => v ?? null),
+  auto_revision_intermediates: z
+    .array(
+      z.object({
+        label: z.string(),
+        content: z.string(),
+        auto_revision_pass: z.number().int(),
+      }),
+    )
+    .default([]),
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
   latest_telemetry: TelemetrySummarySchema.nullable(),
@@ -50,8 +59,21 @@ export const getSubcomparch = (
 ) => subcomparchApi.getState(projectId, parentCompId, subId);
 
 export const postFeedback = (
-  projectId: string, parentCompId: string, subId: string, feedback: string,
-) => subcomparchApi.postFeedback(projectId, parentCompId, subId, feedback);
+  projectId: string,
+  parentCompId: string,
+  subId: string,
+  feedback: string,
+  autoRevisionsRequested?: number,
+) =>
+  autoRevisionsRequested && autoRevisionsRequested > 0
+    ? subcomparchApi.postFeedback(
+        projectId,
+        parentCompId,
+        subId,
+        feedback,
+        autoRevisionsRequested,
+      )
+    : subcomparchApi.postFeedback(projectId, parentCompId, subId, feedback);
 
 export const approveDraft = (
   projectId: string, parentCompId: string, subId: string, draftId: string,

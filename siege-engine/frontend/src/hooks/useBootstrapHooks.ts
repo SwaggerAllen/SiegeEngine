@@ -31,13 +31,30 @@ export function makeBootstrapKeys(tierName: string): BootstrapKeyFactory {
 }
 
 export interface MutationApiFns {
-  postFeedback: (...args: string[]) => Promise<{ job_id: string }>;
+  /**
+   * Variadic signature: leading positional ``scopeIds`` followed
+   * by the ``feedback`` string, plus an optional trailing number
+   * ``autoRevisionsRequested`` that opts this regen into the
+   * Phase 12 auto-revision loop. Tiers that don't wire the count
+   * pass only the string and behave as before.
+   */
+  postFeedback: (...args: Array<string | number>) => Promise<{ job_id: string }>;
   approveDraft: (...args: string[]) => Promise<unknown>;
   discardDraft: (...args: string[]) => Promise<unknown>;
   cancelGeneration: (...args: string[]) => Promise<unknown>;
   resetTier?: (...args: string[]) => Promise<unknown>;
   retryReview?: (...args: string[]) => Promise<unknown>;
 }
+
+/**
+ * Input shape for the feedback mutation. Passing a plain string
+ * is equivalent to ``{ feedback: value }`` — existing callers
+ * stay unchanged. Callers that want auto-revision on the regen
+ * pass ``{ feedback, autoRevisionsRequested }`` instead.
+ */
+export type FeedbackMutationInput =
+  | string
+  | { feedback: string; autoRevisionsRequested?: number };
 
 export function makeBootstrapMutations(
   tierName: string,
@@ -52,7 +69,19 @@ export function makeBootstrapMutations(
     const queryClient = useQueryClient();
     return useMutation({
       mutationKey: [tierName, 'feedback', ...scopeIds],
-      mutationFn: (feedback: string) => apiFns.postFeedback(...scopeIds, feedback),
+      mutationFn: (input: FeedbackMutationInput) => {
+        const feedback = typeof input === 'string' ? input : input.feedback;
+        const autoRevisionsRequested =
+          typeof input === 'string' ? 0 : (input.autoRevisionsRequested ?? 0);
+        if (autoRevisionsRequested > 0) {
+          return apiFns.postFeedback(
+            ...scopeIds,
+            feedback,
+            autoRevisionsRequested,
+          );
+        }
+        return apiFns.postFeedback(...scopeIds, feedback);
+      },
       onSuccess: () => {
         queryClient.setQueryData<BootstrapResponse>(
           keys.detail(...scopeIds),

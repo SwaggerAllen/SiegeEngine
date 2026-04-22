@@ -42,6 +42,7 @@ from backend.graph.handlers._bootstrap_generation import (
     persist_draft,
     run_parse_validate_loop,
 )
+from backend.graph.parsers.review_xml import ParsedReview, ReviewXMLError, parse_review
 from backend.graph.parsers.validators import ValidationError, validate_requirements
 from backend.graph.prompts.requirements import (
     format_features_summary,
@@ -54,13 +55,19 @@ from backend.graph.requirements import (
 )
 from backend.models import Project
 from backend.models.input_document import InputDocument
-from backend.models.node import Node
+from backend.models.node import Draft, Node
 from backend.pipeline import queue as pipeline_queue
 from backend.projects.settings import get_project_settings
 
 logger = logging.getLogger(__name__)
 
 GENERATE_REQUIREMENTS_JOB_TYPE = "v2.generate_requirements"
+REVIEW_REQUIREMENTS_JOB_TYPE = "v2.review_requirements"
+
+# Phase 12 auto-revision — hard cap on how many AI-driven revision
+# passes a single user Reject & Regenerate can trigger. Prevents
+# runaway loops from a user input that overflows the UI stepper.
+MAX_AUTO_REVISIONS = 5
 
 
 class RequirementsHandlerError(RuntimeError):
@@ -74,12 +81,41 @@ class RequirementsParseRetryExhausted(RuntimeError):
 async def generate_requirements(payload: dict) -> None:
     """Job handler for ``v2.generate_requirements``.
 
-    Payload shape: ``{"project_id": str, "feedback": str | None}``.
+    Payload shape:
+    ``{
+        "project_id": str,
+        "feedback": str | None,
+        "auto_revision_pass": int | None,         # default 0
+        "auto_revisions_remaining": int | None,   # default 0
+    }``.
+
+    ``auto_revision_pass`` is the 0-indexed position of this pass
+    within the current run. ``0`` is user-initiated (the prior
+    pending draft is a user-visible baseline that should be
+    discarded with ``reason="user_regen"``). ``>0`` is an
+    auto-revision intermediate landing on top of another
+    auto-revision intermediate, discarded with
+    ``reason="auto_revision"``.
+
+    ``auto_revisions_remaining`` is the count of additional passes
+    the user asked for. When this pass lands and remaining is
+    ``>0``, the handler runs an inline AI review against the new
+    draft, formats the findings as feedback, and enqueues the next
+    generate job with ``auto_revisions_remaining - 1``. When
+    remaining is ``0`` the handler takes the default path and
+    enqueues the async review job; the user sees the pending draft
+    and reviews it.
     """
     project_id = payload.get("project_id")
     if not isinstance(project_id, str) or not project_id:
         raise RequirementsHandlerError("generate_requirements payload missing project_id")
     feedback: str | None = payload.get("feedback")
+    auto_revision_pass = int(payload.get("auto_revision_pass") or 0)
+    auto_revisions_remaining = int(payload.get("auto_revisions_remaining") or 0)
+    # Clamp to the hard cap — defends against a bad payload that
+    # slipped past the route layer's input validation.
+    if auto_revisions_remaining > MAX_AUTO_REVISIONS:
+        auto_revisions_remaining = MAX_AUTO_REVISIONS
 
     # ── Phase 1: gather inputs ──────────────────────────────────────
     db = SessionLocal()
@@ -224,7 +260,7 @@ async def generate_requirements(payload: dict) -> None:
         thinking_effort="max",
     )
 
-    persist_draft(
+    new_draft_id = persist_draft(
         project_id=project_id,
         node_id=reqs_node_id,
         section="requirements",
@@ -232,8 +268,192 @@ async def generate_requirements(payload: dict) -> None:
         attempts=attempts,
         prior_pending_id=prior_pending_id,
         log_handler_name="generate_requirements",
-        review_job_type="v2.review_requirements",
+        review_job_type=REVIEW_REQUIREMENTS_JOB_TYPE,
+        # Auto-revision intermediates get tagged so the regen-time
+        # diff skips them as "before" baselines — the user's
+        # pre-regen view stays anchored to the last user-visible
+        # pending draft, not to each mid-loop pass.
+        prior_discard_reason=("auto_revision" if auto_revision_pass > 0 else "user_regen"),
+        # Skip the async review when more passes are coming — the
+        # inline review below produces the feedback that feeds the
+        # next generate, and the final pass (remaining == 0) is
+        # the one that enqueues the standard async review.
+        enqueue_async_review=(auto_revisions_remaining == 0),
     )
+
+    # Phase 12 — auto-revision loop. Run a review inline against
+    # the just-persisted draft, format its findings as feedback,
+    # and enqueue the next generate pass. Errors / empty findings
+    # collapse the loop and enqueue the async review so the user
+    # still gets the normal review experience for this draft.
+    if auto_revisions_remaining > 0:
+        await _run_auto_revision_pass(
+            project_id=project_id,
+            node_id=reqs_node_id,
+            draft_id=new_draft_id,
+            current_pass=auto_revision_pass,
+            remaining=auto_revisions_remaining,
+        )
+
+
+async def _run_auto_revision_pass(
+    *,
+    project_id: str,
+    node_id: str,
+    draft_id: str,
+    current_pass: int,
+    remaining: int,
+) -> None:
+    """Run one inline AI review and enqueue the next generate pass.
+
+    Stop conditions (each falls back to enqueueing the standard
+    async review so the user still sees a reviewed draft):
+
+    * Review CLI failure / empty output — log and bail.
+    * Review parses but has zero findings — nothing to revise
+      against, so the chain is done.
+    * Findings exist — format as feedback, enqueue next generate
+      with ``auto_revisions_remaining - 1`` and
+      ``auto_revision_pass = current_pass + 1``.
+    """
+    from backend.graph.handlers.review_requirements import review_requirements
+
+    try:
+        await review_requirements(
+            {
+                "project_id": project_id,
+                "node_id": node_id,
+                "draft_id": draft_id,
+            }
+        )
+    except Exception:
+        logger.exception(
+            "Inline auto-revision review failed for project=%s draft=%s; "
+            "collapsing revision chain and enqueueing async review",
+            project_id,
+            draft_id,
+        )
+        _enqueue_async_review_retroactively(project_id, node_id, draft_id)
+        return
+
+    # Fetch the review_text the inline review just committed.
+    db = SessionLocal()
+    try:
+        draft = db.get(Draft, draft_id)
+        review_text = draft.review_text if draft is not None else ""
+    finally:
+        db.close()
+
+    if not review_text.strip():
+        # Shouldn't happen — ``run_review`` raises on empty CLI
+        # output — but guard anyway so the chain collapses cleanly.
+        logger.info(
+            "Auto-revision review produced no text; stopping chain (project=%s draft=%s)",
+            project_id,
+            draft_id,
+        )
+        return
+
+    try:
+        parsed = parse_review(review_text)
+    except ReviewXMLError:
+        logger.exception(
+            "Auto-revision review failed to parse; stopping chain (project=%s draft=%s)",
+            project_id,
+            draft_id,
+        )
+        return
+
+    all_findings = list(parsed.handles_structure) + list(parsed.architectural_decisions)
+    if not all_findings:
+        logger.info(
+            "Auto-revision review has no findings; stopping chain (project=%s draft=%s)",
+            project_id,
+            draft_id,
+        )
+        return
+
+    formatted = _format_findings_as_feedback(parsed)
+    db = SessionLocal()
+    try:
+        pipeline_queue.enqueue(
+            db,
+            job_type=GENERATE_REQUIREMENTS_JOB_TYPE,
+            payload={
+                "project_id": project_id,
+                "feedback": formatted,
+                "auto_revision_pass": current_pass + 1,
+                "auto_revisions_remaining": remaining - 1,
+            },
+        )
+        db.commit()
+    finally:
+        db.close()
+    logger.info(
+        "Auto-revision pass %d enqueued for project=%s (remaining=%d)",
+        current_pass + 1,
+        project_id,
+        remaining - 1,
+    )
+
+
+def _enqueue_async_review_retroactively(
+    project_id: str,
+    node_id: str,
+    draft_id: str,
+) -> None:
+    """Enqueue a regular async review against ``draft_id``.
+
+    Used by the auto-revision collapse path when the inline review
+    errored — we suppressed the async review enqueue during
+    ``persist_draft`` on the assumption the inline path would own
+    reviewing this draft. When that assumption falls through, we
+    still want the user to see a reviewed draft, so re-enqueue
+    here via the normal job pipeline.
+    """
+    import os
+
+    if os.environ.get("SIEGE_DISABLE_AI_REVIEW") == "1":
+        return
+    db = SessionLocal()
+    try:
+        pipeline_queue.enqueue(
+            db,
+            job_type=REVIEW_REQUIREMENTS_JOB_TYPE,
+            payload={
+                "project_id": project_id,
+                "node_id": node_id,
+                "draft_id": draft_id,
+            },
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def _format_findings_as_feedback(parsed: ParsedReview) -> str:
+    """Turn a parsed review into prose the generator prompt consumes.
+
+    Mirrors the frontend's ``formatSelectedAsFeedback`` (lib/
+    reviewXml.ts): grouped per section with a bulleted finding
+    list, sections separated by blank lines. Every finding is
+    included — the auto-revision loop trusts the review's
+    critique in aggregate rather than picking among individual
+    findings (the user's "Apply selected" UI path is orthogonal
+    and feeds user-initiated regens, not auto-revisions).
+    """
+    lines: list[str] = []
+    if parsed.handles_structure:
+        lines.append("Handles & structure:")
+        for f in parsed.handles_structure:
+            lines.append(f"- {f.text}")
+        lines.append("")
+    if parsed.architectural_decisions:
+        lines.append("Architectural decisions:")
+        for f in parsed.architectural_decisions:
+            lines.append(f"- {f.text}")
+        lines.append("")
+    return "\n".join(lines).strip()
 
 
 def register() -> None:

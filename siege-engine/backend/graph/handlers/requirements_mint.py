@@ -149,7 +149,7 @@ async def mint_requirements(payload: dict) -> None:
                     parent_id=None,
                     name=resp.name,
                     display_order=index,
-                    content=resp.intent,
+                    content=_render_responsibility_content(resp),
                 ),
             )
             minted_resp_ids.append(resp_id)
@@ -201,6 +201,37 @@ async def mint_requirements(payload: dict) -> None:
         )
     finally:
         db.close()
+
+
+def _render_responsibility_content(resp) -> str:  # type: ignore[no-untyped-def]
+    """Synthesize the resp node's ``content`` from the structured draft.
+
+    Downstream consumers (sysarch generation, policy application,
+    review context gatherers) read the resp node's ``content`` field
+    expecting a compact description. The prose ``<intent>`` paragraph
+    that used to power this went away with the scope-list grammar;
+    this helper produces an equivalent multi-line rendering from the
+    structured fields so downstream readers don't need to know about
+    the schema change.
+
+    Shape::
+
+        Owns: phrase 1; phrase 2; phrase 3.
+        Does not own: phrase X (deferred to Other Responsibility).
+        Failure surface: <single sentence>.
+
+    The ``Does not own`` line is omitted when empty.
+    """
+    lines: list[str] = []
+    if resp.scope:
+        owns_line = "; ".join(resp.scope)
+        lines.append(f"Owns: {owns_line}.")
+    if resp.does_not_own:
+        defers_line = "; ".join(f"{d.scope} (deferred to {d.to})" for d in resp.does_not_own)
+        lines.append(f"Does not own: {defers_line}.")
+    if resp.failure_surface:
+        lines.append(f"Failure surface: {resp.failure_surface}")
+    return "\n".join(lines)
 
 
 def register() -> None:

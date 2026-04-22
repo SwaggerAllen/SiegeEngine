@@ -14,12 +14,14 @@ describe('RequirementsListTab', () => {
       '<requirements>' +
       '<responsibility>' +
       '<name>Credential Verification</name>' +
-      '<intent>Verify identity and establish sessions.</intent>' +
+      '<scope><item>session state lifecycle</item></scope>' +
+      '<failure-surface>Broken verifier blocks sign-ins.</failure-surface>' +
       '<owns><feat id="feat_login01"/></owns>' +
       '</responsibility>' +
       '<responsibility>' +
       '<name>Billing Lifecycle</name>' +
-      '<intent>Own invoice state transitions.</intent>' +
+      '<scope><item>invoice state transitions</item></scope>' +
+      '<failure-surface>Stalled invoice emission blocks billing.</failure-surface>' +
       '<owns><feat id="feat_billing"/></owns>' +
       '</responsibility>' +
       '</requirements>';

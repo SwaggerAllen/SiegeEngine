@@ -15,8 +15,14 @@ export {
 export const getExpansion = (projectId: string) =>
   expansionApi.getState(projectId);
 
-export const postFeedback = (projectId: string, feedback: string) =>
-  expansionApi.postFeedback(projectId, feedback);
+export const postFeedback = (
+  projectId: string,
+  feedback: string,
+  autoRevisionsRequested?: number,
+) =>
+  autoRevisionsRequested && autoRevisionsRequested > 0
+    ? expansionApi.postFeedback(projectId, feedback, autoRevisionsRequested)
+    : expansionApi.postFeedback(projectId, feedback);
 
 export const approveDraft = (projectId: string, draftId: string) =>
   expansionApi.approveDraft(projectId, draftId);

@@ -14,8 +14,15 @@ export { GenerationStatusSchema, TelemetrySummarySchema };
 export const getComparch = (projectId: string, componentId: string) =>
   comparchApi.getState(projectId, componentId);
 
-export const postFeedback = (projectId: string, componentId: string, feedback: string) =>
-  comparchApi.postFeedback(projectId, componentId, feedback);
+export const postFeedback = (
+  projectId: string,
+  componentId: string,
+  feedback: string,
+  autoRevisionsRequested?: number,
+) =>
+  autoRevisionsRequested && autoRevisionsRequested > 0
+    ? comparchApi.postFeedback(projectId, componentId, feedback, autoRevisionsRequested)
+    : comparchApi.postFeedback(projectId, componentId, feedback);
 
 export const approveDraft = (projectId: string, componentId: string, draftId: string) =>
   comparchApi.approveDraft(projectId, componentId, draftId);

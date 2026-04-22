@@ -32,6 +32,15 @@ export const ImplResponseSchema = z.object({
   // ResponseSchema for the full story on why this exists and when
   // it's null.
   previous_draft_content: z.string().nullish().transform((v) => v ?? null),
+  auto_revision_intermediates: z
+    .array(
+      z.object({
+        label: z.string(),
+        content: z.string(),
+        auto_revision_pass: z.number().int(),
+      }),
+    )
+    .default([]),
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
   latest_telemetry: TelemetrySummarySchema.nullable(),
@@ -60,7 +69,16 @@ export const postImplTopLevelFeedback = (
   projectId: string,
   compId: string,
   feedback: string,
-) => implTopLevelApi.postFeedback(projectId, compId, feedback);
+  autoRevisionsRequested?: number,
+) =>
+  autoRevisionsRequested && autoRevisionsRequested > 0
+    ? implTopLevelApi.postFeedback(
+        projectId,
+        compId,
+        feedback,
+        autoRevisionsRequested,
+      )
+    : implTopLevelApi.postFeedback(projectId, compId, feedback);
 
 export const approveImplTopLevelDraft = (
   projectId: string,
@@ -99,7 +117,17 @@ export const postImplSubFeedback = (
   parentCompId: string,
   subId: string,
   feedback: string,
-) => implSubApi.postFeedback(projectId, parentCompId, subId, feedback);
+  autoRevisionsRequested?: number,
+) =>
+  autoRevisionsRequested && autoRevisionsRequested > 0
+    ? implSubApi.postFeedback(
+        projectId,
+        parentCompId,
+        subId,
+        feedback,
+        autoRevisionsRequested,
+      )
+    : implSubApi.postFeedback(projectId, parentCompId, subId, feedback);
 
 export const approveImplSubDraft = (
   projectId: string,

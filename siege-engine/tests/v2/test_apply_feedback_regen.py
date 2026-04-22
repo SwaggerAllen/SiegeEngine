@@ -77,7 +77,7 @@ def _valid_expansion_output() -> str:
     return (
         "<introduction>Regenerated intro.</introduction>"
         "<features>"
-        "<feature><name>X</name><intent>Ok</intent></feature>"
+        "<feature><name>X</name><intent>Ok intent.</intent></feature>"
         "</features>"
         "<vocabulary>"
         '<term name="t" scope="project">'
@@ -92,7 +92,7 @@ def _valid_reqs_output(feat_id: str) -> str:
     return (
         "<introduction>Regenerated reqs intro.</introduction>"
         "<requirements>"
-        f"<responsibility><name>R</name><intent>Ok.</intent>{covers}</responsibility>"
+        f"<responsibility><name>R</name><scope><item>test scope phrase 2</item></scope><failure-surface>Test failure surface 2.</failure-surface>{covers}</responsibility>"  # noqa: E501
         "</requirements>"
     )
 

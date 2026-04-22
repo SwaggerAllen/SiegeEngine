@@ -277,37 +277,57 @@ def _validate_feature(node: TagNode, index: int, *, group_label: str | None) -> 
 
 
 @dataclass(frozen=True)
+class Deferral:
+    """One ``<defers to="X">phrase</defers>`` entry from a responsibility.
+
+    ``scope`` is the short noun phrase this responsibility explicitly
+    does **not** own; ``to`` is the name of the responsibility that
+    owns the phrase instead. Cross-reference is validated — ``to``
+    must match another responsibility's ``<name>`` in the same
+    document (catches typos in the retry loop rather than at
+    sysarch time).
+    """
+
+    scope: str
+    to: str
+
+
+@dataclass(frozen=True)
 class Responsibility:
     """A single validated responsibility from a ``<requirements>`` block.
 
     ``name`` is the short identifier (2–5 words, title case
-    expected). ``intent`` is the paragraph-length description of
-    the responsibility's role and scope.
+    expected). The prose intent that used to live here has been
+    replaced by three structured fields that together carry the
+    same signal with roughly 70% fewer tokens:
 
-    ``owns`` and ``supports`` split the old flat ``<covers>``
-    list — which in practice conflated primary ownership with
-    supporting contribution — into two roles. ``owns`` are
-    features this responsibility is the primary system-side
-    owner of; every feature has **exactly one** owning
-    responsibility across the whole doc (enforced in
-    :func:`validate_requirements`). ``supports`` are features
-    where this responsibility contributes infrastructure or a
-    composed slice but defers primary ownership to another
-    responsibility; zero or more per feature allowed.
+    * ``scope`` — short noun phrases naming the system-side
+      concerns this responsibility owns. Primary dedup target:
+      no two responsibilities may share a normalized scope entry.
+    * ``does_not_own`` — structured boundary disclaimers. Each
+      :class:`Deferral` names a scope phrase this responsibility
+      explicitly defers and the name of the responsibility that
+      owns it instead. Replaces the prose "does not cover X
+      because Y" clauses the old intent paragraphs carried.
+    * ``failure_surface`` — one sentence describing what breaks
+      when this responsibility malfunctions.
 
-    Both feed the same many-to-many ``feat → resp`` decomposition
-    edges at mint time, so sysarch sees the same topology it did
-    under the old flat grammar. The distinction is a correctness
-    gate on the generator and a semantic hint to the reviewer,
-    not a schema change downstream.
+    ``owns`` and ``supports`` split feature ownership (unchanged
+    from the previous grammar). ``owns`` is the primary
+    system-side owner — every feature appears in exactly one
+    responsibility's ``<owns>`` across the doc. ``supports`` is
+    zero-or-more per feature and captures infrastructure or
+    composition coverage.
 
     ``covers`` is a convenience property returning
-    ``owns + supports`` for consumers that want the flat
-    feature list without caring about the ownership axis.
+    ``owns + supports`` for consumers that want the flat feature
+    list without the ownership axis.
     """
 
     name: str
-    intent: str
+    scope: tuple[str, ...]
+    does_not_own: tuple[Deferral, ...]
+    failure_surface: str
     owns: tuple[str, ...]
     supports: tuple[str, ...]
 
@@ -318,7 +338,16 @@ class Responsibility:
 
 
 _REQUIREMENTS_ALLOWED_CHILDREN = {"responsibility"}
-_RESPONSIBILITY_ALLOWED_CHILDREN = {"name", "intent", "owns", "supports"}
+_RESPONSIBILITY_ALLOWED_CHILDREN = {
+    "name",
+    "scope",
+    "does-not-own",
+    "failure-surface",
+    "owns",
+    "supports",
+}
+_SCOPE_ALLOWED_CHILDREN = {"item"}
+_DOES_NOT_OWN_ALLOWED_CHILDREN = {"defers"}
 _FEAT_LIST_ALLOWED_CHILDREN = {"feat"}
 
 
@@ -422,6 +451,50 @@ def validate_requirements(tree: TagNode, *, known_feature_ids: set[str]) -> list
             "does not satisfy the rule."
         )
 
+    # Scope dedup: no two responsibilities may share a normalized
+    # <scope>/<item> phrase. This is the mechanical overlap check
+    # the review loop kept flagging by hand — "both claim X" —
+    # now expressed structurally at the scope level.
+    scope_owner: dict[str, list[str]] = {}
+    for resp in result:
+        for phrase in resp.scope:
+            scope_owner.setdefault(_normalize_scope(phrase), []).append(resp.name)
+    scope_collisions = {phrase: owners for phrase, owners in scope_owner.items() if len(owners) > 1}
+    if scope_collisions:
+        lines = sorted(
+            f"  - {phrase!r} claimed by {', '.join(owners)}"
+            for phrase, owners in scope_collisions.items()
+        )
+        raise ValidationError(
+            "<requirements> has scope phrases claimed by multiple "
+            "responsibilities. Every <scope>/<item> must be owned by "
+            "exactly one responsibility — if two responsibilities really "
+            "do both own a concept, they are drawn too broadly or the "
+            "phrase is too vague to disambiguate. Collapse or rephrase. "
+            "Offending phrases:\n" + "\n".join(lines)
+        )
+
+    # <defers to="X"> cross-reference: every ``to`` must resolve
+    # to another responsibility's name in the same document.
+    # Catches typos ("Scheduler" vs "Reactive Scheduler") at
+    # generation time rather than at sysarch-read time.
+    known_names = {resp.name for resp in result}
+    unresolved: list[str] = []
+    for resp in result:
+        for deferral in resp.does_not_own:
+            if deferral.to not in known_names:
+                unresolved.append(
+                    f"{resp.name!r} defers {deferral.scope!r} "
+                    f"to {deferral.to!r} (not a known responsibility)"
+                )
+    if unresolved:
+        raise ValidationError(
+            "<requirements> has <defers to=...> entries referencing "
+            "unknown responsibilities. Every ``to`` attribute must match "
+            "another responsibility's <name> exactly. Offending entries:\n"
+            + "\n".join(f"  - {e}" for e in unresolved)
+        )
+
     return result
 
 
@@ -435,8 +508,8 @@ def _validate_responsibility(
         if child.tag not in _RESPONSIBILITY_ALLOWED_CHILDREN:
             raise ValidationError(
                 f"{pos} contains an unexpected child <{child.tag}>. "
-                "Only <name>, <intent>, <owns>, and <supports> are allowed "
-                "inside a <responsibility>."
+                "Allowed children: <name>, <scope>, <does-not-own> (optional), "
+                "<failure-surface>, <owns>, <supports> (optional)."
             )
 
     name_children = node.find_all("name")
@@ -448,17 +521,56 @@ def _validate_responsibility(
         raise ValidationError(
             f"{pos} has {len(name_children)} <name> children; exactly one is required."
         )
+    name_text = name_children[0].text
+    if not name_text:
+        raise ValidationError(
+            f"{pos} has an empty <name>. The responsibility name "
+            "must be a short identifier, typically 2–5 words in title case."
+        )
 
-    intent_children = node.find_all("intent")
-    if len(intent_children) == 0:
+    scope_children = node.find_all("scope")
+    if len(scope_children) == 0:
         raise ValidationError(
-            f"{pos} is missing an <intent> child. Every responsibility "
-            "must have exactly one <intent>."
+            f"{pos} is missing a <scope> child. Every responsibility must "
+            "have exactly one <scope> block listing the short noun phrases "
+            "(one per <item>) that name the system-side concerns this "
+            "responsibility owns."
         )
-    if len(intent_children) > 1:
+    if len(scope_children) > 1:
         raise ValidationError(
-            f"{pos} has {len(intent_children)} <intent> children; exactly one is required."
+            f"{pos} has {len(scope_children)} <scope> children; exactly one is required."
         )
+    scope_phrases = _validate_scope_block(scope_children[0], pos)
+
+    failure_children = node.find_all("failure-surface")
+    if len(failure_children) == 0:
+        raise ValidationError(
+            f"{pos} is missing a <failure-surface> child. Every responsibility "
+            "must have exactly one <failure-surface> describing what breaks "
+            "when this responsibility malfunctions (one sentence)."
+        )
+    if len(failure_children) > 1:
+        raise ValidationError(
+            f"{pos} has {len(failure_children)} <failure-surface> children; exactly one is required."  # noqa: E501
+        )
+    failure_surface_text = failure_children[0].text
+    if not failure_surface_text:
+        raise ValidationError(
+            f"{pos} has an empty <failure-surface>. Name the concrete "
+            "failure mode (data loss, invariant violation, silent degradation) "
+            "in a single sentence."
+        )
+
+    does_not_own_children = node.find_all("does-not-own")
+    if len(does_not_own_children) > 1:
+        raise ValidationError(
+            f"{pos} has {len(does_not_own_children)} <does-not-own> children; "
+            "at most one is allowed."
+        )
+    if does_not_own_children:
+        does_not_own = _validate_does_not_own_block(does_not_own_children[0], pos)
+    else:
+        does_not_own = ()
 
     owns_children = node.find_all("owns")
     if len(owns_children) == 0:
@@ -477,20 +589,6 @@ def _validate_responsibility(
     if len(supports_children) > 1:
         raise ValidationError(
             f"{pos} has {len(supports_children)} <supports> children; at most one is allowed."
-        )
-
-    name_text = name_children[0].text
-    if not name_text:
-        raise ValidationError(
-            f"{pos} has an empty <name>. The responsibility name "
-            "must be a short identifier, typically 2–5 words in title case."
-        )
-
-    intent_text = intent_children[0].text
-    if not intent_text:
-        raise ValidationError(
-            f"{pos} has an empty <intent>. The responsibility intent "
-            "must be a short paragraph describing the role and scope."
         )
 
     owns = _validate_feat_list(
@@ -522,7 +620,99 @@ def _validate_responsibility(
             "two — <owns> implies supporting presence already."
         )
 
-    return Responsibility(name=name_text, intent=intent_text, owns=owns, supports=supports)
+    return Responsibility(
+        name=name_text,
+        scope=scope_phrases,
+        does_not_own=does_not_own,
+        failure_surface=failure_surface_text,
+        owns=owns,
+        supports=supports,
+    )
+
+
+def _validate_scope_block(node: TagNode, parent_pos: str) -> tuple[str, ...]:
+    """Validate a ``<scope>`` block and return its ordered phrases.
+
+    Each ``<item>`` is a short noun phrase naming a system-side
+    concern this responsibility owns. At least one entry is
+    required; two responsibilities cannot share a scope entry
+    (checked at the document level in :func:`validate_requirements`).
+    """
+    for child in node.children:
+        if child.tag not in _SCOPE_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{parent_pos} has a <scope> block containing an unexpected "
+                f"child <{child.tag}>. Only <item>…</item> entries are allowed "
+                "inside <scope>."
+            )
+    item_nodes = node.find_all("item")
+    if not item_nodes:
+        raise ValidationError(
+            f"{parent_pos} has an empty <scope> block. Every responsibility "
+            "must name at least one system-side concern it owns via "
+            "<item>short noun phrase</item>."
+        )
+    phrases: list[str] = []
+    seen: set[str] = set()
+    for i, item in enumerate(item_nodes):
+        text = item.text.strip() if item.text else ""
+        if not text:
+            raise ValidationError(
+                f"{parent_pos} has an empty <item> at <scope> position {i}. "
+                "Scope items must be short noun phrases (2–8 words, system-side)."
+            )
+        normalized = _normalize_scope(text)
+        if normalized in seen:
+            raise ValidationError(
+                f"{parent_pos} has a duplicate <item> at <scope> position {i}: "
+                f"{text!r}. Each scope phrase may appear at most once per "
+                "responsibility."
+            )
+        seen.add(normalized)
+        phrases.append(text)
+    return tuple(phrases)
+
+
+def _validate_does_not_own_block(node: TagNode, parent_pos: str) -> tuple[Deferral, ...]:
+    """Validate a ``<does-not-own>`` block and return its deferral entries.
+
+    Each child is a ``<defers to="Responsibility Name">scope phrase</defers>``
+    entry. Both the phrase body and the ``to`` attribute must be
+    non-empty; cross-references are resolved against the full
+    responsibility list at the top-level validator.
+    """
+    for child in node.children:
+        if child.tag not in _DOES_NOT_OWN_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{parent_pos} has a <does-not-own> block containing an "
+                f"unexpected child <{child.tag}>. Only "
+                '<defers to="Other Responsibility">scope phrase</defers> '
+                "entries are allowed."
+            )
+    defers_nodes = node.find_all("defers")
+    entries: list[Deferral] = []
+    for i, defers in enumerate(defers_nodes):
+        phrase = defers.text.strip() if defers.text else ""
+        to_name = (defers.attrs.get("to") or "").strip()
+        if not phrase:
+            raise ValidationError(
+                f"{parent_pos} has an empty <defers> body at <does-not-own> "
+                f"position {i}. Provide the short noun phrase being deferred."
+            )
+        if not to_name:
+            raise ValidationError(
+                f"{parent_pos} has a <defers> entry at <does-not-own> "
+                f"position {i} with no ``to`` attribute. Every <defers> "
+                'must carry to="Responsibility Name" naming the responsibility '
+                "that owns the phrase instead."
+            )
+        entries.append(Deferral(scope=phrase, to=to_name))
+    return tuple(entries)
+
+
+def _normalize_scope(phrase: str) -> str:
+    """Lowercase + collapse whitespace for cross-responsibility dedup."""
+    return " ".join(phrase.lower().split())
 
 
 def _validate_feat_list(

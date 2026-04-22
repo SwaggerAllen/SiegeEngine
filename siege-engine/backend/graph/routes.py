@@ -174,6 +174,23 @@ class TelemetrySummary(BaseModel):
     created_at: str
 
 
+class AutoRevisionIntermediateResponse(BaseModel):
+    """One auto-revision intermediate for the diff dropdown.
+
+    Phase 12 — when the user opts in to N AI-driven auto-revisions
+    on a regen, each pass's output becomes an entry here. The
+    frontend renders them below the default ``Pre-regen`` baseline
+    in the "Compare against" dropdown so the user can inspect any
+    single pass's delta against the current pending. Empty list on
+    runs with auto_revisions_requested=0 and on pre-loop legacy
+    drafts.
+    """
+
+    label: str
+    content: str
+    auto_revision_pass: int
+
+
 class ExpansionResponse(BaseModel):
     node: ExpansionNodeResponse
     pending_draft: ExpansionDraftResponse | None
@@ -182,6 +199,7 @@ class ExpansionResponse(BaseModel):
     # or ``None`` when no prior discarded draft exists (brand-new
     # bootstrap or first regen after approval).
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -206,6 +224,17 @@ class ExpansionResponse(BaseModel):
 
 class FeedbackRequest(BaseModel):
     feedback: str
+    # Phase 12 auto-revision — number of AI-driven revision passes
+    # the user wants this regen to run before landing as pending.
+    # ``0`` (the default) means "regular Reject & Regenerate": the
+    # generator produces one draft, the user reviews. ``>0`` kicks
+    # off the auto-revision chain inside the generate handler —
+    # each pass runs an inline AI review, formats the findings as
+    # feedback, and enqueues the next generate with ``remaining -
+    # 1``. The chain stops at ``0`` or when the review has no
+    # findings. Only wired on ``requirements`` today; other tiers
+    # accept the field but don't loop.
+    auto_revisions_requested: int = 0
 
 
 class FeedbackResponse(BaseModel):
@@ -396,7 +425,15 @@ def post_expansion_feedback(
     _user: User = Depends(get_current_user),
 ) -> FeedbackResponse:
     return FeedbackResponse(
-        **bootstrap_feedback(db, project_id, (), req.feedback, EXPANSION_CONFIG, _require_project)
+        **bootstrap_feedback(
+            db,
+            project_id,
+            (),
+            req.feedback,
+            EXPANSION_CONFIG,
+            _require_project,
+            auto_revisions_requested=req.auto_revisions_requested,
+        )
     )
 
 
@@ -454,6 +491,7 @@ class ReqsResponse(BaseModel):
     node: ReqsNodeResponse
     pending_draft: ReqsDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -551,6 +589,7 @@ def post_requirements_feedback(
             req.feedback,
             REQUIREMENTS_CONFIG,
             _require_project,
+            auto_revisions_requested=req.auto_revisions_requested,
         )
     )
 
@@ -611,6 +650,7 @@ class SysarchResponse(BaseModel):
     node: SysarchNodeResponse
     pending_draft: SysarchDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -704,6 +744,7 @@ def post_sysarch_feedback(
             req.feedback,
             SYSARCH_CONFIG,
             _require_project,
+            auto_revisions_requested=req.auto_revisions_requested,
         )
     )
 
@@ -1062,6 +1103,7 @@ class SubreqsResponse(BaseModel):
     node: SubreqsNodeResponse
     pending_draft: SubreqsDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1182,6 +1224,7 @@ def post_subreqs_feedback(
             req.feedback,
             SUBREQS_CONFIG,
             _require_project,
+            auto_revisions_requested=req.auto_revisions_requested,
         )
     )
 
@@ -1320,6 +1363,7 @@ class ComparchResponse(BaseModel):
     node: ComparchNodeResponse
     pending_draft: ComparchDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1435,6 +1479,7 @@ def post_comparch_feedback(
             req.feedback,
             COMPARCH_CONFIG,
             _require_project,
+            auto_revisions_requested=req.auto_revisions_requested,
         )
     )
 
@@ -1570,6 +1615,7 @@ class SubcomparchResponse(BaseModel):
     node: SubcomparchNodeResponse
     pending_draft: SubcomparchDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1737,6 +1783,7 @@ def post_subcomparch_feedback(
             req.feedback,
             SUBCOMPARCH_CONFIG,
             _require_project,
+            auto_revisions_requested=req.auto_revisions_requested,
         )
     )
 
@@ -2615,6 +2662,7 @@ class ImplResponse(BaseModel):
     node: ImplNodeResponse
     pending_draft: ImplDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -2757,6 +2805,7 @@ def post_impl_top_level_feedback(
             req.feedback,
             IMPL_CONFIG,
             _require_project,
+            auto_revisions_requested=req.auto_revisions_requested,
         )
     )
 
@@ -2920,6 +2969,7 @@ def post_impl_sub_feedback(
             req.feedback,
             IMPL_CONFIG,
             _require_project,
+            auto_revisions_requested=req.auto_revisions_requested,
         )
     )
 
@@ -3689,6 +3739,10 @@ def post_create_reference(
         "",  # initial generation — no feedback yet
         REFERENCE_CONFIG,
         _require_project,
+        # No auto-revision on initial create — this path kicks off
+        # first-pass generation; the user hasn't seen a draft yet
+        # to critique.
+        auto_revisions_requested=0,
     )
     return CreateReferenceResponse(ref_id=ref_id, job_id=feedback_result["job_id"])
 
@@ -3718,6 +3772,7 @@ def post_reference_feedback(
             req.feedback,
             REFERENCE_CONFIG,
             _require_project,
+            auto_revisions_requested=req.auto_revisions_requested,
         )
     )
 

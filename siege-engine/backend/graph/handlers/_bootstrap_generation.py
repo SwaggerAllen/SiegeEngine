@@ -228,7 +228,10 @@ def persist_draft(
     prior_pending_id: str | None,
     log_handler_name: str,
     review_job_type: str = "",
-) -> None:
+    *,
+    prior_discard_reason: str = "user_regen",
+    enqueue_async_review: bool = True,
+) -> str:
     """Phase 3: persist the validated draft + telemetry in one transaction.
 
     Shared by all generation handlers — the only variation is the
@@ -241,6 +244,19 @@ def persist_draft(
     ``DraftReviewUpdated`` on success. Any prior-draft review job
     is cancelled when the prior draft is discarded so it can't
     race with the fresh draft's review.
+
+    Phase 12 auto-revision: callers driving the inline revision
+    loop override two knobs. ``prior_discard_reason`` tags the
+    prior pending's discard event — ``"auto_revision"`` when this
+    pass is itself an auto-revision intermediate (the prior was
+    landed mid-loop and the user never saw it as baseline).
+    ``enqueue_async_review=False`` suppresses the usual async
+    review enqueue; the caller is handling review inline and will
+    enqueue the async review for the *final* pass on its own.
+
+    Returns the newly-persisted draft's id so callers driving the
+    auto-revision loop can target the inline review against it
+    without re-querying the DB.
     """
     import secrets
 
@@ -256,7 +272,10 @@ def persist_draft(
             append_event(
                 db,
                 project_id,
-                ev.DraftDiscarded(draft_id=prior_pending_id),
+                ev.DraftDiscarded(
+                    draft_id=prior_pending_id,
+                    reason=prior_discard_reason,
+                ),
             )
             # Cancel any in-flight review job for the discarded
             # draft so a late-arriving review can't land on the
@@ -315,7 +334,11 @@ def persist_draft(
         # scope small.
         import os
 
-        if review_job_type and os.environ.get("SIEGE_DISABLE_AI_REVIEW") != "1":
+        if (
+            review_job_type
+            and enqueue_async_review
+            and os.environ.get("SIEGE_DISABLE_AI_REVIEW") != "1"
+        ):
             pipeline_queue.enqueue(
                 db,
                 job_type=review_job_type,
@@ -325,5 +348,6 @@ def persist_draft(
                     "draft_id": new_draft_id,
                 },
             )
+        return new_draft_id
     finally:
         db.close()
