@@ -533,10 +533,23 @@ export function DocumentReviewTabs({
  */
 function ReviewDiagnosticPanel({ reviewText }: { reviewText: string }) {
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const diagnostic = useMemo<ReviewDiagnostic>(
     () => diagnoseReview(reviewText),
     [reviewText],
   );
+  const dump = useMemo(
+    () => formatDiagnosticDump(diagnostic, reviewText),
+    [diagnostic, reviewText],
+  );
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(dump).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   return (
     <details
       className="border border-gray-800 rounded text-xs"
@@ -550,6 +563,16 @@ function ReviewDiagnosticPanel({ reviewText }: { reviewText: string }) {
         className="p-3 border-t border-gray-800 space-y-2 font-mono"
         data-testid="review-diagnostic-panel"
       >
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="px-3 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800 font-sans"
+            title="Copy the diagnostic + full raw review text to the clipboard"
+          >
+            {copied ? 'Copied' : 'Copy diagnostic'}
+          </button>
+        </div>
         <DiagnosticRow label="status" value={diagnostic.status} />
         <DiagnosticRow label="detail" value={diagnostic.detail} wrap />
         <DiagnosticRow
@@ -580,6 +603,32 @@ function ReviewDiagnosticPanel({ reviewText }: { reviewText: string }) {
       </div>
     </details>
   );
+}
+
+/**
+ * Flatten the diagnostic + raw review into a plain-text blob the
+ * user can paste back to the maintainer. Includes every presence
+ * check, the specific failure detail, and the full raw text so
+ * the receiver has everything needed to point at a rule or fix
+ * the prompt that produced it.
+ */
+function formatDiagnosticDump(
+  diagnostic: ReviewDiagnostic,
+  reviewText: string,
+): string {
+  const lines = [
+    `status: ${diagnostic.status}`,
+    `detail: ${diagnostic.detail}`,
+    `raw length: ${diagnostic.rawLength}`,
+    `has <review>: ${diagnostic.hasReviewTag}`,
+    `has <handles-structure>: ${diagnostic.hasHandlesSection}`,
+    `has <architectural-decisions>: ${diagnostic.hasArchSection}`,
+    `<finding> count: ${diagnostic.findingCount}`,
+    '',
+    '--- full raw review text ---',
+    reviewText,
+  ];
+  return lines.join('\n');
 }
 
 function DiagnosticRow({
