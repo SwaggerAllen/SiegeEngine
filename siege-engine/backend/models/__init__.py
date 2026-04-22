@@ -8,6 +8,7 @@ from backend.models.job import Job
 from backend.models.node import Draft, Edge, Fragment, Node, StalenessLedger
 from backend.models.pending_instruction import PendingInstruction, View
 from backend.models.project import Project
+from backend.models.review import ProjectionSnapshot, ReviewBatch
 from backend.models.telemetry import GenerationTelemetry
 
 __all__ = [
@@ -24,6 +25,8 @@ __all__ = [
     "Node",
     "PendingInstruction",
     "Project",
+    "ProjectionSnapshot",
+    "ReviewBatch",
     "StalenessLedger",
     "User",
     "View",

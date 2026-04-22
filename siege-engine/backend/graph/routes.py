@@ -3953,3 +3953,101 @@ def get_feedback_history(
             for e in entries
         ]
     )
+
+
+# ── Phase 12: batched review walker — batch lifecycle ───────────────
+
+
+class ReviewBatchResponse(BaseModel):
+    """Serialized form of a :class:`backend.models.review.ReviewBatch`.
+
+    Minted by ``POST /projects/{id}/review/batches``; the walker UI
+    uses ``id`` on every subsequent walker call so the stale set and
+    snapshot cache are evaluated relative to a stable pinned offset.
+    ``closed_at`` is ``None`` until the user closes the batch.
+    """
+
+    id: str
+    project_id: str
+    pinned_offset: int
+    created_at: str
+    closed_at: str | None
+
+
+def _serialize_review_batch(batch) -> ReviewBatchResponse:
+    return ReviewBatchResponse(
+        id=batch.id,
+        project_id=batch.project_id,
+        pinned_offset=batch.pinned_offset,
+        created_at=batch.created_at.isoformat() if batch.created_at else "",
+        closed_at=batch.closed_at.isoformat() if batch.closed_at else None,
+    )
+
+
+def _require_batch(db: Session, project_id: str, batch_id: str):
+    """Resolve the batch and verify it belongs to this project."""
+    from backend.graph.review import get_review_batch
+
+    batch = get_review_batch(db, batch_id)
+    if batch is None or batch.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Review batch not found")
+    return batch
+
+
+@router.post(
+    "/{project_id}/review/batches",
+    response_model=ReviewBatchResponse,
+)
+def post_open_review_batch(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReviewBatchResponse:
+    """Open a new batched-review session pinned at the latest offset.
+
+    The ``pinned_offset`` freezes the staleness-ledger evaluation
+    context for the batch so concurrent writes after open don't
+    shift the walker's to-do list.
+    """
+    from backend.graph.review import open_review_batch
+
+    _require_project(db, project_id)
+    batch = open_review_batch(db, project_id)
+    db.commit()
+    return _serialize_review_batch(batch)
+
+
+@router.post(
+    "/{project_id}/review/batches/{batch_id}/close",
+    response_model=ReviewBatchResponse,
+)
+def post_close_review_batch(
+    project_id: str,
+    batch_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReviewBatchResponse:
+    """Mark the batch closed so subsequent walker loads can skip it."""
+    from backend.graph.review import close_review_batch
+
+    _require_project(db, project_id)
+    _require_batch(db, project_id, batch_id)
+    batch = close_review_batch(db, batch_id)
+    db.commit()
+    return _serialize_review_batch(batch)
+
+
+@router.get(
+    "/{project_id}/review/batches/{batch_id}",
+    response_model=ReviewBatchResponse,
+)
+def get_review_batch_route(
+    project_id: str,
+    batch_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReviewBatchResponse:
+    """Return the batch row — used by the walker to render its header."""
+    _require_project(db, project_id)
+    batch = _require_batch(db, project_id, batch_id)
+    return _serialize_review_batch(batch)
