@@ -88,7 +88,7 @@ def _valid_expansion_output() -> str:
 
 
 def _valid_reqs_output(feat_id: str) -> str:
-    covers = f'<covers><feat id="{feat_id}"/></covers>'
+    covers = f'<owns><feat id="{feat_id}"/></owns>'
     return (
         "<introduction>Regenerated reqs intro.</introduction>"
         "<requirements>"

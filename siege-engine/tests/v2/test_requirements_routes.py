@@ -171,7 +171,7 @@ def _feat_ids_for(db, project_id) -> list[str]:
 
 
 def _valid_reqs_xml(feat_ids: list[str], label: str = "Default") -> str:
-    covers = "<covers>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</covers>"
+    covers = "<owns>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</owns>"
     return (
         # B4 — <introduction> sibling block required.
         "<introduction>Stub intro for reqs route tests.</introduction>"

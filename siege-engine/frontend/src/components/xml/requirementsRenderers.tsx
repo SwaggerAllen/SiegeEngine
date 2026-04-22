@@ -9,19 +9,25 @@ import { findChild, findChildText, findChildren } from './types';
  *     <responsibility>
  *       <name>Authentication</name>
  *       <intent>…</intent>
- *       <covers>
+ *       <owns>
  *         <feat id="feat_abc12345"/>
+ *       </owns>
+ *       <supports>
  *         <feat id="feat_def67890"/>
- *       </covers>
+ *       </supports>
  *     </responsibility>
  *     …
  *   </requirements>
  *
- * Every responsibility becomes a bordered card with a name heading,
- * the paragraph-length intent, and a "Covers" footer that lists the
- * upstream features this responsibility decomposes — each rendered
- * as ``name (feat_xxxxxxxx)`` when the caller supplies a feature
- * name map, or as a bare id when it doesn't.
+ * Every responsibility becomes a bordered card with a name
+ * heading, the paragraph-length intent, and two distinct footer
+ * sections when present: "Owns" (features this responsibility is
+ * the primary system-side owner of — single-owner rule guarantees
+ * each feature appears in exactly one responsibility's owns block
+ * across the doc) and "Supports" (features this responsibility
+ * contributes to without owning; many-to-many). Feature IDs
+ * resolve to ``name (feat_xxxxxxxx)`` when the caller supplies a
+ * feature name map, or render as bare IDs when it doesn't.
  *
  * Shape is parallel to ``featureRenderers``. The factory form lets
  * the owning panel (``RequirementsPanel``) close over the live
@@ -40,51 +46,71 @@ export function makeRequirementsRenderers(
     responsibility: (node) => {
       const name = findChildText(node, 'name') ?? 'Untitled';
       const intent = findChildText(node, 'intent') ?? '';
-      const coversElement = findChild(node, 'covers');
-      const coveredFeatureIds = coversElement
-        ? findChildren(coversElement, 'feat')
-            .map((f) => (typeof f.attributes.id === 'string' ? f.attributes.id : null))
-            .filter((id): id is string => id !== null)
-        : [];
+      const collectIds = (container: typeof node | undefined) =>
+        container
+          ? findChildren(container, 'feat')
+              .map((f) => (typeof f.attributes.id === 'string' ? f.attributes.id : null))
+              .filter((id): id is string => id !== null)
+          : [];
+      const ownedIds = collectIds(findChild(node, 'owns'));
+      const supportedIds = collectIds(findChild(node, 'supports'));
+      const totalCount = ownedIds.length + supportedIds.length;
       const meta =
-        coveredFeatureIds.length > 0 ? (
-          <span className="text-gray-500">{coveredFeatureIds.length} feat</span>
+        totalCount > 0 ? (
+          <span className="text-gray-500">
+            {ownedIds.length} owns
+            {supportedIds.length > 0 ? ` · ${supportedIds.length} supports` : ''}
+          </span>
         ) : undefined;
+      const renderFeatureList = (
+        heading: string,
+        tone: 'owned' | 'supported',
+        ids: string[],
+      ) => {
+        const headingTone =
+          tone === 'owned' ? 'text-emerald-400/80' : 'text-blue-400/70';
+        return (
+          <div className="pt-1 border-t border-gray-700/60">
+            <div
+              className={`text-xs uppercase tracking-wider mb-1 ${headingTone}`}
+            >
+              {heading}
+            </div>
+            <ul className="text-xs text-gray-400 space-y-0.5">
+              {ids.map((fid) => (
+                <li key={fid} className="font-mono">
+                  {featureNames[fid] ? (
+                    <>
+                      <span className="text-gray-200">{featureNames[fid]}</span>{' '}
+                      <span className="text-gray-500">({fid})</span>
+                    </>
+                  ) : (
+                    fid
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      };
       return (
         <CollapsibleSection summary={name} meta={meta}>
           {intent && <p className="text-sm text-gray-300 m-0">{intent}</p>}
-          {coveredFeatureIds.length > 0 && (
-            <div className="pt-1 border-t border-gray-700/60">
-              <div className="text-xs uppercase tracking-wider text-gray-500 mb-1">
-                Covers
-              </div>
-              <ul className="text-xs text-gray-400 space-y-0.5">
-                {coveredFeatureIds.map((fid) => (
-                  <li key={fid} className="font-mono">
-                    {featureNames[fid] ? (
-                      <>
-                        <span className="text-gray-200">{featureNames[fid]}</span>{' '}
-                        <span className="text-gray-500">({fid})</span>
-                      </>
-                    ) : (
-                      fid
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {ownedIds.length > 0 && renderFeatureList('Owns', 'owned', ownedIds)}
+          {supportedIds.length > 0 &&
+            renderFeatureList('Supports', 'supported', supportedIds)}
         </CollapsibleSection>
       );
     },
 
-    // <name>, <intent>, and <covers> are consumed by the
+    // <name>, <intent>, <owns>, and <supports> are consumed by the
     // <responsibility> renderer above. Render nothing if they bubble
-    // up on their own (schema drift — the validator would reject it,
-    // but defense in depth).
+    // up on their own (schema drift — the validator would reject
+    // it, but defense in depth).
     name: () => null,
     intent: () => null,
-    covers: () => null,
+    owns: () => null,
+    supports: () => null,
   };
 }
 

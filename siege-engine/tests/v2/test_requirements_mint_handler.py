@@ -97,21 +97,63 @@ def _set_reqs_content(session: Session, project_id: str, content: str) -> None:
     session.commit()
 
 
-def _covers(*feat_ids: str) -> str:
-    return "<covers>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</covers>"
+def _owns(*feat_ids: str) -> str:
+    return "<owns>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</owns>"
+
+
+def _supports(*feat_ids: str) -> str:
+    return "<supports>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</supports>"
 
 
 def _reqs_block(feat_ids: list[str], *entries: tuple[str, str]) -> str:
-    """Build a valid <requirements> block; every responsibility
-    covers every feature in ``feat_ids`` so the coverage check
-    passes automatically.
+    """Build a valid <requirements> block that satisfies the
+    single-owner rule: the first responsibility primary-owns
+    every feature in ``feat_ids``; subsequent responsibilities
+    list every feature under ``<supports>``. Keeps the "all
+    responsibilities touch every feature" semantics the tests
+    rely on while remaining valid under the ownership split.
     """
-    cov = _covers(*feat_ids)
-    inner = "".join(
-        f"<responsibility><name>{name}</name><intent>{intent}</intent>{cov}</responsibility>"
-        for name, intent in entries
+    if not entries:
+        return "<requirements></requirements>"
+    rows: list[str] = []
+    for i, (name, intent) in enumerate(entries):
+        if i == 0:
+            body = _owns(*feat_ids)
+        else:
+            # Secondary responsibilities need at least one owned
+            # feature of their own. Give each a distinct stub by
+            # having it primary-own the feature at its index
+            # (wrapping if entries exceed feat_ids), and support
+            # the rest. The first responsibility then primary-owns
+            # everything not claimed by a later one — the loop
+            # rewrites its owns block at the end.
+            owned = (feat_ids[i % len(feat_ids)],)
+            supported = tuple(f for f in feat_ids if f not in owned)
+            body = _owns(*owned) + (_supports(*supported) if supported else "")
+        rows.append(
+            f"<responsibility><name>{name}</name><intent>{intent}</intent>{body}</responsibility>"
+        )
+    # Re-bind the first entry's owned set to be feat_ids minus
+    # everything the later entries claimed, so we don't double-own.
+    claimed_by_others: set[str] = set()
+    for i in range(1, len(entries)):
+        claimed_by_others.add(feat_ids[i % len(feat_ids)])
+    first_owned = tuple(f for f in feat_ids if f not in claimed_by_others)
+    if not first_owned:
+        # Every feature got claimed by a later entry — give the
+        # first resp supports-only with a stub owned feat so it
+        # still has a single-owner. Rare in tests, but possible
+        # when entries > feat_ids.
+        first_owned = (feat_ids[0],)
+        claimed_by_others.discard(feat_ids[0])
+    first_supports = tuple(f for f in feat_ids if f not in first_owned)
+    first_name, first_intent = entries[0]
+    first_body = _owns(*first_owned) + (_supports(*first_supports) if first_supports else "")
+    rows[0] = (
+        f"<responsibility><name>{first_name}</name>"
+        f"<intent>{first_intent}</intent>{first_body}</responsibility>"
     )
-    return f"<requirements>{inner}</requirements>"
+    return f"<requirements>{''.join(rows)}</requirements>"
 
 
 class TestHappyPath:
@@ -119,7 +161,9 @@ class TestHappyPath:
         factory = shared_session_factory
         s = factory()
         try:
-            project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
+            project_id, feat_ids = _seed_project_with_features_and_reqs(
+                s, ["FeatA", "FeatB", "FeatC"]
+            )
             content = _reqs_block(
                 feat_ids,
                 ("Auth", "Identify callers."),
@@ -154,7 +198,10 @@ class TestHappyPath:
             assert all(r.id.startswith("resp_") for r in resps)
             assert [r.display_order for r in resps] == [0, 1, 2]
 
-            # Each of the 3 resps covers both features → 6 edges.
+            # Each of the 3 resps primary-owns one of the 3
+            # features and supports the other two (per the
+            # _reqs_block helper's single-owner distribution).
+            # Total decomposition edges: 3 owns + 6 supports = 9.
             edges = list(
                 s.execute(
                     select(Edge).where(
@@ -163,7 +210,7 @@ class TestHappyPath:
                     )
                 ).scalars()
             )
-            assert len(edges) == 6
+            assert len(edges) == 9
             for e in edges:
                 assert e.source_id in feat_ids
                 assert any(e.target_id == r.id for r in resps)
@@ -182,10 +229,10 @@ class TestHappyPath:
             content = (
                 "<requirements>"
                 f"<responsibility><name>Auth</name><intent>Identify.</intent>"
-                f'<covers><feat id="{feat_ids[0]}"/></covers>'
+                f'<owns><feat id="{feat_ids[0]}"/></owns>'
                 "</responsibility>"
                 f"<responsibility><name>Billing</name><intent>Bill.</intent>"
-                f'<covers><feat id="{feat_ids[1]}"/></covers>'
+                f'<owns><feat id="{feat_ids[1]}"/></owns>'
                 "</responsibility>"
                 "</requirements>"
             )
@@ -217,7 +264,9 @@ class TestIdempotency:
         factory = shared_session_factory
         s = factory()
         try:
-            project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
+            project_id, feat_ids = _seed_project_with_features_and_reqs(
+                s, ["FeatA", "FeatB", "FeatC"]
+            )
             content = _reqs_block(
                 feat_ids,
                 ("Auth", "A."),
@@ -255,7 +304,7 @@ class TestIdempotency:
                     ).scalars()
                 )
             )
-            assert count_edges == 6  # Not 12
+            assert count_edges == 9  # Not 18 (after second run)
         finally:
             s.close()
 
@@ -312,14 +361,14 @@ class TestFailureModes:
             partial = (
                 "<requirements>"
                 f"<responsibility><name>Auth</name><intent>Ok.</intent>"
-                f'<covers><feat id="{feat_ids[0]}"/></covers>'
+                f'<owns><feat id="{feat_ids[0]}"/></owns>'
                 "</responsibility>"
                 "</requirements>"
             )
             _set_reqs_content(s, project_id, partial)
         finally:
             s.close()
-        with pytest.raises(RequirementsMintHandlerError, match="does not cover every feature"):
+        with pytest.raises(RequirementsMintHandlerError, match="features with no owner"):
             asyncio.run(mint_requirements({"project_id": project_id}))
 
 

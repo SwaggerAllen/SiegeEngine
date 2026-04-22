@@ -11,19 +11,41 @@ from backend.graph.review_context.requirements import RequirementsContext
 _HANDLES_INTRO = """\
 Requirements rotates user-facing features into system-level \
 responsibilities. Sysarch then reads each responsibility and \
-decides which component owns it. Two failure modes hurt most: \
-overlapping responsibilities (two resps both claim ownership of \
-the same system capability, making component boundaries \
-ambiguous), and responsibilities that restate their source \
-feature (no rotation happened — sysarch can't distinguish user \
-intent from system obligation). Flag both aggressively.
+decides which component owns it. The grammar now splits feature \
+coverage into ``<owns>`` (primary system-side owner — exactly \
+one per feature) and ``<supports>`` (infrastructure or \
+composition contributors — zero or more per feature). The \
+validator enforces single-owner mechanically, so your job here \
+is the fuzzier axis: overlapping *scope* between responsibilities \
+that the mechanical check can't catch (two resps whose prose \
+intent claims the same system-side work), and responsibilities \
+that restate their source feature without rotating. Flag both \
+aggressively.
 """
 
 _HANDLES = """\
-- **Overlap first.** Are any two responsibilities claiming \
-ownership of the same system capability? Multiple features can \
-share a resp; two resps owning the same scope is a bug. Flag \
-overlaps by naming the specific capability both claim.
+- **Scope overlap in prose, first.** The validator catches \
+per-feature collisions in ``<owns>``. Your job is to spot scope \
+overlap in prose: two resps' intent paragraphs claiming the \
+same system-side capability even when they own different \
+features. If both resps' intents would satisfy the same \
+sysarch-level question ("who produces end-of-month \
+statements?"), that's overlap — flag it by naming the shared \
+capability.
+- Is ``<supports>`` being used honestly? A responsibility that \
+``<supports>`` most of the feature set is likely genuinely \
+cross-cutting (observability, audit, job queue infrastructure); \
+flag if a responsibility claims broad ``<supports>`` without its \
+intent paragraph explaining what it actually contributes. \
+Inversely, flag ``<supports>`` that should really be ``<owns>`` \
+(the prose describes primary ownership, but the feature is \
+listed under supports — a miscategorization).
+- Is the ``<owns>`` assignment the right owner? A feature ends \
+up owned by one responsibility; is that the responsibility \
+whose system-side guarantee the feature actually depends on? \
+Flag if the owner looks accidental (e.g. a cross-cutting \
+infrastructure resp is owning a feature that should belong to \
+its downstream consumer).
 - Are responsibility names distinctive and specific to the \
 system-level work? Flag names that restate a feature, names \
 too abstract for sysarch to map to a component, or names that \
@@ -34,12 +56,8 @@ features already describe? Flag intents that just paraphrase a \
 feature.
 - Does each intent name what the resp explicitly does *not* \
 cover, so sysarch knows where boundaries lie?
-- Does the responsibility set cover the feature set? Every \
-feature's system-side needs should map to at least one \
-responsibility (possibly shared across features). Flag missing \
-coverage.
-- Are ``<covers>`` references valid? Every feat_* id must exist \
-in the feature set.
+- Are ``<owns>`` / ``<supports>`` references valid? Every feat_* \
+id must exist in the feature set.
 """
 
 _ARCHITECTURE_INTRO = """\

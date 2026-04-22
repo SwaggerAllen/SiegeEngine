@@ -4,10 +4,14 @@ The requirements pass consumes the approved feature set (the
 ``feat_*`` nodes minted from the feature expansion) and produces a
 structured, tag-based list of **top-level responsibilities** that
 downstream passes will map onto concrete components. The
-feature → responsibility relationship is many-to-many and is
-captured as ``<covers>`` children on each responsibility — on
-approval the mint handler emits a ``decomposition`` edge
-(``feat_X → resp_Y``) for every listed feature.
+feature → responsibility relationship splits into two roles:
+``<owns>`` (primary system-side owner — exactly one per feature
+across the whole doc) and ``<supports>`` (responsibilities that
+contribute infrastructure or a composed slice without taking
+primary ownership — zero or more per feature). Both feed the
+many-to-many ``decomposition`` edges the mint handler emits on
+approval; the split is a correctness gate against scope
+collisions, not a downstream topology change.
 
 Output format (parsed by :mod:`backend.graph.parsers.xml_sections`
 and validated by :func:`backend.graph.parsers.validators.validate_requirements`):
@@ -17,10 +21,12 @@ and validated by :func:`backend.graph.parsers.validators.validate_requirements`)
         <name>User Authentication</name>
         <intent>…paragraph-length description of what this
         responsibility covers, framed at the role level…</intent>
-        <covers>
+        <owns>
           <feat id="feat_abc12345"/>
+        </owns>
+        <supports>
           <feat id="feat_def67890"/>
-        </covers>
+        </supports>
       </responsibility>
       …
     </requirements>
@@ -59,9 +65,11 @@ feature label hasn't left the feature axis behind.
 
 You will be given a list of features (approved in an upstream \
 pass, each with a stable ``feat_*`` ID) and must produce a \
-structured responsibility list. The feature → responsibility \
-relationship is many-to-many; you record it via ``<covers>`` \
-children listing the feature IDs each responsibility serves.
+structured responsibility list. Each feature appears in \
+**exactly one** responsibility's ``<owns>`` block (its primary \
+system-side owner) and in zero or more responsibilities' \
+``<supports>`` blocks (responsibilities that contribute \
+infrastructure or composition without taking primary ownership).
 
 # Output format
 
@@ -78,9 +86,10 @@ framing instead of restarting from scratch.
 
 After ``<introduction>``, output a single ``<requirements>`` \
 block. Inside it, each responsibility has exactly one \
-``<name>``, exactly one ``<intent>``, and exactly one \
-``<covers>`` block containing one or more ``<feat>`` children \
-with an ``id`` attribute:
+``<name>``, exactly one ``<intent>``, exactly one ``<owns>`` \
+block, and at most one ``<supports>`` block. Each of those \
+blocks contains one or more ``<feat>`` children with an ``id`` \
+attribute (``<supports>`` may be omitted or empty):
 
     <introduction>
       The central axis here is control-plane vs data-plane: \
@@ -107,11 +116,11 @@ specific credential mechanism (password, SSO, passkey) — that's \
 an implementation choice settled later. Failure surface: a \
 broken verifier blocks all sign-ins; a broken session store \
 silently degrades authenticated state.</intent>
-        <covers>
+        <owns>
           <feat id="feat_login01"/>
           <feat id="feat_pwdrst2"/>
           <feat id="feat_session"/>
-        </covers>
+        </owns>
       </responsibility>
       <responsibility>
         <name>Per-Request Permission Checks</name>
@@ -122,10 +131,12 @@ request, not just at sign-in, and because the policy surface \
 grows independently of the identity surface. Owns the \
 permission-to-role mapping data; does not own user records or \
 session state.</intent>
-        <covers>
-          <feat id="feat_login01"/>
+        <owns>
           <feat id="feat_admin99"/>
-        </covers>
+        </owns>
+        <supports>
+          <feat id="feat_login01"/>
+        </supports>
       </responsibility>
       <responsibility>
         <name>Subscription State and Payment Collection</name>
@@ -136,18 +147,19 @@ retries on failure, and suspend accounts when retries exhaust. \
 Owns subscription records and invoice history. Does not own \
 pricing-model decisions — those are configuration, not \
 runtime state.</intent>
-        <covers>
+        <owns>
           <feat id="feat_plans00"/>
           <feat id="feat_invoice"/>
-        </covers>
+        </owns>
       </responsibility>
     </requirements>
 
 # Rules
 
 * Use the tag structure exactly as shown. Each ``<responsibility>`` \
-has exactly one ``<name>``, exactly one ``<intent>``, and exactly \
-one ``<covers>`` block. No other tags inside a responsibility.
+has exactly one ``<name>``, exactly one ``<intent>``, exactly one \
+``<owns>`` block, and at most one ``<supports>`` block. No other \
+tags inside a responsibility.
 * ``<name>`` is a short identifier — typically 2 to 5 words, title \
 case. Name the system-level guarantee, not the engineering \
 category. "Credential Verification and Session Establishment" \
@@ -172,39 +184,67 @@ establish a session, and make the identity available to \
 downstream logic — covers sign-in, sign-out, token refresh, \
 and session invalidation, but not the specific credential \
 mechanism."
-* ``<covers>`` is **required** and must contain **at least one** \
-``<feat>`` child per responsibility. Each ``<feat>`` carries an \
+* ``<owns>`` is **required** and must contain **at least one** \
+``<feat>`` child per responsibility. ``<owns>`` declares the \
+features this responsibility is the primary system-side owner \
+of — the single responsibility that carries the feature's \
+system-level guarantee. A responsibility that owns no features \
+is not a valid top-level responsibility — either merge it into \
+one that does or drop it.
+* ``<supports>`` is optional and may contain zero or more \
+``<feat>`` children. ``<supports>`` declares features where this \
+responsibility contributes infrastructure, composition, or a \
+read-dependency slice, but another responsibility is the \
+primary owner. Example: a "Background Job Queue" responsibility \
+supports every feature that needs async work (it provides the \
+execution substrate) but owns none of them (the scheduler, \
+generation pipeline, etc. are the owners). Example: a \
+"Multi-Project Workspace" view supports a cross-project \
+feature by composing data from the review-routing and \
+project-provisioning owners — it supports, they own. Use \
+``<supports>`` generously when the distinction is real; the \
+sysarch pass reads it as a signal of cross-cutting dependency.
+* Each ``<feat>`` inside ``<owns>`` or ``<supports>`` carries an \
 ``id`` attribute matching exactly the feature ID shown in the \
 input list (the ``feat_*`` prefix plus the 8-character Crockford \
 suffix). Do not invent IDs, do not rewrite them, do not rename \
-them. A responsibility that covers no features is not a valid \
-top-level responsibility — either merge it into one that does \
-or drop it.
-* A feature may appear under multiple ``<covers>`` blocks — the \
-relationship is many-to-many. A cross-cutting responsibility \
-like "Telemetry" will typically cover most features; a scoped \
-responsibility like "Billing" will cover only a handful. This \
-is expected.
-* **Responsibilities do not overlap.** Two responsibilities must \
-not claim ownership of the same system capability. Many \
-features can implicate the same responsibility (that's what \
-``<covers>`` being many-to-many is for), but each responsibility \
-owns its scope exclusively. If two responsibilities share scope \
-— two resps both claiming "produce end-of-month statements", \
-for example — collapse them into one, or redraw the boundary \
-by trigger or data set so each gets a disjoint slice. Example: \
-"Billing" and "Receipts" would overlap if both claimed "produce \
+them.
+* **Single-owner rule (load-bearing).** Every feature ID appears \
+in exactly one responsibility's ``<owns>`` block across the \
+whole document. Two responsibilities both claiming ownership of \
+the same feature is a scope collision — the validator rejects \
+it and feeds you a list of offending features. If two \
+responsibilities really do both want a feature, one of them \
+owns it and the other declares ``<supports>`` — or the \
+boundary between the two responsibilities is drawn wrong and \
+needs redrawing.
+* **A feature may appear in many ``<supports>`` blocks.** A \
+cross-cutting feature ("authentication protects every request") \
+may be supported by many responsibilities even though one \
+responsibility owns it. This is expected — use ``<supports>`` \
+to make the dependency visible rather than hiding it.
+* **A feature must not appear in both ``<owns>`` and \
+``<supports>`` of the same responsibility.** ``<owns>`` already \
+implies supporting presence; duplicating is redundant.
+* **Responsibilities do not overlap in scope.** Two \
+responsibilities must not claim ownership of the same \
+system-side scope even through different feature coverage. The \
+single-owner rule catches per-feature collisions; this rule is \
+about prose scope. If two resps' intent paragraphs both say \
+they own "produce end-of-month statements", that's overlap even \
+if they own different features — collapse them into one, or \
+redraw the boundary by trigger or data set. Example: "Billing" \
+and "Receipts" would overlap if both claimed "produce \
 end-of-month statements"; split by trigger instead — Billing \
 owns invoice lifecycle, Receipts owns post-payment \
 acknowledgments. Each intent paragraph's "does not cover" \
 clause should make the boundary between this resp and its \
-nearest sibling explicit. Overlapping resps are easy for a \
-human reviewer to miss and make sysarch's component boundary \
-calls messy downstream; this rule is load-bearing.
-* **Every feature in the input must be covered by at least one \
+nearest sibling explicit.
+* **Every feature in the input must be owned by some \
 responsibility.** Before emitting the list, mentally check that \
-each input feature ID appears in at least one ``<covers>`` block. \
-Missing coverage is a parse error that gets fed back to you.
+each input feature ID appears in exactly one ``<owns>`` block. \
+A feature that appears only in ``<supports>`` (or nowhere) is a \
+coverage gap — the validator rejects it.
 * **Granularity.** Aim for a responsibility list that's coarser \
 than the feature list but finer than the project description. \
 Err on the side of fewer, coarser responsibilities — \
@@ -212,12 +252,16 @@ sub-decomposition happens in a later pass per component.
 * **Cross-cutting concerns are responsibilities too.** Logging, \
 telemetry, health checks, background job scheduling, rate \
 limiting, secrets handling — if the project needs them, name \
-them. They won't always appear in the feature list directly, but \
-they're real work the system has to do and the sysarch pass will \
-want them named up front so cross-cutting policies can target \
-them later. Cross-cutting responsibilities still need a \
-``<covers>`` block — list the features whose generation or \
-execution you'd expect to trigger the cross-cutting concern.
+them. They won't always appear in the feature list directly, \
+but they're real work the system has to do and the sysarch \
+pass will want them named up front so cross-cutting policies \
+can target them later. Cross-cutting responsibilities still \
+need an ``<owns>`` block listing at least one feature they are \
+the primary owner of (for purely infrastructural \
+responsibilities this may be narrow — a telemetry responsibility \
+might own the one "system observability" feature). They \
+typically have a large ``<supports>`` block listing every \
+feature whose execution they touch.
 * **Break feature boundaries — that is the point of this tier.** \
 A feature like "Accept card payments" touches payment \
 processing, account state management, audit logging, and \
@@ -378,8 +422,9 @@ def format_features_summary(features: list[dict]) -> str:
     features in the same batch — otherwise the list is flat.
 
     **The ID is the load-bearing part** — the LLM needs to echo
-    these IDs verbatim in each ``<covers>`` block, so they must
-    appear in the rendered list. The name and intent are context.
+    these IDs verbatim in each ``<owns>`` / ``<supports>`` block,
+    so they must appear in the rendered list. The name and intent
+    are context.
     """
     if not features:
         return "(no features minted yet)"
