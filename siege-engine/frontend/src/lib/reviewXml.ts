@@ -36,7 +36,7 @@ const ARCH_SECTION = 'architectural-decisions';
 export function parseReview(raw: string): ParsedReview | null {
   if (!raw?.trim()) return null;
 
-  const trimmed = raw.trim();
+  const trimmed = escapeFindingBodies(raw.trim());
   // DOMParser's XML mode treats preamble prose as a parse error,
   // so wrap the input in a synthetic root that swallows
   // whitespace/prose outside the actual ``<review>`` tag.
@@ -72,6 +72,31 @@ export function parseReview(raw: string): ParsedReview | null {
     handlesStructure: handlesFindings,
     architecturalDecisions: archFindings,
   };
+}
+
+/**
+ * Escape stray angle brackets inside every ``<finding>…</finding>``
+ * body before the text hits ``DOMParser``.
+ *
+ * Reviewers routinely reference XML tag names in prose —
+ * ``"three <covers> entries"``, ``"the <name> child"`` — and the
+ * strict XML parser then reads the inline tag name as an open tag
+ * and fails the whole review with an "Opening and ending tag
+ * mismatch" error. Since finding bodies are pure prose (no nested
+ * markup ever rendered), escaping ``<`` and ``>`` between the
+ * finding's open and close tags is safe and lossless for display.
+ *
+ * Leaves the finding's opening/closing tags intact so ``id=``
+ * attributes and section nesting still parse.
+ */
+function escapeFindingBodies(raw: string): string {
+  return raw.replace(
+    /(<finding\b[^>]*>)([\s\S]*?)(<\/finding>)/g,
+    (_match, open: string, body: string, close: string) => {
+      const escaped = body.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return `${open}${escaped}${close}`;
+    },
+  );
 }
 
 function extractFindings(section: Element): ReviewFinding[] | null {
@@ -169,7 +194,7 @@ export function diagnoseReview(raw: string): ReviewDiagnostic {
   let doc: Document;
   try {
     doc = new DOMParser().parseFromString(
-      `<root>${trimmed}</root>`,
+      `<root>${escapeFindingBodies(trimmed)}</root>`,
       'application/xml',
     );
   } catch (exc) {
