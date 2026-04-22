@@ -691,6 +691,15 @@ def bootstrap_reset(
         project_id,
         ev.BootstrapNodeContentCleared(node_id=node.id),
     )
+    # Mark a cutoff so the Feedback History panel stops showing prose
+    # feedback and AI review text from before this reset. The prior
+    # entries remain in the immutable event log + Job/Draft rows, but
+    # the read path filters them out past this timestamp.
+    append_event(
+        db,
+        project_id,
+        ev.FeedbackCleared(node_id=node.id),
+    )
     commit_and_publish(db, project_id)
 
     pipeline_queue.enqueue(

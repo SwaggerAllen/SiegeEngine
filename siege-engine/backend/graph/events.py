@@ -321,6 +321,34 @@ class BootstrapNodeContentCleared(_EventBase):
     node_id: str
 
 
+class FeedbackCleared(_EventBase):
+    """Mark a cutoff past which the Feedback History panel ignores
+    prior entries for ``node_id``.
+
+    Emitted by the destructive reset path alongside
+    ``BootstrapNodeContentCleared``. Feedback entries come from two
+    append-only sources that the reset can't actually delete — user
+    prose sits on immutable ``Job.payload`` rows, and AI review text
+    sits on ``Draft.review_text`` for drafts whose ``DraftDiscarded``
+    events have already been logged. Both predate the reset and aren't
+    safe to mutate without breaking the event-log-is-the-truth
+    invariant.
+
+    The reducer records this event and nothing else (no projection
+    mutation). :func:`backend.graph.queries.feedback_history` reads
+    the most-recent ``FeedbackCleared`` row for ``node_id`` and filters
+    jobs / drafts whose ``created_at`` is at or before that cutoff, so
+    the panel shows only post-reset feedback and the user never has to
+    parse "what came before from what came after".
+
+    Every new reset emits a fresh ``FeedbackCleared`` whose timestamp
+    becomes the new cutoff — multiple resets compose correctly.
+    """
+
+    event_type: Literal["FeedbackCleared"] = "FeedbackCleared"
+    node_id: str
+
+
 # ── View events ──────────────────────────────────────────────────────
 
 
@@ -353,6 +381,7 @@ Event = Annotated[
         DraftDiscarded,
         FanInContentUpdated,
         BootstrapNodeContentCleared,
+        FeedbackCleared,
         ViewRecorded,
     ],
     Field(discriminator="event_type"),
@@ -378,6 +407,7 @@ _EVENT_TYPES: dict[str, type[_EventBase]] = {
     "DraftDiscarded": DraftDiscarded,
     "FanInContentUpdated": FanInContentUpdated,
     "BootstrapNodeContentCleared": BootstrapNodeContentCleared,
+    "FeedbackCleared": FeedbackCleared,
     "ViewRecorded": ViewRecorded,
 }
 

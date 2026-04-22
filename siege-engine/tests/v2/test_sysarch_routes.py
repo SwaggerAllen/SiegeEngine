@@ -41,6 +41,7 @@ from backend.graph.reducer import append_event  # noqa: E402
 from backend.graph.sysarch import bootstrap_sysarch_node  # noqa: E402
 from backend.main import app  # noqa: E402
 from backend.models import InputDocument, Project  # noqa: E402
+from backend.models.graph_event import GraphEvent  # noqa: E402
 from backend.models.job import Job  # noqa: E402
 from backend.models.node import Draft, Node  # noqa: E402
 
@@ -620,6 +621,23 @@ class TestReset:
             .all()
         )
         assert all(j.status == "cancelled" for j in subreqs_jobs)
+
+        # ``FeedbackCleared`` marks the cutoff that hides pre-reset
+        # prose feedback + AI review text in the Feedback History
+        # panel. One must land pointing at the sysarch node id.
+        feedback_cleared_rows = (
+            db.execute(
+                select(GraphEvent).where(
+                    GraphEvent.project_id == project_with_sysarch.id,
+                    GraphEvent.event_type == "FeedbackCleared",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [(r.payload or {}).get("node_id") for r in feedback_cleared_rows] == [
+            sysarch_node_after.id
+        ]
 
     def test_reset_on_missing_sysarch_returns_404(self, client, project_no_sysarch):
         resp = client.post(f"/api/projects/{project_no_sysarch.id}/sysarch/reset")
