@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  acceptReviewNode,
   closeReviewBatch,
   getReviewBatch,
   getReviewBatchNodeDiff,
@@ -83,6 +84,26 @@ export function useCloseReviewBatchMutation(
     mutationFn: () => closeReviewBatch(projectId, batchId),
     onSuccess: (batch) => {
       queryClient.setQueryData(reviewKeys.batch(projectId, batchId), batch);
+    },
+  });
+}
+
+export function useAcceptReviewNodeMutation(
+  projectId: string,
+  batchId: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (nodeId: string) =>
+      acceptReviewNode(projectId, batchId, nodeId),
+    onSuccess: () => {
+      // Refetch the stale-node list so the accepted node drops out
+      // of the left rail. The per-node diff payload stays cached —
+      // the user can still scroll back through an accepted node
+      // for reference.
+      queryClient.invalidateQueries({
+        queryKey: reviewKeys.nodes(projectId, batchId),
+      });
     },
   });
 }

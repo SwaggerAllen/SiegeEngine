@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DraftDiffView } from '../components/DraftDiffView';
 import {
+  useAcceptReviewNodeMutation,
   useCloseReviewBatchMutation,
   useReviewBatch,
   useReviewBatchNodeDiff,
@@ -142,6 +143,7 @@ function WalkerShell({
               nodeId={effectiveSelectedId}
               item={items.find((i) => i.node_id === effectiveSelectedId)}
               batchIsClosed={batchIsClosed}
+              onAccepted={() => setSelectedId(null)}
             />
           ) : (
             <div className="p-6 text-sm text-gray-500 italic">
@@ -204,14 +206,17 @@ function NodeDiffPane({
   nodeId,
   item,
   batchIsClosed,
+  onAccepted,
 }: {
   projectId: string;
   batchId: string;
   nodeId: string;
   item: StaleNodeItem | undefined;
   batchIsClosed: boolean;
+  onAccepted: () => void;
 }) {
   const diffQuery = useReviewBatchNodeDiff(projectId, batchId, nodeId);
+  const acceptMutation = useAcceptReviewNodeMutation(projectId, batchId);
 
   if (diffQuery.isLoading) {
     return (
@@ -287,32 +292,46 @@ function NodeDiffPane({
         <h3 className="text-xs uppercase tracking-wide text-gray-400">
           Accept
         </h3>
-        <p className="text-xs text-gray-500 italic">
-          Accept controls land in PR-12d. For now the walker is
-          read-only; use the per-tier panel to approve or regenerate
-          any pending drafts the cascade produced.
+        <p className="text-xs text-gray-500">
+          {item?.is_destructive
+            ? 'This node was affected by a destructive structural change. Accepting will release the halted cascade by regenerating this node; downstream stale nodes follow via the normal fanout.'
+            : 'The upstream change was non-destructive and the downstream cascade already fired. Accepting just clears the stale marker on this node.'}
         </p>
         <div className="flex gap-2 flex-wrap">
           <button
             type="button"
-            disabled
-            className="px-3 py-1 text-xs rounded bg-green-800/40 text-green-300/60 cursor-not-allowed"
+            onClick={() => {
+              acceptMutation.mutate(nodeId, { onSuccess: onAccepted });
+            }}
+            disabled={batchIsClosed || acceptMutation.isPending}
+            className={`px-3 py-1 text-xs rounded ${
+              item?.is_destructive
+                ? 'bg-red-800 hover:bg-red-700 text-white'
+                : 'bg-green-700 hover:bg-green-600 text-white'
+            } disabled:opacity-40`}
           >
-            Accept changes
+            {item?.is_destructive ? 'Accept — release cascade' : 'Accept changes'}
           </button>
-          {item?.is_destructive && (
-            <button
-              type="button"
-              disabled
-              className="px-3 py-1 text-xs rounded bg-red-900/40 text-red-300/60 cursor-not-allowed"
-            >
-              Accept — release cascade
-            </button>
-          )}
         </div>
+        {acceptMutation.isSuccess && (
+          <p className="text-[11px] text-gray-400 italic">
+            Accepted ·{' '}
+            {acceptMutation.data?.regen_job_ids.length
+              ? `enqueued ${acceptMutation.data.regen_job_ids.length} regen job${
+                  acceptMutation.data.regen_job_ids.length === 1 ? '' : 's'
+                }`
+              : 'no new regens fired'}
+            .
+          </p>
+        )}
+        {acceptMutation.error && (
+          <p className="text-[11px] text-red-400">
+            {describeApiError(acceptMutation.error, 'Accept failed')}
+          </p>
+        )}
         {batchIsClosed && (
           <p className="text-[11px] text-gray-500 italic">
-            This batch is closed; accept actions will be no-ops.
+            This batch is closed; accept is disabled.
           </p>
         )}
       </section>

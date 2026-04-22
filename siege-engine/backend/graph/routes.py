@@ -4134,6 +4134,50 @@ def get_review_batch_nodes(
     )
 
 
+class AcceptReviewResponse(BaseModel):
+    """Outcome of a successful accept click on the walker detail pane."""
+
+    cleared_count: int
+    regen_job_ids: list[str]
+    is_destructive: bool
+
+
+@router.post(
+    "/{project_id}/review/batches/{batch_id}/nodes/{node_id}/accept",
+    response_model=AcceptReviewResponse,
+)
+def post_review_batch_node_accept(
+    project_id: str,
+    batch_id: str,
+    node_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> AcceptReviewResponse:
+    """Accept a stale node from the walker's detail pane.
+
+    Clears the node's active ledger rows. When any of those rows
+    were ``structural_change``, additionally re-fires the cascade
+    that was halted at destructive time by enqueueing a regen of
+    this node — the new draft's non-destructive
+    ``DraftGenerated`` event then propagates staleness downstream
+    naturally. See :func:`backend.graph.review.accept_review`.
+    """
+    from backend.graph.review import accept_review
+
+    _require_project(db, project_id)
+    _require_batch(db, project_id, batch_id)
+    try:
+        result = accept_review(db, project_id, batch_id, node_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    commit_and_publish(db, project_id)
+    return AcceptReviewResponse(
+        cleared_count=result.cleared_count,
+        regen_job_ids=result.regen_job_ids,
+        is_destructive=result.is_destructive,
+    )
+
+
 @router.get(
     "/{project_id}/review/batches/{batch_id}/nodes/{node_id}/diff",
     response_model=NodeDiffResponse,

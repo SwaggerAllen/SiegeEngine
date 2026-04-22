@@ -27,15 +27,19 @@ from __future__ import annotations
 
 import json
 import secrets
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.graph import queries
+from backend.graph.fanout import regen_job_for_node
 from backend.graph.reducer import rebuild_projections
+from backend.models.node import Node, StalenessLedger
 from backend.models.project import Project
 from backend.models.review import ProjectionSnapshot, ReviewBatch
+from backend.pipeline import queue as pipeline_queue
 
 
 def _mint_batch_id() -> str:
@@ -180,6 +184,99 @@ def _build_snapshot_payload(
         savepoint.rollback()
         session.expire_all()
     return json.loads(payload_json)
+
+
+# ── Phase 12d: accept semantics ──────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class AcceptResult:
+    """Outcome of a single accept click on the walker detail pane.
+
+    ``cleared_count`` is the number of ledger rows dropped; it will
+    be ``0`` when the accept is a retry on a node whose ledger has
+    already been cleared (idempotent no-op). ``regen_job_ids`` is
+    the list of regen jobs enqueued as part of a destructive
+    accept — empty for the non-destructive branch.
+    """
+
+    cleared_count: int
+    regen_job_ids: list[str]
+    is_destructive: bool
+
+
+def accept_review(
+    session: Session,
+    project_id: str,
+    batch_id: str,
+    node_id: str,
+) -> AcceptResult:
+    """Accept a stale node's current state.
+
+    Two branches, keyed off whether any of the node's ledger rows
+    carry the ``structural_change`` reason:
+
+    * **Non-destructive accept** — clears the ledger rows for this
+      stale node. The downstream cascade already fired via Phase 9
+      auto-enqueue at trigger time, so there are no new regens to
+      kick off.
+    * **Destructive accept** — same ledger clear *plus* enqueues a
+      regen for this node via
+      :func:`backend.graph.fanout.regen_job_for_node`. When the new
+      draft lands, its ``DraftGenerated`` event is non-destructive
+      so the fanout dispatcher naturally propagates staleness
+      downstream — the cascade that was halted at destructive time
+      resumes from this node without the route having to walk the
+      graph itself.
+
+    Idempotent: a second accept on the same node returns
+    ``cleared_count=0`` and skips the regen enqueue, mirroring the
+    walker UX where the accept buttons read-only after the first
+    click.
+    """
+    batch = session.get(ReviewBatch, batch_id)
+    if batch is None or batch.project_id != project_id:
+        raise ValueError(f"No review batch {batch_id!r} in project {project_id!r}")
+    node = session.get(Node, node_id)
+    if node is None or node.project_id != project_id:
+        raise ValueError(f"No node {node_id!r} in project {project_id!r}")
+
+    rows = (
+        session.execute(
+            select(StalenessLedger).where(
+                StalenessLedger.project_id == project_id,
+                StalenessLedger.stale_node_id == node_id,
+                StalenessLedger.source_offset <= batch.pinned_offset,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    is_destructive = any(r.reason == "structural_change" for r in rows)
+
+    cleared = 0
+    for row in rows:
+        session.delete(row)
+        cleared += 1
+    session.flush()
+
+    regen_job_ids: list[str] = []
+    if is_destructive and cleared > 0:
+        # Only enqueue on the first (effective) accept: when
+        # ``cleared`` is zero we either had nothing to clear or the
+        # ledger has already been processed. Prevents retries from
+        # piling up duplicate regens.
+        job = regen_job_for_node(project_id, node)
+        if job is not None:
+            job_type, payload = job
+            job_id = pipeline_queue.enqueue(session, job_type=job_type, payload=payload)
+            regen_job_ids.append(job_id)
+
+    return AcceptResult(
+        cleared_count=cleared,
+        regen_job_ids=regen_job_ids,
+        is_destructive=is_destructive,
+    )
 
 
 def _json_default(value: Any) -> Any:

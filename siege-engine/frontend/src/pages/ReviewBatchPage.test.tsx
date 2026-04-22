@@ -11,6 +11,7 @@ vi.mock('../api/review', () => ({
   getReviewBatchNodeDiff: vi.fn(),
   closeReviewBatch: vi.fn(),
   openReviewBatch: vi.fn(),
+  acceptReviewNode: vi.fn(),
 }));
 
 import * as reviewApi from '../api/review';
@@ -25,6 +26,9 @@ const mockedGetDiff = reviewApi.getReviewBatchNodeDiff as unknown as ReturnType<
   typeof vi.fn
 >;
 const mockedClose = reviewApi.closeReviewBatch as unknown as ReturnType<
+  typeof vi.fn
+>;
+const mockedAccept = reviewApi.acceptReviewNode as unknown as ReturnType<
   typeof vi.fn
 >;
 
@@ -138,6 +142,85 @@ describe('ReviewBatchPage', () => {
     // Fragment accordion header — there's only one <code> per
     // fragment summary.
     expect(screen.getByText('techspec').tagName).toBe('CODE');
+  });
+
+  it('calls accept with is_destructive=false on non-destructive nodes', async () => {
+    mockedListNodes.mockResolvedValue([
+      {
+        node_id: 'comp_AAAA1111',
+        tier: 'comp',
+        name: 'Auth',
+        parent_id: null,
+        reasons: ['content_changed'],
+        is_destructive: false,
+        topological_order: 50,
+      },
+    ]);
+    mockedGetDiff.mockResolvedValue({
+      node_content: { before: 'a', after: 'b' },
+      fragments: [],
+    });
+    mockedAccept.mockResolvedValue({
+      cleared_count: 1,
+      regen_job_ids: [],
+      is_destructive: false,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Accept changes/i }),
+      ).toBeInTheDocument(),
+    );
+    await user.click(
+      screen.getByRole('button', { name: /Accept changes/i }),
+    );
+    await waitFor(() =>
+      expect(mockedAccept).toHaveBeenCalledWith(
+        'proj_1',
+        'batch_abc',
+        'comp_AAAA1111',
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/no new regens fired/i)).toBeInTheDocument(),
+    );
+  });
+
+  it('shows the release-cascade label on destructive accepts', async () => {
+    mockedListNodes.mockResolvedValue([
+      {
+        node_id: 'comp_AAAA1111',
+        tier: 'comp',
+        name: 'Auth',
+        parent_id: null,
+        reasons: ['structural_change'],
+        is_destructive: true,
+        topological_order: 50,
+      },
+    ]);
+    mockedGetDiff.mockResolvedValue({
+      node_content: { before: 'a', after: 'b' },
+      fragments: [],
+    });
+    mockedAccept.mockResolvedValue({
+      cleared_count: 1,
+      regen_job_ids: ['job_xyz'],
+      is_destructive: true,
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Accept — release cascade/i }),
+      ).toBeInTheDocument(),
+    );
+    await user.click(
+      screen.getByRole('button', { name: /Accept — release cascade/i }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/enqueued 1 regen job/i)).toBeInTheDocument(),
+    );
   });
 
   it('calls the close mutation when Close batch is clicked', async () => {

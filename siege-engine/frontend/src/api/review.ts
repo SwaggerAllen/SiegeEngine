@@ -95,3 +95,21 @@ export async function getReviewBatchNodeDiff(
   );
   return NodeDiffSchema.parse(data);
 }
+
+const AcceptReviewResponseSchema = z.object({
+  cleared_count: z.number().int(),
+  regen_job_ids: z.array(z.string()),
+  is_destructive: z.boolean(),
+});
+export type AcceptReviewResponse = z.infer<typeof AcceptReviewResponseSchema>;
+
+export async function acceptReviewNode(
+  projectId: string,
+  batchId: string,
+  nodeId: string,
+): Promise<AcceptReviewResponse> {
+  const { data } = await api.post(
+    `/projects/${projectId}/review/batches/${batchId}/nodes/${nodeId}/accept`,
+  );
+  return AcceptReviewResponseSchema.parse(data);
+}
