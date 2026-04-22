@@ -1044,6 +1044,30 @@ def feedback_history(session: Session, project_id: str, target_node_id: str) -> 
 
     entries: list[FeedbackEntry] = []
 
+    # ── Cutoff from the most recent FeedbackCleared event ───────
+    # The hard-reset path emits ``FeedbackCleared(node_id)`` so the
+    # panel stops showing prose / AI review text from the prior
+    # generation run. Prior entries still live on immutable Job /
+    # Draft rows, but anything whose ``created_at`` is at or before
+    # this cutoff is filtered out below.
+    cleared_rows = (
+        session.execute(
+            select(GraphEvent)
+            .where(
+                GraphEvent.project_id == project_id,
+                GraphEvent.event_type == "FeedbackCleared",
+            )
+            .order_by(GraphEvent.created_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+    cleared_at = None
+    for row in cleared_rows:
+        if (row.payload or {}).get("node_id") == target_node_id:
+            cleared_at = row.created_at
+            break
+
     # ── User feedback from jobs ──────────────────────────────────
     job_type = _TIER_TO_JOB_TYPE.get(node.tier)
     if job_type is not None:
@@ -1067,6 +1091,12 @@ def feedback_history(session: Session, project_id: str, target_node_id: str) -> 
             if payload.get("project_id") != project_id:
                 continue
             if payload_key and payload.get(payload_key) != target_node_id:
+                continue
+            if (
+                cleared_at is not None
+                and job.created_at is not None
+                and job.created_at <= cleared_at
+            ):
                 continue
             feedback_text = payload.get("feedback")
             if not isinstance(feedback_text, str) or not feedback_text.strip():
@@ -1093,6 +1123,12 @@ def feedback_history(session: Session, project_id: str, target_node_id: str) -> 
         review = (draft.review_text or "").strip()
         if not review:
             continue
+        if (
+            cleared_at is not None
+            and draft.created_at is not None
+            and draft.created_at <= cleared_at
+        ):
+            continue
         entries.append(
             FeedbackEntry(
                 created_at=draft.created_at.isoformat() if draft.created_at else "",
@@ -1104,7 +1140,9 @@ def feedback_history(session: Session, project_id: str, target_node_id: str) -> 
     # Fan-in writes review_text directly on the node, not a draft.
     if node.tier == "fanin":
         node_review = (getattr(node, "review_text", "") or "").strip()
-        if node_review:
+        if node_review and not (
+            cleared_at is not None and node.updated_at is not None and node.updated_at <= cleared_at
+        ):
             entries.append(
                 FeedbackEntry(
                     created_at=node.updated_at.isoformat() if node.updated_at else "",

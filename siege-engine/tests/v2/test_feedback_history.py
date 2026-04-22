@@ -10,10 +10,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 
+from sqlalchemy import select
+
 from backend.graph import events as ev
 from backend.graph.ids import Kind, mint
 from backend.graph.queries import feedback_history
 from backend.graph.reducer import append_event
+from backend.models.graph_event import GraphEvent
 from backend.models.job import Job
 from backend.models.node import Draft
 
@@ -154,6 +157,130 @@ class TestFeedbackHistory:
         assert "First AI review" in entries[0].text
         assert "First user feedback" in entries[1].text
         assert "Second AI review" in entries[2].text
+
+    def _emit_feedback_cleared_at(self, db, project_id: str, node_id: str, when: datetime) -> None:
+        """Emit a ``FeedbackCleared`` event and pin its ``created_at``.
+
+        Production emits it during ``bootstrap_reset`` and takes the
+        wall-clock ``utcnow()`` stamp. Tests need deterministic time,
+        so we rewrite the row's ``created_at`` after append.
+        """
+        append_event(db, project_id, ev.FeedbackCleared(node_id=node_id))
+        row = (
+            db.execute(
+                select(GraphEvent)
+                .where(
+                    GraphEvent.project_id == project_id,
+                    GraphEvent.event_type == "FeedbackCleared",
+                )
+                .order_by(GraphEvent.offset.desc())
+            )
+            .scalars()
+            .first()
+        )
+        assert row is not None
+        row.created_at = when
+        db.flush()
+
+    def test_feedback_cleared_filters_prior_user_feedback(self, db, project):
+        nid = _mint_expansion_node(db, project.id)
+        base = datetime(2026, 4, 20, 12, 0, 0)
+        _add_job(
+            db,
+            project.id,
+            "v2.generate_feature_expansion",
+            "Pre-reset feedback — should be hidden.",
+            base,
+        )
+        self._emit_feedback_cleared_at(db, project.id, nid, base + timedelta(minutes=5))
+        _add_job(
+            db,
+            project.id,
+            "v2.generate_feature_expansion",
+            "Post-reset feedback — should show through.",
+            base + timedelta(minutes=10),
+        )
+
+        entries = feedback_history(db, project.id, nid)
+        assert [e.text for e in entries] == ["Post-reset feedback — should show through."]
+
+    def test_feedback_cleared_filters_prior_ai_reviews(self, db, project):
+        nid = _mint_expansion_node(db, project.id)
+        base = datetime(2026, 4, 20, 12, 0, 0)
+        _add_draft_with_review(db, project.id, nid, "Pre-reset review.", base)
+        self._emit_feedback_cleared_at(db, project.id, nid, base + timedelta(minutes=5))
+        _add_draft_with_review(
+            db, project.id, nid, "Post-reset review.", base + timedelta(minutes=10)
+        )
+
+        entries = feedback_history(db, project.id, nid)
+        assert [e.text for e in entries] == ["Post-reset review."]
+
+    def test_feedback_cleared_most_recent_wins(self, db, project):
+        """A second reset pushes the cutoff forward; post-first-reset entries
+        that predate the second reset are also hidden."""
+        nid = _mint_expansion_node(db, project.id)
+        base = datetime(2026, 4, 20, 12, 0, 0)
+        _add_job(db, project.id, "v2.generate_feature_expansion", "Before first reset.", base)
+        self._emit_feedback_cleared_at(db, project.id, nid, base + timedelta(minutes=5))
+        _add_job(
+            db,
+            project.id,
+            "v2.generate_feature_expansion",
+            "Between resets.",
+            base + timedelta(minutes=10),
+        )
+        self._emit_feedback_cleared_at(db, project.id, nid, base + timedelta(minutes=15))
+        _add_job(
+            db,
+            project.id,
+            "v2.generate_feature_expansion",
+            "After second reset.",
+            base + timedelta(minutes=20),
+        )
+
+        entries = feedback_history(db, project.id, nid)
+        assert [e.text for e in entries] == ["After second reset."]
+
+    def test_feedback_cleared_scoped_to_node(self, db, project):
+        """A reset on one node must not hide another node's feedback."""
+        nid_a = _mint_expansion_node(db, project.id)
+        # Second node on the same project.
+        nid_b = mint(db, Kind.EXPANSION)
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id=nid_b,
+                tier="expansion",
+                kind="domain",
+                parent_id=None,
+                name="Other",
+                content="",
+            ),
+        )
+        base = datetime(2026, 4, 20, 12, 0, 0)
+        _add_job(
+            db,
+            project.id,
+            "v2.generate_feature_expansion",
+            "Feedback on B.",
+            base,
+        )
+        # But jobs aren't node-scoped in _add_job — bind by payload key.
+        # Update the job we just added to target nid_b.
+        latest_job = db.execute(select(Job).order_by(Job.created_at.desc())).scalars().first()
+        latest_job.payload = {
+            **(latest_job.payload or {}),
+            "expansion_id": nid_b,
+        }
+        db.flush()
+        # Reset only targets nid_a.
+        self._emit_feedback_cleared_at(db, project.id, nid_a, base + timedelta(minutes=5))
+
+        # Feedback on B must survive the reset on A.
+        entries = feedback_history(db, project.id, nid_b)
+        assert [e.text for e in entries] == ["Feedback on B."]
 
     def test_filters_by_project_id(self, db, project):
         """Jobs from other projects must not leak into this project's history."""

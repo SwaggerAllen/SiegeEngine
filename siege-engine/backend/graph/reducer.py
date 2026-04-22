@@ -669,6 +669,13 @@ def _apply_view_recorded(session: Session, project_id: str, event: ev.ViewRecord
     return
 
 
+def _apply_feedback_cleared(session: Session, project_id: str, event: ev.FeedbackCleared) -> None:
+    # ``FeedbackCleared`` is read at query time by
+    # :func:`backend.graph.queries.feedback_history` — no projection
+    # mutation needed. Event persistence alone is the state.
+    return
+
+
 # Callable is contravariant in its parameter types, so a concrete
 # handler ``(Session, str, NodeCreated) -> None`` is NOT a subtype of
 # ``(Session, str, _EventBase) -> None``. The dispatch contract is
@@ -695,6 +702,7 @@ _HANDLERS: dict[str, Callable[[Session, str, Any], None]] = {
     "DraftDiscarded": _apply_draft_discarded,
     "FanInContentUpdated": _apply_fanin_content_updated,
     "BootstrapNodeContentCleared": _apply_bootstrap_node_content_cleared,
+    "FeedbackCleared": _apply_feedback_cleared,
     "ViewRecorded": _apply_view_recorded,
 }
 
