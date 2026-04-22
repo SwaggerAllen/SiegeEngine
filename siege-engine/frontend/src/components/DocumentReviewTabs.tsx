@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { formatSelectedAsFeedback, parseReview, type ParsedReview } from '../lib/reviewXml';
+import {
+  diagnoseReview,
+  formatSelectedAsFeedback,
+  parseReview,
+  type ParsedReview,
+  type ReviewDiagnostic,
+} from '../lib/reviewXml';
 import { CollapsibleMarkdown } from './editor/CollapsibleMarkdown';
 import { GenerationClock } from './GenerationClock';
 
@@ -220,10 +226,11 @@ function StructuredReview({
   // that somehow slipped past backend validation).
   if (!parsed) {
     return (
-      <div data-testid="review-text-legacy">
+      <div data-testid="review-text-legacy" className="space-y-3">
         <CollapsibleMarkdown className="text-sm text-gray-300 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-200 [&_h2]:mt-2 [&_h2]:mb-1">
           {`# AI Review\n\n${reviewText}`}
         </CollapsibleMarkdown>
+        <ReviewDiagnosticPanel reviewText={reviewText} />
       </div>
     );
   }
@@ -513,6 +520,136 @@ export function DocumentReviewTabs({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Shown alongside the raw-markdown fallback render when
+ * :func:`parseReview` returns ``null``. The expander surfaces the
+ * exact rule the parser tripped on plus a handful of shape checks
+ * (``<review>`` / section / finding counts), so users on mobile
+ * can screenshot a precise diagnosis without needing DevTools.
+ */
+function ReviewDiagnosticPanel({ reviewText }: { reviewText: string }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const diagnostic = useMemo<ReviewDiagnostic>(
+    () => diagnoseReview(reviewText),
+    [reviewText],
+  );
+  const dump = useMemo(
+    () => formatDiagnosticDump(diagnostic, reviewText),
+    [diagnostic, reviewText],
+  );
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(dump).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <details
+      className="border border-gray-800 rounded text-xs"
+      open={open}
+      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+    >
+      <summary className="px-3 py-2 cursor-pointer text-gray-400 hover:bg-gray-900">
+        Why isn&apos;t this parsed?
+      </summary>
+      <div
+        className="p-3 border-t border-gray-800 space-y-2 font-mono"
+        data-testid="review-diagnostic-panel"
+      >
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="px-3 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800 font-sans"
+            title="Copy the diagnostic + full raw review text to the clipboard"
+          >
+            {copied ? 'Copied' : 'Copy diagnostic'}
+          </button>
+        </div>
+        <DiagnosticRow label="status" value={diagnostic.status} />
+        <DiagnosticRow label="detail" value={diagnostic.detail} wrap />
+        <DiagnosticRow
+          label="raw length"
+          value={String(diagnostic.rawLength)}
+        />
+        <DiagnosticRow
+          label="has <review>"
+          value={String(diagnostic.hasReviewTag)}
+        />
+        <DiagnosticRow
+          label="has <handles-structure>"
+          value={String(diagnostic.hasHandlesSection)}
+        />
+        <DiagnosticRow
+          label="has <architectural-decisions>"
+          value={String(diagnostic.hasArchSection)}
+        />
+        <DiagnosticRow
+          label="<finding> count"
+          value={String(diagnostic.findingCount)}
+        />
+        <DiagnosticRow
+          label="preview (first 400 chars)"
+          value={diagnostic.preview || '(empty)'}
+          wrap
+        />
+      </div>
+    </details>
+  );
+}
+
+/**
+ * Flatten the diagnostic + raw review into a plain-text blob the
+ * user can paste back to the maintainer. Includes every presence
+ * check, the specific failure detail, and the full raw text so
+ * the receiver has everything needed to point at a rule or fix
+ * the prompt that produced it.
+ */
+function formatDiagnosticDump(
+  diagnostic: ReviewDiagnostic,
+  reviewText: string,
+): string {
+  const lines = [
+    `status: ${diagnostic.status}`,
+    `detail: ${diagnostic.detail}`,
+    `raw length: ${diagnostic.rawLength}`,
+    `has <review>: ${diagnostic.hasReviewTag}`,
+    `has <handles-structure>: ${diagnostic.hasHandlesSection}`,
+    `has <architectural-decisions>: ${diagnostic.hasArchSection}`,
+    `<finding> count: ${diagnostic.findingCount}`,
+    '',
+    '--- full raw review text ---',
+    reviewText,
+  ];
+  return lines.join('\n');
+}
+
+function DiagnosticRow({
+  label,
+  value,
+  wrap,
+}: {
+  label: string;
+  value: string;
+  wrap?: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-[10rem_1fr] gap-2">
+      <span className="text-gray-500">{label}</span>
+      <span
+        className={`text-gray-200 ${
+          wrap ? 'break-words whitespace-pre-wrap' : 'truncate'
+        }`}
+      >
+        {value}
+      </span>
     </div>
   );
 }

@@ -117,3 +117,151 @@ export function formatSelectedAsFeedback(
   }
   return lines.join('\n').trim();
 }
+
+// ── Diagnostic helper ────────────────────────────────────────────────
+
+export type ReviewDiagnosticStatus =
+  | 'ok'
+  | 'empty'
+  | 'xml_parse_error'
+  | 'missing_review_root'
+  | 'missing_handles_structure'
+  | 'missing_architectural_decisions'
+  | 'finding_missing_id'
+  | 'finding_empty_body'
+  | 'duplicate_finding_id';
+
+export interface ReviewDiagnostic {
+  status: ReviewDiagnosticStatus;
+  detail: string;
+  rawLength: number;
+  hasReviewTag: boolean;
+  hasHandlesSection: boolean;
+  hasArchSection: boolean;
+  findingCount: number;
+  /** First ~400 chars of the raw text, whitespace-collapsed. */
+  preview: string;
+}
+
+/**
+ * Run the same rule set as :func:`parseReview` but surface the
+ * specific failure reason + presence checks for each required tag.
+ *
+ * Used by the in-app "Why isn't this parsed?" affordance on the
+ * Review tab when the raw fallback render kicks in — lets mobile
+ * users screenshot a precise diagnosis without having to open
+ * DevTools or copy the full review text.
+ */
+export function diagnoseReview(raw: string): ReviewDiagnostic {
+  const trimmed = (raw ?? '').trim();
+  const base = {
+    rawLength: trimmed.length,
+    hasReviewTag: false,
+    hasHandlesSection: false,
+    hasArchSection: false,
+    findingCount: 0,
+    preview: trimmed.replace(/\s+/g, ' ').slice(0, 400),
+  };
+  if (!trimmed) {
+    return { ...base, status: 'empty', detail: 'Review text is empty.' };
+  }
+
+  let doc: Document;
+  try {
+    doc = new DOMParser().parseFromString(
+      `<root>${trimmed}</root>`,
+      'application/xml',
+    );
+  } catch (exc) {
+    return {
+      ...base,
+      status: 'xml_parse_error',
+      detail: `DOMParser threw: ${String(exc)}`,
+    };
+  }
+  const parserError = doc.querySelector('parsererror');
+  if (parserError) {
+    return {
+      ...base,
+      status: 'xml_parse_error',
+      detail:
+        `DOMParser flagged a parsererror: ` +
+        (parserError.textContent ?? '').trim().slice(0, 200),
+    };
+  }
+
+  const reviewEl = doc.querySelector('review');
+  const hasReviewTag = reviewEl !== null;
+  const handles = reviewEl?.querySelector(HANDLES_SECTION) ?? null;
+  const arch = reviewEl?.querySelector(ARCH_SECTION) ?? null;
+  const findings = reviewEl?.querySelectorAll('finding') ?? { length: 0 };
+  const presence = {
+    ...base,
+    hasReviewTag,
+    hasHandlesSection: handles !== null,
+    hasArchSection: arch !== null,
+    findingCount: findings.length,
+  };
+
+  if (!hasReviewTag) {
+    return {
+      ...presence,
+      status: 'missing_review_root',
+      detail: 'No <review> element found anywhere in the raw text.',
+    };
+  }
+  if (!handles) {
+    return {
+      ...presence,
+      status: 'missing_handles_structure',
+      detail: '<review> is missing the required <handles-structure> section.',
+    };
+  }
+  if (!arch) {
+    return {
+      ...presence,
+      status: 'missing_architectural_decisions',
+      detail:
+        '<review> is missing the required <architectural-decisions> section.',
+    };
+  }
+
+  const ids = new Set<string>();
+  for (const section of [handles, arch]) {
+    for (const el of Array.from(section.children)) {
+      if (el.tagName.toLowerCase() !== 'finding') continue;
+      const id = (el.getAttribute('id') ?? '').trim();
+      const text = (el.textContent ?? '').trim();
+      if (!id) {
+        return {
+          ...presence,
+          status: 'finding_missing_id',
+          detail:
+            `A <finding> in <${section.tagName.toLowerCase()}> is missing its id= attribute. ` +
+            `First 80 chars: ${el.outerHTML.slice(0, 80)}`,
+        };
+      }
+      if (!text) {
+        return {
+          ...presence,
+          status: 'finding_empty_body',
+          detail: `<finding id="${id}"> has an empty body.`,
+        };
+      }
+      if (ids.has(id)) {
+        return {
+          ...presence,
+          status: 'duplicate_finding_id',
+          detail: `Two <finding> entries share id="${id}".`,
+        };
+      }
+      ids.add(id);
+    }
+  }
+
+  return {
+    ...presence,
+    status: 'ok',
+    detail: `Review parsed cleanly — ${ids.size} finding(s).`,
+  };
+}

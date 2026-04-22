@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { formatSelectedAsFeedback, parseReview } from './reviewXml';
+import {
+  diagnoseReview,
+  formatSelectedAsFeedback,
+  parseReview,
+} from './reviewXml';
 
 describe('parseReview', () => {
   it('parses two-section review with findings', () => {
@@ -95,5 +99,91 @@ describe('formatSelectedAsFeedback', () => {
 
   it('returns empty string when nothing selected', () => {
     expect(formatSelectedAsFeedback(review, new Set())).toBe('');
+  });
+});
+
+describe('diagnoseReview', () => {
+  const valid =
+    '<review>' +
+    '<handles-structure><finding id="h1">body.</finding></handles-structure>' +
+    '<architectural-decisions><finding id="a1">body.</finding></architectural-decisions>' +
+    '</review>';
+
+  it('reports ok on a clean parse', () => {
+    const d = diagnoseReview(valid);
+    expect(d.status).toBe('ok');
+    expect(d.hasReviewTag).toBe(true);
+    expect(d.hasHandlesSection).toBe(true);
+    expect(d.hasArchSection).toBe(true);
+    expect(d.findingCount).toBe(2);
+  });
+
+  it('reports empty on empty input', () => {
+    expect(diagnoseReview('').status).toBe('empty');
+    expect(diagnoseReview('   ').status).toBe('empty');
+  });
+
+  it('reports missing_review_root when <review> is absent', () => {
+    const d = diagnoseReview(
+      '<handles-structure><finding id="h1">x</finding></handles-structure>' +
+        '<architectural-decisions></architectural-decisions>',
+    );
+    expect(d.status).toBe('missing_review_root');
+    expect(d.hasReviewTag).toBe(false);
+  });
+
+  it('reports missing_handles_structure when that section is absent', () => {
+    const raw =
+      '<review>' +
+      '<architectural-decisions><finding id="a1">x</finding></architectural-decisions>' +
+      '</review>';
+    const d = diagnoseReview(raw);
+    expect(d.status).toBe('missing_handles_structure');
+    expect(d.hasReviewTag).toBe(true);
+    expect(d.hasArchSection).toBe(true);
+  });
+
+  it('reports missing_architectural_decisions when that section is absent', () => {
+    const raw =
+      '<review>' +
+      '<handles-structure><finding id="h1">x</finding></handles-structure>' +
+      '</review>';
+    expect(diagnoseReview(raw).status).toBe(
+      'missing_architectural_decisions',
+    );
+  });
+
+  it('reports finding_missing_id when an id attribute is blank', () => {
+    const raw =
+      '<review>' +
+      '<handles-structure><finding>no id here</finding></handles-structure>' +
+      '<architectural-decisions></architectural-decisions>' +
+      '</review>';
+    expect(diagnoseReview(raw).status).toBe('finding_missing_id');
+  });
+
+  it('reports finding_empty_body when body text is empty', () => {
+    const raw =
+      '<review>' +
+      '<handles-structure><finding id="h1"></finding></handles-structure>' +
+      '<architectural-decisions></architectural-decisions>' +
+      '</review>';
+    expect(diagnoseReview(raw).status).toBe('finding_empty_body');
+  });
+
+  it('reports duplicate_finding_id when two findings share an id', () => {
+    const raw =
+      '<review>' +
+      '<handles-structure><finding id="x">a</finding></handles-structure>' +
+      '<architectural-decisions><finding id="x">b</finding></architectural-decisions>' +
+      '</review>';
+    expect(diagnoseReview(raw).status).toBe('duplicate_finding_id');
+  });
+
+  it('includes a preview of the raw text', () => {
+    const raw = 'some preamble ' + valid;
+    const d = diagnoseReview(raw);
+    expect(d.preview).toContain('some preamble');
+    expect(d.preview.length).toBeLessThanOrEqual(400);
   });
 });
