@@ -91,6 +91,7 @@ export function RequirementsPanel({ projectId }: Props) {
         isBusy,
       }}
       contentRenderers={renderers}
+      docKind="requirements"
       extraTabs={({ pendingContent, approvedContent }) => [
         {
           id: 'requirements',

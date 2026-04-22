@@ -1,9 +1,11 @@
 import { useCallback, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
+import type { DraftDocKind } from '../lib/extractDraftSections';
 import { DocumentReviewTabs, type ExtraTab } from './DocumentReviewTabs';
 import { DraftDiffView } from './DraftDiffView';
 import { FeedbackHistory } from './FeedbackHistory';
 import { GenerationClock } from './GenerationClock';
+import { StructuredDraftDiffView } from './StructuredDraftDiffView';
 import { XmlDocument } from './xml';
 import type { XmlRendererMap } from './xml';
 
@@ -194,6 +196,15 @@ interface Props {
   /** Optional — when present, the B9 Feedback History panel is
    * mounted at the bottom of the panel for this project. */
   projectId?: string;
+  /**
+   * When set, the pending-draft Document tab renders a per-
+   * section diff (one accordion per feature / responsibility /
+   * component) instead of a single flat diff. Set on the
+   * expansion, requirements, and sysarch panels; unset on
+   * propagation tiers (comparch, impl, etc.) where the draft
+   * isn't a list of uniform entries.
+   */
+  docKind?: DraftDocKind;
   /** Optional additional tabs inserted between Document and
    * Review. Callers typically derive these from the current
    * content (pending draft or approved node) so the user can
@@ -298,11 +309,13 @@ function PendingDraftDocumentTab({
   previousDraftContent,
   approvedContent,
   renderers,
+  docKind,
 }: {
   pendingContent: string;
   previousDraftContent: string | null;
   approvedContent: string | null;
   renderers: XmlRendererMap;
+  docKind?: DraftDocKind;
 }) {
   // "Before" side of the diff: the most recently discarded draft
   // if one exists (the typical case across multiple Reject &
@@ -358,11 +371,20 @@ function PendingDraftDocumentTab({
         </div>
       )}
       {mode === 'diff' && hasDiff ? (
-        <DraftDiffView
-          before={before}
-          after={pendingContent}
-          label={diffLabel}
-        />
+        docKind ? (
+          <StructuredDraftDiffView
+            before={before}
+            after={pendingContent}
+            kind={docKind}
+            label={diffLabel}
+          />
+        ) : (
+          <DraftDiffView
+            before={before}
+            after={pendingContent}
+            label={diffLabel}
+          />
+        )
       ) : (
         <XmlDocument content={pendingContent} renderers={renderers} />
       )}
@@ -393,6 +415,7 @@ export function BootstrapDraftPanel({
   callbacks,
   contentRenderers,
   projectId,
+  docKind,
   extraTabs,
 }: Props) {
   const [feedback, setFeedback] = useState('');
@@ -537,6 +560,7 @@ export function BootstrapDraftPanel({
                 previousDraftContent={previous_draft_content}
                 approvedContent={node.content || null}
                 renderers={contentRenderers}
+                docKind={docKind}
               />
             }
             extraTabs={extraTabs?.({
