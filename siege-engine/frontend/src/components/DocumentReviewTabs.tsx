@@ -223,13 +223,30 @@ function StructuredReview({
 
   // Fall back to the legacy markdown render if the review
   // doesn't parse (pre-Phase-8 content, or malformed output
-  // that somehow slipped past backend validation).
+  // that somehow slipped past backend validation). Surface
+  // Regenerate review even in this branch — if the parse failure
+  // is because the last LLM run produced malformed XML,
+  // regenerating is usually the fastest way out.
   if (!parsed) {
     return (
       <div data-testid="review-text-legacy" className="space-y-3">
         <CollapsibleMarkdown className="text-sm text-gray-300 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-gray-200 [&_h2]:mt-2 [&_h2]:mb-1">
           {`# AI Review\n\n${reviewText}`}
         </CollapsibleMarkdown>
+        {onRetryReview && (
+          <div>
+            <button
+              type="button"
+              onClick={onRetryReview}
+              disabled={isBusy}
+              className="px-3 py-1 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
+              data-testid="review-regenerate-legacy"
+              title="Discard the current review output and request a fresh one"
+            >
+              Regenerate review
+            </button>
+          </div>
+        )}
         <ReviewDiagnosticPanel reviewText={reviewText} />
       </div>
     );
