@@ -1117,6 +1117,135 @@ def feedback_history(session: Session, project_id: str, target_node_id: str) -> 
     return entries
 
 
+# ── Phase 12: batched review walker ──────────────────────────────────
+
+
+# Roughly-upstream-first tier ordering for the walker's left rail.
+# Not a proper topological sort over the DAG (edges are too numerous
+# to walk for a UI hint), but a tier-based approximation that lines
+# up with the bootstrap chain: extraction tiers before compression
+# tiers before leaf tiers. Within a tier, top-level nodes come
+# before sub-nodes (via the ``+1`` bump on non-null ``parent_id``)
+# so the user walks feat → resp-top → comp-top → resp-sub → comp-sub
+# → impl rather than jumping back and forth.
+#
+# ``fanin`` is deliberately absent: fan-in nodes are synthesized
+# bottom-up and never directly edited, so including them in the
+# batch walker would surface noise the user can't act on. They
+# still appear in the graph + sidebar.
+_WALKER_TIER_RANK: dict[str, int] = {
+    "expansion": 0,
+    "feat": 10,
+    "reqs": 20,
+    "resp": 30,  # +1 for subresps via parent_id check
+    "sysarch": 40,
+    "comp": 50,  # +1 for subcomps via parent_id check
+    "subreqs": 60,
+    "policy": 70,
+    "ref": 80,
+    "vocab": 90,
+    "impl": 100,
+}
+
+
+@dataclass(frozen=True)
+class StaleNodeSummary:
+    """Per-node digest for the Phase 12 walker's left rail.
+
+    One summary per stale node at the batch's ``pinned_offset``.
+    ``reasons`` collapses the ledger rows for this node into a
+    sorted deduplicated list. ``is_destructive`` is ``True`` when
+    any reason is ``structural_change`` — surfacing the destructive
+    marker drives both the red-dot badge in the UI and the
+    "Accept — release cascade" branch of the accept semantics
+    (landed in 12d).
+    """
+
+    node_id: str
+    tier: str
+    name: str
+    parent_id: str | None
+    reasons: list[str]
+    is_destructive: bool
+    topological_order: int
+
+
+def stale_nodes_at_offset(
+    session: Session,
+    project_id: str,
+    pinned_offset: int,
+) -> list[StaleNodeSummary]:
+    """Return the project's stale nodes as of ``pinned_offset``.
+
+    Reads the live ``staleness_ledger`` and filters by
+    ``source_offset <= pinned_offset`` so markers produced by
+    events *after* the batch opened don't leak into the walker's
+    stale set. The ledger itself isn't versioned — markers cleared
+    after ``pinned_offset`` are not reconstructable — but the
+    filter is enough for the common case where the user opens a
+    batch and walks straight through it.
+
+    Excludes ``fanin`` tier nodes because fan-in is synthesized
+    bottom-up and isn't user-editable; surfacing it in the walker
+    would just add noise. Sorted roughly upstream-to-downstream
+    via :data:`_WALKER_TIER_RANK`, with top-level nodes ahead of
+    sub-nodes within a tier.
+    """
+    rows = session.execute(
+        select(StalenessLedger, Node)
+        .join(Node, Node.id == StalenessLedger.stale_node_id)
+        .where(
+            StalenessLedger.project_id == project_id,
+            StalenessLedger.source_offset <= pinned_offset,
+            Node.tier != "fanin",
+        )
+        .order_by(Node.display_order.asc(), Node.id.asc())
+    ).all()
+
+    by_node: dict[str, dict] = {}
+    for ledger_row, node in rows:
+        entry = by_node.setdefault(
+            node.id,
+            {
+                "node": node,
+                "reasons": set(),
+            },
+        )
+        entry["reasons"].add(ledger_row.reason)
+
+    summaries: list[StaleNodeSummary] = []
+    for entry in by_node.values():
+        node = entry["node"]
+        reasons = sorted(entry["reasons"])
+        summaries.append(
+            StaleNodeSummary(
+                node_id=node.id,
+                tier=node.tier,
+                name=node.name,
+                parent_id=node.parent_id,
+                reasons=reasons,
+                is_destructive="structural_change" in reasons,
+                topological_order=_topological_order_for(node),
+            )
+        )
+    summaries.sort(
+        key=lambda s: (s.topological_order, s.name or "", s.node_id),
+    )
+    return summaries
+
+
+def _topological_order_for(node: Node) -> int:
+    """Walker-order rank: upstream tiers first, top-levels before subs."""
+    base = _WALKER_TIER_RANK.get(node.tier)
+    if base is None:
+        # Unknown tier — park it at the end so it still shows up
+        # rather than silently dropping.
+        return 999
+    if node.tier in ("comp", "resp") and node.parent_id is not None:
+        return base + 1
+    return base
+
+
 # ── Phase 12: regen-time diff ────────────────────────────────────────
 
 

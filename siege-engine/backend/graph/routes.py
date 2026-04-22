@@ -4051,3 +4051,111 @@ def get_review_batch_route(
     _require_project(db, project_id)
     batch = _require_batch(db, project_id, batch_id)
     return _serialize_review_batch(batch)
+
+
+# ── Phase 12c: walker queries (stale nodes + per-node diff) ─────────
+
+
+class StaleNodeItemResponse(BaseModel):
+    """One row in the walker's left-rail list of stale nodes."""
+
+    node_id: str
+    tier: str
+    name: str
+    parent_id: str | None
+    reasons: list[str]
+    is_destructive: bool
+    topological_order: int
+
+
+class StaleNodesListResponse(BaseModel):
+    items: list[StaleNodeItemResponse]
+
+
+class DiffSidesResponse(BaseModel):
+    """Before / after pair for a single content or fragment body.
+
+    Nullable on either side: ``before=None`` means "didn't exist at
+    ``pinned_offset``" (a fragment created after the pin);
+    ``after=None`` means "no longer exists" (a fragment deleted by
+    a destructive change).
+    """
+
+    before: str | None
+    after: str | None
+
+
+class FragmentDiffResponse(BaseModel):
+    fragment_kind: str
+    before: str | None
+    after: str | None
+
+
+class NodeDiffResponse(BaseModel):
+    """Walker-pane payload for a single reviewed node.
+
+    ``node_content`` diffs the ``Node.content`` field itself; the
+    per-fragment list covers every fragment owned by the node so
+    the accordion in the detail pane can render one section per
+    fragment kind.
+    """
+
+    node_content: DiffSidesResponse
+    fragments: list[FragmentDiffResponse]
+
+
+@router.get(
+    "/{project_id}/review/batches/{batch_id}/nodes",
+    response_model=StaleNodesListResponse,
+)
+def get_review_batch_nodes(
+    project_id: str,
+    batch_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> StaleNodesListResponse:
+    """List stale nodes in roughly-topological order for the walker."""
+    _require_project(db, project_id)
+    batch = _require_batch(db, project_id, batch_id)
+    items = queries.stale_nodes_at_offset(db, project_id, batch.pinned_offset)
+    return StaleNodesListResponse(
+        items=[
+            StaleNodeItemResponse(
+                node_id=item.node_id,
+                tier=item.tier,
+                name=item.name,
+                parent_id=item.parent_id,
+                reasons=item.reasons,
+                is_destructive=item.is_destructive,
+                topological_order=item.topological_order,
+            )
+            for item in items
+        ]
+    )
+
+
+@router.get(
+    "/{project_id}/review/batches/{batch_id}/nodes/{node_id}/diff",
+    response_model=NodeDiffResponse,
+)
+def get_review_batch_node_diff(
+    project_id: str,
+    batch_id: str,
+    node_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> NodeDiffResponse:
+    """Return the before/after diff bundle for one node click."""
+    from backend.graph.diff import node_diff_payload
+    from backend.models.node import Node
+
+    _require_project(db, project_id)
+    batch = _require_batch(db, project_id, batch_id)
+    node = db.get(Node, node_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Node not found in project")
+    payload = node_diff_payload(db, project_id, node_id, batch.pinned_offset)
+    return NodeDiffResponse(
+        node_content=DiffSidesResponse(**payload["node_content"]),
+        fragments=[FragmentDiffResponse(**f) for f in payload["fragments"]],
+    )
