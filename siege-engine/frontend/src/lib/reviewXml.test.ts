@@ -102,6 +102,34 @@ describe('formatSelectedAsFeedback', () => {
   });
 });
 
+describe('parseReview — tag names inside finding bodies', () => {
+  it('parses reviews that reference XML tag names inline', () => {
+    // Real-world case: the reviewer writes prose like
+    // "three `<covers>` entries" inside a finding body. DOMParser
+    // would normally read that as an unclosed ``<covers>`` tag
+    // and fail the whole review. The pre-processor escapes stray
+    // angle brackets inside every finding body.
+    const raw =
+      '<review>' +
+      '<handles-structure>' +
+      '<finding id="h1">Bundle intent overlaps with Provisioning scope.</finding>' +
+      '<finding id="h2">feat_XYZ has three `<covers>` entries for one feature — ambiguous owner.</finding>' +
+      '</handles-structure>' +
+      '<architectural-decisions>' +
+      '<finding id="a1">Workspace <foo>aggregation</foo> is too fine-grained.</finding>' +
+      '</architectural-decisions>' +
+      '</review>';
+    const parsed = parseReview(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.handlesStructure).toHaveLength(2);
+    expect(parsed!.architecturalDecisions).toHaveLength(1);
+    // Escaped tag names survive as literal angle brackets in the
+    // finding text so the reviewer's intent is still readable.
+    expect(parsed!.handlesStructure[1].text).toContain('<covers>');
+    expect(parsed!.architecturalDecisions[0].text).toContain('<foo>');
+  });
+});
+
 describe('diagnoseReview', () => {
   const valid =
     '<review>' +
