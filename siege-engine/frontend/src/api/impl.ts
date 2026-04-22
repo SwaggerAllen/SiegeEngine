@@ -28,6 +28,10 @@ export type ImplDraft = z.infer<typeof ImplDraftSchema>;
 export const ImplResponseSchema = z.object({
   node: ImplNodeSchema,
   pending_draft: ImplDraftSchema.nullable(),
+  // Phase 12 — regen-time diff "before" content; see bootstrapApi
+  // ResponseSchema for the full story on why this exists and when
+  // it's null.
+  previous_draft_content: z.string().nullish().transform((v) => v ?? null),
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
   latest_telemetry: TelemetrySummarySchema.nullable(),

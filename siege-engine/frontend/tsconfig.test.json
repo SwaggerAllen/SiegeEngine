@@ -15,5 +15,10 @@
     "strict": true,
     "types": ["vitest/globals"]
   },
-  "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**/*.ts"]
+  "include": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/test/**/*.ts",
+    "src/types/**/*.d.ts"
+  ]
 }

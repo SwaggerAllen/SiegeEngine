@@ -22,6 +22,7 @@ from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.ids import Kind, mint
 from backend.graph.queries import (
     get_component_context,
+    most_recent_discarded_draft_content,
     pending_draft_kinds_by_comp,
 )
 from backend.graph.reducer import append_event
@@ -402,3 +403,149 @@ class TestPendingDraftKindsByComp:
         append_event(db, seeded["project_id"], ev.DraftApproved(draft_id=draft_id))
         db.commit()
         assert pending_draft_kinds_by_comp(db, seeded["project_id"]) == {}
+
+
+# ── most_recent_discarded_draft_content ──────────────────────────────
+
+
+def _seed_and_discard_draft(
+    session: Session,
+    project_id: str,
+    target_id: str,
+    content: str,
+) -> str:
+    """Emit DraftGenerated + DraftDiscarded so the row lands as discarded."""
+    import secrets
+
+    draft_id = f"draft_{secrets.token_hex(8)}"
+    append_event(
+        session,
+        project_id,
+        ev.DraftGenerated(
+            draft_id=draft_id,
+            target_type="node",
+            target_id=target_id,
+            content=content,
+            batch_id=f"batch_{secrets.token_hex(8)}",
+        ),
+    )
+    append_event(session, project_id, ev.DraftDiscarded(draft_id=draft_id))
+    return draft_id
+
+
+class TestMostRecentDiscardedDraftContent:
+    def test_returns_none_when_no_discards_exist(self, db, seeded):
+        # Brand-new bootstrap: no drafts, discarded or otherwise.
+        assert (
+            most_recent_discarded_draft_content(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            is None
+        )
+
+    def test_ignores_pending_and_applied_drafts(self, db, seeded):
+        # One pending draft, one approved — neither is discarded,
+        # so the helper should still return None.
+        _seed_pending_node_draft(db, seeded["project_id"], seeded["comp_billing"])
+        applied_id = "draft_applied02"
+        append_event(
+            db,
+            seeded["project_id"],
+            ev.DraftGenerated(
+                draft_id=applied_id,
+                target_type="node",
+                target_id=seeded["comp_billing"],
+                content="<stub>approved</stub>",
+                batch_id="batch_applied02",
+            ),
+        )
+        append_event(db, seeded["project_id"], ev.DraftApproved(draft_id=applied_id))
+        db.commit()
+        assert (
+            most_recent_discarded_draft_content(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            is None
+        )
+
+    def test_returns_content_of_most_recent_discarded(self, db, seeded):
+        import time
+
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>v1</sysarch>",
+        )
+        # updated_at resolution on SQLite is seconds; sleep briefly
+        # so the second discard sorts after the first.
+        time.sleep(1.1)
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>v2</sysarch>",
+        )
+        db.commit()
+        assert (
+            most_recent_discarded_draft_content(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            == "<sysarch>v2</sysarch>"
+        )
+
+    def test_scopes_by_target_id(self, db, seeded):
+        # Discard against comp_auth, query against comp_billing:
+        # must not leak across targets.
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_auth"],
+            "<sysarch>auth</sysarch>",
+        )
+        db.commit()
+        assert (
+            most_recent_discarded_draft_content(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            is None
+        )
+        assert (
+            most_recent_discarded_draft_content(
+                db,
+                seeded["project_id"],
+                seeded["comp_auth"],
+            )
+            == "<sysarch>auth</sysarch>"
+        )
+
+    def test_scopes_by_project_id(self, db, seeded):
+        # Seed a discard under a different project with the same
+        # target_id; the helper must not return it when querying
+        # the original project.
+        other_project = str(uuid.uuid4())
+        db.add(Project(id=other_project, name="other", git_repo_path="/tmp/o"))
+        db.flush()
+        _seed_and_discard_draft(
+            db,
+            other_project,
+            seeded["comp_billing"],
+            "<sysarch>leak</sysarch>",
+        )
+        db.commit()
+        assert (
+            most_recent_discarded_draft_content(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            is None
+        )

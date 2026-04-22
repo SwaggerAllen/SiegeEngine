@@ -42,6 +42,7 @@ function response(overrides: Partial<ImplResponse> = {}): ImplResponse {
       updated_at: '2026-04-17T00:00:00',
     },
     pending_draft: null,
+    previous_draft_content: null,
     generation_status: 'idle',
     last_error: null,
     latest_telemetry: null,

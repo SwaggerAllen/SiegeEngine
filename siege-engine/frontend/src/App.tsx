@@ -9,6 +9,7 @@ import { ProjectListPage } from './pages/ProjectListPage';
 import { ProjectCreatePage } from './pages/ProjectCreatePage';
 import { ProjectWorkspacePage } from './pages/ProjectWorkspacePage';
 import { ProjectSettingsPage } from './pages/ProjectSettingsPage';
+import { ReviewBatchPage } from './pages/ReviewBatchPage';
 import {
   RedirectComponentComparch,
   RedirectComponentFanIn,
@@ -90,6 +91,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ProjectSettingsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:id/review/:batchId"
+          element={
+            <ProtectedRoute>
+              <ReviewBatchPage />
             </ProtectedRoute>
           }
         />

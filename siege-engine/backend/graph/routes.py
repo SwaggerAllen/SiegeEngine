@@ -177,6 +177,11 @@ class TelemetrySummary(BaseModel):
 class ExpansionResponse(BaseModel):
     node: ExpansionNodeResponse
     pending_draft: ExpansionDraftResponse | None
+    # Phase 12 — regen-time diff "before" content. Contains the
+    # most recently discarded draft's content for this target,
+    # or ``None`` when no prior discarded draft exists (brand-new
+    # bootstrap or first regen after approval).
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -448,6 +453,7 @@ class ReqsDraftResponse(BaseModel):
 class ReqsResponse(BaseModel):
     node: ReqsNodeResponse
     pending_draft: ReqsDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -604,6 +610,7 @@ class SysarchDraftResponse(BaseModel):
 class SysarchResponse(BaseModel):
     node: SysarchNodeResponse
     pending_draft: SysarchDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1054,6 +1061,7 @@ class SubreqsDraftResponse(BaseModel):
 class SubreqsResponse(BaseModel):
     node: SubreqsNodeResponse
     pending_draft: SubreqsDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1311,6 +1319,7 @@ class ComparchDraftResponse(BaseModel):
 class ComparchResponse(BaseModel):
     node: ComparchNodeResponse
     pending_draft: ComparchDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1560,6 +1569,7 @@ class SubcomparchDraftResponse(BaseModel):
 class SubcomparchResponse(BaseModel):
     node: SubcomparchNodeResponse
     pending_draft: SubcomparchDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -2604,6 +2614,7 @@ class ImplDraftResponse(BaseModel):
 class ImplResponse(BaseModel):
     node: ImplNodeResponse
     pending_draft: ImplDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -3941,4 +3952,254 @@ def get_feedback_history(
             FeedbackHistoryEntryResponse(created_at=e.created_at, source=e.source, text=e.text)
             for e in entries
         ]
+    )
+
+
+# ── Phase 12: batched review walker — batch lifecycle ───────────────
+
+
+class ReviewBatchResponse(BaseModel):
+    """Serialized form of a :class:`backend.models.review.ReviewBatch`.
+
+    Minted by ``POST /projects/{id}/review/batches``; the walker UI
+    uses ``id`` on every subsequent walker call so the stale set and
+    snapshot cache are evaluated relative to a stable pinned offset.
+    ``closed_at`` is ``None`` until the user closes the batch.
+    """
+
+    id: str
+    project_id: str
+    pinned_offset: int
+    created_at: str
+    closed_at: str | None
+
+
+def _serialize_review_batch(batch) -> ReviewBatchResponse:
+    return ReviewBatchResponse(
+        id=batch.id,
+        project_id=batch.project_id,
+        pinned_offset=batch.pinned_offset,
+        created_at=batch.created_at.isoformat() if batch.created_at else "",
+        closed_at=batch.closed_at.isoformat() if batch.closed_at else None,
+    )
+
+
+def _require_batch(db: Session, project_id: str, batch_id: str):
+    """Resolve the batch and verify it belongs to this project."""
+    from backend.graph.review import get_review_batch
+
+    batch = get_review_batch(db, batch_id)
+    if batch is None or batch.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Review batch not found")
+    return batch
+
+
+@router.post(
+    "/{project_id}/review/batches",
+    response_model=ReviewBatchResponse,
+)
+def post_open_review_batch(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReviewBatchResponse:
+    """Open a new batched-review session pinned at the latest offset.
+
+    The ``pinned_offset`` freezes the staleness-ledger evaluation
+    context for the batch so concurrent writes after open don't
+    shift the walker's to-do list.
+    """
+    from backend.graph.review import open_review_batch
+
+    _require_project(db, project_id)
+    batch = open_review_batch(db, project_id)
+    db.commit()
+    return _serialize_review_batch(batch)
+
+
+@router.post(
+    "/{project_id}/review/batches/{batch_id}/close",
+    response_model=ReviewBatchResponse,
+)
+def post_close_review_batch(
+    project_id: str,
+    batch_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReviewBatchResponse:
+    """Mark the batch closed so subsequent walker loads can skip it."""
+    from backend.graph.review import close_review_batch
+
+    _require_project(db, project_id)
+    _require_batch(db, project_id, batch_id)
+    batch = close_review_batch(db, batch_id)
+    db.commit()
+    return _serialize_review_batch(batch)
+
+
+@router.get(
+    "/{project_id}/review/batches/{batch_id}",
+    response_model=ReviewBatchResponse,
+)
+def get_review_batch_route(
+    project_id: str,
+    batch_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> ReviewBatchResponse:
+    """Return the batch row — used by the walker to render its header."""
+    _require_project(db, project_id)
+    batch = _require_batch(db, project_id, batch_id)
+    return _serialize_review_batch(batch)
+
+
+# ── Phase 12c: walker queries (stale nodes + per-node diff) ─────────
+
+
+class StaleNodeItemResponse(BaseModel):
+    """One row in the walker's left-rail list of stale nodes."""
+
+    node_id: str
+    tier: str
+    name: str
+    parent_id: str | None
+    reasons: list[str]
+    is_destructive: bool
+    topological_order: int
+
+
+class StaleNodesListResponse(BaseModel):
+    items: list[StaleNodeItemResponse]
+
+
+class DiffSidesResponse(BaseModel):
+    """Before / after pair for a single content or fragment body.
+
+    Nullable on either side: ``before=None`` means "didn't exist at
+    ``pinned_offset``" (a fragment created after the pin);
+    ``after=None`` means "no longer exists" (a fragment deleted by
+    a destructive change).
+    """
+
+    before: str | None
+    after: str | None
+
+
+class FragmentDiffResponse(BaseModel):
+    fragment_kind: str
+    before: str | None
+    after: str | None
+
+
+class NodeDiffResponse(BaseModel):
+    """Walker-pane payload for a single reviewed node.
+
+    ``node_content`` diffs the ``Node.content`` field itself; the
+    per-fragment list covers every fragment owned by the node so
+    the accordion in the detail pane can render one section per
+    fragment kind.
+    """
+
+    node_content: DiffSidesResponse
+    fragments: list[FragmentDiffResponse]
+
+
+@router.get(
+    "/{project_id}/review/batches/{batch_id}/nodes",
+    response_model=StaleNodesListResponse,
+)
+def get_review_batch_nodes(
+    project_id: str,
+    batch_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> StaleNodesListResponse:
+    """List stale nodes in roughly-topological order for the walker."""
+    _require_project(db, project_id)
+    batch = _require_batch(db, project_id, batch_id)
+    items = queries.stale_nodes_at_offset(db, project_id, batch.pinned_offset)
+    return StaleNodesListResponse(
+        items=[
+            StaleNodeItemResponse(
+                node_id=item.node_id,
+                tier=item.tier,
+                name=item.name,
+                parent_id=item.parent_id,
+                reasons=item.reasons,
+                is_destructive=item.is_destructive,
+                topological_order=item.topological_order,
+            )
+            for item in items
+        ]
+    )
+
+
+class AcceptReviewResponse(BaseModel):
+    """Outcome of a successful accept click on the walker detail pane."""
+
+    cleared_count: int
+    regen_job_ids: list[str]
+    is_destructive: bool
+
+
+@router.post(
+    "/{project_id}/review/batches/{batch_id}/nodes/{node_id}/accept",
+    response_model=AcceptReviewResponse,
+)
+def post_review_batch_node_accept(
+    project_id: str,
+    batch_id: str,
+    node_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> AcceptReviewResponse:
+    """Accept a stale node from the walker's detail pane.
+
+    Clears the node's active ledger rows. When any of those rows
+    were ``structural_change``, additionally re-fires the cascade
+    that was halted at destructive time by enqueueing a regen of
+    this node — the new draft's non-destructive
+    ``DraftGenerated`` event then propagates staleness downstream
+    naturally. See :func:`backend.graph.review.accept_review`.
+    """
+    from backend.graph.review import accept_review
+
+    _require_project(db, project_id)
+    _require_batch(db, project_id, batch_id)
+    try:
+        result = accept_review(db, project_id, batch_id, node_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    commit_and_publish(db, project_id)
+    return AcceptReviewResponse(
+        cleared_count=result.cleared_count,
+        regen_job_ids=result.regen_job_ids,
+        is_destructive=result.is_destructive,
+    )
+
+
+@router.get(
+    "/{project_id}/review/batches/{batch_id}/nodes/{node_id}/diff",
+    response_model=NodeDiffResponse,
+)
+def get_review_batch_node_diff(
+    project_id: str,
+    batch_id: str,
+    node_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> NodeDiffResponse:
+    """Return the before/after diff bundle for one node click."""
+    from backend.graph.diff import node_diff_payload
+    from backend.models.node import Node
+
+    _require_project(db, project_id)
+    batch = _require_batch(db, project_id, batch_id)
+    node = db.get(Node, node_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Node not found in project")
+    payload = node_diff_payload(db, project_id, node_id, batch.pinned_offset)
+    return NodeDiffResponse(
+        node_content=DiffSidesResponse(**payload["node_content"]),
+        fragments=[FragmentDiffResponse(**f) for f in payload["fragments"]],
     )

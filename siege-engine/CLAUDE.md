@@ -72,7 +72,7 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
 
 ## Phase status (as of last session)
 
-**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger) + Phase 10 (layered DAG view) + Phase 11 (pending-change queue + structured edit UIs).
+**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger) + Phase 10 (layered DAG view) + Phase 11 (pending-change queue + structured edit UIs) + Phase 12 (batched review + regen-time diff).
 
 - **Phases 0-5.5** — v2 bootstrap chain end-to-end: project →
   expansion → features → requirements → sysarch → subreqs (per
@@ -179,7 +179,40 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
   drag-to-connect and node drag-repositioning — two-tap is the
   working pattern and ELK layout is authoritative.
 
-**Next:** Phase 12 (batched review flow + regen-time diff).
+- **Phase 12 (batched review + regen-time diff)** —
+  Four PRs landed in sequence. **12a** adds a pending-before-
+  vs-pending-after diff on the Document tab for every bootstrap
+  tier's Reject & Regenerate loop. "Before" resolves to the
+  most-recently-discarded draft row (preserved by
+  `_apply_draft_discarded` across cycles), falling back to
+  approved content on first regen and to raw render on brand-
+  new bootstraps. `DraftDiffView` wraps `react-diff-view` with
+  a dark-theme CSS-var scope (`.diff-view-dark`) and a
+  side-by-side / unified toggle. **12b** adds two primary-state
+  tables: `review_batches` pins the latest `GraphEvent.offset`
+  at batch open so the stale-set evaluation is stable under
+  concurrent writes, and `projection_snapshots` caches JSON
+  dumps of `projection_snapshot` at each offset (built via
+  `rebuild_projections` inside a `session.begin_nested()`
+  savepoint that rolls back after serialization so the live
+  projection survives). **12c** ships the walker UI at
+  `/projects/:id/review/:batchId` — tier-ranked ordered list in
+  the left rail, per-node content diff + per-fragment
+  accordion in the detail pane, both rendered via the same
+  `DraftDiffView` the regen loop uses. Fan-in tier is excluded
+  from the walker per the roadmap. **12d** wires the accept
+  endpoint: non-destructive accept clears the node's ledger
+  rows (downstream cascade already fired via Phase 9
+  auto-enqueue); destructive accept (any
+  `structural_change` reason) additionally enqueues a regen
+  for the accepted node, which re-fires the halted cascade
+  naturally via fanout on the new `DraftGenerated` event.
+  Accept is idempotent — a second click is a no-op.
+  Workspace header sprouts a `Review` button that opens a
+  fresh batch; sidebar integration is deliberately minimal
+  pending a multi-batch review flow.
+
+**Next:** Phase 13 (change summaries).
 
 ## V3 spec scope vs V2 implementation
 

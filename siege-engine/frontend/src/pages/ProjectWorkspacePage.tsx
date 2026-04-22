@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { DashboardMenu } from '../components/DashboardMenu';
 import { NavDetail } from '../components/nav/NavDetail';
 import { NavTree } from '../components/nav/NavTree';
@@ -8,6 +8,7 @@ import { tabScope, type Tab } from '../components/nav/tabScope';
 import { useProject } from '../hooks/queries/useProjectQueries';
 import { useProjectEventStream } from '../hooks/queries/useProjectEventStream';
 import { useProjectStructure } from '../hooks/queries/useProjectStructure';
+import { useOpenReviewBatchMutation } from '../hooks/queries/useReviewBatch';
 import { describeApiError } from '../lib/describeApiError';
 
 /**
@@ -37,11 +38,13 @@ const SIDEBAR_OPEN_STORAGE_KEY = 'siege.workspace.sidebarOpen';
 
 function WorkspaceShell({ projectId }: { projectId: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const selectedId = searchParams.get('node');
   const view = searchParams.get('view');
 
   const { data: project, error: projectError } = useProject(projectId);
   const { data: structure, error: navError } = useProjectStructure(projectId);
+  const openReviewMutation = useOpenReviewBatchMutation(projectId);
 
   // One EventSource per mounted project page. Drives all cache
   // invalidations for this project; per-tier query hooks drop
@@ -162,6 +165,21 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
             )}
           </h1>
         </div>
+        <button
+          type="button"
+          onClick={() => {
+            openReviewMutation.mutate(undefined, {
+              onSuccess: (batch) => {
+                navigate(`/projects/${projectId}/review/${batch.id}`);
+              },
+            });
+          }}
+          disabled={openReviewMutation.isPending}
+          className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-40 shrink-0"
+          title="Open a batched review of stale nodes"
+        >
+          Review
+        </button>
         <DashboardMenu projectId={projectId} />
       </header>
 
