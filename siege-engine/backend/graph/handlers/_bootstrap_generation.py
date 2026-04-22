@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from typing import Literal
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -229,7 +230,7 @@ def persist_draft(
     log_handler_name: str,
     review_job_type: str = "",
     *,
-    prior_discard_reason: str = "user_regen",
+    prior_discard_reason: Literal["user_regen", "auto_revision"] = "user_regen",
     enqueue_async_review: bool = True,
 ) -> str:
     """Phase 3: persist the validated draft + telemetry in one transaction.
