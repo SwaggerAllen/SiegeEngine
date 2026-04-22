@@ -256,7 +256,10 @@ def persist_draft(
             append_event(
                 db,
                 project_id,
-                ev.DraftDiscarded(draft_id=prior_pending_id),
+                ev.DraftDiscarded(
+                    draft_id=prior_pending_id,
+                    reason="user_regen",
+                ),
             )
             # Cancel any in-flight review job for the discarded
             # draft so a late-arriving review can't land on the

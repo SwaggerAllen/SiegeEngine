@@ -413,8 +413,16 @@ def _seed_and_discard_draft(
     project_id: str,
     target_id: str,
     content: str,
+    *,
+    reason: str | None = "user_regen",
 ) -> str:
-    """Emit DraftGenerated + DraftDiscarded so the row lands as discarded."""
+    """Emit DraftGenerated + DraftDiscarded so the row lands as discarded.
+
+    ``reason`` defaults to ``"user_regen"`` — the discard path all
+    tests exercised pre-auto-revision. Pass ``None`` to simulate
+    a legacy event (no reason recorded) or ``"auto_revision"`` to
+    simulate an AI-revision intermediate.
+    """
     import secrets
 
     draft_id = f"draft_{secrets.token_hex(8)}"
@@ -429,7 +437,11 @@ def _seed_and_discard_draft(
             batch_id=f"batch_{secrets.token_hex(8)}",
         ),
     )
-    append_event(session, project_id, ev.DraftDiscarded(draft_id=draft_id))
+    append_event(
+        session,
+        project_id,
+        ev.DraftDiscarded(draft_id=draft_id, reason=reason),
+    )
     return draft_id
 
 
@@ -548,4 +560,59 @@ class TestMostRecentDiscardedDraftContent:
                 seeded["comp_billing"],
             )
             is None
+        )
+
+    def test_skips_auto_revision_discards(self, db, seeded):
+        # Phase 12 auto-revision: intermediate passes are discarded
+        # with ``reason="auto_revision"``. The diff helper must skip
+        # them and return the previous user-visible discard instead.
+        import time
+
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>user-visible v1</sysarch>",
+            reason="user_regen",
+        )
+        time.sleep(1.1)
+        # Auto-revision intermediate landed after — most recent by
+        # timestamp, but must be filtered out.
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>mid-loop intermediate</sysarch>",
+            reason="auto_revision",
+        )
+        db.commit()
+        assert (
+            most_recent_discarded_draft_content(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            == "<sysarch>user-visible v1</sysarch>"
+        )
+
+    def test_accepts_legacy_discards_with_null_reason(self, db, seeded):
+        # Events emitted before the reason field was added have
+        # ``reason=None``; the reducer projects NULL. Those are all
+        # user-initiated by construction and must still qualify as
+        # the diff baseline.
+        _seed_and_discard_draft(
+            db,
+            seeded["project_id"],
+            seeded["comp_billing"],
+            "<sysarch>legacy</sysarch>",
+            reason=None,
+        )
+        db.commit()
+        assert (
+            most_recent_discarded_draft_content(
+                db,
+                seeded["project_id"],
+                seeded["comp_billing"],
+            )
+            == "<sysarch>legacy</sysarch>"
         )

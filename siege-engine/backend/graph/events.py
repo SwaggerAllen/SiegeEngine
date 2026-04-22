@@ -227,6 +227,19 @@ class DraftApproved(_EventBase):
 class DraftDiscarded(_EventBase):
     event_type: Literal["DraftDiscarded"] = "DraftDiscarded"
     draft_id: str
+    # Why the draft was discarded. ``user_regen`` is a user-initiated
+    # Reject & Regenerate on a pending draft. ``auto_revision`` is
+    # an intermediate discard by the AI-driven auto-revision loop
+    # (the draft was generated, AI-reviewed, and discarded without
+    # the user ever seeing it as pending). ``None`` on legacy events
+    # from before the field was added — those are all user-initiated
+    # discards by construction (auto-revision didn't exist yet).
+    #
+    # The read-side diff helper filters on this: "previous-version"
+    # baselines are drawn from ``user_regen`` / legacy discards only;
+    # ``auto_revision`` intermediates are skipped so the default diff
+    # shows the net change across the whole run, not each pass.
+    reason: Literal["user_regen", "auto_revision"] | None = None
 
 
 class DraftReviewUpdated(_EventBase):

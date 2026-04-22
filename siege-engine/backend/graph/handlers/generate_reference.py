@@ -175,7 +175,11 @@ async def generate_reference(payload: dict) -> None:
     db = SessionLocal()
     try:
         if prior_pending_id is not None:
-            append_event(db, project_id, ev.DraftDiscarded(draft_id=prior_pending_id))
+            append_event(
+                db,
+                project_id,
+                ev.DraftDiscarded(draft_id=prior_pending_id, reason="user_regen"),
+            )
 
         new_draft_id = _new_draft_id()
         new_batch_id = _new_batch_id()

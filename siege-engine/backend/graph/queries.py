@@ -1254,18 +1254,28 @@ def most_recent_discarded_draft_content(
     project_id: str,
     target_id: str,
 ) -> str | None:
-    """Return the content of the most recent discarded draft for ``target_id``.
+    """Return the content of the most recent user-visible discarded draft.
 
-    Every Reject & Regenerate cycle flips the prior pending draft's
-    status to ``"discarded"`` (``_apply_draft_discarded`` keeps the
-    row, only the status changes). The Phase 12 regen-time diff uses
+    Every user-initiated Reject & Regenerate cycle flips the prior
+    pending draft's status to ``"discarded"``
+    (``_apply_draft_discarded`` keeps the row, only the status and
+    ``discard_reason`` change). The Phase 12 regen-time diff uses
     the most recent such row as the "before" side of the pending-
-    before-vs-pending-after diff; when no discarded draft exists yet
-    — e.g. on the very first regen after approval — callers fall
-    back to the node's approved content.
+    before-vs-pending-after diff; when no qualifying discarded draft
+    exists yet — e.g. on the very first regen after approval —
+    callers fall back to the node's approved content.
 
-    Returns ``None`` when the target has never had a discarded
-    draft, matching the first-regen / brand-new-bootstrap case.
+    Auto-revision intermediates (drafts generated, AI-reviewed, and
+    discarded within the same run without ever reaching pending
+    status) are filtered out — the user never saw them, so they're
+    the wrong baseline for the diff's "before" side. The filter
+    accepts ``discard_reason='user_regen'`` and NULL (legacy events
+    from before the field was added — all user-initiated by
+    construction).
+
+    Returns ``None`` when the target has never had a user-visible
+    discarded draft, matching the first-regen / brand-new-bootstrap
+    case.
     """
     row = session.execute(
         select(Draft)
@@ -1273,6 +1283,10 @@ def most_recent_discarded_draft_content(
             Draft.project_id == project_id,
             Draft.target_id == target_id,
             Draft.status == "discarded",
+            or_(
+                Draft.discard_reason.is_(None),
+                Draft.discard_reason == "user_regen",
+            ),
         )
         .order_by(Draft.updated_at.desc(), Draft.id.desc())
         .limit(1)

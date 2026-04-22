@@ -453,7 +453,11 @@ def bootstrap_discard(
             status_code=409,
             detail=f"Draft is {draft.status!r}, not pending",
         )
-    append_event(db, project_id, ev.DraftDiscarded(draft_id=draft_id))
+    append_event(
+        db,
+        project_id,
+        ev.DraftDiscarded(draft_id=draft_id, reason="user_regen"),
+    )
     commit_and_publish(db, project_id)
     pipeline_queue.enqueue(
         db,
@@ -597,10 +601,18 @@ def bootstrap_reset(
 
     drafts_discarded = 0
     for draft in pending_drafts:
-        append_event(db, project_id, ev.DraftDiscarded(draft_id=draft.id))
+        append_event(
+            db,
+            project_id,
+            ev.DraftDiscarded(draft_id=draft.id, reason="user_regen"),
+        )
         drafts_discarded += 1
     if own_pending is not None:
-        append_event(db, project_id, ev.DraftDiscarded(draft_id=own_pending.id))
+        append_event(
+            db,
+            project_id,
+            ev.DraftDiscarded(draft_id=own_pending.id, reason="user_regen"),
+        )
         drafts_discarded += 1
 
     additional_drafts = (
@@ -610,7 +622,11 @@ def bootstrap_reset(
     )
     for maybe_draft in additional_drafts:
         if maybe_draft is not None:
-            append_event(db, project_id, ev.DraftDiscarded(draft_id=maybe_draft.id))
+            append_event(
+                db,
+                project_id,
+                ev.DraftDiscarded(draft_id=maybe_draft.id, reason="user_regen"),
+            )
             drafts_discarded += 1
 
     for dn in downstream_nodes:
