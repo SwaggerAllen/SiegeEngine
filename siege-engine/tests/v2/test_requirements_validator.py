@@ -15,12 +15,34 @@ def _parse(raw: str) -> TagNode:
     return extract_tag_tree(raw, "requirements")
 
 
-def _covers(*feat_ids: str) -> str:
-    return "<covers>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</covers>"
+def _owns(*feat_ids: str) -> str:
+    return "<owns>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</owns>"
 
 
-# Fixed known-id set used by most happy-path tests. Values are
-# stable across tests so test XML can reference them freely.
+def _supports(*feat_ids: str) -> str:
+    return "<supports>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</supports>"
+
+
+def _resp(
+    name: str,
+    intent: str,
+    owns_ids: tuple[str, ...],
+    supports_ids: tuple[str, ...] = (),
+) -> str:
+    """Build a single <responsibility> fragment for test fixtures."""
+    parts = [
+        "<responsibility>",
+        f"<name>{name}</name>",
+        f"<intent>{intent}</intent>",
+        _owns(*owns_ids),
+    ]
+    if supports_ids:
+        parts.append(_supports(*supports_ids))
+    parts.append("</responsibility>")
+    return "".join(parts)
+
+
+# Fixed known-id set used by most happy-path tests.
 KNOWN = {"feat_abc12345", "feat_def67890", "feat_xyz00001"}
 
 
@@ -28,66 +50,96 @@ class TestValidateRequirementsHappyPath:
     def test_single_responsibility(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility>"
-            "<name>User Authentication</name>"
-            "<intent>Establish the identity of a caller and make it "
-            "available to downstream logic.</intent>"
-            + _covers("feat_abc12345", "feat_def67890", "feat_xyz00001")
-            + "</responsibility>"
-            "</requirements>"
+            + _resp(
+                "User Authentication",
+                "Establish the identity of a caller and make it available to downstream logic.",
+                ("feat_abc12345", "feat_def67890", "feat_xyz00001"),
+            )
+            + "</requirements>"
         )
         resps = validate_requirements(tree, known_feature_ids=KNOWN)
         assert len(resps) == 1
         assert resps[0].name == "User Authentication"
-        assert resps[0].intent == (
-            "Establish the identity of a caller and make it available to downstream logic."
-        )
+        assert set(resps[0].owns) == KNOWN
+        assert resps[0].supports == ()
+        # Back-compat property: covers = owns + supports
         assert set(resps[0].covers) == KNOWN
 
     def test_multiple_preserve_order(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Identify callers.</intent>"
-            + _covers("feat_abc12345")
-            + "</responsibility>"
-            "<responsibility><name>Billing</name><intent>Bill accounts.</intent>"
-            + _covers("feat_def67890")
-            + "</responsibility>"
-            "<responsibility><name>Telemetry</name><intent>Record usage.</intent>"
-            + _covers("feat_abc12345", "feat_def67890", "feat_xyz00001")
-            + "</responsibility>"
-            "</requirements>"
+            + _resp("Auth", "Identify callers.", ("feat_abc12345",))
+            + _resp("Billing", "Bill accounts.", ("feat_def67890",))
+            + _resp("Telemetry", "Record usage.", ("feat_xyz00001",))
+            + "</requirements>"
         )
         resps = validate_requirements(tree, known_feature_ids=KNOWN)
         assert [r.name for r in resps] == ["Auth", "Billing", "Telemetry"]
 
-    def test_many_to_many_feature_appears_under_multiple_resps(self):
-        # feat_abc12345 is covered by both Auth and Telemetry. That
-        # should be fine — the decomposition relationship is
-        # many-to-many by design.
+    def test_feature_owned_by_one_supported_by_many(self):
+        # Legitimate many-to-many: feat_abc12345 is owned by Auth
+        # exclusively, but Telemetry and Billing both support it
+        # (they run alongside authenticated flows).
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Identify.</intent>"
-            + _covers("feat_abc12345", "feat_def67890")
-            + "</responsibility>"
-            "<responsibility><name>Telemetry</name><intent>Record.</intent>"
-            + _covers("feat_abc12345", "feat_def67890", "feat_xyz00001")
-            + "</responsibility>"
+            + _resp("Auth", "Identify.", ("feat_abc12345",), ())
+            + _resp(
+                "Telemetry",
+                "Record.",
+                ("feat_def67890",),
+                ("feat_abc12345",),
+            )
+            + _resp(
+                "Billing",
+                "Bill.",
+                ("feat_xyz00001",),
+                ("feat_abc12345",),
+            )
+            + "</requirements>"
+        )
+        resps = validate_requirements(tree, known_feature_ids=KNOWN)
+        # One owner, two supporters, no error.
+        owners = [r.name for r in resps if "feat_abc12345" in r.owns]
+        supporters = [r.name for r in resps if "feat_abc12345" in r.supports]
+        assert owners == ["Auth"]
+        assert sorted(supporters) == ["Billing", "Telemetry"]
+
+    def test_supports_is_optional(self):
+        # A responsibility may omit <supports> entirely.
+        tree = _parse(
+            "<requirements>"
+            + _resp("Auth", "Identify.", ("feat_abc12345",))
+            + _resp("Billing", "Bill.", ("feat_def67890", "feat_xyz00001"))
+            + "</requirements>"
+        )
+        resps = validate_requirements(tree, known_feature_ids=KNOWN)
+        assert all(r.supports == () for r in resps)
+
+    def test_supports_may_be_empty_block(self):
+        # An explicit empty <supports/> block is also fine — the
+        # generator may emit one when the prompt instructs it to
+        # always include the element.
+        tree = _parse(
+            "<requirements>"
+            "<responsibility>"
+            "<name>Auth</name><intent>Identify.</intent>"
+            + _owns("feat_abc12345", "feat_def67890", "feat_xyz00001")
+            + "<supports></supports>"
+            "</responsibility>"
             "</requirements>"
         )
         resps = validate_requirements(tree, known_feature_ids=KNOWN)
-        assert "feat_abc12345" in resps[0].covers
-        assert "feat_abc12345" in resps[1].covers
+        assert resps[0].supports == ()
 
     def test_multi_sentence_intent_preserved(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility>"
-            "<name>Telemetry</name>"
-            "<intent>Record every LLM call. Flag latency spikes. Retain for 30 days.</intent>"
-            + _covers("feat_abc12345", "feat_def67890", "feat_xyz00001")
-            + "</responsibility>"
-            "</requirements>"
+            + _resp(
+                "Telemetry",
+                "Record every LLM call. Flag latency spikes. Retain for 30 days.",
+                ("feat_abc12345", "feat_def67890", "feat_xyz00001"),
+            )
+            + "</requirements>"
         )
         resps = validate_requirements(tree, known_feature_ids=KNOWN)
         assert resps[0].intent == "Record every LLM call. Flag latency spikes. Retain for 30 days."
@@ -95,23 +147,15 @@ class TestValidateRequirementsHappyPath:
 
 class TestValidateRequirementsRootLevel:
     def test_wrong_root_tag_rejected(self):
-        # Construct a TagNode directly with the wrong root tag so
-        # we test validator behavior in isolation from the parser.
-        tree = TagNode(
-            tag="features",
-            text="",
-            children=[],
-        )
+        tree = TagNode(tag="features", text="", children=[])
         with pytest.raises(ValidationError, match="Expected root tag <requirements>"):
             validate_requirements(tree, known_feature_ids=set())
 
     def test_unknown_child_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent>"
-            + _covers("feat_abc12345", "feat_def67890", "feat_xyz00001")
-            + "</responsibility>"
-            "<widget>nope</widget>"
+            + _resp("Auth", "Ok.", ("feat_abc12345", "feat_def67890", "feat_xyz00001"))
+            + "<widget>nope</widget>"
             "</requirements>"
         )
         with pytest.raises(ValidationError, match="unexpected child <widget>"):
@@ -128,7 +172,7 @@ class TestValidateResponsibilityStructure:
         tree = _parse(
             "<requirements>"
             "<responsibility><intent>No name here.</intent>"
-            + _covers("feat_abc12345")
+            + _owns("feat_abc12345")
             + "</responsibility>"
             "</requirements>"
         )
@@ -138,19 +182,19 @@ class TestValidateResponsibilityStructure:
     def test_missing_intent_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name>" + _covers("feat_abc12345") + "</responsibility>"
+            "<responsibility><name>Auth</name>" + _owns("feat_abc12345") + "</responsibility>"
             "</requirements>"
         )
         with pytest.raises(ValidationError, match="missing an <intent>"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
-    def test_missing_covers_rejected(self):
+    def test_missing_owns_rejected(self):
         tree = _parse(
             "<requirements>"
             "<responsibility><name>Auth</name><intent>Ok.</intent></responsibility>"
             "</requirements>"
         )
-        with pytest.raises(ValidationError, match="missing a <covers>"):
+        with pytest.raises(ValidationError, match="missing an <owns>"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
     def test_multiple_names_rejected(self):
@@ -158,7 +202,7 @@ class TestValidateResponsibilityStructure:
             "<requirements>"
             "<responsibility>"
             "<name>Auth</name><name>Auth2</name>"
-            "<intent>Ok.</intent>" + _covers("feat_abc12345") + "</responsibility>"
+            "<intent>Ok.</intent>" + _owns("feat_abc12345") + "</responsibility>"
             "</requirements>"
         )
         with pytest.raises(ValidationError, match="2 <name> children"):
@@ -170,31 +214,45 @@ class TestValidateResponsibilityStructure:
             "<responsibility>"
             "<name>Auth</name>"
             "<intent>First.</intent><intent>Second.</intent>"
-            + _covers("feat_abc12345")
+            + _owns("feat_abc12345")
             + "</responsibility>"
             "</requirements>"
         )
         with pytest.raises(ValidationError, match="2 <intent> children"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
-    def test_multiple_covers_rejected(self):
+    def test_multiple_owns_rejected(self):
         tree = _parse(
             "<requirements>"
             "<responsibility>"
             "<name>Auth</name><intent>Ok.</intent>"
-            + _covers("feat_abc12345")
-            + _covers("feat_def67890")
+            + _owns("feat_abc12345")
+            + _owns("feat_def67890")
             + "</responsibility>"
             "</requirements>"
         )
-        with pytest.raises(ValidationError, match="2 <covers> children"):
+        with pytest.raises(ValidationError, match="2 <owns> children"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345", "feat_def67890"})
+
+    def test_multiple_supports_rejected(self):
+        tree = _parse(
+            "<requirements>"
+            "<responsibility>"
+            "<name>Auth</name><intent>Ok.</intent>"
+            + _owns("feat_abc12345")
+            + _supports("feat_def67890")
+            + _supports("feat_xyz00001")
+            + "</responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="2 <supports> children"):
+            validate_requirements(tree, known_feature_ids=KNOWN)
 
     def test_empty_name_rejected(self):
         tree = _parse(
             "<requirements>"
             "<responsibility><name> </name><intent>Ok.</intent>"
-            + _covers("feat_abc12345")
+            + _owns("feat_abc12345")
             + "</responsibility>"
             "</requirements>"
         )
@@ -205,7 +263,7 @@ class TestValidateResponsibilityStructure:
         tree = _parse(
             "<requirements>"
             "<responsibility><name>Auth</name><intent> </intent>"
-            + _covers("feat_abc12345")
+            + _owns("feat_abc12345")
             + "</responsibility>"
             "</requirements>"
         )
@@ -219,7 +277,7 @@ class TestValidateResponsibilityStructure:
             "<name>Auth</name>"
             "<intent>Ok.</intent>"
             "<rationale>should not be here</rationale>"
-            + _covers("feat_abc12345")
+            + _owns("feat_abc12345")
             + "</responsibility>"
             "</requirements>"
         )
@@ -227,22 +285,22 @@ class TestValidateResponsibilityStructure:
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
 
-class TestValidateCovers:
-    def test_empty_covers_rejected(self):
+class TestValidateOwnsBlock:
+    def test_empty_owns_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent><covers></covers>"
+            "<responsibility><name>Auth</name><intent>Ok.</intent><owns></owns>"
             "</responsibility>"
             "</requirements>"
         )
-        with pytest.raises(ValidationError, match="empty <covers>"):
+        with pytest.raises(ValidationError, match="empty <owns>"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
-    def test_covers_with_unknown_tag_rejected(self):
+    def test_owns_with_unknown_tag_rejected(self):
         tree = _parse(
             "<requirements>"
             "<responsibility><name>Auth</name><intent>Ok.</intent>"
-            '<covers><feat id="feat_abc12345"/><widget/></covers>'
+            '<owns><feat id="feat_abc12345"/><widget/></owns>'
             "</responsibility>"
             "</requirements>"
         )
@@ -253,7 +311,7 @@ class TestValidateCovers:
         tree = _parse(
             "<requirements>"
             "<responsibility><name>Auth</name><intent>Ok.</intent>"
-            "<covers><feat/></covers>"
+            "<owns><feat/></owns>"
             "</responsibility>"
             "</requirements>"
         )
@@ -264,47 +322,98 @@ class TestValidateCovers:
         tree = _parse(
             "<requirements>"
             "<responsibility><name>Auth</name><intent>Ok.</intent>"
-            + _covers("feat_unknown1")
+            + _owns("feat_unknown1")
             + "</responsibility>"
             "</requirements>"
         )
         with pytest.raises(ValidationError, match="unknown feature id"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
-    def test_duplicate_feature_in_same_covers_rejected(self):
+    def test_duplicate_feature_in_same_owns_rejected(self):
         tree = _parse(
             "<requirements>"
             "<responsibility><name>Auth</name><intent>Ok.</intent>"
-            + _covers("feat_abc12345", "feat_abc12345")
+            + _owns("feat_abc12345", "feat_abc12345")
             + "</responsibility>"
             "</requirements>"
         )
         with pytest.raises(ValidationError, match="duplicate feature id"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
-    def test_feature_not_covered_anywhere_rejected(self):
-        # feat_def67890 exists but no responsibility covers it.
+
+class TestSingleOwnerRule:
+    """The single-owner rule — every feature has exactly one <owns> home."""
+
+    def test_two_owners_for_one_feature_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent>"
-            + _covers("feat_abc12345")
-            + "</responsibility>"
-            "</requirements>"
+            + _resp("Auth", "Identify.", ("feat_abc12345",))
+            + _resp("Telemetry", "Record.", ("feat_abc12345",))
+            + _resp("Billing", "Bill.", ("feat_def67890", "feat_xyz00001"))
+            + "</requirements>"
         )
-        with pytest.raises(ValidationError, match="does not cover every feature"):
+        with pytest.raises(ValidationError, match="multiple owners"):
+            validate_requirements(tree, known_feature_ids=KNOWN)
+
+    def test_feature_listed_only_in_supports_is_missing_owner(self):
+        # feat_def67890 appears only in a supports block, never in
+        # an owns block — counts as no owner.
+        tree = _parse(
+            "<requirements>"
+            + _resp("Auth", "Identify.", ("feat_abc12345", "feat_xyz00001"), ("feat_def67890",))
+            + "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="features with no owner"):
+            validate_requirements(tree, known_feature_ids=KNOWN)
+
+    def test_feature_in_both_owns_and_supports_of_same_resp_rejected(self):
+        tree = _parse(
+            "<requirements>"
+            + _resp(
+                "Auth",
+                "Identify.",
+                ("feat_abc12345", "feat_def67890", "feat_xyz00001"),
+                ("feat_abc12345",),
+            )
+            + "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="in both <owns> and <supports>"):
+            validate_requirements(tree, known_feature_ids=KNOWN)
+
+    def test_feature_not_in_any_block_is_missing_owner(self):
+        # feat_def67890 is declared known but appears nowhere.
+        tree = _parse(
+            "<requirements>" + _resp("Auth", "Identify.", ("feat_abc12345",)) + "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="features with no owner"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345", "feat_def67890"})
 
-    def test_coverage_check_passes_when_union_covers_all(self):
-        # Two resps together cover two features; validator accepts.
+    def test_valid_distribution_passes(self):
+        # feat_abc12345 owned by Auth, feat_def67890 owned by Billing;
+        # Telemetry supports both without claiming ownership of either.
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent>"
-            + _covers("feat_abc12345")
-            + "</responsibility>"
-            "<responsibility><name>Billing</name><intent>Ok.</intent>"
-            + _covers("feat_def67890")
-            + "</responsibility>"
-            "</requirements>"
+            + _resp("Auth", "Identify.", ("feat_abc12345",))
+            + _resp("Billing", "Bill.", ("feat_def67890", "feat_xyz00001"))
+            + _resp(
+                "Telemetry",
+                "Record.",
+                ("feat_xyz00001",),  # can't own xyz if Billing does
+            )
+            + "</requirements>"
         )
-        resps = validate_requirements(tree, known_feature_ids={"feat_abc12345", "feat_def67890"})
-        assert len(resps) == 2
+        # Telemetry owning xyz would collide with Billing — adjust.
+        tree = _parse(
+            "<requirements>"
+            + _resp("Auth", "Identify.", ("feat_abc12345",))
+            + _resp("Billing", "Bill.", ("feat_def67890",))
+            + _resp(
+                "Telemetry",
+                "Record.",
+                ("feat_xyz00001",),
+                ("feat_abc12345", "feat_def67890"),
+            )
+            + "</requirements>"
+        )
+        resps = validate_requirements(tree, known_feature_ids=KNOWN)
+        assert len(resps) == 3

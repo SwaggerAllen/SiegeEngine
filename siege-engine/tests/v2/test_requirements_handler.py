@@ -5,7 +5,7 @@ handler is a near-clone, so these tests mirror its structure:
 happy path, regen, CLI failure, parse-validate retry loop,
 telemetry, project settings timeout wiring. Plus a couple of
 reqs-specific tests for the features-summary plumbing and the
-``<covers>`` many-to-many coverage check.
+``<owns>`` many-to-many coverage check.
 
 ``cli_manager.generate_with_usage`` is monkeypatched so the real
 CLI never runs; tests feed deterministic text through the parse-
@@ -137,13 +137,13 @@ def seeded_feat_ids(shared_session_factory, seeded_project) -> list[str]:
 
 
 def _covers_all(feat_ids: list[str]) -> str:
-    """Build a ``<covers>`` block listing every known feature id.
+    """Build a ``<owns>`` block listing every known feature id.
 
     Using all-features-per-responsibility keeps the coverage
     check happy in a maximally-boring way. Tests that want to
     exercise specific subsets can build their own covers blocks.
     """
-    return "<covers>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</covers>"
+    return "<owns>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</owns>"
 
 
 def _reqs_xml(feat_ids: list[str], *entries: tuple[str, str]) -> str:
@@ -232,7 +232,7 @@ class TestHappyPath:
         assert "Billing" in prompt
         assert "Users pay for plans." in prompt
         assert "Auth" in prompt
-        # Feature IDs must appear in the prompt — LLM echoes them in <covers>
+        # Feature IDs must appear in the prompt — LLM echoes them in <owns>
         for fid in seeded_feat_ids:
             assert fid in prompt
 
@@ -349,7 +349,7 @@ class TestParseValidateRetry:
     def test_retry_on_missing_covers_block(
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        # First attempt: no <covers> block (regression of the v2
+        # First attempt: no <owns> block (regression of the v2
         # retrofit — the LLM forgot to include it).
         first_bad = (
             "<introduction>stub</introduction>"
@@ -363,14 +363,14 @@ class TestParseValidateRetry:
         assert len(calls) == 2
         retry_prompt = calls[1]["prompt"]
         # The retry prompt surfaces the specific validation error.
-        assert "missing a <covers>" in retry_prompt
+        assert "missing an <owns>" in retry_prompt
 
     def test_retry_on_missing_feature_coverage(
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
         # First attempt: covers only the first feature, leaving
         # the second uncovered.
-        partial_covers = "<covers>" + f'<feat id="{seeded_feat_ids[0]}"/>' + "</covers>"
+        partial_covers = "<owns>" + f'<feat id="{seeded_feat_ids[0]}"/>' + "</owns>"
         first_bad = (
             "<introduction>stub</introduction>"
             "<requirements>"
@@ -382,14 +382,14 @@ class TestParseValidateRetry:
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 2
         retry_prompt = calls[1]["prompt"]
-        assert "does not cover every feature" in retry_prompt
+        assert "features with no owner" in retry_prompt
         # The uncovered id is named in the error feedback
         assert seeded_feat_ids[1] in retry_prompt
 
     def test_retry_on_unknown_feature_id(
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        fake_covers = '<covers><feat id="feat_bogus01"/></covers>'
+        fake_covers = '<owns><feat id="feat_bogus01"/></owns>'
         first_bad = (
             "<introduction>stub</introduction>"
             "<requirements>"

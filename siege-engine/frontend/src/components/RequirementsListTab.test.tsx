@@ -15,12 +15,12 @@ describe('RequirementsListTab', () => {
       '<responsibility>' +
       '<name>Credential Verification</name>' +
       '<intent>Verify identity and establish sessions.</intent>' +
-      '<covers><feat id="feat_login01"/></covers>' +
+      '<owns><feat id="feat_login01"/></owns>' +
       '</responsibility>' +
       '<responsibility>' +
       '<name>Billing Lifecycle</name>' +
       '<intent>Own invoice state transitions.</intent>' +
-      '<covers><feat id="feat_billing"/></covers>' +
+      '<owns><feat id="feat_billing"/></owns>' +
       '</responsibility>' +
       '</requirements>';
     render(

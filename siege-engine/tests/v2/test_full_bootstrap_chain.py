@@ -148,6 +148,11 @@ def _features_xml() -> str:
         "<features>"
         "<feature><name>Billing</name><intent>Users pay for plans.</intent></feature>"
         "<feature><name>Auth</name><intent>Users sign in.</intent></feature>"
+        # Two additional features so the requirements stub can hand
+        # each of the four synthetic responsibilities a distinct
+        # primary-owned feature under the single-owner rule.
+        "<feature><name>Admin</name><intent>Admins configure the tenant.</intent></feature>"
+        "<feature><name>Reports</name><intent>Users view usage reports.</intent></feature>"
         "</features>"
         "<vocabulary>"
         '<term name="boulder" scope="project">'
@@ -175,7 +180,6 @@ def _requirements_xml(session, project_id: str) -> str:
             .order_by(Node.display_order, Node.id)
         )
     ]
-    covers = "<covers>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</covers>"
     entries = [
         ("Authentication", "Identify callers and make them available downstream."),
         ("BillingDomain", "Handle payments and subscription state."),
@@ -185,10 +189,32 @@ def _requirements_xml(session, project_id: str) -> str:
         ("BillingUI", "Render a dashboard view of billing state."),
         ("Foundation", "Own project root, build config, shared utilities."),
     ]
-    inner = "".join(
-        f"<responsibility><name>{name}</name><intent>{intent}</intent>{covers}</responsibility>"
-        for name, intent in entries
-    )
+    # Distribute ownership across responsibilities so the
+    # single-owner rule passes: each responsibility primary-owns
+    # the feature at its index (wrapping if entries > features)
+    # and supports all the others. Tests seed at least as many
+    # features as entries for this to produce a valid doc.
+    if len(feat_ids) < len(entries):
+        raise AssertionError(
+            "reqs fixture needs at least one feature per responsibility; "
+            f"got {len(feat_ids)} features for {len(entries)} responsibilities"
+        )
+
+    rows: list[str] = []
+    for i, (name, intent) in enumerate(entries):
+        owned_id = feat_ids[i]
+        supported_ids = tuple(f for f in feat_ids if f != owned_id)
+        owns_block = "<owns>" + f'<feat id="{owned_id}"/>' + "</owns>"
+        supports_block = (
+            ("<supports>" + "".join(f'<feat id="{fid}"/>' for fid in supported_ids) + "</supports>")
+            if supported_ids
+            else ""
+        )
+        rows.append(
+            f"<responsibility><name>{name}</name><intent>{intent}</intent>"
+            f"{owns_block}{supports_block}</responsibility>"
+        )
+    inner = "".join(rows)
     return (
         "<introduction>Chain integration test: stub intro.</introduction>"
         f"<requirements>{inner}</requirements>"
@@ -863,7 +889,7 @@ class TestFullBootstrapChain:
                     )
                 ).scalars()
             )
-            assert len(feats) == 2
+            assert len(feats) == 4
             # Phase 6 adds a BillingUI resp/comp as the presentational
             # slice alongside the three pre-existing domain resps.
             assert len(top_resps) == 4
