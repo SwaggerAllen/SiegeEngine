@@ -28,6 +28,12 @@ const DraftSchema = z.object({
 const ResponseSchema = z.object({
   node: NodeSchema,
   pending_draft: DraftSchema.nullable(),
+  // Phase 12 — regen-time diff. Content of the most recently
+  // discarded draft for this target, or ``null`` when the target
+  // has never had a discarded draft (brand-new bootstrap, or the
+  // first regen after approval — in which case the panel falls
+  // back to the approved node content as the diff's "before").
+  previous_draft_content: z.string().nullish().transform((v) => v ?? null),
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
   latest_telemetry: TelemetrySummarySchema.nullable(),

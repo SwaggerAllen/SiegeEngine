@@ -62,6 +62,7 @@ function detail(overrides: Partial<ReferenceDetail> = {}): ReferenceDetail {
       updated_at: '2026-04-16T00:00:00',
     },
     pending_draft: null,
+    previous_draft_content: null,
     generation_status: 'idle',
     last_error: null,
     latest_telemetry: null,

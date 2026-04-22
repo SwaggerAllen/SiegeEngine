@@ -1115,3 +1115,39 @@ def feedback_history(session: Session, project_id: str, target_node_id: str) -> 
 
     entries.sort(key=lambda e: e.created_at)
     return entries
+
+
+# ── Phase 12: regen-time diff ────────────────────────────────────────
+
+
+def most_recent_discarded_draft_content(
+    session: Session,
+    project_id: str,
+    target_id: str,
+) -> str | None:
+    """Return the content of the most recent discarded draft for ``target_id``.
+
+    Every Reject & Regenerate cycle flips the prior pending draft's
+    status to ``"discarded"`` (``_apply_draft_discarded`` keeps the
+    row, only the status changes). The Phase 12 regen-time diff uses
+    the most recent such row as the "before" side of the pending-
+    before-vs-pending-after diff; when no discarded draft exists yet
+    — e.g. on the very first regen after approval — callers fall
+    back to the node's approved content.
+
+    Returns ``None`` when the target has never had a discarded
+    draft, matching the first-regen / brand-new-bootstrap case.
+    """
+    row = session.execute(
+        select(Draft)
+        .where(
+            Draft.project_id == project_id,
+            Draft.target_id == target_id,
+            Draft.status == "discarded",
+        )
+        .order_by(Draft.updated_at.desc(), Draft.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    return row.content or ""

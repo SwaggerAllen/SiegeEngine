@@ -177,6 +177,11 @@ class TelemetrySummary(BaseModel):
 class ExpansionResponse(BaseModel):
     node: ExpansionNodeResponse
     pending_draft: ExpansionDraftResponse | None
+    # Phase 12 — regen-time diff "before" content. Contains the
+    # most recently discarded draft's content for this target,
+    # or ``None`` when no prior discarded draft exists (brand-new
+    # bootstrap or first regen after approval).
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -448,6 +453,7 @@ class ReqsDraftResponse(BaseModel):
 class ReqsResponse(BaseModel):
     node: ReqsNodeResponse
     pending_draft: ReqsDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -604,6 +610,7 @@ class SysarchDraftResponse(BaseModel):
 class SysarchResponse(BaseModel):
     node: SysarchNodeResponse
     pending_draft: SysarchDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1054,6 +1061,7 @@ class SubreqsDraftResponse(BaseModel):
 class SubreqsResponse(BaseModel):
     node: SubreqsNodeResponse
     pending_draft: SubreqsDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1311,6 +1319,7 @@ class ComparchDraftResponse(BaseModel):
 class ComparchResponse(BaseModel):
     node: ComparchNodeResponse
     pending_draft: ComparchDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1560,6 +1569,7 @@ class SubcomparchDraftResponse(BaseModel):
 class SubcomparchResponse(BaseModel):
     node: SubcomparchNodeResponse
     pending_draft: SubcomparchDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -2604,6 +2614,7 @@ class ImplDraftResponse(BaseModel):
 class ImplResponse(BaseModel):
     node: ImplNodeResponse
     pending_draft: ImplDraftResponse | None
+    previous_draft_content: str | None = None
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None

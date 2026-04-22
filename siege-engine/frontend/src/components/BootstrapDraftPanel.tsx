@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
 import { DocumentReviewTabs, type ExtraTab } from './DocumentReviewTabs';
+import { DraftDiffView } from './DraftDiffView';
 import { FeedbackHistory } from './FeedbackHistory';
 import { GenerationClock } from './GenerationClock';
 import { XmlDocument } from './xml';
@@ -68,6 +69,14 @@ export type BootstrapGenerationStatus = 'idle' | 'running' | 'failed';
 export interface BootstrapPanelData {
   node: BootstrapPanelNode;
   pending_draft: BootstrapPanelDraft | null;
+  /**
+   * Phase 12 — regen-time diff "before" content. The most recently
+   * discarded draft's content for this target, or ``null`` when no
+   * prior discarded draft exists (brand-new bootstrap, or the first
+   * regen after approval — in which case the panel falls back to
+   * the approved node content for the diff's "before" side).
+   */
+  previous_draft_content: string | null;
   generation_status: BootstrapGenerationStatus;
   last_error: string | null;
   latest_telemetry: BootstrapPanelTelemetry | null;
@@ -274,6 +283,94 @@ function ResetApprovedStateControl({
 }
 
 /**
+ * Document tab body for the pending-draft state. Wraps the raw
+ * ``XmlDocument`` render in a Diff | Raw toggle so the user can
+ * see what changed on a Reject & Regenerate before re-reading the
+ * whole thing. Defaults to Diff when a prior version (discarded
+ * draft or approved content) exists, to Raw otherwise.
+ *
+ * Lives inline rather than in its own file because it's a thin
+ * view-mode switch — pure presentation over the same data the
+ * panel already has.
+ */
+function PendingDraftDocumentTab({
+  pendingContent,
+  previousDraftContent,
+  approvedContent,
+  renderers,
+}: {
+  pendingContent: string;
+  previousDraftContent: string | null;
+  approvedContent: string | null;
+  renderers: XmlRendererMap;
+}) {
+  // "Before" side of the diff: the most recently discarded draft
+  // if one exists (the typical case across multiple Reject &
+  // Regenerate cycles), otherwise the approved content (the
+  // first-regen case). ``null`` when neither exists — brand-new
+  // bootstrap, in which case we hide the Diff button entirely.
+  const before =
+    previousDraftContent !== null && previousDraftContent !== ''
+      ? previousDraftContent
+      : approvedContent && approvedContent.trim()
+        ? approvedContent
+        : null;
+  const diffLabel =
+    previousDraftContent !== null && previousDraftContent !== ''
+      ? 'Comparing against the previous draft.'
+      : 'Comparing against the approved content (first regeneration).';
+
+  const hasDiff = before !== null;
+  const [mode, setMode] = useState<'diff' | 'raw'>(hasDiff ? 'diff' : 'raw');
+
+  return (
+    <div className="space-y-3">
+      {hasDiff && (
+        <div
+          className="inline-flex text-xs rounded border border-gray-700 overflow-hidden"
+          role="group"
+          aria-label="Document view"
+        >
+          <button
+            type="button"
+            onClick={() => setMode('diff')}
+            aria-pressed={mode === 'diff'}
+            className={`px-3 py-1 ${
+              mode === 'diff'
+                ? 'bg-gray-700 text-gray-100'
+                : 'bg-gray-900 text-gray-400 hover:bg-gray-800'
+            }`}
+          >
+            Diff
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('raw')}
+            aria-pressed={mode === 'raw'}
+            className={`px-3 py-1 border-l border-gray-700 ${
+              mode === 'raw'
+                ? 'bg-gray-700 text-gray-100'
+                : 'bg-gray-900 text-gray-400 hover:bg-gray-800'
+            }`}
+          >
+            Raw
+          </button>
+        </div>
+      )}
+      {mode === 'diff' && hasDiff ? (
+        <DraftDiffView
+          before={before}
+          after={pendingContent}
+          label={diffLabel}
+        />
+      ) : (
+        <XmlDocument content={pendingContent} renderers={renderers} />
+      )}
+    </div>
+  );
+}
+
+/**
  * The four-state bootstrap-doc panel shell.
  *
  * Each of the v2 bootstrap docs (expansion, requirements, sysarch,
@@ -320,6 +417,7 @@ export function BootstrapDraftPanel({
   const {
     node,
     pending_draft,
+    previous_draft_content,
     generation_status,
     last_error,
     latest_telemetry,
@@ -434,7 +532,12 @@ export function BootstrapDraftPanel({
           <DocumentReviewTabs
             idPrefix="pending-draft"
             document={
-              <XmlDocument content={pending_draft.content} renderers={contentRenderers} />
+              <PendingDraftDocumentTab
+                pendingContent={pending_draft.content}
+                previousDraftContent={previous_draft_content}
+                approvedContent={node.content || null}
+                renderers={contentRenderers}
+              />
             }
             extraTabs={extraTabs?.({
               pendingContent: pending_draft.content,

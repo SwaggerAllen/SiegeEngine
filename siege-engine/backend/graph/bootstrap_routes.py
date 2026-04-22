@@ -245,9 +245,25 @@ def bootstrap_get_state(
         if row.reason not in stale_reasons:
             stale_reasons.append(row.reason)
 
+    # Phase 12 — regen-time diff "before" content. When the user
+    # hits Reject & Regenerate, ``_apply_draft_discarded`` flips
+    # the prior pending draft to ``status="discarded"`` without
+    # deleting the row, so the most-recent-discarded content is
+    # the natural "before" side of a pending-before-vs-pending-
+    # after diff. On the very first regen after approval there is
+    # no discarded draft yet and the frontend falls back to the
+    # approved node content. Brand-new bootstraps have neither,
+    # and the panel renders the raw draft.
+    previous_draft_content = queries.most_recent_discarded_draft_content(
+        db,
+        project_id,
+        node.id,
+    )
+
     return {
         "node": config.serialize_node(node),
         "pending_draft": config.serialize_draft(draft) if draft else None,
+        "previous_draft_content": previous_draft_content,
         "generation_status": status,
         "last_error": last_error,
         "latest_telemetry": telemetry,
