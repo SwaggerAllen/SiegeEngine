@@ -105,6 +105,7 @@ export function SysarchPanel({ projectId }: Props) {
         isBusy,
       }}
       contentRenderers={renderers}
+      docKind="sysarch"
       extraTabs={({ pendingContent, approvedContent }) => [
         {
           id: 'components',

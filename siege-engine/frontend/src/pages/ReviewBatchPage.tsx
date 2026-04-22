@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DraftDiffView } from '../components/DraftDiffView';
+import { StructuredDraftDiffView } from '../components/StructuredDraftDiffView';
 import {
   useAcceptReviewNodeMutation,
   useCloseReviewBatchMutation,
@@ -9,6 +10,7 @@ import {
   useReviewBatchNodes,
 } from '../hooks/queries/useReviewBatch';
 import type { StaleNodeItem } from '../api/review';
+import type { DraftDocKind } from '../lib/extractDraftSections';
 import { describeApiError } from '../lib/describeApiError';
 
 /**
@@ -156,6 +158,18 @@ function WalkerShell({
   );
 }
 
+/**
+ * Tier → structured-diff kind. Only the three structured
+ * bootstrap docs have section-aware parsing; other tiers fall
+ * through to the flat :component:`DraftDiffView`.
+ */
+function docKindForTier(tier: string): DraftDocKind | null {
+  if (tier === 'expansion') return 'expansion';
+  if (tier === 'reqs') return 'requirements';
+  if (tier === 'sysarch') return 'sysarch';
+  return null;
+}
+
 function StaleNodeRow({
   item,
   selected,
@@ -253,11 +267,20 @@ function NodeDiffPane({
         <h3 className="text-xs uppercase tracking-wide text-gray-400">
           Node content
         </h3>
-        <DraftDiffView
-          before={diff.node_content.before}
-          after={diff.node_content.after ?? ''}
-          label="Comparing pinned snapshot against live content."
-        />
+        {item && docKindForTier(item.tier) ? (
+          <StructuredDraftDiffView
+            before={diff.node_content.before}
+            after={diff.node_content.after ?? ''}
+            kind={docKindForTier(item.tier) as DraftDocKind}
+            label="Comparing pinned snapshot against live content."
+          />
+        ) : (
+          <DraftDiffView
+            before={diff.node_content.before}
+            after={diff.node_content.after ?? ''}
+            label="Comparing pinned snapshot against live content."
+          />
+        )}
       </section>
 
       <section className="space-y-3">

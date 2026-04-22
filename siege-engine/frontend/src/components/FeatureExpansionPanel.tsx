@@ -59,6 +59,7 @@ export function FeatureExpansionPanel({ projectId }: Props) {
         isBusy,
       }}
       contentRenderers={featureRenderers}
+      docKind="expansion"
       extraTabs={({ pendingContent, approvedContent }) => [
         {
           id: 'features',
