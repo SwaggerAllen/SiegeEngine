@@ -178,7 +178,7 @@ def _valid_reqs_xml(feat_ids: list[str], label: str = "Default") -> str:
         "<requirements>"
         "<responsibility>"
         f"<name>{label}</name>"
-        f"<intent>Paragraph for {label} responsibility in route tests.</intent>"
+        f"<scope><item>test scope phrase 1</item></scope><failure-surface>Test failure surface 1.</failure-surface>"  # noqa: E501
         f"{covers}"
         "</responsibility>"
         "</requirements>"

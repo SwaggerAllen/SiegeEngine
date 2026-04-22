@@ -11,51 +11,71 @@ from backend.graph.review_context.requirements import RequirementsContext
 _HANDLES_INTRO = """\
 Requirements rotates user-facing features into system-level \
 responsibilities. Sysarch then reads each responsibility and \
-decides which component owns it. The grammar now splits feature \
-coverage into ``<owns>`` (primary system-side owner — exactly \
-one per feature) and ``<supports>`` (infrastructure or \
-composition contributors — zero or more per feature). The \
-validator enforces single-owner mechanically, so your job here \
-is the fuzzier axis: overlapping *scope* between responsibilities \
-that the mechanical check can't catch (two resps whose prose \
-intent claims the same system-side work), and responsibilities \
-that restate their source feature without rotating. Flag both \
-aggressively.
+decides which component owns it. The grammar is structured: \
+each responsibility has ``<scope>`` (short noun phrases naming \
+system-side concerns it owns), ``<does-not-own>`` (explicit \
+deferrals to peers), a one-sentence ``<failure-surface>``, \
+``<owns>`` (primary feature ownership — exactly one per feature \
+doc-wide), and ``<supports>`` (composition / infrastructure). \
+The validator mechanically enforces single-owner on features, \
+scope-phrase uniqueness across responsibilities, and \
+cross-reference resolution on ``<defers to=...>``. Your job is \
+the fuzzier axis the mechanical check can't catch: **scope \
+phrases that are near-duplicates** (different wording, same \
+concern), **scope phrases that aren't actually system-side**, \
+**weak or vague phrases** that fail to distinguish one \
+responsibility from its peer, and **failure surfaces that \
+describe impact-categories instead of concrete failure modes**.
 """
 
 _HANDLES = """\
-- **Scope overlap in prose, first.** The validator catches \
-per-feature collisions in ``<owns>``. Your job is to spot scope \
-overlap in prose: two resps' intent paragraphs claiming the \
-same system-side capability even when they own different \
-features. If both resps' intents would satisfy the same \
-sysarch-level question ("who produces end-of-month \
-statements?"), that's overlap — flag it by naming the shared \
-capability.
-- Is ``<supports>`` being used honestly? A responsibility that \
-``<supports>`` most of the feature set is likely genuinely \
-cross-cutting (observability, audit, job queue infrastructure); \
-flag if a responsibility claims broad ``<supports>`` without its \
-intent paragraph explaining what it actually contributes. \
-Inversely, flag ``<supports>`` that should really be ``<owns>`` \
-(the prose describes primary ownership, but the feature is \
-listed under supports — a miscategorization).
+- **Near-duplicate scope phrases are the first thing to look \
+for.** The validator rejects literal duplicates across \
+responsibilities. You should flag *semantic* duplicates: two \
+resps whose scope entries read differently but name the same \
+system-side concept ("session state lifecycle" vs "session \
+storage and invalidation"). Name the shared concept and \
+suggest which responsibility should own it outright.
+- **Scope phrases should be system-side, not user-facing.** \
+Flag scope items that restate a user outcome instead of a \
+system concern. Good: "append-only event log", "session-state \
+lifecycle". Bad: "users can sign in", "secure authentication". \
+Every scope item should be something sysarch could plausibly \
+map to a module or data store.
+- **Scope phrases should distinguish this responsibility from \
+its peers.** A scope item that applies equally to half the \
+other responsibilities is too vague. Flag phrases like \
+"reliable delivery", "secure storage", "valid state" — those \
+are universal concerns, not specific claims.
+- **The ``<does-not-own>`` block is doing real work.** Every \
+``<defers to="X">phrase</defers>`` should name a peer \
+responsibility that genuinely owns the scope being deferred. \
+Flag ``<defers>`` entries that read as boilerplate disclaimers \
+(deferring to something obviously unrelated) or that defer to \
+a responsibility whose own scope doesn't actually include the \
+deferred phrase.
+- **``<failure-surface>`` should name concrete failure modes, \
+not impact categories.** Good: "Reducer drift is a platform-\
+integrity incident; a non-reducer write is an invariant \
+violation." Bad: "Loss of service; data integrity issues." \
+Flag failure surfaces that wave at impact without naming the \
+specific thing that breaks.
 - Is the ``<owns>`` assignment the right owner? A feature ends \
 up owned by one responsibility; is that the responsibility \
 whose system-side guarantee the feature actually depends on? \
 Flag if the owner looks accidental (e.g. a cross-cutting \
 infrastructure resp is owning a feature that should belong to \
 its downstream consumer).
+- Is ``<supports>`` being used honestly? A responsibility that \
+supports most of the feature set is likely genuinely \
+cross-cutting (observability, audit, job queue infrastructure). \
+Flag large supports lists whose scope doesn't explain what the \
+responsibility actually contributes, and flag ``<supports>`` \
+entries that should really be ``<owns>``.
 - Are responsibility names distinctive and specific to the \
 system-level work? Flag names that restate a feature, names \
 too abstract for sysarch to map to a component, or names that \
 collide with siblings.
-- Are intents specific about the system-side work (mechanism / \
-data / guarantee) rather than user-facing behavior the \
-features already describe? Flag intents that just paraphrase a \
-feature.
-- Does each intent name what the resp explicitly does *not* \
-cover, so sysarch knows where boundaries lie?
 - Are ``<owns>`` / ``<supports>`` references valid? Every feat_* \
 id must exist in the feature set.
 """
@@ -67,19 +87,30 @@ requirements didn't rotate — sysarch will struggle to map them \
 to components because they're still on the feature side of the \
 axis. Cross-cutting concerns (auth, audit, observability) \
 deserve their own resps so sysarch can consolidate them, \
-rather than feature-by-feature duplicates.
+rather than feature-by-feature duplicates. Look at the \
+aggregate shape of the scope phrases across the whole doc: \
+does the set hang together, or does it look like the feature \
+list with renamed headers?
 """
 
 _ARCHITECTURE = """\
 - Is the axis right? Requirements should rotate user-facing \
 feature intents into system-level responsibilities. Flag resps \
-still framed in user-outcome terms.
+whose scope phrases still read as user outcomes (feature-axis) \
+rather than system concerns (system-axis).
 - Is the decomposition the right level for sysarch? Too-fine \
-creates a component explosion; too-coarse collapses distinct \
-concerns.
+creates a component explosion (flag resps whose scope has only \
+1–2 items unless they're genuinely narrow platform-level \
+concerns); too-coarse collapses distinct failure modes into a \
+single responsibility (flag resps whose scope spans \
+unrelated-seeming concerns — they probably need splitting).
 - Are cross-cutting concerns (auth, audit, observability) \
 handled as their own resps rather than duplicated across \
 feature-specific resps?
+- Does the aggregate responsibility list cover what the project \
+actually needs, or are there implicit system concerns (logging, \
+rate limiting, secrets handling, background scheduling) that \
+nobody is naming?
 """
 
 

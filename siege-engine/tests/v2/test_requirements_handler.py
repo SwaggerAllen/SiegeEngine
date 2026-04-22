@@ -150,13 +150,20 @@ def _reqs_xml(feat_ids: list[str], *entries: tuple[str, str]) -> str:
     """Build a valid ``<requirements>`` block where every entry
     covers every feature in ``feat_ids``.
 
-    Phase-11 followup B4 made ``<introduction>`` a required
-    sibling block; this helper prepends a stub intro.
+    The second field of each entry is used as the responsibility's
+    ``<scope>`` phrase — lets tests provide distinctive strings
+    the prompt-rendering machinery should carry through. Under the
+    scope-list grammar, scope phrases must be unique across
+    responsibilities; each caller is responsible for distinct
+    phrases across ``entries``.
     """
     covers = _covers_all(feat_ids)
     inner = "".join(
-        f"<responsibility><name>{name}</name><intent>{intent}</intent>{covers}</responsibility>"
-        for name, intent in entries
+        f"<responsibility><name>{name}</name>"
+        f"<scope><item>{phrase}</item></scope>"
+        f"<failure-surface>{name} failure surface.</failure-surface>"
+        f"{covers}</responsibility>"
+        for name, phrase in entries
     )
     return (
         "<introduction>Stub intro for requirements handler tests.</introduction>"
@@ -167,7 +174,7 @@ def _reqs_xml(feat_ids: list[str], *entries: tuple[str, str]) -> str:
 def _valid_xml(feat_ids: list[str]) -> str:
     return _reqs_xml(
         feat_ids,
-        ("User Authentication", "Identify callers and make them available downstream."),
+        ("User Authentication", "authenticated-session lifecycle"),
     )
 
 
@@ -354,7 +361,7 @@ class TestParseValidateRetry:
         first_bad = (
             "<introduction>stub</introduction>"
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent></responsibility>"
+            "<responsibility><name>Auth</name><scope><item>test scope phrase 2</item></scope><failure-surface>Test failure surface 2.</failure-surface></responsibility>"  # noqa: E501
             "</requirements>"
         )
         second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
@@ -374,7 +381,7 @@ class TestParseValidateRetry:
         first_bad = (
             "<introduction>stub</introduction>"
             "<requirements>"
-            f"<responsibility><name>Auth</name><intent>Ok.</intent>{partial_covers}</responsibility>"
+            f"<responsibility><name>Auth</name><scope><item>test scope phrase 3</item></scope><failure-surface>Test failure surface 3.</failure-surface>{partial_covers}</responsibility>"  # noqa: E501
             "</requirements>"
         )
         second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
@@ -393,7 +400,7 @@ class TestParseValidateRetry:
         first_bad = (
             "<introduction>stub</introduction>"
             "<requirements>"
-            f"<responsibility><name>Auth</name><intent>Ok.</intent>{fake_covers}</responsibility>"
+            f"<responsibility><name>Auth</name><scope><item>test scope phrase 4</item></scope><failure-surface>Test failure surface 4.</failure-surface>{fake_covers}</responsibility>"  # noqa: E501
             "</requirements>"
         )
         second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
@@ -553,14 +560,14 @@ class TestInputDocInclusion:
         # section and we'd only notice in a quality regression.
         distinctive_first = _reqs_xml(
             seeded_feat_ids,
-            ("DraftOneMarker", "A distinctive first-draft intent."),
+            ("DraftOneMarker", "distinctive first-draft scope"),
         )
         _patch_cli(monkeypatch, distinctive_first)
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
 
         distinctive_second = _reqs_xml(
             seeded_feat_ids,
-            ("DraftTwoMarker", "A distinctive second-draft intent."),
+            ("DraftTwoMarker", "distinctive second-draft scope"),
         )
         second_calls = _patch_cli(monkeypatch, distinctive_second)
         asyncio.run(
@@ -572,7 +579,7 @@ class TestInputDocInclusion:
         # section, so the LLM knows what it's refining.
         assert "# Current version" in second_prompt
         assert "DraftOneMarker" in second_prompt
-        assert "A distinctive first-draft intent." in second_prompt
+        assert "distinctive first-draft scope" in second_prompt
 
         # And the third call's pending is D2, not D1 — proving the
         # "most recent" part of the contract. D1 was discarded by
@@ -580,7 +587,7 @@ class TestInputDocInclusion:
         # should see D2 (which contains DraftTwoMarker) but not D1.
         distinctive_third = _reqs_xml(
             seeded_feat_ids,
-            ("DraftThreeMarker", "A distinctive third-draft intent."),
+            ("DraftThreeMarker", "distinctive third-draft scope"),
         )
         third_calls = _patch_cli(monkeypatch, distinctive_third)
         asyncio.run(
@@ -590,7 +597,7 @@ class TestInputDocInclusion:
         )
         third_prompt = third_calls[0]["prompt"]
         assert "DraftTwoMarker" in third_prompt
-        assert "A distinctive second-draft intent." in third_prompt
+        assert "distinctive second-draft scope" in third_prompt
         assert "DraftOneMarker" not in third_prompt
         assert "A distinctive first-draft intent." not in third_prompt
 
@@ -638,4 +645,4 @@ class TestDomainUiSplitGuidance:
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         system_prompt = calls[0]["system_prompt"]
         assert "not UI/backend splits" in system_prompt
-        assert "sysarch pass makes" in system_prompt
+        assert "sysarch decides which components" in system_prompt

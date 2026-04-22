@@ -146,13 +146,13 @@ def _features_xml() -> str:
     return (
         "<introduction>Chain integration test: stub intro.</introduction>"
         "<features>"
-        "<feature><name>Billing</name><intent>Users pay for plans.</intent></feature>"
-        "<feature><name>Auth</name><intent>Users sign in.</intent></feature>"
+        "<feature><name>Billing</name><intent>Ok intent.</intent></feature>"
+        "<feature><name>Auth</name><intent>Ok intent.</intent></feature>"
         # Two additional features so the requirements stub can hand
         # each of the four synthetic responsibilities a distinct
         # primary-owned feature under the single-owner rule.
-        "<feature><name>Admin</name><intent>Admins configure the tenant.</intent></feature>"
-        "<feature><name>Reports</name><intent>Users view usage reports.</intent></feature>"
+        "<feature><name>Admin</name><intent>Ok intent.</intent></feature>"
+        "<feature><name>Reports</name><intent>Ok intent.</intent></feature>"
         "</features>"
         "<vocabulary>"
         '<term name="boulder" scope="project">'
@@ -210,8 +210,13 @@ def _requirements_xml(session, project_id: str) -> str:
             if supported_ids
             else ""
         )
+        # Scope must be unique per responsibility — include the name
+        # in the phrase so the dedup rule is satisfied without
+        # having to thread bespoke content into every entry.
+        scope_block = f"<scope><item>test scope for {name}</item></scope>"
+        failure_block = f"<failure-surface>{name} failure surface.</failure-surface>"
         rows.append(
-            f"<responsibility><name>{name}</name><intent>{intent}</intent>"
+            f"<responsibility><name>{name}</name>{scope_block}{failure_block}"
             f"{owns_block}{supports_block}</responsibility>"
         )
     inner = "".join(rows)

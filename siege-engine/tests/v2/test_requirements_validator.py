@@ -23,19 +23,39 @@ def _supports(*feat_ids: str) -> str:
     return "<supports>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</supports>"
 
 
+def _scope(*phrases: str) -> str:
+    return "<scope>" + "".join(f"<item>{p}</item>" for p in phrases) + "</scope>"
+
+
+def _failure(text: str) -> str:
+    return f"<failure-surface>{text}</failure-surface>"
+
+
 def _resp(
     name: str,
-    intent: str,
+    scope_phrases: tuple[str, ...],
     owns_ids: tuple[str, ...],
     supports_ids: tuple[str, ...] = (),
+    failure_surface: str | None = None,
+    does_not_own: tuple[tuple[str, str], ...] = (),
 ) -> str:
-    """Build a single <responsibility> fragment for test fixtures."""
+    """Build a single <responsibility> fragment for test fixtures.
+
+    ``does_not_own`` is an iterable of ``(phrase, to_name)`` pairs.
+    ``failure_surface`` defaults to a minimal valid sentence.
+    """
     parts = [
         "<responsibility>",
         f"<name>{name}</name>",
-        f"<intent>{intent}</intent>",
-        _owns(*owns_ids),
+        _scope(*scope_phrases),
     ]
+    if does_not_own:
+        parts.append("<does-not-own>")
+        for phrase, to in does_not_own:
+            parts.append(f'<defers to="{to}">{phrase}</defers>')
+        parts.append("</does-not-own>")
+    parts.append(_failure(failure_surface or f"{name} failure surface."))
+    parts.append(_owns(*owns_ids))
     if supports_ids:
         parts.append(_supports(*supports_ids))
     parts.append("</responsibility>")
@@ -52,7 +72,7 @@ class TestValidateRequirementsHappyPath:
             "<requirements>"
             + _resp(
                 "User Authentication",
-                "Establish the identity of a caller and make it available to downstream logic.",
+                ("session-state lifecycle",),
                 ("feat_abc12345", "feat_def67890", "feat_xyz00001"),
             )
             + "</requirements>"
@@ -62,15 +82,18 @@ class TestValidateRequirementsHappyPath:
         assert resps[0].name == "User Authentication"
         assert set(resps[0].owns) == KNOWN
         assert resps[0].supports == ()
+        assert resps[0].scope == ("session-state lifecycle",)
+        assert resps[0].failure_surface == "User Authentication failure surface."
+        assert resps[0].does_not_own == ()
         # Back-compat property: covers = owns + supports
         assert set(resps[0].covers) == KNOWN
 
     def test_multiple_preserve_order(self):
         tree = _parse(
             "<requirements>"
-            + _resp("Auth", "Identify callers.", ("feat_abc12345",))
-            + _resp("Billing", "Bill accounts.", ("feat_def67890",))
-            + _resp("Telemetry", "Record usage.", ("feat_xyz00001",))
+            + _resp("Auth", ("auth scope",), ("feat_abc12345",))
+            + _resp("Billing", ("billing scope",), ("feat_def67890",))
+            + _resp("Telemetry", ("telemetry scope",), ("feat_xyz00001",))
             + "</requirements>"
         )
         resps = validate_requirements(tree, known_feature_ids=KNOWN)
@@ -82,47 +105,44 @@ class TestValidateRequirementsHappyPath:
         # (they run alongside authenticated flows).
         tree = _parse(
             "<requirements>"
-            + _resp("Auth", "Identify.", ("feat_abc12345",), ())
+            + _resp("Auth", ("auth scope",), ("feat_abc12345",), ())
             + _resp(
                 "Telemetry",
-                "Record.",
+                ("telemetry scope",),
                 ("feat_def67890",),
                 ("feat_abc12345",),
             )
             + _resp(
                 "Billing",
-                "Bill.",
+                ("billing scope",),
                 ("feat_xyz00001",),
                 ("feat_abc12345",),
             )
             + "</requirements>"
         )
         resps = validate_requirements(tree, known_feature_ids=KNOWN)
-        # One owner, two supporters, no error.
         owners = [r.name for r in resps if "feat_abc12345" in r.owns]
         supporters = [r.name for r in resps if "feat_abc12345" in r.supports]
         assert owners == ["Auth"]
         assert sorted(supporters) == ["Billing", "Telemetry"]
 
     def test_supports_is_optional(self):
-        # A responsibility may omit <supports> entirely.
         tree = _parse(
             "<requirements>"
-            + _resp("Auth", "Identify.", ("feat_abc12345",))
-            + _resp("Billing", "Bill.", ("feat_def67890", "feat_xyz00001"))
+            + _resp("Auth", ("auth scope",), ("feat_abc12345",))
+            + _resp("Billing", ("billing scope",), ("feat_def67890", "feat_xyz00001"))
             + "</requirements>"
         )
         resps = validate_requirements(tree, known_feature_ids=KNOWN)
         assert all(r.supports == () for r in resps)
 
     def test_supports_may_be_empty_block(self):
-        # An explicit empty <supports/> block is also fine — the
-        # generator may emit one when the prompt instructs it to
-        # always include the element.
         tree = _parse(
             "<requirements>"
             "<responsibility>"
-            "<name>Auth</name><intent>Identify.</intent>"
+            "<name>Auth</name>"
+            + _scope("auth scope")
+            + _failure("Auth fails.")
             + _owns("feat_abc12345", "feat_def67890", "feat_xyz00001")
             + "<supports></supports>"
             "</responsibility>"
@@ -131,18 +151,22 @@ class TestValidateRequirementsHappyPath:
         resps = validate_requirements(tree, known_feature_ids=KNOWN)
         assert resps[0].supports == ()
 
-    def test_multi_sentence_intent_preserved(self):
+    def test_multiple_scope_items(self):
         tree = _parse(
             "<requirements>"
             + _resp(
                 "Telemetry",
-                "Record every LLM call. Flag latency spikes. Retain for 30 days.",
+                ("record every LLM call", "latency spikes flagged", "30-day retention"),
                 ("feat_abc12345", "feat_def67890", "feat_xyz00001"),
             )
             + "</requirements>"
         )
         resps = validate_requirements(tree, known_feature_ids=KNOWN)
-        assert resps[0].intent == "Record every LLM call. Flag latency spikes. Retain for 30 days."
+        assert resps[0].scope == (
+            "record every LLM call",
+            "latency spikes flagged",
+            "30-day retention",
+        )
 
 
 class TestValidateRequirementsRootLevel:
@@ -154,7 +178,7 @@ class TestValidateRequirementsRootLevel:
     def test_unknown_child_rejected(self):
         tree = _parse(
             "<requirements>"
-            + _resp("Auth", "Ok.", ("feat_abc12345", "feat_def67890", "feat_xyz00001"))
+            + _resp("Auth", ("scope",), ("feat_abc12345", "feat_def67890", "feat_xyz00001"))
             + "<widget>nope</widget>"
             "</requirements>"
         )
@@ -171,7 +195,9 @@ class TestValidateResponsibilityStructure:
     def test_missing_name_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><intent>No name here.</intent>"
+            "<responsibility>"
+            + _scope("scope")
+            + _failure("fails")
             + _owns("feat_abc12345")
             + "</responsibility>"
             "</requirements>"
@@ -179,19 +205,37 @@ class TestValidateResponsibilityStructure:
         with pytest.raises(ValidationError, match="missing a <name>"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
-    def test_missing_intent_rejected(self):
+    def test_missing_scope_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name>" + _owns("feat_abc12345") + "</responsibility>"
+            "<responsibility><name>Auth</name>"
+            + _failure("fails")
+            + _owns("feat_abc12345")
+            + "</responsibility>"
             "</requirements>"
         )
-        with pytest.raises(ValidationError, match="missing an <intent>"):
+        with pytest.raises(ValidationError, match="missing a <scope>"):
+            validate_requirements(tree, known_feature_ids={"feat_abc12345"})
+
+    def test_missing_failure_surface_rejected(self):
+        tree = _parse(
+            "<requirements>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + _owns("feat_abc12345")
+            + "</responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="missing a <failure-surface>"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
     def test_missing_owns_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent></responsibility>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + _failure("fails")
+            + "</responsibility>"
             "</requirements>"
         )
         with pytest.raises(ValidationError, match="missing an <owns>"):
@@ -202,30 +246,35 @@ class TestValidateResponsibilityStructure:
             "<requirements>"
             "<responsibility>"
             "<name>Auth</name><name>Auth2</name>"
-            "<intent>Ok.</intent>" + _owns("feat_abc12345") + "</responsibility>"
+            + _scope("scope")
+            + _failure("fails")
+            + _owns("feat_abc12345")
+            + "</responsibility>"
             "</requirements>"
         )
         with pytest.raises(ValidationError, match="2 <name> children"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
-    def test_multiple_intents_rejected(self):
+    def test_multiple_scope_blocks_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility>"
-            "<name>Auth</name>"
-            "<intent>First.</intent><intent>Second.</intent>"
+            "<responsibility><name>Auth</name>"
+            + _scope("a")
+            + _scope("b")
+            + _failure("fails")
             + _owns("feat_abc12345")
             + "</responsibility>"
             "</requirements>"
         )
-        with pytest.raises(ValidationError, match="2 <intent> children"):
+        with pytest.raises(ValidationError, match="2 <scope> children"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
     def test_multiple_owns_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility>"
-            "<name>Auth</name><intent>Ok.</intent>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + _failure("fails")
             + _owns("feat_abc12345")
             + _owns("feat_def67890")
             + "</responsibility>"
@@ -237,8 +286,9 @@ class TestValidateResponsibilityStructure:
     def test_multiple_supports_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility>"
-            "<name>Auth</name><intent>Ok.</intent>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + _failure("fails")
             + _owns("feat_abc12345")
             + _supports("feat_def67890")
             + _supports("feat_xyz00001")
@@ -251,7 +301,9 @@ class TestValidateResponsibilityStructure:
     def test_empty_name_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name> </name><intent>Ok.</intent>"
+            "<responsibility><name> </name>"
+            + _scope("scope")
+            + _failure("fails")
             + _owns("feat_abc12345")
             + "</responsibility>"
             "</requirements>"
@@ -259,15 +311,40 @@ class TestValidateResponsibilityStructure:
         with pytest.raises(ValidationError, match="empty <name>"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
-    def test_empty_intent_rejected(self):
+    def test_empty_scope_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent> </intent>"
+            "<responsibility><name>Auth</name>"
+            "<scope></scope>" + _failure("fails") + _owns("feat_abc12345") + "</responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="empty <scope>"):
+            validate_requirements(tree, known_feature_ids={"feat_abc12345"})
+
+    def test_empty_scope_item_rejected(self):
+        tree = _parse(
+            "<requirements>"
+            "<responsibility><name>Auth</name>"
+            "<scope><item> </item></scope>"
+            + _failure("fails")
             + _owns("feat_abc12345")
             + "</responsibility>"
             "</requirements>"
         )
-        with pytest.raises(ValidationError, match="empty <intent>"):
+        with pytest.raises(ValidationError, match="empty <item>"):
+            validate_requirements(tree, known_feature_ids={"feat_abc12345"})
+
+    def test_empty_failure_surface_rejected(self):
+        tree = _parse(
+            "<requirements>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + "<failure-surface> </failure-surface>"
+            + _owns("feat_abc12345")
+            + "</responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="empty <failure-surface>"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345"})
 
     def test_unknown_child_in_responsibility_rejected(self):
@@ -275,8 +352,9 @@ class TestValidateResponsibilityStructure:
             "<requirements>"
             "<responsibility>"
             "<name>Auth</name>"
-            "<intent>Ok.</intent>"
-            "<rationale>should not be here</rationale>"
+            + _scope("scope")
+            + _failure("fails")
+            + "<rationale>should not be here</rationale>"
             + _owns("feat_abc12345")
             + "</responsibility>"
             "</requirements>"
@@ -289,7 +367,10 @@ class TestValidateOwnsBlock:
     def test_empty_owns_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent><owns></owns>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + _failure("fails")
+            + "<owns></owns>"
             "</responsibility>"
             "</requirements>"
         )
@@ -299,8 +380,10 @@ class TestValidateOwnsBlock:
     def test_owns_with_unknown_tag_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent>"
-            '<owns><feat id="feat_abc12345"/><widget/></owns>'
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + _failure("fails")
+            + '<owns><feat id="feat_abc12345"/><widget/></owns>'
             "</responsibility>"
             "</requirements>"
         )
@@ -310,8 +393,10 @@ class TestValidateOwnsBlock:
     def test_feat_missing_id_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent>"
-            "<owns><feat/></owns>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + _failure("fails")
+            + "<owns><feat/></owns>"
             "</responsibility>"
             "</requirements>"
         )
@@ -321,7 +406,9 @@ class TestValidateOwnsBlock:
     def test_unknown_feature_id_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + _failure("fails")
             + _owns("feat_unknown1")
             + "</responsibility>"
             "</requirements>"
@@ -332,7 +419,9 @@ class TestValidateOwnsBlock:
     def test_duplicate_feature_in_same_owns_rejected(self):
         tree = _parse(
             "<requirements>"
-            "<responsibility><name>Auth</name><intent>Ok.</intent>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + _failure("fails")
             + _owns("feat_abc12345", "feat_abc12345")
             + "</responsibility>"
             "</requirements>"
@@ -347,20 +436,27 @@ class TestSingleOwnerRule:
     def test_two_owners_for_one_feature_rejected(self):
         tree = _parse(
             "<requirements>"
-            + _resp("Auth", "Identify.", ("feat_abc12345",))
-            + _resp("Telemetry", "Record.", ("feat_abc12345",))
-            + _resp("Billing", "Bill.", ("feat_def67890", "feat_xyz00001"))
+            + _resp("Auth", ("auth scope",), ("feat_abc12345",))
+            + _resp("Telemetry", ("telemetry scope",), ("feat_abc12345",))
+            + _resp(
+                "Billing",
+                ("billing scope",),
+                ("feat_def67890", "feat_xyz00001"),
+            )
             + "</requirements>"
         )
         with pytest.raises(ValidationError, match="multiple owners"):
             validate_requirements(tree, known_feature_ids=KNOWN)
 
     def test_feature_listed_only_in_supports_is_missing_owner(self):
-        # feat_def67890 appears only in a supports block, never in
-        # an owns block — counts as no owner.
         tree = _parse(
             "<requirements>"
-            + _resp("Auth", "Identify.", ("feat_abc12345", "feat_xyz00001"), ("feat_def67890",))
+            + _resp(
+                "Auth",
+                ("auth scope",),
+                ("feat_abc12345", "feat_xyz00001"),
+                ("feat_def67890",),
+            )
             + "</requirements>"
         )
         with pytest.raises(ValidationError, match="features with no owner"):
@@ -371,7 +467,7 @@ class TestSingleOwnerRule:
             "<requirements>"
             + _resp(
                 "Auth",
-                "Identify.",
+                ("auth scope",),
                 ("feat_abc12345", "feat_def67890", "feat_xyz00001"),
                 ("feat_abc12345",),
             )
@@ -381,35 +477,22 @@ class TestSingleOwnerRule:
             validate_requirements(tree, known_feature_ids=KNOWN)
 
     def test_feature_not_in_any_block_is_missing_owner(self):
-        # feat_def67890 is declared known but appears nowhere.
         tree = _parse(
-            "<requirements>" + _resp("Auth", "Identify.", ("feat_abc12345",)) + "</requirements>"
+            "<requirements>"
+            + _resp("Auth", ("auth scope",), ("feat_abc12345",))
+            + "</requirements>"
         )
         with pytest.raises(ValidationError, match="features with no owner"):
             validate_requirements(tree, known_feature_ids={"feat_abc12345", "feat_def67890"})
 
     def test_valid_distribution_passes(self):
-        # feat_abc12345 owned by Auth, feat_def67890 owned by Billing;
-        # Telemetry supports both without claiming ownership of either.
         tree = _parse(
             "<requirements>"
-            + _resp("Auth", "Identify.", ("feat_abc12345",))
-            + _resp("Billing", "Bill.", ("feat_def67890", "feat_xyz00001"))
+            + _resp("Auth", ("auth scope",), ("feat_abc12345",))
+            + _resp("Billing", ("billing scope",), ("feat_def67890",))
             + _resp(
                 "Telemetry",
-                "Record.",
-                ("feat_xyz00001",),  # can't own xyz if Billing does
-            )
-            + "</requirements>"
-        )
-        # Telemetry owning xyz would collide with Billing — adjust.
-        tree = _parse(
-            "<requirements>"
-            + _resp("Auth", "Identify.", ("feat_abc12345",))
-            + _resp("Billing", "Bill.", ("feat_def67890",))
-            + _resp(
-                "Telemetry",
-                "Record.",
+                ("telemetry scope",),
                 ("feat_xyz00001",),
                 ("feat_abc12345", "feat_def67890"),
             )
@@ -417,3 +500,119 @@ class TestSingleOwnerRule:
         )
         resps = validate_requirements(tree, known_feature_ids=KNOWN)
         assert len(resps) == 3
+
+
+class TestScopeDedup:
+    """Scope phrases must be unique across responsibilities."""
+
+    def test_literal_duplicate_rejected(self):
+        tree = _parse(
+            "<requirements>"
+            + _resp("Auth", ("session-state lifecycle",), ("feat_abc12345",))
+            + _resp("Billing", ("session-state lifecycle",), ("feat_def67890",))
+            + _resp("Telemetry", ("unique",), ("feat_xyz00001",))
+            + "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="claimed by multiple"):
+            validate_requirements(tree, known_feature_ids=KNOWN)
+
+    def test_whitespace_and_case_normalized(self):
+        # "Session State Lifecycle" vs "session state lifecycle " — same
+        # phrase under normalize, so should collide.
+        tree = _parse(
+            "<requirements>"
+            + _resp("Auth", ("Session State Lifecycle",), ("feat_abc12345",))
+            + _resp(
+                "Billing",
+                ("session state  lifecycle ",),
+                ("feat_def67890",),
+            )
+            + _resp("Telemetry", ("unique",), ("feat_xyz00001",))
+            + "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="claimed by multiple"):
+            validate_requirements(tree, known_feature_ids=KNOWN)
+
+    def test_intra_responsibility_duplicate_rejected(self):
+        tree = _parse(
+            "<requirements>"
+            "<responsibility><name>Auth</name>"
+            + _scope("session lifecycle", "session lifecycle")
+            + _failure("fails")
+            + _owns("feat_abc12345", "feat_def67890", "feat_xyz00001")
+            + "</responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="duplicate <item>"):
+            validate_requirements(tree, known_feature_ids=KNOWN)
+
+
+class TestDoesNotOwnCrossReference:
+    """<defers to="X"> must resolve to another resp's name."""
+
+    def test_valid_cross_reference_passes(self):
+        tree = _parse(
+            "<requirements>"
+            + _resp(
+                "Auth",
+                ("auth scope",),
+                ("feat_abc12345",),
+                does_not_own=(("permission checks", "Authorization"),),
+            )
+            + _resp(
+                "Authorization",
+                ("permission mapping",),
+                ("feat_def67890", "feat_xyz00001"),
+            )
+            + "</requirements>"
+        )
+        resps = validate_requirements(tree, known_feature_ids=KNOWN)
+        assert resps[0].does_not_own[0].scope == "permission checks"
+        assert resps[0].does_not_own[0].to == "Authorization"
+
+    def test_unresolved_reference_rejected(self):
+        tree = _parse(
+            "<requirements>"
+            + _resp(
+                "Auth",
+                ("auth scope",),
+                ("feat_abc12345",),
+                does_not_own=(("permission checks", "NonexistentResp"),),
+            )
+            + _resp(
+                "Billing",
+                ("billing scope",),
+                ("feat_def67890", "feat_xyz00001"),
+            )
+            + "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="unknown responsibilities"):
+            validate_requirements(tree, known_feature_ids=KNOWN)
+
+    def test_empty_defers_body_rejected(self):
+        tree = _parse(
+            "<requirements>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + '<does-not-own><defers to="Other"></defers></does-not-own>'
+            + _failure("fails")
+            + _owns("feat_abc12345", "feat_def67890", "feat_xyz00001")
+            + "</responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="empty <defers> body"):
+            validate_requirements(tree, known_feature_ids=KNOWN)
+
+    def test_defers_missing_to_rejected(self):
+        tree = _parse(
+            "<requirements>"
+            "<responsibility><name>Auth</name>"
+            + _scope("scope")
+            + "<does-not-own><defers>something</defers></does-not-own>"
+            + _failure("fails")
+            + _owns("feat_abc12345", "feat_def67890", "feat_xyz00001")
+            + "</responsibility>"
+            "</requirements>"
+        )
+        with pytest.raises(ValidationError, match="no ``to`` attribute"):
+            validate_requirements(tree, known_feature_ids=KNOWN)

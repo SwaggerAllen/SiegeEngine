@@ -131,7 +131,10 @@ def _reqs_block(feat_ids: list[str], *entries: tuple[str, str]) -> str:
             supported = tuple(f for f in feat_ids if f not in owned)
             body = _owns(*owned) + (_supports(*supported) if supported else "")
         rows.append(
-            f"<responsibility><name>{name}</name><intent>{intent}</intent>{body}</responsibility>"
+            f"<responsibility><name>{name}</name>"
+            f"<scope><item>scope for {name}</item></scope>"
+            f"<failure-surface>{name} failure surface.</failure-surface>"
+            f"{body}</responsibility>"
         )
     # Re-bind the first entry's owned set to be feat_ids minus
     # everything the later entries claimed, so we don't double-own.
@@ -151,7 +154,9 @@ def _reqs_block(feat_ids: list[str], *entries: tuple[str, str]) -> str:
     first_body = _owns(*first_owned) + (_supports(*first_supports) if first_supports else "")
     rows[0] = (
         f"<responsibility><name>{first_name}</name>"
-        f"<intent>{first_intent}</intent>{first_body}</responsibility>"
+        f"<scope><item>scope for {first_name}</item></scope>"
+        f"<failure-surface>{first_name} failure surface.</failure-surface>"
+        f"{first_body}</responsibility>"
     )
     return f"<requirements>{''.join(rows)}</requirements>"
 
@@ -190,10 +195,13 @@ class TestHappyPath:
                 ).scalars()
             )
             assert [r.name for r in resps] == ["Auth", "Billing", "Telemetry"]
+            # Under the scope-list grammar the resp's ``content`` is
+            # synthesized from ``scope`` + ``failure_surface`` —
+            # prose intent is gone.
             assert [r.content for r in resps] == [
-                "Identify callers.",
-                "Bill accounts.",
-                "Record every call.",
+                "Owns: scope for Auth.\nFailure surface: Auth failure surface.",
+                "Owns: scope for Billing.\nFailure surface: Billing failure surface.",
+                "Owns: scope for Telemetry.\nFailure surface: Telemetry failure surface.",
             ]
             assert all(r.id.startswith("resp_") for r in resps)
             assert [r.display_order for r in resps] == [0, 1, 2]
@@ -228,10 +236,10 @@ class TestHappyPath:
             project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
             content = (
                 "<requirements>"
-                f"<responsibility><name>Auth</name><intent>Identify.</intent>"
+                f"<responsibility><name>Auth</name><scope><item>test scope phrase 3</item></scope><failure-surface>Test failure surface 3.</failure-surface>"  # noqa: E501
                 f'<owns><feat id="{feat_ids[0]}"/></owns>'
                 "</responsibility>"
-                f"<responsibility><name>Billing</name><intent>Bill.</intent>"
+                f"<responsibility><name>Billing</name><scope><item>test scope phrase 4</item></scope><failure-surface>Test failure surface 4.</failure-surface>"  # noqa: E501
                 f'<owns><feat id="{feat_ids[1]}"/></owns>'
                 "</responsibility>"
                 "</requirements>"
@@ -360,7 +368,7 @@ class TestFailureModes:
             # Content covers only the first feature
             partial = (
                 "<requirements>"
-                f"<responsibility><name>Auth</name><intent>Ok.</intent>"
+                f"<responsibility><name>Auth</name><scope><item>test scope phrase 5</item></scope><failure-surface>Test failure surface 5.</failure-surface>"  # noqa: E501
                 f'<owns><feat id="{feat_ids[0]}"/></owns>'
                 "</responsibility>"
                 "</requirements>"

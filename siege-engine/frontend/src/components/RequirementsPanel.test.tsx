@@ -76,7 +76,7 @@ describe('RequirementsPanel', () => {
         pending_draft: {
           id: 'draft_1',
           content:
-            '<requirements><responsibility><name>Auth</name><intent>Identify users.</intent></responsibility></requirements>',
+            '<requirements><responsibility><name>Auth</name><scope><item>identify users</item></scope><failure-surface>Auth failure.</failure-surface></responsibility></requirements>',
           created_at: '2026-04-13T00:00:00',
         },
       })
@@ -84,7 +84,7 @@ describe('RequirementsPanel', () => {
     renderPanel();
 
     await waitFor(() => expect(screen.getByText('Auth')).toBeInTheDocument());
-    expect(screen.getByText('Identify users.')).toBeInTheDocument();
+    expect(screen.getByText('identify users')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reject & Regenerate' })).toBeInTheDocument();
   });
@@ -95,7 +95,7 @@ describe('RequirementsPanel', () => {
         pending_draft: {
           id: 'draft_1',
           content:
-            '<requirements><responsibility><name>A</name><intent>Ok.</intent></responsibility></requirements>',
+            '<requirements><responsibility><name>A</name><scope><item>ok scope</item></scope><failure-surface>ok failure.</failure-surface></responsibility></requirements>',
           created_at: '2026-04-13T00:00:00',
         },
       })
@@ -120,7 +120,7 @@ describe('RequirementsPanel', () => {
         pending_draft: {
           id: 'draft_1',
           content:
-            '<requirements><responsibility><name>A</name><intent>Ok.</intent></responsibility></requirements>',
+            '<requirements><responsibility><name>A</name><scope><item>ok scope</item></scope><failure-surface>ok failure.</failure-surface></responsibility></requirements>',
           created_at: '2026-04-13T00:00:00',
         },
       })
@@ -140,7 +140,7 @@ describe('RequirementsPanel', () => {
         pending_draft: {
           id: 'draft_1',
           content:
-            '<requirements><responsibility><name>A</name><intent>Ok.</intent></responsibility></requirements>',
+            '<requirements><responsibility><name>A</name><scope><item>ok scope</item></scope><failure-surface>ok failure.</failure-surface></responsibility></requirements>',
           created_at: '2026-04-13T00:00:00',
         },
       })
@@ -164,7 +164,7 @@ describe('RequirementsPanel', () => {
           id: 'reqs_1',
           name: 'Requirements',
           content:
-            '<requirements><responsibility><name>Final</name><intent>Final intent.</intent></responsibility></requirements>',
+            '<requirements><responsibility><name>Final</name><scope><item>final scope</item></scope><failure-surface>Final failure.</failure-surface></responsibility></requirements>',
           updated_at: '2026-04-13T00:00:00',
         },
       })
