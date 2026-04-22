@@ -55,7 +55,13 @@ export function extractDraftSections(
   if (!xml || !xml.trim()) return null;
   let root: XmlElement;
   try {
-    root = parseXml(xml);
+    // Bootstrap drafts commonly emit sibling top-level tags —
+    // e.g. ``<introduction>…</introduction><requirements>…</requirements>``
+    // — which ``parseXml`` would treat as multiple roots and only
+    // return the first one from. Wrap in a synthetic root so every
+    // sibling survives as a child of the wrapper and downstream
+    // ``findTagInTree`` walks them all.
+    root = parseXml(`<__draft__>${xml}</__draft__>`);
   } catch {
     return null;
   }
@@ -75,7 +81,8 @@ export function extractDraftSections(
     }));
   }
   if (docKind === 'sysarch') {
-    return sysarchSections(root);
+    const sections = sysarchSections(root);
+    return sections.length === 0 ? null : sections;
   }
   return null;
 }

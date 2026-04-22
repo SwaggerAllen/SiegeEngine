@@ -54,6 +54,37 @@ describe('extractDraftSections', () => {
       expect(sections?.map((s) => s.label)).toEqual(['Identity', 'Billing']);
       expect(sections?.[0].kind).toBe('responsibility');
     });
+
+    it('handles sibling top-level tags (bootstrap draft shape)', () => {
+      // Real bootstrap drafts emit <introduction>…</introduction>
+      // followed by <requirements>…</requirements> as siblings, not
+      // wrapped under a single root. The extractor must find the
+      // requirements block anyway.
+      const xml =
+        '<introduction>Long intro paragraph.</introduction>' +
+        '<requirements>' +
+        '<responsibility><name>Credential Verification</name></responsibility>' +
+        '<responsibility><name>Billing Lifecycle</name></responsibility>' +
+        '</requirements>';
+      const sections = extractDraftSections(xml, 'requirements');
+      expect(sections).not.toBeNull();
+      expect(sections?.map((s) => s.label)).toEqual([
+        'Credential Verification',
+        'Billing Lifecycle',
+      ]);
+    });
+  });
+
+  describe('expansion sibling shape', () => {
+    it('finds features when siblings with <introduction>', () => {
+      const xml =
+        '<introduction>ignored</introduction>' +
+        '<features>' +
+        '<feature><name>Login</name><intent>i</intent></feature>' +
+        '</features>';
+      const sections = extractDraftSections(xml, 'expansion');
+      expect(sections?.map((s) => s.label)).toEqual(['Login']);
+    });
   });
 
   describe('sysarch', () => {
