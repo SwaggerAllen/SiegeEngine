@@ -259,11 +259,30 @@ def bootstrap_get_state(
         project_id,
         node.id,
     )
+    # Phase 12 auto-revision — intermediates produced by the AI-
+    # driven revision loop, scoped to the current regen run. Empty
+    # list on drafts generated before the loop shipped or when
+    # auto_revisions_requested=0. The frontend renders these as
+    # additional entries in the diff's "Compare against" dropdown
+    # below the default "Pre-regen" baseline.
+    intermediates = queries.auto_revision_intermediates(
+        db,
+        project_id,
+        node.id,
+    )
 
     return {
         "node": config.serialize_node(node),
         "pending_draft": config.serialize_draft(draft) if draft else None,
         "previous_draft_content": previous_draft_content,
+        "auto_revision_intermediates": [
+            {
+                "label": it.label,
+                "content": it.content,
+                "auto_revision_pass": it.auto_revision_pass,
+            }
+            for it in intermediates
+        ],
         "generation_status": status,
         "last_error": last_error,
         "latest_telemetry": telemetry,

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
 import type { DraftDocKind } from '../lib/extractDraftSections';
 import { DocumentReviewTabs, type ExtraTab } from './DocumentReviewTabs';
@@ -68,6 +68,15 @@ export interface BootstrapPanelTelemetry {
 
 export type BootstrapGenerationStatus = 'idle' | 'running' | 'failed';
 
+export interface BootstrapPanelIntermediate {
+  /** Human-readable label for the dropdown, e.g. ``"After pass 1"``. */
+  label: string;
+  /** Draft body — fed to the diff view as the "before" side when selected. */
+  content: string;
+  /** 1-indexed pass within the current regen run. */
+  auto_revision_pass: number;
+}
+
 export interface BootstrapPanelData {
   node: BootstrapPanelNode;
   pending_draft: BootstrapPanelDraft | null;
@@ -79,6 +88,14 @@ export interface BootstrapPanelData {
    * the approved node content for the diff's "before" side).
    */
   previous_draft_content: string | null;
+  /**
+   * Phase 12 auto-revision — intermediate drafts produced by the
+   * AI-driven revision loop scoped to the current regen run.
+   * Rendered as additional entries in the diff view's "Compare
+   * against" dropdown below the default ``Pre-regen`` baseline.
+   * Empty when the loop isn't active or auto_revisions_requested=0.
+   */
+  auto_revision_intermediates: BootstrapPanelIntermediate[];
   generation_status: BootstrapGenerationStatus;
   last_error: string | null;
   latest_telemetry: BootstrapPanelTelemetry | null;
@@ -308,79 +325,130 @@ function PendingDraftDocumentTab({
   pendingContent,
   previousDraftContent,
   approvedContent,
+  intermediates,
   renderers,
   docKind,
 }: {
   pendingContent: string;
   previousDraftContent: string | null;
   approvedContent: string | null;
+  intermediates: BootstrapPanelIntermediate[];
   renderers: XmlRendererMap;
   docKind?: DraftDocKind;
 }) {
-  // "Before" side of the diff: the most recently discarded draft
-  // if one exists (the typical case across multiple Reject &
-  // Regenerate cycles), otherwise the approved content (the
-  // first-regen case). ``null`` when neither exists — brand-new
-  // bootstrap, in which case we hide the Diff button entirely.
-  const before =
-    previousDraftContent !== null && previousDraftContent !== ''
-      ? previousDraftContent
-      : approvedContent && approvedContent.trim()
-        ? approvedContent
-        : null;
-  const diffLabel =
-    previousDraftContent !== null && previousDraftContent !== ''
-      ? 'Comparing against the previous draft.'
-      : 'Comparing against the approved content (first regeneration).';
+  // Build the ordered list of diff comparison options. Default
+  // is "Pre-regen" (most recent user-visible discard, falling
+  // back to approved content on first regen). Additional entries
+  // are the auto-revision intermediates from the current run,
+  // labeled server-side as ``After pass 1``, ``After pass 2``,
+  // etc. If no pre-regen baseline exists (brand-new bootstrap)
+  // there are no options and the diff is hidden entirely.
+  const options = useMemo(() => {
+    const preRegen =
+      previousDraftContent !== null && previousDraftContent !== ''
+        ? {
+            label: 'Pre-regen',
+            content: previousDraftContent,
+            labelDetail: 'the previous draft',
+          }
+        : approvedContent && approvedContent.trim()
+          ? {
+              label: 'Approved content',
+              content: approvedContent,
+              labelDetail: 'the approved content (first regeneration)',
+            }
+          : null;
+    const out: {
+      label: string;
+      content: string;
+      labelDetail: string;
+    }[] = [];
+    if (preRegen) out.push(preRegen);
+    for (const it of intermediates) {
+      out.push({
+        label: it.label,
+        content: it.content,
+        labelDetail: `auto-revision ${it.label.toLowerCase()}`,
+      });
+    }
+    return out;
+  }, [previousDraftContent, approvedContent, intermediates]);
 
-  const hasDiff = before !== null;
+  const hasDiff = options.length > 0;
   const [mode, setMode] = useState<'diff' | 'raw'>(hasDiff ? 'diff' : 'raw');
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  // Clamp selection if the options list shrinks (e.g. intermediates
+  // disappear on next regen cycle).
+  const safeIdx = Math.min(selectedIdx, Math.max(options.length - 1, 0));
+  const active = hasDiff ? options[safeIdx] : null;
+  const diffLabel = active
+    ? `Comparing pending against ${active.labelDetail}.`
+    : '';
 
   return (
     <div className="space-y-3">
-      {hasDiff && (
-        <div
-          className="inline-flex text-xs rounded border border-gray-700 overflow-hidden"
-          role="group"
-          aria-label="Document view"
-        >
-          <button
-            type="button"
-            onClick={() => setMode('diff')}
-            aria-pressed={mode === 'diff'}
-            className={`px-3 py-1 ${
-              mode === 'diff'
-                ? 'bg-gray-700 text-gray-100'
-                : 'bg-gray-900 text-gray-400 hover:bg-gray-800'
-            }`}
+      <div className="flex items-center gap-3 flex-wrap">
+        {hasDiff && (
+          <div
+            className="inline-flex text-xs rounded border border-gray-700 overflow-hidden"
+            role="group"
+            aria-label="Document view"
           >
-            Diff
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('raw')}
-            aria-pressed={mode === 'raw'}
-            className={`px-3 py-1 border-l border-gray-700 ${
-              mode === 'raw'
-                ? 'bg-gray-700 text-gray-100'
-                : 'bg-gray-900 text-gray-400 hover:bg-gray-800'
-            }`}
-          >
-            Raw
-          </button>
-        </div>
-      )}
-      {mode === 'diff' && hasDiff ? (
+            <button
+              type="button"
+              onClick={() => setMode('diff')}
+              aria-pressed={mode === 'diff'}
+              className={`px-3 py-1 ${
+                mode === 'diff'
+                  ? 'bg-gray-700 text-gray-100'
+                  : 'bg-gray-900 text-gray-400 hover:bg-gray-800'
+              }`}
+            >
+              Diff
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('raw')}
+              aria-pressed={mode === 'raw'}
+              className={`px-3 py-1 border-l border-gray-700 ${
+                mode === 'raw'
+                  ? 'bg-gray-700 text-gray-100'
+                  : 'bg-gray-900 text-gray-400 hover:bg-gray-800'
+              }`}
+            >
+              Raw
+            </button>
+          </div>
+        )}
+        {mode === 'diff' && options.length > 1 && (
+          <label className="text-xs text-gray-400 flex items-center gap-2">
+            Compare against:
+            <select
+              value={safeIdx}
+              onChange={(e) => setSelectedIdx(Number(e.target.value))}
+              className="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+              aria-label="Diff comparison baseline"
+            >
+              {options.map((opt, i) => (
+                <option key={opt.label} value={i}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
+      {mode === 'diff' && active ? (
         docKind ? (
           <StructuredDraftDiffView
-            before={before}
+            before={active.content}
             after={pendingContent}
             kind={docKind}
             label={diffLabel}
           />
         ) : (
           <DraftDiffView
-            before={before}
+            before={active.content}
             after={pendingContent}
             label={diffLabel}
           />
@@ -441,6 +509,7 @@ export function BootstrapDraftPanel({
     node,
     pending_draft,
     previous_draft_content,
+    auto_revision_intermediates,
     generation_status,
     last_error,
     latest_telemetry,
@@ -559,6 +628,7 @@ export function BootstrapDraftPanel({
                 pendingContent={pending_draft.content}
                 previousDraftContent={previous_draft_content}
                 approvedContent={node.content || null}
+                intermediates={auto_revision_intermediates}
                 renderers={contentRenderers}
                 docKind={docKind}
               />

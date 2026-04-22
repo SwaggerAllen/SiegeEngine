@@ -25,6 +25,15 @@ const DraftSchema = z.object({
   created_at: z.string(),
 });
 
+const AutoRevisionIntermediateSchema = z.object({
+  label: z.string(),
+  content: z.string(),
+  auto_revision_pass: z.number().int(),
+});
+export type AutoRevisionIntermediate = z.infer<
+  typeof AutoRevisionIntermediateSchema
+>;
+
 const ResponseSchema = z.object({
   node: NodeSchema,
   pending_draft: DraftSchema.nullable(),
@@ -34,6 +43,12 @@ const ResponseSchema = z.object({
   // first regen after approval — in which case the panel falls
   // back to the approved node content as the diff's "before").
   previous_draft_content: z.string().nullish().transform((v) => v ?? null),
+  // Phase 12 auto-revision — intermediates from the AI-driven
+  // revision loop scoped to the current regen run. Empty when the
+  // loop isn't active or the user's auto_revisions_requested=0.
+  auto_revision_intermediates: z
+    .array(AutoRevisionIntermediateSchema)
+    .default([]),
   generation_status: GenerationStatusSchema,
   last_error: z.string().nullable(),
   latest_telemetry: TelemetrySummarySchema.nullable(),

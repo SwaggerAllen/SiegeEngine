@@ -37,6 +37,7 @@ function makeResponse(overrides: Partial<ReqsResponse> = {}): ReqsResponse {
     },
     pending_draft: null,
     previous_draft_content: null,
+    auto_revision_intermediates: [],
     generation_status: 'idle',
     last_error: null,
     latest_telemetry: null,

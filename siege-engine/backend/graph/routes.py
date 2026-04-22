@@ -174,6 +174,23 @@ class TelemetrySummary(BaseModel):
     created_at: str
 
 
+class AutoRevisionIntermediateResponse(BaseModel):
+    """One auto-revision intermediate for the diff dropdown.
+
+    Phase 12 — when the user opts in to N AI-driven auto-revisions
+    on a regen, each pass's output becomes an entry here. The
+    frontend renders them below the default ``Pre-regen`` baseline
+    in the "Compare against" dropdown so the user can inspect any
+    single pass's delta against the current pending. Empty list on
+    runs with auto_revisions_requested=0 and on pre-loop legacy
+    drafts.
+    """
+
+    label: str
+    content: str
+    auto_revision_pass: int
+
+
 class ExpansionResponse(BaseModel):
     node: ExpansionNodeResponse
     pending_draft: ExpansionDraftResponse | None
@@ -182,6 +199,7 @@ class ExpansionResponse(BaseModel):
     # or ``None`` when no prior discarded draft exists (brand-new
     # bootstrap or first regen after approval).
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -454,6 +472,7 @@ class ReqsResponse(BaseModel):
     node: ReqsNodeResponse
     pending_draft: ReqsDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -611,6 +630,7 @@ class SysarchResponse(BaseModel):
     node: SysarchNodeResponse
     pending_draft: SysarchDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1062,6 +1082,7 @@ class SubreqsResponse(BaseModel):
     node: SubreqsNodeResponse
     pending_draft: SubreqsDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1320,6 +1341,7 @@ class ComparchResponse(BaseModel):
     node: ComparchNodeResponse
     pending_draft: ComparchDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -1570,6 +1592,7 @@ class SubcomparchResponse(BaseModel):
     node: SubcomparchNodeResponse
     pending_draft: SubcomparchDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None
@@ -2615,6 +2638,7 @@ class ImplResponse(BaseModel):
     node: ImplNodeResponse
     pending_draft: ImplDraftResponse | None
     previous_draft_content: str | None = None
+    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
     generation_status: queries.GenerationStatus
     last_error: str | None
     latest_telemetry: TelemetrySummary | None

@@ -1277,7 +1277,19 @@ def most_recent_discarded_draft_content(
     discarded draft, matching the first-regen / brand-new-bootstrap
     case.
     """
-    row = session.execute(
+    row = _most_recent_user_visible_discard(session, project_id, target_id)
+    if row is None:
+        return None
+    return row.content or ""
+
+
+def _most_recent_user_visible_discard(
+    session: Session,
+    project_id: str,
+    target_id: str,
+) -> Draft | None:
+    """Return the most recent non-auto-revision discarded Draft row."""
+    return session.execute(
         select(Draft)
         .where(
             Draft.project_id == project_id,
@@ -1291,6 +1303,72 @@ def most_recent_discarded_draft_content(
         .order_by(Draft.updated_at.desc(), Draft.id.desc())
         .limit(1)
     ).scalar_one_or_none()
-    if row is None:
-        return None
-    return row.content or ""
+
+
+@dataclass(frozen=True)
+class AutoRevisionIntermediate:
+    """One auto-revision intermediate draft body + its pass index.
+
+    Returned by :func:`auto_revision_intermediates` for the frontend
+    "Compare against" dropdown. The default baseline (``Pre-regen``)
+    is the most recent user-visible discard
+    (``most_recent_discarded_draft_content``), returned separately
+    and always first in the dropdown. Each intermediate here is an
+    AI-driven revision pass that landed and was discarded within
+    the current run without ever becoming the user-visible pending.
+    """
+
+    label: str
+    content: str
+    auto_revision_pass: int
+
+
+def auto_revision_intermediates(
+    session: Session,
+    project_id: str,
+    target_id: str,
+) -> list[AutoRevisionIntermediate]:
+    """Return the auto-revision intermediates since the last user-visible discard.
+
+    "Since" is keyed off timestamp: any ``discard_reason="auto_revision"``
+    draft whose ``updated_at`` is newer than the most recent
+    user-visible discard is part of the current regen run. If no
+    user-visible discard exists (brand-new bootstrap) every
+    auto-revision discard on the target is considered part of the
+    current run.
+
+    Ordered chronologically — oldest first — and labeled
+    ``"After pass 1"``, ``"After pass 2"``, etc. so the frontend
+    dropdown can render them directly without another pass of
+    bookkeeping. Empty list when no intermediates exist.
+
+    Returns ``[]`` on any target for which the auto-revision loop
+    has not yet run (i.e., every target today — the loop itself
+    lands in a follow-up commit; this query is the read-side piece
+    the frontend dropdown will consume once the loop starts
+    producing intermediates).
+    """
+    baseline = _most_recent_user_visible_discard(session, project_id, target_id)
+
+    query = (
+        select(Draft)
+        .where(
+            Draft.project_id == project_id,
+            Draft.target_id == target_id,
+            Draft.status == "discarded",
+            Draft.discard_reason == "auto_revision",
+        )
+        .order_by(Draft.updated_at.asc(), Draft.id.asc())
+    )
+    if baseline is not None:
+        query = query.where(Draft.updated_at > baseline.updated_at)
+
+    rows = list(session.execute(query).scalars())
+    return [
+        AutoRevisionIntermediate(
+            label=f"After pass {i}",
+            content=row.content or "",
+            auto_revision_pass=i,
+        )
+        for i, row in enumerate(rows, start=1)
+    ]
