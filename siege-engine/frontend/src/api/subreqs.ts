@@ -14,8 +14,15 @@ export { GenerationStatusSchema, TelemetrySummarySchema };
 export const getSubreqs = (projectId: string, componentId: string) =>
   subreqsApi.getState(projectId, componentId);
 
-export const postFeedback = (projectId: string, componentId: string, feedback: string) =>
-  subreqsApi.postFeedback(projectId, componentId, feedback);
+export const postFeedback = (
+  projectId: string,
+  componentId: string,
+  feedback: string,
+  autoRevisionsRequested?: number,
+) =>
+  autoRevisionsRequested && autoRevisionsRequested > 0
+    ? subreqsApi.postFeedback(projectId, componentId, feedback, autoRevisionsRequested)
+    : subreqsApi.postFeedback(projectId, componentId, feedback);
 
 export const approveDraft = (projectId: string, componentId: string, draftId: string) =>
   subreqsApi.approveDraft(projectId, componentId, draftId);

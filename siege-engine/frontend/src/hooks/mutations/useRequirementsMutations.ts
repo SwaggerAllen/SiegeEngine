@@ -5,7 +5,7 @@ import { requirementsKeys } from '../queries/useRequirementsQueries';
 const m = makeBootstrapMutations(
   'requirements',
   {
-    postFeedback: (pid, fb) => api.postFeedback(pid, fb),
+    postFeedback: (...args: Array<string | number>) => api.postFeedback(...(args as Parameters<typeof api.postFeedback>)),
     approveDraft: (pid, did) => api.approveDraft(pid, did),
     discardDraft: (pid, did) => api.discardDraft(pid, did),
     cancelGeneration: (pid) => api.cancelGeneration(pid),

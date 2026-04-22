@@ -9,7 +9,7 @@ import { implKeys } from '../queries/useImplQueries';
 const topLevel = makeBootstrapMutations(
   'impl',
   {
-    postFeedback: (pid, cid, fb) => implApi.postImplTopLevelFeedback(pid, cid, fb),
+    postFeedback: (...args: Array<string | number>) => implApi.postImplTopLevelFeedback(...(args as [string, string, string])),
     approveDraft: (pid, cid, did) => implApi.approveImplTopLevelDraft(pid, cid, did),
     discardDraft: (pid, cid, did) => implApi.discardImplTopLevelDraft(pid, cid, did),
     cancelGeneration: (pid, cid) => implApi.cancelImplTopLevelGeneration(pid, cid),
@@ -22,7 +22,7 @@ const topLevel = makeBootstrapMutations(
 const sub = makeBootstrapMutations(
   'impl',
   {
-    postFeedback: (pid, pcid, sid, fb) => implApi.postImplSubFeedback(pid, pcid, sid, fb),
+    postFeedback: (...args: Array<string | number>) => implApi.postImplSubFeedback(...(args as [string, string, string, string])),
     approveDraft: (pid, pcid, sid, did) => implApi.approveImplSubDraft(pid, pcid, sid, did),
     discardDraft: (pid, pcid, sid, did) => implApi.discardImplSubDraft(pid, pcid, sid, did),
     cancelGeneration: (pid, pcid, sid) => implApi.cancelImplSubGeneration(pid, pcid, sid),

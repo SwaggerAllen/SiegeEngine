@@ -175,8 +175,15 @@ export interface BootstrapPanelCallbacks {
    * always sees the current pending draft as ``prior_pending`` so
    * the LLM can iterate on what it produced last time, rather than
    * regenerating from scratch. Called by the single
-   * "Reject & Regenerate" button in the pending-draft state. */
-  onFeedback: (feedback: string) => void;
+   * "Reject & Regenerate" button in the pending-draft state.
+   *
+   * ``autoRevisionsRequested`` (Phase 12) — when > 0, the backend
+   * generate handler runs that many inline AI-review passes before
+   * landing the final draft, each pass feeding its review findings
+   * as feedback to the next pass. Only reqs reacts today; other
+   * tiers accept and ignore.
+   */
+  onFeedback: (feedback: string, autoRevisionsRequested?: number) => void;
   /** Approve the given pending draft id. */
   onApprove: (draftId: string) => void;
   /** Kick off a fresh generation with no feedback (the
@@ -487,6 +494,14 @@ export function BootstrapDraftPanel({
   extraTabs,
 }: Props) {
   const [feedback, setFeedback] = useState('');
+  // Phase 12 auto-revision count for this regen run. 0 = default
+  // behavior (one generate, user reviews). > 0 opts into
+  // AI-driven revision passes on the backend generate job.
+  // Ephemeral by design: resets on mount and on every submit so
+  // the user sets it per-run rather than discovering a sticky
+  // multiplier they forgot about.
+  const [autoRevisionsRequested, setAutoRevisionsRequested] = useState(0);
+  const MAX_AUTO_REVISIONS_UI = 5;
   // Formatted prose pushed up from the AI-review checkbox UI.
   // Empty string means "no findings selected (or no parsed
   // review yet)". Rebuilds on every checkbox toggle so the
@@ -562,8 +577,9 @@ export function BootstrapDraftPanel({
     } else {
       combined = userPart || reviewPart;
     }
-    callbacks.onFeedback(combined);
+    callbacks.onFeedback(combined, autoRevisionsRequested);
     setFeedback('');
+    setAutoRevisionsRequested(0);
   };
 
   // State 1: generating, no pending draft yet.
@@ -677,6 +693,33 @@ export function BootstrapDraftPanel({
             >
               Reject &amp; Regenerate
             </button>
+            <label
+              className="text-xs text-gray-400 flex items-center gap-1"
+              title={
+                'Number of AI-driven revision passes to run after the ' +
+                'initial generation. Each pass runs the review and feeds ' +
+                'its findings back as feedback. 0 = one draft, you review.'
+              }
+            >
+              AI revisions:
+              <input
+                type="number"
+                min={0}
+                max={MAX_AUTO_REVISIONS_UI}
+                value={autoRevisionsRequested}
+                onChange={(e) => {
+                  const raw = Number(e.target.value);
+                  const clamped = Math.max(
+                    0,
+                    Math.min(MAX_AUTO_REVISIONS_UI, Number.isFinite(raw) ? raw : 0),
+                  );
+                  setAutoRevisionsRequested(clamped);
+                }}
+                disabled={callbacks.isBusy || isRegenerating}
+                aria-label="Auto-revision passes"
+                className="w-14 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+              />
+            </label>
             <CopyButton content={pending_draft.content} />
           </div>
         </div>

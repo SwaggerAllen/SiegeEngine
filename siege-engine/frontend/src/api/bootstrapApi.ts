@@ -96,7 +96,15 @@ export type PromptPreview = z.infer<typeof PromptPreviewSchema>;
 
 export interface BootstrapApi {
   getState: (...scopeIds: string[]) => Promise<BootstrapResponse>;
-  postFeedback: (...args: [...string[], string]) => Promise<{ job_id: string }>;
+  /**
+   * ``postFeedback(...scopeIds, feedback)`` or
+   * ``postFeedback(...scopeIds, feedback, autoRevisionsRequested)``
+   * — the trailing number is optional and opts the generation
+   * into the Phase 12 auto-revision loop. Implementation slurps
+   * the trailing number if present and otherwise falls back to
+   * the legacy string-only shape.
+   */
+  postFeedback: (...args: Array<string | number>) => Promise<{ job_id: string }>;
   approveDraft: (...args: [...string[], string]) => Promise<BootstrapNode>;
   discardDraft: (...args: [...string[], string]) => Promise<void>;
   cancelGeneration: (...scopeIds: string[]) => Promise<boolean>;
@@ -113,12 +121,30 @@ export function makeBootstrapApi(
       const { data } = await api.get(buildBase(...scopeIds));
       return ResponseSchema.parse(data);
     },
-    async postFeedback(...args: string[]) {
-      const feedback = args[args.length - 1];
-      const scopeIds = args.slice(0, -1);
-      const { data } = await api.post(`${buildBase(...scopeIds)}/feedback`, {
-        feedback,
-      });
+    async postFeedback(...args: Array<string | number>) {
+      // Trailing number is the optional auto_revisions_requested
+      // count. Slurp it off before peeling ``feedback`` and scope
+      // ids so existing callers that pass only ``(...scopeIds,
+      // feedback)`` keep working unchanged.
+      let autoRevisionsRequested = 0;
+      let rest = args;
+      if (args.length > 0 && typeof args[args.length - 1] === 'number') {
+        autoRevisionsRequested = args[args.length - 1] as number;
+        rest = args.slice(0, -1);
+      }
+      const feedback = rest[rest.length - 1] as string;
+      const scopeIds = rest.slice(0, -1) as string[];
+      const body: {
+        feedback: string;
+        auto_revisions_requested?: number;
+      } = { feedback };
+      if (autoRevisionsRequested > 0) {
+        body.auto_revisions_requested = autoRevisionsRequested;
+      }
+      const { data } = await api.post(
+        `${buildBase(...scopeIds)}/feedback`,
+        body,
+      );
       return FeedbackResponseSchema.parse(data);
     },
     async approveDraft(...args: string[]) {

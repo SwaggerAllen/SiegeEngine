@@ -17,7 +17,7 @@ function makeApiFns(projectId: string) {
   // variadic types — the helpers just thread the args through.
   return {
     postFeedback: apiInst.postFeedback as unknown as (
-      ...args: string[]
+      ...args: Array<string | number>
     ) => Promise<{ job_id: string }>,
     approveDraft: apiInst.approveDraft as unknown as (
       ...args: string[]

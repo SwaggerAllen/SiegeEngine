@@ -322,8 +322,18 @@ def bootstrap_feedback(
     feedback_text: str,
     config: BootstrapTierConfig,
     require_project: Callable,
+    *,
+    auto_revisions_requested: int = 0,
 ) -> dict[str, str]:
-    """Generic POST feedback handler."""
+    """Generic POST feedback handler.
+
+    ``auto_revisions_requested`` (Phase 12) — forwarded verbatim
+    into the generate job payload as ``auto_revisions_remaining``
+    along with ``auto_revision_pass=0`` (user-initiated). Tiers
+    that support the auto-revision loop read those fields and
+    drive inline review passes from the handler. Tiers that don't
+    yet react to the fields carry them harmlessly.
+    """
     require_project(db, project_id)
     node = config.get_node(db, project_id, *scope_ids)
     if node is None:
@@ -335,6 +345,11 @@ def bootstrap_feedback(
         db, project_id, *scope_ids
     ):
         raise HTTPException(status_code=409, detail=config.feedback_readonly_detail)
+    if auto_revisions_requested < 0:
+        raise HTTPException(
+            status_code=422,
+            detail="auto_revisions_requested must be >= 0",
+        )
 
     # Clear the currently-pending draft's review_text and cancel
     # any in-flight review job for it. The old review is about to
@@ -366,15 +381,22 @@ def bootstrap_feedback(
         commit_and_publish(db, project_id)
 
     feedback = (feedback_text or "").strip() or None
+    payload = build_job_payload(
+        project_id,
+        scope_ids,
+        feedback,
+        scope_payload_keys=config.scope_payload_keys,
+    )
+    if auto_revisions_requested > 0:
+        # Seed the auto-revision loop. Tiers that handle the fields
+        # (requirements today) read them in their generate handler;
+        # others carry them harmlessly.
+        payload["auto_revision_pass"] = 0
+        payload["auto_revisions_remaining"] = auto_revisions_requested
     job_id = pipeline_queue.enqueue(
         db,
         job_type=config.generate_job_type,
-        payload=build_job_payload(
-            project_id,
-            scope_ids,
-            feedback,
-            scope_payload_keys=config.scope_payload_keys,
-        ),
+        payload=payload,
     )
     return {"job_id": job_id}
 

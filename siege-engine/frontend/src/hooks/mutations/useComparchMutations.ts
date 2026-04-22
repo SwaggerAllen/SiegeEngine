@@ -5,7 +5,7 @@ import { comparchKeys } from '../queries/useComparchQueries';
 const m = makeBootstrapMutations(
   'comparch',
   {
-    postFeedback: (pid, cid, fb) => api.postFeedback(pid, cid, fb),
+    postFeedback: (...args: Array<string | number>) => api.postFeedback(...(args as Parameters<typeof api.postFeedback>)),
     approveDraft: (pid, cid, did) => api.approveDraft(pid, cid, did),
     discardDraft: (pid, cid, did) => api.discardDraft(pid, cid, did),
     cancelGeneration: (pid, cid) => api.cancelGeneration(pid, cid),

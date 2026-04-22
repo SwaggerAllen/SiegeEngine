@@ -17,8 +17,14 @@ export { GenerationStatusSchema, TelemetrySummarySchema };
 export const getRequirements = (projectId: string) =>
   requirementsApi.getState(projectId);
 
-export const postFeedback = (projectId: string, feedback: string) =>
-  requirementsApi.postFeedback(projectId, feedback);
+export const postFeedback = (
+  projectId: string,
+  feedback: string,
+  autoRevisionsRequested?: number,
+) =>
+  autoRevisionsRequested && autoRevisionsRequested > 0
+    ? requirementsApi.postFeedback(projectId, feedback, autoRevisionsRequested)
+    : requirementsApi.postFeedback(projectId, feedback);
 
 export const approveDraft = (projectId: string, draftId: string) =>
   requirementsApi.approveDraft(projectId, draftId);

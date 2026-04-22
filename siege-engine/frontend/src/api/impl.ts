@@ -69,7 +69,16 @@ export const postImplTopLevelFeedback = (
   projectId: string,
   compId: string,
   feedback: string,
-) => implTopLevelApi.postFeedback(projectId, compId, feedback);
+  autoRevisionsRequested?: number,
+) =>
+  autoRevisionsRequested && autoRevisionsRequested > 0
+    ? implTopLevelApi.postFeedback(
+        projectId,
+        compId,
+        feedback,
+        autoRevisionsRequested,
+      )
+    : implTopLevelApi.postFeedback(projectId, compId, feedback);
 
 export const approveImplTopLevelDraft = (
   projectId: string,
@@ -108,7 +117,17 @@ export const postImplSubFeedback = (
   parentCompId: string,
   subId: string,
   feedback: string,
-) => implSubApi.postFeedback(projectId, parentCompId, subId, feedback);
+  autoRevisionsRequested?: number,
+) =>
+  autoRevisionsRequested && autoRevisionsRequested > 0
+    ? implSubApi.postFeedback(
+        projectId,
+        parentCompId,
+        subId,
+        feedback,
+        autoRevisionsRequested,
+      )
+    : implSubApi.postFeedback(projectId, parentCompId, subId, feedback);
 
 export const approveImplSubDraft = (
   projectId: string,
