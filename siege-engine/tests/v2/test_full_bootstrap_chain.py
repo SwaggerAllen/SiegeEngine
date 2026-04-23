@@ -240,6 +240,7 @@ def _sysarch_xml(session, project_id: str) -> str:
             f"<kind>domain</kind>"
             f"<role>Own the {r.name} subsystem.</role>"
             f"<api-intent>public API for {r.name}</api-intent>"
+            f"<failure-surface>{r.name}Service bug corrupts its owned state.</failure-surface>"
             f"<responsibilities>{resp_xml}</responsibilities>"
             f"{foundation_tag}"
             f"</component>"
@@ -256,6 +257,7 @@ def _sysarch_xml(session, project_id: str) -> str:
             f"<kind>presentational</kind>"
             f"<role>Own the {presentational_resp_name} subsystem.</role>"
             f"<api-intent>public API for {presentational_resp_name}</api-intent>"
+            f"<failure-surface>Render bug hides critical state from the operator.</failure-surface>"
             f'<responsibilities><resp id="{pres_resp.id}"/></responsibilities>'
             f"</component>"
         )

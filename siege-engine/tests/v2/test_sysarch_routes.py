@@ -209,18 +209,21 @@ def _valid_sysarch(resp_ids: list[str]) -> str:
         "<name>Authentication</name><kind>domain</kind>"
         "<role>Identify callers.</role>"
         "<api-intent>authenticate().</api-intent>"
+        "<failure-surface>Auth bug blocks sign-ins.</failure-surface>"
         f'<responsibilities><resp id="{auth_id}"/></responsibilities>'
         "</component>"
         '<component alias="billing">'
         "<name>Billing</name><kind>domain</kind>"
         "<role>Handle payments.</role>"
         "<api-intent>get_billing_state().</api-intent>"
+        "<failure-surface>Invoice bug double-charges.</failure-surface>"
         f'<responsibilities><resp id="{billing_id}"/></responsibilities>'
         "</component>"
         '<component alias="foundation">'
         "<name>Foundation</name><kind>domain</kind>"
         "<role>Project root, shared utilities.</role>"
         "<api-intent>load_settings().</api-intent>"
+        "<failure-surface>Settings crash aborts startup.</failure-surface>"
         f'<responsibilities><resp id="{foundation_id}"/></responsibilities>'
         "<foundation/>"
         "</component>"

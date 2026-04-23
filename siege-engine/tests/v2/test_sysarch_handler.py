@@ -180,6 +180,7 @@ def _valid_sysarch(resp_ids: list[str]) -> str:
         "<kind>domain</kind>"
         "<role>Identify callers and maintain session state.</role>"
         "<api-intent>authenticate(creds) -> Session.</api-intent>"
+        "<failure-surface>Auth bug blocks sign-ins.</failure-surface>"
         f'<responsibilities><resp id="{auth_id}"/></responsibilities>'
         "</component>"
         '<component alias="billing">'
@@ -187,6 +188,7 @@ def _valid_sysarch(resp_ids: list[str]) -> str:
         "<kind>domain</kind>"
         "<role>Handle payments and subscription state.</role>"
         "<api-intent>get_billing_state(account_id).</api-intent>"
+        "<failure-surface>Invoice bug double-charges.</failure-surface>"
         f'<responsibilities><resp id="{billing_id}"/></responsibilities>'
         "</component>"
         '<component alias="foundation">'
@@ -194,6 +196,7 @@ def _valid_sysarch(resp_ids: list[str]) -> str:
         "<kind>domain</kind>"
         "<role>Own project root, build config, shared utilities.</role>"
         "<api-intent>load_settings(); configure_logging().</api-intent>"
+        "<failure-surface>Settings-loader crash aborts startup.</failure-surface>"
         f'<responsibilities><resp id="{foundation_id}"/></responsibilities>'
         "<foundation/>"
         "</component>"

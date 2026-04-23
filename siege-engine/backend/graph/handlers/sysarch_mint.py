@@ -199,6 +199,16 @@ async def mint_sysarch(payload: dict) -> None:
                     parent_id=None,
                     name=component.name,
                     display_order=index,
+                    # ``content`` stays empty — the platform-wide signal
+                    # for "this node's downstream tier has not landed
+                    # yet" (see :func:`backend.graph.fanout._has_approved_content`).
+                    # The sysarch-level ``<failure-surface>`` is enforced
+                    # at validate time and read by the sysarch AI review
+                    # from the draft content; it does not need a
+                    # per-comp persistence slot yet. A comparch
+                    # `<failure-surface>` in its own fragment is the
+                    # downstream home if / when this signal needs to
+                    # propagate past sysarch review.
                     content="",
                     is_foundation=component.is_foundation,
                 ),
