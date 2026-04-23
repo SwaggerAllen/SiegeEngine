@@ -2,45 +2,38 @@
 """Prompt template for the requirements (``reqs_*``) draft.
 
 The requirements pass consumes the approved feature set (the
-``feat_*`` nodes minted from the feature expansion) and produces a
-compact, structured list of **top-level responsibilities** that
-downstream passes map onto concrete components. The schema is
-machine-first: scope phrases and deferral cross-references that
-make overlap mechanically detectable, not prose that has to be
-re-read every regen.
+``feat_*`` nodes minted from the feature expansion) and produces
+a flat list of **atomic system-side responsibilities** — one
+concern per atom, named by a short noun phrase. Clustering into
+components is sysarch's job, not this tier's; the grammar is
+deliberately first-class-atom so structural edits (rename /
+merge / split / reparent) can mobilize individual atoms without
+prose surgery.
 
-Responsibility grammar (parsed by
+Atomic responsibility grammar (parsed by
 :mod:`backend.graph.parsers.xml_sections` and validated by
 :func:`backend.graph.parsers.validators.validate_requirements`):
 
     <requirements>
       <responsibility>
-        <name>User Authentication</name>
-        <scope>
-          <item>password + session state</item>
-          <item>sign-in rate limit</item>
-        </scope>
-        <does-not-own>
-          <defers to="Per-Request Authorization">permission checks</defers>
-        </does-not-own>
-        <failure-surface>Broken verifier blocks all sign-ins; session-store bug silently degrades authenticated state.</failure-surface>
-        <owns>
-          <feat id="feat_abc12345"/>
-        </owns>
-        <supports>
-          <feat id="feat_def67890"/>
-        </supports>
+        <name>session-state lifecycle</name>
+        <feats>
+          <feat id="feat_login01"/>
+        </feats>
       </responsibility>
       …
     </requirements>
 
-Each responsibility is: name + scope (short noun phrases) +
-explicit deferrals (boundary work as structured entries) + one-
-sentence failure surface + owns/supports feature lists. No prose
-intent paragraph — the structured fields carry the same signal
-with roughly 70% fewer tokens and make cross-responsibility
-overlap mechanically detectable at validation time rather than
-after sysarch reads the doc.
+Document-level invariants (enforced by the validator):
+
+* **Name-dedup** — no two atoms share a normalized name.
+* **Feat-coverage** — every known feature appears in at least one
+  atom's ``<feats>``; a feature with no atom tag is a rotation
+  gap and fails parse.
+
+Many-to-many is expected: a cross-cutting feature may implicate
+multiple atoms. Empty ``<feats/>`` is legal for system-emergent
+atoms (event log, reducer, etc.) with no direct feature cause.
 
 See ``docs/architecture/v2-rearchitecture.md`` §Subrequirements
 decomposition and §Feature → Responsibility → Component.
@@ -50,216 +43,182 @@ from __future__ import annotations
 
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are **rotating** the problem from user-facing capabilities \
-to system-level guarantees. The features you are given describe \
+to system-side obligations. The features you are given describe \
 what users can do; the responsibilities you produce describe \
-what the system must ensure. These are different axes — multiple \
-features contribute to one responsibility, and one feature spans \
-several responsibilities, because user concerns and system \
-concerns don't align 1:1. Your job is not to decompose features \
-into smaller pieces; it is to re-index them along the axis of \
-system-level obligation.
+what the system must handle. These are different axes — one \
+feature usually implicates several system-side concerns, and \
+one concern is usually implicated by several features, because \
+user concerns and system concerns don't align 1:1. Your job is \
+not to decompose features; it is to re-index them along the \
+axis of system-side concern.
 
-Your downstream reader is the **sysarch pass**, which will \
-assign each responsibility to exactly one component by \
-clustering responsibilities that share data ownership and \
-failure modes. Your output is structured, not prose: short \
-noun phrases naming the concerns each responsibility owns, \
-explicit deferrals to peers for boundary work, and a one-\
-sentence failure-surface statement. The structure is the \
-primary signal — sysarch reads scope and failure mode, not \
-a narrative.
-
-Each feature appears in **exactly one** responsibility's \
-``<owns>`` block (its primary system-side owner) and in zero or \
-more responsibilities' ``<supports>`` blocks (responsibilities \
-that contribute infrastructure or composition without taking \
-primary ownership).
+Each responsibility you produce is an **atom** — one concrete \
+concern, not a grouping. "session-state lifecycle" is an atom. \
+"rate-limit buckets" is an atom. "Authentication" is not an atom \
+— it is a grouping of several concerns (session, password hash, \
+rate limit, token refresh) that you will emit as separate atoms. \
+Clustering these atoms into components is the downstream \
+**sysarch pass**'s job, not yours. Your job is to enumerate the \
+atoms and tag each one with the feature IDs that implicate it.
 
 # Output format
 
 Output two top-level blocks in this order: ``<introduction>`` \
-and ``<requirements>``. The ``<introduction>`` is required — a \
-short prose preamble (5–15 sentences, a couple of paragraphs) \
-capturing your initial thinking about the decomposition: which \
-axes of system work you identified, which responsibilities you \
-considered and rejected, which ambiguities in the feature set \
-you had to resolve. This is the only prose in the doc; the \
-responsibilities themselves are fully structured. Keep the \
-introduction compact — it exists so a later regen can re-anchor, \
-not as a place to extend each responsibility's rationale.
+and ``<requirements>``. The ``<introduction>`` is optional — a \
+short prose preamble (2–5 sentences) naming the rotation axis \
+you used and any ambiguities you had to resolve. Keep it \
+compact; the atoms themselves carry the load.
 
 After ``<introduction>``, output a single ``<requirements>`` \
-block. Inside it, each responsibility has this exact shape (no \
-``<intent>`` paragraph, no other tags):
+block. Inside it, each ``<responsibility>`` has this exact \
+shape — one ``<name>`` and one ``<feats>`` block, nothing else:
 
     <introduction>
-      The central axis here is control-plane vs data-plane: \
-    identity + authz on one side, invoice lifecycle + payment \
-    settlement on the other. I kept them as two top-level \
-    resps because sysarch will almost certainly assign them to \
-    separate components with different durability profiles.
+    Rotating login, password-reset, permission, and invoicing \
+    features onto system-side axes: auth produces several \
+    independent concerns (session state, password hashing, rate \
+    limiting, token refresh, permission mapping) that sysarch \
+    will likely cluster across two or three components. The \
+    event log has no direct feature cause; it's a platform-level \
+    emergent atom.
     </introduction>
     <requirements>
       <responsibility>
-        <name>Credential Verification and Session Establishment</name>
-        <scope>
-          <item>password hash storage</item>
-          <item>session state lifecycle</item>
-          <item>sign-in rate limit</item>
-          <item>token refresh</item>
-        </scope>
-        <does-not-own>
-          <defers to="Per-Request Permission Checks">permission-to-role mapping</defers>
-          <defers to="Subscription State and Payment Collection">account activation state</defers>
-        </does-not-own>
-        <failure-surface>Broken verifier blocks all sign-ins; session-store bug silently degrades authenticated state.</failure-surface>
-        <owns>
+        <name>append-only event log</name>
+        <feats/>
+      </responsibility>
+      <responsibility>
+        <name>password hash storage</name>
+        <feats>
           <feat id="feat_login01"/>
           <feat id="feat_pwdrst2"/>
-          <feat id="feat_session"/>
-        </owns>
+        </feats>
       </responsibility>
       <responsibility>
-        <name>Per-Request Permission Checks</name>
-        <scope>
-          <item>permission-to-role mapping</item>
-          <item>per-request access decision</item>
-        </scope>
-        <does-not-own>
-          <defers to="Credential Verification and Session Establishment">user identity records</defers>
-        </does-not-own>
-        <failure-surface>A permission check bug is either a denial-of-service (false negatives) or a privilege escalation (false positives).</failure-surface>
-        <owns>
-          <feat id="feat_admin99"/>
-        </owns>
-        <supports>
+        <name>session-state lifecycle</name>
+        <feats>
           <feat id="feat_login01"/>
-        </supports>
+        </feats>
       </responsibility>
       <responsibility>
-        <name>Subscription State and Payment Collection</name>
-        <scope>
-          <item>account plan state</item>
-          <item>payment-method record</item>
-          <item>grace-period countdown</item>
-          <item>invoice emission</item>
-        </scope>
-        <does-not-own>
-          <defers to="Bundle Configuration">pricing model</defers>
-        </does-not-own>
-        <failure-surface>Payment-collector outage stalls account activation; invoice emission bug charges the wrong customer.</failure-surface>
-        <owns>
-          <feat id="feat_plans00"/>
+        <name>sign-in rate limit</name>
+        <feats>
+          <feat id="feat_login01"/>
+        </feats>
+      </responsibility>
+      <responsibility>
+        <name>session token refresh</name>
+        <feats>
+          <feat id="feat_login01"/>
+        </feats>
+      </responsibility>
+      <responsibility>
+        <name>password-reset token issuance</name>
+        <feats>
+          <feat id="feat_pwdrst2"/>
+        </feats>
+      </responsibility>
+      <responsibility>
+        <name>permission-to-role mapping</name>
+        <feats>
+          <feat id="feat_admin99"/>
+        </feats>
+      </responsibility>
+      <responsibility>
+        <name>per-request access decision</name>
+        <feats>
+          <feat id="feat_admin99"/>
+          <feat id="feat_login01"/>
+        </feats>
+      </responsibility>
+      <responsibility>
+        <name>invoice emission</name>
+        <feats>
           <feat id="feat_invoice"/>
-        </owns>
+        </feats>
+      </responsibility>
+      <responsibility>
+        <name>grace-period countdown</name>
+        <feats>
+          <feat id="feat_invoice"/>
+        </feats>
       </responsibility>
     </requirements>
 
+Notice what happens across the 10 atoms above: four features \
+expand into ten system-side concerns; ``feat_login01`` appears \
+in five atoms (cross-cutting login concern); the event-log atom \
+has no direct feature cause (emergent platform concern); no two \
+atoms share a name. That is the rotation.
+
 # Rules
 
-* Each ``<responsibility>`` has exactly one ``<name>``, exactly \
-one ``<scope>`` block, at most one ``<does-not-own>`` block, \
-exactly one ``<failure-surface>``, exactly one ``<owns>`` block, \
-and at most one ``<supports>`` block. No ``<intent>`` tag, no \
-other tags. The structure is the spec.
-* ``<name>`` is a short identifier — typically 2 to 5 words, title \
-case. Name the system-level guarantee, not the engineering \
-category. "Credential Verification and Session Establishment" \
-is sharper than "User Authentication"; "Subscription State and \
-Payment Collection" is sharper than "Billing"; "Background \
-Retry Scheduling" is sharper than "Job Execution". If the name \
-could label a responsibility in any software project without \
-modification, push toward what makes this project's version \
-distinctive.
-* ``<scope>`` is **required** and must contain **at least one** \
-``<item>`` child. Each ``<item>`` is a short noun phrase (2–8 \
-words, system-side) naming a concrete concern this \
-responsibility owns. Think "persistent-state handles" and \
-"durable-invariant labels", not "user activities" — scope \
-phrases should read as system concerns sysarch can assign to \
-a module. Good examples: "append-only event log", "pure reducer \
-entrypoint", "staleness cascade edge walk", "per-generation \
-sandbox filesystem scope", "review SLA timer". Bad examples: \
-"users can log in" (feature axis), "secure session handling" \
-(vague), "authentication".
-* ``<does-not-own>`` is optional and contains ``<defers>`` \
-entries with a ``to="Other Responsibility Name"`` attribute and \
-a scope-phrase body. Each entry records a concern this \
-responsibility explicitly defers to another responsibility in \
-this doc, making the boundary between the two explicit. The \
-``to`` attribute must match another responsibility's ``<name>`` \
-exactly — the validator rejects unresolved references. Use this \
-generously where boundaries are easy to get wrong; an empty \
-``<does-not-own>`` is fine when the boundary is obvious from the \
-scope alone.
-* ``<failure-surface>`` is **required** and is a single sentence \
-naming the concrete failure mode (data loss, invariant violation, \
-silent degradation, security breach). Example: "Reducer drift is \
-a platform-integrity incident; a non-reducer write path is an \
-invariant violation; log corruption is project data loss." \
-Name the specific failure, not the impact category.
-* ``<owns>`` is **required** and must contain **at least one** \
-``<feat>`` child. ``<owns>`` declares the features this \
-responsibility is the primary system-side owner of — the single \
-responsibility that carries each feature's system-level guarantee.
-* ``<supports>`` is optional and may contain zero or more \
-``<feat>`` children. ``<supports>`` declares features where this \
-responsibility contributes infrastructure, composition, or a \
-read-dependency slice, but another responsibility is the primary \
-owner. Use it generously when the dependency is real.
-* Each ``<feat>`` inside ``<owns>`` or ``<supports>`` carries an \
-``id`` attribute matching exactly the feature ID shown in the \
-input list (the ``feat_*`` prefix plus the 8-character Crockford \
-suffix). Do not invent IDs, do not rewrite them, do not rename \
-them.
-* **Single-owner rule (load-bearing).** Every feature ID appears \
-in exactly one responsibility's ``<owns>`` block across the \
-whole document. Two responsibilities both claiming ownership of \
-the same feature is a scope collision — the validator rejects \
-it and feeds you a list of offending features. If two \
-responsibilities really do both want a feature, one of them \
-owns it and the other declares ``<supports>`` — or the \
-boundary between the two responsibilities is drawn wrong and \
-needs redrawing.
-* **Scope-dedup rule (load-bearing).** No two responsibilities \
-may share a scope phrase (case- and whitespace-insensitive). If \
-two responsibilities both list "event-log retention" in their \
-scope, the validator rejects the draft — rename one, collapse \
-them into a single responsibility, or split the phrase by the \
-real boundary ("event-log retention window" vs "audit-log \
-retention policy"). The scope list is the primary dedup target; \
-drafting short distinct phrases for each responsibility is the \
-entire point of the grammar.
-* **Every feature in the input must be owned by some \
-responsibility.** A feature that appears only in ``<supports>`` \
-(or nowhere) is a coverage gap — the validator rejects it.
-* **Break feature boundaries — that is the point of this tier.** \
-A feature like "Accept card payments" touches payment \
-processing, account state management, audit logging, and \
-notification delivery. Those are four different system concerns \
-with different data ownership and different failure modes. Don't \
-mirror the feature structure — redistribute it. If your \
-responsibility list looks like the feature list with different \
-names, you haven't rotated.
-* **Group into one responsibility concerns that share data \
-ownership and fail together.** Separate concerns that touch \
-different data or have different failure surfaces. Sysarch \
-clusters resps into components along these same lines, so the \
-closer your responsibility boundaries match data-ownership \
-boundaries, the cleaner sysarch's component assignments will be.
-* **Cross-cutting concerns are responsibilities too.** Logging, \
-telemetry, health checks, background job scheduling, rate \
-limiting, secrets handling — if the project needs them, name \
-them. Cross-cutting responsibilities still need an ``<owns>`` \
-block listing at least one feature they are the primary owner of.
-* **Responsibilities are system-level guarantees, not UI/backend \
-splits.** A single responsibility like "Payment Collection" \
-covers both backend mechanics and UI; sysarch decides which \
-components handle which side.
+* Each ``<responsibility>`` has exactly one ``<name>`` and \
+exactly one ``<feats>`` block. No other tags — no ``<scope>``, \
+no ``<intent>``, no ``<failure-surface>``, no ``<owns>``, no \
+``<supports>``, no ``<does-not-own>``. The structure is the spec.
+* ``<name>`` is a short noun phrase (2–8 words, typically \
+lowercase) naming **one** system-side concern. Good examples: \
+"append-only event log", "per-request access decision", \
+"staleness cascade edge walk", "review SLA timer", \
+"per-generation sandbox filesystem scope". Bad examples: \
+"User Authentication" (grouping — break into session lifecycle, \
+password hash, rate limit, etc.), "users can log in" (feature \
+axis, not system-side), "secure session handling" (vague), \
+"authentication" (one word, vague).
+* **One atom = one concern.** If the name has "and" in it, it's \
+probably two atoms. "session lifecycle and token refresh" → \
+split into "session-state lifecycle" + "session token refresh". \
+"billing state and invoice emission" → split.
+* ``<feats>`` is a flat list of zero-or-more \
+``<feat id="feat_..."/>`` children naming every feature that \
+implicates this atom. Each ``id`` must match exactly a feature \
+ID from the input list (``feat_*`` prefix plus 8-character \
+Crockford suffix). Do not invent IDs, do not rewrite them.
+* **Many-to-many is expected.** A feature like \
+``feat_login01`` typically implicates session lifecycle, \
+password hash, rate limit, token refresh, and access decision — \
+tag it on all five. The grammar does not track "primary" \
+ownership; sysarch figures out clustering.
+* **Empty ``<feats/>`` is legal** for system-emergent atoms with \
+no direct feature cause — an append-only event log, a reducer \
+entrypoint, a per-project sandbox root. Use this when the atom \
+is real but no user-facing feature names it.
+* **Name-dedup (enforced).** No two atoms share a name \
+(case- and whitespace-insensitive). If two candidates would \
+collide, they are either the same atom (merge them) or need \
+sharper names that distinguish the actual boundary.
+* **Feat-coverage (enforced).** Every feature in the input must \
+appear in at least one atom's ``<feats>``. A feature with no \
+atom tag is a rotation gap — the validator rejects the draft and \
+names the missing IDs. If a feature looks like it has no system \
+side, look again: every feature imposes *some* system-side \
+obligation, even if only "persist this preference".
+* **Break feature boundaries — that is the point.** A feature \
+like "Accept card payments" decomposes into payment-method \
+storage, charge authorization, invoice emission, retry \
+scheduling, and audit trail — five atoms, one feature. If your \
+atom list looks like the feature list with different names, you \
+haven't rotated.
+* **Granularity target: roughly 20-40 atoms.** Fewer than ~15 \
+means you're still clustering; more than ~50 means you're \
+splitting below the concern grain. Aim for atoms at the "one \
+coherent piece of system behavior sysarch could assign to a \
+module" scale.
+* **Clustering is sysarch's job, not yours.** Don't group atoms \
+into components. Don't worry if one feature tags five atoms \
+that might live in three different components — sysarch will \
+cluster them. Your job is the flat atom list.
+* **Atoms are system-side concerns, not UI/backend splits.** Do \
+not emit sibling atoms like "payment mechanics" + "payment UI"; \
+emit one atom naming the system-side concern ("invoice emission") \
+and let sysarch decides which components render which side. The \
+rotation axis is user-facing → system-side, not user-facing → \
+frontend vs. backend.
 * Do not include meta-commentary. Output only ``<introduction>`` \
 followed by ``<requirements>``.
-* Unescaped ``&`` and ``<`` in scope / defers / failure-surface \
-text are fine — the parser tolerates them.
+* Unescaped ``&`` and ``<`` in names are fine — the parser \
+tolerates them.
 """
 
 

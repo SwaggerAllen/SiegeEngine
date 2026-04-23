@@ -97,67 +97,19 @@ def _set_reqs_content(session: Session, project_id: str, content: str) -> None:
     session.commit()
 
 
-def _owns(*feat_ids: str) -> str:
-    return "<owns>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</owns>"
+def _resp(name: str, feat_ids: tuple[str, ...]) -> str:
+    feats_xml = "".join(f'<feat id="{fid}"/>' for fid in feat_ids)
+    return f"<responsibility><name>{name}</name><feats>{feats_xml}</feats></responsibility>"
 
 
-def _supports(*feat_ids: str) -> str:
-    return "<supports>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</supports>"
-
-
-def _reqs_block(feat_ids: list[str], *entries: tuple[str, str]) -> str:
-    """Build a valid <requirements> block that satisfies the
-    single-owner rule: the first responsibility primary-owns
-    every feature in ``feat_ids``; subsequent responsibilities
-    list every feature under ``<supports>``. Keeps the "all
-    responsibilities touch every feature" semantics the tests
-    rely on while remaining valid under the ownership split.
+def _reqs_block(feat_ids: list[str], *names: str) -> str:
+    """Build a valid <requirements> block where every atom tags
+    every feature. Simplest fixture satisfying feat-coverage under
+    the atomic grammar.
     """
-    if not entries:
+    if not names:
         return "<requirements></requirements>"
-    rows: list[str] = []
-    for i, (name, intent) in enumerate(entries):
-        if i == 0:
-            body = _owns(*feat_ids)
-        else:
-            # Secondary responsibilities need at least one owned
-            # feature of their own. Give each a distinct stub by
-            # having it primary-own the feature at its index
-            # (wrapping if entries exceed feat_ids), and support
-            # the rest. The first responsibility then primary-owns
-            # everything not claimed by a later one — the loop
-            # rewrites its owns block at the end.
-            owned = (feat_ids[i % len(feat_ids)],)
-            supported = tuple(f for f in feat_ids if f not in owned)
-            body = _owns(*owned) + (_supports(*supported) if supported else "")
-        rows.append(
-            f"<responsibility><name>{name}</name>"
-            f"<scope><item>scope for {name}</item></scope>"
-            f"<failure-surface>{name} failure surface.</failure-surface>"
-            f"{body}</responsibility>"
-        )
-    # Re-bind the first entry's owned set to be feat_ids minus
-    # everything the later entries claimed, so we don't double-own.
-    claimed_by_others: set[str] = set()
-    for i in range(1, len(entries)):
-        claimed_by_others.add(feat_ids[i % len(feat_ids)])
-    first_owned = tuple(f for f in feat_ids if f not in claimed_by_others)
-    if not first_owned:
-        # Every feature got claimed by a later entry — give the
-        # first resp supports-only with a stub owned feat so it
-        # still has a single-owner. Rare in tests, but possible
-        # when entries > feat_ids.
-        first_owned = (feat_ids[0],)
-        claimed_by_others.discard(feat_ids[0])
-    first_supports = tuple(f for f in feat_ids if f not in first_owned)
-    first_name, first_intent = entries[0]
-    first_body = _owns(*first_owned) + (_supports(*first_supports) if first_supports else "")
-    rows[0] = (
-        f"<responsibility><name>{first_name}</name>"
-        f"<scope><item>scope for {first_name}</item></scope>"
-        f"<failure-surface>{first_name} failure surface.</failure-surface>"
-        f"{first_body}</responsibility>"
-    )
+    rows = [_resp(name, tuple(feat_ids)) for name in names]
     return f"<requirements>{''.join(rows)}</requirements>"
 
 
@@ -171,9 +123,9 @@ class TestHappyPath:
             )
             content = _reqs_block(
                 feat_ids,
-                ("Auth", "Identify callers."),
-                ("Billing", "Bill accounts."),
-                ("Telemetry", "Record every call."),
+                "session lifecycle",
+                "invoice emission",
+                "event log",
             )
             _set_reqs_content(s, project_id, content)
         finally:
@@ -194,22 +146,23 @@ class TestHappyPath:
                     .order_by(Node.display_order)
                 ).scalars()
             )
-            assert [r.name for r in resps] == ["Auth", "Billing", "Telemetry"]
-            # Under the scope-list grammar the resp's ``content`` is
-            # synthesized from ``scope`` + ``failure_surface`` —
-            # prose intent is gone.
+            assert [r.name for r in resps] == [
+                "session lifecycle",
+                "invoice emission",
+                "event log",
+            ]
+            # Under the atomic grammar the resp's ``content`` is
+            # just the atom name (the scope phrase verbatim).
             assert [r.content for r in resps] == [
-                "Owns: scope for Auth.\nFailure surface: Auth failure surface.",
-                "Owns: scope for Billing.\nFailure surface: Billing failure surface.",
-                "Owns: scope for Telemetry.\nFailure surface: Telemetry failure surface.",
+                "session lifecycle",
+                "invoice emission",
+                "event log",
             ]
             assert all(r.id.startswith("resp_") for r in resps)
             assert [r.display_order for r in resps] == [0, 1, 2]
 
-            # Each of the 3 resps primary-owns one of the 3
-            # features and supports the other two (per the
-            # _reqs_block helper's single-owner distribution).
-            # Total decomposition edges: 3 owns + 6 supports = 9.
+            # Every atom tags all 3 feats → 3 resps × 3 feats = 9
+            # decomposition edges.
             edges = list(
                 s.execute(
                     select(Edge).where(
@@ -227,22 +180,17 @@ class TestHappyPath:
             s.close()
 
     def test_partial_coverage_across_resps(self, shared_session_factory):
-        # Each resp covers only one feature; together they cover
-        # both features (coverage check passes) and produce exactly
-        # 2 edges.
+        # Each atom tags one feat; together they cover both and
+        # produce exactly 2 edges.
         factory = shared_session_factory
         s = factory()
         try:
             project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
             content = (
                 "<requirements>"
-                f"<responsibility><name>Auth</name><scope><item>test scope phrase 3</item></scope><failure-surface>Test failure surface 3.</failure-surface>"  # noqa: E501
-                f'<owns><feat id="{feat_ids[0]}"/></owns>'
-                "</responsibility>"
-                f"<responsibility><name>Billing</name><scope><item>test scope phrase 4</item></scope><failure-surface>Test failure surface 4.</failure-surface>"  # noqa: E501
-                f'<owns><feat id="{feat_ids[1]}"/></owns>'
-                "</responsibility>"
-                "</requirements>"
+                + _resp("session lifecycle", (feat_ids[0],))
+                + _resp("invoice emission", (feat_ids[1],))
+                + "</requirements>"
             )
             _set_reqs_content(s, project_id, content)
         finally:
@@ -277,9 +225,9 @@ class TestIdempotency:
             )
             content = _reqs_block(
                 feat_ids,
-                ("Auth", "A."),
-                ("Billing", "B."),
-                ("Telemetry", "T."),
+                "session lifecycle",
+                "invoice emission",
+                "event log",
             )
             _set_reqs_content(s, project_id, content)
         finally:
@@ -360,23 +308,18 @@ class TestFailureModes:
         # coverage valid at generation time but a feature was added
         # after approval, the mint handler's parse-validate pass
         # catches it and refuses to mint rather than emit an
-        # orphaned resp set.
+        # incomplete atom set.
         factory = shared_session_factory
         s = factory()
         try:
             project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
-            # Content covers only the first feature
             partial = (
-                "<requirements>"
-                f"<responsibility><name>Auth</name><scope><item>test scope phrase 5</item></scope><failure-surface>Test failure surface 5.</failure-surface>"  # noqa: E501
-                f'<owns><feat id="{feat_ids[0]}"/></owns>'
-                "</responsibility>"
-                "</requirements>"
+                "<requirements>" + _resp("session lifecycle", (feat_ids[0],)) + "</requirements>"
             )
             _set_reqs_content(s, project_id, partial)
         finally:
             s.close()
-        with pytest.raises(RequirementsMintHandlerError, match="features with no owner"):
+        with pytest.raises(RequirementsMintHandlerError, match="no atom tag"):
             asyncio.run(mint_requirements({"project_id": project_id}))
 
 
@@ -386,7 +329,7 @@ class TestSysarchBootstrapFanOut:
         s = factory()
         try:
             project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA", "FeatB"])
-            content = _reqs_block(feat_ids, ("Auth", "Identify."))
+            content = _reqs_block(feat_ids, "session lifecycle")
             _set_reqs_content(s, project_id, content)
         finally:
             s.close()
@@ -395,7 +338,6 @@ class TestSysarchBootstrapFanOut:
 
         s = factory()
         try:
-            # Sysarch bootstrap node exists
             sysarch_nodes = list(
                 s.execute(
                     select(Node).where(Node.project_id == project_id, Node.tier == "sysarch")
@@ -403,10 +345,8 @@ class TestSysarchBootstrapFanOut:
             )
             assert len(sysarch_nodes) == 1
             assert sysarch_nodes[0].id.startswith("sysarch_")
-            # Empty content until the generation handler produces a draft
             assert sysarch_nodes[0].content == ""
 
-            # v2.generate_sysarch job enqueued
             jobs = list(
                 s.execute(select(Job).where(Job.job_type == "v2.generate_sysarch")).scalars()
             )
@@ -419,7 +359,7 @@ class TestSysarchBootstrapFanOut:
         s = factory()
         try:
             project_id, feat_ids = _seed_project_with_features_and_reqs(s, ["FeatA"])
-            _set_reqs_content(s, project_id, _reqs_block(feat_ids, ("Auth", "Ok.")))
+            _set_reqs_content(s, project_id, _reqs_block(feat_ids, "session lifecycle"))
         finally:
             s.close()
 

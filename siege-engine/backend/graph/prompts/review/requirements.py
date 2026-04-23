@@ -9,108 +9,83 @@ from backend.graph.prompts.review._shared import (
 from backend.graph.review_context.requirements import RequirementsContext
 
 _HANDLES_INTRO = """\
-Requirements rotates user-facing features into system-level \
-responsibilities. Sysarch then reads each responsibility and \
-decides which component owns it. The grammar is structured: \
-each responsibility has ``<scope>`` (short noun phrases naming \
-system-side concerns it owns), ``<does-not-own>`` (explicit \
-deferrals to peers), a one-sentence ``<failure-surface>``, \
-``<owns>`` (primary feature ownership — exactly one per feature \
-doc-wide), and ``<supports>`` (composition / infrastructure). \
-The validator mechanically enforces single-owner on features, \
-scope-phrase uniqueness across responsibilities, and \
-cross-reference resolution on ``<defers to=...>``. Your job is \
-the fuzzier axis the mechanical check can't catch: **scope \
-phrases that are near-duplicates** (different wording, same \
-concern), **scope phrases that aren't actually system-side**, \
-**weak or vague phrases** that fail to distinguish one \
-responsibility from its peer, and **failure surfaces that \
-describe impact-categories instead of concrete failure modes**.
+Requirements rotates user-facing features into atomic \
+system-side responsibilities. Each ``<responsibility>`` is one \
+concern, named by a short noun phrase. Sysarch clusters these \
+atoms into components — that clustering is *not* this tier's \
+job. The grammar is minimal: exactly ``<name>`` + ``<feats>``. \
+The validator mechanically enforces name-dedup and \
+feat-coverage (every feature appears in at least one atom's \
+``<feats>``), so you can assume coverage is already satisfied \
+and focus on the fuzzier axis the mechanical check can't catch: \
+**atoms that are still compound groupings** rather than one \
+concern, **atoms that read as user outcomes** instead of \
+system-side concerns, and **feat tags that are wrong** (a feat \
+tagged on an atom it doesn't actually implicate, or a feat that \
+belongs on this atom but isn't tagged).
 """
 
 _HANDLES = """\
-- **Near-duplicate scope phrases are the first thing to look \
-for.** The validator rejects literal duplicates across \
-responsibilities. You should flag *semantic* duplicates: two \
-resps whose scope entries read differently but name the same \
-system-side concept ("session state lifecycle" vs "session \
-storage and invalidation"). Name the shared concept and \
-suggest which responsibility should own it outright.
-- **Scope phrases should be system-side, not user-facing.** \
-Flag scope items that restate a user outcome instead of a \
-system concern. Good: "append-only event log", "session-state \
-lifecycle". Bad: "users can sign in", "secure authentication". \
-Every scope item should be something sysarch could plausibly \
-map to a module or data store.
-- **Scope phrases should distinguish this responsibility from \
-its peers.** A scope item that applies equally to half the \
-other responsibilities is too vague. Flag phrases like \
-"reliable delivery", "secure storage", "valid state" — those \
-are universal concerns, not specific claims.
-- **The ``<does-not-own>`` block is doing real work.** Every \
-``<defers to="X">phrase</defers>`` should name a peer \
-responsibility that genuinely owns the scope being deferred. \
-Flag ``<defers>`` entries that read as boilerplate disclaimers \
-(deferring to something obviously unrelated) or that defer to \
-a responsibility whose own scope doesn't actually include the \
-deferred phrase.
-- **``<failure-surface>`` should name concrete failure modes, \
-not impact categories.** Good: "Reducer drift is a platform-\
-integrity incident; a non-reducer write is an invariant \
-violation." Bad: "Loss of service; data integrity issues." \
-Flag failure surfaces that wave at impact without naming the \
-specific thing that breaks.
-- Is the ``<owns>`` assignment the right owner? A feature ends \
-up owned by one responsibility; is that the responsibility \
-whose system-side guarantee the feature actually depends on? \
-Flag if the owner looks accidental (e.g. a cross-cutting \
-infrastructure resp is owning a feature that should belong to \
-its downstream consumer).
-- Is ``<supports>`` being used honestly? A responsibility that \
-supports most of the feature set is likely genuinely \
-cross-cutting (observability, audit, job queue infrastructure). \
-Flag large supports lists whose scope doesn't explain what the \
-responsibility actually contributes, and flag ``<supports>`` \
-entries that should really be ``<owns>``.
-- Are responsibility names distinctive and specific to the \
-system-level work? Flag names that restate a feature, names \
-too abstract for sysarch to map to a component, or names that \
-collide with siblings.
-- Are ``<owns>`` / ``<supports>`` references valid? Every feat_* \
-id must exist in the feature set.
+- **Atomicity is the first thing to check.** Each atom should \
+name one concrete system-side concern. Flag atoms whose names \
+contain "and" or imply a grouping — "session lifecycle and \
+token refresh" is two atoms; "billing state and invoice \
+emission" is two atoms; "Authentication" is probably four or \
+five atoms (session, password hash, rate limit, token refresh, \
+permission check). Suggest the split and name the atoms the \
+generator should have emitted.
+- **Names should be system-side, not user-facing.** Flag atoms \
+whose names restate a user outcome instead of a system concern. \
+Good: "append-only event log", "session-state lifecycle", \
+"per-request access decision". Bad: "users can sign in", \
+"secure authentication", "reliable delivery" (vague), \
+"Authentication" (grouping). Every atom name should be \
+something sysarch could plausibly map to a module or data store.
+- **Feat-tagging honesty.** The validator guarantees every \
+feature appears on at least one atom, but it can't judge \
+whether the tags are *correct*. Flag atoms whose ``<feats>`` \
+includes a feature the atom doesn't actually implicate (wrong \
+tag) and atoms that are missing a feature which clearly \
+implicates them (missing tag). Many-to-many is normal — a \
+login feature legitimately implicates session, rate limit, and \
+password hash — but each tag should be defensible.
+- **Names should distinguish this atom from its peers.** An \
+atom name so vague it could apply to half the other atoms is \
+too abstract. Flag names like "reliable delivery", "secure \
+storage", "valid state" — those are universal claims, not \
+specific concerns.
+- Are ``<feat>`` references valid? Every ``feat_*`` id must \
+exist in the feature set. (The validator catches this, but \
+flag it if you see it — makes the critique complete.)
 """
 
 _ARCHITECTURE_INTRO = """\
-The rotation axis is the load-bearing decision here. If \
-responsibilities still read as user-facing outcomes, \
-requirements didn't rotate — sysarch will struggle to map them \
-to components because they're still on the feature side of the \
-axis. Cross-cutting concerns (auth, audit, observability) \
-deserve their own resps so sysarch can consolidate them, \
-rather than feature-by-feature duplicates. Look at the \
-aggregate shape of the scope phrases across the whole doc: \
-does the set hang together, or does it look like the feature \
-list with renamed headers?
+The rotation axis is the load-bearing decision here. If the \
+atoms still read as user-facing outcomes or as groupings, \
+requirements didn't rotate — sysarch will struggle to cluster \
+them because they're still on the feature side of the axis or \
+they already impose component boundaries. Look at the aggregate \
+shape: does the set decompose the features into system-side \
+concerns at the atom grain (good), or does it echo the feature \
+list with renamed headers (bad)?
 """
 
 _ARCHITECTURE = """\
-- Is the axis right? Requirements should rotate user-facing \
-feature intents into system-level responsibilities. Flag resps \
-whose scope phrases still read as user outcomes (feature-axis) \
-rather than system concerns (system-axis).
-- Is the decomposition the right level for sysarch? Too-fine \
-creates a component explosion (flag resps whose scope has only \
-1–2 items unless they're genuinely narrow platform-level \
-concerns); too-coarse collapses distinct failure modes into a \
-single responsibility (flag resps whose scope spans \
-unrelated-seeming concerns — they probably need splitting).
-- Are cross-cutting concerns (auth, audit, observability) \
-handled as their own resps rather than duplicated across \
-feature-specific resps?
-- Does the aggregate responsibility list cover what the project \
-actually needs, or are there implicit system concerns (logging, \
-rate limiting, secrets handling, background scheduling) that \
-nobody is naming?
+- Is the axis right? Atoms should be system-side concerns, not \
+user outcomes and not UI/backend splits. Flag atoms that still \
+read as features ("Accept card payments") or as UI/backend \
+sibling pairs ("payment mechanics" + "payment UI" — those are \
+sysarch's concern, not this tier's).
+- Is the granularity right? Target roughly 20-40 atoms. Flag \
+the set if it has fewer than ~15 atoms (still clustering into \
+groups) or more than ~50 (split below the concern grain).
+- Are system-emergent atoms named? Flag absences: an \
+append-only event log, a pure reducer entrypoint, a per-project \
+sandbox — these typically have no direct feature cause but \
+belong in the atom list with ``<feats/>`` empty.
+- Does the atom list cover what the project actually needs, or \
+are there implicit system concerns (logging, rate limiting, \
+secrets handling, background scheduling) that nobody named?
 """
 
 

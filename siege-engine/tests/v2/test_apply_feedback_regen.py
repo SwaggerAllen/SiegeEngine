@@ -88,11 +88,11 @@ def _valid_expansion_output() -> str:
 
 
 def _valid_reqs_output(feat_id: str) -> str:
-    covers = f'<owns><feat id="{feat_id}"/></owns>'
+    feats = f'<feats><feat id="{feat_id}"/></feats>'
     return (
         "<introduction>Regenerated reqs intro.</introduction>"
         "<requirements>"
-        f"<responsibility><name>R</name><scope><item>test scope phrase 2</item></scope><failure-surface>Test failure surface 2.</failure-surface>{covers}</responsibility>"  # noqa: E501
+        f"<responsibility><name>session lifecycle</name>{feats}</responsibility>"
         "</requirements>"
     )
 

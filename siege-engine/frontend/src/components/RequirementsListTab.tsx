@@ -12,7 +12,7 @@ import { makeRequirementsRenderers } from './xml';
  * scrolling past it every regen is noisy.
  *
  * Renderers need the project's feature-name map so
- * ``<covers><feat id="feat_xxxx"/></covers>`` renders as
+ * ``<feats><feat id="feat_xxxx"/></feats>`` renders as
  * ``Billing (feat_xxxx)`` instead of bare IDs. The parent
  * `RequirementsPanel` passes it in since it owns the features
  * query.

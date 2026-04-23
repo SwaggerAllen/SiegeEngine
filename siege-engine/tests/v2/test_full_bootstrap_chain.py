@@ -180,45 +180,14 @@ def _requirements_xml(session, project_id: str) -> str:
             .order_by(Node.display_order, Node.id)
         )
     ]
-    entries = [
-        ("Authentication", "Identify callers and make them available downstream."),
-        ("BillingDomain", "Handle payments and subscription state."),
-        # Presentational responsibility for the Phase 6 slice — the
-        # sysarch stub marks its owning component as presentational
-        # and draws a domain_parent edge back at BillingDomain.
-        ("BillingUI", "Render a dashboard view of billing state."),
-        ("Foundation", "Own project root, build config, shared utilities."),
-    ]
-    # Distribute ownership across responsibilities so the
-    # single-owner rule passes: each responsibility primary-owns
-    # the feature at its index (wrapping if entries > features)
-    # and supports all the others. Tests seed at least as many
-    # features as entries for this to produce a valid doc.
-    if len(feat_ids) < len(entries):
-        raise AssertionError(
-            "reqs fixture needs at least one feature per responsibility; "
-            f"got {len(feat_ids)} features for {len(entries)} responsibilities"
-        )
-
-    rows: list[str] = []
-    for i, (name, intent) in enumerate(entries):
-        owned_id = feat_ids[i]
-        supported_ids = tuple(f for f in feat_ids if f != owned_id)
-        owns_block = "<owns>" + f'<feat id="{owned_id}"/>' + "</owns>"
-        supports_block = (
-            ("<supports>" + "".join(f'<feat id="{fid}"/>' for fid in supported_ids) + "</supports>")
-            if supported_ids
-            else ""
-        )
-        # Scope must be unique per responsibility — include the name
-        # in the phrase so the dedup rule is satisfied without
-        # having to thread bespoke content into every entry.
-        scope_block = f"<scope><item>test scope for {name}</item></scope>"
-        failure_block = f"<failure-surface>{name} failure surface.</failure-surface>"
-        rows.append(
-            f"<responsibility><name>{name}</name>{scope_block}{failure_block}"
-            f"{owns_block}{supports_block}</responsibility>"
-        )
+    # Atomic grammar: each atom is a unique scope phrase with a
+    # flat <feats> list. Many-to-many is legal, so giving every
+    # atom every feat satisfies coverage in the simplest way.
+    # Atom names match the sysarch stub's expected resp names
+    # (Authentication, BillingDomain, BillingUI, Foundation).
+    names = ("Authentication", "BillingDomain", "BillingUI", "Foundation")
+    feats_block = "<feats>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</feats>"
+    rows = [f"<responsibility><name>{name}</name>{feats_block}</responsibility>" for name in names]
     inner = "".join(rows)
     return (
         "<introduction>Chain integration test: stub intro.</introduction>"

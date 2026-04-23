@@ -136,34 +136,23 @@ def seeded_feat_ids(shared_session_factory, seeded_project) -> list[str]:
         s.close()
 
 
-def _covers_all(feat_ids: list[str]) -> str:
-    """Build a ``<owns>`` block listing every known feature id.
+def _feats_all(feat_ids: list[str]) -> str:
+    """Build a ``<feats>`` block listing every known feature id."""
+    return "<feats>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</feats>"
 
-    Using all-features-per-responsibility keeps the coverage
-    check happy in a maximally-boring way. Tests that want to
-    exercise specific subsets can build their own covers blocks.
+
+def _reqs_xml(feat_ids: list[str], *names: str) -> str:
+    """Build a valid ``<requirements>`` block where every atom
+    tags every feature in ``feat_ids``.
+
+    Each positional ``name`` becomes one ``<responsibility>`` atom
+    (the name IS the scope phrase verbatim under the atomic
+    grammar). Names must be unique under
+    :func:`backend.graph.parsers.validators._normalize_name`.
     """
-    return "<owns>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</owns>"
-
-
-def _reqs_xml(feat_ids: list[str], *entries: tuple[str, str]) -> str:
-    """Build a valid ``<requirements>`` block where every entry
-    covers every feature in ``feat_ids``.
-
-    The second field of each entry is used as the responsibility's
-    ``<scope>`` phrase — lets tests provide distinctive strings
-    the prompt-rendering machinery should carry through. Under the
-    scope-list grammar, scope phrases must be unique across
-    responsibilities; each caller is responsible for distinct
-    phrases across ``entries``.
-    """
-    covers = _covers_all(feat_ids)
+    feats = _feats_all(feat_ids)
     inner = "".join(
-        f"<responsibility><name>{name}</name>"
-        f"<scope><item>{phrase}</item></scope>"
-        f"<failure-surface>{name} failure surface.</failure-surface>"
-        f"{covers}</responsibility>"
-        for name, phrase in entries
+        f"<responsibility><name>{name}</name>{feats}</responsibility>" for name in names
     )
     return (
         "<introduction>Stub intro for requirements handler tests.</introduction>"
@@ -172,10 +161,7 @@ def _reqs_xml(feat_ids: list[str], *entries: tuple[str, str]) -> str:
 
 
 def _valid_xml(feat_ids: list[str]) -> str:
-    return _reqs_xml(
-        feat_ids,
-        ("User Authentication", "authenticated-session lifecycle"),
-    )
+    return _reqs_xml(feat_ids, "authenticated-session lifecycle")
 
 
 def _patch_cli(
@@ -229,7 +215,7 @@ class TestHappyPath:
     def test_generates_pending_draft(
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        draft_xml = _reqs_xml(seeded_feat_ids, ("Auth", "Identify callers."))
+        draft_xml = _reqs_xml(seeded_feat_ids, "session lifecycle")
         calls = _patch_cli(monkeypatch, draft_xml)
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
 
@@ -239,7 +225,7 @@ class TestHappyPath:
         assert "Billing" in prompt
         assert "Users pay for plans." in prompt
         assert "Auth" in prompt
-        # Feature IDs must appear in the prompt — LLM echoes them in <owns>
+        # Feature IDs must appear in the prompt — LLM echoes them in <feats>
         for fid in seeded_feat_ids:
             assert fid in prompt
 
@@ -257,8 +243,8 @@ class TestHappyPath:
     def test_regeneration_discards_old_pending(
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        first = _reqs_xml(seeded_feat_ids, ("One", "First draft."))
-        second = _reqs_xml(seeded_feat_ids, ("Two", "Second draft."))
+        first = _reqs_xml(seeded_feat_ids, "session lifecycle first draft")
+        second = _reqs_xml(seeded_feat_ids, "session lifecycle second draft")
 
         _patch_cli(monkeypatch, first)
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
@@ -289,11 +275,11 @@ class TestHappyPath:
     def test_feedback_appears_in_prompt(
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        first = _reqs_xml(seeded_feat_ids, ("Auth", "v1."))
+        first = _reqs_xml(seeded_feat_ids, "session lifecycle v1")
         _patch_cli(monkeypatch, first)
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
 
-        calls = _patch_cli(monkeypatch, _reqs_xml(seeded_feat_ids, ("Auth", "v2.")))
+        calls = _patch_cli(monkeypatch, _reqs_xml(seeded_feat_ids, "session lifecycle v2"))
         asyncio.run(
             generate_requirements({"project_id": seeded_project, "feedback": "Add rate limiting"})
         )
@@ -345,7 +331,7 @@ class TestParseValidateRetry:
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
         first_bad = "Here are the requirements but I forgot the tags."
-        second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
+        second_good = _reqs_xml(seeded_feat_ids, "session lifecycle")
         calls = _patch_cli_sequence(monkeypatch, [first_bad, second_good])
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 2
@@ -353,57 +339,56 @@ class TestParseValidateRetry:
         assert "Previous output failed structural validation" in retry_prompt
         assert "<requirements>" in retry_prompt
 
-    def test_retry_on_missing_covers_block(
+    def test_retry_on_missing_feats_block(
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        # First attempt: no <owns> block (regression of the v2
-        # retrofit — the LLM forgot to include it).
+        # First attempt: responsibility has no <feats> element at
+        # all (empty <feats/> is legal; entirely missing is not).
         first_bad = (
             "<introduction>stub</introduction>"
             "<requirements>"
-            "<responsibility><name>Auth</name><scope><item>test scope phrase 2</item></scope><failure-surface>Test failure surface 2.</failure-surface></responsibility>"  # noqa: E501
+            "<responsibility><name>session lifecycle</name></responsibility>"
             "</requirements>"
         )
-        second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
+        second_good = _reqs_xml(seeded_feat_ids, "session lifecycle")
         calls = _patch_cli_sequence(monkeypatch, [first_bad, second_good])
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 2
         retry_prompt = calls[1]["prompt"]
-        # The retry prompt surfaces the specific validation error.
-        assert "missing an <owns>" in retry_prompt
+        assert "missing a <feats>" in retry_prompt
 
     def test_retry_on_missing_feature_coverage(
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        # First attempt: covers only the first feature, leaving
+        # First attempt: tags only the first feature, leaving
         # the second uncovered.
-        partial_covers = "<owns>" + f'<feat id="{seeded_feat_ids[0]}"/>' + "</owns>"
+        partial_feats = "<feats>" + f'<feat id="{seeded_feat_ids[0]}"/>' + "</feats>"
         first_bad = (
             "<introduction>stub</introduction>"
             "<requirements>"
-            f"<responsibility><name>Auth</name><scope><item>test scope phrase 3</item></scope><failure-surface>Test failure surface 3.</failure-surface>{partial_covers}</responsibility>"  # noqa: E501
+            f"<responsibility><name>session lifecycle</name>{partial_feats}</responsibility>"
             "</requirements>"
         )
-        second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
+        second_good = _reqs_xml(seeded_feat_ids, "session lifecycle")
         calls = _patch_cli_sequence(monkeypatch, [first_bad, second_good])
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 2
         retry_prompt = calls[1]["prompt"]
-        assert "features with no owner" in retry_prompt
+        assert "no atom tag" in retry_prompt
         # The uncovered id is named in the error feedback
         assert seeded_feat_ids[1] in retry_prompt
 
     def test_retry_on_unknown_feature_id(
         self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
     ):
-        fake_covers = '<owns><feat id="feat_bogus01"/></owns>'
+        fake_feats = '<feats><feat id="feat_bogus01"/></feats>'
         first_bad = (
             "<introduction>stub</introduction>"
             "<requirements>"
-            f"<responsibility><name>Auth</name><scope><item>test scope phrase 4</item></scope><failure-surface>Test failure surface 4.</failure-surface>{fake_covers}</responsibility>"  # noqa: E501
+            f"<responsibility><name>session lifecycle</name>{fake_feats}</responsibility>"
             "</requirements>"
         )
-        second_good = _reqs_xml(seeded_feat_ids, ("Auth", "Ok."))
+        second_good = _reqs_xml(seeded_feat_ids, "session lifecycle")
         calls = _patch_cli_sequence(monkeypatch, [first_bad, second_good])
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 2
@@ -435,7 +420,7 @@ class TestTelemetry:
     ):
         _patch_cli(
             monkeypatch,
-            _reqs_xml(seeded_feat_ids, ("Auth", "Ok.")),
+            _reqs_xml(seeded_feat_ids, "session lifecycle"),
             prompt_tokens=1234,
             completion_tokens=567,
             model="claude-sonnet-4-6",
@@ -535,7 +520,7 @@ class TestInputDocInclusion:
         # Second call with feedback: user is iterating on the
         # pending draft and needs the LLM to reshape with the
         # original framing still visible. The doc must stay.
-        second_calls = _patch_cli(monkeypatch, _reqs_xml(seeded_feat_ids, ("Auth", "v2.")))
+        second_calls = _patch_cli(monkeypatch, _reqs_xml(seeded_feat_ids, "session lifecycle v2"))
         asyncio.run(
             generate_requirements({"project_id": seeded_project, "feedback": "Tighten it up"})
         )
@@ -560,14 +545,14 @@ class TestInputDocInclusion:
         # section and we'd only notice in a quality regression.
         distinctive_first = _reqs_xml(
             seeded_feat_ids,
-            ("DraftOneMarker", "distinctive first-draft scope"),
+            "DraftOneMarker distinctive first-draft scope",
         )
         _patch_cli(monkeypatch, distinctive_first)
         asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
 
         distinctive_second = _reqs_xml(
             seeded_feat_ids,
-            ("DraftTwoMarker", "distinctive second-draft scope"),
+            "DraftTwoMarker distinctive second-draft scope",
         )
         second_calls = _patch_cli(monkeypatch, distinctive_second)
         asyncio.run(
@@ -587,7 +572,7 @@ class TestInputDocInclusion:
         # should see D2 (which contains DraftTwoMarker) but not D1.
         distinctive_third = _reqs_xml(
             seeded_feat_ids,
-            ("DraftThreeMarker", "distinctive third-draft scope"),
+            "DraftThreeMarker distinctive third-draft scope",
         )
         third_calls = _patch_cli(monkeypatch, distinctive_third)
         asyncio.run(
@@ -599,7 +584,7 @@ class TestInputDocInclusion:
         assert "DraftTwoMarker" in third_prompt
         assert "distinctive second-draft scope" in third_prompt
         assert "DraftOneMarker" not in third_prompt
-        assert "A distinctive first-draft intent." not in third_prompt
+        assert "distinctive first-draft scope" not in third_prompt
 
     def test_missing_input_document_row_does_not_crash(self, shared_session_factory, monkeypatch):
         # Edge case: a project without an InputDocument row (e.g.
@@ -620,10 +605,7 @@ class TestInputDocInclusion:
 
         calls = _patch_cli(
             monkeypatch,
-            _reqs_xml(
-                [fid],
-                ("Auth", "Identify callers and make them available downstream."),
-            ),
+            _reqs_xml([fid], "session lifecycle"),
         )
         asyncio.run(generate_requirements({"project_id": pid, "feedback": None}))
         prompt = calls[0]["prompt"]
