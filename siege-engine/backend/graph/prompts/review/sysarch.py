@@ -28,6 +28,14 @@ does, not what it IS? A role should describe behavior, not \
 category. Flag category-speak.
 - Are api-intents specific enough for downstream pubapi \
 shaping? Flag vague "coordinates X" / "manages Y" prose.
+- Is every ``<failure-surface>`` a **concrete failure mode** \
+(data loss, invariant violation, silent degradation, security \
+breach, specific wrong-output shape) rather than an impact \
+category? Flag surfaces that say "service becomes unreliable", \
+"data issues", "users affected" — those describe consequences, \
+not the specific thing that breaks. The failure-surface is the \
+signal comparch / fanin readers use to pick invariants to \
+check; a vague surface produces vague invariants.
 - Does every top-level responsibility appear on exactly one \
 ``<decomposition>`` edge, mapping it to a single owning \
 component? Flag orphaned resps, doubly-mapped resps, or \

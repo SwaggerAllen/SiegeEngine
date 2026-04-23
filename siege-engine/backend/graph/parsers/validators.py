@@ -511,6 +511,7 @@ class Component:
     kind: Literal["domain", "presentational"]
     role: str
     api_intent: str
+    failure_surface: str
     resp_refs: tuple[str, ...]
     is_foundation: bool
 
@@ -606,6 +607,7 @@ _COMPONENT_ALLOWED_CHILDREN = {
     "kind",
     "role",
     "api-intent",
+    "failure-surface",
     "responsibilities",
     "foundation",
 }
@@ -884,6 +886,7 @@ def _validate_component(
     kind_node = _require_one("kind")
     role_node = _require_one("role")
     api_intent_node = _require_one("api-intent")
+    failure_surface_node = _require_one("failure-surface")
     responsibilities_node = _require_one("responsibilities")
 
     name = (name_node.text or "").strip()
@@ -921,6 +924,15 @@ def _validate_component(
         raise ValidationError(
             f"{pos} (alias={alias!r}) has an empty <api-intent>. Every "
             "component must describe the shape of its intended API."
+        )
+
+    failure_surface = (failure_surface_node.text or "").strip()
+    if not failure_surface:
+        raise ValidationError(
+            f"{pos} (alias={alias!r}) has an empty <failure-surface>. "
+            "Name the concrete failure mode (data loss, invariant "
+            "violation, silent degradation, security breach) in a "
+            "single sentence — 'service degraded' is not concrete."
         )
 
     # Validate the <responsibilities> block.
@@ -971,6 +983,7 @@ def _validate_component(
         kind=kind,
         role=role,
         api_intent=api_intent,
+        failure_surface=failure_surface,
         resp_refs=tuple(resp_refs),
         is_foundation=is_foundation,
     )

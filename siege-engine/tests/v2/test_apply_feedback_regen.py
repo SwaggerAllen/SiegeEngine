@@ -107,6 +107,7 @@ def _valid_sysarch_output(resp_id: str) -> str:
         "<name>Foundation</name><kind>domain</kind>"
         "<role>Project root.</role>"
         "<api-intent>load_settings().</api-intent>"
+        "<failure-surface>Settings crash aborts startup.</failure-surface>"
         f'<responsibilities><resp id="{resp_id}"/></responsibilities>'
         "<foundation/>"
         "</component>"

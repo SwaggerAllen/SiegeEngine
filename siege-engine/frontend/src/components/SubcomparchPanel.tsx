@@ -88,7 +88,8 @@ export function SubcomparchPanel({
       error={error}
       labels={makeLabels(subName)}
       callbacks={{
-        onFeedback: (f) => feedbackMutation.mutate(f),
+        onFeedback: (f, autoRev) =>
+          feedbackMutation.mutate({ feedback: f, autoRevisionsRequested: autoRev ?? 0 }),
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),

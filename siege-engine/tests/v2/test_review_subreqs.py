@@ -203,6 +203,8 @@ class TestReviewSubreqs:
         draft_id = _seed_pending_draft(db, seeded)
         review_xml = (
             "<review>"
+            "<intro>Overall shape is good.</intro>"
+            "<score>78</score>"
             "<handles-structure>"
             '<finding id="h1">Names are specific; coverage is complete.</finding>'
             "</handles-structure>"
@@ -288,6 +290,8 @@ class TestReviewSubreqs:
 
         review_xml = (
             "<review>"
+            "<intro>Looks good retroactively.</intro>"
+            "<score>80</score>"
             "<handles-structure>"
             '<finding id="h1">Looks good retroactively.</finding>'
             "</handles-structure>"

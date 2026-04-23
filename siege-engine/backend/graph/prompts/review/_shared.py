@@ -30,8 +30,12 @@ generator that saw the context described in the user prompt.
 
 Your job is to surface issues the generator missed. Be \
 specific — cite names, IDs, and structural elements. Avoid \
-generic prose. A thin review is better than a padded one. \
-Don't invent problems to fill space.
+generic prose. Scale your findings to the problem surface: \
+emit one ``<finding>`` per distinct issue you can name; emit \
+**zero** findings when there's nothing actionable to flag. \
+Don't invent problems to fill space, don't emit placeholder \
+"no issues" findings. A clean artifact gets an empty findings \
+section with a high score — that's the correct shape.
 
 Be direct. No hedging. Either it's an issue or it isn't.
 
@@ -39,6 +43,13 @@ Output format — XML matching this schema. No markdown, no \
 preamble, no code fences, no commentary outside the root tag:
 
 <review>
+  <intro>One or two short paragraphs (3–6 sentences total) \
+giving the user a "how close to finished" read on this \
+artifact. Summarize the overall shape, name the single biggest \
+thing holding it back (if anything), and note what's in good \
+shape. Purely display-only — the findings below are what the \
+generator regens against.</intro>
+  <score>0</score>
   <handles-structure>
     <finding id="h1">One specific issue, stated as actionable \
 prose. Name the element (ID / name / section), say what's \
@@ -52,14 +63,31 @@ pack multiple issues into one entry.</finding>
 </review>
 
 Rules:
+- ``<intro>`` is required and non-empty. Keep it short — this \
+is a display hint for the user, not a substitute for findings. \
+Content here does not feed the regeneration loop.
+- ``<score>`` is an integer 0-100 on the "how close to \
+finished" scale:
+  * 0-30 — fundamental axis is wrong or large-scale rework \
+needed; the artifact is not ready for downstream consumption.
+  * 31-60 — structural issues to fix before approval; \
+shape is roughly right but several findings need addressing.
+  * 61-85 — minor refinements; one or two small findings, \
+otherwise usable.
+  * 86-100 — ready to approve; zero or near-zero findings.
+  Pick the score that matches your own findings count and \
+severity. A score in the 80s with ten critical findings is \
+internally inconsistent.
 - Assign each finding a stable id: ``h1``, ``h2``, ... inside \
 ``<handles-structure>``; ``a1``, ``a2``, ... inside \
 ``<architectural-decisions>``. Sequential within each section, \
 no gaps.
-- If a section has no actionable findings, leave it empty: \
-``<handles-structure></handles-structure>``. Do not emit a \
-placeholder "no issues" finding.
-- Both sections must be present even if empty.
+- Scale findings to actual issues. One finding per distinct \
+problem you can name. If a section has no actionable findings, \
+leave it empty: ``<handles-structure></handles-structure>``. \
+Do not emit a placeholder "no issues" finding and do not pad \
+with low-value nitpicks.
+- Both findings sections must be present even if empty.
 - Finding text is plain prose. No nested XML tags inside a \
 ``<finding>``. Avoid bullet lists within a single finding — \
 split into multiple findings instead.

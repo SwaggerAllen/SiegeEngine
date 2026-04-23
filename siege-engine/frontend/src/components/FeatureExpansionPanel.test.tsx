@@ -264,6 +264,8 @@ describe('FeatureExpansionPanel', () => {
 
     const STRUCTURED_REVIEW = (
       '<review>' +
+      '<intro>Shape is roughly right but a couple of names collide.</intro>' +
+      '<score>65</score>' +
       '<handles-structure>' +
       '<finding id="h1">Feature names overlap between "Dashboard" and "Reports".</finding>' +
       '<finding id="h2">Intent for X is a restated name.</finding>' +

@@ -99,7 +99,8 @@ function ImplPanelTopLevel({
       error={error}
       labels={makeLabels(ownerName)}
       callbacks={{
-        onFeedback: (f) => feedbackMutation.mutate(f),
+        onFeedback: (f, autoRev) =>
+          feedbackMutation.mutate({ feedback: f, autoRevisionsRequested: autoRev ?? 0 }),
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
@@ -147,7 +148,8 @@ function ImplPanelSub({
       error={error}
       labels={makeLabels(ownerName)}
       callbacks={{
-        onFeedback: (f) => feedbackMutation.mutate(f),
+        onFeedback: (f, autoRev) =>
+          feedbackMutation.mutate({ feedback: f, autoRevisionsRequested: autoRev ?? 0 }),
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),

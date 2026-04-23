@@ -36,15 +36,18 @@ def _comp(
     resp_ids: tuple[str, ...],
     *,
     foundation: bool = False,
+    failure_surface: str | None = None,
 ) -> str:
     resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
     foundation_marker = "<foundation/>" if foundation else ""
+    fs = failure_surface if failure_surface is not None else f"{name} fails concretely."
     return (
         f'<component alias="{alias}">'
         f"<name>{name}</name>"
         f"<kind>{kind}</kind>"
         f"<role>{role}</role>"
         f"<api-intent>{api_intent}</api-intent>"
+        f"<failure-surface>{fs}</failure-surface>"
         f"<responsibilities>{resp_xml}</responsibilities>"
         f"{foundation_marker}"
         "</component>"
@@ -408,6 +411,34 @@ class TestComponentStructure:
         )
         raw = _sysarch(components=bad)
         with pytest.raises(ValidationError, match="empty <api-intent>"):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids={"resp_auth00001"})
+
+    def test_missing_failure_surface_rejected(self):
+        bad = (
+            '<component alias="thing">'
+            "<name>Thing</name><kind>domain</kind>"
+            "<role>x</role><api-intent>x</api-intent>"
+            '<responsibilities><resp id="resp_auth00001"/></responsibilities>'
+            "<foundation/>"
+            "</component>"
+        )
+        raw = _sysarch(components=bad)
+        with pytest.raises(ValidationError, match="missing a <failure-surface>"):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids={"resp_auth00001"})
+
+    def test_empty_failure_surface_rejected(self):
+        bad = _comp(
+            "thing",
+            "Thing",
+            "domain",
+            "x",
+            "x",
+            ("resp_auth00001",),
+            foundation=True,
+            failure_surface="",
+        )
+        raw = _sysarch(components=bad)
+        with pytest.raises(ValidationError, match="empty <failure-surface>"):
             validate_sysarch(_parse(raw), known_top_level_resp_ids={"resp_auth00001"})
 
     def test_empty_responsibilities_rejected(self):

@@ -22,6 +22,7 @@ and validated by
           <kind>domain</kind>
           <role>…role paragraph…</role>
           <api-intent>…api intent paragraph…</api-intent>
+          <failure-surface>…one sentence naming the concrete failure mode…</failure-surface>
           <responsibilities>
             <resp id="resp_abc12345"/>
             <resp id="resp_def67890"/>
@@ -32,6 +33,7 @@ and validated by
           <kind>domain</kind>
           <role>…</role>
           <api-intent>…</api-intent>
+          <failure-surface>…</failure-surface>
           <responsibilities>…</responsibilities>
           <foundation/>
         </component>
@@ -160,6 +162,10 @@ payment provider callbacks.</role>
 ``BillingStateChanged`` event on transitions. Payment provider \
 integration lives inside this component; other components only \
 see the stable internal interface.</api-intent>
+          <failure-surface>Invoice emission bug charges the \
+wrong customer or double-charges; payment-collector outage \
+stalls activation without a retry path; grace-period clock \
+drift silently suspends paying accounts.</failure-surface>
           <responsibilities>
             <resp id="resp_billing001"/>
             <resp id="resp_invoicing2"/>
@@ -173,6 +179,10 @@ session state that downstream components can read.</role>
           <api-intent>``authenticate(credentials) -> Session``, \
 ``resolve_session(token) -> Principal | None``. No password \
 storage details exposed at this layer — those are internal.</api-intent>
+          <failure-surface>Credential-verifier regression blocks \
+all sign-ins; session-store bug silently degrades authenticated \
+state into anonymous; token-refresh race issues duplicate \
+sessions for one account.</failure-surface>
           <responsibilities>
             <resp id="resp_auth00001"/>
           </responsibilities>
@@ -189,6 +199,10 @@ belong to any specific component lives here.</role>
 ``configure_logging()``, shared base classes \
 (``Handler``, ``Event``), and the main application factory \
 other components import at startup.</api-intent>
+          <failure-surface>A bad settings loader crashes the \
+app at startup; a broken shared base class corrupts every \
+handler that subclasses it; missing logging config blinds \
+every downstream component.</failure-surface>
           <responsibilities>
             <resp id="resp_config001"/>
           </responsibilities>
@@ -277,8 +291,22 @@ letters, digits, and underscores; must start with a letter; 1 to \
 32 characters; regex ``^[a-z][a-z0-9_]{0,31}$``. Aliases are \
 unique within ``<components>`` — no two components may share one.
 * Each ``<component>`` must contain exactly one ``<name>``, one \
-``<kind>``, one ``<role>``, one ``<api-intent>``, and one \
-``<responsibilities>`` block.
+``<kind>``, one ``<role>``, one ``<api-intent>``, one \
+``<failure-surface>``, and one ``<responsibilities>`` block.
+* ``<failure-surface>`` is **required** and is a single sentence \
+naming the **concrete failure modes** this component can \
+produce (data loss, invariant violation, silent degradation, \
+security breach, specific wrong-output shape). You have the \
+architectural context to write this at the component grain — \
+the responsibility atoms that feed you don't, which is why this \
+field lives here. Name the specific thing that breaks, not the \
+impact category. Good: "Reducer drift is a platform-integrity \
+incident; a non-reducer write path is an invariant violation; \
+log corruption is project data loss." Bad: "service becomes \
+unreliable"; "data issues"; "users affected". If the component \
+has multiple distinct failure modes worth naming, cram them \
+into one sentence separated by semicolons — keep it one \
+sentence so the downstream review pass can parse it as a unit.
 * ``<kind>`` is either ``domain`` or ``presentational``. Domain \
 components do the structural work. Presentational components \
 render views into domain content — UIs, dashboards, CLIs, \

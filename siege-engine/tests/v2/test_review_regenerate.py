@@ -22,6 +22,8 @@ pytest.importorskip("bs4")  # review XML parser uses bs4
 def _structured_review_markdown() -> str:
     return (
         "<review>"
+        "<intro>Mid-fix shape.</intro>"
+        "<score>55</score>"
         "<handles-structure>"
         '<finding id="h1">A specific handle issue.</finding>'
         "</handles-structure>"

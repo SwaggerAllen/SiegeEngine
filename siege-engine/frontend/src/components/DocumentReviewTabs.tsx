@@ -270,6 +270,7 @@ function StructuredReview({
 
   return (
     <div className="space-y-4" data-testid="review-text">
+      <ReviewScoreIntro intro={parsed.intro} score={parsed.score} />
       {totalCount > 0 && (
         <div className="flex items-center gap-3 flex-wrap text-xs text-gray-400">
           <button
@@ -299,9 +300,24 @@ function StructuredReview({
           {onSelectionChanged && (
             <span className="text-gray-500 italic w-full">
               Selected findings ride along when you Reject &amp; Regenerate
-              below.
+              below. The intro and score stay display-only — they don&apos;t
+              feed the next generation.
             </span>
           )}
+        </div>
+      )}
+      {totalCount === 0 && onRetryReview && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onRetryReview}
+            disabled={isBusy}
+            className="px-2 py-0.5 rounded border border-gray-700 text-xs text-gray-400 hover:bg-gray-800 hover:text-gray-200 disabled:opacity-40"
+            title="Discard this review and run a fresh one against the current draft"
+            data-testid="review-regenerate-button"
+          >
+            Regenerate review
+          </button>
         </div>
       )}
       <ReviewSection
@@ -320,6 +336,49 @@ function StructuredReview({
         isBusy={isBusy}
         testId="review-section-arch"
       />
+    </div>
+  );
+}
+
+/**
+ * Score + intro header for a parsed review. Renders a 0-100
+ * readiness pill and a short prose summary above the findings
+ * sections. Display-only — the pill and the prose stay out of
+ * the feedback propagation path (auto-revision + Reject &
+ * Regenerate), so the generator never sees them on the next pass.
+ */
+function ReviewScoreIntro({ intro, score }: { intro: string; score: number }) {
+  const band =
+    score >= 86
+      ? { label: 'Ready to approve', tone: 'bg-emerald-900/40 border-emerald-800 text-emerald-200' }
+      : score >= 61
+        ? { label: 'Minor refinements', tone: 'bg-blue-900/40 border-blue-800 text-blue-200' }
+        : score >= 31
+          ? { label: 'Structural issues', tone: 'bg-amber-900/40 border-amber-800 text-amber-200' }
+          : { label: 'Needs rework', tone: 'bg-red-900/40 border-red-800 text-red-200' };
+  return (
+    <div
+      className={`rounded border px-3 py-2 flex flex-col gap-2 ${band.tone}`}
+      data-testid="review-score-intro"
+    >
+      <div className="flex items-baseline gap-3">
+        <span
+          className="text-xl font-semibold tabular-nums"
+          data-testid="review-score"
+        >
+          {score}
+          <span className="text-xs text-gray-400 font-normal">/100</span>
+        </span>
+        <span className="text-xs uppercase tracking-wider opacity-80">
+          {band.label}
+        </span>
+      </div>
+      <p
+        className="text-sm leading-relaxed whitespace-pre-wrap text-gray-100"
+        data-testid="review-intro"
+      >
+        {intro}
+      </p>
     </div>
   );
 }
@@ -601,6 +660,14 @@ function ReviewDiagnosticPanel({ reviewText }: { reviewText: string }) {
           value={String(diagnostic.hasReviewTag)}
         />
         <DiagnosticRow
+          label="has <intro>"
+          value={String(diagnostic.hasIntroSection)}
+        />
+        <DiagnosticRow
+          label="has <score>"
+          value={String(diagnostic.hasScoreSection)}
+        />
+        <DiagnosticRow
           label="has <handles-structure>"
           value={String(diagnostic.hasHandlesSection)}
         />
@@ -638,6 +705,8 @@ function formatDiagnosticDump(
     `detail: ${diagnostic.detail}`,
     `raw length: ${diagnostic.rawLength}`,
     `has <review>: ${diagnostic.hasReviewTag}`,
+    `has <intro>: ${diagnostic.hasIntroSection}`,
+    `has <score>: ${diagnostic.hasScoreSection}`,
     `has <handles-structure>: ${diagnostic.hasHandlesSection}`,
     `has <architectural-decisions>: ${diagnostic.hasArchSection}`,
     `<finding> count: ${diagnostic.findingCount}`,

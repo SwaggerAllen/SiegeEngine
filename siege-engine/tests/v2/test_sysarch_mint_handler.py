@@ -113,6 +113,8 @@ def _valid_sysarch(resp_ids: list[str]) -> str:
         "<kind>domain</kind>"
         "<role>Identify callers and maintain session state.</role>"
         "<api-intent>authenticate(creds) -> Session.</api-intent>"
+        "<failure-surface>Verifier bug blocks all sign-ins; "
+        "session-store drift silently anonymizes authenticated users.</failure-surface>"
         f'<responsibilities><resp id="{auth_id}"/></responsibilities>'
         "</component>"
         '<component alias="billing">'
@@ -120,6 +122,8 @@ def _valid_sysarch(resp_ids: list[str]) -> str:
         "<kind>domain</kind>"
         "<role>Handle payments and subscription state.</role>"
         "<api-intent>get_billing_state(account_id).</api-intent>"
+        "<failure-surface>Invoice-emission bug double-charges; "
+        "payment-collector outage stalls activation.</failure-surface>"
         f'<responsibilities><resp id="{billing_id}"/></responsibilities>'
         "</component>"
         '<component alias="foundation">'
@@ -127,6 +131,8 @@ def _valid_sysarch(resp_ids: list[str]) -> str:
         "<kind>domain</kind>"
         "<role>Own project root and shared utilities.</role>"
         "<api-intent>load_settings(); configure_logging().</api-intent>"
+        "<failure-surface>Bad settings loader crashes startup; "
+        "broken base classes corrupt every subclassing handler.</failure-surface>"
         f'<responsibilities><resp id="{foundation_id}"/></responsibilities>'
         "<foundation/>"
         "</component>"
@@ -181,7 +187,9 @@ class TestHappyPath:
                 "Foundation",
             ]
             assert all(c.id.startswith("comp_") for c in comps)
-            # content is empty string — role + api-intent live in fragments
+            # content stays empty — role + api-intent live in
+            # fragments, and failure-surface is validate-time only
+            # (see sysarch_mint.py NodeCreated for the rationale).
             assert all(c.content == "" for c in comps)
 
             comp_by_name = {c.name: c for c in comps}
