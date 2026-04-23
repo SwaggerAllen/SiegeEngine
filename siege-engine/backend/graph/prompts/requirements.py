@@ -200,11 +200,15 @@ storage, charge authorization, invoice emission, retry \
 scheduling, and audit trail — five atoms, one feature. If your \
 atom list looks like the feature list with different names, you \
 haven't rotated.
-* **Granularity target: roughly 20-40 atoms.** Fewer than ~15 \
-means you're still clustering; more than ~50 means you're \
-splitting below the concern grain. Aim for atoms at the "one \
-coherent piece of system behavior sysarch could assign to a \
-module" scale.
+* **No atom-count ceiling — prefer splitting when uncertain.** \
+There is no target count. If a candidate name packs multiple \
+concerns ("review routing, notification, and SLA"), split it \
+into separate atoms even if that pushes the total well past \
+what "feels right". Clustering is sysarch's job, not yours; a \
+longer atom list that preserves one-concern-per-atom is always \
+better than a shorter list that smuggles groupings back in. \
+Aim for atoms at the "one coherent piece of system behavior \
+sysarch could assign to a module" scale.
 * **Clustering is sysarch's job, not yours.** Don't group atoms \
 into components. Don't worry if one feature tags five atoms \
 that might live in three different components — sysarch will \
