@@ -4,11 +4,13 @@
 //
 // The parser is lenient on the outer wrapper (preamble /
 // postamble is fine) but strict on the inner structure:
-// both ``<handles-structure>`` and ``<architectural-decisions>``
-// must be present, every ``<finding>`` needs a non-empty ``id``
-// and body. Malformed reviews return ``null`` — the caller
-// falls back to the raw-markdown render for pre-Phase-8 content
-// or any review that slipped through backend validation.
+// ``<intro>``, ``<score>``, ``<handles-structure>``, and
+// ``<architectural-decisions>`` must all be present; the score
+// must parse as an integer 0-100; every ``<finding>`` needs a
+// non-empty ``id`` and body. Malformed reviews return ``null``
+// — the caller falls back to the raw-markdown render for
+// pre-Phase-8 content or any review that slipped through
+// backend validation.
 
 export interface ReviewFinding {
   id: string;
@@ -16,10 +18,14 @@ export interface ReviewFinding {
 }
 
 export interface ParsedReview {
+  intro: string;
+  score: number;
   handlesStructure: ReviewFinding[];
   architecturalDecisions: ReviewFinding[];
 }
 
+const INTRO_SECTION = 'intro';
+const SCORE_SECTION = 'score';
 const HANDLES_SECTION = 'handles-structure';
 const ARCH_SECTION = 'architectural-decisions';
 
@@ -54,9 +60,19 @@ export function parseReview(raw: string): ParsedReview | null {
   const reviewEl = doc.querySelector('review');
   if (!reviewEl) return null;
 
+  const introEl = reviewEl.querySelector(INTRO_SECTION);
+  const scoreEl = reviewEl.querySelector(SCORE_SECTION);
   const handles = reviewEl.querySelector(HANDLES_SECTION);
   const arch = reviewEl.querySelector(ARCH_SECTION);
-  if (!handles || !arch) return null;
+  if (!introEl || !scoreEl || !handles || !arch) return null;
+
+  const intro = (introEl.textContent ?? '').trim();
+  if (!intro) return null;
+
+  const scoreText = (scoreEl.textContent ?? '').trim();
+  if (!scoreText) return null;
+  const score = Number(scoreText);
+  if (!Number.isInteger(score) || score < 0 || score > 100) return null;
 
   const handlesFindings = extractFindings(handles);
   const archFindings = extractFindings(arch);
@@ -69,6 +85,8 @@ export function parseReview(raw: string): ParsedReview | null {
   }
 
   return {
+    intro,
+    score,
     handlesStructure: handlesFindings,
     architecturalDecisions: archFindings,
   };
@@ -150,6 +168,10 @@ export type ReviewDiagnosticStatus =
   | 'empty'
   | 'xml_parse_error'
   | 'missing_review_root'
+  | 'missing_intro'
+  | 'empty_intro'
+  | 'missing_score'
+  | 'invalid_score'
   | 'missing_handles_structure'
   | 'missing_architectural_decisions'
   | 'finding_missing_id'
@@ -161,6 +183,8 @@ export interface ReviewDiagnostic {
   detail: string;
   rawLength: number;
   hasReviewTag: boolean;
+  hasIntroSection: boolean;
+  hasScoreSection: boolean;
   hasHandlesSection: boolean;
   hasArchSection: boolean;
   findingCount: number;
@@ -182,6 +206,8 @@ export function diagnoseReview(raw: string): ReviewDiagnostic {
   const base = {
     rawLength: trimmed.length,
     hasReviewTag: false,
+    hasIntroSection: false,
+    hasScoreSection: false,
     hasHandlesSection: false,
     hasArchSection: false,
     findingCount: 0,
@@ -217,12 +243,16 @@ export function diagnoseReview(raw: string): ReviewDiagnostic {
 
   const reviewEl = doc.querySelector('review');
   const hasReviewTag = reviewEl !== null;
+  const introEl = reviewEl?.querySelector(INTRO_SECTION) ?? null;
+  const scoreEl = reviewEl?.querySelector(SCORE_SECTION) ?? null;
   const handles = reviewEl?.querySelector(HANDLES_SECTION) ?? null;
   const arch = reviewEl?.querySelector(ARCH_SECTION) ?? null;
   const findings = reviewEl?.querySelectorAll('finding') ?? { length: 0 };
   const presence = {
     ...base,
     hasReviewTag,
+    hasIntroSection: introEl !== null,
+    hasScoreSection: scoreEl !== null,
     hasHandlesSection: handles !== null,
     hasArchSection: arch !== null,
     findingCount: findings.length,
@@ -233,6 +263,36 @@ export function diagnoseReview(raw: string): ReviewDiagnostic {
       ...presence,
       status: 'missing_review_root',
       detail: 'No <review> element found anywhere in the raw text.',
+    };
+  }
+  if (!introEl) {
+    return {
+      ...presence,
+      status: 'missing_intro',
+      detail: '<review> is missing the required <intro> section.',
+    };
+  }
+  if (!(introEl.textContent ?? '').trim()) {
+    return {
+      ...presence,
+      status: 'empty_intro',
+      detail: '<intro> is present but its body is empty.',
+    };
+  }
+  if (!scoreEl) {
+    return {
+      ...presence,
+      status: 'missing_score',
+      detail: '<review> is missing the required <score> section.',
+    };
+  }
+  const scoreText = (scoreEl.textContent ?? '').trim();
+  const scoreValue = Number(scoreText);
+  if (!Number.isInteger(scoreValue) || scoreValue < 0 || scoreValue > 100) {
+    return {
+      ...presence,
+      status: 'invalid_score',
+      detail: `<score> must be an integer 0-100, got ${JSON.stringify(scoreText)}.`,
     };
   }
   if (!handles) {
