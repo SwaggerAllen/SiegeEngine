@@ -47,6 +47,10 @@ const FragmentDiffSchema = z.object({
 const NodeDiffSchema = z.object({
   node_content: DiffSidesSchema,
   fragments: z.array(FragmentDiffSchema),
+  latest_change_summary: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
 });
 export type NodeDiff = z.infer<typeof NodeDiffSchema>;
 

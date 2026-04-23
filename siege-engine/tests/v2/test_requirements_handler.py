@@ -628,3 +628,78 @@ class TestDomainUiSplitGuidance:
         system_prompt = calls[0]["system_prompt"]
         assert "not UI/backend splits" in system_prompt
         assert "sysarch decides which components" in system_prompt
+
+
+class TestChangeSummaryLiftAndStrip:
+    """Phase 13 — ``<change-summary>`` body is lifted onto ``Draft.change_summary``
+    and stripped from the stored ``Draft.content`` so downstream readers see
+    only document prose."""
+
+    def test_change_summary_lifted_and_stripped(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        summary_body = "First pass — 1 atom covering every seeded feature."
+        raw = (
+            "<introduction>Stub intro.</introduction>"
+            f"<change-summary>{summary_body}</change-summary>"
+            "<requirements>"
+            "<responsibility><name>session lifecycle</name>"
+            "<feats>"
+            + "".join(f'<feat id="{fid}"/>' for fid in seeded_feat_ids)
+            + "</feats></responsibility>"
+            "</requirements>"
+        )
+        _patch_cli(monkeypatch, raw)
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+
+        session = shared_session_factory()
+        try:
+            draft = session.execute(
+                select(Draft).where(Draft.project_id == seeded_project)
+            ).scalar_one()
+            assert draft.change_summary == summary_body
+            assert "<change-summary>" not in draft.content
+            assert summary_body not in draft.content
+            # Document prose is still intact.
+            assert "<introduction>" in draft.content
+            assert "<requirements>" in draft.content
+        finally:
+            session.close()
+
+    def test_missing_change_summary_stores_null(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        """Drafts without a ``<change-summary>`` tag (e.g. fan-in stubs,
+        pre-Phase-13 fixtures) persist with ``NULL`` in the column and
+        unchanged content."""
+        raw = _reqs_xml(seeded_feat_ids, "session lifecycle")
+        _patch_cli(monkeypatch, raw)
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+
+        session = shared_session_factory()
+        try:
+            draft = session.execute(
+                select(Draft).where(Draft.project_id == seeded_project)
+            ).scalar_one()
+            assert draft.change_summary is None
+            assert draft.content == raw
+        finally:
+            session.close()
+
+
+class TestChangeSummaryPromptInvariant:
+    """The shared Phase 13 instruction must land in every in-scope
+    system prompt. Reqs is the exemplar; the other tiers concatenate
+    the same helper so a single assertion here protects the contract."""
+
+    def test_system_prompt_includes_change_summary_instruction(
+        self, shared_session_factory, seeded_project, seeded_feat_ids, monkeypatch
+    ):
+        calls = _patch_cli(monkeypatch, _valid_xml(seeded_feat_ids))
+        asyncio.run(generate_requirements({"project_id": seeded_project, "feedback": None}))
+        system_prompt = calls[0]["system_prompt"]
+        assert "<change-summary>" in system_prompt
+        assert "display-only" in system_prompt
+        # Rule wording safeguards — removal would silently break the
+        # lift-and-strip contract the parser enforces.
+        assert "Required on every draft" in system_prompt

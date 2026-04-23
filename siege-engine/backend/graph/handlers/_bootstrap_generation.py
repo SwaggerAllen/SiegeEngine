@@ -263,6 +263,7 @@ def persist_draft(
 
     from backend.database import SessionLocal
     from backend.graph import events as ev
+    from backend.graph.parsers.change_summary import extract_change_summary
     from backend.graph.reducer import append_event
     from backend.models.telemetry import GenerationTelemetry
     from backend.pipeline import queue as pipeline_queue
@@ -293,6 +294,13 @@ def persist_draft(
         import uuid
 
         new_batch_id = f"batch_{uuid.uuid4().hex[:16]}"
+        # Phase 13 — lift the generator's ``<change-summary>`` body
+        # into its own column and strip the tag from the stored draft
+        # content so downstream readers (diff view, mint handler
+        # re-parse, validators) see only document prose. Missing
+        # / empty tags return ``("", unchanged)`` — fan-in drafts are
+        # out of scope so they flow through without modification.
+        change_summary, stored_content = extract_change_summary(validated_output.text)
         append_event(
             db,
             project_id,
@@ -300,8 +308,9 @@ def persist_draft(
                 draft_id=new_draft_id,
                 target_type="node",
                 target_id=node_id,
-                content=validated_output.text,
+                content=stored_content,
                 batch_id=new_batch_id,
+                change_summary=change_summary,
             ),
         )
         for attempt in attempts:

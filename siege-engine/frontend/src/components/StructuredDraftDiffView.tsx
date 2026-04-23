@@ -37,11 +37,19 @@ export function StructuredDraftDiffView({
   after,
   kind,
   label,
+  summaryText,
 }: {
   before: string | null;
   after: string;
   kind: DraftDocKind;
   label?: string;
+  /**
+   * Phase 13 — the generator's change-summary rendered above the
+   * per-section accordion list. Matches the flat-fallback behavior
+   * of :component:`DraftDiffView` so callers can thread a single
+   * string through without branching on structured-vs-flat.
+   */
+  summaryText?: string | null;
 }) {
   const pairs = useMemo(
     () => pairSections(before, after, kind),
@@ -53,13 +61,29 @@ export function StructuredDraftDiffView({
   // bootstrap with ``before=null``, etc.). Callers get the same
   // render path they had pre-structured-diff.
   if (pairs === null) {
-    return <DraftDiffView before={before} after={after} label={label} />;
+    return (
+      <DraftDiffView
+        before={before}
+        after={after}
+        label={label}
+        summaryText={summaryText}
+      />
+    );
   }
 
   const changeCount = pairs.filter((p) => p.status !== 'unchanged').length;
+  const trimmedSummary = (summaryText ?? '').trim();
 
   return (
     <div className="space-y-3">
+      {trimmedSummary && (
+        <div
+          className="rounded border-l-2 border-blue-700/80 bg-gray-900/50 px-3 py-2 text-sm italic text-gray-200"
+          data-testid="structured-diff-summary"
+        >
+          {trimmedSummary}
+        </div>
+      )}
       {label && <div className="text-xs text-gray-400 italic">{label}</div>}
       <StructuredSummary pairs={pairs} />
       {changeCount === 0 ? (

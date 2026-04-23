@@ -17,6 +17,7 @@ export const SubcomparchDraftSchema = z.object({
   id: z.string(),
   content: z.string(),
   created_at: z.string(),
+  change_summary: z.string().nullable().optional(),
 });
 export type SubcomparchDraft = z.infer<typeof SubcomparchDraftSchema>;
 

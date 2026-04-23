@@ -1359,6 +1359,7 @@ class AutoRevisionIntermediate:
     label: str
     content: str
     auto_revision_pass: int
+    change_summary: str | None = None
 
 
 def auto_revision_intermediates(
@@ -1407,6 +1408,7 @@ def auto_revision_intermediates(
             label=f"After pass {i}",
             content=row.content or "",
             auto_revision_pass=i,
+            change_summary=row.change_summary,
         )
         for i, row in enumerate(rows, start=1)
     ]

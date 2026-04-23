@@ -56,4 +56,70 @@ describe('DraftDiffView', () => {
     expect(unified).toHaveAttribute('aria-pressed', 'true');
     expect(sideBySide).toHaveAttribute('aria-pressed', 'false');
   });
+
+  describe('summaryText', () => {
+    it('renders above the diff when provided', () => {
+      render(
+        <DraftDiffView
+          before="<sysarch>v1</sysarch>"
+          after="<sysarch>v2</sysarch>"
+          summaryText="Split Auth into five atoms per the review's compound-name finding."
+        />,
+      );
+      const summary = screen.getByTestId('draft-diff-summary');
+      expect(summary).toBeInTheDocument();
+      expect(summary).toHaveTextContent('Split Auth into five atoms');
+    });
+
+    it('is omitted when the summary is empty or whitespace-only', () => {
+      const { rerender } = render(
+        <DraftDiffView
+          before="<sysarch>v1</sysarch>"
+          after="<sysarch>v2</sysarch>"
+          summaryText={null}
+        />,
+      );
+      expect(screen.queryByTestId('draft-diff-summary')).not.toBeInTheDocument();
+
+      rerender(
+        <DraftDiffView
+          before="<sysarch>v1</sysarch>"
+          after="<sysarch>v2</sysarch>"
+          summaryText="   "
+        />,
+      );
+      expect(screen.queryByTestId('draft-diff-summary')).not.toBeInTheDocument();
+    });
+
+    it('renders above the "no prior version" empty state', () => {
+      render(
+        <DraftDiffView
+          before={null}
+          after="<sysarch>v1</sysarch>"
+          summaryText="First pass — initial shape of the document."
+        />,
+      );
+      expect(screen.getByTestId('draft-diff-summary')).toHaveTextContent(
+        'First pass',
+      );
+      expect(
+        screen.getByText(/first version on this tier/i),
+      ).toBeInTheDocument();
+    });
+
+    it('renders above the "no changes" empty state', () => {
+      const same = '<sysarch>unchanged</sysarch>';
+      render(
+        <DraftDiffView
+          before={same}
+          after={same}
+          summaryText="Regen produced identical output."
+        />,
+      );
+      expect(screen.getByTestId('draft-diff-summary')).toHaveTextContent(
+        'Regen produced identical output.',
+      );
+      expect(screen.getByText(/No changes/i)).toBeInTheDocument();
+    });
+  });
 });

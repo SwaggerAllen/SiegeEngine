@@ -229,6 +229,13 @@ class Draft(Base):
     # legacy discarded drafts that predate the field (all of which
     # are user-initiated by construction).
     discard_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Phase 13 — generator's self-report of what this draft contains
+    # / changed vs its prior draft. 1-3 sentences of prose lifted out
+    # of the ``<change-summary>`` tag at persist time. ``NULL`` on
+    # pre-Phase-13 drafts, on fan-in drafts (out of scope), and on
+    # drafts whose generator skipped the tag. Display-only — the
+    # summary does NOT feed back into the next regen's prompt.
+    change_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

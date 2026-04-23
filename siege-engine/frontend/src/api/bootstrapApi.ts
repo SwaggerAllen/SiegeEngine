@@ -23,12 +23,17 @@ const DraftSchema = z.object({
   id: z.string(),
   content: z.string(),
   created_at: z.string(),
+  // Phase 13 — generator's self-report of what this draft
+  // changed / contains. Null on pre-Phase-13 drafts and on
+  // drafts whose generator skipped the <change-summary> tag.
+  change_summary: z.string().nullable().optional(),
 });
 
 const AutoRevisionIntermediateSchema = z.object({
   label: z.string(),
   content: z.string(),
   auto_revision_pass: z.number().int(),
+  change_summary: z.string().nullable().optional(),
 });
 export type AutoRevisionIntermediate = z.infer<
   typeof AutoRevisionIntermediateSchema

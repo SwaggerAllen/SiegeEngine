@@ -59,6 +59,7 @@ const ReferenceDetailRawSchema = z.object({
       id: z.string(),
       content: z.string(),
       created_at: z.string(),
+      change_summary: z.string().nullable().optional(),
     })
     .nullable(),
   previous_draft_content: z.string().nullish().transform((v) => v ?? null),
@@ -68,6 +69,10 @@ const ReferenceDetailRawSchema = z.object({
         label: z.string(),
         content: z.string(),
         auto_revision_pass: z.number().int(),
+        change_summary: z
+          .string()
+          .nullish()
+          .transform((v) => v ?? null),
       }),
     )
     .default([]),

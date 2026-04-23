@@ -273,12 +273,14 @@ function NodeDiffPane({
             after={diff.node_content.after ?? ''}
             kind={docKindForTier(item.tier) as DraftDocKind}
             label="Comparing pinned snapshot against live content."
+            summaryText={diff.latest_change_summary}
           />
         ) : (
           <DraftDiffView
             before={diff.node_content.before}
             after={diff.node_content.after ?? ''}
             label="Comparing pinned snapshot against live content."
+            summaryText={diff.latest_change_summary}
           />
         )}
       </section>

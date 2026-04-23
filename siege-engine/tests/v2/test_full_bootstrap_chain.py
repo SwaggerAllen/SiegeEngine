@@ -189,8 +189,14 @@ def _requirements_xml(session, project_id: str) -> str:
     feats_block = "<feats>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</feats>"
     rows = [f"<responsibility><name>{name}</name>{feats_block}</responsibility>" for name in names]
     inner = "".join(rows)
+    # Phase 13 — chain stub seeds a <change-summary> on reqs so the
+    # end-to-end lift-and-strip path is covered by the integration
+    # test. Other tiers' stubs don't carry one; they exercise the
+    # "missing tag → NULL change_summary, unchanged content" branch.
     return (
         "<introduction>Chain integration test: stub intro.</introduction>"
+        "<change-summary>Chain integration stub — four atoms covering "
+        "every seeded feature.</change-summary>"
         f"<requirements>{inner}</requirements>"
     )
 
@@ -874,6 +880,26 @@ class TestFullBootstrapChain:
             assert len(subresps) == 8
             # Each comp decomposes into 2 subcomponents → 8 subcomps.
             assert len(subcomps) == 8
+
+            # Phase 13: the reqs stub seeds a <change-summary>; assert
+            # its body landed on the drafts table column and the tag
+            # was stripped from the stored draft content.
+            from backend.models.node import Draft
+
+            reqs_node = session.execute(
+                select(Node).where(Node.project_id == project_id, Node.tier == "reqs")
+            ).scalar_one()
+            reqs_drafts = list(
+                session.execute(select(Draft).where(Draft.target_id == reqs_node.id)).scalars()
+            )
+            assert reqs_drafts, "chain test expected at least one reqs draft"
+            summary_drafts = [d for d in reqs_drafts if d.change_summary]
+            assert summary_drafts, (
+                "reqs stub seeded <change-summary> but no Draft.change_summary was populated"
+            )
+            assert any("Chain integration stub" in (d.change_summary or "") for d in summary_drafts)
+            for d in summary_drafts:
+                assert "<change-summary>" not in d.content
 
             # Foundation persistence: sysarch seeds one top-level
             # foundation (the last in display order), and comparch

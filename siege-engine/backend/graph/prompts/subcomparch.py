@@ -62,6 +62,8 @@ Phase 5.
 
 from __future__ import annotations
 
+from backend.graph.prompts._change_summary import change_summary_instruction
+
 SYSTEM_PROMPT = """\
 You are producing the **subcomponent architecture document** for \
 a single subcomponent — a leaf in the component tree. This is \
@@ -226,7 +228,7 @@ section. Subcomponents cannot decompose further — the reducer \
 enforces a two-level ``comp_*`` depth cap. Any internal structure \
 you want to describe belongs in the ``<private-surface>`` \
 section as prose or code, not as structural XML.
-"""
+""" + change_summary_instruction()
 
 
 def format_domain_parent_surface_for_sub(
