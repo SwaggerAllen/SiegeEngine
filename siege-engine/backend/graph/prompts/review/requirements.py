@@ -76,9 +76,12 @@ user outcomes and not UI/backend splits. Flag atoms that still \
 read as features ("Accept card payments") or as UI/backend \
 sibling pairs ("payment mechanics" + "payment UI" — those are \
 sysarch's concern, not this tier's).
-- Is the granularity right? Target roughly 20-40 atoms. Flag \
-the set if it has fewer than ~15 atoms (still clustering into \
-groups) or more than ~50 (split below the concern grain).
+- Is any atom doing too much? Flag atoms whose names pack \
+multiple concerns together ("review routing, notification, \
+and SLA") — these should have been split into separate atoms. \
+There's no atom-count ceiling; a small total atom count \
+relative to feature count is a signal the generator was \
+clustering to conserve entries.
 - Are system-emergent atoms named? Flag absences: an \
 append-only event log, a pure reducer entrypoint, a per-project \
 sandbox — these typically have no direct feature cause but \
