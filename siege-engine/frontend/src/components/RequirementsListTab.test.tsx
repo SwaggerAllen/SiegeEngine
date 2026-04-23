@@ -13,16 +13,12 @@ describe('RequirementsListTab', () => {
       '<introduction>Long intro paragraph the user does not want to scroll through.</introduction>' +
       '<requirements>' +
       '<responsibility>' +
-      '<name>Credential Verification</name>' +
-      '<scope><item>session state lifecycle</item></scope>' +
-      '<failure-surface>Broken verifier blocks sign-ins.</failure-surface>' +
-      '<owns><feat id="feat_login01"/></owns>' +
+      '<name>session-state lifecycle</name>' +
+      '<feats><feat id="feat_login01"/></feats>' +
       '</responsibility>' +
       '<responsibility>' +
-      '<name>Billing Lifecycle</name>' +
-      '<scope><item>invoice state transitions</item></scope>' +
-      '<failure-surface>Stalled invoice emission blocks billing.</failure-surface>' +
-      '<owns><feat id="feat_billing"/></owns>' +
+      '<name>invoice state transitions</name>' +
+      '<feats><feat id="feat_billing"/></feats>' +
       '</responsibility>' +
       '</requirements>';
     render(
@@ -31,8 +27,8 @@ describe('RequirementsListTab', () => {
         featureNames={{ feat_login01: 'Login', feat_billing: 'Billing' }}
       />,
     );
-    expect(screen.getByText('Credential Verification')).toBeInTheDocument();
-    expect(screen.getByText('Billing Lifecycle')).toBeInTheDocument();
+    expect(screen.getByText('session-state lifecycle')).toBeInTheDocument();
+    expect(screen.getByText('invoice state transitions')).toBeInTheDocument();
     // Introduction must not leak through.
     expect(screen.queryByText(/Long intro/)).not.toBeInTheDocument();
   });

@@ -277,120 +277,56 @@ def _validate_feature(node: TagNode, index: int, *, group_label: str | None) -> 
 
 
 @dataclass(frozen=True)
-class Deferral:
-    """One ``<defers to="X">phrase</defers>`` entry from a responsibility.
-
-    ``scope`` is the short noun phrase this responsibility explicitly
-    does **not** own; ``to`` is the name of the responsibility that
-    owns the phrase instead. Cross-reference is validated — ``to``
-    must match another responsibility's ``<name>`` in the same
-    document (catches typos in the retry loop rather than at
-    sysarch time).
-    """
-
-    scope: str
-    to: str
-
-
-@dataclass(frozen=True)
 class Responsibility:
     """A single validated responsibility from a ``<requirements>`` block.
 
-    ``name`` is the short identifier (2–5 words, title case
-    expected). The prose intent that used to live here has been
-    replaced by three structured fields that together carry the
-    same signal with roughly 70% fewer tokens:
+    One atom = one atomic system-side concern. The ``name`` is the
+    scope phrase verbatim (2–8 word noun phrase, sysarch-mappable).
+    ``feats`` is a flat list of feature IDs this atom implicates —
+    many-to-many: a feat may appear on multiple atoms, and an atom
+    may have an empty ``feats`` tuple if it is system-emergent
+    (no direct feature cause).
 
-    * ``scope`` — short noun phrases naming the system-side
-      concerns this responsibility owns. Primary dedup target:
-      no two responsibilities may share a normalized scope entry.
-    * ``does_not_own`` — structured boundary disclaimers. Each
-      :class:`Deferral` names a scope phrase this responsibility
-      explicitly defers and the name of the responsibility that
-      owns it instead. Replaces the prose "does not cover X
-      because Y" clauses the old intent paragraphs carried.
-    * ``failure_surface`` — one sentence describing what breaks
-      when this responsibility malfunctions.
+    Document-level invariants enforced by
+    :func:`validate_requirements`:
 
-    ``owns`` and ``supports`` split feature ownership (unchanged
-    from the previous grammar). ``owns`` is the primary
-    system-side owner — every feature appears in exactly one
-    responsibility's ``<owns>`` across the doc. ``supports`` is
-    zero-or-more per feature and captures infrastructure or
-    composition coverage.
-
-    ``covers`` is a convenience property returning
-    ``owns + supports`` for consumers that want the flat feature
-    list without the ownership axis.
+    * **Name-dedup** — no two atoms share a normalized name.
+    * **Feat-coverage** — every known feature must appear in at
+      least one atom's ``feats``. An uncovered feat means the
+      rotation is incomplete and fails parse.
     """
 
     name: str
-    scope: tuple[str, ...]
-    does_not_own: tuple[Deferral, ...]
-    failure_surface: str
-    owns: tuple[str, ...]
-    supports: tuple[str, ...]
-
-    @property
-    def covers(self) -> tuple[str, ...]:
-        """Flat feature list: owns followed by supports, no dedup."""
-        return self.owns + self.supports
+    feats: tuple[str, ...]
 
 
 _REQUIREMENTS_ALLOWED_CHILDREN = {"responsibility"}
-_RESPONSIBILITY_ALLOWED_CHILDREN = {
-    "name",
-    "scope",
-    "does-not-own",
-    "failure-surface",
-    "owns",
-    "supports",
-}
-_SCOPE_ALLOWED_CHILDREN = {"item"}
-_DOES_NOT_OWN_ALLOWED_CHILDREN = {"defers"}
-_FEAT_LIST_ALLOWED_CHILDREN = {"feat"}
+_RESPONSIBILITY_ALLOWED_CHILDREN = {"name", "feats"}
+_FEATS_ALLOWED_CHILDREN = {"feat"}
 
 
 def validate_requirements(tree: TagNode, *, known_feature_ids: set[str]) -> list[Responsibility]:
-    """Validate a parsed ``<requirements>`` tree and return its entries.
+    """Validate a parsed ``<requirements>`` tree and return its atoms.
 
     Shape:
 
     * ``tree.tag`` must be exactly ``"requirements"``.
     * ``<requirements>`` contains one or more ``<responsibility>``
       entries. No other tags at this level.
-    * Each ``<responsibility>`` contains exactly one ``<name>``,
-      exactly one ``<intent>``, **and** either (a) one ``<owns>``
-      block plus at most one ``<supports>`` block, or (b) one
-      legacy ``<covers>`` block (accepted for backward
-      compatibility with drafts authored before the ownership
-      split).
-    * ``<owns>`` / ``<supports>`` / ``<covers>`` each contain one
-      or more ``<feat id="..."/>`` children. The ``id`` must match
-      a known feature from ``known_feature_ids``. Unknown /
-      missing IDs are parse errors that feed the retry loop.
-    * **Single-owner rule:** every feature in ``known_feature_ids``
-      must appear in exactly one responsibility's ``<owns>`` block
-      across the whole document (legacy ``<covers>`` entries count
-      as ``<owns>`` for this rule). Zero owners ⇒ coverage gap.
-      Two or more owners ⇒ scope collision — the gate the review
-      loop kept flagging by hand. Appearing in both ``<owns>`` and
-      ``<supports>`` inside the same responsibility is disallowed
-      (redundant — ``<owns>`` already covers it).
-    * ``<supports>`` is multiplicity-free across responsibilities:
-      a feature may appear in zero or many ``<supports>`` blocks,
-      reflecting the "multiple responsibilities contribute
-      infrastructure / composition to one user-visible feature"
-      pattern that's legitimate under the rotation.
+    * Each ``<responsibility>`` contains exactly one ``<name>``
+      (the scope phrase verbatim) and exactly one ``<feats>``
+      block. ``<feats>`` holds zero-or-more
+      ``<feat id="feat_..."/>`` children (empty is legal for
+      system-emergent atoms with no direct feature cause).
+    * **Name-dedup:** no two atoms share a normalized name.
+    * **Feat-coverage:** every feature in ``known_feature_ids``
+      must appear in at least one atom's ``<feats>``. An uncovered
+      feat means the rotation is incomplete and fails parse — the
+      retry loop surfaces the missing IDs back to the LLM.
 
-    Parallel shape to :func:`validate_features`: same general
-    layout (one root, a flat list of structured children, each
-    child has a name + intent), different tag vocabulary. The
-    ownership / support distinction is what distinguishes it from
-    its feature-expansion cousin: both collections feed the
-    many-to-many edges emitted on approval, and single-owner is
-    enforced here so the retry loop catches scope collisions
-    before they land in the projection.
+    Many-to-many at the feat level is expected: a cross-cutting
+    feature may implicate multiple atoms. The grammar does not
+    track primacy — clustering is sysarch's job.
     """
     if tree.tag != "requirements":
         raise ValidationError(
@@ -415,84 +351,32 @@ def validate_requirements(tree: TagNode, *, known_feature_ids: set[str]) -> list
             "Every project must have at least one top-level responsibility."
         )
 
-    # Single-owner rule: every known feature must appear in
-    # exactly one responsibility's <owns> block across the whole
-    # doc. Two or more owners is a scope collision the review
-    # loop used to flag by hand; zero owners is a coverage gap.
-    owner_of: dict[str, list[str]] = {}
+    # Name-dedup: no two atoms may share a normalized name.
+    name_owner: dict[str, list[str]] = {}
     for resp in result:
-        for fid in resp.owns:
-            owner_of.setdefault(fid, []).append(resp.name)
-
-    duplicated = {fid: owners for fid, owners in owner_of.items() if len(owners) > 1}
-    if duplicated:
-        lines = sorted(
-            f"  - {fid} owned by {', '.join(owners)}" for fid, owners in duplicated.items()
-        )
+        name_owner.setdefault(_normalize_name(resp.name), []).append(resp.name)
+    name_collisions = {n: names for n, names in name_owner.items() if len(names) > 1}
+    if name_collisions:
+        lines = sorted(f"  - {', '.join(names)}" for names in name_collisions.values())
         raise ValidationError(
-            "<requirements> has features with multiple owners. "
-            "Every feature must be listed in exactly one responsibility's "
-            "<owns> block — put supporting responsibilities in <supports> "
-            "instead so the primary owner is unambiguous. Offending "
-            "features:\n" + "\n".join(lines)
+            "<requirements> has responsibilities with duplicate names. "
+            "Every atom must have a unique name (normalized by lowercasing "
+            "and whitespace collapse). Offending names:\n" + "\n".join(lines)
         )
 
-    covered_as_owned = set(owner_of.keys())
-    # Features that appear only in <supports> (or nowhere) still
-    # need an owner; report them explicitly so the retry prompt
-    # can tell the LLM which owner is missing.
-    missing_owner = sorted(known_feature_ids - covered_as_owned)
-    if missing_owner:
-        raise ValidationError(
-            "<requirements> has features with no owner. "
-            f"The following feature IDs do not appear in any <owns> block: "
-            f"{', '.join(missing_owner)}. Every feature must have exactly "
-            "one responsibility that owns it; listing it only in <supports> "
-            "does not satisfy the rule."
-        )
-
-    # Scope dedup: no two responsibilities may share a normalized
-    # <scope>/<item> phrase. This is the mechanical overlap check
-    # the review loop kept flagging by hand — "both claim X" —
-    # now expressed structurally at the scope level.
-    scope_owner: dict[str, list[str]] = {}
+    # Feat-coverage: every known feature must appear in at least
+    # one atom's <feats>. Missing coverage means the rotation is
+    # incomplete; the retry prompt can surface the missing IDs.
+    covered: set[str] = set()
     for resp in result:
-        for phrase in resp.scope:
-            scope_owner.setdefault(_normalize_scope(phrase), []).append(resp.name)
-    scope_collisions = {phrase: owners for phrase, owners in scope_owner.items() if len(owners) > 1}
-    if scope_collisions:
-        lines = sorted(
-            f"  - {phrase!r} claimed by {', '.join(owners)}"
-            for phrase, owners in scope_collisions.items()
-        )
+        covered.update(resp.feats)
+    missing = sorted(known_feature_ids - covered)
+    if missing:
         raise ValidationError(
-            "<requirements> has scope phrases claimed by multiple "
-            "responsibilities. Every <scope>/<item> must be owned by "
-            "exactly one responsibility — if two responsibilities really "
-            "do both own a concept, they are drawn too broadly or the "
-            "phrase is too vague to disambiguate. Collapse or rephrase. "
-            "Offending phrases:\n" + "\n".join(lines)
-        )
-
-    # <defers to="X"> cross-reference: every ``to`` must resolve
-    # to another responsibility's name in the same document.
-    # Catches typos ("Scheduler" vs "Reactive Scheduler") at
-    # generation time rather than at sysarch-read time.
-    known_names = {resp.name for resp in result}
-    unresolved: list[str] = []
-    for resp in result:
-        for deferral in resp.does_not_own:
-            if deferral.to not in known_names:
-                unresolved.append(
-                    f"{resp.name!r} defers {deferral.scope!r} "
-                    f"to {deferral.to!r} (not a known responsibility)"
-                )
-    if unresolved:
-        raise ValidationError(
-            "<requirements> has <defers to=...> entries referencing "
-            "unknown responsibilities. Every ``to`` attribute must match "
-            "another responsibility's <name> exactly. Offending entries:\n"
-            + "\n".join(f"  - {e}" for e in unresolved)
+            f"<requirements> has feature(s) with no atom tag: {', '.join(missing)}. "
+            "Every feature must appear in at least one <responsibility>'s <feats>. "
+            'Add a <feat id=".."/> entry on each atom whose system-side concern '
+            "that feature implicates."
         )
 
     return result
@@ -501,15 +385,14 @@ def validate_requirements(tree: TagNode, *, known_feature_ids: set[str]) -> list
 def _validate_responsibility(
     node: TagNode, index: int, *, known_feature_ids: set[str]
 ) -> Responsibility:
-    """Validate a single ``<responsibility>`` entry."""
+    """Validate a single ``<responsibility>`` atom."""
     pos = f"<responsibility> at position {index}"
 
     for child in node.children:
         if child.tag not in _RESPONSIBILITY_ALLOWED_CHILDREN:
             raise ValidationError(
                 f"{pos} contains an unexpected child <{child.tag}>. "
-                "Allowed children: <name>, <scope>, <does-not-own> (optional), "
-                "<failure-surface>, <owns>, <supports> (optional)."
+                "Allowed children: <name>, <feats>."
             )
 
     name_children = node.find_all("name")
@@ -524,193 +407,33 @@ def _validate_responsibility(
     name_text = name_children[0].text
     if not name_text:
         raise ValidationError(
-            f"{pos} has an empty <name>. The responsibility name "
-            "must be a short identifier, typically 2–5 words in title case."
+            f"{pos} has an empty <name>. The atom name must be a short "
+            "noun phrase (2–8 words) naming one system-side concern."
         )
 
-    scope_children = node.find_all("scope")
-    if len(scope_children) == 0:
+    feats_children = node.find_all("feats")
+    if len(feats_children) == 0:
         raise ValidationError(
-            f"{pos} is missing a <scope> child. Every responsibility must "
-            "have exactly one <scope> block listing the short noun phrases "
-            "(one per <item>) that name the system-side concerns this "
-            "responsibility owns."
+            f"{pos} is missing a <feats> child. Every responsibility must "
+            "have exactly one <feats> block listing the feature IDs this "
+            "atom implicates (empty <feats/> is legal for system-emergent "
+            "atoms)."
         )
-    if len(scope_children) > 1:
+    if len(feats_children) > 1:
         raise ValidationError(
-            f"{pos} has {len(scope_children)} <scope> children; exactly one is required."
-        )
-    scope_phrases = _validate_scope_block(scope_children[0], pos)
-
-    failure_children = node.find_all("failure-surface")
-    if len(failure_children) == 0:
-        raise ValidationError(
-            f"{pos} is missing a <failure-surface> child. Every responsibility "
-            "must have exactly one <failure-surface> describing what breaks "
-            "when this responsibility malfunctions (one sentence)."
-        )
-    if len(failure_children) > 1:
-        raise ValidationError(
-            f"{pos} has {len(failure_children)} <failure-surface> children; exactly one is required."  # noqa: E501
-        )
-    failure_surface_text = failure_children[0].text
-    if not failure_surface_text:
-        raise ValidationError(
-            f"{pos} has an empty <failure-surface>. Name the concrete "
-            "failure mode (data loss, invariant violation, silent degradation) "
-            "in a single sentence."
+            f"{pos} has {len(feats_children)} <feats> children; exactly one is required."
         )
 
-    does_not_own_children = node.find_all("does-not-own")
-    if len(does_not_own_children) > 1:
-        raise ValidationError(
-            f"{pos} has {len(does_not_own_children)} <does-not-own> children; "
-            "at most one is allowed."
-        )
-    if does_not_own_children:
-        does_not_own = _validate_does_not_own_block(does_not_own_children[0], pos)
-    else:
-        does_not_own = ()
-
-    owns_children = node.find_all("owns")
-    if len(owns_children) == 0:
-        raise ValidationError(
-            f"{pos} is missing an <owns> child. Every responsibility "
-            "must have exactly one <owns> block listing at least one "
-            '<feat id="feat_..."/> child identifying the features it '
-            "is the primary system-side owner of."
-        )
-    if len(owns_children) > 1:
-        raise ValidationError(
-            f"{pos} has {len(owns_children)} <owns> children; exactly one is required."
-        )
-
-    supports_children = node.find_all("supports")
-    if len(supports_children) > 1:
-        raise ValidationError(
-            f"{pos} has {len(supports_children)} <supports> children; at most one is allowed."
-        )
-
-    owns = _validate_feat_list(
-        owns_children[0],
+    feats = _validate_feat_list(
+        feats_children[0],
         pos,
-        tag_name="owns",
-        allow_empty=False,
         known_feature_ids=known_feature_ids,
     )
-    if supports_children:
-        supports = _validate_feat_list(
-            supports_children[0],
-            pos,
-            tag_name="supports",
-            allow_empty=True,
-            known_feature_ids=known_feature_ids,
-        )
-    else:
-        supports = ()
 
-    # Intra-responsibility redundancy: a feature listed in both
-    # <owns> and <supports> of the same responsibility is a
-    # contradiction — <owns> already covers it.
-    redundant = sorted(set(owns) & set(supports))
-    if redundant:
-        raise ValidationError(
-            f"{pos} lists the same feature(s) in both <owns> and <supports>: "
-            f"{', '.join(redundant)}. Put each feature in exactly one of the "
-            "two — <owns> implies supporting presence already."
-        )
-
-    return Responsibility(
-        name=name_text,
-        scope=scope_phrases,
-        does_not_own=does_not_own,
-        failure_surface=failure_surface_text,
-        owns=owns,
-        supports=supports,
-    )
+    return Responsibility(name=name_text, feats=feats)
 
 
-def _validate_scope_block(node: TagNode, parent_pos: str) -> tuple[str, ...]:
-    """Validate a ``<scope>`` block and return its ordered phrases.
-
-    Each ``<item>`` is a short noun phrase naming a system-side
-    concern this responsibility owns. At least one entry is
-    required; two responsibilities cannot share a scope entry
-    (checked at the document level in :func:`validate_requirements`).
-    """
-    for child in node.children:
-        if child.tag not in _SCOPE_ALLOWED_CHILDREN:
-            raise ValidationError(
-                f"{parent_pos} has a <scope> block containing an unexpected "
-                f"child <{child.tag}>. Only <item>…</item> entries are allowed "
-                "inside <scope>."
-            )
-    item_nodes = node.find_all("item")
-    if not item_nodes:
-        raise ValidationError(
-            f"{parent_pos} has an empty <scope> block. Every responsibility "
-            "must name at least one system-side concern it owns via "
-            "<item>short noun phrase</item>."
-        )
-    phrases: list[str] = []
-    seen: set[str] = set()
-    for i, item in enumerate(item_nodes):
-        text = item.text.strip() if item.text else ""
-        if not text:
-            raise ValidationError(
-                f"{parent_pos} has an empty <item> at <scope> position {i}. "
-                "Scope items must be short noun phrases (2–8 words, system-side)."
-            )
-        normalized = _normalize_scope(text)
-        if normalized in seen:
-            raise ValidationError(
-                f"{parent_pos} has a duplicate <item> at <scope> position {i}: "
-                f"{text!r}. Each scope phrase may appear at most once per "
-                "responsibility."
-            )
-        seen.add(normalized)
-        phrases.append(text)
-    return tuple(phrases)
-
-
-def _validate_does_not_own_block(node: TagNode, parent_pos: str) -> tuple[Deferral, ...]:
-    """Validate a ``<does-not-own>`` block and return its deferral entries.
-
-    Each child is a ``<defers to="Responsibility Name">scope phrase</defers>``
-    entry. Both the phrase body and the ``to`` attribute must be
-    non-empty; cross-references are resolved against the full
-    responsibility list at the top-level validator.
-    """
-    for child in node.children:
-        if child.tag not in _DOES_NOT_OWN_ALLOWED_CHILDREN:
-            raise ValidationError(
-                f"{parent_pos} has a <does-not-own> block containing an "
-                f"unexpected child <{child.tag}>. Only "
-                '<defers to="Other Responsibility">scope phrase</defers> '
-                "entries are allowed."
-            )
-    defers_nodes = node.find_all("defers")
-    entries: list[Deferral] = []
-    for i, defers in enumerate(defers_nodes):
-        phrase = defers.text.strip() if defers.text else ""
-        to_name = (defers.attrs.get("to") or "").strip()
-        if not phrase:
-            raise ValidationError(
-                f"{parent_pos} has an empty <defers> body at <does-not-own> "
-                f"position {i}. Provide the short noun phrase being deferred."
-            )
-        if not to_name:
-            raise ValidationError(
-                f"{parent_pos} has a <defers> entry at <does-not-own> "
-                f"position {i} with no ``to`` attribute. Every <defers> "
-                'must carry to="Responsibility Name" naming the responsibility '
-                "that owns the phrase instead."
-            )
-        entries.append(Deferral(scope=phrase, to=to_name))
-    return tuple(entries)
-
-
-def _normalize_scope(phrase: str) -> str:
+def _normalize_name(phrase: str) -> str:
     """Lowercase + collapse whitespace for cross-responsibility dedup."""
     return " ".join(phrase.lower().split())
 
@@ -719,64 +442,44 @@ def _validate_feat_list(
     node: TagNode,
     parent_pos: str,
     *,
-    tag_name: str,
-    allow_empty: bool,
     known_feature_ids: set[str],
 ) -> tuple[str, ...]:
-    """Validate a ``<owns>`` or ``<supports>`` block and return its feature IDs.
+    """Validate a ``<feats>`` block and return its feature IDs.
 
-    Both blocks share the same child grammar (``<feat id="..."/>``
-    entries, unique within the block, each id drawn from the
-    known-feature allowlist). ``<owns>`` must be non-empty;
-    ``<supports>`` may be empty when the responsibility has no
-    supporting features to declare.
-
-    ``parent_pos`` is the position marker of the enclosing
-    responsibility — used in error messages so the retry prompt
-    can direct the LLM to the right responsibility. ``tag_name``
-    is ``"owns"`` or ``"supports"`` and surfaces in errors so the
-    LLM knows which block to fix.
+    Empty ``<feats/>`` is legal — an atom with no direct feature
+    cause (system-emergent). Each ``<feat id="..."/>`` must carry
+    a non-empty id from the known-feature allowlist and be unique
+    within the block.
     """
     for child in node.children:
-        if child.tag not in _FEAT_LIST_ALLOWED_CHILDREN:
+        if child.tag not in _FEATS_ALLOWED_CHILDREN:
             raise ValidationError(
-                f"{parent_pos} has a <{tag_name}> block containing an unexpected "
+                f"{parent_pos} has a <feats> block containing an unexpected "
                 f'child <{child.tag}>. Only <feat id="feat_..."/> entries '
-                f"are allowed inside <{tag_name}>."
+                "are allowed inside <feats>."
             )
 
     feat_nodes = node.find_all("feat")
-    if not feat_nodes:
-        if allow_empty:
-            return ()
-        raise ValidationError(
-            f"{parent_pos} has an empty <{tag_name}> block. Every responsibility "
-            f"must own at least one feature — list the feature IDs via "
-            f'<feat id="feat_..."/> children. If this responsibility has '
-            "no features to own, it probably shouldn't be a top-level "
-            "responsibility at all."
-        )
-
     ids: list[str] = []
     seen: set[str] = set()
     for i, feat_node in enumerate(feat_nodes):
         fid = feat_node.attrs.get("id", "").strip()
         if not fid:
             raise ValidationError(
-                f"{parent_pos} has a <feat> entry at <{tag_name}> position {i} "
+                f"{parent_pos} has a <feat> entry at <feats> position {i} "
                 "with no id attribute. Every <feat> must carry an "
                 'id="feat_..." attribute referencing a known feature.'
             )
         if fid in seen:
             raise ValidationError(
-                f"{parent_pos} has a <feat> entry at <{tag_name}> position {i} "
+                f"{parent_pos} has a <feat> entry at <feats> position {i} "
                 f"listing duplicate feature id {fid!r}. Each feature id may "
-                f"appear at most once per <{tag_name}> block."
+                "appear at most once per <feats> block."
             )
         seen.add(fid)
         if fid not in known_feature_ids:
             raise ValidationError(
-                f"{parent_pos} has a <feat> entry at <{tag_name}> position {i} "
+                f"{parent_pos} has a <feat> entry at <feats> position {i} "
                 f"referencing unknown feature id {fid!r}. Valid feature "
                 f"IDs for this project: {', '.join(sorted(known_feature_ids))}. "
                 "Only reference IDs from the feature list provided in the prompt."

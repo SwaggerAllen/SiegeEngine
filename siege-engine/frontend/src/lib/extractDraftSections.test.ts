@@ -46,8 +46,8 @@ describe('extractDraftSections', () => {
         '<reqs>' +
         '<introduction>ignored</introduction>' +
         '<requirements>' +
-        '<responsibility><name>Identity</name><scope><item>identity scope</item></scope></responsibility>' +
-        '<responsibility><name>Billing</name><scope><item>billing scope</item></scope></responsibility>' +
+        '<responsibility><name>Identity</name><feats/></responsibility>' +
+        '<responsibility><name>Billing</name><feats/></responsibility>' +
         '</requirements>' +
         '</reqs>';
       const sections = extractDraftSections(xml, 'requirements');

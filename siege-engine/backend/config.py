@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # LLM
     anthropic_api_key: str = ""
-    default_model: str = "claude-sonnet-4-20250514"
+    default_model: str = "claude-opus-4-6"
     default_temperature: float = 0.3
 
     # Rate Limiting

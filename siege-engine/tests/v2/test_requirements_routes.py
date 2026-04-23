@@ -170,17 +170,13 @@ def _feat_ids_for(db, project_id) -> list[str]:
     ]
 
 
-def _valid_reqs_xml(feat_ids: list[str], label: str = "Default") -> str:
-    covers = "<owns>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</owns>"
+def _valid_reqs_xml(feat_ids: list[str], label: str = "session lifecycle") -> str:
+    feats = "<feats>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</feats>"
     return (
         # B4 — <introduction> sibling block required.
         "<introduction>Stub intro for reqs route tests.</introduction>"
         "<requirements>"
-        "<responsibility>"
-        f"<name>{label}</name>"
-        f"<scope><item>test scope phrase 1</item></scope><failure-surface>Test failure surface 1.</failure-surface>"  # noqa: E501
-        f"{covers}"
-        "</responsibility>"
+        f"<responsibility><name>{label}</name>{feats}</responsibility>"
         "</requirements>"
     )
 
