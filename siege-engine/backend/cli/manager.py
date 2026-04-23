@@ -324,8 +324,10 @@ class CLIManager:
             sp_file.write(system_prompt)
             sp_file.close()
             args.extend(["--system-prompt-file", sp_file.name])
-        if model:
-            args.extend(["--model", model])
+        # Always pass an explicit --model so pipeline generation doesn't
+        # pick up whatever the parent CLI login happens to default to.
+        effective_model = model or settings.default_model
+        args.extend(["--model", effective_model])
         if tools is not None:
             args.extend(["--tools", tools])
         if max_budget_usd is not None:
@@ -341,7 +343,7 @@ class CLIManager:
 
         logger.info(
             "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds (using CLI login credentials)",
-            model or "default",
+            effective_model,
             tools or "default",
             working_dir or ".",
             timeout,
