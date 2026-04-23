@@ -82,7 +82,8 @@ export function RequirementsPanel({ projectId }: Props) {
       error={error}
       labels={LABELS}
       callbacks={{
-        onFeedback: (f) => feedbackMutation.mutate(f),
+        onFeedback: (f, autoRev) =>
+          feedbackMutation.mutate({ feedback: f, autoRevisionsRequested: autoRev ?? 0 }),
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),

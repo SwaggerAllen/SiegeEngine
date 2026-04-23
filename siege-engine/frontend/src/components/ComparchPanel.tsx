@@ -60,7 +60,8 @@ export function ComparchPanel({ projectId, componentId, componentName }: Props) 
       error={error}
       labels={makeLabels(componentName)}
       callbacks={{
-        onFeedback: (f) => feedbackMutation.mutate(f),
+        onFeedback: (f, autoRev) =>
+          feedbackMutation.mutate({ feedback: f, autoRevisionsRequested: autoRev ?? 0 }),
         onApprove: (id) => approveMutation.mutate(id),
         onRetry: () => feedbackMutation.mutate(''),
         onCancel: () => cancelMutation.mutate(),
