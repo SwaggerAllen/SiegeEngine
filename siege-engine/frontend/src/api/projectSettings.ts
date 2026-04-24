@@ -7,6 +7,7 @@ import api from './client';
 export const ProjectSettingsSchema = z.object({
   generation_timeout_seconds: z.number().int().min(60).max(14400),
   cli_max_budget_usd: z.number().min(0.1).max(20),
+  cli_max_output_tokens: z.number().int().min(1000).max(400000),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 

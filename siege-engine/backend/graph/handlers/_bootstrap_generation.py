@@ -136,6 +136,7 @@ async def run_parse_validate_loop(
     exhausted_exception_cls: type[Exception],
     log_handler_name: str,
     thinking_effort: str | None = None,
+    cli_max_output_tokens: int | None = None,
 ) -> tuple[GenerationResult, list[GenerationResult]]:
     """Run the parse-validate retry loop for a bootstrap generation handler.
 
@@ -191,6 +192,7 @@ async def run_parse_validate_loop(
             timeout=cli_timeout_seconds,
             max_budget_usd=cli_max_budget_usd,
             thinking_effort=thinking_effort,
+            max_output_tokens=cli_max_output_tokens,
         )
         attempts.append(result)
 

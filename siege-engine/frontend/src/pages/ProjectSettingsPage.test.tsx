@@ -27,6 +27,7 @@ function defaultSettings(overrides?: Partial<ProjectSettings>): ProjectSettings 
   return {
     generation_timeout_seconds: 900,
     cli_max_budget_usd: 2.0,
+    cli_max_output_tokens: 128000,
     ...overrides,
   };
 }

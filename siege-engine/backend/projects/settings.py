@@ -15,6 +15,16 @@ Current settings:
   Opus runs can push past an hour on a real-sized project; the
   4h ceiling still catches a typo before it hangs a worker for
   a whole day.
+* ``cli_max_output_tokens`` — cap on output tokens for a single
+  Claude CLI subprocess. Forwarded as the
+  ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` env var on the per-call env
+  dict (never on the parent process, so concurrent handlers
+  don't race). Default 128000 — double the CLI's intrinsic 64k
+  default so sysarch / reqs / subcomparch runs on real-sized
+  projects don't truncate mid-atom. Minimum 1000 (avoid
+  starvation); maximum 400000 (well past any current model's
+  output window — the ceiling exists to catch a typo, not to
+  bound a real capability limit).
 * ``cli_max_budget_usd`` — maximum dollar budget passed to the
   Claude CLI's ``--max-budget-usd`` flag for a single generation
   attempt. Default 2.00. Each parse-validate retry is a fresh
@@ -79,6 +89,19 @@ class ProjectSettings(BaseModel):
             "fresh call with a fresh budget. 0.10 floor catches "
             "accidental zeros; 20.00 ceiling keeps a typo from "
             "burning a whole card in one generation."
+        ),
+    )
+    cli_max_output_tokens: int = Field(
+        default=128000,
+        ge=1000,
+        le=400000,
+        description=(
+            "Cap on output tokens for a single Claude CLI subprocess. "
+            "Forwarded as the CLAUDE_CODE_MAX_OUTPUT_TOKENS env var on "
+            "the per-call env dict. 128000 default — double the CLI's "
+            "intrinsic 64k so sysarch / reqs / subcomparch runs on "
+            "real-sized projects don't truncate mid-atom. 1000 floor "
+            "avoids starvation; 400000 ceiling catches typos."
         ),
     )
 

@@ -110,6 +110,7 @@ async def review_subreqs(payload: dict) -> None:
         settings = get_project_settings(project_row)
         cli_timeout_seconds = settings.generation_timeout_seconds
         cli_max_budget_usd = settings.cli_max_budget_usd
+        cli_max_output_tokens = settings.cli_max_output_tokens
     finally:
         db.close()
 
@@ -121,6 +122,7 @@ async def review_subreqs(payload: dict) -> None:
         user_prompt=user_prompt,
         cli_timeout_seconds=cli_timeout_seconds,
         cli_max_budget_usd=cli_max_budget_usd,
+        cli_max_output_tokens=cli_max_output_tokens,
         log_handler_name="review_subreqs",
     )
 

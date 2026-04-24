@@ -12,6 +12,8 @@ const MIN_TIMEOUT_SECONDS = 60;
 const MAX_TIMEOUT_SECONDS = 14400;
 const MIN_BUDGET_USD = 0.1;
 const MAX_BUDGET_USD = 20;
+const MIN_MAX_OUTPUT_TOKENS = 1000;
+const MAX_MAX_OUTPUT_TOKENS = 400000;
 
 export function ProjectSettingsPage() {
   const { id: projectId } = useParams<{ id: string }>();
@@ -30,6 +32,7 @@ function SettingsShell({ projectId }: { projectId: string }) {
   // on both sides, so no conversion.
   const [timeoutMinutes, setTimeoutMinutes] = useState<string>('');
   const [budgetUsd, setBudgetUsd] = useState<string>('');
+  const [maxOutputTokens, setMaxOutputTokens] = useState<string>('');
   const [validationError, setValidationError] = useState<string | null>(null);
   const [savedOnce, setSavedOnce] = useState(false);
 
@@ -37,6 +40,7 @@ function SettingsShell({ projectId }: { projectId: string }) {
     if (settings) {
       setTimeoutMinutes(String(Math.round(settings.generation_timeout_seconds / 60)));
       setBudgetUsd(settings.cli_max_budget_usd.toFixed(2));
+      setMaxOutputTokens(String(settings.cli_max_output_tokens));
     }
   }, [settings]);
 
@@ -73,6 +77,21 @@ function SettingsShell({ projectId }: { projectId: string }) {
       return;
     }
 
+    const parsedOutputTokens = Number.parseInt(maxOutputTokens, 10);
+    if (!Number.isFinite(parsedOutputTokens) || parsedOutputTokens <= 0) {
+      setValidationError('Max output tokens must be a positive integer.');
+      return;
+    }
+    if (
+      parsedOutputTokens < MIN_MAX_OUTPUT_TOKENS ||
+      parsedOutputTokens > MAX_MAX_OUTPUT_TOKENS
+    ) {
+      setValidationError(
+        `Max output tokens must be between ${MIN_MAX_OUTPUT_TOKENS.toLocaleString()} and ${MAX_MAX_OUTPUT_TOKENS.toLocaleString()}.`
+      );
+      return;
+    }
+
     if (!settings) {
       setValidationError('Settings are still loading.');
       return;
@@ -81,6 +100,7 @@ function SettingsShell({ projectId }: { projectId: string }) {
     const payload: ProjectSettings = {
       generation_timeout_seconds: seconds,
       cli_max_budget_usd: parsedBudget,
+      cli_max_output_tokens: parsedOutputTokens,
     };
 
     updateMutation.mutate(payload, {
@@ -178,6 +198,38 @@ function SettingsShell({ projectId }: { projectId: string }) {
                 retry is a fresh call with a fresh budget. Between
                 ${MIN_BUDGET_USD.toFixed(2)} and ${MAX_BUDGET_USD.toFixed(2)}.
                 Default: $2.00.
+              </p>
+            </div>
+
+            <div>
+              <label
+                htmlFor="max-output-tokens"
+                className="block text-sm font-medium mb-1"
+              >
+                Max output tokens
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="max-output-tokens"
+                  type="number"
+                  min={MIN_MAX_OUTPUT_TOKENS}
+                  max={MAX_MAX_OUTPUT_TOKENS}
+                  step={1000}
+                  value={maxOutputTokens}
+                  onChange={(e) => setMaxOutputTokens(e.target.value)}
+                  className="w-32 bg-gray-800 border border-gray-700 rounded p-2 text-sm"
+                  disabled={updateMutation.isPending}
+                />
+                <span className="text-sm text-gray-400">tokens</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Cap on output tokens per Claude CLI call, forwarded as
+                the <code className="text-gray-400">CLAUDE_CODE_MAX_OUTPUT_TOKENS</code>{' '}
+                env var. Between {MIN_MAX_OUTPUT_TOKENS.toLocaleString()}{' '}
+                and {MAX_MAX_OUTPUT_TOKENS.toLocaleString()}. Default:
+                128,000 — double the CLI's intrinsic 64,000 so
+                sysarch / reqs / subcomparch runs on real-sized
+                projects don't truncate mid-atom.
               </p>
             </div>
 
