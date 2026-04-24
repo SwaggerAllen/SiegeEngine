@@ -99,6 +99,7 @@ def has_been_approved(session: Session, project_id: str) -> bool:
 
 _DOWNSTREAM_OF_REQS_TIERS: tuple[str, ...] = (
     "resp",
+    "sysarch",
     "comp",
     "policy",
     "subreqs",
@@ -112,10 +113,13 @@ _DOWNSTREAM_OF_REQS_TIERS: tuple[str, ...] = (
 def collect_downstream_nodes(session: Session, project_id: str) -> list[Node]:
     """Return every node downstream of the requirements approval.
 
-    This includes all resps (top-level and sub), plus everything
-    sysarch minted (comps, policies, subreqs nodes, etc.). The
-    sysarch singleton *node* is NOT deleted — its content is
-    cleared separately via BootstrapNodeContentCleared.
+    This includes all resps (top-level and sub), the sysarch node,
+    and everything sysarch minted (comps, policies, subreqs nodes,
+    etc.). A requirements reset deletes the sysarch node outright so
+    the Sysarch panel disappears from the UI until reqs is
+    re-approved; ``reqs_mint`` re-bootstraps a fresh sysarch node on
+    the next approval (the bootstrap call there is already guarded
+    on absence).
     """
     return list(
         session.execute(
