@@ -82,6 +82,26 @@ def test_sysarch_review_prompt_flags_external_boundary_bundling():
     assert "Flag specific bundlings" in handles_body or "specific" in handles_body.lower()
 
 
+def test_sysarch_review_prompt_audits_kind_classification():
+    """Review must explicitly audit whether each component's
+    domain/presentational kind is correct under the
+    external-interface vs. domain-logic axis. A REST API or
+    notification dispatcher classified as domain, or an
+    LLM-gateway-style outbound wrapper classified as
+    presentational, are specific mistakes the reviewer should
+    flag."""
+    system_prompt = sysarch.render_system_prompt()
+    handles_idx = system_prompt.find("Handles & structure review")
+    arch_idx = system_prompt.find("Architectural-decisions review")
+    handles_body = system_prompt[handles_idx:arch_idx]
+    # Classification audit is named.
+    assert "classification" in handles_body.lower() or "miscategorization" in handles_body.lower()
+    # The decision test is referenced so the reviewer can apply it.
+    assert "delete" in handles_body.lower() and "domain" in handles_body.lower()
+    # Specific miscategorization categories are named.
+    assert "REST" in handles_body or "webhook" in handles_body.lower()
+
+
 def test_sysarch_review_prompt_flags_backend_vocab_in_presentationals():
     """Backend transactional vocabulary in a presentational
     component's invariants/operations is a specific leak — the LLM

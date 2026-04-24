@@ -45,6 +45,35 @@ def test_external_boundary_isolation_rule_present():
     assert "failure surface" in sys.lower()
 
 
+def test_kind_split_is_interface_vs_domain_not_frontend_vs_backend():
+    """The domain/presentational split is about external-interface
+    vs. domain-logic, NOT backend-vs-frontend. A REST API surface,
+    a webhook relay, and a notification dispatcher are all
+    presentational (external interfaces outsiders consume) even
+    though none are "frontend." The prompt must say this
+    explicitly so the sysarch LLM doesn't misclassify non-UI
+    consumption surfaces as domain.
+    """
+    sys = render_system_prompt()
+    # Explicit framing.
+    assert "external-interface" in sys.lower() or "external interface" in sys.lower()
+    assert (
+        "not backend-vs-frontend" in sys.lower()
+        or "not backend/frontend" in sys.lower()
+        or ("not backend-vs-frontend" in sys.lower())
+    )
+    # Non-UI presentational examples enumerated.
+    for example in ("REST", "webhook", "notification"):
+        assert example in sys, (
+            f"Kind rule must name {example!r} as a presentational (interface) example."
+        )
+    # Outbound-call-wrapper examples that are domain, so the LLM
+    # doesn't misclassify them as external interfaces.
+    assert "LLM" in sys and "git" in sys.lower()
+    # Decision test is spelled out.
+    assert "would the system lose" in sys.lower() or "deleted this component" in sys.lower()
+
+
 def test_backend_vocab_leak_self_check_present():
     """Presentational components must not parrot domain transactional
     invariants. The previous self-check (parrots-domain-invariants)
@@ -55,8 +84,10 @@ def test_backend_vocab_leak_self_check_present():
     has pattern shape: "owner assignment captures persist
     atomically..." vs. the UI rewrite."""
     sys = render_system_prompt()
-    # The backend-vocab self-check is named.
-    assert "transactional" in sys.lower() or "atomicity" in sys.lower()
+    # The ownership-vs-delivery distinction is named — ownership
+    # words leak, delivery-format words (REST/HTTP/JSON/webhook)
+    # are legitimate on interface presentationals.
+    assert "ownership" in sys.lower() or "transactional" in sys.lower()
     # The forbidden-word list is explicit.
     for word in ("persist", "atomically", "commit"):
         assert word in sys, f"Backend-vocab self-check must name {word!r} as a flagged word."

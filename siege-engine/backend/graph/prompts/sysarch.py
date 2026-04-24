@@ -340,70 +340,125 @@ one ``<primary-operations>``, and one ``<responsibilities>`` block. \
 There is no ``<failure-surface>`` at this tier — the comparch pass \
 writes a sharper, component-local failure surface once it has the \
 full techspec + pubapi + invariants in hand.
-* ``<kind>`` is either ``domain`` or ``presentational``. Domain \
-components do the structural work. Presentational components \
-render views into domain content — UIs, dashboards, CLIs, \
-operator consoles, docs pages, any surface where a human \
-interacts with what the domains expose.
-* **A presentational component is one coherent user task, not \
-one audience.** The unit of decomposition is "what the user is \
-trying to do", not "who is using the system". Two distinct \
-tasks become two presentational components even when the same \
-user performs both; one task stays one component even when \
-multiple user types hit it. A single presentational that \
-covers "everything an admin sees" or "everything a user sees" \
-is an *application*, not a slice, and it will pull in too many \
-domains and generate with too little specificity.
-* **Presentationals own presentation + interaction atoms, not \
-business-logic atoms.** This is the most common failure mode at \
-this tier and the easiest one to fall into: the LLM, asked \
-"what does the UI component own?", parrots the domain parent's \
+* ``<kind>`` is either ``domain`` or ``presentational``. **The \
+split is external-interface vs. domain-logic, not \
+backend-vs-frontend.** Domain components own state, business \
+logic, mutations, and the wrapper machinery for services *we* \
+call outbound (LLM provider client, git forge client, IdP \
+verification client — those are things we consume, not \
+surfaces for outsiders to access us through). Presentational \
+components are **external interfaces**: surfaces through which \
+parties *outside our trust boundary* interact with the system. \
+That includes humans via UIs / CLIs / operator consoles, but \
+also services via REST / GraphQL / gRPC, subscribers via \
+webhooks / SSE streams, and users via notification channels \
+(email, in-app, team messaging). Classifying by \
+external-interface role, not by "does a browser render it," \
+means a notification dispatcher is presentational (it exposes \
+our events to outside subscribers), a REST API surface is \
+presentational (external services consume our projection \
+through it), and a webhook relay is presentational (external \
+subscribers receive our events through it). **Decision test:** \
+if you deleted this component, would the system lose *state or \
+business logic* (→ domain) or lose a *way to expose state/events \
+to outsiders* (→ presentational)? Outbound-call wrappers like \
+LLM Gateway and Git Forge fail this test in the domain \
+direction — deleting them breaks our ability to *use* external \
+services, not an outside party's ability to access us.
+* **A presentational component is one coherent consumer \
+interaction, not one audience.** The unit of decomposition is \
+"what the consumer is trying to do through this surface", not \
+"who is on the other end". For UI presentationals the \
+consumer is a human and the "task" is their interaction \
+pattern (review an artifact, navigate the graph, triage the \
+queue). For non-UI presentationals the consumer is another \
+service or subscriber and the "task" is their interaction \
+pattern too (query the projection via REST, receive review \
+events via webhook, get notifications for assigned reviews). \
+Two distinct interactions become two presentational \
+components even when the same consumer performs both; one \
+interaction stays one component even when multiple consumer \
+types hit it. A single presentational that covers "everything \
+an admin sees" or "every REST endpoint" is an *application*, \
+not a slice, and it will pull in too many domains and \
+generate with too little specificity.
+* **Presentationals own interface concerns, not domain-logic \
+concerns.** This is the most common failure mode at this tier \
+and the easiest one to fall into: the LLM, asked "what does \
+this interface component own?", parrots the domain parent's \
 invariants and operations back. It doesn't. The *domain* owns \
 business invariants ("exactly one active subscription per \
 account", "credentials are hashed at rest") and business \
 operations ("record a payment", "revoke a session"). The \
-*presentational* owns **rendering** of those invariants (which \
-states are visible, which are hidden, how transitions animate), \
-**interaction** with those operations (which gestures invoke \
-which operation, how concurrent user actions are serialized), \
-and **UI-local state** (selection, draft edits, which panel is \
-open, navigation history). When you write a presentational's \
-``<purpose>``, ``<owned-invariants>``, and \
-``<primary-operations>``, the subject should be the UI, not the \
-backend. Compare:
+*presentational* owns whatever is specific to the **consumer \
+interface**: for a UI that's rendering (what's visible, how \
+transitions animate), interaction (gestures, input validation, \
+concurrent-action serialization), and UI-local state \
+(selection, drafts, navigation history); for a REST / GraphQL \
+API that's schema shape, versioning, idempotency headers, \
+pagination, per-token rate limiting, and routing writes \
+through the reducer; for a webhook relay that's delivery \
+semantics (at-least-once, retry backoff), payload signing, \
+event-type filtering, and subscriber registration; for a \
+notification dispatcher that's channel routing, per-user \
+preferences, batching granularity, and delivery semantics. \
+When you write a presentational's ``<purpose>``, \
+``<owned-invariants>``, and ``<primary-operations>``, the \
+subject is the interface's contract with its consumers, not \
+the backend's contract with itself. Compare (UI case):
   * Wrong (parrots the domain): purpose "owns the subscription \
     and payment lifecycle", invariants "exactly one active \
     subscription per account", operations "record a payment".
-  * Right (UI-local): purpose "lets a customer review and edit \
-    their subscription", invariants "displayed price always \
-    matches the backend's current state", "one edit session per \
-    customer at a time", operations "render the current \
-    subscription", "submit a plan change for confirmation", \
-    "cancel an in-flight edit".
+  * Right (UI interface): purpose "lets a customer review and \
+    edit their subscription", invariants "displayed price \
+    always matches the backend's current state", "one edit \
+    session per customer at a time", operations "render the \
+    current subscription", "submit a plan change for \
+    confirmation", "cancel an in-flight edit".
+  Compare (REST API case):
+  * Wrong (parrots the domain): purpose "owns the projection", \
+    invariants "all writes flow through the reducer", \
+    operations "validate events", "apply projection deltas".
+  * Right (REST interface): purpose "exposes the projection as \
+    a versioned REST surface for external consumers", \
+    invariants "every endpoint returns JSON conforming to the \
+    documented schema", "write endpoints route through the \
+    reducer without bypass", "rate limits applied per API \
+    token", operations "serve a projection read with \
+    pagination", "accept a write request and forward to the \
+    reducer", "reject unauthorized calls with a documented \
+    error code".
 * If a presentational's ``<owned-invariants>`` or \
 ``<primary-operations>`` are identical to its domain parent's, \
 that is a signal you are re-describing the domain instead of \
-articulating the UI. Rewrite them to name rendering-, \
-interaction-, or navigation-level concerns. An honest empty \
-edge case is better than a duplicated invariant — if the UI \
-genuinely has no rendering invariant beyond "mirror the \
-domain", list the two rendering concerns you *do* have (e.g. \
-stale-state handling, optimistic updates) and move on.
-* **Watch for transactional / persistence / atomicity vocabulary \
-leaking into a presentational component.** Words like "persist", \
-"atomically", "commit", "transaction", "stored", "validated and \
-committed", "event log", "consistency", "concurrent write" are \
-backend vocabulary — if any of those appear in a presentational \
+articulating the interface. Rewrite them to name \
+interface-level concerns (rendering, API shape, delivery \
+semantics, consumer-facing contract). An honest empty edge \
+case is better than a duplicated invariant — if the interface \
+genuinely has no concerns beyond "mirror the domain", list \
+the interface-specific ones you *do* have (stale-state \
+handling, schema versioning, optimistic updates, retry \
+semantics) and move on.
+* **Watch for ownership vocabulary leaking into a \
+presentational component.** Words like "persist", "atomically", \
+"commit", "transaction", "stored", "validated and committed", \
+"event log", "consistency", "concurrent write" are \
+*ownership* vocabulary — they describe the domain's contract \
+with itself. Delivery-format vocabulary (REST, HTTP, JSON, \
+SSE, webhook, email) is fine on an interface presentational \
+because it's describing the interface's own contract with \
+consumers. If any ownership word appears in a presentational \
 component's ``<owned-invariants>`` or ``<primary-operations>``, \
-you are describing the backend's contract from the UI's \
-viewpoint and the invariant belongs on the domain parent, not \
-the presentational. Apply this self-check to each \
-presentational invariant: rewrite it to name a *display*, \
-*interaction*, *navigation*, or *UI-local-state* concern, OR \
-move it to the domain parent and replace it on the \
-presentational with a real rendering invariant. Concrete \
-example: "owner assignment captures persist atomically with \
-the fan-out approval" is a backend transactional invariant; \
+you are describing the backend's contract instead of the \
+interface's own contract and the invariant belongs on the \
+domain parent. Apply this self-check to each presentational \
+invariant: rewrite it to name an *interface* concern \
+(rendering for UI, schema shape for API, delivery semantics \
+for webhook/notification), OR move it to the domain parent \
+and replace it on the presentational with a real interface \
+invariant. Concrete example: "owner assignment captures \
+persist atomically with the fan-out approval" is a backend \
+ownership invariant; \
 the UI version is "owner-assignment input renders inline with \
 the fan-out approval gate so the user assigns owners in the \
 same submit action." Same underlying concern; one is what the \
@@ -419,19 +474,28 @@ shapes (different entity types, different operations), that's \
 itself a signal the presentational is combining two tasks \
 rather than surfacing one.
 * **Anti-patterns that indicate you're building an application \
-instead of a slice:** names ending in ``Workspace``, \
-``Dashboard``, ``Console``, ``UI``, or ``Hub``; purposes that \
-describe a collection of views ("renders the graph and the \
-review panels and the chat") rather than a single coherent \
-task; 3+ domain parents. If your first draft of the \
-presentational layer has one component per audience, start \
-over and slice by task instead.
+instead of a slice:** for UI presentationals, names ending in \
+``Workspace``, ``Dashboard``, ``Console``, ``UI``, or ``Hub``; \
+for API / event-stream / webhook / notification \
+presentationals, names like ``Service``, ``Gateway``, \
+``Facade``, or generic suffixes that could describe any \
+external-interface component (``ApiSurface``, \
+``EventRelay``). Purposes that describe a collection of \
+interactions ("renders the graph and the review panels and \
+the chat"; "serves every projection read endpoint and all \
+write endpoints and rate-limits them") rather than a single \
+coherent consumer interaction. 3+ domain parents. If your \
+first draft of the presentational layer has one component per \
+audience (or one per protocol — a catch-all ``RestSurface`` \
+covering every endpoint), start over and slice by interaction \
+instead.
 * **Domain-presentational pairing is the expected default, not \
-a carve-out.** Almost every project has at least one human \
-consumer, so almost every project has at least one \
-presentational component. A system with zero presentational \
-components is the exception — it implies the only consumers \
-are other software. For every *task* a human performs against \
+a carve-out.** Almost every project has at least one external \
+consumer (humans, services, subscribers), so almost every \
+project has at least one presentational component. A system \
+with zero presentational components is the exception — it \
+implies the system has no external interface, which is rare. \
+For every *interaction* an outside party performs against \
 what the domains expose, expect a presentational component \
 with one or two ``<domain-parent>`` edges to the domains that \
 task actually touches. One domain may be presented by multiple \
@@ -441,30 +505,38 @@ those are two components). One presentational surfaces one or \
 two domains; if you find yourself listing three, the task is \
 too broad.
 * Every presentational component's ``<purpose>`` is a \
-one-sentence statement of the **user task** it serves — "Lets \
-a reviewer work through their outstanding review queue one \
-artifact at a time.", "Lets a developer compose a flow \
-proposal and send it to the lobby.", etc. If that sentence \
-covers multiple unrelated tasks, the component is too big. \
-The purpose is load-bearing: the downstream comparch pass \
-reads it as the primary handle for what to decompose into, and \
-a task-shaped purpose keeps the decomposition focused on that \
-task's surface rather than on a grab-bag of features.
+one-sentence statement of the **consumer interaction** it \
+serves. For UI presentationals that's a user task ("Lets a \
+reviewer work through their outstanding review queue one \
+artifact at a time."); for non-UI presentationals it's an \
+interface contract ("Exposes the projection read set as a \
+versioned REST surface for external services.", "Pushes \
+review-lifecycle events to registered webhook subscribers \
+with cryptographically-signed payloads.", "Delivers \
+notifications to configured channels per user preference."). \
+If that sentence covers multiple unrelated interactions, the \
+component is too big. The purpose is load-bearing: the \
+downstream comparch pass reads it as the primary handle for \
+what to decompose into, and an interaction-shaped purpose \
+keeps the decomposition focused on that interface's contract \
+rather than on a grab-bag of endpoints or channels.
 * A responsibility may appear in one presentational \
 component's ``<responsibilities>`` block **in addition to** its \
 owning domain component — and for any responsibility that has \
-a user-facing face, it **should**. This mirror pattern is how \
-sysarch expresses "the presentational component surfaces this \
-responsibility to the user." The reqs tier deliberately does \
-not split responsibilities into domain-side and UI-side halves \
-— one responsibility like "Payment Collection" covers both the \
-backend mechanics and whatever UI surface presents it — and it \
-is the sysarch layer's job to decide which side(s) claim each \
-resp. When the presentational claims a resp via the mirror, \
-subreqs later rotates it to UI-shaped articulation; the \
-presentational's comparch inherits the domain's pubapi via the \
-``<domain-parent>`` edge. Without the mirror, the subreqs pass \
-for the presentational has no parent resps to decompose.
+an external-facing face (UI, REST, webhook, notification, \
+etc.), it **should**. This mirror pattern is how sysarch \
+expresses "the presentational component exposes this \
+responsibility to outside consumers." The reqs tier \
+deliberately does not split responsibilities into domain-side \
+and interface-side halves — one responsibility like "Payment \
+Collection" covers both the backend mechanics and whatever \
+surface presents it (UI, REST, both) — and it is the sysarch \
+layer's job to decide which side(s) claim each resp. When the \
+presentational claims a resp via the mirror, subreqs later \
+rotates it to interface-shaped articulation; the \
+presentational's comparch inherits the domain's pubapi via \
+the ``<domain-parent>`` edge. Without the mirror, the subreqs \
+pass for the presentational has no parent resps to decompose.
 * Concretely: if a presentational component has a \
 ``<domain-parent>`` edge to a domain component, every \
 responsibility on that domain that the presentational actually \
@@ -474,13 +546,17 @@ surfaces should be mirrored into the presentational's \
 the set of resps they ought to surface are under-specified — \
 they give the subreqs pass nothing to rotate, and their \
 comparch pulls in domain pubapi without having decomposed its \
-own UI-side articulation.
-* **If the project has significant frontend infrastructure** \
-(routing, theming, state management, error boundaries, layout \
-shells), consider whether a top-level presentational \
+own interface-side articulation.
+* **If the project has significant shared interface \
+infrastructure**, consider whether a top-level presentational \
 component should own that shared code so other presentational \
-components can depend on it rather than each one independently \
-setting up its own. This is the presentational counterpart to \
+components can depend on it. For UI presentationals this is \
+the routing / theming / state-management / layout-shell tier \
+(Phoenix LiveView shell, Next.js app shell). For non-UI \
+presentationals this is things like a shared REST-gateway \
+layer handling auth / rate limiting / observability \
+middleware that every endpoint-shaped presentational mounts \
+inside. Either way this is the presentational counterpart to \
 the foundation component — not marked ``<foundation/>`` \
 (there's only one of those), but serving an analogous role as \
 the shared-infrastructure dep target for the presentational \
