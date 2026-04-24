@@ -35,17 +35,40 @@ to any component.
 phrases callers actually invoke? Flag category verbs ("handle", \
 "manage", "coordinate") and invented operations that don't \
 match the responsibilities.
+- **Resp-ID mirroring on presentational components is the \
+intended pattern, not a flaw.** Every responsibility a \
+presentational component surfaces to the user **should** appear \
+in *both* its owning domain component's ``<responsibilities>`` \
+block AND the presentational's. The reqs tier emits one \
+responsibility per system-side concern (no UI/backend split), \
+and it is the sysarch layer's job to mirror those into the \
+presentational that exposes them — without the mirror, the \
+subreqs pass for the presentational has nothing to rotate to \
+UI articulation. **Do not flag a resp ID appearing in one \
+domain component AND one presentational component as \
+"doubly-mapped" — that is correct.** The thing that IS broken: \
+a resp ID appearing in two *domain* components, or in a \
+presentational whose ``<domain-parent>`` edge does not point at \
+the resp's owning domain. Those are the genuine assignment \
+errors to flag.
 - **For presentational components specifically:** do the \
-invariants and operations describe rendering / interaction / \
-UI-local state, or do they parrot the domain parent's business \
-invariants back? A presentational whose owned-invariants read \
-identically to its domain parent's is under-specified — flag \
-it. The presentational owns display rules, gesture wiring, \
-navigation, and UI-state; the domain owns business state.
-- Does every top-level responsibility appear on exactly one \
-``<decomposition>`` edge, mapping it to a single owning \
-component? Flag orphaned resps, doubly-mapped resps, or \
-cross-mapped IDs that don't resolve.
+``<owned-invariants>`` and ``<primary-operations>`` *content* \
+describe rendering / interaction / UI-local state, or do they \
+parrot the domain parent's business invariants and operations \
+back word-for-word? A presentational whose invariants/operations \
+read identically to its domain parent's is under-specified — \
+flag it. The presentational owns display rules, gesture wiring, \
+navigation, and UI-state; the domain owns business state. Note \
+this check is about the prose content of those two micro-field \
+blocks, NOT about resp-ID assignment (see the previous bullet — \
+mirroring resp IDs is correct).
+- Does every top-level responsibility appear on **at least one** \
+domain component's ``<responsibilities>`` block (coverage), and \
+on **at most one** domain component (no domain double-ownership)? \
+Flag orphans (resp not in any domain component) and \
+domain-domain double-ownership. Resp IDs additionally appearing \
+in a presentational with the right domain-parent edge are \
+correct, not a coverage error.
 - Are dependencies a DAG? Flag cycles.
 - For presentational components: are their domain_parent edges \
 pointing at the right domain comps? Does each presentational \

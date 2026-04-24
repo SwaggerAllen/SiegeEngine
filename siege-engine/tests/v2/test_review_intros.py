@@ -64,6 +64,34 @@ def test_tier_review_prompt_includes_prose_intros(tier_module, tier_name):
     )
 
 
+def test_sysarch_review_prompt_treats_presentational_mirror_as_intended():
+    """Presentational components should mirror their domain parent's
+    resp IDs in their own ``<responsibilities>`` block — that's the
+    spec-intended pattern, not a flaw. The review prompt must say so
+    explicitly and must NOT instruct the reviewer to flag a resp
+    appearing in one domain + one presentational as "doubly-mapped."
+    Catching this in a previous prompt revision: the reviewer scored
+    a clean draft 44/100 on the basis that 35 resp IDs were
+    "double-mapped" between domain and presentational components,
+    which was the intended mirror, not a bug."""
+    system_prompt = sysarch.render_system_prompt()
+    handles_idx = system_prompt.find("Handles & structure review")
+    arch_idx = system_prompt.find("Architectural-decisions review")
+    handles_body = system_prompt[handles_idx:arch_idx]
+    # Positive framing must appear: mirror is correct.
+    assert "intended pattern" in handles_body
+    assert "mirror" in handles_body.lower()
+    # The "doubly-mapped" framing must be qualified: only flag when
+    # both endpoints are domain components, NOT the
+    # domain-plus-presentational mirror.
+    assert "domain double-ownership" in handles_body.lower() or (
+        "two *domain* components" in handles_body
+    )
+    # The parroting check must scope itself to invariants/operations
+    # *content*, not resp-ID assignment.
+    assert "content" in handles_body.lower()
+
+
 def test_reqs_review_prompt_flags_tech_leaks_in_names():
     """The reqs tier is pre-tech-choice — sysarch owns libraries,
     frameworks, and algorithm selection. Atom names that embed a
