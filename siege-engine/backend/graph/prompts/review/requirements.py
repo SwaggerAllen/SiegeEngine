@@ -54,6 +54,21 @@ atom name so vague it could apply to half the other atoms is \
 too abstract. Flag names like "reliable delivery", "secure \
 storage", "valid state" — those are universal claims, not \
 specific concerns.
+- **Names should not leak technology choices.** The reqs tier \
+is pre-tech-choice — sysarch picks libraries, frameworks, and \
+algorithms in its ``<techspec>`` and ``<technologies>`` blocks. \
+Flag atoms whose names embed a specific library, framework, or \
+algorithm author-name: "Liquid template rendering via Solid \
+engine" should be "prompt template rendering"; "Sugiyama-style \
+layered graph layout" should be "layered graph layout"; \
+"Phoenix LiveView session handler" should be "realtime session \
+handler". Wire-protocol names (SAML, OIDC, HTTP) are fine when \
+the protocol is the spec-level concern at this tier — swapping \
+a protocol changes what the atom means. The rule is: if \
+swapping the tech would not change what the atom *means* for a \
+reader who doesn't know the implementation, the tech name \
+doesn't belong in the atom. Name the rename the generator \
+should have emitted.
 - Are ``<feat>`` references valid? Every ``feat_*`` id must \
 exist in the feature set. (The validator catches this, but \
 flag it if you see it — makes the critique complete.)

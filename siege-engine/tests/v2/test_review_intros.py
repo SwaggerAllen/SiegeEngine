@@ -64,6 +64,26 @@ def test_tier_review_prompt_includes_prose_intros(tier_module, tier_name):
     )
 
 
+def test_reqs_review_prompt_flags_tech_leaks_in_names():
+    """The reqs tier is pre-tech-choice — sysarch owns libraries,
+    frameworks, and algorithm selection. Atom names that embed a
+    specific library/framework/algorithm author-name leak sysarch's
+    decisions back into the reqs tier and should be flagged. Wire
+    protocols (SAML, OIDC, HTTP) are fine because swapping them
+    changes what the atom means."""
+    system_prompt = requirements.render_system_prompt()
+    handles_idx = system_prompt.find("Handles & structure review")
+    arch_idx = system_prompt.find("Architectural-decisions review")
+    handles_body = system_prompt[handles_idx:arch_idx]
+    # The rule itself must appear.
+    assert "technology choices" in handles_body.lower() or "tech-choice" in handles_body.lower()
+    # Concrete bad-example renames so the reviewer has pattern shape.
+    assert "Liquid" in handles_body
+    assert "Sugiyama" in handles_body
+    # The carve-out that wire protocols are fine must be explicit.
+    assert "SAML" in handles_body or "wire-protocol" in handles_body.lower()
+
+
 def test_reqs_review_prompt_flags_missing_nfr_atoms():
     """The reqs review is the platform's last chance to catch a
     missing NFR atom before sysarch compresses. The prompt must
