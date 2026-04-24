@@ -462,12 +462,12 @@ class TestTelemetry:
 
 
 class TestProjectSettingsTimeout:
-    def test_default_1800(
+    def test_default_7200(
         self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
     ):
         calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
         asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
-        assert calls[0]["timeout"] == 1800
+        assert calls[0]["timeout"] == 7200
 
     def test_override_honored(
         self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch

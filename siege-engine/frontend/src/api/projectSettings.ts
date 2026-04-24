@@ -5,7 +5,7 @@ import api from './client';
 // bounds aligned with the backend pydantic Field constraints so the
 // frontend validates client-side before the round trip.
 export const ProjectSettingsSchema = z.object({
-  generation_timeout_seconds: z.number().int().min(60).max(3600),
+  generation_timeout_seconds: z.number().int().min(60).max(14400),
   cli_max_budget_usd: z.number().min(0.1).max(20),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;

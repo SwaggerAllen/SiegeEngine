@@ -9,8 +9,12 @@ Current settings:
 
 * ``generation_timeout_seconds`` — how long handlers wait on a
   single Claude CLI subprocess before killing it and surfacing a
-  timeout error. Default 1800 (30 minutes). Minimum 60 (1 minute)
-  and maximum 3600 (1 hour) to keep obvious footguns out.
+  timeout error. Default 7200 (2 hours). Minimum 60 (1 minute)
+  and maximum 14400 (4 hours) — the top three tiers (expansion,
+  reqs, sysarch) pass ``thinking_effort="max"`` and deep-thinking
+  Opus runs can push past an hour on a real-sized project; the
+  4h ceiling still catches a typo before it hangs a worker for
+  a whole day.
 * ``cli_max_budget_usd`` — maximum dollar budget passed to the
   Claude CLI's ``--max-budget-usd`` flag for a single generation
   attempt. Default 2.00. Each parse-validate retry is a fresh
@@ -53,14 +57,16 @@ class ProjectSettings(BaseModel):
     """
 
     generation_timeout_seconds: int = Field(
-        default=1800,
+        default=7200,
         ge=60,
-        le=3600,
+        le=14400,
         description=(
             "How long to wait on a single Claude CLI subprocess before "
             "killing it. 60s floor so you can't accidentally starve "
-            "real work; 3600s ceiling so a typo doesn't hang a "
-            "worker for a whole day."
+            "real work; 14400s (4h) ceiling because max-effort "
+            "sysarch / reqs runs on Opus can push past an hour on a "
+            "real-sized project, while still catching a typo before "
+            "it hangs a worker for a whole day."
         ),
     )
     cli_max_budget_usd: float = Field(

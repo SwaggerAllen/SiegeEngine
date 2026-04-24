@@ -89,7 +89,7 @@ class TestGetSettings:
         resp = client.get(f"/api/projects/{project.id}/settings")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["generation_timeout_seconds"] == 1800
+        assert body["generation_timeout_seconds"] == 7200
         assert body["cli_max_budget_usd"] == 2.00
 
     def test_returns_overridden_value_when_column_is_set(self, client, project, db):
@@ -107,7 +107,7 @@ class TestGetSettings:
         resp = client.get(f"/api/projects/{project.id}/settings")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["generation_timeout_seconds"] == 1800
+        assert body["generation_timeout_seconds"] == 7200
         assert body["cli_max_budget_usd"] == 2.00
 
     def test_unknown_project_is_404(self, client):
@@ -134,10 +134,10 @@ class TestPutSettings:
         resp = client.put(f"/api/projects/{project.id}/settings", json={})
         assert resp.status_code == 200
         body = resp.json()
-        assert body["generation_timeout_seconds"] == 1800
+        assert body["generation_timeout_seconds"] == 7200
         assert body["cli_max_budget_usd"] == 2.00
         db.refresh(project)
-        assert project.settings["generation_timeout_seconds"] == 1800
+        assert project.settings["generation_timeout_seconds"] == 7200
         assert project.settings["cli_max_budget_usd"] == 2.00
 
     def test_updates_budget(self, client, project, db):

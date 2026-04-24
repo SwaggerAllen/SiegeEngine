@@ -104,10 +104,10 @@ describe('ProjectSettingsPage', () => {
     mockedGet.mockResolvedValue(defaultSettings());
     renderPage();
     const input = (await screen.findByLabelText(/Generation timeout/i)) as HTMLInputElement;
-    fireEvent.change(input, { target: { value: '120' } });
+    fireEvent.change(input, { target: { value: '500' } });
     fireEvent.click(screen.getByRole('button', { name: /Save/i }));
     await waitFor(() =>
-      expect(screen.getByText(/^Timeout must be between 1 and 60 minutes/)).toBeInTheDocument()
+      expect(screen.getByText(/^Timeout must be between 1 and 240 minutes/)).toBeInTheDocument()
     );
     expect(mockedUpdate).not.toHaveBeenCalled();
   });

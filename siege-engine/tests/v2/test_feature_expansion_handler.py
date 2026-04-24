@@ -589,13 +589,13 @@ class TestProjectSettingsTimeout:
     project's settings column and passes it to the CLI invocation.
     """
 
-    def test_default_timeout_is_1800_when_settings_is_null(
+    def test_default_timeout_is_7200_when_settings_is_null(
         self, shared_session_factory, seeded_project, monkeypatch
     ):
         calls = _patch_cli(monkeypatch)
         asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 1
-        assert calls[0]["timeout"] == 1800
+        assert calls[0]["timeout"] == 7200
 
     def test_uses_override_when_settings_is_populated(
         self, shared_session_factory, seeded_project, monkeypatch
