@@ -62,6 +62,32 @@ navigation, and UI-state; the domain owns business state. Note \
 this check is about the prose content of those two micro-field \
 blocks, NOT about resp-ID assignment (see the previous bullet — \
 mirroring resp IDs is correct).
+- **Backend-vocabulary leak in presentational invariants/operations.** \
+Scan each presentational's micro-fields for transactional / \
+persistence vocabulary: "persist", "atomically", "commit", \
+"transaction", "stored", "validated", "event log", "consistency", \
+"concurrent write". Any of those words in a presentational \
+component's owned-invariants or primary-operations is a leak — \
+the LLM described the backend's guarantee from the UI's \
+viewpoint instead of the UI's actual contract. Flag the \
+specific atom and suggest the rewrite (a display / interaction \
+/ navigation / UI-state concern), or note that the invariant \
+belongs on the domain parent and the presentational needs a \
+real rendering invariant in its slot.
+- **External-boundary isolation.** For each external integration \
+the project depends on (LLM provider APIs, git forges, identity \
+providers, notification channels, payment processors, hosted \
+vector stores, telemetry sinks), check whether it has its own \
+component or is bundled inside a use-site component. Bundling \
+is the smell — the use site and the boundary have different \
+failure modes (provider outage, rate limit, credential rotation, \
+schema drift) and conflating them blurs both. Foundation is the \
+exception (it carries genuine cross-cutting platform concerns). \
+Flag specific bundlings: "LLM dispatch is folded into Generation \
+Pipeline alongside prompt rendering and template expansion — \
+those are use-site concerns; the LLM provider boundary should \
+be its own component with its own retry/circuit-breaker/quota \
+surface."
 - Does every top-level responsibility appear on **at least one** \
 domain component's ``<responsibilities>`` block (coverage), and \
 on **at most one** domain component (no domain double-ownership)? \

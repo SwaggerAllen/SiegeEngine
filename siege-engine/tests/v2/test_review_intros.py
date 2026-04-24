@@ -64,6 +64,41 @@ def test_tier_review_prompt_includes_prose_intros(tier_module, tier_name):
     )
 
 
+def test_sysarch_review_prompt_flags_external_boundary_bundling():
+    """External integrations (LLM providers, git forges, IdPs,
+    notification channels) bundled into use-site components are a
+    specific smell with a different failure surface than the
+    use-site's. Review must scan for this and flag specific
+    bundlings, not generically."""
+    system_prompt = sysarch.render_system_prompt()
+    handles_idx = system_prompt.find("Handles & structure review")
+    arch_idx = system_prompt.find("Architectural-decisions review")
+    handles_body = system_prompt[handles_idx:arch_idx]
+    assert "external" in handles_body.lower()
+    # Concrete callout for the LLM-dispatch-bundling smell.
+    assert "LLM" in handles_body or "git forge" in handles_body.lower()
+    # The reviewer should call out specific bundlings, not flag
+    # external-boundary issues abstractly.
+    assert "Flag specific bundlings" in handles_body or "specific" in handles_body.lower()
+
+
+def test_sysarch_review_prompt_flags_backend_vocab_in_presentationals():
+    """Backend transactional vocabulary in a presentational
+    component's invariants/operations is a specific leak — the LLM
+    described the backend's guarantee from the UI's viewpoint
+    instead of the UI's actual contract. Review prompt must scan
+    for this with a concrete word list."""
+    system_prompt = sysarch.render_system_prompt()
+    handles_idx = system_prompt.find("Handles & structure review")
+    arch_idx = system_prompt.find("Architectural-decisions review")
+    handles_body = system_prompt[handles_idx:arch_idx]
+    # Backend-vocab leak check is named.
+    assert "transactional" in handles_body.lower() or "persistence" in handles_body.lower()
+    # Specific forbidden words enumerated so the reviewer can grep.
+    for word in ("persist", "atomically", "commit"):
+        assert word in handles_body, f"Sysarch review must name {word!r} as a flagged word."
+
+
 def test_sysarch_review_prompt_treats_presentational_mirror_as_intended():
     """Presentational components should mirror their domain parent's
     resp IDs in their own ``<responsibilities>`` block — that's the

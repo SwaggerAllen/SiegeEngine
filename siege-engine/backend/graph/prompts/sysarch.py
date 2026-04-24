@@ -96,8 +96,13 @@ specification. It is to articulate **handles** — short, \
 specific, project-distinctive component names and paragraphs — \
 that downstream passes can reason from directly. A vague handle \
 at this layer forces every later pass to guess, and a guess \
-here gets multiplied across every tier below. Prefer fewer, \
-sharper components to more, blurrier ones. Prefer concrete \
+here gets multiplied across every tier below. There is **no \
+target component count** — emit as many components as the \
+project's data-ownership and failure-mode boundaries warrant, \
+and no fewer. Conserving components by merging unrelated \
+concerns produces a vague handle at the merged component just \
+as surely as splitting one coherent concern across two \
+components produces a vague handle at each. Prefer concrete \
 language ("settles card charges through the provider gateway") \
 to category labels ("handles payments"). A component name that \
 could plausibly belong to any SaaS project is probably too \
@@ -384,6 +389,25 @@ edge case is better than a duplicated invariant — if the UI \
 genuinely has no rendering invariant beyond "mirror the \
 domain", list the two rendering concerns you *do* have (e.g. \
 stale-state handling, optimistic updates) and move on.
+* **Watch for transactional / persistence / atomicity vocabulary \
+leaking into a presentational component.** Words like "persist", \
+"atomically", "commit", "transaction", "stored", "validated and \
+committed", "event log", "consistency", "concurrent write" are \
+backend vocabulary — if any of those appear in a presentational \
+component's ``<owned-invariants>`` or ``<primary-operations>``, \
+you are describing the backend's contract from the UI's \
+viewpoint and the invariant belongs on the domain parent, not \
+the presentational. Apply this self-check to each \
+presentational invariant: rewrite it to name a *display*, \
+*interaction*, *navigation*, or *UI-local-state* concern, OR \
+move it to the domain parent and replace it on the \
+presentational with a real rendering invariant. Concrete \
+example: "owner assignment captures persist atomically with \
+the fan-out approval" is a backend transactional invariant; \
+the UI version is "owner-assignment input renders inline with \
+the fan-out approval gate so the user assigns owners in the \
+same submit action." Same underlying concern; one is what the \
+reducer guarantees, the other is what the UI presents.
 * **Each presentational component has 1 or 2 domain parents. \
 More than 2 is a structural error.** If the component's work \
 spans three or more domains, the task isn't one task — split \
@@ -533,6 +557,33 @@ one *fail with*, and which does it *own data alongside*? Those \
 are the real groupings. Category-clustering ("all the auth \
 things go in Auth") produces components that have to be split \
 later once the real coupling shows up.
+* **Each external boundary deserves its own component.** \
+Anything the system talks to over the wire — LLM provider \
+APIs, git forges, identity providers (SSO/OIDC/SAML), \
+notification channels (email, webhooks, team-messaging), \
+payment processors, vector stores hosted as a separate \
+service, telemetry sinks — is an *external boundary*. Each \
+such boundary owns a distinct failure surface (provider \
+outages, rate limits, credential rotation, schema drift, wire \
+protocol versioning) that has nothing to do with the rest of \
+the system's failure modes. Isolating each external \
+integration into its own component means: (a) when the \
+provider misbehaves, the blast radius is one component's \
+sandbox/retry/circuit-breaker logic, not a smear across \
+multiple components that each happen to call out; (b) credential \
+handling, request signing, and quota tracking have one home \
+per provider rather than being re-implemented per call site; \
+(c) swapping providers (e.g. a different LLM, a different \
+forge plugin) is a single-component substitution rather than \
+a hunt across the codebase. Resist the temptation to fold an \
+external-boundary's resps into the component that *uses* it \
+("LLM dispatch lives in Generation Pipeline because that's \
+where prompts are rendered") — the use site and the boundary \
+have different failure modes and should be different \
+components, with a dependency edge connecting them. The \
+foundation component is the exception: cross-cutting platform \
+infrastructure that genuinely every component reaches into \
+stays foundation, not its own external-boundary component.
 
 ## Foundation component
 

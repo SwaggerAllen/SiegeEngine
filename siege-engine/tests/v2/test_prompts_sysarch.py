@@ -10,6 +10,60 @@ from __future__ import annotations
 from backend.graph.prompts.sysarch import render_system_prompt, render_user_prompt
 
 
+def test_no_target_component_count_guidance():
+    """Sysarch prompt must not bias the LLM toward a particular
+    component count. Conserving components by merging unrelated
+    concerns produces vague handles just as splitting one coherent
+    concern produces vague handles. Bias-free framing is "as many
+    as the project's data-ownership and failure-mode boundaries
+    warrant, and no fewer." Old framing ("Prefer fewer, sharper
+    components to more, blurrier ones") biased toward under-emission,
+    which produced bundles of unrelated concerns at the merged
+    component."""
+    sys = render_system_prompt()
+    # Old biased framing must not appear.
+    assert "Prefer fewer" not in sys
+    # New explicit framing.
+    assert "no target component count" in sys.lower()
+
+
+def test_external_boundary_isolation_rule_present():
+    """Each external integration (LLM provider, git forge, IdP,
+    notification channel, payment processor, etc.) deserves its own
+    component for failure-surface isolation. Bundling the
+    LLM-dispatch boundary inside the prompt-rendering component is
+    the exact smell this rule catches."""
+    sys = render_system_prompt()
+    assert "external boundary" in sys.lower() or "external boundaries" in sys.lower()
+    # Concrete examples of external boundaries the LLM should
+    # recognize as separate-component candidates.
+    for example in ("LLM provider", "git forge", "SSO"):
+        assert example in sys, f"External-boundary rule must name {example!r} as an example."
+    # The "blast radius is one component's sandbox/retry" justification
+    # must be explicit so the LLM understands the *why*, not just the
+    # rule.
+    assert "failure surface" in sys.lower()
+
+
+def test_backend_vocab_leak_self_check_present():
+    """Presentational components must not parrot domain transactional
+    invariants. The previous self-check (parrots-domain-invariants)
+    catches some but not all cases — backend vocabulary like
+    "persist", "atomically", "transaction", "commit" leaking into a
+    presentational invariant is a specific failure mode that needs
+    its own callout. Concrete worked example required so the LLM
+    has pattern shape: "owner assignment captures persist
+    atomically..." vs. the UI rewrite."""
+    sys = render_system_prompt()
+    # The backend-vocab self-check is named.
+    assert "transactional" in sys.lower() or "atomicity" in sys.lower()
+    # The forbidden-word list is explicit.
+    for word in ("persist", "atomically", "commit"):
+        assert word in sys, f"Backend-vocab self-check must name {word!r} as a flagged word."
+    # The concrete worked example demonstrates the rewrite.
+    assert "renders inline" in sys.lower() or "owner-assignment input" in sys
+
+
 def test_policy_shaped_resp_guidance_present():
     """Reqs seeds policy-shaped atoms (rate limiting, audit, telemetry,
     license hygiene) as ordinary resps; sysarch decides per-atom whether
