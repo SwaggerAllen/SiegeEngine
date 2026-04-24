@@ -23,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 os.environ.setdefault("SIEGE_DISABLE_WORKER_LOOP", "1")
 os.environ.setdefault("SIEGE_DISABLE_AI_REVIEW", "1")
 
+from backend.cli.config import CliInvocationConfig
 from backend.cli.manager import GenerationResult, _build_subprocess_env
 from backend.database import Base
 from backend.graph.expansion import bootstrap_expansion_node
@@ -88,11 +89,20 @@ def _valid_features_xml() -> str:
     )
 
 
+def _config(thinking_effort: str | None = None) -> CliInvocationConfig:
+    return CliInvocationConfig(
+        timeout_seconds=7200,
+        max_budget_usd=2.0,
+        max_output_tokens=128000,
+        thinking_effort=thinking_effort,
+    )
+
+
 class TestBuildSubprocessEnv:
     """``_build_subprocess_env`` constructs the per-call subprocess env."""
 
     def test_sets_effort_level_when_provided(self):
-        env = _build_subprocess_env("max")
+        env = _build_subprocess_env(_config(thinking_effort="max"))
         assert env["CLAUDE_CODE_EFFORT_LEVEL"] == "max"
 
     def test_strips_claudecode_and_api_key(self, monkeypatch):
@@ -109,7 +119,7 @@ class TestBuildSubprocessEnv:
 
     def test_preserves_other_env(self, monkeypatch):
         monkeypatch.setenv("PATH", "/custom/path")
-        env = _build_subprocess_env("max")
+        env = _build_subprocess_env(_config(thinking_effort="max"))
         assert env["PATH"] == "/custom/path"
 
 
@@ -134,6 +144,10 @@ class TestHandlerForwardsThinkingEffort:
         asyncio.run(fe_handler.generate_feature_expansion({"project_id": pid, "feedback": None}))
 
         assert captured, "cli_manager.generate_with_usage was never called"
-        assert captured[0].get("thinking_effort") == "max", (
-            f"feature expansion must pass thinking_effort='max'; kwargs keys: {list(captured[0])}"
+        config = captured[0].get("config")
+        assert config is not None, (
+            f"feature expansion must pass a CliInvocationConfig; kwargs keys: {list(captured[0])}"
+        )
+        assert config.thinking_effort == "max", (
+            f"feature expansion must pass thinking_effort='max'; got {config.thinking_effort!r}"
         )

@@ -32,8 +32,7 @@ Example caller binding (feature-expansion):
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="features",
         system_prompt=SYSTEM_PROMPT,
-        cli_timeout_seconds=cli_timeout_seconds,
-        cli_max_budget_usd=cli_max_budget_usd,
+        cli_config=cli_config,
         prior_pending=prior_pending,
         render_prompt=_render,
         validate=_validate,
@@ -50,6 +49,7 @@ from typing import Literal
 
 from sqlalchemy.orm.attributes import flag_modified
 
+from backend.cli.config import CliInvocationConfig
 from backend.cli.manager import GenerationResult
 from backend.database import SessionLocal
 from backend.graph.handlers.feature_expansion import (
@@ -128,15 +128,12 @@ async def run_parse_validate_loop(
     *,
     root_tag: str,
     system_prompt: str,
-    cli_timeout_seconds: int,
-    cli_max_budget_usd: float,
+    cli_config: "CliInvocationConfig",
     prior_pending: str | None,
     render_prompt: Callable[..., str],
     validate: Callable[[TagNode, str], None],
     exhausted_exception_cls: type[Exception],
     log_handler_name: str,
-    thinking_effort: str | None = None,
-    cli_max_output_tokens: int | None = None,
 ) -> tuple[GenerationResult, list[GenerationResult]]:
     """Run the parse-validate retry loop for a bootstrap generation handler.
 
@@ -189,10 +186,7 @@ async def run_parse_validate_loop(
             prompt=user_prompt,
             system_prompt=system_prompt,
             tools=CLI_TOOLS,
-            timeout=cli_timeout_seconds,
-            max_budget_usd=cli_max_budget_usd,
-            thinking_effort=thinking_effort,
-            max_output_tokens=cli_max_output_tokens,
+            config=cli_config,
         )
         attempts.append(result)
 

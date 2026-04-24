@@ -595,7 +595,7 @@ class TestProjectSettingsTimeout:
         calls = _patch_cli(monkeypatch)
         asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 1
-        assert calls[0]["timeout"] == 7200
+        assert calls[0]["config"].timeout_seconds == 7200
 
     def test_uses_override_when_settings_is_populated(
         self, shared_session_factory, seeded_project, monkeypatch
@@ -616,7 +616,7 @@ class TestProjectSettingsTimeout:
         calls = _patch_cli(monkeypatch)
         asyncio.run(generate_feature_expansion({"project_id": seeded_project, "feedback": None}))
         assert len(calls) == 1
-        assert calls[0]["timeout"] == 1500
+        assert calls[0]["config"].timeout_seconds == 1500
 
 
 def _patch_cli_mixed(

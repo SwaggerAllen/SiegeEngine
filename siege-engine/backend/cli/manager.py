@@ -6,6 +6,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 
+from backend.cli.config import CliInvocationConfig
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
@@ -167,32 +168,35 @@ _semaphore: asyncio.Semaphore | None = None
 _semaphore_loop: asyncio.AbstractEventLoop | None = None
 
 
-def _build_subprocess_env(
-    thinking_effort: str | None,
-    max_output_tokens: int | None = None,
-) -> dict[str, str]:
+def _build_subprocess_env(config: CliInvocationConfig | None) -> dict[str, str]:
     """Construct the env dict for a CLI subprocess invocation.
 
     Copies the parent process environment, strips SIEGE-specific
     secrets (``ANTHROPIC_API_KEY``, ``CLAUDECODE`` signal) the CLI
-    must not inherit, and sets / clears ``CLAUDE_CODE_EFFORT_LEVEL``
-    based on the per-call ``thinking_effort`` argument.
+    must not inherit, and threads every env-var-shaped CLI knob
+    from ``config`` onto the per-call dict. Scoping via a per-call
+    env (not the process env) means concurrent handler calls don't
+    race each other's settings.
 
-    Phase-11 followup B6: the three top-of-chain tiers (expansion,
-    reqs, sysarch) pass ``thinking_effort="max"`` so their single
-    calls run at max effort; propagation tiers leave it unset so
-    their CLI budget isn't consumed by thinking tokens. Scoping
-    via this per-call env (not the process env) means concurrent
-    handler calls don't race each other's settings.
+    Env vars set from the config:
 
-    ``max_output_tokens`` — when provided, forwarded as
-    ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` on the env dict. Sourced
-    from ``ProjectSettings.cli_max_output_tokens`` by the handler.
-    None clears the var (so the CLI's intrinsic default applies).
+    * ``CLAUDE_CODE_EFFORT_LEVEL`` — from ``config.thinking_effort``
+      when set; the first three tiers (expansion, reqs, sysarch)
+      pass ``"max"``, propagation tiers leave it ``None``.
+      Phase-11 followup B6.
+    * ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` — from
+      ``config.max_output_tokens``. Doubled to 128k by default so
+      real-sized sysarch / reqs runs don't truncate mid-atom.
+
+    ``config=None`` keeps the CLI's intrinsic defaults for every
+    knob — used by direct callers (tests, rename_rewrite) that
+    don't go through the handler chain.
     """
     env = {**os.environ}
     env.pop("CLAUDECODE", None)
     env.pop("ANTHROPIC_API_KEY", None)
+    thinking_effort = config.thinking_effort if config is not None else None
+    max_output_tokens = config.max_output_tokens if config is not None else None
     if thinking_effort is not None:
         env["CLAUDE_CODE_EFFORT_LEVEL"] = thinking_effort
     else:
@@ -224,10 +228,7 @@ class CLIManager:
         working_dir: str | None = None,
         model: str | None = None,
         tools: str | None = None,
-        timeout: int | None = None,
-        max_budget_usd: float | None = None,
-        thinking_effort: str | None = None,
-        max_output_tokens: int | None = None,
+        config: CliInvocationConfig | None = None,
     ) -> str:
         """
         Run claude CLI with a prompt and return the output text.
@@ -240,21 +241,13 @@ class CLIManager:
             tools: Tool specification. Use '""' to disable all tools,
                    "default" for all tools, or specific tools like "Bash,Edit,Read".
                    None = CLI default (all tools).
-            timeout: Timeout in seconds. Defaults to cli_timeout setting.
-            max_budget_usd: Maximum dollar amount for API calls.
-            thinking_effort: When set (e.g. ``"max"``), forwarded to
-                the CLI subprocess as ``CLAUDE_CODE_EFFORT_LEVEL``.
-                Scoped to the single call — doesn't affect other
-                concurrent invocations or the parent process env.
-                Used on the first three tiers (expansion, reqs,
-                sysarch) where deep thinking materially improves
-                downstream quality; deliberately unset on propagation
-                tiers to keep their budgets from blowing up (see
-                Phase-11 followup B6).
+            config: :class:`CliInvocationConfig` carrying timeout,
+                budget, max output tokens, and thinking effort. When
+                None, every knob falls back to the CLI's intrinsic
+                default (including the subprocess timeout, which
+                defaults to ``settings.cli_timeout``). Handlers build
+                the config via ``ProjectSettings.to_cli_config``.
         """
-        if timeout is None:
-            timeout = settings.cli_timeout
-
         async with _get_semaphore():
             return await self._invoke(
                 prompt,
@@ -262,11 +255,8 @@ class CLIManager:
                 working_dir,
                 model,
                 tools,
-                timeout,
-                max_budget_usd,
                 output_format="text",
-                thinking_effort=thinking_effort,
-                max_output_tokens=max_output_tokens,
+                config=config,
             )
 
     async def generate_with_usage(
@@ -276,10 +266,7 @@ class CLIManager:
         working_dir: str | None = None,
         model: str | None = None,
         tools: str | None = None,
-        timeout: int | None = None,
-        max_budget_usd: float | None = None,
-        thinking_effort: str | None = None,
-        max_output_tokens: int | None = None,
+        config: CliInvocationConfig | None = None,
     ) -> GenerationResult:
         """Run claude CLI with ``--output-format json`` and return text + usage.
 
@@ -290,9 +277,10 @@ class CLIManager:
         (``docs/architecture/v2-rearchitecture.md`` §Generation
         telemetry).
 
-        ``thinking_effort`` — same semantics as :meth:`generate`.
-        When set, forwarded to the CLI subprocess as
-        ``CLAUDE_CODE_EFFORT_LEVEL``; scoped to the single call.
+        ``config`` — same semantics as :meth:`generate`. When set,
+        every CLI knob (timeout, budget, output-token cap, thinking
+        effort) is sourced from the bundle; when ``None``, each
+        knob falls back to the CLI's intrinsic default.
 
         Token-usage extraction is best-effort: if the CLI's JSON
         shape omits the usage fields or parse fails, we log a warning
@@ -300,9 +288,6 @@ class CLIManager:
         generation. Telemetry is observability, not correctness — a
         missing row should never block a draft from landing.
         """
-        if timeout is None:
-            timeout = settings.cli_timeout
-
         async with _get_semaphore():
             raw = await self._invoke(
                 prompt,
@@ -310,11 +295,8 @@ class CLIManager:
                 working_dir,
                 model,
                 tools,
-                timeout,
-                max_budget_usd,
                 output_format="json",
-                thinking_effort=thinking_effort,
-                max_output_tokens=max_output_tokens,
+                config=config,
             )
         return _parse_json_result(raw, fallback_model=model)
 
@@ -325,13 +307,12 @@ class CLIManager:
         working_dir: str | None,
         model: str | None,
         tools: str | None,
-        timeout: int,
-        max_budget_usd: float | None,
         output_format: str = "text",
-        thinking_effort: str | None = None,
-        max_output_tokens: int | None = None,
+        config: CliInvocationConfig | None = None,
     ) -> str:
         args = ["claude", "-p", "--output-format", output_format]
+        timeout = config.timeout_seconds if config is not None else settings.cli_timeout
+        max_budget_usd = config.max_budget_usd if config is not None else None
 
         # Write system prompt to a temp file to avoid ARG_MAX limits
         # (pinned artifacts can make the system prompt very large).
@@ -356,16 +337,17 @@ class CLIManager:
         # Don't persist sessions for pipeline generation
         args.append("--no-session-persistence")
 
-        env = _build_subprocess_env(thinking_effort, max_output_tokens=max_output_tokens)
+        env = _build_subprocess_env(config)
 
         logger.info(
-            "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds, max_output_tokens=%s "
-            "(using CLI login credentials)",
+            "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds, max_output_tokens=%s, "
+            "thinking_effort=%s (using CLI login credentials)",
             effective_model,
             tools or "default",
             working_dir or ".",
             timeout,
-            max_output_tokens if max_output_tokens is not None else "cli-default",
+            config.max_output_tokens if config is not None else "cli-default",
+            config.thinking_effort if config is not None else "unset",
         )
 
         proc = await asyncio.create_subprocess_exec(

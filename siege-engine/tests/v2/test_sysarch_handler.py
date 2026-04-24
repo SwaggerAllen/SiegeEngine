@@ -467,7 +467,7 @@ class TestProjectSettingsTimeout:
     ):
         calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
         asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
-        assert calls[0]["timeout"] == 7200
+        assert calls[0]["config"].timeout_seconds == 7200
 
     def test_override_honored(
         self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
@@ -483,7 +483,7 @@ class TestProjectSettingsTimeout:
             s.close()
         calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
         asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
-        assert calls[0]["timeout"] == 1500
+        assert calls[0]["config"].timeout_seconds == 1500
 
 
 class TestInputDocInclusion:

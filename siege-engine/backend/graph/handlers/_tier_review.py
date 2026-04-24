@@ -114,9 +114,7 @@ async def run_tier_review(
         project_row = db.get(Project, project_id)
         assert project_row is not None
         settings = get_project_settings(project_row)
-        cli_timeout_seconds = settings.generation_timeout_seconds
-        cli_max_budget_usd = settings.cli_max_budget_usd
-        cli_max_output_tokens = settings.cli_max_output_tokens
+        cli_config = settings.to_cli_config()
     finally:
         db.close()
 
@@ -126,8 +124,6 @@ async def run_tier_review(
         draft_id=resolved_draft_id,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        cli_timeout_seconds=cli_timeout_seconds,
-        cli_max_budget_usd=cli_max_budget_usd,
-        cli_max_output_tokens=cli_max_output_tokens,
+        cli_config=cli_config,
         log_handler_name=log_handler_name,
     )
