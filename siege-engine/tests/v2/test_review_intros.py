@@ -64,6 +64,27 @@ def test_tier_review_prompt_includes_prose_intros(tier_module, tier_name):
     )
 
 
+def test_reqs_review_prompt_flags_missing_nfr_atoms():
+    """The reqs review is the platform's last chance to catch a
+    missing NFR atom before sysarch compresses. The prompt must
+    explicitly tell the reviewer to check for platform-NFR coverage
+    (rate limiting, audit, telemetry, fuses, encryption, SLA,
+    license hygiene) with concrete examples."""
+    system_prompt = requirements.render_system_prompt()
+    # The NFR check is under the architectural-decisions section.
+    arch_idx = system_prompt.find("Architectural-decisions review")
+    arch_body = system_prompt[arch_idx:]
+    assert "platform-NFR" in arch_body or "platform NFR" in arch_body
+    # Concrete categories the reviewer should name-check against.
+    for example in ("rate limiting", "audit", "telemetry"):
+        assert example.lower() in arch_body.lower(), (
+            f"Reqs review prompt must name {example!r} as an NFR example."
+        )
+    # The reviewer must call out specific missing atoms, not
+    # flag NFR-coverage generically.
+    assert "Don't flag generically" in arch_body or "name the missing atom" in arch_body
+
+
 def test_shared_template_renders_with_default_intros_when_absent():
     """Backward compatibility: tiers that omit the intro kwargs
     get a safe generic paragraph rather than an empty section."""

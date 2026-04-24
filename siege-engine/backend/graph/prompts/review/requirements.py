@@ -86,9 +86,20 @@ clustering to conserve entries.
 append-only event log, a pure reducer entrypoint, a per-project \
 sandbox — these typically have no direct feature cause but \
 belong in the atom list with ``<feats/>`` empty.
-- Does the atom list cover what the project actually needs, or \
-are there implicit system concerns (logging, rate limiting, \
-secrets handling, background scheduling) that nobody named?
+- **Are platform-NFR concerns atomized?** Rate limiting, audit \
+logging, token/cost telemetry, circuit breakers and fuses on \
+external calls, retry with backoff, encryption at rest, \
+credential rotation, SLA enforcement, quota tracking, \
+license/compliance obligations (AGPL, SOC2, GDPR). These govern \
+how features behave and typically have empty ``<feats/>``. \
+**Sysarch cannot recover these if reqs doesn't emit them** — a \
+missing NFR atom here becomes a missing policy downstream. Flag \
+specific absences by name: if the project processes payments, \
+"audit every credential access" and "rate-limit outbound \
+payment-provider calls" should be in the list; if the project \
+calls LLMs, "token telemetry on every LLM call" and \
+"rate-limit outbound LLM calls per provider" should be in the \
+list. Don't flag generically — name the missing atom.
 """
 
 

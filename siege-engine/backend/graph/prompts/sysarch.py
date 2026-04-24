@@ -554,6 +554,30 @@ has a more specific convention.
 * Top-level policies live under ``<policies>``. Zero or more are \
 permitted; if the project has no cross-cutting invariants that \
 need explicit statement, emit ``<policies></policies>`` empty.
+* **The reqs tier seeds policy-shaped atoms as ordinary resps** — \
+names like "rate-limit outbound LLM calls per provider", "audit \
+every credential access", "encrypt provider credentials at rest", \
+"AGPL dependency hygiene" show up in the input resp list. For \
+each one you make an architecture-informed judgment that the \
+reqs pass could not: **is this actually cross-cutting, or is it \
+local to one component's boundary?** Rate-limiting LLM calls is \
+local if every LLM call flows through one gateway component — \
+it's just a regular resp owned by that component, no policy \
+needed. Rate-limiting is cross-cutting only if many components \
+would independently call providers. "Reducer-only writes" is \
+local (the rule lives at the reducer entrypoint). "AGPL \
+dependency hygiene" is cross-cutting (every component adding a \
+dep must honour it). **When in doubt, local wins — emit a \
+regular resp assignment, not a policy.** Your ``<policies>`` \
+block is authoritative; the reqs seeds are input signal. You \
+decide.
+* When a reqs-seeded atom is genuinely cross-cutting, emit a \
+``<policy>`` naming its trigger with ``<required>`` pointing at \
+the resp's ID — the resp still gets assigned to one domain \
+component as its enforcer, and the policy adds application \
+edges to every matching-trigger site. When a reqs-seeded atom \
+is local, just assign it as an ordinary resp and omit the \
+policy entirely — no double-encoding.
 * Each ``<policy>`` contains exactly one ``<name>``, one \
 ``<trigger>``, one ``<rationale>``, and **zero or one** \
 ``<required>``. Most policies have a ``<required>``; universal-\
