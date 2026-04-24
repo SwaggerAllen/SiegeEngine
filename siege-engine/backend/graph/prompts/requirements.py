@@ -143,10 +143,20 @@ shape — one ``<name>`` and one ``<feats>`` block, nothing else:
           <feat id="feat_invoice"/>
         </feats>
       </responsibility>
+      <responsibility>
+        <name>audit every credential access</name>
+        <feats/>
+      </responsibility>
+      <responsibility>
+        <name>rate-limit outbound payment-provider calls</name>
+        <feats/>
+      </responsibility>
     </requirements>
 
-Notice what happens across the 10 atoms above: four features \
-expand into ten system-side concerns; ``feat_login01`` appears \
+Notice what happens across the 12 atoms above: four features \
+expand into ten feature-derived system-side concerns plus two \
+platform-NFR atoms with no single owning feature; ``feat_login01`` \
+appears \
 in five atoms (cross-cutting login concern); the event-log atom \
 has no direct feature cause (emergent platform concern); no two \
 atoms share a name. That is the rotation.
@@ -219,6 +229,28 @@ emit one atom naming the system-side concern ("invoice emission") \
 and let sysarch decides which components render which side. The \
 rotation axis is user-facing → system-side, not user-facing → \
 frontend vs. backend.
+* **Atomize platform-NFR concerns too, not just feature-derived \
+work.** Platform concerns that govern how features behave — rate \
+limiting, audit logging, token/cost telemetry, circuit breakers \
+and fuses on external calls, retry with backoff, encryption at \
+rest, credential rotation, SLA enforcement on review queues, \
+quota tracking, license/compliance obligations (AGPL, SOC2, \
+GDPR) — are real atoms even though no user-facing feature names \
+them directly. Most of these are **local** to the component that \
+owns the external interface (rate-limiting LLM calls lives with \
+whatever component wraps the LLM client; audit of destructive \
+ops lives with whatever enforces destructive-op approval), but a \
+few are genuinely cross-cutting and will be lifted to policies \
+at the sysarch tier. Either way, sysarch can only work with what \
+you emit — if an NFR isn't in the atom list, sysarch has no way \
+to recover it. Good NFR-shaped atom names: "rate-limit outbound \
+LLM calls per provider", "audit every credential access", \
+"encrypt LLM provider credentials at rest", "review SLA escalation \
+chain", "AGPL dependency hygiene". These typically have empty \
+``<feats/>`` since they govern existing features rather than \
+covering new ones. **Don't try to distinguish "local" from \
+"cross-cutting" here** — that's an architecture-informed call \
+sysarch makes; your job is surfacing the concern.
 * Do not include meta-commentary. Output only ``<introduction>`` \
 followed by ``<requirements>``.
 * Unescaped ``&`` and ``<`` in names are fine — the parser \

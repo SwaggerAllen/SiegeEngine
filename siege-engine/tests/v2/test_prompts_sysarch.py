@@ -7,7 +7,28 @@ initial bootstrap generation.
 
 from __future__ import annotations
 
-from backend.graph.prompts.sysarch import render_user_prompt
+from backend.graph.prompts.sysarch import render_system_prompt, render_user_prompt
+
+
+def test_policy_shaped_resp_guidance_present():
+    """Reqs seeds policy-shaped atoms (rate limiting, audit, telemetry,
+    license hygiene) as ordinary resps; sysarch decides per-atom whether
+    each is local to one component (assign as a regular resp) or
+    cross-cutting (lift to <policies>). The prompt must state this
+    so the sysarch LLM doesn't treat every policy-shaped atom as a
+    policy or ignore the signal entirely.
+    """
+    sys = render_system_prompt()
+    # Explicitly name the decision sysarch has to make.
+    assert "cross-cutting" in sys.lower()
+    assert "local" in sys.lower()
+    # The "when in doubt, local wins" rule biases toward under-
+    # promotion, which matches the invariant that policies carry
+    # application-edge overhead downstream.
+    assert "local wins" in sys.lower() or "local — emit" in sys
+    # Concrete reqs-seed examples so the LLM has pattern shape.
+    assert "rate-limit" in sys.lower()
+    assert "AGPL" in sys or "audit" in sys.lower()
 
 
 class TestRenderUserPromptInputDoc:

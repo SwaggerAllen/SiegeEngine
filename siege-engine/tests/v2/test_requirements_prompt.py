@@ -50,3 +50,22 @@ def test_empty_feats_allowed_guidance():
     sys = render_system_prompt()
     assert "Empty ``<feats/>`` is legal" in sys or "empty" in sys.lower()
     assert "system-emergent" in sys
+
+
+def test_platform_nfr_atomization_guidance_present():
+    """The reqs tier is the one and only chance to atomize
+    platform-NFR concerns — rate limiting, audit logging, token
+    telemetry, fuses, encryption, SLA enforcement, license
+    compliance. Sysarch cannot recover these if reqs doesn't emit
+    them, so the prompt must explicitly name them as atom-eligible.
+    """
+    sys = render_system_prompt()
+    assert "platform-nfr" in sys.lower() or "platform nfr" in sys.lower()
+    # Concrete NFR examples so the LLM has category shape to match.
+    for example in ("rate limiting", "audit", "telemetry", "AGPL"):
+        assert example.lower() in sys.lower(), (
+            f"Requirements prompt must name {example!r} as an NFR example."
+        )
+    # The worked example gains at least one NFR-shaped atom with
+    # empty <feats/>, so reviewers see the pattern concretely.
+    assert "audit every credential access" in sys
