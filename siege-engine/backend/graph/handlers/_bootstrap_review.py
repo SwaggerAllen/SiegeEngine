@@ -51,6 +51,7 @@ async def run_review(
     cli_timeout_seconds: int,
     cli_max_budget_usd: float,
     log_handler_name: str,
+    cli_max_output_tokens: int | None = None,
 ) -> None:
     """Run one review CLI call, commit ``DraftReviewUpdated`` on success.
 
@@ -70,6 +71,7 @@ async def run_review(
         system_prompt=system_prompt,
         timeout=cli_timeout_seconds,
         max_budget_usd=cli_max_budget_usd,
+        max_output_tokens=cli_max_output_tokens,
     )
 
     review_text = (result.text or "").strip()

@@ -167,7 +167,10 @@ _semaphore: asyncio.Semaphore | None = None
 _semaphore_loop: asyncio.AbstractEventLoop | None = None
 
 
-def _build_subprocess_env(thinking_effort: str | None) -> dict[str, str]:
+def _build_subprocess_env(
+    thinking_effort: str | None,
+    max_output_tokens: int | None = None,
+) -> dict[str, str]:
     """Construct the env dict for a CLI subprocess invocation.
 
     Copies the parent process environment, strips SIEGE-specific
@@ -181,6 +184,11 @@ def _build_subprocess_env(thinking_effort: str | None) -> dict[str, str]:
     their CLI budget isn't consumed by thinking tokens. Scoping
     via this per-call env (not the process env) means concurrent
     handler calls don't race each other's settings.
+
+    ``max_output_tokens`` — when provided, forwarded as
+    ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` on the env dict. Sourced
+    from ``ProjectSettings.cli_max_output_tokens`` by the handler.
+    None clears the var (so the CLI's intrinsic default applies).
     """
     env = {**os.environ}
     env.pop("CLAUDECODE", None)
@@ -189,6 +197,10 @@ def _build_subprocess_env(thinking_effort: str | None) -> dict[str, str]:
         env["CLAUDE_CODE_EFFORT_LEVEL"] = thinking_effort
     else:
         env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)
+    if max_output_tokens is not None:
+        env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(max_output_tokens)
+    else:
+        env.pop("CLAUDE_CODE_MAX_OUTPUT_TOKENS", None)
     return env
 
 
@@ -215,6 +227,7 @@ class CLIManager:
         timeout: int | None = None,
         max_budget_usd: float | None = None,
         thinking_effort: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> str:
         """
         Run claude CLI with a prompt and return the output text.
@@ -253,6 +266,7 @@ class CLIManager:
                 max_budget_usd,
                 output_format="text",
                 thinking_effort=thinking_effort,
+                max_output_tokens=max_output_tokens,
             )
 
     async def generate_with_usage(
@@ -265,6 +279,7 @@ class CLIManager:
         timeout: int | None = None,
         max_budget_usd: float | None = None,
         thinking_effort: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> GenerationResult:
         """Run claude CLI with ``--output-format json`` and return text + usage.
 
@@ -299,6 +314,7 @@ class CLIManager:
                 max_budget_usd,
                 output_format="json",
                 thinking_effort=thinking_effort,
+                max_output_tokens=max_output_tokens,
             )
         return _parse_json_result(raw, fallback_model=model)
 
@@ -313,6 +329,7 @@ class CLIManager:
         max_budget_usd: float | None,
         output_format: str = "text",
         thinking_effort: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> str:
         args = ["claude", "-p", "--output-format", output_format]
 
@@ -339,14 +356,16 @@ class CLIManager:
         # Don't persist sessions for pipeline generation
         args.append("--no-session-persistence")
 
-        env = _build_subprocess_env(thinking_effort)
+        env = _build_subprocess_env(thinking_effort, max_output_tokens=max_output_tokens)
 
         logger.info(
-            "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds (using CLI login credentials)",
+            "CLI invoke: model=%s, tools=%s, cwd=%s, timeout=%ds, max_output_tokens=%s "
+            "(using CLI login credentials)",
             effective_model,
             tools or "default",
             working_dir or ".",
             timeout,
+            max_output_tokens if max_output_tokens is not None else "cli-default",
         )
 
         proc = await asyncio.create_subprocess_exec(

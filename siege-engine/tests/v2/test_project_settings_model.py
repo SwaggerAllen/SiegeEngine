@@ -30,6 +30,10 @@ class TestProjectSettingsDefaults:
         s = ProjectSettings()
         assert s.cli_max_budget_usd == 2.00
 
+    def test_default_max_output_tokens_is_128k(self) -> None:
+        s = ProjectSettings()
+        assert s.cli_max_output_tokens == 128000
+
 
 class TestGetProjectSettings:
     def test_none_column_yields_defaults(self) -> None:
