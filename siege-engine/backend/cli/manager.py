@@ -45,7 +45,20 @@ class CliError(RuntimeError):
     — retrying either burns budget for no chance of success (budget,
     context window, content policy) or won't resolve without user
     action (auth, invalid argument).
+
+    ``partial_output`` carries any stdout the CLI subprocess emitted
+    before it crashed / hit a budget limit. On a budget or
+    max-output-tokens abort the CLI often produces most of a draft
+    before the abort — preserving it lets the handler persist it to
+    ``Job.payload["_failed_raw_output"]`` so the UI's raw-output
+    copy button surfaces the partial draft alongside the
+    human-readable error. Empty string when the CLI produced
+    nothing (most transient failures).
     """
+
+    def __init__(self, *args, partial_output: str = "") -> None:
+        super().__init__(*args)
+        self.partial_output = partial_output
 
 
 class CliTransientError(CliError):
@@ -149,19 +162,35 @@ _FATAL_CLI_SIGNALS: tuple[tuple[tuple[str, ...], type[CliError]], ...] = (
 )
 
 
-def _classify_cli_failure(returncode: int | None, detail: str) -> CliError:
+def _classify_cli_failure(
+    returncode: int | None,
+    detail: str,
+    partial_output: str = "",
+) -> CliError:
     """Return the most specific :class:`CliError` for a non-zero CLI exit.
 
     Matches ``detail`` (lowercased stderr+stdout) against
     :data:`_FATAL_CLI_SIGNALS`. Unrecognized failures fall through
     to :class:`CliTransientError` so the retry wrapper gets a chance
     — the safer default when we don't recognize the error.
+
+    ``partial_output`` is the stdout the subprocess emitted before it
+    aborted. Attached to the returned exception so handlers can stash
+    it on ``Job.payload["_failed_raw_output"]`` and the UI's existing
+    raw-output copy button lights up the same way it does on a
+    parse-validate exhaustion.
     """
     needle = detail.lower()
     for patterns, cls in _FATAL_CLI_SIGNALS:
         if any(p in needle for p in patterns):
-            return cls(f"Claude CLI failed (exit {returncode}): {detail[:1000]}")
-    return CliTransientError(f"Claude CLI failed (exit {returncode}): {detail[:1000]}")
+            return cls(
+                f"Claude CLI failed (exit {returncode}): {detail[:1000]}",
+                partial_output=partial_output,
+            )
+    return CliTransientError(
+        f"Claude CLI failed (exit {returncode}): {detail[:1000]}",
+        partial_output=partial_output,
+    )
 
 
 _semaphore: asyncio.Semaphore | None = None
@@ -423,7 +452,14 @@ class CLIManager:
             # can skip futile retries (budget, context window, auth,
             # content policy, invalid arg) while still retrying real
             # blips (5xx, rate limits, network resets, crashes).
-            raise _classify_cli_failure(proc.returncode, detail)
+            # Forward whatever stdout the CLI emitted pre-abort so
+            # handlers can persist it on the Job row for the UI's
+            # raw-output fallback.
+            raise _classify_cli_failure(
+                proc.returncode,
+                detail,
+                partial_output=output,
+            )
 
         if err_output:
             logger.debug("CLI stderr: %s", err_output[:500])
