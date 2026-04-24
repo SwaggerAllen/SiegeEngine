@@ -51,29 +51,47 @@ a resp ID appearing in two *domain* components, or in a \
 presentational whose ``<domain-parent>`` edge does not point at \
 the resp's owning domain. Those are the genuine assignment \
 errors to flag.
+- **Domain-vs-presentational classification audit.** The split \
+is external-interface vs. domain-logic, NOT backend-vs-frontend. \
+Scan each domain-classified component: is it actually a \
+consumption surface for external parties (REST API, webhook \
+relay, notification dispatcher, SSE stream)? Those are \
+presentational, misclassified as domain. Conversely, scan \
+each presentational: does it actually own state or wrap an \
+outbound call *we* initiate (LLM Gateway, git forge client, \
+IdP verification)? Those are domain, misclassified as \
+presentational. Decision test: if you deleted the component, \
+would the system lose state/business-logic (→ domain) or lose \
+a way for outsiders to interact with the system (→ \
+presentational)? Flag specific miscategorizations by name.
 - **For presentational components specifically:** do the \
 ``<owned-invariants>`` and ``<primary-operations>`` *content* \
-describe rendering / interaction / UI-local state, or do they \
-parrot the domain parent's business invariants and operations \
-back word-for-word? A presentational whose invariants/operations \
-read identically to its domain parent's is under-specified — \
-flag it. The presentational owns display rules, gesture wiring, \
-navigation, and UI-state; the domain owns business state. Note \
-this check is about the prose content of those two micro-field \
-blocks, NOT about resp-ID assignment (see the previous bullet — \
+describe interface concerns (rendering for UI, schema/routing \
+for REST, delivery semantics for webhooks, channel routing \
+for notifications), or do they parrot the domain parent's \
+business invariants and operations back word-for-word? A \
+presentational whose invariants/operations read identically \
+to its domain parent's is under-specified — flag it. The \
+presentational owns whatever is specific to its consumer \
+interface; the domain owns business state. Note this check \
+is about the prose content of those two micro-field blocks, \
+NOT about resp-ID assignment (see the previous bullet — \
 mirroring resp IDs is correct).
-- **Backend-vocabulary leak in presentational invariants/operations.** \
-Scan each presentational's micro-fields for transactional / \
-persistence vocabulary: "persist", "atomically", "commit", \
+- **Ownership-vocabulary leak in presentational invariants/operations.** \
+Scan each presentational's micro-fields for ownership / \
+transactional vocabulary: "persist", "atomically", "commit", \
 "transaction", "stored", "validated", "event log", "consistency", \
-"concurrent write". Any of those words in a presentational \
-component's owned-invariants or primary-operations is a leak — \
-the LLM described the backend's guarantee from the UI's \
-viewpoint instead of the UI's actual contract. Flag the \
-specific atom and suggest the rewrite (a display / interaction \
-/ navigation / UI-state concern), or note that the invariant \
-belongs on the domain parent and the presentational needs a \
-real rendering invariant in its slot.
+"concurrent write". Delivery-format vocabulary (REST, HTTP, \
+JSON, webhook, SSE, email, channel) is fine on an interface \
+presentational because it's describing the interface's own \
+contract. Ownership words in a presentational's \
+owned-invariants or primary-operations are a leak — the LLM \
+described the backend's contract instead of the interface's. \
+Flag the specific atom and suggest the rewrite (an interface \
+concern for that presentational's kind: rendering for UI, \
+schema for API, delivery semantics for webhook, routing for \
+notifications), or note that the invariant belongs on the \
+domain parent.
 - **External-boundary isolation.** For each external integration \
 the project depends on (LLM provider APIs, git forges, identity \
 providers, notification channels, payment processors, hosted \
