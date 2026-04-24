@@ -1678,12 +1678,19 @@ class Subcomponent:
     subcomponent assignment is enforced at the ``<subcomponents>``
     block level so every minted subresp lands in exactly one
     subcomponent.
+
+    Shape matches the sysarch Component micro-field grammar:
+    ``purpose`` (one sentence) + 2-4 ``owned_invariants`` +
+    3-6 ``primary_operations``. Keeping the two tiers in sync
+    means downstream readers (impl prompts, subcomparch review)
+    have one schema to parse instead of two.
     """
 
     alias: str
     name: str
-    role: str
-    api_intent: str
+    purpose: str
+    owned_invariants: tuple[str, ...]
+    primary_operations: tuple[str, ...]
     resp_refs: tuple[str, ...]
     is_foundation: bool
 
@@ -1739,8 +1746,9 @@ _COMPARCH_REQUIRED_ORDER = (
 _SUBCOMPONENTS_ALLOWED_CHILDREN = {"subcomponent"}
 _SUBCOMPONENT_ALLOWED_CHILDREN = {
     "name",
-    "role",
-    "api-intent",
+    "purpose",
+    "owned-invariants",
+    "primary-operations",
     "responsibilities",
     "foundation",
 }
@@ -2145,8 +2153,9 @@ def _validate_subcomponent(
         return matching[0]
 
     name_node = _require_one("name")
-    role_node = _require_one("role")
-    api_intent_node = _require_one("api-intent")
+    purpose_node = _require_one("purpose")
+    owned_invariants_node = _require_one("owned-invariants")
+    primary_operations_node = _require_one("primary-operations")
     responsibilities_node = _require_one("responsibilities")
 
     name = (name_node.text or "").strip()
@@ -2156,20 +2165,77 @@ def _validate_subcomponent(
             "name must be a short title-case identifier."
         )
 
-    role = (role_node.text or "").strip()
-    if not role:
+    if purpose_node.children:
         raise ValidationError(
-            f"{pos} (alias={alias!r}) has an empty <role>. Every "
-            "subcomponent must have a role paragraph describing what "
-            "it does within this component."
+            f"{pos} (alias={alias!r}) has nested tags inside <purpose>. "
+            "Purpose must be a single plain-text sentence."
+        )
+    purpose = (purpose_node.text or "").strip()
+    if not purpose:
+        raise ValidationError(
+            f"{pos} (alias={alias!r}) has an empty <purpose>. Every "
+            "subcomponent must state its purpose in one sentence."
         )
 
-    api_intent = (api_intent_node.text or "").strip()
-    if not api_intent:
+    for ichild in owned_invariants_node.children:
+        if ichild.tag not in _OWNED_INVARIANTS_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has a <owned-invariants> block "
+                f"containing an unexpected child <{ichild.tag}>. Only "
+                "<invariant> entries are allowed."
+            )
+    invariant_nodes = owned_invariants_node.find_all("invariant")
+    if not (2 <= len(invariant_nodes) <= 4):
         raise ValidationError(
-            f"{pos} (alias={alias!r}) has an empty <api-intent>. Every "
-            "subcomponent must describe the shape of its intended API."
+            f"{pos} (alias={alias!r}) has {len(invariant_nodes)} "
+            "<invariant> entries in its <owned-invariants> block. Each "
+            "subcomponent must list 2 to 4 short noun phrases naming "
+            "the durable state or guarantees it owns."
         )
+    owned_invariants: list[str] = []
+    for inv in invariant_nodes:
+        if inv.children:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has nested tags inside an "
+                "<invariant>. Invariants are short plain-text phrases."
+            )
+        text = (inv.text or "").strip()
+        if not text:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has an empty <invariant> entry. "
+                "Each invariant is a short noun phrase."
+            )
+        owned_invariants.append(text)
+
+    for ochild in primary_operations_node.children:
+        if ochild.tag not in _PRIMARY_OPERATIONS_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has a <primary-operations> block "
+                f"containing an unexpected child <{ochild.tag}>. Only "
+                "<operation> entries are allowed."
+            )
+    operation_nodes = primary_operations_node.find_all("operation")
+    if not (3 <= len(operation_nodes) <= 6):
+        raise ValidationError(
+            f"{pos} (alias={alias!r}) has {len(operation_nodes)} "
+            "<operation> entries in its <primary-operations> block. "
+            "Each subcomponent must list 3 to 6 short verb phrases "
+            "naming the operations callers invoke."
+        )
+    primary_operations: list[str] = []
+    for op in operation_nodes:
+        if op.children:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has nested tags inside an "
+                "<operation>. Operations are short plain-text phrases."
+            )
+        text = (op.text or "").strip()
+        if not text:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has an empty <operation> entry. "
+                "Each operation is a short verb phrase."
+            )
+        primary_operations.append(text)
 
     for rchild in responsibilities_node.children:
         if rchild.tag not in _RESPONSIBILITIES_ALLOWED_CHILDREN:
@@ -2216,11 +2282,27 @@ def _validate_subcomponent(
     return Subcomponent(
         alias=alias,
         name=name,
-        role=role,
-        api_intent=api_intent,
+        purpose=purpose,
+        owned_invariants=tuple(owned_invariants),
+        primary_operations=tuple(primary_operations),
         resp_refs=tuple(resp_refs),
         is_foundation=is_foundation,
     )
+
+
+def format_subcomponent_techspec(sub: Subcomponent) -> str:
+    """Render a subcomponent's purpose + owned-invariants as a techspec fragment string.
+
+    Mirrors :func:`format_component_techspec` for the sysarch tier.
+    """
+    invariants = "\n".join(f"- {inv}" for inv in sub.owned_invariants)
+    return f"**Purpose.** {sub.purpose}\n\n**Owned invariants.**\n{invariants}"
+
+
+def format_subcomponent_pubapi(sub: Subcomponent) -> str:
+    """Render a subcomponent's primary-operations as a pubapi fragment string."""
+    ops = "\n".join(f"- {op}" for op in sub.primary_operations)
+    return f"**Primary operations.**\n{ops}"
 
 
 def _validate_arch_doc_sub_dependencies(node: TagNode, alias_set: set[str]) -> tuple[DepEdge, ...]:

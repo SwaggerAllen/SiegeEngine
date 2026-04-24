@@ -8,15 +8,15 @@ describe('StructuredDraftDiffView', () => {
     const before =
       '<sysarch>' +
       '<components>' +
-      '<component alias="billing"><name>Billing</name><role>v1</role></component>' +
-      '<component alias="auth"><name>Auth</name><role>v1</role></component>' +
+      '<component alias="billing"><name>Billing</name><purpose>v1</purpose></component>' +
+      '<component alias="auth"><name>Auth</name><purpose>v1</purpose></component>' +
       '</components>' +
       '</sysarch>';
     const after =
       '<sysarch>' +
       '<components>' +
-      '<component alias="billing"><name>Billing</name><role>v2 revised</role></component>' +
-      '<component alias="reporting"><name>Reporting</name><role>new</role></component>' +
+      '<component alias="billing"><name>Billing</name><purpose>v2 revised</purpose></component>' +
+      '<component alias="reporting"><name>Reporting</name><purpose>new</purpose></component>' +
       '</components>' +
       '</sysarch>';
 
@@ -54,7 +54,7 @@ describe('StructuredDraftDiffView', () => {
     const xml =
       '<sysarch>' +
       '<components>' +
-      '<component alias="billing"><name>Billing</name><role>v1</role></component>' +
+      '<component alias="billing"><name>Billing</name><purpose>v1</purpose></component>' +
       '</components>' +
       '</sysarch>';
     render(<StructuredDraftDiffView before={xml} after={xml} kind="sysarch" />);
@@ -82,15 +82,15 @@ describe('StructuredDraftDiffView', () => {
     const before =
       '<sysarch>' +
       '<components>' +
-      '<component alias="billing"><name>Billing</name><role>v1</role></component>' +
-      '<component alias="auth"><name>Auth</name><role>same</role></component>' +
+      '<component alias="billing"><name>Billing</name><purpose>v1</purpose></component>' +
+      '<component alias="auth"><name>Auth</name><purpose>same</purpose></component>' +
       '</components>' +
       '</sysarch>';
     const after =
       '<sysarch>' +
       '<components>' +
-      '<component alias="billing"><name>Billing</name><role>v2</role></component>' +
-      '<component alias="auth"><name>Auth</name><role>same</role></component>' +
+      '<component alias="billing"><name>Billing</name><purpose>v2</purpose></component>' +
+      '<component alias="auth"><name>Auth</name><purpose>same</purpose></component>' +
       '</components>' +
       '</sysarch>';
     render(<StructuredDraftDiffView before={before} after={after} kind="sysarch" />);

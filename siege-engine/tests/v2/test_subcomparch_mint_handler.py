@@ -131,6 +131,35 @@ def _set_content(session: Session, node_id: str, content: str) -> None:
     session.commit()
 
 
+def _sub_xml(
+    alias: str,
+    name: str,
+    resp_ids: tuple[str, ...],
+    *,
+    foundation: bool = False,
+) -> str:
+    """Render a ``<subcomponent>`` in the micro-field grammar."""
+    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    foundation_marker = "<foundation/>" if foundation else ""
+    return (
+        f'<subcomponent alias="{alias}">'
+        f"<name>{name}</name>"
+        f"<purpose>Owns {name} territory.</purpose>"
+        f"<owned-invariants>"
+        f"<invariant>{name} holds state</invariant>"
+        f"<invariant>{name} is journaled</invariant>"
+        f"</owned-invariants>"
+        f"<primary-operations>"
+        f"<operation>read {name}</operation>"
+        f"<operation>mutate {name}</operation>"
+        f"<operation>emit {name}</operation>"
+        f"</primary-operations>"
+        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"{foundation_marker}"
+        "</subcomponent>"
+    )
+
+
 def _sub_doc(*, deps: str = "") -> str:
     return (
         "<subcomparch>"
@@ -580,20 +609,9 @@ class TestComparchMintFanOut:
                 "<policies></policies>"
                 f'<dependencies><dep to="{comp_auth}"/></dependencies>'
                 "<subcomponents>"
-                '<subcomponent alias="token_store">'
-                "<name>TokenStore</name>"
-                "<role>Owns tokenization.</role>"
-                "<api-intent>tokenize(raw).</api-intent>"
-                f'<responsibilities><resp id="{sub_token}"/></responsibilities>'
-                "</subcomponent>"
-                '<subcomponent alias="foundation">'
-                "<name>Foundation</name>"
-                "<role>Component root + retry.</role>"
-                "<api-intent>init(); schedule_retry(ctx).</api-intent>"
-                f'<responsibilities><resp id="{sub_retry}"/></responsibilities>'
-                "<foundation/>"
-                "</subcomponent>"
-                "</subcomponents>"
+                + _sub_xml("token_store", "TokenStore", (sub_token,))
+                + _sub_xml("foundation", "Foundation", (sub_retry,), foundation=True)
+                + "</subcomponents>"
                 "<sub-dependencies>"
                 '<dep from="token_store" to="foundation"/>'
                 "</sub-dependencies>"

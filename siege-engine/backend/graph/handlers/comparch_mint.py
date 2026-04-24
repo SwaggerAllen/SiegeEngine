@@ -60,7 +60,12 @@ from backend.graph.broadcast import commit_and_publish
 from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.handlers.sysarch_mint import _serialize_policy_blob
 from backend.graph.ids import Kind, mint
-from backend.graph.parsers.validators import ValidationError, validate_arch_doc
+from backend.graph.parsers.validators import (
+    ValidationError,
+    format_subcomponent_pubapi,
+    format_subcomponent_techspec,
+    validate_arch_doc,
+)
 from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
 from backend.graph.queries import (
     list_subresponsibilities,
@@ -226,8 +231,20 @@ async def mint_comparch(payload: dict) -> None:
             # generation handler (enqueued post-commit below) will
             # replace these with real content once the subcomponent's
             # own arch doc is drafted and approved.
-            _emit_fragment(db, project_id, sub_id, FragmentKind.TECHSPEC, subcomp.role)
-            _emit_fragment(db, project_id, sub_id, FragmentKind.PUBAPI, subcomp.api_intent)
+            _emit_fragment(
+                db,
+                project_id,
+                sub_id,
+                FragmentKind.TECHSPEC,
+                format_subcomponent_techspec(subcomp),
+            )
+            _emit_fragment(
+                db,
+                project_id,
+                sub_id,
+                FragmentKind.PUBAPI,
+                format_subcomponent_pubapi(subcomp),
+            )
 
             # Decomposition edges: subresp → this subcomponent.
             for subresp_id in subcomp.resp_refs:

@@ -33,8 +33,16 @@ and validated by
       <subcomponents>
         <subcomponent alias="cache">
           <name>CacheLayer</name>
-          <role>…</role>
-          <api-intent>…</api-intent>
+          <purpose>…one sentence…</purpose>
+          <owned-invariants>
+            <invariant>…</invariant>
+            <invariant>…</invariant>
+          </owned-invariants>
+          <primary-operations>
+            <operation>…</operation>
+            <operation>…</operation>
+            <operation>…</operation>
+          </primary-operations>
           <responsibilities>
             <resp id="resp_sub_xyz"/>
           </responsibilities>
@@ -171,33 +179,48 @@ Example (abbreviated):
       <subcomponents>
         <subcomponent alias="session_store">
           <name>SessionStore</name>
-          <role>Persist session state to the database and answer \
-    lookups by token. Owns the sessions table and the token \
-    rotation schedule.</role>
-          <api-intent>create_session(principal_id) -> Session; \
-    resolve(token) -> Session | None; rotate_expired() -> int. \
-    No password material ever reaches this subcomponent.</api-intent>
+          <purpose>Owns session rows and answers token lookups.</purpose>
+          <owned-invariants>
+            <invariant>every row has a single active principal</invariant>
+            <invariant>expired tokens are rotated on read</invariant>
+          </owned-invariants>
+          <primary-operations>
+            <operation>create a session for a principal</operation>
+            <operation>resolve a token into a session</operation>
+            <operation>rotate expired sessions</operation>
+          </primary-operations>
           <responsibilities>
             <resp id="resp_sub_sess"/>
           </responsibilities>
         </subcomponent>
         <subcomponent alias="credential_gate">
           <name>CredentialGate</name>
-          <role>Verify raw credentials against the stored hash \
-    and produce a fresh session on success. The single site that \
-    ever sees plaintext passwords.</role>
-          <api-intent>verify(credentials) -> PrincipalId | None. \
-    Delegates session creation to session_store.</api-intent>
+          <purpose>The single site that verifies plaintext credentials.</purpose>
+          <owned-invariants>
+            <invariant>raw credentials never leave this subcomponent</invariant>
+            <invariant>hash comparison uses constant-time equality</invariant>
+          </owned-invariants>
+          <primary-operations>
+            <operation>verify credentials and return a principal id</operation>
+            <operation>delegate session creation to the session store</operation>
+            <operation>emit a failed-auth event on mismatch</operation>
+          </primary-operations>
           <responsibilities>
             <resp id="resp_sub_cred"/>
           </responsibilities>
         </subcomponent>
         <subcomponent alias="foundation">
           <name>Foundation</name>
-          <role>Own this component's root folder: package init, \
-    config loader, shared base types, logging setup.</role>
-          <api-intent>load_settings(); configure_logging(); \
-    AuthError base class.</api-intent>
+          <purpose>Owns this component's root folder and shared base types.</purpose>
+          <owned-invariants>
+            <invariant>shared base types stay versioned together</invariant>
+            <invariant>one source of truth for component settings</invariant>
+          </owned-invariants>
+          <primary-operations>
+            <operation>load settings from the environment</operation>
+            <operation>configure logging for this component</operation>
+            <operation>expose shared base classes</operation>
+          </primary-operations>
           <responsibilities>
             <resp id="resp_sub_found"/>
           </responsibilities>
@@ -326,29 +349,41 @@ underscores, 1-32 characters; regex \
 ``^[a-z][a-z0-9_]{0,31}$``. Aliases are unique within \
 ``<subcomponents>``.
 * Each ``<subcomponent>`` has exactly one ``<name>``, one \
-``<role>``, one ``<api-intent>``, and one ``<responsibilities>`` \
-block. Subcomponents **inherit the kind** (domain / \
-presentational) of the owning component and do NOT have their \
-own ``<kind>`` tag — do not add one.
+``<purpose>``, one ``<owned-invariants>``, one \
+``<primary-operations>``, and one ``<responsibilities>`` block. \
+Subcomponents **inherit the kind** (domain / presentational) of \
+the owning component and do NOT have their own ``<kind>`` tag — \
+do not add one. The micro-field grammar matches the sysarch \
+Component grammar deliberately; downstream readers get one \
+schema at both tiers.
 * ``<name>`` is a short identifier — title case. Name the \
 subcomponent project-specifically. "SessionStore" is sharper \
 than "DataLayer"; "CredentialGate" is sharper than "Validator". \
 If two unrelated components could plausibly have a subcomponent \
 with this name, it's too generic.
-* ``<role>`` is the primary handle the subcomparch pass (Phase 5) \
-will use to reason about this subcomponent. It will read **only** \
-this paragraph, the ``<api-intent>``, and the assigned \
-subresponsibilities to produce the subcomponent's architecture \
-doc. Write it so Phase 5 can work without re-reading the parent \
-comparch. Name what data this subcomponent owns, what operations \
-it performs, what it explicitly does not touch.
-* ``<api-intent>`` is the handle sibling subcomponents and \
-external dependents read to decide how to call this one. Name \
-rough call shapes, return types, error modes, and side-effect \
-boundaries. Full public-surface detail comes later when Phase 5 \
-generates the subcomponent's own arch doc, but the intent should \
-be specific enough that siblings can code against it without \
-guessing.
+* ``<purpose>`` is the one-sentence reason this subcomponent \
+exists. The subcomparch pass (Phase 5) reads it first when \
+deciding the subcomponent's internal structure, and impl nodes \
+read it to frame what code they're writing. Name the \
+subcomponent-distinctive *why*, not the category. "The single \
+site that verifies plaintext credentials" is a handle; "handles \
+credentials" is category-speak. If you need an ``and``, consider \
+whether the subcomponent is actually two.
+* ``<owned-invariants>`` lists **2-4 short noun phrases** naming \
+the durable state or guarantees this subcomponent owns. \
+Examples: "every row has a single active principal", "raw \
+credentials never leave this subcomponent", "hash comparison \
+uses constant-time equality". Concrete enough that a reviewer \
+can point at the impl and say yes/no. If you find yourself \
+listing more than four, push the extras to implementation \
+detail; if fewer than two, the subcomponent's role is too thin.
+* ``<primary-operations>`` lists **3-6 short verb phrases** \
+naming the operations callers (sibling subcomponents or outside \
+dependents) invoke on this subcomponent. Examples: "verify \
+credentials and return a principal id", "rotate expired \
+sessions". Phase 5 elaborates these into real pubapi signatures; \
+at this tier we just need the action handles. No "handle X" / \
+"manage Y" category verbs — rewrite as concrete actions.
 * ``<responsibilities>`` contains one or more ``<resp \
 id="resp_..."/>`` children. **Every resp ID must match one of \
 this component's pre-minted subresponsibilities** shown in the \
@@ -392,10 +427,10 @@ this component).
 * Un-fanned-out components do NOT need a foundation child \
 (there are no subcomponents at all).
 * The foundation subcomponent is otherwise a normal \
-subcomponent with its own name, role, api-intent, and at least \
-one responsibility. The conventional default name is \
-``Foundation`` unless the component has a more specific \
-convention.
+subcomponent with its own name, purpose, owned-invariants, \
+primary-operations, and at least one responsibility. The \
+conventional default name is ``Foundation`` unless the \
+component has a more specific convention.
 
 ## Sub-dependencies
 

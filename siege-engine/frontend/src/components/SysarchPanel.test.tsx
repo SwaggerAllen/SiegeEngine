@@ -64,20 +64,41 @@ function makeResponse(overrides: Partial<SysarchResponse> = {}): SysarchResponse
   };
 }
 
-const SAMPLE_DRAFT = (
+const _MICRO_FIELDS = (alias: string) =>
+  `<purpose>Owns ${alias}.</purpose>` +
+  '<owned-invariants>' +
+  `<invariant>${alias} holds its state</invariant>` +
+  `<invariant>${alias} state is journaled</invariant>` +
+  '</owned-invariants>' +
+  '<primary-operations>' +
+  `<operation>read ${alias} state</operation>` +
+  `<operation>mutate ${alias} state</operation>` +
+  `<operation>emit ${alias} events</operation>` +
+  '</primary-operations>';
+
+const _TECHSPEC =
+  '<techspec>' +
+  '<runtime>Python 3.11.</runtime>' +
+  '<persistence>Postgres.</persistence>' +
+  '<write-path>Event-sourced reducer.</write-path>' +
+  '<concurrency>Async loop.</concurrency>' +
+  '<testing>pytest.</testing>' +
+  '<deploy>Docker on Fly.io.</deploy>' +
+  '<technologies>Python, Postgres, React.</technologies>' +
+  '</techspec>';
+
+const SAMPLE_DRAFT =
   '<sysarch>' +
-  '<techspec>Python + React.</techspec>' +
+  _TECHSPEC +
   '<components>' +
   '<component alias="auth">' +
   '<name>Authentication</name><kind>domain</kind>' +
-  '<role>Identify callers.</role>' +
-  '<api-intent>authenticate().</api-intent>' +
+  _MICRO_FIELDS('auth') +
   '<responsibilities><resp id="resp_abc12345"/></responsibilities>' +
   '</component>' +
   '<component alias="foundation">' +
   '<name>Foundation</name><kind>domain</kind>' +
-  '<role>Project root and shared utilities.</role>' +
-  '<api-intent>load_settings().</api-intent>' +
+  _MICRO_FIELDS('foundation') +
   '<responsibilities><resp id="resp_def67890"/></responsibilities>' +
   '<foundation/>' +
   '</component>' +
@@ -85,8 +106,7 @@ const SAMPLE_DRAFT = (
   '<policies></policies>' +
   '<dependencies><dep from="auth" to="foundation"/></dependencies>' +
   '<domain-parent></domain-parent>' +
-  '</sysarch>'
-);
+  '</sysarch>';
 
 beforeEach(() => {
   vi.clearAllMocks();

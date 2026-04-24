@@ -96,12 +96,12 @@ describe('extractDraftSections', () => {
         '<component alias="billing">' +
         '<name>Billing</name>' +
         '<kind>domain</kind>' +
-        '<role>Owns invoices.</role>' +
+        '<purpose>Owns invoices.</purpose>' +
         '</component>' +
         '<component alias="auth">' +
         '<name>Auth</name>' +
         '<kind>domain</kind>' +
-        '<role>Identifies callers.</role>' +
+        '<purpose>Identifies callers.</purpose>' +
         '</component>' +
         '</components>' +
         '<policies></policies>' +
