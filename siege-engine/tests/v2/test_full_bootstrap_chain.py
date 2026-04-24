@@ -411,8 +411,16 @@ def _comparch_xml(session, project_id: str, prompt: str) -> str:
         subs.append(
             f'<subcomponent alias="{alias}">'
             f"<name>{target.name}{r.name}</name>"
-            f"<role>Own the {r.name} slice of {target.name}.</role>"
-            f"<api-intent>internal API for {r.name}</api-intent>"
+            f"<purpose>Owns the {r.name} slice of {target.name}.</purpose>"
+            f"<owned-invariants>"
+            f"<invariant>{r.name} state stays consistent</invariant>"
+            f"<invariant>{r.name} writes are journaled</invariant>"
+            f"</owned-invariants>"
+            f"<primary-operations>"
+            f"<operation>read {r.name} state</operation>"
+            f"<operation>mutate {r.name} state</operation>"
+            f"<operation>emit {r.name} events</operation>"
+            f"</primary-operations>"
             f'<responsibilities><resp id="{r.id}"/></responsibilities>'
             f"{foundation_tag}"
             f"</subcomponent>"

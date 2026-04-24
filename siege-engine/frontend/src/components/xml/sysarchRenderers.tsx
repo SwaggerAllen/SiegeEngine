@@ -1,5 +1,4 @@
 import { CollapsibleSection } from './CollapsibleSection';
-import { Paragraphs } from './Paragraphs';
 import type { XmlRendererMap } from './types';
 import { findChild, findChildText, findChildren, hasChild, textContent } from './types';
 
@@ -89,43 +88,82 @@ export function makeSysarchRenderers(
       ['deploy', 'Deploy'],
       ['technologies', 'Technologies'],
     ];
-    const hasLabeledBlocks = BLOCK_LABELS.some(([tag]) => findChild(node, tag));
     return (
       <section className="space-y-2">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
           System Technical Specification
         </h2>
-        {hasLabeledBlocks ? (
-          <dl className="space-y-2 m-0">
-            {BLOCK_LABELS.map(([tag, label]) => {
-              const text = findChildText(node, tag);
-              if (!text) return null;
-              return (
-                <div key={tag} className="space-y-0.5">
-                  <dt className="text-[10px] uppercase tracking-wider text-gray-500">
-                    {label}
-                  </dt>
-                  <dd className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
-                    {text}
-                  </dd>
-                </div>
-              );
-            })}
-          </dl>
-        ) : (
-          // Pre-migration drafts had free prose in <techspec>. Fall
-          // back to paragraph rendering so stored legacy content
-          // still displays.
-          <Paragraphs text={textContent(node)} />
-        )}
+        <dl className="space-y-2 m-0">
+          {BLOCK_LABELS.map(([tag, label]) => {
+            const text = findChildText(node, tag);
+            if (!text) return null;
+            return (
+              <div key={tag} className="space-y-0.5">
+                <dt className="text-[10px] uppercase tracking-wider text-gray-500">
+                  {label}
+                </dt>
+                <dd className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
+                  {text}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
       </section>
     );
   },
 
   components: (node, ctx) => {
     const components = findChildren(node, 'component');
+    // Orphan-resp enumeration: linear pass over every
+    // ``<component kind="domain">/<responsibilities>/<resp>`` child
+    // to collect which top-level resp IDs the draft assigns. Diff
+    // against ``respNames`` (passed in by ``SysarchPanel`` with the
+    // project's full top-level resp roster) and render a warning
+    // for any known resp the draft fails to place. Only runs when
+    // a non-empty ``respNames`` map is available — the default
+    // module-level export passes ``{}`` so bare-ID callers skip
+    // the check cleanly.
+    //
+    // Note: the backend validator rejects orphans at approval time,
+    // so this panel only ever surfaces them on *pending* drafts —
+    // which is exactly when the user wants to see them, since a
+    // partial regen may have dropped a resp that the user needs to
+    // ask the LLM to restore.
+    const assigned = new Set<string>();
+    for (const comp of components) {
+      const kind = findChildText(comp, 'kind') ?? 'domain';
+      if (kind !== 'domain') continue;
+      const respsNode = findChild(comp, 'responsibilities');
+      if (!respsNode) continue;
+      for (const child of respsNode.children) {
+        if (child.type !== 'element' || child.name !== 'resp') continue;
+        const rid = child.attributes.id;
+        if (typeof rid === 'string' && rid) assigned.add(rid);
+      }
+    }
+    const orphans = Object.keys(respNames).filter((rid) => !assigned.has(rid));
     return (
       <section className="space-y-3">
+        {orphans.length > 0 && (
+          <div
+            className="rounded-md border border-amber-500/60 bg-amber-950/30 px-3 py-2 text-sm text-amber-100"
+            role="alert"
+          >
+            <div className="font-semibold">
+              {orphans.length} responsibilit{orphans.length === 1 ? 'y' : 'ies'} not
+              assigned to any component
+            </div>
+            <ul className="mt-1 space-y-0.5 m-0 pl-0 list-none">
+              {orphans.map((rid) => (
+                <li key={rid} className="font-mono text-xs text-amber-200">
+                  <span className="text-amber-100">{respNames[rid]}</span>{' '}
+                  <span className="text-amber-300/70">({rid})</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
           Components
           <span className="ml-2 text-gray-600 font-normal normal-case tracking-normal">
@@ -143,11 +181,7 @@ export function makeSysarchRenderers(
     const alias = node.attributes.alias ?? '?';
     const name = findChildText(node, 'name') ?? 'Untitled';
     const kind = findChildText(node, 'kind') ?? 'domain';
-    // New micro-field grammar: purpose / owned-invariants /
-    // primary-operations. Legacy drafts still have <role> and
-    // <api-intent> — fall back to those if the new tags are absent.
-    const purpose =
-      findChildText(node, 'purpose') ?? findChildText(node, 'role') ?? '';
+    const purpose = findChildText(node, 'purpose') ?? '';
     const ownedInvariantsNode = findChild(node, 'owned-invariants');
     const invariants: string[] = ownedInvariantsNode
       ? ownedInvariantsNode.children
@@ -162,8 +196,6 @@ export function makeSysarchRenderers(
           .map((c) => textContent(c).trim())
           .filter(Boolean)
       : [];
-    const legacyApiIntent =
-      operations.length === 0 ? findChildText(node, 'api-intent') ?? '' : '';
     const isFoundation = hasChild(node, 'foundation');
     const respsNode = findChild(node, 'responsibilities');
     const respIds: string[] = respsNode
@@ -248,16 +280,6 @@ export function makeSysarchRenderers(
                 <li key={i} className="whitespace-pre-wrap">{op}</li>
               ))}
             </ul>
-          </div>
-        )}
-        {legacyApiIntent && (
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wider text-gray-500">
-              API intent
-            </div>
-            <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
-              {legacyApiIntent}
-            </p>
           </div>
         )}
         {respIds.length > 0 && (
@@ -390,10 +412,6 @@ export function makeSysarchRenderers(
     invariant: () => null,
     'primary-operations': () => null,
     operation: () => null,
-    // Legacy sysarch shape (role / api-intent) — silently consume so
-    // pre-migration drafts don't double-render.
-    role: () => null,
-    'api-intent': () => null,
     // Labeled techspec sub-blocks consumed by the techspec renderer.
     runtime: () => null,
     persistence: () => null,

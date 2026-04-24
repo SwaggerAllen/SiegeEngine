@@ -53,6 +53,35 @@ def shared_session_factory(monkeypatch):
     engine.dispose()
 
 
+def _sub_xml(
+    alias: str,
+    name: str,
+    resp_ids: tuple[str, ...],
+    *,
+    foundation: bool = False,
+) -> str:
+    """Render a ``<subcomponent>`` in the micro-field grammar."""
+    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    foundation_marker = "<foundation/>" if foundation else ""
+    return (
+        f'<subcomponent alias="{alias}">'
+        f"<name>{name}</name>"
+        f"<purpose>Owns {name} territory.</purpose>"
+        f"<owned-invariants>"
+        f"<invariant>{name} holds state</invariant>"
+        f"<invariant>{name} is journaled</invariant>"
+        f"</owned-invariants>"
+        f"<primary-operations>"
+        f"<operation>read {name}</operation>"
+        f"<operation>mutate {name}</operation>"
+        f"<operation>emit {name}</operation>"
+        f"</primary-operations>"
+        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"{foundation_marker}"
+        "</subcomponent>"
+    )
+
+
 def _fanned_out_comparch() -> str:
     return (
         "<comparch>"
@@ -63,18 +92,9 @@ def _fanned_out_comparch() -> str:
         "<policies></policies>"
         "<dependencies></dependencies>"
         "<subcomponents>"
-        '<subcomponent alias="a">'
-        "<name>SubA</name><role>Role A</role>"
-        "<api-intent>API A</api-intent>"
-        '<responsibilities><resp id="{resp_a}"/></responsibilities>'
-        "</subcomponent>"
-        '<subcomponent alias="b">'
-        "<name>SubB</name><role>Role B</role>"
-        "<api-intent>API B</api-intent>"
-        '<responsibilities><resp id="{resp_b}"/></responsibilities>'
-        "<foundation/>"
-        "</subcomponent>"
-        "</subcomponents>"
+        + _sub_xml("a", "SubA", ("{resp_a}",))
+        + _sub_xml("b", "SubB", ("{resp_b}",), foundation=True)
+        + "</subcomponents>"
         '<sub-dependencies><dep from="a" to="b"/></sub-dependencies>'
         "</comparch>"
     )

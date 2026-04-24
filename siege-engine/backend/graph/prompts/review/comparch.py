@@ -10,23 +10,28 @@ from backend.graph.review_context.comparch import ComparchContext
 
 _HANDLES_INTRO = """\
 Comparch is the last compression before impl. Subcomponent \
-names, roles, api-intents, and the pubapi / privapi split are \
-the handles impl (and sibling subcomponents) reason against. \
-Vague handles here — "Manager", "Service", unsigned api-intent \
-prose — let impl ship generic code that misses the specifics. \
-The pubapi/privapi split matters: a bloated pubapi leaks \
-internals across sibling boundaries.
+names, purposes, owned-invariants, primary-operations, and the \
+pubapi / privapi split are the handles impl (and sibling \
+subcomponents) reason against. Vague handles here — "Manager", \
+"Service", generic purposes — let impl ship generic code that \
+misses the specifics. The pubapi/privapi split matters: a \
+bloated pubapi leaks internals across sibling boundaries.
 """
 
 _HANDLES = """\
 - Are subcomponent names distinctive and domain-specific? Flag \
 anti-patterns (Manager / Helper / Utils / Service) and names \
 that restate the parent comp.
-- Are subcomponent roles specific about what each does, not \
-what it IS? Flag category-speak.
-- Are subcomponent api-intents (``<api-intent>``) specific \
-enough for dependent subs to call without guessing signatures? \
-Flag vague intents.
+- Is each subcomponent's ``<purpose>`` a single specific \
+sentence that names the subcomponent-distinctive *why*? Flag \
+category-speak ("handles X", "manages Y").
+- Does each ``<owned-invariants>`` list 2-4 concrete noun \
+phrases (durable state, guarantees the sub enforces)? Flag \
+impact-category padding ("must be reliable") or invariants \
+that could belong to any subcomponent.
+- Does each ``<primary-operations>`` list 3-6 concrete verb \
+phrases? Flag category verbs ("handle", "manage", "coordinate") \
+and operations invented beyond the subresponsibilities.
 - Every pre-minted subresp must appear in exactly one \
 subcomponent's ``<responsibilities>``. Flag orphans or doubles.
 - ``<dependencies>`` and ``<sub-dependencies>`` reference only \

@@ -39,14 +39,37 @@ def _sub(
     resp_ids: tuple[str, ...],
     *,
     foundation: bool = False,
+    purpose: str | None = None,
+    owned_invariants: tuple[str, ...] | None = None,
+    primary_operations: tuple[str, ...] | None = None,
 ) -> str:
+    """Render a ``<subcomponent>`` in the micro-field grammar.
+
+    ``role`` / ``api_intent`` are still positional for test-site
+    brevity but are used as defaults for ``purpose`` / the first
+    primary operation when the explicit overrides aren't supplied.
+    Tests that exercise the new micro-fields directly pass them in.
+    """
     resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
     foundation_marker = "<foundation/>" if foundation else ""
+    actual_purpose = purpose if purpose is not None else (role or f"{name} exists.")
+    invariants = owned_invariants or (
+        f"{name} invariant one",
+        f"{name} invariant two",
+    )
+    operations = primary_operations or (
+        api_intent or f"do {name} one",
+        f"do {name} two",
+        f"do {name} three",
+    )
+    inv_xml = "".join(f"<invariant>{inv}</invariant>" for inv in invariants)
+    op_xml = "".join(f"<operation>{op}</operation>" for op in operations)
     return (
         f'<subcomponent alias="{alias}">'
         f"<name>{name}</name>"
-        f"<role>{role}</role>"
-        f"<api-intent>{api_intent}</api-intent>"
+        f"<purpose>{actual_purpose}</purpose>"
+        f"<owned-invariants>{inv_xml}</owned-invariants>"
+        f"<primary-operations>{op_xml}</primary-operations>"
         f"<responsibilities>{resp_xml}</responsibilities>"
         f"{foundation_marker}"
         "</subcomponent>"
@@ -490,10 +513,46 @@ class TestSubcomponentStructure:
         with pytest.raises(ValidationError, match="empty <name>"):
             _validate(raw, known_subresp_ids={"resp_sub_sess"})
 
-    def test_empty_role_rejected(self):
-        bad = _sub("x", "Name", "", "api", ("resp_sub_sess",), foundation=True)
+    def test_empty_purpose_rejected(self):
+        bad = _sub(
+            "x",
+            "Name",
+            "role-placeholder",
+            "api",
+            ("resp_sub_sess",),
+            foundation=True,
+            purpose="",
+        )
         raw = _arch_doc(subcomponents=bad, sub_dependencies="")
-        with pytest.raises(ValidationError, match="empty <role>"):
+        with pytest.raises(ValidationError, match="empty <purpose>"):
+            _validate(raw, known_subresp_ids={"resp_sub_sess"})
+
+    def test_too_few_subcomp_invariants_rejected(self):
+        bad = _sub(
+            "x",
+            "Name",
+            "role",
+            "api",
+            ("resp_sub_sess",),
+            foundation=True,
+            owned_invariants=("only one",),
+        )
+        raw = _arch_doc(subcomponents=bad, sub_dependencies="")
+        with pytest.raises(ValidationError, match=r"1 <invariant> entries"):
+            _validate(raw, known_subresp_ids={"resp_sub_sess"})
+
+    def test_too_few_subcomp_operations_rejected(self):
+        bad = _sub(
+            "x",
+            "Name",
+            "role",
+            "api",
+            ("resp_sub_sess",),
+            foundation=True,
+            primary_operations=("do a", "do b"),
+        )
+        raw = _arch_doc(subcomponents=bad, sub_dependencies="")
+        with pytest.raises(ValidationError, match=r"2 <operation> entries"):
             _validate(raw, known_subresp_ids={"resp_sub_sess"})
 
     def test_empty_responsibilities_rejected(self):

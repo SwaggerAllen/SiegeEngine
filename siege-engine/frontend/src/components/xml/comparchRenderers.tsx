@@ -16,8 +16,9 @@ import { findChild, findChildText, findChildren, textContent } from './types';
  *     <subcomponents>
  *       <subcomponent alias="...">
  *         <name>…</name>
- *         <role>…</role>
- *         <api-intent>…</api-intent>
+ *         <purpose>…one sentence…</purpose>
+ *         <owned-invariants><invariant>…</invariant>…</owned-invariants>
+ *         <primary-operations><operation>…</operation>…</primary-operations>
  *         <responsibilities><resp id="resp_..."/></responsibilities>
  *         [<foundation/>]
  *       </subcomponent>
@@ -170,8 +171,21 @@ export const comparchRenderers: XmlRendererMap = {
     const aliasAttr = node.attributes.alias;
     const alias = typeof aliasAttr === 'string' ? aliasAttr : '?';
     const name = findChildText(node, 'name') ?? 'Untitled';
-    const role = findChildText(node, 'role') ?? '';
-    const apiIntent = findChildText(node, 'api-intent') ?? '';
+    const purpose = findChildText(node, 'purpose') ?? '';
+    const ownedInvariantsNode = findChild(node, 'owned-invariants');
+    const invariants: string[] = ownedInvariantsNode
+      ? ownedInvariantsNode.children
+          .filter((c) => c.type === 'element' && c.name === 'invariant')
+          .map((c) => textContent(c).trim())
+          .filter(Boolean)
+      : [];
+    const primaryOperationsNode = findChild(node, 'primary-operations');
+    const operations: string[] = primaryOperationsNode
+      ? primaryOperationsNode.children
+          .filter((c) => c.type === 'element' && c.name === 'operation')
+          .map((c) => textContent(c).trim())
+          .filter(Boolean)
+      : [];
     const isFoundation =
       node.children.some((c) => c.type === 'element' && c.name === 'foundation');
     const respsNode = findChild(node, 'responsibilities');
@@ -201,22 +215,36 @@ export const comparchRenderers: XmlRendererMap = {
     ) : undefined;
     return (
       <CollapsibleSection summary={summary} meta={meta}>
-        {role && (
+        {purpose && (
           <div className="space-y-1">
             <div className="text-[10px] uppercase tracking-wider text-gray-500">
-              Role
+              Purpose
             </div>
-            <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">{role}</p>
+            <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">{purpose}</p>
           </div>
         )}
-        {apiIntent && (
+        {invariants.length > 0 && (
           <div className="space-y-1">
             <div className="text-[10px] uppercase tracking-wider text-gray-500">
-              API intent
+              Owned invariants
             </div>
-            <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
-              {apiIntent}
-            </p>
+            <ul className="text-sm text-gray-300 space-y-0.5 m-0 pl-4 list-disc">
+              {invariants.map((inv, i) => (
+                <li key={i} className="whitespace-pre-wrap">{inv}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {operations.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-[10px] uppercase tracking-wider text-gray-500">
+              Primary operations
+            </div>
+            <ul className="text-sm text-gray-300 space-y-0.5 m-0 pl-4 list-disc">
+              {operations.map((op, i) => (
+                <li key={i} className="whitespace-pre-wrap">{op}</li>
+              ))}
+            </ul>
           </div>
         )}
         {respIds.length > 0 && (
@@ -270,8 +298,11 @@ export const comparchRenderers: XmlRendererMap = {
 
   // Consumed by parent renderers — null at the top level.
   name: () => null,
-  role: () => null,
-  'api-intent': () => null,
+  purpose: () => null,
+  'owned-invariants': () => null,
+  invariant: () => null,
+  'primary-operations': () => null,
+  operation: () => null,
   responsibilities: () => null,
   resp: () => null,
   foundation: () => null,

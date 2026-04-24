@@ -295,6 +295,35 @@ def seeded_project(shared_session_factory):
         s.close()
 
 
+def _sub_xml(
+    alias: str,
+    name: str,
+    resp_ids: tuple[str, ...],
+    *,
+    foundation: bool = False,
+) -> str:
+    """Render a ``<subcomponent>`` in the micro-field grammar."""
+    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    foundation_marker = "<foundation/>" if foundation else ""
+    return (
+        f'<subcomponent alias="{alias}">'
+        f"<name>{name}</name>"
+        f"<purpose>Owns {name} territory.</purpose>"
+        f"<owned-invariants>"
+        f"<invariant>{name} holds state</invariant>"
+        f"<invariant>{name} is journaled</invariant>"
+        f"</owned-invariants>"
+        f"<primary-operations>"
+        f"<operation>read {name}</operation>"
+        f"<operation>mutate {name}</operation>"
+        f"<operation>emit {name}</operation>"
+        f"</primary-operations>"
+        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"{foundation_marker}"
+        "</subcomponent>"
+    )
+
+
 def _valid_comparch_simple(sub_ids: list[str], sibling_comp_ids: list[str]) -> str:
     """A simpler valid comparch with 2 subs (one foundation) covering 2 subresps."""
     sibling_dep = f'<dep to="{sibling_comp_ids[0]}"/>' if sibling_comp_ids else ""
@@ -307,20 +336,9 @@ def _valid_comparch_simple(sub_ids: list[str], sibling_comp_ids: list[str]) -> s
         "<policies></policies>"
         f"<dependencies>{sibling_dep}</dependencies>"
         "<subcomponents>"
-        '<subcomponent alias="token_store">'
-        "<name>TokenStore</name>"
-        "<role>Owns card tokenization.</role>"
-        "<api-intent>tokenize(raw).</api-intent>"
-        f'<responsibilities><resp id="{sub_ids[0]}"/></responsibilities>'
-        "</subcomponent>"
-        '<subcomponent alias="foundation">'
-        "<name>Foundation</name>"
-        "<role>Component root + retry scheduler.</role>"
-        "<api-intent>init(); schedule_retry(ctx).</api-intent>"
-        f'<responsibilities><resp id="{sub_ids[1]}"/></responsibilities>'
-        "<foundation/>"
-        "</subcomponent>"
-        "</subcomponents>"
+        + _sub_xml("token_store", "TokenStore", (sub_ids[0],))
+        + _sub_xml("foundation", "Foundation", (sub_ids[1],), foundation=True)
+        + "</subcomponents>"
         "<sub-dependencies>"
         '<dep from="token_store" to="foundation"/>'
         "</sub-dependencies>"
