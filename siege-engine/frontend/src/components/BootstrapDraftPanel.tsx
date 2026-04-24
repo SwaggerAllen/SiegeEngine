@@ -57,6 +57,14 @@ export interface BootstrapPanelDraft {
   id: string;
   content: string;
   created_at: string;
+  /**
+   * Phase 13 — generator's self-report of what this draft
+   * changed / contains. Null on pre-Phase-13 drafts and on
+   * drafts whose generator skipped the tag. Optional on the
+   * interface so older tests + mocks that predate the field
+   * don't have to re-mint the whole draft shape.
+   */
+  change_summary?: string | null;
 }
 
 export interface BootstrapPanelTelemetry {
@@ -75,6 +83,8 @@ export interface BootstrapPanelIntermediate {
   content: string;
   /** 1-indexed pass within the current regen run. */
   auto_revision_pass: number;
+  /** Phase 13 — per-pass change summary (may be null). */
+  change_summary?: string | null;
 }
 
 export interface BootstrapPanelData {
@@ -330,6 +340,7 @@ function ResetApprovedStateControl({
  */
 function PendingDraftDocumentTab({
   pendingContent,
+  pendingSummary,
   previousDraftContent,
   approvedContent,
   intermediates,
@@ -337,6 +348,14 @@ function PendingDraftDocumentTab({
   docKind,
 }: {
   pendingContent: string;
+  /**
+   * Phase 13 — the pending draft's ``<change-summary>`` body (or
+   * null). Rendered as the diff's header so the reviewer sees the
+   * "why" before the "what" diff. Switches to the selected
+   * intermediate's summary when the Compare-against dropdown
+   * lands on one, so the header tracks the diff's right-hand side.
+   */
+  pendingSummary: string | null;
   previousDraftContent: string | null;
   approvedContent: string | null;
   intermediates: BootstrapPanelIntermediate[];
@@ -452,12 +471,14 @@ function PendingDraftDocumentTab({
             after={pendingContent}
             kind={docKind}
             label={diffLabel}
+            summaryText={pendingSummary}
           />
         ) : (
           <DraftDiffView
             before={active.content}
             after={pendingContent}
             label={diffLabel}
+            summaryText={pendingSummary}
           />
         )
       ) : (
@@ -642,6 +663,7 @@ export function BootstrapDraftPanel({
             document={
               <PendingDraftDocumentTab
                 pendingContent={pending_draft.content}
+                pendingSummary={pending_draft.change_summary ?? null}
                 previousDraftContent={previous_draft_content}
                 approvedContent={node.content || null}
                 intermediates={auto_revision_intermediates}

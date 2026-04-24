@@ -22,6 +22,7 @@ export const ImplDraftSchema = z.object({
   id: z.string(),
   content: z.string(),
   created_at: z.string(),
+  change_summary: z.string().nullable().optional(),
 });
 export type ImplDraft = z.infer<typeof ImplDraftSchema>;
 

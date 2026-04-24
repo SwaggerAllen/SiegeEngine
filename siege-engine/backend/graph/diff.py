@@ -129,10 +129,31 @@ def node_diff_payload(
 
     One-shot helper the walker route calls per node click. Keeps
     the HTTP response shape close to what the frontend walker
-    renders: ``{node_content: {before, after}, fragments: [...]}``.
+    renders: ``{node_content: {before, after}, fragments: [...],
+    latest_change_summary: str | None}``.
+
+    Phase 13 — the latest non-null ``Draft.change_summary`` for
+    this target (any status) rides along so the walker detail
+    pane can render the "why" above the diff without a second
+    round-trip. Null when the node has no drafts or no draft
+    ever carried a summary (fan-in targets, pre-Phase-13 nodes).
     """
+    from sqlalchemy import select
+
+    from backend.models.node import Draft
+
     content = node_content_diff(session, project_id, node_id, pinned_offset)
     frags = fragment_diff(session, project_id, node_id, pinned_offset)
+    latest_summary = session.execute(
+        select(Draft.change_summary)
+        .where(
+            Draft.project_id == project_id,
+            Draft.target_id == node_id,
+            Draft.change_summary.is_not(None),
+        )
+        .order_by(Draft.created_at.desc(), Draft.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
     return {
         "node_content": {
             "before": content.before,
@@ -146,4 +167,5 @@ def node_diff_payload(
             }
             for f in frags
         ],
+        "latest_change_summary": latest_summary,
     }

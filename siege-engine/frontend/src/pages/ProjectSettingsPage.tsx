@@ -9,7 +9,7 @@ import { describeApiError } from '../lib/describeApiError';
 import { type ProjectSettings } from '../api/projectSettings';
 
 const MIN_TIMEOUT_SECONDS = 60;
-const MAX_TIMEOUT_SECONDS = 3600;
+const MAX_TIMEOUT_SECONDS = 14400;
 const MIN_BUDGET_USD = 0.1;
 const MAX_BUDGET_USD = 20;
 
@@ -144,7 +144,7 @@ function SettingsShell({ projectId }: { projectId: string }) {
               </div>
               <p className="text-xs text-gray-500 mt-1">
                 How long a single LLM call may run before the worker
-                kills it. Between 1 and 60 minutes. Default: 30
+                kills it. Between 1 and 240 minutes. Default: 120
                 minutes.
               </p>
             </div>

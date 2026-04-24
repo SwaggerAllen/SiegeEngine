@@ -34,6 +34,8 @@ node this ref has outgoing ``reference`` edges to.
 
 from __future__ import annotations
 
+from backend.graph.prompts._change_summary import change_summary_instruction
+
 SYSTEM_PROMPT = """\
 You are authoring a supplemental reference document for a \
 software project. The document is pulled into other nodes' \
@@ -79,7 +81,7 @@ how you arrived at the content. Output only the ``<reference>`` \
 block.
 * Unescaped ``&`` and ``<`` in the body are fine — the parser \
 tolerates them.
-"""
+""" + change_summary_instruction()
 
 
 def render_user_prompt(

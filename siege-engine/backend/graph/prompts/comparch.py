@@ -403,7 +403,9 @@ the XML tags themselves) are tolerated by the parser.
 
 def render_system_prompt() -> str:
     """Return the comparch system prompt."""
-    return _SYSTEM_PROMPT_TEMPLATE
+    from backend.graph.prompts._change_summary import change_summary_instruction
+
+    return _SYSTEM_PROMPT_TEMPLATE + change_summary_instruction()
 
 
 def format_domain_parent_surface(

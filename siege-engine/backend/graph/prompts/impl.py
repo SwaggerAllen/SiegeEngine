@@ -47,6 +47,8 @@ The whole prose document lives in ``Node.content`` as one blob.
 
 from __future__ import annotations
 
+from backend.graph.prompts._change_summary import change_summary_instruction
+
 SYSTEM_PROMPT = """\
 You are authoring the **implementation document** for a single \
 leaf in the component tree. This is the **last articulation \
@@ -177,7 +179,7 @@ the others as footnotes.
 * Keep it proportionate to the leaf's complexity. A simple \
 cache wrapper doesn't need 2000 words; a session-management \
 engine does. Pad isn't helpful; underspecifying is worse.
-"""
+""" + change_summary_instruction()
 
 
 def render_user_prompt(

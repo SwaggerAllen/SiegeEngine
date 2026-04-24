@@ -21,6 +21,15 @@ interface Props {
    * content"). Rendered in small italic text.
    */
   label?: string;
+  /**
+   * Phase 13 — the generator's self-report of what this draft
+   * changed / contains. Lifted out of the ``<change-summary>``
+   * tag at persist time; ``null``/empty for pre-Phase-13 drafts
+   * and fan-in drafts. Rendered as a small callout above the
+   * layout toggle so reviewers get the "why" before reading the
+   * "what" diff below.
+   */
+  summaryText?: string | null;
 }
 
 /**
@@ -37,11 +46,12 @@ interface Props {
  * ``frontend/src/index.css``. Consumers mount the component
  * directly; all the dark-theme work is contained.
  */
-export function DraftDiffView({ before, after, label }: Props) {
+export function DraftDiffView({ before, after, label, summaryText }: Props) {
   const [viewType, setViewType] = useState<ViewType>('split');
 
   const beforeText = (before ?? '').trim();
   const afterText = (after ?? '').trim();
+  const trimmedSummary = (summaryText ?? '').trim();
 
   const { hasPrevious, hasChanges, hunks } = useMemo(() => {
     if (before === null) {
@@ -62,25 +72,41 @@ export function DraftDiffView({ before, after, label }: Props) {
     return { hasPrevious: true, hasChanges: parsedHunks.length > 0, hunks: parsedHunks };
   }, [before, beforeText, afterText]);
 
+  const summaryCallout = trimmedSummary ? (
+    <div
+      className="rounded border-l-2 border-blue-700/80 bg-gray-900/50 px-3 py-2 text-sm italic text-gray-200"
+      data-testid="draft-diff-summary"
+    >
+      {trimmedSummary}
+    </div>
+  ) : null;
+
   if (!hasPrevious) {
     return (
-      <div className="p-4 border border-gray-800 rounded text-xs text-gray-500 italic bg-gray-900/40">
-        No prior draft or approved content to diff against — this is
-        the first version on this tier.
+      <div className="space-y-2">
+        {summaryCallout}
+        <div className="p-4 border border-gray-800 rounded text-xs text-gray-500 italic bg-gray-900/40">
+          No prior draft or approved content to diff against — this is
+          the first version on this tier.
+        </div>
       </div>
     );
   }
 
   if (!hasChanges) {
     return (
-      <div className="p-4 border border-gray-800 rounded text-xs text-gray-500 italic bg-gray-900/40">
-        No changes — the new draft is identical to the previous version.
+      <div className="space-y-2">
+        {summaryCallout}
+        <div className="p-4 border border-gray-800 rounded text-xs text-gray-500 italic bg-gray-900/40">
+          No changes — the new draft is identical to the previous version.
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-2">
+      {summaryCallout}
       <div className="flex items-center justify-between flex-wrap gap-2">
         {label ? (
           <div className="text-xs text-gray-400 italic">{label}</div>

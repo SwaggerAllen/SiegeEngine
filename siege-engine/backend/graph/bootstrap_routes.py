@@ -280,6 +280,7 @@ def bootstrap_get_state(
                 "label": it.label,
                 "content": it.content,
                 "auto_revision_pass": it.auto_revision_pass,
+                "change_summary": it.change_summary,
             }
             for it in intermediates
         ],

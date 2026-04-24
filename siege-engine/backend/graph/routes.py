@@ -165,6 +165,7 @@ class ExpansionDraftResponse(BaseModel):
     id: str
     content: str
     created_at: str
+    change_summary: str | None = None
 
 
 class TelemetrySummary(BaseModel):
@@ -189,6 +190,9 @@ class AutoRevisionIntermediateResponse(BaseModel):
     label: str
     content: str
     auto_revision_pass: int
+    # Phase 13 — generator's per-pass change-summary, lifted out
+    # of the ``<change-summary>`` tag at persist time.
+    change_summary: str | None = None
 
 
 class ExpansionResponse(BaseModel):
@@ -295,6 +299,23 @@ class PromptPreviewResponse(BaseModel):
     user_prompt: str
 
 
+class DraftHistoryEntry(BaseModel):
+    """One row in a node's draft timeline (Phase 13 audit history)."""
+
+    draft_id: str
+    target_type: str
+    status: str
+    discard_reason: str | None
+    change_summary: str | None
+    created_at: str
+
+
+class DraftHistoryResponse(BaseModel):
+    """Newest-first list of every draft that ever targeted one node."""
+
+    entries: list[DraftHistoryEntry]
+
+
 # ── Expansion endpoints ─────────────────────────────────────────────
 
 
@@ -359,6 +380,7 @@ def _draft_to_dict(draft) -> dict:
         "id": draft.id,
         "content": draft.content,
         "created_at": draft.created_at.isoformat() if draft.created_at else "",
+        "change_summary": draft.change_summary,
     }
 
 
@@ -485,6 +507,7 @@ class ReqsDraftResponse(BaseModel):
     id: str
     content: str
     created_at: str
+    change_summary: str | None = None
 
 
 class ReqsResponse(BaseModel):
@@ -644,6 +667,7 @@ class SysarchDraftResponse(BaseModel):
     id: str
     content: str
     created_at: str
+    change_summary: str | None = None
 
 
 class SysarchResponse(BaseModel):
@@ -1097,6 +1121,7 @@ class SubreqsDraftResponse(BaseModel):
     id: str
     content: str
     created_at: str
+    change_summary: str | None = None
 
 
 class SubreqsResponse(BaseModel):
@@ -1357,6 +1382,7 @@ class ComparchDraftResponse(BaseModel):
     id: str
     content: str
     created_at: str
+    change_summary: str | None = None
 
 
 class ComparchResponse(BaseModel):
@@ -1609,6 +1635,7 @@ class SubcomparchDraftResponse(BaseModel):
     id: str
     content: str
     created_at: str
+    change_summary: str | None = None
 
 
 class SubcomparchResponse(BaseModel):
@@ -2656,6 +2683,7 @@ class ImplDraftResponse(BaseModel):
     id: str
     content: str
     created_at: str
+    change_summary: str | None = None
 
 
 class ImplResponse(BaseModel):
@@ -4152,11 +4180,14 @@ class NodeDiffResponse(BaseModel):
     ``node_content`` diffs the ``Node.content`` field itself; the
     per-fragment list covers every fragment owned by the node so
     the accordion in the detail pane can render one section per
-    fragment kind.
+    fragment kind. Phase 13 — ``latest_change_summary`` carries
+    the most-recent non-null draft change_summary for this
+    target so the walker can render the "why" above the diff.
     """
 
     node_content: DiffSidesResponse
     fragments: list[FragmentDiffResponse]
+    latest_change_summary: str | None = None
 
 
 @router.get(
@@ -4257,4 +4288,49 @@ def get_review_batch_node_diff(
     return NodeDiffResponse(
         node_content=DiffSidesResponse(**payload["node_content"]),
         fragments=[FragmentDiffResponse(**f) for f in payload["fragments"]],
+        latest_change_summary=payload.get("latest_change_summary"),
     )
+
+
+# ── Phase 13 — draft change-summary audit history ───────────────────
+
+
+@router.get(
+    "/{project_id}/drafts/by-target/{target_id}/history",
+    response_model=DraftHistoryResponse,
+)
+def get_draft_history(
+    project_id: str,
+    target_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> DraftHistoryResponse:
+    """Return every draft that ever targeted ``target_id``, newest first.
+
+    Carries the Phase 13 ``change_summary`` alongside each draft's
+    lifecycle metadata so the frontend can render a per-node
+    timeline without stitching together the walker's snapshot
+    payload with the regen-diff state. Read-only — no write surface.
+    """
+    from backend.models.node import Draft
+
+    _require_project(db, project_id)
+    rows = list(
+        db.execute(
+            select(Draft)
+            .where(Draft.project_id == project_id, Draft.target_id == target_id)
+            .order_by(Draft.created_at.desc(), Draft.id.desc())
+        ).scalars()
+    )
+    entries = [
+        DraftHistoryEntry(
+            draft_id=row.id,
+            target_type=row.target_type,
+            status=row.status,
+            discard_reason=row.discard_reason,
+            change_summary=row.change_summary,
+            created_at=row.created_at.isoformat() if row.created_at else "",
+        )
+        for row in rows
+    ]
+    return DraftHistoryResponse(entries=entries)

@@ -498,6 +498,7 @@ def _apply_draft_generated(session: Session, project_id: str, event: ev.DraftGen
             content=event.content,
             status="pending",
             batch_id=event.batch_id,
+            change_summary=event.change_summary or None,
             created_at=now,
             updated_at=now,
         )

@@ -198,6 +198,11 @@ class DraftGenerated(_EventBase):
     target_id: str
     content: str
     batch_id: str
+    # Phase 13 — optional per-draft change summary. Lifted out of the
+    # generator's ``<change-summary>`` tag at persist time and stored
+    # on ``Draft.change_summary``. Empty string on fan-in drafts (out
+    # of scope) and on drafts whose generator skipped the tag.
+    change_summary: str = ""
 
 
 class DraftEdited(_EventBase):
