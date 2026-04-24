@@ -78,6 +78,9 @@ from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
     Policy,
     ValidationError,
+    format_component_pubapi,
+    format_component_techspec,
+    format_techspec_fragment,
     validate_sysarch,
 )
 from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
@@ -217,9 +220,9 @@ async def mint_sysarch(payload: dict) -> None:
             minted_comp_ids.append(comp_id)
 
             # ── Phase 2: per-comp fragments ─────────────────────
-            # Techspec fragment = role paragraph. Pubapi fragment
-            # = api-intent paragraph. Both are skeletal — Phase 4
-            # comparch replaces them with real content.
+            # Techspec fragment = formatted purpose + owned-invariants.
+            # Pubapi fragment = formatted primary-operations. Both are
+            # skeletal — Phase 4 comparch replaces them with real content.
             techspec_fid = fragment_id(comp_id, FragmentKind.TECHSPEC)
             append_event(
                 db,
@@ -228,7 +231,7 @@ async def mint_sysarch(payload: dict) -> None:
                     fragment_id=techspec_fid,
                     owner_id=comp_id,
                     fragment_kind=FragmentKind.TECHSPEC,
-                    new_content=component.role,
+                    new_content=format_component_techspec(component),
                 ),
             )
             pubapi_fid = fragment_id(comp_id, FragmentKind.PUBAPI)
@@ -239,7 +242,7 @@ async def mint_sysarch(payload: dict) -> None:
                     fragment_id=pubapi_fid,
                     owner_id=comp_id,
                     fragment_kind=FragmentKind.PUBAPI,
-                    new_content=component.api_intent,
+                    new_content=format_component_pubapi(component),
                 ),
             )
 
@@ -269,7 +272,7 @@ async def mint_sysarch(payload: dict) -> None:
                 fragment_id=sysarch_techspec_fid,
                 owner_id=sysarch_node_id,
                 fragment_kind=FragmentKind.TECHSPEC,
-                new_content=doc.techspec,
+                new_content=format_techspec_fragment(doc.techspec),
             ),
         )
 

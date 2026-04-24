@@ -58,7 +58,7 @@ EDGE_TYPES = (
     "decomposition",
     "reference",
 )
-FRAGMENT_KINDS = ("techspec", "pubapi", "privapi", "policies", "deps")
+FRAGMENT_KINDS = ("techspec", "pubapi", "privapi", "policies", "deps", "failuresurface")
 DRAFT_TARGET_TYPES = ("node", "fragment")
 DRAFT_STATUSES = ("pending", "approved", "discarded")
 # Phase 9 staleness ledger reasons. Each marker records why a

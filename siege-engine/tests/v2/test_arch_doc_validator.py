@@ -94,6 +94,7 @@ def _arch_doc(
     techspec: str = "Python + PostgreSQL stack.",
     pubapi: str = "authenticate(creds) -> Session.",
     privapi: str = "Internal: _verify_password.",
+    failure_surface: str = "Verifier regression admits empty-hash matches.",
     policies: str = "",
     dependencies: str = "",
     subcomponents: str = "",
@@ -104,6 +105,7 @@ def _arch_doc(
         f"<technical-specification>{techspec}</technical-specification>"
         f"<public-surface>{pubapi}</public-surface>"
         f"<private-surface>{privapi}</private-surface>"
+        f"<failure-surface>{failure_surface}</failure-surface>"
         f"<policies>{policies}</policies>"
         f"<dependencies>{dependencies}</dependencies>"
         f"<subcomponents>{subcomponents}</subcomponents>"
@@ -215,6 +217,7 @@ class TestRootAndSectionOrder:
             "<technical-specification>t</technical-specification>"
             "<public-surface>p</public-surface>"
             "<private-surface>pr</private-surface>"
+            "<failure-surface>fs</failure-surface>"
             "<policies></policies>"
             "<subcomponents></subcomponents>"
             "<sub-dependencies></sub-dependencies>"
@@ -230,6 +233,7 @@ class TestRootAndSectionOrder:
             "<technical-specification>t</technical-specification>"
             "<public-surface>p</public-surface>"
             "<private-surface>pr</private-surface>"
+            "<failure-surface>fs</failure-surface>"
             "<policies></policies>"
             "<dependencies></dependencies>"
             "<sub-dependencies></sub-dependencies>"
@@ -246,6 +250,7 @@ class TestRootAndSectionOrder:
             "<technical-specification>t2</technical-specification>"
             "<public-surface>p</public-surface>"
             "<private-surface>pr</private-surface>"
+            "<failure-surface>fs</failure-surface>"
             "<policies></policies>"
             "<dependencies></dependencies>"
             "<subcomponents></subcomponents>"
@@ -296,6 +301,7 @@ class TestFragmentSections:
             "<technical-specification>t <nested>no</nested></technical-specification>"
             "<public-surface>p</public-surface>"
             "<private-surface>pr</private-surface>"
+            "<failure-surface>auth bypass on verifier regression</failure-surface>"
             "<policies></policies>"
             "<dependencies></dependencies>"
             "<subcomponents></subcomponents>"
@@ -304,6 +310,25 @@ class TestFragmentSections:
         )
         with pytest.raises(ValidationError, match="must contain plain text"):
             _validate(raw, known_subresp_ids=set())
+
+    def test_empty_failure_surface_rejected(self):
+        raw = _arch_doc(
+            failure_surface="",
+            subcomponents=_default_subcomponents(),
+            sub_dependencies=_DEFAULT_SUB_DEPS,
+        )
+        with pytest.raises(ValidationError, match="<failure-surface> is empty"):
+            _validate(raw)
+
+    def test_failure_surface_persisted_on_doc(self):
+        doc = _validate(
+            _arch_doc(
+                failure_surface="verifier regression admits empty-hash matches",
+                subcomponents=_default_subcomponents(),
+                sub_dependencies=_DEFAULT_SUB_DEPS,
+            )
+        )
+        assert "verifier regression" in doc.failure_surface
 
 
 class TestExternalDependencies:

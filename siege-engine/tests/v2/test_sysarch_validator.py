@@ -36,18 +36,39 @@ def _comp(
     resp_ids: tuple[str, ...],
     *,
     foundation: bool = False,
-    failure_surface: str | None = None,
+    purpose: str | None = None,
+    owned_invariants: tuple[str, ...] | None = None,
+    primary_operations: tuple[str, ...] | None = None,
 ) -> str:
+    """Build a ``<component>`` XML blob in the micro-field grammar.
+
+    ``role`` and ``api_intent`` are still positional for test-site
+    brevity but are now used as defaults for ``purpose`` / first
+    ``operation`` respectively when the richer fields aren't
+    provided explicitly. Tests that exercise the new micro-fields
+    pass them directly.
+    """
     resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
     foundation_marker = "<foundation/>" if foundation else ""
-    fs = failure_surface if failure_surface is not None else f"{name} fails concretely."
+    actual_purpose = purpose if purpose is not None else (role or f"{name} exists.")
+    invariants = owned_invariants or (
+        f"{name} invariant one",
+        f"{name} invariant two",
+    )
+    operations = primary_operations or (
+        api_intent or f"do {name} thing one",
+        f"do {name} thing two",
+        f"do {name} thing three",
+    )
+    inv_xml = "".join(f"<invariant>{inv}</invariant>" for inv in invariants)
+    op_xml = "".join(f"<operation>{op}</operation>" for op in operations)
     return (
         f'<component alias="{alias}">'
         f"<name>{name}</name>"
         f"<kind>{kind}</kind>"
-        f"<role>{role}</role>"
-        f"<api-intent>{api_intent}</api-intent>"
-        f"<failure-surface>{fs}</failure-surface>"
+        f"<purpose>{actual_purpose}</purpose>"
+        f"<owned-invariants>{inv_xml}</owned-invariants>"
+        f"<primary-operations>{op_xml}</primary-operations>"
         f"<responsibilities>{resp_xml}</responsibilities>"
         f"{foundation_marker}"
         "</component>"
@@ -65,17 +86,49 @@ def _policy(name: str, trigger: str, required: str, rationale: str) -> str:
     )
 
 
+def _default_techspec() -> str:
+    """Standard structured techspec for happy-path tests."""
+    return (
+        "<techspec>"
+        "<runtime>Python 3.11 FastAPI single-process async loop.</runtime>"
+        "<persistence>PostgreSQL via SQLAlchemy with typed-ID keys.</persistence>"
+        "<write-path>Event-sourced reducer; no direct ORM writes.</write-path>"
+        "<concurrency>Async handlers + custom worker pool.</concurrency>"
+        "<testing>pytest with an integration drain harness.</testing>"
+        "<deploy>Docker on Fly.io with a Postgres sidecar.</deploy>"
+        "<technologies>FastAPI, SQLAlchemy, PostgreSQL, React 18.</technologies>"
+        "</techspec>"
+    )
+
+
 def _sysarch(
     *,
-    techspec: str = "A typical stack with Python, React, and PostgreSQL.",
+    techspec: str | None = None,
     components: str = "",
     policies: str = "",
     dependencies: str = "",
     domain_parent: str = "",
 ) -> str:
+    """Assemble a ``<sysarch>`` XML doc from section fragments.
+
+    ``techspec`` accepts either a raw ``<techspec>...</techspec>``
+    block or ``None`` (for the default structured block) or an
+    empty string (for a deliberately-empty block used by negative
+    tests).
+    """
+    if techspec is None:
+        ts_block = _default_techspec()
+    elif techspec == "":
+        ts_block = "<techspec></techspec>"
+    elif techspec.startswith("<techspec"):
+        ts_block = techspec
+    else:
+        # Raw content — wrap it (used by negative tests that
+        # want to feed plain prose into the labeled-block shape).
+        ts_block = f"<techspec>{techspec}</techspec>"
     return (
         "<sysarch>"
-        f"<techspec>{techspec}</techspec>"
+        f"{ts_block}"
         f"<components>{components}</components>"
         f"<policies>{policies}</policies>"
         f"<dependencies>{dependencies}</dependencies>"
@@ -128,7 +181,8 @@ class TestHappyPath:
             _parse(_sysarch(components=_default_components(), dependencies=_DEFAULT_DEPS)),
             known_top_level_resp_ids=KNOWN_RESPS,
         )
-        assert doc.techspec.startswith("A typical stack")
+        assert doc.techspec.runtime.startswith("Python 3.11")
+        assert "PostgreSQL" in doc.techspec.technologies
         assert [c.alias for c in doc.components] == ["auth", "billing", "foundation"]
         assert doc.policies == ()
         assert len(doc.deps) == 2
@@ -289,8 +343,53 @@ class TestRootAndSectionOrder:
             validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
 
     def test_empty_techspec_rejected(self):
+        # Empty <techspec> (no labeled children) reads as "sections
+        # not in the required order" because the structured
+        # labeled-block shape is what the validator enforces now.
         raw = _sysarch(techspec="", components=_default_components())
-        with pytest.raises(ValidationError, match="<techspec> is empty"):
+        with pytest.raises(
+            ValidationError,
+            match=r"<techspec> sections are not in the required order",
+        ):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+
+    def test_techspec_missing_one_block_rejected(self):
+        # Drop the <technologies> block specifically.
+        partial = (
+            "<techspec>"
+            "<runtime>x</runtime>"
+            "<persistence>x</persistence>"
+            "<write-path>x</write-path>"
+            "<concurrency>x</concurrency>"
+            "<testing>x</testing>"
+            "<deploy>x</deploy>"
+            "</techspec>"
+        )
+        raw = _sysarch(techspec=partial, components=_default_components())
+        with pytest.raises(
+            ValidationError,
+            match=r"<techspec> sections are not in the required order",
+        ):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
+
+    def test_techspec_empty_labeled_block_rejected(self):
+        # <runtime> is present but empty.
+        bad = (
+            "<techspec>"
+            "<runtime></runtime>"
+            "<persistence>x</persistence>"
+            "<write-path>x</write-path>"
+            "<concurrency>x</concurrency>"
+            "<testing>x</testing>"
+            "<deploy>x</deploy>"
+            "<technologies>x</technologies>"
+            "</techspec>"
+        )
+        raw = _sysarch(techspec=bad, components=_default_components())
+        with pytest.raises(
+            ValidationError,
+            match=r"<techspec><runtime> is empty",
+        ):
             validate_sysarch(_parse(raw), known_top_level_resp_ids=KNOWN_RESPS)
 
 
@@ -305,7 +404,11 @@ class TestComponentStructure:
         bad = (
             "<component>"
             "<name>Thing</name><kind>domain</kind>"
-            "<role>x</role><api-intent>x</api-intent>"
+            "<purpose>x</purpose>"
+            "<owned-invariants><invariant>a</invariant><invariant>b</invariant></owned-invariants>"
+            "<primary-operations>"
+            "<operation>do a</operation><operation>do b</operation><operation>do c</operation>"
+            "</primary-operations>"
             "<responsibilities></responsibilities>"
             "</component>"
         )
@@ -376,7 +479,11 @@ class TestComponentStructure:
         bad = (
             '<component alias="thing">'
             "<kind>domain</kind>"
-            "<role>x</role><api-intent>x</api-intent>"
+            "<purpose>x</purpose>"
+            "<owned-invariants><invariant>a</invariant><invariant>b</invariant></owned-invariants>"
+            "<primary-operations>"
+            "<operation>do a</operation><operation>do b</operation><operation>do c</operation>"
+            "</primary-operations>"
             '<responsibilities><resp id="resp_auth00001"/></responsibilities>'
             "<foundation/>"
             "</component>"
@@ -385,60 +492,79 @@ class TestComponentStructure:
         with pytest.raises(ValidationError, match="missing a <name>"):
             validate_sysarch(_parse(raw), known_top_level_resp_ids={"resp_auth00001"})
 
-    def test_empty_role_rejected(self):
+    def test_empty_purpose_rejected(self):
         bad = _comp(
             "thing",
             "Thing",
             "domain",
-            "",  # empty role
-            "x",
+            "role-placeholder",
+            "api-placeholder",
             ("resp_auth00001",),
             foundation=True,
+            purpose="",
         )
         raw = _sysarch(components=bad)
-        with pytest.raises(ValidationError, match="empty <role>"):
+        with pytest.raises(ValidationError, match="empty <purpose>"):
             validate_sysarch(_parse(raw), known_top_level_resp_ids={"resp_auth00001"})
 
-    def test_empty_api_intent_rejected(self):
+    def test_too_few_invariants_rejected(self):
         bad = _comp(
             "thing",
             "Thing",
             "domain",
-            "x",
-            "",
+            "r",
+            "a",
             ("resp_auth00001",),
             foundation=True,
+            owned_invariants=("only one invariant",),
         )
         raw = _sysarch(components=bad)
-        with pytest.raises(ValidationError, match="empty <api-intent>"):
+        with pytest.raises(ValidationError, match=r"1 <invariant> entries"):
             validate_sysarch(_parse(raw), known_top_level_resp_ids={"resp_auth00001"})
 
-    def test_missing_failure_surface_rejected(self):
-        bad = (
-            '<component alias="thing">'
-            "<name>Thing</name><kind>domain</kind>"
-            "<role>x</role><api-intent>x</api-intent>"
-            '<responsibilities><resp id="resp_auth00001"/></responsibilities>'
-            "<foundation/>"
-            "</component>"
-        )
-        raw = _sysarch(components=bad)
-        with pytest.raises(ValidationError, match="missing a <failure-surface>"):
-            validate_sysarch(_parse(raw), known_top_level_resp_ids={"resp_auth00001"})
-
-    def test_empty_failure_surface_rejected(self):
+    def test_too_many_invariants_rejected(self):
         bad = _comp(
             "thing",
             "Thing",
             "domain",
-            "x",
-            "x",
+            "r",
+            "a",
             ("resp_auth00001",),
             foundation=True,
-            failure_surface="",
+            owned_invariants=("one", "two", "three", "four", "five"),
         )
         raw = _sysarch(components=bad)
-        with pytest.raises(ValidationError, match="empty <failure-surface>"):
+        with pytest.raises(ValidationError, match=r"5 <invariant> entries"):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids={"resp_auth00001"})
+
+    def test_too_few_operations_rejected(self):
+        bad = _comp(
+            "thing",
+            "Thing",
+            "domain",
+            "r",
+            "a",
+            ("resp_auth00001",),
+            foundation=True,
+            primary_operations=("do a", "do b"),  # only 2
+        )
+        raw = _sysarch(components=bad)
+        with pytest.raises(ValidationError, match=r"2 <operation> entries"):
+            validate_sysarch(_parse(raw), known_top_level_resp_ids={"resp_auth00001"})
+
+    def test_too_many_operations_rejected(self):
+        bad = _comp(
+            "thing",
+            "Thing",
+            "domain",
+            "r",
+            "a",
+            ("resp_auth00001",),
+            foundation=True,
+            primary_operations=tuple(f"op{i}" for i in range(7)),
+        )
+        raw = _sysarch(components=bad)
+        with pytest.raises(ValidationError, match=r"7 <operation> entries"):
             validate_sysarch(_parse(raw), known_top_level_resp_ids={"resp_auth00001"})
 
     def test_empty_responsibilities_rejected(self):

@@ -102,41 +102,65 @@ def _set_sysarch_content(session: Session, project_id: str, content: str) -> Non
     session.commit()
 
 
+_TECHSPEC_STUB = (
+    "<techspec>"
+    "<runtime>Python 3.11 FastAPI async loop.</runtime>"
+    "<persistence>PostgreSQL via SQLAlchemy.</persistence>"
+    "<write-path>Event-sourced reducer; no direct ORM writes.</write-path>"
+    "<concurrency>Async handlers + worker pool.</concurrency>"
+    "<testing>pytest with an integration drain harness.</testing>"
+    "<deploy>Docker on Fly.io with a Postgres sidecar.</deploy>"
+    "<technologies>FastAPI, SQLAlchemy, PostgreSQL.</technologies>"
+    "</techspec>"
+)
+
+
+def _comp_xml(
+    alias: str,
+    name: str,
+    purpose: str,
+    resp_ids: tuple[str, ...],
+    *,
+    foundation: bool = False,
+) -> str:
+    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    foundation_marker = "<foundation/>" if foundation else ""
+    return (
+        f'<component alias="{alias}">'
+        f"<name>{name}</name>"
+        f"<kind>domain</kind>"
+        f"<purpose>{purpose}</purpose>"
+        f"<owned-invariants>"
+        f"<invariant>{alias} owns state A</invariant>"
+        f"<invariant>{alias} owns state B</invariant>"
+        f"</owned-invariants>"
+        f"<primary-operations>"
+        f"<operation>do {alias} thing one</operation>"
+        f"<operation>do {alias} thing two</operation>"
+        f"<operation>do {alias} thing three</operation>"
+        f"</primary-operations>"
+        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"{foundation_marker}"
+        "</component>"
+    )
+
+
 def _valid_sysarch(resp_ids: list[str]) -> str:
     auth_id, billing_id, foundation_id = resp_ids
     return (
         "<sysarch>"
-        "<techspec>A typical Python + React stack with event-sourced writes.</techspec>"
-        "<components>"
-        '<component alias="auth">'
-        "<name>Authentication</name>"
-        "<kind>domain</kind>"
-        "<role>Identify callers and maintain session state.</role>"
-        "<api-intent>authenticate(creds) -> Session.</api-intent>"
-        "<failure-surface>Verifier bug blocks all sign-ins; "
-        "session-store drift silently anonymizes authenticated users.</failure-surface>"
-        f'<responsibilities><resp id="{auth_id}"/></responsibilities>'
-        "</component>"
-        '<component alias="billing">'
-        "<name>Billing Service</name>"
-        "<kind>domain</kind>"
-        "<role>Handle payments and subscription state.</role>"
-        "<api-intent>get_billing_state(account_id).</api-intent>"
-        "<failure-surface>Invoice-emission bug double-charges; "
-        "payment-collector outage stalls activation.</failure-surface>"
-        f'<responsibilities><resp id="{billing_id}"/></responsibilities>'
-        "</component>"
-        '<component alias="foundation">'
-        "<name>Foundation</name>"
-        "<kind>domain</kind>"
-        "<role>Own project root and shared utilities.</role>"
-        "<api-intent>load_settings(); configure_logging().</api-intent>"
-        "<failure-surface>Bad settings loader crashes startup; "
-        "broken base classes corrupt every subclassing handler.</failure-surface>"
-        f'<responsibilities><resp id="{foundation_id}"/></responsibilities>'
-        "<foundation/>"
-        "</component>"
-        "</components>"
+        + _TECHSPEC_STUB
+        + "<components>"
+        + _comp_xml("auth", "Authentication", "Identify callers.", (auth_id,))
+        + _comp_xml("billing", "Billing Service", "Handle payments.", (billing_id,))
+        + _comp_xml(
+            "foundation",
+            "Foundation",
+            "Own project root.",
+            (foundation_id,),
+            foundation=True,
+        )
+        + "</components>"
         "<policies>"
         "<policy>"
         "<name>LLM Telemetry</name>"
@@ -214,11 +238,13 @@ class TestHappyPath:
                 assert fragment_id(cid, FragmentKind.TECHSPEC) in frag_ids
                 assert fragment_id(cid, FragmentKind.PUBAPI) in frag_ids
 
-            # Content of one specific fragment — techspec = role paragraph
+            # Content of one specific fragment — techspec = formatted
+            # purpose + owned-invariants under the micro-field grammar.
             auth_techspec = s.execute(
                 select(Fragment).where(Fragment.id == fragment_id(auth_cid, FragmentKind.TECHSPEC))
             ).scalar_one()
             assert "Identify callers" in auth_techspec.content
+            assert "auth owns state A" in auth_techspec.content
 
             # ── Sysarch techspec fragment ────────────────────
             sysarch_node = s.execute(
@@ -229,7 +255,11 @@ class TestHappyPath:
                     Fragment.id == fragment_id(sysarch_node.id, FragmentKind.TECHSPEC)
                 )
             ).scalar_one()
-            assert "Python + React" in sys_techspec.content
+            # Structured labeled-block render: each block is a
+            # bolded heading + short prose. Check for any of the
+            # labels to confirm the render ran.
+            assert "Runtime." in sys_techspec.content
+            assert "Technologies." in sys_techspec.content
 
             # ── Policies ─────────────────────────────────────
             policies = list(

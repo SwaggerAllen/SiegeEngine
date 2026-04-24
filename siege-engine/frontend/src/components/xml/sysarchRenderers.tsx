@@ -7,13 +7,19 @@ import { findChild, findChildText, findChildren, hasChild, textContent } from '.
  * Renderer overrides for the sysarch schema:
  *
  *   <sysarch>
- *     <techspec>…project-level tech spec…</techspec>
+ *     <techspec>
+ *       <runtime>…</runtime><persistence>…</persistence>
+ *       <write-path>…</write-path><concurrency>…</concurrency>
+ *       <testing>…</testing><deploy>…</deploy>
+ *       <technologies>…</technologies>
+ *     </techspec>
  *     <components>
  *       <component alias="billing">
  *         <name>Billing</name>
  *         <kind>domain</kind>
- *         <role>…</role>
- *         <api-intent>…</api-intent>
+ *         <purpose>…</purpose>
+ *         <owned-invariants><invariant>…</invariant>…</owned-invariants>
+ *         <primary-operations><operation>…</operation>…</primary-operations>
  *         <responsibilities>
  *           <resp id="resp_..."/>
  *         </responsibilities>
@@ -73,14 +79,48 @@ export function makeSysarchRenderers(
     <div className="not-prose space-y-6">{ctx.renderChildren(node.children)}</div>
   ),
 
-  techspec: (node) => (
-    <section className="space-y-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
-        System Technical Specification
-      </h2>
-      <Paragraphs text={textContent(node)} />
-    </section>
-  ),
+  techspec: (node) => {
+    const BLOCK_LABELS: Array<[string, string]> = [
+      ['runtime', 'Runtime'],
+      ['persistence', 'Persistence'],
+      ['write-path', 'Write path'],
+      ['concurrency', 'Concurrency'],
+      ['testing', 'Testing'],
+      ['deploy', 'Deploy'],
+      ['technologies', 'Technologies'],
+    ];
+    const hasLabeledBlocks = BLOCK_LABELS.some(([tag]) => findChild(node, tag));
+    return (
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400 m-0">
+          System Technical Specification
+        </h2>
+        {hasLabeledBlocks ? (
+          <dl className="space-y-2 m-0">
+            {BLOCK_LABELS.map(([tag, label]) => {
+              const text = findChildText(node, tag);
+              if (!text) return null;
+              return (
+                <div key={tag} className="space-y-0.5">
+                  <dt className="text-[10px] uppercase tracking-wider text-gray-500">
+                    {label}
+                  </dt>
+                  <dd className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
+                    {text}
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+        ) : (
+          // Pre-migration drafts had free prose in <techspec>. Fall
+          // back to paragraph rendering so stored legacy content
+          // still displays.
+          <Paragraphs text={textContent(node)} />
+        )}
+      </section>
+    );
+  },
 
   components: (node, ctx) => {
     const components = findChildren(node, 'component');
@@ -103,8 +143,27 @@ export function makeSysarchRenderers(
     const alias = node.attributes.alias ?? '?';
     const name = findChildText(node, 'name') ?? 'Untitled';
     const kind = findChildText(node, 'kind') ?? 'domain';
-    const role = findChildText(node, 'role') ?? '';
-    const apiIntent = findChildText(node, 'api-intent') ?? '';
+    // New micro-field grammar: purpose / owned-invariants /
+    // primary-operations. Legacy drafts still have <role> and
+    // <api-intent> — fall back to those if the new tags are absent.
+    const purpose =
+      findChildText(node, 'purpose') ?? findChildText(node, 'role') ?? '';
+    const ownedInvariantsNode = findChild(node, 'owned-invariants');
+    const invariants: string[] = ownedInvariantsNode
+      ? ownedInvariantsNode.children
+          .filter((c) => c.type === 'element' && c.name === 'invariant')
+          .map((c) => textContent(c).trim())
+          .filter(Boolean)
+      : [];
+    const primaryOperationsNode = findChild(node, 'primary-operations');
+    const operations: string[] = primaryOperationsNode
+      ? primaryOperationsNode.children
+          .filter((c) => c.type === 'element' && c.name === 'operation')
+          .map((c) => textContent(c).trim())
+          .filter(Boolean)
+      : [];
+    const legacyApiIntent =
+      operations.length === 0 ? findChildText(node, 'api-intent') ?? '' : '';
     const isFoundation = hasChild(node, 'foundation');
     const respsNode = findChild(node, 'responsibilities');
     const respIds: string[] = respsNode
@@ -161,18 +220,44 @@ export function makeSysarchRenderers(
         meta={meta}
         className={cardBorderClass}
       >
-        {role && (
+        {purpose && (
           <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wider text-gray-500">Role</div>
-            <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">{role}</p>
+            <div className="text-[10px] uppercase tracking-wider text-gray-500">Purpose</div>
+            <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">{purpose}</p>
           </div>
         )}
-        {apiIntent && (
+        {invariants.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-[10px] uppercase tracking-wider text-gray-500">
+              Owned invariants
+            </div>
+            <ul className="text-sm text-gray-300 space-y-0.5 m-0 pl-4 list-disc">
+              {invariants.map((inv, i) => (
+                <li key={i} className="whitespace-pre-wrap">{inv}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {operations.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-[10px] uppercase tracking-wider text-gray-500">
+              Primary operations
+            </div>
+            <ul className="text-sm text-gray-300 space-y-0.5 m-0 pl-4 list-disc">
+              {operations.map((op, i) => (
+                <li key={i} className="whitespace-pre-wrap">{op}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {legacyApiIntent && (
           <div className="space-y-1">
             <div className="text-[10px] uppercase tracking-wider text-gray-500">
               API intent
             </div>
-            <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">{apiIntent}</p>
+            <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
+              {legacyApiIntent}
+            </p>
           </div>
         )}
         {respIds.length > 0 && (
@@ -300,8 +385,23 @@ export function makeSysarchRenderers(
     // Tags consumed by parent renderers — return null at the top level.
     name: () => null,
     kind: () => null,
+    purpose: () => null,
+    'owned-invariants': () => null,
+    invariant: () => null,
+    'primary-operations': () => null,
+    operation: () => null,
+    // Legacy sysarch shape (role / api-intent) — silently consume so
+    // pre-migration drafts don't double-render.
     role: () => null,
     'api-intent': () => null,
+    // Labeled techspec sub-blocks consumed by the techspec renderer.
+    runtime: () => null,
+    persistence: () => null,
+    'write-path': () => null,
+    concurrency: () => null,
+    testing: () => null,
+    deploy: () => null,
+    technologies: () => null,
     responsibilities: () => null,
     resp: () => null,
     foundation: () => null,

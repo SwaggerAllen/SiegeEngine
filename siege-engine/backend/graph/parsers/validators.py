@@ -504,14 +504,20 @@ class Component:
     1:1 resp→comp invariant is enforced at the ``<sysarch>`` root
     level so every known top-level resp lands in exactly one
     component's list.
+
+    The grammar is intentionally micro-field: a one-sentence
+    ``purpose`` + 2-4 ``owned_invariants`` noun phrases +
+    3-6 ``primary_operations`` verb phrases. Replaces an earlier
+    free-prose ``<role>`` / ``<api-intent>`` shape that invited
+    verbose restatement of downstream comparch content.
     """
 
     alias: str
     name: str
     kind: Literal["domain", "presentational"]
-    role: str
-    api_intent: str
-    failure_surface: str
+    purpose: str
+    owned_invariants: tuple[str, ...]
+    primary_operations: tuple[str, ...]
     resp_refs: tuple[str, ...]
     is_foundation: bool
 
@@ -568,6 +574,30 @@ class DomainParentEdge:
 
 
 @dataclass(frozen=True)
+class Techspec:
+    """Structured ``<techspec>`` block of a sysarch doc.
+
+    Replaces the earlier free-prose paragraph with labeled
+    single-purpose fields. Each field is 1-2 short sentences;
+    ``technologies`` is a verbatim list of the concrete framework /
+    library / service choices so downstream comparch passes can
+    read them back without re-parsing prose.
+
+    The rendered form (stored on the sysarch techspec fragment and
+    surfaced to downstream tiers) is a markdown block with labeled
+    paragraphs — see :func:`format_techspec_fragment`.
+    """
+
+    runtime: str
+    persistence: str
+    write_path: str
+    concurrency: str
+    testing: str
+    deploy: str
+    technologies: str
+
+
+@dataclass(frozen=True)
 class SysarchDoc:
     """The full validated sysarch output as structured data.
 
@@ -576,7 +606,7 @@ class SysarchDoc:
     validator and ID-based concerns in the mint handler.
     """
 
-    techspec: str
+    techspec: Techspec
     components: tuple[Component, ...]
     policies: tuple[Policy, ...]
     deps: tuple[DepEdge, ...]
@@ -605,12 +635,32 @@ _SYSARCH_REQUIRED_ORDER = (
 _COMPONENT_ALLOWED_CHILDREN = {
     "name",
     "kind",
-    "role",
-    "api-intent",
-    "failure-surface",
+    "purpose",
+    "owned-invariants",
+    "primary-operations",
     "responsibilities",
     "foundation",
 }
+_OWNED_INVARIANTS_ALLOWED_CHILDREN = {"invariant"}
+_PRIMARY_OPERATIONS_ALLOWED_CHILDREN = {"operation"}
+_TECHSPEC_ALLOWED_CHILDREN = {
+    "runtime",
+    "persistence",
+    "write-path",
+    "concurrency",
+    "testing",
+    "deploy",
+    "technologies",
+}
+_TECHSPEC_REQUIRED_ORDER = (
+    "runtime",
+    "persistence",
+    "write-path",
+    "concurrency",
+    "testing",
+    "deploy",
+    "technologies",
+)
 _RESPONSIBILITIES_ALLOWED_CHILDREN = {"resp"}
 _POLICIES_ALLOWED_CHILDREN = {"policy"}
 _POLICY_ALLOWED_CHILDREN = {"name", "trigger", "required", "rationale"}
@@ -761,23 +811,105 @@ def validate_sysarch(
     )
 
 
-def _validate_sysarch_techspec(node: TagNode) -> str:
-    """Extract the non-empty text of ``<techspec>``."""
-    if node.children:
-        # Any nested tags inside techspec are unexpected for MVP.
-        # We still accept them with a warning for now — the LLM's
-        # intent is clear — but reject if there's no direct text.
+def _validate_sysarch_techspec(node: TagNode) -> Techspec:
+    """Validate ``<techspec>`` as a labeled-blocks structure.
+
+    Requires exactly one of each labeled child tag in a fixed
+    order: runtime / persistence / write-path / concurrency /
+    testing / deploy / technologies. Every block must be
+    non-empty short prose. Unlabeled prose inside ``<techspec>``
+    is rejected so the downstream parser has a reliable schema.
+    """
+    seen: dict[str, TagNode] = {}
+    for child in node.children:
+        if child.tag not in _TECHSPEC_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"<techspec> contains an unexpected child <{child.tag}>. "
+                f"Allowed children are: {sorted(_TECHSPEC_ALLOWED_CHILDREN)}."
+            )
+        if child.tag in seen:
+            raise ValidationError(
+                f"<techspec> contains more than one <{child.tag}> block; "
+                "exactly one of each section is required."
+            )
+        seen[child.tag] = child
+
+    actual_order = [c.tag for c in node.children if c.tag in _TECHSPEC_REQUIRED_ORDER]
+    if actual_order != list(_TECHSPEC_REQUIRED_ORDER):
         raise ValidationError(
-            "<techspec> must contain plain text only, no nested tags. "
-            f"Found children: {[c.tag for c in node.children]}."
+            "<techspec> sections are not in the required order. "
+            f"Expected: {list(_TECHSPEC_REQUIRED_ORDER)}. "
+            f"Got: {actual_order}. "
+            "Reorder the children of <techspec> to match the required sequence."
         )
-    text = node.text.strip() if node.text else ""
-    if not text:
-        raise ValidationError(
-            "<techspec> is empty. The system techspec must be a paragraph "
-            "describing project-level technology and architecture choices."
-        )
-    return text
+
+    extracted: dict[str, str] = {}
+    for tag in _TECHSPEC_REQUIRED_ORDER:
+        block = seen[tag]
+        if block.children:
+            raise ValidationError(
+                f"<techspec><{tag}> must contain plain text only, no nested "
+                f"tags. Found children: {[c.tag for c in block.children]}."
+            )
+        text = (block.text or "").strip()
+        if not text:
+            raise ValidationError(
+                f"<techspec><{tag}> is empty. Every labeled techspec block "
+                "must carry 1-2 sentences (or, for <technologies>, a "
+                "comma-separated list of the concrete choices)."
+            )
+        extracted[tag] = text
+
+    return Techspec(
+        runtime=extracted["runtime"],
+        persistence=extracted["persistence"],
+        write_path=extracted["write-path"],
+        concurrency=extracted["concurrency"],
+        testing=extracted["testing"],
+        deploy=extracted["deploy"],
+        technologies=extracted["technologies"],
+    )
+
+
+def format_techspec_fragment(ts: Techspec) -> str:
+    """Render a :class:`Techspec` as the sysarch techspec fragment string.
+
+    The rendered form is a stable labeled-paragraph markdown block
+    so downstream tiers reading the fragment get a consistent
+    layout regardless of how verbose any single block is. One
+    blank line between paragraphs so the existing paragraph-aware
+    renderer (see ``backend/graph/prompts/sysarch.py`` techspec
+    guidance) splits cleanly.
+    """
+    return (
+        f"**Runtime.** {ts.runtime}\n\n"
+        f"**Persistence.** {ts.persistence}\n\n"
+        f"**Write path.** {ts.write_path}\n\n"
+        f"**Concurrency.** {ts.concurrency}\n\n"
+        f"**Testing.** {ts.testing}\n\n"
+        f"**Deploy.** {ts.deploy}\n\n"
+        f"**Technologies.** {ts.technologies}"
+    )
+
+
+def format_component_techspec(component: Component) -> str:
+    """Render a component's purpose + owned-invariants as its techspec fragment.
+
+    The sysarch mint handler writes each component's techspec
+    fragment from the validator output. Previously this was the
+    free-prose ``<role>`` paragraph; under the micro-field grammar
+    we compose a short, labeled block so downstream readers
+    (subreqs / comparch / reviews) still see a "what this is"
+    block but formatted consistently.
+    """
+    invariants = "\n".join(f"- {inv}" for inv in component.owned_invariants)
+    return f"**Purpose.** {component.purpose}\n\n**Owned invariants.**\n{invariants}"
+
+
+def format_component_pubapi(component: Component) -> str:
+    """Render a component's primary-operations as its pubapi fragment."""
+    ops = "\n".join(f"- {op}" for op in component.primary_operations)
+    return f"**Primary operations.**\n{ops}"
 
 
 def _validate_sysarch_components(
@@ -884,9 +1016,9 @@ def _validate_component(
 
     name_node = _require_one("name")
     kind_node = _require_one("kind")
-    role_node = _require_one("role")
-    api_intent_node = _require_one("api-intent")
-    failure_surface_node = _require_one("failure-surface")
+    purpose_node = _require_one("purpose")
+    owned_invariants_node = _require_one("owned-invariants")
+    primary_operations_node = _require_one("primary-operations")
     responsibilities_node = _require_one("responsibilities")
 
     name = (name_node.text or "").strip()
@@ -912,28 +1044,77 @@ def _validate_component(
                 "Must be 'domain' or 'presentational'."
             )
 
-    role = (role_node.text or "").strip()
-    if not role:
+    if purpose_node.children:
         raise ValidationError(
-            f"{pos} (alias={alias!r}) has an empty <role>. Every component "
-            "must have a role paragraph describing what it does."
+            f"{pos} (alias={alias!r}) has nested tags inside <purpose>. "
+            "Purpose must be a single plain-text sentence."
+        )
+    purpose = (purpose_node.text or "").strip()
+    if not purpose:
+        raise ValidationError(
+            f"{pos} (alias={alias!r}) has an empty <purpose>. Every "
+            "component must state its purpose in one sentence."
         )
 
-    api_intent = (api_intent_node.text or "").strip()
-    if not api_intent:
+    for ichild in owned_invariants_node.children:
+        if ichild.tag not in _OWNED_INVARIANTS_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has a <owned-invariants> block "
+                f"containing an unexpected child <{ichild.tag}>. Only "
+                "<invariant> entries are allowed."
+            )
+    invariant_nodes = owned_invariants_node.find_all("invariant")
+    if not (2 <= len(invariant_nodes) <= 4):
         raise ValidationError(
-            f"{pos} (alias={alias!r}) has an empty <api-intent>. Every "
-            "component must describe the shape of its intended API."
+            f"{pos} (alias={alias!r}) has {len(invariant_nodes)} "
+            "<invariant> entries in its <owned-invariants> block. Each "
+            "component must list 2 to 4 short noun phrases naming the "
+            "durable state or guarantees it owns."
         )
+    owned_invariants: list[str] = []
+    for inv in invariant_nodes:
+        if inv.children:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has nested tags inside an "
+                "<invariant>. Invariants are short plain-text phrases."
+            )
+        text = (inv.text or "").strip()
+        if not text:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has an empty <invariant> entry. "
+                "Each invariant is a short noun phrase."
+            )
+        owned_invariants.append(text)
 
-    failure_surface = (failure_surface_node.text or "").strip()
-    if not failure_surface:
+    for ochild in primary_operations_node.children:
+        if ochild.tag not in _PRIMARY_OPERATIONS_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has a <primary-operations> block "
+                f"containing an unexpected child <{ochild.tag}>. Only "
+                "<operation> entries are allowed."
+            )
+    operation_nodes = primary_operations_node.find_all("operation")
+    if not (3 <= len(operation_nodes) <= 6):
         raise ValidationError(
-            f"{pos} (alias={alias!r}) has an empty <failure-surface>. "
-            "Name the concrete failure mode (data loss, invariant "
-            "violation, silent degradation, security breach) in a "
-            "single sentence — 'service degraded' is not concrete."
+            f"{pos} (alias={alias!r}) has {len(operation_nodes)} "
+            "<operation> entries in its <primary-operations> block. "
+            "Each component must list 3 to 6 short verb phrases naming "
+            "the operations callers invoke."
         )
+    primary_operations: list[str] = []
+    for op in operation_nodes:
+        if op.children:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has nested tags inside an "
+                "<operation>. Operations are short plain-text phrases."
+            )
+        text = (op.text or "").strip()
+        if not text:
+            raise ValidationError(
+                f"{pos} (alias={alias!r}) has an empty <operation> entry. "
+                "Each operation is a short verb phrase."
+            )
+        primary_operations.append(text)
 
     # Validate the <responsibilities> block.
     for rchild in responsibilities_node.children:
@@ -981,9 +1162,9 @@ def _validate_component(
         alias=alias,
         name=name,
         kind=kind,
-        role=role,
-        api_intent=api_intent,
-        failure_surface=failure_surface,
+        purpose=purpose,
+        owned_invariants=tuple(owned_invariants),
+        primary_operations=tuple(primary_operations),
         resp_refs=tuple(resp_refs),
         is_foundation=is_foundation,
     )
@@ -1528,6 +1709,7 @@ class ArchDoc:
     techspec: str
     pubapi: str
     privapi: str
+    failure_surface: str
     policies: tuple[Policy, ...]
     external_deps: tuple[str, ...]
     subcomponents: tuple[Subcomponent, ...]
@@ -1538,6 +1720,7 @@ _COMPARCH_ALLOWED_CHILDREN = {
     "technical-specification",
     "public-surface",
     "private-surface",
+    "failure-surface",
     "policies",
     "dependencies",
     "subcomponents",
@@ -1547,6 +1730,7 @@ _COMPARCH_REQUIRED_ORDER = (
     "technical-specification",
     "public-surface",
     "private-surface",
+    "failure-surface",
     "policies",
     "dependencies",
     "subcomponents",
@@ -1653,6 +1837,7 @@ def validate_arch_doc(
     )
     pubapi = _validate_fragment_section(section_map["public-surface"], "public-surface")
     privapi = _validate_fragment_section(section_map["private-surface"], "private-surface")
+    failure_surface = _validate_fragment_section(section_map["failure-surface"], "failure-surface")
 
     policies = _validate_arch_doc_policies(
         section_map["policies"], known_resp_ids=known_resp_ids_for_policies
@@ -1684,6 +1869,7 @@ def validate_arch_doc(
         techspec=techspec,
         pubapi=pubapi,
         privapi=privapi,
+        failure_surface=failure_surface,
         policies=policies,
         external_deps=external_deps,
         subcomponents=subcomponents,

@@ -39,6 +39,11 @@ class FragmentKind(str, Enum):
     PRIVAPI = "privapi"
     POLICIES = "policies"
     DEPS = "deps"
+    # ``failuresurface`` is stored as one token (no underscore) to
+    # satisfy the single-token invariant enforced below — owner IDs
+    # contain underscores so the fragment-ID parser must split on the
+    # last underscore.
+    FAILURE_SURFACE = "failuresurface"
 
 
 # Enforce the single-token invariant at import time so a future

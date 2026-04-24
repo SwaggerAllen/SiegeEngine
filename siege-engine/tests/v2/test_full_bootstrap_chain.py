@@ -244,9 +244,16 @@ def _sysarch_xml(session, project_id: str) -> str:
             f'<component alias="{alias}">'
             f"<name>{r.name}Service</name>"
             f"<kind>domain</kind>"
-            f"<role>Own the {r.name} subsystem.</role>"
-            f"<api-intent>public API for {r.name}</api-intent>"
-            f"<failure-surface>{r.name}Service bug corrupts its owned state.</failure-surface>"
+            f"<purpose>Owns the {r.name} subsystem for the project.</purpose>"
+            f"<owned-invariants>"
+            f"<invariant>{r.name} state stays consistent</invariant>"
+            f"<invariant>{r.name} writes are journaled</invariant>"
+            f"</owned-invariants>"
+            f"<primary-operations>"
+            f"<operation>get {r.name} state</operation>"
+            f"<operation>mutate {r.name} state</operation>"
+            f"<operation>emit {r.name} events</operation>"
+            f"</primary-operations>"
             f"<responsibilities>{resp_xml}</responsibilities>"
             f"{foundation_tag}"
             f"</component>"
@@ -261,9 +268,16 @@ def _sysarch_xml(session, project_id: str) -> str:
             f'<component alias="{pres_alias}">'
             f"<name>{presentational_resp_name}Service</name>"
             f"<kind>presentational</kind>"
-            f"<role>Own the {presentational_resp_name} subsystem.</role>"
-            f"<api-intent>public API for {presentational_resp_name}</api-intent>"
-            f"<failure-surface>Render bug hides critical state from the operator.</failure-surface>"
+            f"<purpose>Lets the operator view and act on {presentational_resp_name}.</purpose>"
+            f"<owned-invariants>"
+            f"<invariant>rendered {presentational_resp_name} state matches the backend</invariant>"
+            f"<invariant>only one edit session per operator at a time</invariant>"
+            f"</owned-invariants>"
+            f"<primary-operations>"
+            f"<operation>render current {presentational_resp_name} state</operation>"
+            f"<operation>submit an operator action</operation>"
+            f"<operation>cancel an in-flight edit</operation>"
+            f"</primary-operations>"
             f'<responsibilities><resp id="{pres_resp.id}"/></responsibilities>'
             f"</component>"
         )
@@ -284,7 +298,15 @@ def _sysarch_xml(session, project_id: str) -> str:
     return (
         "<introduction>Chain integration test: stub intro.</introduction>"
         "<sysarch>"
-        "<techspec>Python + FastAPI + PostgreSQL event-sourced stack.</techspec>"
+        "<techspec>"
+        "<runtime>Python 3.11 FastAPI async loop.</runtime>"
+        "<persistence>PostgreSQL via SQLAlchemy.</persistence>"
+        "<write-path>Event-sourced reducer; no direct ORM writes.</write-path>"
+        "<concurrency>Async handlers + worker pool.</concurrency>"
+        "<testing>pytest integration drain harness.</testing>"
+        "<deploy>Docker on Fly.io with a Postgres sidecar.</deploy>"
+        "<technologies>FastAPI, SQLAlchemy, PostgreSQL.</technologies>"
+        "</techspec>"
         f"<components>{''.join(components)}</components>"
         "<policies></policies>"
         f"<dependencies>{deps}</dependencies>"
@@ -409,6 +431,8 @@ def _comparch_xml(session, project_id: str, prompt: str) -> str:
         "</technical-specification>"
         f"<public-surface>public API for {target.name}.</public-surface>"
         "<private-surface>Internal helpers.</private-surface>"
+        f"<failure-surface>{target.name} bug corrupts owned state; "
+        "reducer drift breaks audit trail.</failure-surface>"
         "<policies></policies>"
         "<dependencies></dependencies>"
         f"<subcomponents>{''.join(subs)}</subcomponents>"
@@ -972,6 +996,7 @@ class TestFullBootstrapChain:
                     "privapi",
                     "policies",
                     "deps",
+                    "failuresurface",
                 }, f"{comp.id} fragments = {frag_kinds}"
             for sub in subcomps:
                 frag_kinds = set(

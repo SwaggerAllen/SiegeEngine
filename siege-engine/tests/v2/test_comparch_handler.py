@@ -303,6 +303,7 @@ def _valid_comparch_simple(sub_ids: list[str], sibling_comp_ids: list[str]) -> s
         "<technical-specification>Python + PostgreSQL. FastAPI.</technical-specification>"
         "<public-surface>get_billing_state(id); record_payment().</public-surface>"
         "<private-surface>Internal helpers.</private-surface>"
+        "<failure-surface>billing corruption silently double-charges cards.</failure-surface>"
         "<policies></policies>"
         f"<dependencies>{sibling_dep}</dependencies>"
         "<subcomponents>"

@@ -146,6 +146,7 @@ def _arch_doc(
         "<technical-specification>Python + PostgreSQL.</technical-specification>"
         "<public-surface>get_billing_state(id).</public-surface>"
         "<private-surface>Internal helpers.</private-surface>"
+        "<failure-surface>billing corruption silently double-charges cards.</failure-surface>"
         f"<policies>{policy_block}</policies>"
         f'<dependencies><dep to="{sibling_comp_id}"/></dependencies>'
         "<subcomponents>"

@@ -10,6 +10,7 @@ import { findChild, findChildText, findChildren, textContent } from './types';
  *     <technical-specification>…</technical-specification>
  *     <public-surface>…</public-surface>
  *     <private-surface>…</private-surface>
+ *     <failure-surface>…</failure-surface>
  *     <policies><policy>…</policy>…</policies>
  *     <dependencies><dep to="comp_..."/></dependencies>
  *     <subcomponents>
@@ -52,6 +53,14 @@ export const comparchRenderers: XmlRendererMap = {
 
   'private-surface': (node) => (
     <CollapsibleSection summary="Private Surface">
+      <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
+        {textContent(node).trim()}
+      </p>
+    </CollapsibleSection>
+  ),
+
+  'failure-surface': (node) => (
+    <CollapsibleSection summary="Failure Surface">
       <p className="text-sm text-gray-300 m-0 whitespace-pre-wrap">
         {textContent(node).trim()}
       </p>
