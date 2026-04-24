@@ -197,37 +197,66 @@ def _resp_ids(db, project_id):
     ]
 
 
+_TECHSPEC_STUB = (
+    "<techspec>"
+    "<runtime>Python 3.11 FastAPI async loop.</runtime>"
+    "<persistence>PostgreSQL via SQLAlchemy.</persistence>"
+    "<write-path>Event-sourced reducer; no direct ORM writes.</write-path>"
+    "<concurrency>Async handlers + worker pool.</concurrency>"
+    "<testing>pytest with an integration drain harness.</testing>"
+    "<deploy>Docker on Fly.io with a Postgres sidecar.</deploy>"
+    "<technologies>FastAPI, SQLAlchemy, PostgreSQL.</technologies>"
+    "</techspec>"
+)
+
+
+def _comp_xml(
+    alias: str,
+    name: str,
+    purpose: str,
+    resp_ids: tuple[str, ...],
+    *,
+    foundation: bool = False,
+) -> str:
+    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    foundation_marker = "<foundation/>" if foundation else ""
+    return (
+        f'<component alias="{alias}">'
+        f"<name>{name}</name><kind>domain</kind>"
+        f"<purpose>{purpose}</purpose>"
+        f"<owned-invariants>"
+        f"<invariant>{alias} owns A</invariant>"
+        f"<invariant>{alias} owns B</invariant>"
+        f"</owned-invariants>"
+        f"<primary-operations>"
+        f"<operation>do {alias} one</operation>"
+        f"<operation>do {alias} two</operation>"
+        f"<operation>do {alias} three</operation>"
+        f"</primary-operations>"
+        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"{foundation_marker}"
+        "</component>"
+    )
+
+
 def _valid_sysarch(resp_ids: list[str]) -> str:
     auth_id, billing_id, foundation_id = resp_ids
     return (
         # B4 — <introduction> sibling block required.
         "<introduction>Stub intro for sysarch route tests.</introduction>"
         "<sysarch>"
-        "<techspec>Typical Python + React stack.</techspec>"
-        "<components>"
-        '<component alias="auth">'
-        "<name>Authentication</name><kind>domain</kind>"
-        "<role>Identify callers.</role>"
-        "<api-intent>authenticate().</api-intent>"
-        "<failure-surface>Auth bug blocks sign-ins.</failure-surface>"
-        f'<responsibilities><resp id="{auth_id}"/></responsibilities>'
-        "</component>"
-        '<component alias="billing">'
-        "<name>Billing</name><kind>domain</kind>"
-        "<role>Handle payments.</role>"
-        "<api-intent>get_billing_state().</api-intent>"
-        "<failure-surface>Invoice bug double-charges.</failure-surface>"
-        f'<responsibilities><resp id="{billing_id}"/></responsibilities>'
-        "</component>"
-        '<component alias="foundation">'
-        "<name>Foundation</name><kind>domain</kind>"
-        "<role>Project root, shared utilities.</role>"
-        "<api-intent>load_settings().</api-intent>"
-        "<failure-surface>Settings crash aborts startup.</failure-surface>"
-        f'<responsibilities><resp id="{foundation_id}"/></responsibilities>'
-        "<foundation/>"
-        "</component>"
-        "</components>"
+        + _TECHSPEC_STUB
+        + "<components>"
+        + _comp_xml("auth", "Authentication", "Identify callers.", (auth_id,))
+        + _comp_xml("billing", "Billing", "Handle payments.", (billing_id,))
+        + _comp_xml(
+            "foundation",
+            "Foundation",
+            "Own project root.",
+            (foundation_id,),
+            foundation=True,
+        )
+        + "</components>"
         "<policies></policies>"
         "<dependencies>"
         '<dep from="billing" to="foundation"/>'

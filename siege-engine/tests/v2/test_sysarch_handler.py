@@ -173,34 +173,18 @@ def _valid_sysarch(resp_ids: list[str]) -> str:
     return (
         "<introduction>Stub intro for sysarch handler tests.</introduction>"
         "<sysarch>"
-        "<techspec>A typical Python + React stack with event-sourced writes.</techspec>"
-        "<components>"
-        '<component alias="auth">'
-        "<name>Authentication</name>"
-        "<kind>domain</kind>"
-        "<role>Identify callers and maintain session state.</role>"
-        "<api-intent>authenticate(creds) -> Session.</api-intent>"
-        "<failure-surface>Auth bug blocks sign-ins.</failure-surface>"
-        f'<responsibilities><resp id="{auth_id}"/></responsibilities>'
-        "</component>"
-        '<component alias="billing">'
-        "<name>Billing Service</name>"
-        "<kind>domain</kind>"
-        "<role>Handle payments and subscription state.</role>"
-        "<api-intent>get_billing_state(account_id).</api-intent>"
-        "<failure-surface>Invoice bug double-charges.</failure-surface>"
-        f'<responsibilities><resp id="{billing_id}"/></responsibilities>'
-        "</component>"
-        '<component alias="foundation">'
-        "<name>Foundation</name>"
-        "<kind>domain</kind>"
-        "<role>Own project root, build config, shared utilities.</role>"
-        "<api-intent>load_settings(); configure_logging().</api-intent>"
-        "<failure-surface>Settings-loader crash aborts startup.</failure-surface>"
-        f'<responsibilities><resp id="{foundation_id}"/></responsibilities>'
-        "<foundation/>"
-        "</component>"
-        "</components>"
+        + _TECHSPEC_STUB
+        + "<components>"
+        + _comp_xml("auth", "Authentication", "Identify callers.", (auth_id,))
+        + _comp_xml("billing", "Billing Service", "Handle payments.", (billing_id,))
+        + _comp_xml(
+            "foundation",
+            "Foundation",
+            "Own project root.",
+            (foundation_id,),
+            foundation=True,
+        )
+        + "</components>"
         "<policies></policies>"
         "<dependencies>"
         '<dep from="billing" to="foundation"/>'
@@ -208,6 +192,53 @@ def _valid_sysarch(resp_ids: list[str]) -> str:
         "</dependencies>"
         "<domain-parent></domain-parent>"
         "</sysarch>"
+    )
+
+
+# Shared stubs for the post-Phase-13 micro-field sysarch grammar.
+# Kept at module scope so ``_make_valid_sysarch_xml`` and any ad-hoc
+# fixture assembly in this file can reach them.
+_TECHSPEC_STUB = (
+    "<techspec>"
+    "<runtime>Python 3.11 FastAPI async loop.</runtime>"
+    "<persistence>PostgreSQL via SQLAlchemy.</persistence>"
+    "<write-path>Event-sourced reducer; no direct ORM writes.</write-path>"
+    "<concurrency>Async handlers + worker pool.</concurrency>"
+    "<testing>pytest with an integration drain harness.</testing>"
+    "<deploy>Docker on Fly.io with a Postgres sidecar.</deploy>"
+    "<technologies>FastAPI, SQLAlchemy, PostgreSQL.</technologies>"
+    "</techspec>"
+)
+
+
+def _comp_xml(
+    alias: str,
+    name: str,
+    purpose: str,
+    resp_ids: tuple[str, ...],
+    *,
+    foundation: bool = False,
+) -> str:
+    """Render a ``<component>`` in the micro-field grammar."""
+    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    foundation_marker = "<foundation/>" if foundation else ""
+    return (
+        f'<component alias="{alias}">'
+        f"<name>{name}</name>"
+        f"<kind>domain</kind>"
+        f"<purpose>{purpose}</purpose>"
+        f"<owned-invariants>"
+        f"<invariant>{alias} owns state A</invariant>"
+        f"<invariant>{alias} owns state B</invariant>"
+        f"</owned-invariants>"
+        f"<primary-operations>"
+        f"<operation>do {alias} thing one</operation>"
+        f"<operation>do {alias} thing two</operation>"
+        f"<operation>do {alias} thing three</operation>"
+        f"</primary-operations>"
+        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"{foundation_marker}"
+        "</component>"
     )
 
 
@@ -467,7 +498,7 @@ class TestProjectSettingsTimeout:
     ):
         calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
         asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
-        assert calls[0]["timeout"] == 7200
+        assert calls[0]["config"].timeout_seconds == 7200
 
     def test_override_honored(
         self, shared_session_factory, seeded_project, seeded_resp_ids, monkeypatch
@@ -483,7 +514,7 @@ class TestProjectSettingsTimeout:
             s.close()
         calls = _patch_cli(monkeypatch, _valid_sysarch(seeded_resp_ids))
         asyncio.run(generate_sysarch({"project_id": seeded_project, "feedback": None}))
-        assert calls[0]["timeout"] == 1500
+        assert calls[0]["config"].timeout_seconds == 1500
 
 
 class TestInputDocInclusion:
@@ -556,7 +587,7 @@ class TestInputDocInclusion:
         # "# Current draft" section so the LLM knows what it's
         # refining.
         assert "# Current version" in second_prompt
-        assert "<techspec>A typical Python + React stack" in second_prompt
+        assert "Python 3.11 FastAPI async loop" in second_prompt
         assert "Reconsider dependency shape" in second_prompt
 
     def test_missing_input_document_row_does_not_crash(self, shared_session_factory, monkeypatch):

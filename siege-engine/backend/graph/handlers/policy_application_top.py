@@ -190,9 +190,7 @@ async def apply_top_level_policies(payload: dict) -> None:
         project_row = db.get(Project, project_id)
         assert project_row is not None
         settings = get_project_settings(project_row)
-        cli_timeout_seconds = settings.generation_timeout_seconds
-        cli_max_budget_usd = settings.cli_max_budget_usd
-        cli_max_output_tokens = settings.cli_max_output_tokens
+        cli_config = settings.to_cli_config()
 
         # Project vocabulary scoped to this component's reachable
         # features, same as the subreqs / comparch / subcomparch
@@ -236,9 +234,7 @@ async def apply_top_level_policies(payload: dict) -> None:
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="policy-applications",
         system_prompt=SYSTEM_PROMPT,
-        cli_timeout_seconds=cli_timeout_seconds,
-        cli_max_budget_usd=cli_max_budget_usd,
-        cli_max_output_tokens=cli_max_output_tokens,
+        cli_config=cli_config,
         prior_pending=None,
         render_prompt=_render,
         validate=_validate,

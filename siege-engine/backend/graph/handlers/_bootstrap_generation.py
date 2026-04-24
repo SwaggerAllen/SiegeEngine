@@ -32,8 +32,7 @@ Example caller binding (feature-expansion):
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="features",
         system_prompt=SYSTEM_PROMPT,
-        cli_timeout_seconds=cli_timeout_seconds,
-        cli_max_budget_usd=cli_max_budget_usd,
+        cli_config=cli_config,
         prior_pending=prior_pending,
         render_prompt=_render,
         validate=_validate,
@@ -50,7 +49,8 @@ from typing import Literal
 
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend.cli.manager import GenerationResult
+from backend.cli.config import CliInvocationConfig
+from backend.cli.manager import CliError, GenerationResult
 from backend.database import SessionLocal
 from backend.graph.handlers.feature_expansion import (
     CLI_TOOLS,
@@ -128,15 +128,12 @@ async def run_parse_validate_loop(
     *,
     root_tag: str,
     system_prompt: str,
-    cli_timeout_seconds: int,
-    cli_max_budget_usd: float,
+    cli_config: "CliInvocationConfig",
     prior_pending: str | None,
     render_prompt: Callable[..., str],
     validate: Callable[[TagNode, str], None],
     exhausted_exception_cls: type[Exception],
     log_handler_name: str,
-    thinking_effort: str | None = None,
-    cli_max_output_tokens: int | None = None,
 ) -> tuple[GenerationResult, list[GenerationResult]]:
     """Run the parse-validate retry loop for a bootstrap generation handler.
 
@@ -185,15 +182,33 @@ async def run_parse_validate_loop(
             prior_pending=effective_prior_pending,
             parse_error=parse_error,
         )
-        result = await _call_cli_with_transient_retry(
-            prompt=user_prompt,
-            system_prompt=system_prompt,
-            tools=CLI_TOOLS,
-            timeout=cli_timeout_seconds,
-            max_budget_usd=cli_max_budget_usd,
-            thinking_effort=thinking_effort,
-            max_output_tokens=cli_max_output_tokens,
-        )
+        try:
+            result = await _call_cli_with_transient_retry(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                tools=CLI_TOOLS,
+                config=cli_config,
+            )
+        except CliError as cli_exc:
+            # Fatal CLI failures (budget / context-window / auth /
+            # content-policy / invalid-arg) and exhausted transient
+            # retries land here. If the subprocess managed to emit
+            # any stdout before the abort, preserve it on the Job
+            # row so the UI's raw-output copy button surfaces the
+            # partial draft alongside the human-readable error.
+            # Especially useful on CliBudgetExceededError /
+            # max-output-tokens aborts where most of a valid draft
+            # is sitting in stdout.
+            partial = (cli_exc.partial_output or "").strip()
+            if partial:
+                logger.warning(
+                    "%s CLI error carried %d chars of partial output; "
+                    "persisting to Job._failed_raw_output",
+                    log_handler_name,
+                    len(partial),
+                )
+                _record_failed_raw_output(partial)
+            raise
         attempts.append(result)
 
         try:

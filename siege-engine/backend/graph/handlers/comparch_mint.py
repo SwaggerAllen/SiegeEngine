@@ -176,6 +176,13 @@ async def mint_comparch(payload: dict) -> None:
         _emit_fragment(db, project_id, component_id, FragmentKind.TECHSPEC, doc.techspec)
         _emit_fragment(db, project_id, component_id, FragmentKind.PUBAPI, doc.pubapi)
         _emit_fragment(db, project_id, component_id, FragmentKind.PRIVAPI, doc.privapi)
+        _emit_fragment(
+            db,
+            project_id,
+            component_id,
+            FragmentKind.FAILURE_SURFACE,
+            doc.failure_surface,
+        )
         # The policies and deps sections are stored as their raw
         # XML content in their fragment — serialize the tuples
         # back to XML for the fragment body so downstream readers

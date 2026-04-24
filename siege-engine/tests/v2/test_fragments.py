@@ -20,6 +20,7 @@ class TestFragmentKind:
             "privapi",
             "policies",
             "deps",
+            "failuresurface",
         }
 
     def test_all_kinds_are_single_token(self):

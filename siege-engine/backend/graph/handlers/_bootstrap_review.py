@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 
+from backend.cli.config import CliInvocationConfig
 from backend.database import SessionLocal
 from backend.graph import events as ev
 from backend.graph.broadcast import commit_and_publish
@@ -48,10 +49,8 @@ async def run_review(
     draft_id: str | None,
     system_prompt: str,
     user_prompt: str,
-    cli_timeout_seconds: int,
-    cli_max_budget_usd: float,
+    cli_config: CliInvocationConfig,
     log_handler_name: str,
-    cli_max_output_tokens: int | None = None,
 ) -> None:
     """Run one review CLI call, commit ``DraftReviewUpdated`` on success.
 
@@ -69,9 +68,7 @@ async def run_review(
     result = await _call_cli_with_transient_retry(
         prompt=user_prompt,
         system_prompt=system_prompt,
-        timeout=cli_timeout_seconds,
-        max_budget_usd=cli_max_budget_usd,
-        max_output_tokens=cli_max_output_tokens,
+        config=cli_config,
     )
 
     review_text = (result.text or "").strip()

@@ -18,6 +18,7 @@ and validated by
       <technical-specification>…role-level techspec…</technical-specification>
       <public-surface>…types / signatures / events…</public-surface>
       <private-surface>…internal types + helpers…</private-surface>
+      <failure-surface>…concrete failure modes this component produces…</failure-surface>
       <policies>
         <policy>
           <name>…</name>
@@ -45,7 +46,7 @@ and validated by
       </sub-dependencies>
     </comparch>
 
-Seven sections in fixed order. First five are fragments
+Eight sections in fixed order. First four are fragments
 (persistent, transcluded into dependents' regen prompts). Last
 two are mint-time directives: ``<subcomponents>`` mints
 ``comp_*`` children and ``<sub-dependencies>`` emits dependency
@@ -99,19 +100,21 @@ minted so far, and optionally prior approved / pending drafts, \
 user feedback, and parse-validate errors.
 
 Your job is to produce a single ``<comparch>`` block containing \
-seven sections in a fixed order: a role-level technical \
+eight sections in a fixed order: a role-level technical \
 specification, the component's public surface, its private \
-surface, the policies it mints locally, its external \
+surface, the concrete failure surface this component can \
+produce, the policies it mints locally, its external \
 dependencies, its subcomponent decomposition, and the dependency \
 edges between those subcomponents. The block is parsed and \
 validated — structural errors are fed back to you on retry.
 
 # Output format
 
-Emit exactly one ``<comparch>`` block with these seven children \
+Emit exactly one ``<comparch>`` block with these eight children \
 in this order: ``<technical-specification>`` → \
-``<public-surface>`` → ``<private-surface>`` → ``<policies>`` → \
-``<dependencies>`` → ``<subcomponents>`` → ``<sub-dependencies>``. \
+``<public-surface>`` → ``<private-surface>`` → \
+``<failure-surface>`` → ``<policies>`` → ``<dependencies>`` → \
+``<subcomponents>`` → ``<sub-dependencies>``. \
 Example (abbreviated):
 
     <comparch>
@@ -141,6 +144,14 @@ Example (abbreviated):
     def _rotate_stale_tokens(db: Session, cutoff: datetime) -> int: ...
     ```
       </private-surface>
+      <failure-surface>
+    Credential-verifier regression admits empty-hash matches and \
+    lets any attacker sign in as any account (auth bypass); a bug \
+    in session rotation issues duplicate active sessions for one \
+    principal (silent identity-state divergence); session-store \
+    writes bypassing the reducer corrupt the audit trail (log \
+    drift, platform-integrity incident).
+      </failure-surface>
       <policies>
         <policy>
           <name>Failed Login Rate Limiting</name>
@@ -206,14 +217,14 @@ Example (abbreviated):
 
 * Emit **exactly one** ``<comparch>`` root block. Nothing before, \
 nothing after.
-* The seven children **must appear in this order**: \
+* The eight children **must appear in this order**: \
 ``<technical-specification>`` → ``<public-surface>`` → \
-``<private-surface>`` → ``<policies>`` → ``<dependencies>`` → \
-``<subcomponents>`` → ``<sub-dependencies>``. Out-of-order \
-sections are a structural error.
+``<private-surface>`` → ``<failure-surface>`` → ``<policies>`` → \
+``<dependencies>`` → ``<subcomponents>`` → ``<sub-dependencies>``. \
+Out-of-order sections are a structural error.
 * No unknown top-level children under ``<comparch>``.
 
-## Fragment sections (techspec / pubapi / privapi)
+## Fragment sections (techspec / pubapi / privapi / failure-surface)
 
 * ``<technical-specification>`` is a **role-level** paragraph \
 describing the component's technology and architecture choices. \
@@ -251,7 +262,21 @@ regen, but **not** to sibling dependents. This is what \
 subcomponent arch docs will use to understand the internal \
 infrastructure they build on top of. Same fenced-code-block \
 convention as the public surface.
-* All three fragment sections must be non-empty. Do not put \
+* ``<failure-surface>`` names the **concrete failure modes** \
+this component can produce now that you have the full techspec + \
+pubapi + privapi in hand. This is the sharper, component-local \
+version of the sketchy sysarch-level failure rehearsal — at this \
+tier you know the persistence pattern, the exact call shapes, and \
+the invariants the subcomponents will enforce, so the failure \
+surface you write here is what downstream fanin and review passes \
+will use to pick invariants to check. Name the specific thing that \
+breaks, not the impact category. Good: "Credential-verifier \
+regression admits empty-hash matches and lets any attacker sign \
+in as any account; session-store writes bypassing the reducer \
+corrupt the audit trail." Bad: "service becomes unreliable", \
+"data issues", "users affected". Pack multiple distinct failure \
+modes into one paragraph separated by semicolons or sentences.
+* All four fragment sections must be non-empty. Do not put \
 nested XML tags inside them — only prose and fenced code blocks.
 
 ## Policies

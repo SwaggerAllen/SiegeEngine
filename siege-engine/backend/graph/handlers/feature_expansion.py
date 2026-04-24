@@ -145,9 +145,7 @@ async def generate_feature_expansion(payload: dict) -> None:
         project_row = db.get(Project, project_id)
         assert project_row is not None  # expansion node existed, so does the project
         settings = get_project_settings(project_row)
-        cli_timeout_seconds = settings.generation_timeout_seconds
-        cli_max_budget_usd = settings.cli_max_budget_usd
-        cli_max_output_tokens = settings.cli_max_output_tokens
+        cli_config = settings.to_cli_config(thinking_effort="max")
         system_prompt = render_system_prompt()
     finally:
         db.close()
@@ -215,9 +213,7 @@ async def generate_feature_expansion(payload: dict) -> None:
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="features",
         system_prompt=system_prompt,
-        cli_timeout_seconds=cli_timeout_seconds,
-        cli_max_budget_usd=cli_max_budget_usd,
-        cli_max_output_tokens=cli_max_output_tokens,
+        cli_config=cli_config,
         prior_pending=prior_pending,
         render_prompt=_render,
         validate=_validate,
@@ -226,7 +222,6 @@ async def generate_feature_expansion(payload: dict) -> None:
         # Phase-11 followup B6: the three top-of-chain tiers run at
         # max thinking effort because their output quality shapes
         # every downstream tier. Propagation tiers stay on default.
-        thinking_effort="max",
     )
 
     persist_draft(

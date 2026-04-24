@@ -133,9 +133,7 @@ async def generate_reference(payload: dict) -> None:
         if project_row is None:
             raise ReferenceHandlerError(f"Project {project_id!r} not found")
         settings = get_project_settings(project_row)
-        cli_timeout_seconds = settings.generation_timeout_seconds
-        cli_max_budget_usd = settings.cli_max_budget_usd
-        cli_max_output_tokens = settings.cli_max_output_tokens
+        cli_config = settings.to_cli_config()
     finally:
         db.close()
 
@@ -163,9 +161,7 @@ async def generate_reference(payload: dict) -> None:
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="reference",
         system_prompt=SYSTEM_PROMPT,
-        cli_timeout_seconds=cli_timeout_seconds,
-        cli_max_budget_usd=cli_max_budget_usd,
-        cli_max_output_tokens=cli_max_output_tokens,
+        cli_config=cli_config,
         prior_pending=prior_pending,
         render_prompt=_render,
         validate=_validate,

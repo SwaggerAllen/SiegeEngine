@@ -125,3 +125,30 @@ class TestTransientFallback:
         # still classifies correctly.
         exc = _classify_cli_failure(1, "BUDGET EXCEEDED: max-budget reached")
         assert isinstance(exc, CliBudgetExceededError)
+
+
+class TestPartialOutputPreservation:
+    """The classifier must attach any pre-abort stdout to the
+    raised exception so handlers can persist it on the Job row."""
+
+    def test_partial_output_defaults_empty(self) -> None:
+        exc = _classify_cli_failure(1, "500 Internal Server Error")
+        assert exc.partial_output == ""
+
+    def test_partial_output_attached_on_fatal_budget_exit(self) -> None:
+        partial = "<sysarch><techspec>truncated mid-paragraph..."
+        exc = _classify_cli_failure(1, "max-budget exceeded", partial_output=partial)
+        assert isinstance(exc, CliBudgetExceededError)
+        assert exc.partial_output == partial
+
+    def test_partial_output_attached_on_transient_fallback(self) -> None:
+        partial = "some bytes"
+        exc = _classify_cli_failure(1, "500 upstream overload", partial_output=partial)
+        assert isinstance(exc, CliTransientError)
+        assert exc.partial_output == partial
+
+    def test_partial_output_attached_on_context_window_exit(self) -> None:
+        partial = "<sysarch>...</sysarch>"
+        exc = _classify_cli_failure(1, "context window exceeded", partial_output=partial)
+        assert isinstance(exc, CliContextWindowError)
+        assert exc.partial_output == partial

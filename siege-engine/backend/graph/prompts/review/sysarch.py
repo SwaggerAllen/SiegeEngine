@@ -12,30 +12,36 @@ _HANDLES_INTRO = """\
 Sysarch is the compression pass — it collapses responsibilities \
 into components, fixes component boundaries, and picks the \
 tech stack. Every downstream tier reads these handles as \
-read-only: names / role / api-intent / policies are the \
-compressed form comparch thinks against. If names are generic \
-("Service", "Manager", "Hub") or role prose is category-speak \
-("manages X", "handles Y"), comparch reasons against empty \
-handles and produces generic techspecs. Be strict here.
+read-only: names / purpose / owned-invariants / primary-\
+operations / policies are the compressed form comparch thinks \
+against. If names are generic ("Service", "Manager", "Hub") or \
+purpose prose is category-speak ("manages X", "handles Y"), \
+comparch reasons against empty handles and produces generic \
+techspecs. Be strict here.
 """
 
 _HANDLES = """\
 - Are component names distinctive, domain-shaped, and free of \
 anti-patterns (Workspace / Dashboard / Console / UI / Hub / \
 Service)? Flag generic names.
-- Are roles (``<role>``) specific about what the component \
-does, not what it IS? A role should describe behavior, not \
-category. Flag category-speak.
-- Are api-intents specific enough for downstream pubapi \
-shaping? Flag vague "coordinates X" / "manages Y" prose.
-- Is every ``<failure-surface>`` a **concrete failure mode** \
-(data loss, invariant violation, silent degradation, security \
-breach, specific wrong-output shape) rather than an impact \
-category? Flag surfaces that say "service becomes unreliable", \
-"data issues", "users affected" — those describe consequences, \
-not the specific thing that breaks. The failure-surface is the \
-signal comparch / fanin readers use to pick invariants to \
-check; a vague surface produces vague invariants.
+- Is each ``<purpose>`` a single specific sentence that names \
+the component-distinctive *why*, not the category it sits in? \
+Flag category-speak ("handles X", "manages Y").
+- Does each ``<owned-invariants>`` list 2-4 concrete noun \
+phrases (durable state, guarantees)? Flag impact-category \
+padding ("must be reliable") or invariants that could belong \
+to any component.
+- Does each ``<primary-operations>`` list 3-6 concrete verb \
+phrases callers actually invoke? Flag category verbs ("handle", \
+"manage", "coordinate") and invented operations that don't \
+match the responsibilities.
+- **For presentational components specifically:** do the \
+invariants and operations describe rendering / interaction / \
+UI-local state, or do they parrot the domain parent's business \
+invariants back? A presentational whose owned-invariants read \
+identically to its domain parent's is under-specified — flag \
+it. The presentational owns display rules, gesture wiring, \
+navigation, and UI-state; the domain owns business state.
 - Does every top-level responsibility appear on exactly one \
 ``<decomposition>`` edge, mapping it to a single owning \
 component? Flag orphaned resps, doubly-mapped resps, or \
@@ -54,9 +60,9 @@ Component boundaries and tech-stack choices land here and are \
 expensive to undo — comparch, subcomparch, and impl all inherit \
 them. Watch for components that bundle unrelated work (no \
 coherent axis), foundation components used as a dumping ground, \
-and techspec prose that's thin ("Python, React") rather than \
-specific about persistence / concurrency / testing / \
-deployment. Also audit policies: an AGPL-style universal policy \
+and techspec blocks that are thin ("Python, React" in \
+``<technologies>`` but nothing specific in the narrative \
+blocks). Also audit policies: an AGPL-style universal policy \
 shouldn't have a ``<required>`` responsibility; a policy that \
 targets a specific capability should.
 """
@@ -66,9 +72,13 @@ _ARCHITECTURE = """\
 domain / workflow)? Flag forced / unnatural groupings.
 - Do components have coherent responsibilities (one axis of \
 work) or do they bundle unrelated concerns?
-- Is the tech spec (``<techspec>``) specific about \
-language/runtime, persistence, concurrency, testing, \
-deployment — or thin ("Python, React")?
+- Are the labeled techspec blocks (``<runtime>``, \
+``<persistence>``, ``<write-path>``, ``<concurrency>``, \
+``<testing>``, ``<deploy>``) each specific enough that a \
+downstream tier can act on them? Flag thin or filler blocks.
+- Does ``<technologies>`` faithfully record the concrete \
+framework / library / service choices named in the input? Flag \
+invented technologies or missing ones.
 - Are cross-cutting concerns handled as policies / foundation \
 components rather than duplicated?
 - Is the foundation component (if any) genuinely foundational, \

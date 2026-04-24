@@ -3,10 +3,11 @@
 The sysarch pass is the joint-reasoning step in the cold-start
 chain. It takes the approved feature set and the approved
 top-level responsibilities and produces the component graph:
-top-level components (with role + API intent + assigned
-responsibilities + optional foundation marker), top-level
-policies, dependency edges, domain-parent edges, and a
-system-level technical specification.
+top-level components (with micro-fields: purpose, owned-invariants,
+primary-operations + assigned responsibilities + optional foundation
+marker), top-level policies, dependency edges, domain-parent edges,
+and a system-level technical specification structured into labeled
+blocks.
 
 Output format (parsed by :mod:`backend.graph.parsers.xml_sections`
 and validated by
@@ -14,15 +15,28 @@ and validated by
 
     <sysarch>
       <techspec>
-        …project-level tech spec paragraph(s)…
+        <runtime>…language + runtime + process model…</runtime>
+        <persistence>…storage pattern + schema approach…</persistence>
+        <write-path>…event sourcing / direct mutations / CQRS…</write-path>
+        <concurrency>…single-threaded / async / workers / locks…</concurrency>
+        <testing>…test pyramid + frameworks…</testing>
+        <deploy>…build + deployment shape…</deploy>
+        <technologies>…verbatim concrete choices from the input…</technologies>
       </techspec>
       <components>
         <component alias="billing">
           <name>Billing Service</name>
           <kind>domain</kind>
-          <role>…role paragraph…</role>
-          <api-intent>…api intent paragraph…</api-intent>
-          <failure-surface>…one sentence naming the concrete failure mode…</failure-surface>
+          <purpose>…one sentence, why this component exists.…</purpose>
+          <owned-invariants>
+            <invariant>…short noun phrase…</invariant>
+            <invariant>…</invariant>
+          </owned-invariants>
+          <primary-operations>
+            <operation>…short verb phrase…</operation>
+            <operation>…</operation>
+            <operation>…</operation>
+          </primary-operations>
           <responsibilities>
             <resp id="resp_abc12345"/>
             <resp id="resp_def67890"/>
@@ -31,9 +45,9 @@ and validated by
         <component alias="foundation">
           <name>Foundation</name>
           <kind>domain</kind>
-          <role>…</role>
-          <api-intent>…</api-intent>
-          <failure-surface>…</failure-surface>
+          <purpose>…</purpose>
+          <owned-invariants>…</owned-invariants>
+          <primary-operations>…</primary-operations>
           <responsibilities>…</responsibilities>
           <foundation/>
         </component>
@@ -140,32 +154,41 @@ with these five children in this order: ``<techspec>``, \
     </introduction>
     <sysarch>
       <techspec>
-    Python 3.11 backend on FastAPI with a PostgreSQL primary \
-store via SQLAlchemy. React 18 frontend built with Vite and \
-React Query. Background jobs run on a custom lightweight queue. \
-Anthropic Claude via the claude CLI is the only LLM surface; \
-tokens are recorded in a telemetry side table on every call. \
-All domain writes are event-sourced through a central reducer.
+        <runtime>Python 3.11 FastAPI process per environment; \
+a single-process async event loop fronts the API.</runtime>
+        <persistence>PostgreSQL primary with SQLAlchemy; every \
+domain entity maps to its own table keyed by a typed ID.</persistence>
+        <write-path>All domain writes go through a single \
+event-sourced reducer; no direct ORM writes from handlers.</write-path>
+        <concurrency>Background jobs run on a custom worker pool; \
+long-lived external calls are isolated behind the reducer's \
+event boundary.</concurrency>
+        <testing>pytest unit coverage on handlers plus a \
+full-chain integration test that drains the job queue in a \
+single-threaded harness.</testing>
+        <deploy>Docker image built by CI; deployed as a single \
+container with a Postgres sidecar on Fly.io.</deploy>
+        <technologies>FastAPI, SQLAlchemy, PostgreSQL, React 18, \
+Vite, React Query, Anthropic Claude via the claude CLI, \
+Fly.io, Docker.</technologies>
       </techspec>
       <components>
         <component alias="billing">
           <name>Billing Service</name>
           <kind>domain</kind>
-          <role>Handle subscription state, payment collection, \
-invoice generation and delivery, and account suspension on \
-payment failure. Exposes a small internal API that other \
-domains use to check billing status and a webhook endpoint for \
-payment provider callbacks.</role>
-          <api-intent>Internal REST + event hooks: \
-``get_billing_state(account_id)``, \
-``record_payment(account_id, amount, provider_ref)``, \
-``BillingStateChanged`` event on transitions. Payment provider \
-integration lives inside this component; other components only \
-see the stable internal interface.</api-intent>
-          <failure-surface>Invoice emission bug charges the \
-wrong customer or double-charges; payment-collector outage \
-stalls activation without a retry path; grace-period clock \
-drift silently suspends paying accounts.</failure-surface>
+          <purpose>Owns the subscription and payment lifecycle \
+for every account.</purpose>
+          <owned-invariants>
+            <invariant>exactly one active subscription per account</invariant>
+            <invariant>every charge traces to an invoice row</invariant>
+            <invariant>grace-period expiry suspends access atomically</invariant>
+          </owned-invariants>
+          <primary-operations>
+            <operation>fetch the current billing state for an account</operation>
+            <operation>record a payment attempt and its outcome</operation>
+            <operation>emit a subscription-changed event on transitions</operation>
+            <operation>reconcile webhook callbacks from the payment provider</operation>
+          </primary-operations>
           <responsibilities>
             <resp id="resp_billing001"/>
             <resp id="resp_invoicing2"/>
@@ -174,15 +197,17 @@ drift silently suspends paying accounts.</failure-surface>
         <component alias="auth">
           <name>Authentication</name>
           <kind>domain</kind>
-          <role>Verify the identity of callers and establish \
-session state that downstream components can read.</role>
-          <api-intent>``authenticate(credentials) -> Session``, \
-``resolve_session(token) -> Principal | None``. No password \
-storage details exposed at this layer — those are internal.</api-intent>
-          <failure-surface>Credential-verifier regression blocks \
-all sign-ins; session-store bug silently degrades authenticated \
-state into anonymous; token-refresh race issues duplicate \
-sessions for one account.</failure-surface>
+          <purpose>Verifies the identity of callers and issues \
+session state downstream components can trust.</purpose>
+          <owned-invariants>
+            <invariant>every active session maps to one account</invariant>
+            <invariant>credentials are hashed at rest</invariant>
+          </owned-invariants>
+          <primary-operations>
+            <operation>authenticate credentials into a session</operation>
+            <operation>resolve a session token into a principal</operation>
+            <operation>revoke an active session on demand</operation>
+          </primary-operations>
           <responsibilities>
             <resp id="resp_auth00001"/>
           </responsibilities>
@@ -190,19 +215,17 @@ sessions for one account.</failure-surface>
         <component alias="foundation">
           <name>Foundation</name>
           <kind>domain</kind>
-          <role>Own the project root: build config, package init, \
-cross-cutting utilities, top-level entry point, env config \
-loader, shared base types used by multiple subsystems. \
-Everything that lives in the project's root folder and doesn't \
-belong to any specific component lives here.</role>
-          <api-intent>``load_settings()``, \
-``configure_logging()``, shared base classes \
-(``Handler``, ``Event``), and the main application factory \
-other components import at startup.</api-intent>
-          <failure-surface>A bad settings loader crashes the \
-app at startup; a broken shared base class corrupts every \
-handler that subclasses it; missing logging config blinds \
-every downstream component.</failure-surface>
+          <purpose>Owns the project root: shared utilities, the \
+entry point, the env config loader, and shared base types.</purpose>
+          <owned-invariants>
+            <invariant>a single source of truth for app settings</invariant>
+            <invariant>shared handler/event base types stay versioned together</invariant>
+          </owned-invariants>
+          <primary-operations>
+            <operation>load settings from the environment</operation>
+            <operation>configure logging for the whole app</operation>
+            <operation>expose the application factory to startup</operation>
+          </primary-operations>
           <responsibilities>
             <resp id="resp_config001"/>
           </responsibilities>
@@ -254,34 +277,50 @@ are a structural error.
 
 ## Techspec
 
-* ``<techspec>`` is the project-level technical specification. \
-The comparch pass (producing per-component subcomponent \
-decomposition) will read this to decide internal component \
-structure — which concurrency model, which persistence pattern, \
-which cross-cutting framework choices shape the inside of each \
-component. Individual implementation plans downstream read it \
-to choose libraries and dependency versions. Be specific: \
-language + runtime version, storage and schema approach, the \
-write-path pattern (direct mutations / event sourcing / \
-command-handler split), the concurrency model (single-threaded \
-worker / async / multi-process), the testing approach, the \
-build + deployment shape.
-* A ``<techspec>`` that only lists language choices ("Python, \
-React") is too thin — downstream passes cannot tell from \
-"Python" alone whether they should write handlers around \
-SQLAlchemy sessions or around a write-through cache. Say the \
-**pattern**, not just the ingredient. If the project has \
-architectural non-negotiables (all writes event-sourced; all \
-LLM calls logged; no direct DB access outside the reducer), \
-name them here — downstream passes will treat them as \
+* ``<techspec>`` is the project-level technical specification, \
+structured into seven fixed labeled blocks in order: \
+``<runtime>`` → ``<persistence>`` → ``<write-path>`` → \
+``<concurrency>`` → ``<testing>`` → ``<deploy>`` → \
+``<technologies>``. Each block is **1-2 short sentences** (one \
+sentence is fine when the call is unambiguous). No free prose \
+outside the labeled blocks; no nested tags inside them; no \
+reordering. The comparch pass reads each block back verbatim \
+when deciding internal component structure.
+* ``<runtime>`` — language + language version + process model \
+(single-process async loop / multi-process worker / BEAM actor \
+tree, etc).
+* ``<persistence>`` — storage engine + schema approach (relational \
+with per-entity tables / document store with typed keys / \
+hybrid).
+* ``<write-path>`` — the write pattern that every downstream \
+component must honour: direct ORM writes / event-sourced \
+reducer / command-handler split / CQRS, etc.
+* ``<concurrency>`` — concurrency model and how long-lived work \
+is isolated: single-threaded / async I/O / worker pool / \
+dedicated process per tenant.
+* ``<testing>`` — test pyramid shape + frameworks (pytest + \
+integration drain / Jest + Playwright / ExUnit + property \
+tests).
+* ``<deploy>`` — build + deployment shape (Docker image on CI / \
+single Fly.io container / Kubernetes + Helm / static site + \
+edge functions).
+* ``<technologies>`` — verbatim list of concrete framework / \
+library / service choices named in the input document. This \
+block exists because the upstream tiers strip the input's \
+technology decisions during extraction and compression; if you \
+don't record them here they are lost. Comma-separated, \
+normalized casing, one line. Do **not** invent technologies \
+that the input didn't name — this is a record of the input's \
+choices, not a recommendation.
+* Prefer the **pattern** in each narrative block, not just the \
+ingredient. "Python 3.11" is underspecified; "Python 3.11 FastAPI \
+process per environment; single-process async event loop fronts \
+the API" is a real handle.
+* If the project has architectural non-negotiables (all writes \
+event-sourced; all LLM calls logged; no direct DB access \
+outside the reducer), name them inside the relevant block. \
+``<write-path>`` is the usual home for reducer / event-log \
 invariants.
-* Structure the spec as paragraphs separated by a blank line \
-(``\n\n``). Each paragraph addresses one concern — \
-language/runtime, persistence, concurrency model, testing, \
-build + deploy, architectural invariants. Don't use bullet \
-lists or headings; the downstream renderer splits on blank \
-lines and wraps each paragraph in its own block, so the blank \
-line between paragraphs is the structural signal.
 
 ## Components
 
@@ -291,22 +330,11 @@ letters, digits, and underscores; must start with a letter; 1 to \
 32 characters; regex ``^[a-z][a-z0-9_]{0,31}$``. Aliases are \
 unique within ``<components>`` — no two components may share one.
 * Each ``<component>`` must contain exactly one ``<name>``, one \
-``<kind>``, one ``<role>``, one ``<api-intent>``, one \
-``<failure-surface>``, and one ``<responsibilities>`` block.
-* ``<failure-surface>`` is **required** and is a single sentence \
-naming the **concrete failure modes** this component can \
-produce (data loss, invariant violation, silent degradation, \
-security breach, specific wrong-output shape). You have the \
-architectural context to write this at the component grain — \
-the responsibility atoms that feed you don't, which is why this \
-field lives here. Name the specific thing that breaks, not the \
-impact category. Good: "Reducer drift is a platform-integrity \
-incident; a non-reducer write path is an invariant violation; \
-log corruption is project data loss." Bad: "service becomes \
-unreliable"; "data issues"; "users affected". If the component \
-has multiple distinct failure modes worth naming, cram them \
-into one sentence separated by semicolons — keep it one \
-sentence so the downstream review pass can parse it as a unit.
+``<kind>``, one ``<purpose>``, one ``<owned-invariants>``, \
+one ``<primary-operations>``, and one ``<responsibilities>`` block. \
+There is no ``<failure-surface>`` at this tier — the comparch pass \
+writes a sharper, component-local failure surface once it has the \
+full techspec + pubapi + invariants in hand.
 * ``<kind>`` is either ``domain`` or ``presentational``. Domain \
 components do the structural work. Presentational components \
 render views into domain content — UIs, dashboards, CLIs, \
@@ -321,6 +349,41 @@ multiple user types hit it. A single presentational that \
 covers "everything an admin sees" or "everything a user sees" \
 is an *application*, not a slice, and it will pull in too many \
 domains and generate with too little specificity.
+* **Presentationals own presentation + interaction atoms, not \
+business-logic atoms.** This is the most common failure mode at \
+this tier and the easiest one to fall into: the LLM, asked \
+"what does the UI component own?", parrots the domain parent's \
+invariants and operations back. It doesn't. The *domain* owns \
+business invariants ("exactly one active subscription per \
+account", "credentials are hashed at rest") and business \
+operations ("record a payment", "revoke a session"). The \
+*presentational* owns **rendering** of those invariants (which \
+states are visible, which are hidden, how transitions animate), \
+**interaction** with those operations (which gestures invoke \
+which operation, how concurrent user actions are serialized), \
+and **UI-local state** (selection, draft edits, which panel is \
+open, navigation history). When you write a presentational's \
+``<purpose>``, ``<owned-invariants>``, and \
+``<primary-operations>``, the subject should be the UI, not the \
+backend. Compare:
+  * Wrong (parrots the domain): purpose "owns the subscription \
+    and payment lifecycle", invariants "exactly one active \
+    subscription per account", operations "record a payment".
+  * Right (UI-local): purpose "lets a customer review and edit \
+    their subscription", invariants "displayed price always \
+    matches the backend's current state", "one edit session per \
+    customer at a time", operations "render the current \
+    subscription", "submit a plan change for confirmation", \
+    "cancel an in-flight edit".
+* If a presentational's ``<owned-invariants>`` or \
+``<primary-operations>`` are identical to its domain parent's, \
+that is a signal you are re-describing the domain instead of \
+articulating the UI. Rewrite them to name rendering-, \
+interaction-, or navigation-level concerns. An honest empty \
+edge case is better than a duplicated invariant — if the UI \
+genuinely has no rendering invariant beyond "mirror the \
+domain", list the two rendering concerns you *do* have (e.g. \
+stale-state handling, optimistic updates) and move on.
 * **Each presentational component has 1 or 2 domain parents. \
 More than 2 is a structural error.** If the component's work \
 spans three or more domains, the task isn't one task — split \
@@ -333,7 +396,7 @@ itself a signal the presentational is combining two tasks \
 rather than surfacing one.
 * **Anti-patterns that indicate you're building an application \
 instead of a slice:** names ending in ``Workspace``, \
-``Dashboard``, ``Console``, ``UI``, or ``Hub``; roles that \
+``Dashboard``, ``Console``, ``UI``, or ``Hub``; purposes that \
 describe a collection of views ("renders the graph and the \
 review panels and the chat") rather than a single coherent \
 task; 3+ domain parents. If your first draft of the \
@@ -353,17 +416,16 @@ subscription-management task and a payment-history task — \
 those are two components). One presentational surfaces one or \
 two domains; if you find yourself listing three, the task is \
 too broad.
-* Every presentational component must open its ``<role>`` with \
-a one-sentence statement of the user task it serves — "Lets a \
-reviewer work through their outstanding review queue one \
+* Every presentational component's ``<purpose>`` is a \
+one-sentence statement of the **user task** it serves — "Lets \
+a reviewer work through their outstanding review queue one \
 artifact at a time.", "Lets a developer compose a flow \
 proposal and send it to the lobby.", etc. If that sentence \
 covers multiple unrelated tasks, the component is too big. \
-This framing sentence is load-bearing: the downstream comparch \
-pass reads ``<role>`` as the primary handle for what to \
-decompose into, and a task-shaped opener keeps the \
-decomposition focused on that task's surface rather than on a \
-grab-bag of features.
+The purpose is load-bearing: the downstream comparch pass \
+reads it as the primary handle for what to decompose into, and \
+a task-shaped purpose keeps the decomposition focused on that \
+task's surface rather than on a grab-bag of features.
 * A responsibility may appear in one presentational \
 component's ``<responsibilities>`` block **in addition to** its \
 owning domain component — and for any responsibility that has \
@@ -410,39 +472,42 @@ this component does over the category it sits in: \
 Broker" beats "Authentication"; "Bundle Resolver" beats \
 "Configuration Management". The name is the shortest handle \
 in the system — it has to earn its brevity by being specific.
-* ``<role>`` is the primary handle downstream passes use to \
-reason about this component. The subrequirements pass \
-(decomposing this component into subresponsibilities) and the \
-comparch pass (choosing its internal subcomponent decomposition) \
-will read **only** this paragraph, the ``<api-intent>``, and \
-the assigned responsibilities — not the feature list, not the \
-input doc. Write it so those passes can work without re-reading \
-upstream content. Prefer specifics: what data flows through \
-this component, what state it owns, what operations it performs \
-on which entities, what interactions it has with which other \
-components, what it explicitly does **not** own. Avoid category \
-phrases like "handles authentication" — say instead what kind \
-of credentials, what kind of sessions, what kind of callers. A \
-``<role>`` that could be copy-pasted into any project's \
-component of the same name is not pulling its weight. No \
-implementation details and no specific technology choices — \
-those belong in ``<techspec>`` or in the Phase 4 component arch \
-doc.
-* ``<api-intent>`` is the handle that dependent components read \
-to decide how to call this one. A dependent needs to know, at \
-minimum: **interaction style** (synchronous call vs async \
-event vs both), **rough call shapes** (names plus approximate \
-parameters and return shapes), **error modes** (what can fail \
-and how a caller learns), **side-effect boundaries** (what \
-state changes and whether the operation is idempotent), and \
-**event contracts** (what this component publishes that others \
-might subscribe to). Enough detail that a dependent can code \
-against the intent without a public-surface listing; not so \
-much that you are writing the full public surface — that \
-expansion happens in the Phase 4 component arch doc. Vague \
-api-intents force dependents to guess interface contracts, and \
-guesses compound when multiple components depend on the same \
-vague handle.
+* ``<purpose>`` is the one-sentence reason this component \
+exists. The subrequirements pass (decomposing this component \
+into subresponsibilities) and the comparch pass (choosing its \
+internal subcomponent decomposition) both read it first. Name \
+the component-distinctive *why* — the specific territory it \
+owns — not the category it sits in. "Handles authentication" \
+is category-speak; "verifies the identity of callers and \
+issues session state downstream components can trust" is a \
+handle. Do not cram multiple concerns into the sentence; if \
+you need an ``and``, consider whether the component is \
+actually two.
+* ``<owned-invariants>`` lists **2-4 short noun phrases** \
+naming the durable state or guarantees this component owns. \
+Each invariant is a contract that downstream comparch and \
+impl passes must preserve; together they answer "what is this \
+component *for*, structurally?". Examples: "exactly one active \
+subscription per account", "every charge traces to an invoice \
+row", "credentials are hashed at rest". Avoid impact \
+categories ("must be reliable") — an invariant must be \
+specific enough that a reviewer can point at a concrete \
+implementation and say yes/no. If you find yourself listing \
+more than four, some of them are actually sub-component \
+concerns — push them down to comparch. If you find yourself \
+listing fewer than two, the component's role is too thin.
+* ``<primary-operations>`` lists **3-6 short verb phrases** \
+naming the operations callers invoke on this component. Each \
+is a one-line handle: "authenticate credentials into a \
+session", "record a payment attempt and its outcome", "emit a \
+subscription-changed event on transitions". Downstream \
+comparch elaborates these into real pubapi signatures; at this \
+tier we just need the action handles. Phrases like "handle \
+X" or "manage Y" are category-speak — rewrite them as concrete \
+verbs ("record", "resolve", "reconcile", "emit"). The cap at \
+six keeps the sysarch-level API surface honest; if a component \
+genuinely has more than six independent primary operations, \
+split it.
 * ``<responsibilities>`` contains one or more ``<resp \
 id="resp_..."/>`` children. Each ``id`` must reference a \
 top-level responsibility from the input list, verbatim. **Every \
@@ -479,9 +544,10 @@ anything that doesn't logically belong to another top-level \
 component. See the architecture doc §Foundation components for \
 why this is required.
 * The foundation component is otherwise a normal component — \
-it has its own name, role, api-intent, and at least one \
-responsibility. The conventional default name is ``Foundation`` \
-unless the project has a more specific convention.
+it has its own name, purpose, owned-invariants, \
+primary-operations, and at least one responsibility. The \
+conventional default name is ``Foundation`` unless the project \
+has a more specific convention.
 
 ## Policies
 
@@ -561,9 +627,9 @@ to a domain component.
 * **Each presentational has 1 or 2 ``<domain-parent>`` edges — \
 3 or more is rejected by the validator.** Downstream comparch \
 for the presentational pulls in domain pubapi fragments for \
-fan-in context via these edges, and 5+ parents means the \
+fan-in context via these edges, and 3+ parents means the \
 component is surfacing too much for one task. If the \
-``<role>`` spans three or more domains, the solution is to \
+``<purpose>`` spans three or more domains, the solution is to \
 split the presentational into multiple task-focused \
 components, each with 1–2 parents — not to wire more edges on \
 the original.
@@ -586,9 +652,11 @@ assignments to multiple domain components are structural errors.
 
 * Do not include commentary about what you are doing or how you \
 arrived at the list. Output only the ``<sysarch>`` block.
-* Unescaped ``&`` and ``<`` inside ``<role>`` / ``<api-intent>`` / \
-``<techspec>`` / ``<rationale>`` text are fine — the parser \
-tolerates them.
+* Unescaped ``&`` and ``<`` inside ``<purpose>`` / ``<invariant>`` \
+/ ``<operation>`` / ``<runtime>`` / ``<persistence>`` / \
+``<write-path>`` / ``<concurrency>`` / ``<testing>`` / \
+``<deploy>`` / ``<technologies>`` / ``<rationale>`` text are \
+fine — the parser tolerates them.
 """
 
 

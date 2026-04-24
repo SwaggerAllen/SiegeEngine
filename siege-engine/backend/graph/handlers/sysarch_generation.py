@@ -137,9 +137,7 @@ async def generate_sysarch(payload: dict) -> None:
         project_row = db.get(Project, project_id)
         assert project_row is not None
         settings = get_project_settings(project_row)
-        cli_timeout_seconds = settings.generation_timeout_seconds
-        cli_max_budget_usd = settings.cli_max_budget_usd
-        cli_max_output_tokens = settings.cli_max_output_tokens
+        cli_config = settings.to_cli_config(thinking_effort="max")
         system_prompt = render_system_prompt()
 
         # Project vocabulary context — sysarch reasons across the
@@ -217,16 +215,13 @@ async def generate_sysarch(payload: dict) -> None:
     validated_output, attempts = await run_parse_validate_loop(
         root_tag="sysarch",
         system_prompt=system_prompt,
-        cli_timeout_seconds=cli_timeout_seconds,
-        cli_max_budget_usd=cli_max_budget_usd,
-        cli_max_output_tokens=cli_max_output_tokens,
+        cli_config=cli_config,
         prior_pending=prior_pending,
         render_prompt=_render,
         validate=_validate,
         exhausted_exception_cls=SysarchParseRetryExhausted,
         log_handler_name="generate_sysarch",
         # B6 — top-of-chain tier runs at max thinking effort.
-        thinking_effort="max",
     )
 
     persist_draft(

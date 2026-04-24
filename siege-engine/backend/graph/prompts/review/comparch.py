@@ -40,6 +40,14 @@ persistence / testing / build — not a one-liner.
 just method names.
 - ``<private-surface>`` is genuinely internal (helpers only \
 the subs of this comp call), not re-exported public API.
+- ``<failure-surface>`` names **concrete failure modes** \
+(auth bypass, invariant violation, data loss, silent \
+degradation, specific wrong-output shapes) rather than impact \
+categories ("service becomes unreliable", "users affected"). \
+Flag vague surfaces — the component-local failure surface is \
+sharper than the sysarch one because comparch has the full \
+techspec + pubapi in hand; if it reads the same as a sysarch \
+sketch, it's under-specified.
 """
 
 _ARCHITECTURE_INTRO = """\

@@ -576,6 +576,7 @@ class TestComparchMintFanOut:
                 "<technical-specification>Python.</technical-specification>"
                 "<public-surface>get_billing_state().</public-surface>"
                 "<private-surface>helpers.</private-surface>"
+                "<failure-surface>billing bug double-charges cards.</failure-surface>"
                 "<policies></policies>"
                 f'<dependencies><dep to="{comp_auth}"/></dependencies>'
                 "<subcomponents>"
