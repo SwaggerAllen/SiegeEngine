@@ -64,6 +64,89 @@ def test_tier_review_prompt_includes_prose_intros(tier_module, tier_name):
     )
 
 
+def test_sysarch_review_prompt_flags_external_boundary_bundling():
+    """External integrations (LLM providers, git forges, IdPs,
+    notification channels) bundled into use-site components are a
+    specific smell with a different failure surface than the
+    use-site's. Review must scan for this and flag specific
+    bundlings, not generically."""
+    system_prompt = sysarch.render_system_prompt()
+    handles_idx = system_prompt.find("Handles & structure review")
+    arch_idx = system_prompt.find("Architectural-decisions review")
+    handles_body = system_prompt[handles_idx:arch_idx]
+    assert "external" in handles_body.lower()
+    # Concrete callout for the LLM-dispatch-bundling smell.
+    assert "LLM" in handles_body or "git forge" in handles_body.lower()
+    # The reviewer should call out specific bundlings, not flag
+    # external-boundary issues abstractly.
+    assert "Flag specific bundlings" in handles_body or "specific" in handles_body.lower()
+
+
+def test_sysarch_review_prompt_flags_backend_vocab_in_presentationals():
+    """Backend transactional vocabulary in a presentational
+    component's invariants/operations is a specific leak — the LLM
+    described the backend's guarantee from the UI's viewpoint
+    instead of the UI's actual contract. Review prompt must scan
+    for this with a concrete word list."""
+    system_prompt = sysarch.render_system_prompt()
+    handles_idx = system_prompt.find("Handles & structure review")
+    arch_idx = system_prompt.find("Architectural-decisions review")
+    handles_body = system_prompt[handles_idx:arch_idx]
+    # Backend-vocab leak check is named.
+    assert "transactional" in handles_body.lower() or "persistence" in handles_body.lower()
+    # Specific forbidden words enumerated so the reviewer can grep.
+    for word in ("persist", "atomically", "commit"):
+        assert word in handles_body, f"Sysarch review must name {word!r} as a flagged word."
+
+
+def test_sysarch_review_prompt_treats_presentational_mirror_as_intended():
+    """Presentational components should mirror their domain parent's
+    resp IDs in their own ``<responsibilities>`` block — that's the
+    spec-intended pattern, not a flaw. The review prompt must say so
+    explicitly and must NOT instruct the reviewer to flag a resp
+    appearing in one domain + one presentational as "doubly-mapped."
+    Catching this in a previous prompt revision: the reviewer scored
+    a clean draft 44/100 on the basis that 35 resp IDs were
+    "double-mapped" between domain and presentational components,
+    which was the intended mirror, not a bug."""
+    system_prompt = sysarch.render_system_prompt()
+    handles_idx = system_prompt.find("Handles & structure review")
+    arch_idx = system_prompt.find("Architectural-decisions review")
+    handles_body = system_prompt[handles_idx:arch_idx]
+    # Positive framing must appear: mirror is correct.
+    assert "intended pattern" in handles_body
+    assert "mirror" in handles_body.lower()
+    # The "doubly-mapped" framing must be qualified: only flag when
+    # both endpoints are domain components, NOT the
+    # domain-plus-presentational mirror.
+    assert "domain double-ownership" in handles_body.lower() or (
+        "two *domain* components" in handles_body
+    )
+    # The parroting check must scope itself to invariants/operations
+    # *content*, not resp-ID assignment.
+    assert "content" in handles_body.lower()
+
+
+def test_reqs_review_prompt_flags_tech_leaks_in_names():
+    """The reqs tier is pre-tech-choice — sysarch owns libraries,
+    frameworks, and algorithm selection. Atom names that embed a
+    specific library/framework/algorithm author-name leak sysarch's
+    decisions back into the reqs tier and should be flagged. Wire
+    protocols (SAML, OIDC, HTTP) are fine because swapping them
+    changes what the atom means."""
+    system_prompt = requirements.render_system_prompt()
+    handles_idx = system_prompt.find("Handles & structure review")
+    arch_idx = system_prompt.find("Architectural-decisions review")
+    handles_body = system_prompt[handles_idx:arch_idx]
+    # The rule itself must appear.
+    assert "technology choices" in handles_body.lower() or "tech-choice" in handles_body.lower()
+    # Concrete bad-example renames so the reviewer has pattern shape.
+    assert "Liquid" in handles_body
+    assert "Sugiyama" in handles_body
+    # The carve-out that wire protocols are fine must be explicit.
+    assert "SAML" in handles_body or "wire-protocol" in handles_body.lower()
+
+
 def test_reqs_review_prompt_flags_missing_nfr_atoms():
     """The reqs review is the platform's last chance to catch a
     missing NFR atom before sysarch compresses. The prompt must

@@ -307,3 +307,77 @@ class TestDiscard:
             if j.payload.get("project_id") == project_with_reqs.id
         ]
         assert fresh_gens  # At least one enqueued
+
+
+class TestReset:
+    """``POST /requirements/reset`` rolls the whole downstream subtree
+    back to the empty state. The sysarch node in particular must be
+    *deleted*, not just cleared — when reqs was approved the sysarch
+    node was bootstrapped (by ``reqs_mint``), and leaving it behind
+    with empty content makes the Sysarch panel look kickable from the
+    UI, which produces the zero-resp generation failure mode.
+    ``reqs_mint`` re-bootstraps a fresh sysarch node on the next
+    approval (its bootstrap call is guarded on absence).
+    """
+
+    def test_reset_deletes_sysarch_node(self, client, project_with_reqs, db, monkeypatch):
+        # Put the reqs node into the approved state the reset flow
+        # requires. ``has_been_approved`` is content-based, so we
+        # just set content directly rather than running the full
+        # generate → approve → mint chain.
+        pid = project_with_reqs.id
+        reqs_node = db.execute(
+            select(Node).where(
+                Node.project_id == pid,
+                Node.tier == "reqs",
+            )
+        ).scalar_one()
+        reqs_node.content = (
+            "<requirements><responsibility><name>x</name><feats/></responsibility></requirements>"
+        )
+
+        # Seed one top-level resp and the sysarch node (as
+        # ``reqs_mint`` would have at approval time).
+        resp_id = mint(db, Kind.RESP)
+        append_event(
+            db,
+            pid,
+            ev.NodeCreated(
+                node_id=resp_id,
+                tier="resp",
+                kind="domain",
+                parent_id=None,
+                name="x",
+                display_order=0,
+                content="x",
+            ),
+        )
+        from backend.graph.sysarch import bootstrap_sysarch_node
+
+        sysarch_id = bootstrap_sysarch_node(db, pid)
+        db.commit()
+
+        # Sanity: both nodes exist before the reset.
+        assert (
+            db.execute(select(Node).where(Node.id == sysarch_id)).scalar_one_or_none() is not None
+        )
+        assert db.execute(select(Node).where(Node.id == resp_id)).scalar_one_or_none() is not None
+
+        resp = client.post(f"/api/projects/{pid}/requirements/reset")
+        assert resp.status_code == 200
+
+        # After reset: sysarch node AND the resp node are gone
+        # (both emitted as NodeDeleted via the downstream-tier
+        # collector). The reqs node itself persists with content
+        # cleared so the next regen targets the same node.
+        assert db.execute(select(Node).where(Node.id == sysarch_id)).scalar_one_or_none() is None
+        assert db.execute(select(Node).where(Node.id == resp_id)).scalar_one_or_none() is None
+        db.refresh(reqs_node)
+        assert reqs_node.content == ""
+
+    def test_reset_rejects_if_reqs_not_approved(self, client, project_with_reqs):
+        """``has_been_approved`` gates the reset route — a reqs node
+        with no content cannot be reset (409)."""
+        pid = project_with_reqs.id
+        resp = client.post(f"/api/projects/{pid}/requirements/reset")
+        assert resp.status_code == 409

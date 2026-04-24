@@ -357,6 +357,42 @@ class TestFailureModes:
         with pytest.raises(SysarchHandlerError, match="no sysarch node"):
             asyncio.run(generate_sysarch({"project_id": pid, "feedback": None}))
 
+    def test_zero_top_level_resps_fails_fast(self, shared_session_factory, monkeypatch):
+        """Sysarch decomposes top-level resps into components — zero
+        resps is an unsatisfiable constraint the validator will reject
+        on every retry. The handler must fail-fast pre-generation
+        rather than burn max-effort CLI attempts against a prompt the
+        LLM cannot satisfy. The user-visible error names the fix
+        (approve the reqs draft).
+        """
+        factory = shared_session_factory
+        s = factory()
+        try:
+            pid = str(uuid.uuid4())
+            s.add(Project(id=pid, name="T3", git_repo_path="/tmp/t3"))
+            s.flush()
+            bootstrap_sysarch_node(s, pid)
+            s.commit()
+        finally:
+            s.close()
+
+        # If the fail-fast doesn't fire, the handler will try to
+        # invoke the CLI. Stub it to blow up — the test will fail
+        # with an unexpected exception type, which tells us the
+        # guard didn't short-circuit early enough.
+        import backend.graph.handlers.feature_expansion as _fe_handler
+
+        async def should_not_be_called(**kwargs):
+            raise AssertionError("CLI was invoked despite zero-resp input")
+
+        monkeypatch.setattr(_fe_handler.cli_manager, "generate_with_usage", should_not_be_called)
+
+        with pytest.raises(
+            SysarchHandlerError,
+            match="no top-level responsibilities",
+        ):
+            asyncio.run(generate_sysarch({"project_id": pid, "feedback": None}))
+
     def test_cli_failure_leaves_no_events(
         self, shared_session_factory, seeded_project, monkeypatch
     ):

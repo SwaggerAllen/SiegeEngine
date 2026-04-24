@@ -134,6 +134,33 @@ async def generate_sysarch(payload: dict) -> None:
         )
         known_top_level_resp_ids: set[str] = {r.id for r in resp_rows}
 
+        # Fail-fast on zero-resp input. Every component the generator
+        # emits must reference ≥1 ``resp_*`` ID from this set; zero
+        # resps is an unsatisfiable constraint that the validator will
+        # reject on every retry. Burning four max-effort attempts
+        # against that is expensive and useless — surface a clean
+        # error instead and let the chain recover when reqs lands.
+        #
+        # Root cause is one of:
+        #   (a) the requirements tier hasn't been approved yet (resp
+        #       nodes mint at reqs_mint time), or
+        #   (b) a force-reset cleared the resp nodes and the reqs
+        #       regen hasn't landed, or
+        #   (c) the sysarch job was enqueued before reqs_mint's
+        #       post-commit fan-out completed.
+        # All three are recoverable by the user approving reqs (or
+        # waiting for the in-flight mint). The error message points at
+        # that.
+        if not resp_rows:
+            raise SysarchHandlerError(
+                f"generate_sysarch project={project_id}: no top-level "
+                "responsibilities exist yet. Sysarch decomposes reqs "
+                "into components; with zero resps the validator cannot "
+                "be satisfied. Approve the requirements draft first "
+                "(or wait for the in-flight reqs_mint to complete) "
+                "and retry."
+            )
+
         project_row = db.get(Project, project_id)
         assert project_row is not None
         settings = get_project_settings(project_row)

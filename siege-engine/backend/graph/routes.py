@@ -580,8 +580,10 @@ REQUIREMENTS_CONFIG = BootstrapTierConfig(
         "v2.apply_top_level_policies",
         "v2.apply_component_local_policies",
     ),
-    additional_nodes_to_clear=lambda db, pid: [get_sysarch_node(db, pid)],
-    additional_drafts_to_discard=lambda db, pid: [pending_sysarch_draft(db, pid)],
+    # The sysarch node is collected as a downstream node in
+    # ``reqs_collect_downstream_nodes`` (tier "sysarch" is in the
+    # downstream-tiers list), so the generic pending-draft and
+    # NodeDeleted paths handle it — no additional_* hooks needed.
     review_job_type="v2.review_requirements",
 )
 
