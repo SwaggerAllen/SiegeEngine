@@ -75,6 +75,46 @@ class TestNodeEvents:
         append_event(db, project.id, ev.NodeDeleted(node_id="comp_YYYYYYYY"))
         assert db.get(Node, "comp_YYYYYYYY") is None
 
+    def test_node_content_updated_overwrites_content(self, db, project):
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="feat_CCCCCCCC",
+                tier="feat",
+                kind="domain",
+                name="X",
+                content="",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.NodeContentUpdated(
+                node_id="feat_CCCCCCCC", new_content="canonical intent paragraph"
+            ),
+        )
+        assert db.get(Node, "feat_CCCCCCCC").content == "canonical intent paragraph"
+
+    def test_node_content_updated_idempotent_on_same_content(self, db, project):
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="feat_DDDDDDDD",
+                tier="feat",
+                kind="domain",
+                name="X",
+                content="same",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.NodeContentUpdated(node_id="feat_DDDDDDDD", new_content="same"),
+        )
+        assert db.get(Node, "feat_DDDDDDDD").content == "same"
+
     def test_nodes_merged_deletes_others(self, db, project):
         for nid, name in [("comp_MMMMMMMM", "M"), ("comp_NNNNNNNN", "N")]:
             append_event(

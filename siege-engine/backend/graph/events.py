@@ -100,6 +100,33 @@ class NodeRenamed(_EventBase):
     new_name: str
 
 
+class NodeContentUpdated(_EventBase):
+    """Set ``Node.content`` on an existing node.
+
+    Used by the feature-proposal flow's expansion handler: a feat node
+    is minted with empty content via ``NodeCreated`` (so the
+    structural slot exists immediately), then the LLM-driven expansion
+    job emits ``NodeContentUpdated`` to fill in the intent paragraph
+    once it lands.
+
+    Distinct from ``BootstrapNodeContentCleared`` (which clears) and
+    from ``NodeCreated`` (which mints with content set at creation
+    time). Generic enough to reuse for any future "fill in content on
+    an existing node" flow.
+
+    The fanout dispatcher records staleness for downstream consumers
+    on this event but does **not** auto-enqueue regen jobs — regen
+    enqueue is deferred to the cascade-flush helper that fires at
+    queue-apply completion or expansion-batch completion. This
+    deferred-enqueue contract is what makes multi-feature batches
+    propagate as a single consolidated downstream cascade.
+    """
+
+    event_type: Literal["NodeContentUpdated"] = "NodeContentUpdated"
+    node_id: str
+    new_content: str
+
+
 class NodeReparented(_EventBase):
     event_type: Literal["NodeReparented"] = "NodeReparented"
     node_id: str
@@ -370,6 +397,7 @@ Event = Annotated[
     Union[
         NodeCreated,
         NodeRenamed,
+        NodeContentUpdated,
         NodeReparented,
         NodeDeferredUpdated,
         NodePromoted,
@@ -396,6 +424,7 @@ Event = Annotated[
 _EVENT_TYPES: dict[str, type[_EventBase]] = {
     "NodeCreated": NodeCreated,
     "NodeRenamed": NodeRenamed,
+    "NodeContentUpdated": NodeContentUpdated,
     "NodeReparented": NodeReparented,
     "NodeDeferredUpdated": NodeDeferredUpdated,
     "NodePromoted": NodePromoted,

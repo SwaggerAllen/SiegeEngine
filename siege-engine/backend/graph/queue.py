@@ -175,6 +175,7 @@ async def _apply_instructions_handler(payload: dict) -> None:
 
         now = datetime.utcnow()
         halted = False
+        any_deferred = False
         affected_node_ids: set[str] = set()
         for row in rows:
             if halted:
@@ -184,7 +185,18 @@ async def _apply_instructions_handler(payload: dict) -> None:
                 continue
             try:
                 instruction = instr_mod.instruction_from_row(row.instruction_type, row.payload)
-                apply_mod.dispatch_instruction(db, project_id, instruction)
+                # Half-async instructions (currently only ProposeFeature)
+                # return True from dispatch — events are emitted by a
+                # background job, the row stays ``running`` until that
+                # job completes, and the cascade-flush is deferred to
+                # the job's completion path. Sync instructions return
+                # False and follow the existing flip-to-applied path.
+                defers_cascade = apply_mod.dispatch_instruction(
+                    db,
+                    project_id,
+                    instruction,
+                    source_pending_instruction_id=row.id,
+                )
             except Exception as exc:  # noqa: BLE001 — we want to halt on any failure
                 logger.warning(
                     "v2.apply_instructions: project=%s seq=%d failed: %s",
@@ -197,9 +209,14 @@ async def _apply_instructions_handler(payload: dict) -> None:
                 row.updated_at = now
                 halted = True
                 continue
-            row.status = "applied"
-            row.error = None
-            row.updated_at = now
+            if defers_cascade:
+                # Row stays running; the background job will flip it
+                # to applied / failed when it completes.
+                any_deferred = True
+            else:
+                row.status = "applied"
+                row.error = None
+                row.updated_at = now
             # Collect node_ids the frontend should invalidate when the
             # apply completes. Each instruction payload carries them
             # under one of these well-known keys.
@@ -207,6 +224,17 @@ async def _apply_instructions_handler(payload: dict) -> None:
                 val = (row.payload or {}).get(key)
                 if isinstance(val, str):
                     affected_node_ids.add(val)
+
+        # If no rows defer, fire the cascade-enqueue helper here so
+        # downstream regens for any synchronously-emitted events get
+        # enqueued before we publish. Deferred rows take responsibility
+        # for the cascade themselves on completion (the last expansion
+        # in the batch fires it once for the whole batch).
+        if not halted and not any_deferred:
+            from backend.graph.fanout import flush_pending_regens
+
+            for job_type, payload in flush_pending_regens(db, project_id):
+                pipeline_queue.enqueue(db, job_type=job_type, payload=payload)
 
         commit_and_publish(db, project_id)
         publish_queue_event(

@@ -15,7 +15,9 @@ from backend.graph import events as ev
 from backend.graph.fanout import (
     StalenessChanges,
     apply_staleness_changes,
+    auto_enqueue_regens,
     compute_staleness_changes,
+    flush_pending_regens,
     is_destructive,
     regen_job_for_node,
 )
@@ -565,6 +567,180 @@ class TestComputeChangesDirect:
         changes = compute_staleness_changes(db, project.id, trigger, 1)
         assert changes.marks == []
         assert changes.clears == []
+
+    def test_node_content_updated_marks_inbound_sources_stale(self, db, project):
+        # feat (with content) <--decomposition-- src (top-level reqs).
+        # Wait — direction is feat → reqs (source → target). The reqs
+        # node is the *target*; updating reqs's content marks the
+        # feat as stale w.r.t. it.
+        # For this isolated test: src --decomposition--> tgt, then a
+        # NodeContentUpdated on tgt should mark src as stale.
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="comp_NCU00001",
+                tier="comp",
+                kind="domain",
+                name="Src",
+                content="<comparch>approved</comparch>",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="comp_NCU00002",
+                tier="comp",
+                kind="domain",
+                name="Tgt",
+                content="initial",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.EdgeCreated(
+                edge_id="edge_NCU00001",
+                edge_type="decomposition",
+                source_id="comp_NCU00001",
+                target_id="comp_NCU00002",
+            ),
+        )
+        db.query(StalenessLedger).filter_by(project_id=project.id).delete()
+        db.flush()
+
+        trigger = ev.NodeContentUpdated(node_id="comp_NCU00002", new_content="updated content")
+        changes = compute_staleness_changes(db, project.id, trigger, 99)
+        assert any(
+            m.stale_node_id == "comp_NCU00001"
+            and m.source_node_id == "comp_NCU00002"
+            and m.reason == "content_changed"
+            for m in changes.marks
+        )
+
+    def test_node_content_updated_does_not_auto_enqueue(self, db, project):
+        # Even when marks are produced, auto_enqueue_regens returns
+        # [] for NodeContentUpdated triggers — regen enqueue is
+        # deferred to flush_pending_regens. This is the contract that
+        # lets multi-feature batches collapse into one cascade.
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="comp_NCU00003",
+                tier="comp",
+                kind="domain",
+                name="Src",
+                content="<comparch>approved</comparch>",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="comp_NCU00004",
+                tier="comp",
+                kind="domain",
+                name="Tgt",
+                content="initial",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.EdgeCreated(
+                edge_id="edge_NCU00002",
+                edge_type="decomposition",
+                source_id="comp_NCU00003",
+                target_id="comp_NCU00004",
+            ),
+        )
+
+        trigger = ev.NodeContentUpdated(node_id="comp_NCU00004", new_content="updated content")
+        changes = compute_staleness_changes(db, project.id, trigger, 1)
+        # Marks landed (downstream visibility) but auto-enqueue is empty.
+        assert any(m.stale_node_id == "comp_NCU00003" for m in changes.marks)
+        enqueues = auto_enqueue_regens(db, project.id, trigger, changes)
+        assert enqueues == []
+
+    def test_flush_pending_regens_walks_ledger(self, db, project):
+        # Seed a stale top-level comp with a known regen path
+        # (top-level comp → v2.generate_comparch). flush_pending_regens
+        # should return one enqueue pair for that node.
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="comp_FLU00001",
+                tier="comp",
+                kind="domain",
+                name="StaleTop",
+                content="<comparch>approved</comparch>",
+            ),
+        )
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="comp_FLU00002",
+                tier="comp",
+                kind="domain",
+                name="Upstream",
+            ),
+        )
+        # Insert a synthetic ledger row directly.
+        db.add(
+            StalenessLedger(
+                project_id=project.id,
+                stale_node_id="comp_FLU00001",
+                source_node_id="comp_FLU00002",
+                source_offset=5,
+                reason="content_changed",
+            )
+        )
+        db.flush()
+
+        pairs = flush_pending_regens(db, project.id)
+        assert any(
+            job_type == "v2.generate_comparch" and payload.get("component_id") == "comp_FLU00001"
+            for job_type, payload in pairs
+        )
+
+    def test_flush_pending_regens_dedups_identical_marks(self, db, project):
+        # Two ledger rows for the same stale node → one enqueue.
+        append_event(
+            db,
+            project.id,
+            ev.NodeCreated(
+                node_id="comp_FLU00003",
+                tier="comp",
+                kind="domain",
+                name="StaleTop",
+                content="<comparch>approved</comparch>",
+            ),
+        )
+        for src, reason in [
+            ("comp_FLU00004", "content_changed"),
+            ("comp_FLU00005", "edge_created"),
+        ]:
+            db.add(
+                StalenessLedger(
+                    project_id=project.id,
+                    stale_node_id="comp_FLU00003",
+                    source_node_id=src,
+                    source_offset=1,
+                    reason=reason,
+                )
+            )
+        db.flush()
+        pairs = flush_pending_regens(db, project.id)
+        comparch_pairs = [
+            (job_type, payload)
+            for job_type, payload in pairs
+            if job_type == "v2.generate_comparch" and payload.get("component_id") == "comp_FLU00003"
+        ]
+        assert len(comparch_pairs) == 1
 
     def test_edge_deleted_is_a_noop(self, db, project):
         # EdgeDeleted carries only edge_id; by the time fanout runs

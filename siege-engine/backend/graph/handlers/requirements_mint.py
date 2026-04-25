@@ -173,6 +173,36 @@ async def mint_requirements(payload: dict) -> None:
                 )
                 minted_edge_ids.append(edge_id)
 
+        # Mint a feat→reqs decomposition edge per top-level feat in
+        # the project. This is what the staleness-cascade machinery
+        # walks when a feature is added, removed, or has its content
+        # updated post-bootstrap (via the ProposeFeature instruction
+        # + expand_single_feature handler). Without these edges the
+        # cascade has no path from a feat node to the reqs node, so
+        # the reqs draft would not auto-regen on feature change.
+        # Idempotency: EdgeCreated reducer dedups by
+        # ``(project_id, edge_type, source_id, target_id)`` so a
+        # re-mint of an existing edge is a no-op.
+        feat_ids = (
+            db.query(Node.id)
+            .filter(Node.project_id == project_id, Node.tier == "feat")
+            .order_by(Node.display_order, Node.created_at)
+            .all()
+        )
+        for (feat_id,) in feat_ids:
+            edge_id = mint(db, Kind.EDGE)
+            append_event(
+                db,
+                project_id,
+                ev.EdgeCreated(
+                    edge_id=edge_id,
+                    edge_type="decomposition",
+                    source_id=feat_id,
+                    target_id=node.id,
+                ),
+            )
+            minted_edge_ids.append(edge_id)
+
         # Bootstrap the sysarch node in the same transaction as
         # the resp mints so either both land or neither does.
         # Skip if a sysarch node already exists (replay safety).

@@ -41,7 +41,12 @@ class _InstructionBase(BaseModel):
 class Create(_InstructionBase):
     instruction_type: Literal["Create"] = "Create"
     node_id: str
-    tier: Literal["feat", "resp", "comp", "impl"]
+    # ``feat`` is intentionally excluded — content-less feat nodes are
+    # useless to the reqs generator (which reads ``Node.content`` for
+    # the intent paragraph). Use :class:`ProposeFeature` instead, which
+    # mints the structural slot and enqueues an LLM expansion job that
+    # produces a canonical name + intent paragraph.
+    tier: Literal["resp", "comp", "impl"]
     name: str
     parent_id: str | None = None
     parent_name: str | None = None
@@ -49,6 +54,46 @@ class Create(_InstructionBase):
     def render(self) -> str:
         parent = f" under {self.parent_name or self.parent_id}" if self.parent_id else ""
         return f'- Create {self.tier} "{self.name}" ({self.node_id}){parent}'
+
+
+class ProposeFeature(_InstructionBase):
+    """Propose a new feature with a one-line description.
+
+    Replaces ``Create`` for the ``feat`` tier. A content-less feat is
+    useless downstream — the reqs generator reads ``Node.content`` to
+    atomize system-side resps. Instead the user supplies a short
+    description; the apply handler mints the structural slot
+    immediately (with a synthetic placeholder name so the row is
+    visible in the queue / graph view) and enqueues a focused LLM
+    expansion job that produces a canonical name + intent paragraph.
+
+    The pending-instruction row stays in ``running`` status until the
+    expansion completes — the apply handler returns
+    ``defers_cascade=True`` so the queue handler doesn't flip the row
+    to ``applied`` and doesn't fire the downstream cascade. The
+    expansion handler emits ``NodeRenamed`` (replacing the placeholder
+    with the canonical name) + ``NodeContentUpdated`` (filling in the
+    intent paragraph), flips its source row to ``applied``, and
+    triggers the cascade only when its row is the last ``running`` row
+    in the queue-apply batch. This makes a multi-feature batch (two
+    ``ProposeFeature`` rows in the same apply) propagate as one
+    consolidated downstream regen rather than two.
+
+    On expansion failure (LLM error, validator rejection, etc.) the
+    handler emits ``NodeDeleted`` for the empty feat node and flips
+    the row to ``failed`` — the projection ends up as if the propose
+    never happened.
+    """
+
+    instruction_type: Literal["ProposeFeature"] = "ProposeFeature"
+    node_id: str
+    name_hint: str
+    description: str
+
+    def render(self) -> str:
+        snippet = self.description[:60].rstrip()
+        suffix = "…" if len(self.description) > 60 else ""
+        return f'- Propose feature "{snippet}{suffix}" ({self.node_id})'
 
 
 class Delete(_InstructionBase):
@@ -330,6 +375,7 @@ class SetFeatureDeferred(_InstructionBase):
 Instruction = Annotated[
     Union[
         Create,
+        ProposeFeature,
         Delete,
         Rename,
         ReassignMapping,
@@ -353,6 +399,7 @@ Instruction = Annotated[
 
 _INSTRUCTION_TYPES: dict[str, type[_InstructionBase]] = {
     "Create": Create,
+    "ProposeFeature": ProposeFeature,
     "Delete": Delete,
     "Rename": Rename,
     "ReassignMapping": ReassignMapping,

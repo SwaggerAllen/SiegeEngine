@@ -68,13 +68,74 @@ class TestCreate:
         assert "NodeCreated" in _event_types(db, project.id)
 
     def test_defaults_kind_to_domain_when_no_parent(self, db, project):
+        # Create no longer accepts tier="feat" — that path is now
+        # served by ProposeFeature so feat nodes always carry an
+        # intent paragraph. Use tier="comp" for the kind-default
+        # check.
         apply_mod.dispatch_instruction(
             db,
             project.id,
-            instr.Create(node_id="feat_AAAAAAAA", tier="feat", name="Solo"),
+            instr.Create(node_id="comp_AAAAAAAA", tier="comp", name="Solo"),
         )
-        node = db.get(Node, "feat_AAAAAAAA")
+        node = db.get(Node, "comp_AAAAAAAA")
         assert node is not None and node.kind == "domain"
+
+
+class TestProposeFeature:
+    def test_emits_node_created_and_enqueues_expansion_and_defers(self, db, project):
+        from backend.graph.handlers.expand_single_feature import (
+            EXPAND_SINGLE_FEATURE_JOB_TYPE,
+        )
+        from backend.models.job import Job
+
+        feat_node_id = "feat_NEWNODE1"
+        defers = apply_mod.dispatch_instruction(
+            db,
+            project.id,
+            instr.ProposeFeature(
+                node_id=feat_node_id,
+                name_hint="(proposing) Profile editing",
+                description="Profile editing with avatar upload and password change",
+            ),
+            source_pending_instruction_id="row-uuid-42",
+        )
+        # Half-async signal for the queue handler.
+        assert defers is True
+
+        # The placeholder slot landed immediately so the row is
+        # visible in the projection / graph view.
+        node = db.get(Node, feat_node_id)
+        assert node is not None
+        assert node.tier == "feat"
+        assert node.kind == "domain"
+        assert node.name == "(proposing) Profile editing"
+        assert (node.content or "") == ""
+
+        assert "NodeCreated" in _event_types(db, project.id)
+
+        # Expansion job enqueued with the source row id so the
+        # handler can flip status on completion.
+        jobs = db.query(Job).filter_by(job_type=EXPAND_SINGLE_FEATURE_JOB_TYPE).all()
+        assert len(jobs) == 1
+        payload = jobs[0].payload
+        assert payload["project_id"] == project.id
+        assert payload["feat_node_id"] == feat_node_id
+        assert payload["description"] == "Profile editing with avatar upload and password change"
+        assert payload["source_pending_instruction_id"] == "row-uuid-42"
+
+    def test_requires_source_pending_instruction_id(self, db, project):
+        # Defends the contract: the queue handler must pass the row
+        # id so the expansion handler knows which row to flip.
+        with pytest.raises(apply_mod.InstructionApplyError, match="source_pending_instruction_id"):
+            apply_mod.dispatch_instruction(
+                db,
+                project.id,
+                instr.ProposeFeature(
+                    node_id="feat_AAAAAAAA",
+                    name_hint="(proposing) X",
+                    description="X",
+                ),
+            )
 
 
 class TestDelete:

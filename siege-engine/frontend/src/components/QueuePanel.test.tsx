@@ -162,6 +162,33 @@ describe('QueuePanel', () => {
     expect(applyBtn).toBeDisabled();
   });
 
+  it('renders ProposeFeature rows with the description prominent', async () => {
+    mockedList.mockResolvedValue(
+      listResponse([
+        row({
+          sequence: 9,
+          instruction_type: 'ProposeFeature',
+          payload: {
+            instruction_type: 'ProposeFeature',
+            node_id: 'feat_NEWNODE1',
+            name_hint: '(proposing) User profiles',
+            description: 'User profile management with avatar uploads',
+          },
+        }),
+      ]),
+    );
+    render(
+      <TestQueryWrapper>
+        <QueuePanel projectId="p1" />
+      </TestQueryWrapper>,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Propose feature: User profile management with avatar uploads/),
+      ).toBeInTheDocument(),
+    );
+  });
+
   it('surfaces the failed row error in a banner', async () => {
     mockedList.mockResolvedValue(
       listResponse([
