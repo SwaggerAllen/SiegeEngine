@@ -205,17 +205,18 @@ def _derived(*ids: str) -> str:
 
 
 def _valid_subreqs(parent_ids: list[str]) -> str:
+    # The routes fixture seeds no features, so the in-scope feat
+    # set is empty and atomic <feats/> blocks satisfy the
+    # feat-coverage check vacuously.
     return (
         "<introduction>Two subresps cover assigned parents.</introduction>"
         "<subrequirements>"
         "<subresponsibility>"
         "<name>Tokenization</name>"
-        "<intent>Convert raw cards to tokens.</intent>"
-        + _derived(parent_ids[0])
-        + "</subresponsibility>"
+        "<feats/>" + _derived(parent_ids[0]) + "</subresponsibility>"
         "<subresponsibility>"
         "<name>Delivery</name>"
-        "<intent>Send invoices.</intent>" + _derived(parent_ids[1]) + "</subresponsibility>"
+        "<feats/>" + _derived(parent_ids[1]) + "</subresponsibility>"
         "</subrequirements>"
     )
 

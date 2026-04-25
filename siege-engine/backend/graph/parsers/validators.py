@@ -1463,37 +1463,64 @@ def _enforce_foundation_dependency(
 class Subresponsibility:
     """A single validated subresponsibility from a ``<subrequirements>`` block.
 
+    One atom = one atomic component-territory concern. The
+    ``name`` is the scope phrase verbatim. ``feats`` is the flat
+    list of feature IDs this subresp implicates (many-to-many; an
+    empty tuple is legal for component-emergent concerns like
+    plumbing or internal caches with no direct feature cause).
     ``derived_from`` is the set of top-level resp IDs this subresp
     decomposes — must be a non-empty subset of the owning
     component's assigned top-level resps.
+
+    Document-level invariants enforced by
+    :func:`validate_subrequirements`:
+
+    * **Name-dedup** — no two subresps share a normalized name.
+    * **Feat-coverage** — every feat in the component's in-scope
+      set (the union of feats on its assigned parent resps) must
+      appear in at least one subresp's ``feats``.
+    * **Parent-resp coverage** — every assigned parent resp must
+      appear in at least one ``<derived-from>`` block.
     """
 
     name: str
-    intent: str
+    feats: tuple[str, ...]
     derived_from: tuple[str, ...]
 
 
 _SUBREQUIREMENTS_ALLOWED_CHILDREN = {"subresponsibility"}
-_SUBRESPONSIBILITY_ALLOWED_CHILDREN = {"name", "intent", "derived-from"}
+_SUBRESPONSIBILITY_ALLOWED_CHILDREN = {"name", "feats", "derived-from"}
 _DERIVED_FROM_ALLOWED_CHILDREN = {"resp"}
 
 
 def validate_subrequirements(
-    tree: TagNode, *, known_parent_resp_ids: set[str]
+    tree: TagNode,
+    *,
+    known_parent_resp_ids: set[str],
+    known_feat_ids: set[str],
 ) -> list[Subresponsibility]:
     """Validate a parsed ``<subrequirements>`` tree.
 
     Shape parallels ``validate_requirements`` but scoped to a
-    single component. ``known_parent_resp_ids`` is the set of
-    top-level resps assigned to *this* component (via the
-    ``decomposition`` edges minted at sysarch approval). Every
-    ``<resp id=...>`` reference in any ``<derived-from>`` block
-    must be in this set — cross-component leaks are parse errors.
+    single component. Two cross-cutting allowlists:
 
-    Coverage check: every known parent resp must appear in at
-    least one ``<derived-from>`` across the full validated set.
-    An uncovered parent resp is a parse error that feeds the
-    retry loop.
+    * ``known_parent_resp_ids`` — the top-level resps assigned to
+      *this* component (via the ``decomposition`` edges minted at
+      sysarch approval). Every ``<resp id=...>`` reference in any
+      ``<derived-from>`` block must be in this set; cross-component
+      leaks are parse errors.
+    * ``known_feat_ids`` — the union of feat IDs reachable from
+      this component's assigned parent resps via ``feat → resp``
+      decomposition edges. Every ``<feat id=...>`` reference in
+      any ``<feats>`` block must be in this set.
+
+    Coverage checks:
+
+    * Every known parent resp must appear in at least one
+      ``<derived-from>`` across the full validated set.
+    * Every known feat must appear in at least one ``<feats>``.
+
+    Both coverage failures fail parse and feed the retry loop.
     """
     if tree.tag != "subrequirements":
         raise ValidationError(
@@ -1513,7 +1540,12 @@ def validate_subrequirements(
     result: list[Subresponsibility] = []
     for index, child in enumerate(tree.children):
         result.append(
-            _validate_subresponsibility(child, index, known_parent_resp_ids=known_parent_resp_ids)
+            _validate_subresponsibility(
+                child,
+                index,
+                known_parent_resp_ids=known_parent_resp_ids,
+                known_feat_ids=known_feat_ids,
+            )
         )
 
     if not result:
@@ -1523,24 +1555,58 @@ def validate_subrequirements(
             "have at least one subresponsibility."
         )
 
-    # Coverage check: every parent resp must be covered.
-    covered: set[str] = set()
+    # Name-dedup: no two atoms may share a normalized name.
+    name_owner: dict[str, list[str]] = {}
+    for sub in result:
+        name_owner.setdefault(_normalize_name(sub.name), []).append(sub.name)
+    name_collisions = {n: names for n, names in name_owner.items() if len(names) > 1}
+    if name_collisions:
+        lines = sorted(f"  - {', '.join(names)}" for names in name_collisions.values())
+        raise ValidationError(
+            "<subrequirements> has subresponsibilities with duplicate names. "
+            "Every atom must have a unique name (normalized by lowercasing "
+            "and whitespace collapse). Offending names:\n" + "\n".join(lines)
+        )
+
+    # Parent-resp coverage: every parent resp must be covered.
+    covered_parents: set[str] = set()
     for subresp in result:
-        covered.update(subresp.derived_from)
-    missing = sorted(known_parent_resp_ids - covered)
-    if missing:
+        covered_parents.update(subresp.derived_from)
+    missing_parents = sorted(known_parent_resp_ids - covered_parents)
+    if missing_parents:
         raise ValidationError(
             "<subrequirements> does not cover every parent responsibility "
             "assigned to this component. Missing: "
-            f"{', '.join(missing)}. Every assigned responsibility must "
+            f"{', '.join(missing_parents)}. Every assigned responsibility must "
             "appear in at least one <derived-from> block."
+        )
+
+    # Feat-coverage: every in-scope feat must appear in at least
+    # one subresp's <feats>. An uncovered feat means the rotation
+    # left a feature stranded with no implementing concern.
+    covered_feats: set[str] = set()
+    for subresp in result:
+        covered_feats.update(subresp.feats)
+    missing_feats = sorted(known_feat_ids - covered_feats)
+    if missing_feats:
+        raise ValidationError(
+            f"<subrequirements> has feature(s) with no subresp tag: "
+            f"{', '.join(missing_feats)}. Every in-scope feature (those "
+            "tagged on at least one parent responsibility assigned to this "
+            "component) must appear in at least one <subresponsibility>'s "
+            '<feats>. Add a <feat id=".."/> entry on each subresp whose '
+            "concern that feature implicates."
         )
 
     return result
 
 
 def _validate_subresponsibility(
-    node: TagNode, index: int, *, known_parent_resp_ids: set[str]
+    node: TagNode,
+    index: int,
+    *,
+    known_parent_resp_ids: set[str],
+    known_feat_ids: set[str],
 ) -> Subresponsibility:
     """Validate a single ``<subresponsibility>`` entry."""
     pos = f"<subresponsibility> at position {index}"
@@ -1549,7 +1615,7 @@ def _validate_subresponsibility(
         if child.tag not in _SUBRESPONSIBILITY_ALLOWED_CHILDREN:
             raise ValidationError(
                 f"{pos} contains an unexpected child <{child.tag}>. "
-                "Only <name>, <intent>, and <derived-from> are allowed "
+                "Only <name>, <feats>, and <derived-from> are allowed "
                 "inside a <subresponsibility>."
             )
 
@@ -1564,15 +1630,17 @@ def _validate_subresponsibility(
             f"{pos} has {len(name_children)} <name> children; exactly one is required."
         )
 
-    intent_children = node.find_all("intent")
-    if len(intent_children) == 0:
+    feats_children = node.find_all("feats")
+    if len(feats_children) == 0:
         raise ValidationError(
-            f"{pos} is missing an <intent> child. Every subresponsibility "
-            "must have exactly one <intent>."
+            f"{pos} is missing a <feats> child. Every subresponsibility "
+            "must have exactly one <feats> block listing the feature IDs "
+            "this atom implicates (empty <feats/> is legal for "
+            "component-emergent concerns)."
         )
-    if len(intent_children) > 1:
+    if len(feats_children) > 1:
         raise ValidationError(
-            f"{pos} has {len(intent_children)} <intent> children; exactly one is required."
+            f"{pos} has {len(feats_children)} <feats> children; exactly one is required."
         )
 
     derived_children = node.find_all("derived-from")
@@ -1591,21 +1659,21 @@ def _validate_subresponsibility(
     if not name_text:
         raise ValidationError(
             f"{pos} has an empty <name>. The subresponsibility name "
-            "must be a short identifier, typically 2–5 words in title case."
+            "must be a short noun phrase (2–5 words in title case) "
+            "naming one component-territory concern."
         )
 
-    intent_text = intent_children[0].text
-    if not intent_text:
-        raise ValidationError(
-            f"{pos} has an empty <intent>. The intent must be a short "
-            "paragraph describing the role and scope."
-        )
+    feats = _validate_feat_list(
+        feats_children[0],
+        pos,
+        known_feature_ids=known_feat_ids,
+    )
 
     derived_from = _validate_derived_from(
         derived_children[0], pos, known_parent_resp_ids=known_parent_resp_ids
     )
 
-    return Subresponsibility(name=name_text, intent=intent_text, derived_from=derived_from)
+    return Subresponsibility(name=name_text, feats=feats, derived_from=derived_from)
 
 
 def _validate_derived_from(

@@ -88,7 +88,9 @@ class SubreqsState:
     # Per-tier extras:
     component_summary: str
     parent_resps_summary: str
+    in_scope_feats_summary: str
     known_parent_resp_ids: set[str]
+    known_feat_ids: set[str]
     domain_parent_context: str | None
     sibling_dep_context: str | None
     vocab_summary: str
@@ -130,7 +132,9 @@ def gather_subreqs_state(db: Session, project_id: str, scope_ids: tuple[str, ...
         system_prompt=render_system_prompt(),
         component_summary=ctx.component_summary,
         parent_resps_summary=ctx.parent_resps_summary,
+        in_scope_feats_summary=ctx.in_scope_feats_summary,
         known_parent_resp_ids=ctx.known_parent_resp_ids,
+        known_feat_ids=ctx.known_feat_ids,
         domain_parent_context=ctx.domain_parent_context,
         sibling_dep_context=ctx.sibling_dep_context,
         vocab_summary=ctx.vocab_summary,
@@ -149,6 +153,7 @@ def _render_subreqs_prompt(
     return render_user_prompt(
         component_summary=state.component_summary,
         parent_resps_summary=state.parent_resps_summary,
+        in_scope_feats_summary=state.in_scope_feats_summary,
         domain_parent_context=state.domain_parent_context,
         sibling_dep_context=state.sibling_dep_context,
         prior_approved=state.prior_approved,
@@ -175,7 +180,11 @@ def _validate_subreqs(tree: TagNode, raw_text: str, state: SubreqsState) -> None
             "thinking — which parent resps cluster, where boundaries "
             "fall. Put it before the <subrequirements> block."
         )
-    validate_subrequirements(tree, known_parent_resp_ids=state.known_parent_resp_ids)
+    validate_subrequirements(
+        tree,
+        known_parent_resp_ids=state.known_parent_resp_ids,
+        known_feat_ids=state.known_feat_ids,
+    )
 
 
 # Cast through TierState for the dataclass-as-protocol contract.
