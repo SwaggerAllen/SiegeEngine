@@ -210,11 +210,14 @@ async def run_tier_generation(
     finally:
         db.close()
     if not ready:
-        # The predicate signaled a soft fail. Phase A treats every
-        # ``(False, ...)`` from the convenience predicate as a hard
-        # fail; Phase F's readiness predicates raise
-        # :class:`TierDeferredError` directly when they want the
-        # deferred-retry path.
+        # Phase F: predicates that want the retry-later semantics
+        # produce a reason string starting with "deferred —". The
+        # driver maps that to :class:`TierDeferredError` so the
+        # worker completes cleanly and a wakeup hook re-enqueues.
+        # Everything else maps to :class:`TierPreconditionError`
+        # (hard fail; the row records a failure).
+        if reason.lstrip().startswith("deferred"):
+            raise TierDeferredError(f"{config.tier_name}: {reason}")
         raise TierPreconditionError(f"{config.tier_name}: {reason}")
 
     # Phase 2: gather state. Closes before the LLM call.

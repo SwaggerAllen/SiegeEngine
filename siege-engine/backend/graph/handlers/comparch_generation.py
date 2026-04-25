@@ -30,8 +30,10 @@ from backend.cli.config import CliInvocationConfig
 from backend.database import SessionLocal  # noqa: F401  (chain test patches this attr)
 from backend.graph.handlers._readiness import (
     all_of,
+    comparch_dep_comps_settled,
     parent_subreqs_approved,
     top_level_comp_exists,
+    wake_deferred_comparchs,
 )
 from backend.graph.handlers._tier_generation import (
     TierGenerationConfig,
@@ -187,7 +189,12 @@ COMPARCH_CONFIG: TierGenerationConfig = TierGenerationConfig(
     review_job_type="v2.review_comparch",
     scope_payload_keys=("component_id",),
     max_auto_revisions=5,
-    readiness_check=all_of(top_level_comp_exists, parent_subreqs_approved),
+    readiness_check=all_of(
+        top_level_comp_exists,
+        parent_subreqs_approved,
+        comparch_dep_comps_settled,
+    ),
+    post_persist_hooks=(wake_deferred_comparchs,),
 )
 
 
