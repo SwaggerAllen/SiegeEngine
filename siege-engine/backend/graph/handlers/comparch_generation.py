@@ -77,6 +77,7 @@ async def generate_comparch(payload: dict) -> None:
     if not isinstance(component_id, str) or not component_id:
         raise ComparchHandlerError("generate_comparch payload missing component_id")
     feedback: str | None = payload.get("feedback")
+    prior_review: str | None = payload.get("prior_review_text") or None
 
     # ── Phase 1: gather inputs ──────────────────────────────────────
     db = SessionLocal()
@@ -174,6 +175,7 @@ async def generate_comparch(payload: dict) -> None:
             prior_approved=prior_approved,
             prior_pending=prior_pending,
             feedback=feedback,
+            prior_review=prior_review,
             target_is_foundation=target_is_foundation,
             parse_error=parse_error,
         )

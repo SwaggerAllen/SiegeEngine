@@ -113,3 +113,118 @@ def test_bootstrap_feedback_clears_stale_review(db, project):
         "pending draft; otherwise the UI shows critique of content "
         "that's about to be replaced."
     )
+
+
+def test_bootstrap_feedback_threads_prior_review_into_regen_payload(db, project):
+    """The AI review_text on the pending draft must ride along on
+    the regen job payload as ``prior_review_text`` so the next
+    generation prompt can surface it. Without this, the AI review's
+    recommendations stay trapped on the about-to-be-discarded draft
+    row and the regen never sees them."""
+    from unittest.mock import MagicMock
+
+    from backend.graph import events as ev
+    from backend.graph.bootstrap_routes import bootstrap_feedback
+    from backend.graph.expansion import bootstrap_expansion_node
+    from backend.graph.reducer import append_event
+    from backend.graph.routes import EXPANSION_CONFIG
+    from backend.models.job import Job
+
+    exp_id = bootstrap_expansion_node(db, project.id)
+    draft_id = "draft_priorrev0"
+    append_event(
+        db,
+        project.id,
+        ev.DraftGenerated(
+            draft_id=draft_id,
+            target_type="node",
+            target_id=exp_id,
+            content="<features><feature><name>X</name><intent>ok</intent></feature></features>",
+            batch_id="batch_priorrev",
+        ),
+    )
+    review_markdown = _structured_review_markdown()
+    append_event(
+        db,
+        project.id,
+        ev.DraftReviewUpdated(
+            draft_id=draft_id,
+            node_id=exp_id,
+            review_text=review_markdown,
+        ),
+    )
+    db.commit()
+
+    bootstrap_feedback(
+        db,
+        project.id,
+        (),
+        "user feedback string",
+        EXPANSION_CONFIG,
+        MagicMock(),
+    )
+    db.commit()
+
+    # The expansion regen job was enqueued. Inspect its payload.
+    regen_job = (
+        db.query(Job)
+        .filter(Job.job_type == EXPANSION_CONFIG.generate_job_type)
+        .order_by(Job.created_at.desc())
+        .first()
+    )
+    assert regen_job is not None
+    payload = regen_job.payload or {}
+    assert payload.get("prior_review_text") == review_markdown, (
+        "The pending draft's AI review_text must be captured into the "
+        "regen payload before bootstrap_feedback's UI-clear, so the "
+        "generation handler can surface it in the next prompt."
+    )
+    assert payload.get("feedback") == "user feedback string"
+
+
+def test_bootstrap_feedback_omits_prior_review_text_when_review_is_blank(db, project):
+    """No payload field when there's no review to thread — the
+    handler reads ``payload.get("prior_review_text") or None`` so a
+    missing key resolves cleanly to None in the prompt."""
+    from unittest.mock import MagicMock
+
+    from backend.graph import events as ev
+    from backend.graph.bootstrap_routes import bootstrap_feedback
+    from backend.graph.expansion import bootstrap_expansion_node
+    from backend.graph.reducer import append_event
+    from backend.graph.routes import EXPANSION_CONFIG
+    from backend.models.job import Job
+
+    exp_id = bootstrap_expansion_node(db, project.id)
+    draft_id = "draft_noreview0"
+    append_event(
+        db,
+        project.id,
+        ev.DraftGenerated(
+            draft_id=draft_id,
+            target_type="node",
+            target_id=exp_id,
+            content="<features><feature><name>X</name><intent>ok</intent></feature></features>",
+            batch_id="batch_noreview",
+        ),
+    )
+    db.commit()
+
+    bootstrap_feedback(
+        db,
+        project.id,
+        (),
+        "user feedback only",
+        EXPANSION_CONFIG,
+        MagicMock(),
+    )
+    db.commit()
+
+    regen_job = (
+        db.query(Job)
+        .filter(Job.job_type == EXPANSION_CONFIG.generate_job_type)
+        .order_by(Job.created_at.desc())
+        .first()
+    )
+    assert regen_job is not None
+    assert "prior_review_text" not in (regen_job.payload or {})

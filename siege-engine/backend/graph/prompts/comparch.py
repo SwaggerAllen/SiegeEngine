@@ -83,6 +83,8 @@ documents are parseable, §Policies, §Foundation components, and
 
 from __future__ import annotations
 
+from backend.graph.prompts._prior_framing import render_prior_review_section
+
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are producing the **architecture document** for a single \
 component. This is the **last compression step** before \
@@ -555,6 +557,7 @@ def render_user_prompt(
     prior_approved: str | None,
     prior_pending: str | None,
     feedback: str | None,
+    prior_review: str | None = None,
     parse_error: str | None = None,
     target_is_foundation: bool = False,
     vocab_summary: str = "",
@@ -738,6 +741,8 @@ def render_user_prompt(
         parts.append("")
         parts.append(feedback.strip())
         parts.append("")
+
+    parts.extend(render_prior_review_section(prior_review))
 
     if parse_error:
         parts.append("# Previous output failed structural validation")

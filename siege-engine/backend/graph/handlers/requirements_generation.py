@@ -110,6 +110,7 @@ async def generate_requirements(payload: dict) -> None:
     if not isinstance(project_id, str) or not project_id:
         raise RequirementsHandlerError("generate_requirements payload missing project_id")
     feedback: str | None = payload.get("feedback")
+    prior_review: str | None = payload.get("prior_review_text") or None
     auto_revision_pass = int(payload.get("auto_revision_pass") or 0)
     auto_revisions_remaining = int(payload.get("auto_revisions_remaining") or 0)
     # Clamp to the hard cap — defends against a bad payload that
@@ -226,6 +227,7 @@ async def generate_requirements(payload: dict) -> None:
             prior_approved=prior_approved,
             prior_pending=prior_pending,
             feedback=feedback,
+            prior_review=prior_review,
             parse_error=parse_error,
             vocab_summary=vocab_summary,
             input_doc=input_doc,

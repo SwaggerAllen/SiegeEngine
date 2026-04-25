@@ -162,7 +162,9 @@ class TestHappyPath:
             assert [r.display_order for r in resps] == [0, 1, 2]
 
             # Every atom tags all 3 feats → 3 resps × 3 feats = 9
-            # decomposition edges.
+            # feat→resp decomposition edges. Plus one feat→reqs
+            # decomposition edge per feat (3 feats) for the
+            # staleness-cascade walk → 12 total.
             edges = list(
                 s.execute(
                     select(Edge).where(
@@ -171,17 +173,26 @@ class TestHappyPath:
                     )
                 ).scalars()
             )
-            assert len(edges) == 9
+            assert len(edges) == 12
+            resp_ids = {r.id for r in resps}
+            reqs_node = s.execute(
+                select(Node).where(Node.project_id == project_id, Node.tier == "reqs")
+            ).scalar_one()
+            feat_to_resp_edges = [e for e in edges if e.target_id in resp_ids]
+            feat_to_reqs_edges = [e for e in edges if e.target_id == reqs_node.id]
+            assert len(feat_to_resp_edges) == 9
+            assert len(feat_to_reqs_edges) == 3
             for e in edges:
                 assert e.source_id in feat_ids
-                assert any(e.target_id == r.id for r in resps)
                 assert e.id.startswith("edge_")
+            assert {e.source_id for e in feat_to_reqs_edges} == set(feat_ids)
         finally:
             s.close()
 
     def test_partial_coverage_across_resps(self, shared_session_factory):
         # Each atom tags one feat; together they cover both and
-        # produce exactly 2 edges.
+        # produce exactly 2 feat→resp edges. Plus 2 feat→reqs
+        # edges (one per feat) → 4 total.
         factory = shared_session_factory
         s = factory()
         try:
@@ -208,9 +219,15 @@ class TestHappyPath:
                     )
                 ).scalars()
             )
-            assert len(edges) == 2
-            sources = {e.source_id for e in edges}
-            assert sources == set(feat_ids)
+            assert len(edges) == 4
+            reqs_node = s.execute(
+                select(Node).where(Node.project_id == project_id, Node.tier == "reqs")
+            ).scalar_one()
+            feat_to_reqs = [e for e in edges if e.target_id == reqs_node.id]
+            feat_to_resp = [e for e in edges if e.target_id != reqs_node.id]
+            assert len(feat_to_reqs) == 2
+            assert len(feat_to_resp) == 2
+            assert {e.source_id for e in edges} == set(feat_ids)
         finally:
             s.close()
 
@@ -260,7 +277,9 @@ class TestIdempotency:
                     ).scalars()
                 )
             )
-            assert count_edges == 9  # Not 18 (after second run)
+            # 9 feat→resp edges + 3 feat→reqs edges = 12 (not 24
+            # after second run — idempotency guard short-circuits).
+            assert count_edges == 12
         finally:
             s.close()
 

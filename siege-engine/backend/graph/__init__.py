@@ -30,6 +30,7 @@ Importing this package also registers the v2 job handlers:
 from backend.graph import queue as _queue
 from backend.graph.handlers import comparch_generation as _comparch_gen_handler
 from backend.graph.handlers import comparch_mint as _comparch_mint_handler
+from backend.graph.handlers import expand_single_feature as _expand_single_feature_handler
 from backend.graph.handlers import fanin_generation as _fanin_gen_handler
 from backend.graph.handlers import feature_expansion as _feature_expansion_handler
 from backend.graph.handlers import feature_mint as _feature_mint_handler
@@ -57,6 +58,7 @@ from backend.graph.handlers import sysarch_mint as _sysarch_mint_handler
 
 _queue.register_apply_handler()
 _rename_rewrite_handler.register()
+_expand_single_feature_handler.register()
 _feature_expansion_handler.register()
 _feature_mint_handler.register()
 _requirements_gen_handler.register()

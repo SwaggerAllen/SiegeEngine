@@ -157,6 +157,17 @@ def compute_staleness_changes(
         _fanout_content_change(
             session, project_id, trigger.node_id, trigger_offset, "content_changed", changes
         )
+    elif isinstance(trigger, ev.NodeContentUpdated):
+        # Records staleness marks for downstream consumers but does
+        # NOT cause regen jobs to enqueue at fanout time. Regen
+        # enqueue is deferred to ``flush_pending_regens`` called by
+        # the queue's apply-completion path or the expansion handler's
+        # batch-completion check. This deferred-enqueue contract is
+        # what makes multi-feature batches propagate as one
+        # consolidated downstream cascade.
+        _fanout_content_change(
+            session, project_id, trigger.node_id, trigger_offset, "content_changed", changes
+        )
     elif isinstance(trigger, ev.EdgeCreated):
         _fanout_edge_change(
             session,
@@ -564,17 +575,42 @@ def auto_enqueue_regens(
     """Return ``(job_type, payload)`` pairs for regens to enqueue.
 
     Empty when ``trigger`` is destructive — the cascade halts for
-    the user to review. Otherwise returns one enqueue per marked
+    the user to review. Empty when ``trigger`` is
+    ``NodeContentUpdated`` — the regen enqueue for that event is
+    deferred to :func:`flush_pending_regens`, called by the queue's
+    apply-completion path or the expansion handler's batch-completion
+    check. This deferral is what makes multi-feature batches
+    propagate as one consolidated downstream cascade rather than N
+    independent regens. Otherwise returns one enqueue per marked
     node that has a known regen job type. The caller pipes each
     pair through ``backend.pipeline.queue.enqueue``; the queue's
     payload-dedupe collapses duplicate enqueues into a single job.
     """
     if is_destructive(trigger):
         return []
+    if isinstance(trigger, ev.NodeContentUpdated):
+        # Marks are recorded by ``compute_staleness_changes`` and
+        # land in the ledger; the deferred flush picks them up.
+        return []
 
+    return _enqueue_for_marks(session, project_id, changes.marks)
+
+
+def _enqueue_for_marks(
+    session: Session,
+    project_id: str,
+    marks: list[_Mark],
+) -> list[tuple[str, dict]]:
+    """Map staleness marks to ``(job_type, payload)`` pairs.
+
+    Internal helper shared by the eager auto-enqueue path
+    (``auto_enqueue_regens``) and the deferred flush path
+    (``flush_pending_regens``). Skips marks whose stale node lacks
+    a known regen job type and dedups identical job/payload pairs.
+    """
     requests: list[tuple[str, dict]] = []
     seen: set[tuple[str, str]] = set()  # (job_type, target_key) for dedup
-    for mark in changes.marks:
+    for mark in marks:
         node = session.get(Node, mark.stale_node_id)
         if node is None or node.project_id != project_id:
             continue
@@ -589,3 +625,40 @@ def auto_enqueue_regens(
         seen.add(key)
         requests.append((job_type, payload))
     return requests
+
+
+def flush_pending_regens(
+    session: Session,
+    project_id: str,
+) -> list[tuple[str, dict]]:
+    """Walk the project's staleness ledger and enqueue regens.
+
+    Called by the queue's apply-completion path (when no rows in the
+    apply batch defer cascade) and by the expansion handler's
+    batch-completion check (when the last running row in a batch
+    flips). Reads every current ``StalenessLedger`` row for the
+    project and produces one ``(job_type, payload)`` per stale node
+    that has a known regen job type, deduping identical pairs.
+
+    Idempotent: re-running while no marks have been added produces
+    no enqueues. The pipeline queue's payload-dedup additionally
+    collapses double enqueues if two callers race.
+    """
+    rows = session.execute(
+        select(
+            StalenessLedger.stale_node_id,
+            StalenessLedger.source_node_id,
+            StalenessLedger.source_offset,
+            StalenessLedger.reason,
+        ).where(StalenessLedger.project_id == project_id)
+    ).all()
+    marks = [
+        _Mark(
+            stale_node_id=r[0],
+            source_node_id=r[1],
+            source_offset=r[2],
+            reason=r[3],
+        )
+        for r in rows
+    ]
+    return _enqueue_for_marks(session, project_id, marks)

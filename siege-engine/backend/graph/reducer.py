@@ -326,6 +326,20 @@ def _apply_node_renamed(session: Session, project_id: str, event: ev.NodeRenamed
     node.updated_at = datetime.utcnow()
 
 
+def _apply_node_content_updated(
+    session: Session, project_id: str, event: ev.NodeContentUpdated
+) -> None:
+    """Set ``Node.content`` on an existing node.
+
+    Idempotent: if the new content equals the current content, this
+    is a no-op (the ``updated_at`` stamp still bumps so callers can
+    use it as a freshness signal).
+    """
+    node = _require_node(session, project_id, event.node_id)
+    node.content = event.new_content
+    node.updated_at = datetime.utcnow()
+
+
 def _apply_node_reparented(session: Session, project_id: str, event: ev.NodeReparented) -> None:
     node = _require_node(session, project_id, event.node_id)
     _enforce_comp_depth_cap(session, project_id, node.tier, event.new_parent_id, event.node_id)
@@ -686,6 +700,7 @@ def _apply_feedback_cleared(session: Session, project_id: str, event: ev.Feedbac
 _HANDLERS: dict[str, Callable[[Session, str, Any], None]] = {
     "NodeCreated": _apply_node_created,
     "NodeRenamed": _apply_node_renamed,
+    "NodeContentUpdated": _apply_node_content_updated,
     "NodeReparented": _apply_node_reparented,
     "NodeDeferredUpdated": _apply_node_deferred_updated,
     "NodePromoted": _apply_node_promoted,

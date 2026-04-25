@@ -152,3 +152,74 @@ class TestRenderUserPromptInputDoc:
     def test_default_omits_input_doc(self) -> None:
         out = render_user_prompt(**self._kwargs())
         assert "# Project input document" not in out
+
+
+class TestRenderUserPromptPriorFraming:
+    """The prior pending draft's <introduction> block must render
+    under a 'superseded' header rather than dumping into the
+    'Current version' block — otherwise the model treats prior
+    self-justifications as live framing for the new round."""
+
+    def _kwargs(self, **overrides: object) -> dict:
+        base: dict[str, object] = {
+            "features_summary": "- `feat_x` **F**: f.",
+            "reqs_summary": "- `resp_y` **R**: r.",
+            "prior_approved": None,
+            "prior_pending": None,
+            "feedback": None,
+        }
+        base.update(overrides)
+        return base
+
+    def test_prior_introduction_renders_under_superseded_header(self) -> None:
+        prior = (
+            "<introduction>I considered breaking up projection but "
+            "kept it cohesive.</introduction>"
+            "<sysarch><components/></sysarch>"
+        )
+        out = render_user_prompt(**self._kwargs(prior_pending=prior))
+        # Introduction lives in its own clearly-labeled section.
+        assert "Prior framing (superseded" in out
+        assert "I considered breaking up projection" in out
+        # Body of the prior still lands under # Current version,
+        # but stripped of the <introduction>.
+        assert "# Current version" in out
+        body_idx = out.index("# Current version")
+        body_section = out[body_idx:]
+        assert "<introduction>" not in body_section
+        assert "<sysarch><components/></sysarch>" in body_section
+
+    def test_prior_without_introduction_renders_no_framing_header(self) -> None:
+        prior = "<sysarch><components/></sysarch>"
+        out = render_user_prompt(**self._kwargs(prior_pending=prior))
+        assert "Prior framing" not in out
+        assert "# Current version" in out
+
+    def test_prior_review_renders_under_advisory_header(self) -> None:
+        out = render_user_prompt(
+            **self._kwargs(
+                prior_pending="<sysarch/>",
+                prior_review="## Handles\nThe projection mega-component is too large.",
+            )
+        )
+        assert "AI review of the prior draft" in out
+        assert "advisory" in out.lower()
+        assert "projection mega-component is too large" in out
+
+    def test_prior_review_omitted_when_none(self) -> None:
+        out = render_user_prompt(**self._kwargs(prior_pending="<sysarch/>"))
+        assert "AI review of the prior draft" not in out
+
+    def test_user_feedback_appears_before_ai_review(self) -> None:
+        # Ordering matters: user feedback is authoritative, AI
+        # review is advisory. The model reads them in order.
+        out = render_user_prompt(
+            **self._kwargs(
+                prior_pending="<sysarch/>",
+                feedback="Break up projection.",
+                prior_review="## Handles\nReview commentary.",
+            )
+        )
+        feedback_idx = out.index("# User feedback")
+        review_idx = out.index("# AI review of the prior draft")
+        assert feedback_idx < review_idx
