@@ -18,7 +18,9 @@ from sqlalchemy import select
 from backend.graph import events as ev
 from backend.graph.handlers._readiness import (
     comparch_dep_comps_settled,
+    subcomparch_sibling_deps_settled,
     wake_deferred_comparchs,
+    wake_deferred_dependents,
 )
 from backend.graph.handlers._tier_generation import (
     PostPersistContext,
@@ -249,6 +251,136 @@ class TestWakeDeferredComparchs:
         assert not any((j.payload or {}).get("component_id") == x for j in new_jobs), (
             "X's deferred shouldn't wake when B persists (X doesn't depend on B)"
         )
+
+
+def _enqueue_subcomparch_job(db, project_id, sub_id, *, status="queued"):
+    """Insert a v2.generate_subcomparch Job row."""
+    from backend.pipeline import queue as pipeline_queue
+
+    job_id = pipeline_queue.enqueue(
+        db,
+        job_type="v2.generate_subcomparch",
+        payload={
+            "project_id": project_id,
+            "component_id": sub_id,
+            "feedback": None,
+        },
+    )
+    if status != "queued":
+        job = db.get(Job, job_id)
+        assert job is not None
+        job.status = status
+        db.commit()
+    return job_id
+
+
+class TestSubcomparchSiblingDepsSettled:
+    def test_passes_with_no_sibling_deps(self, db, project):
+        parent = _make_comp(db, project.id, name="P")
+        sub = _make_comp(db, project.id, name="Sub", parent_id=parent)
+        ready, _ = subcomparch_sibling_deps_settled(db, project.id, (sub,))
+        assert ready is True
+
+    def test_defers_when_sibling_dep_in_flight(self, db, project):
+        parent = _make_comp(db, project.id, name="P")
+        sub_a = _make_comp(db, project.id, name="A", parent_id=parent)
+        sub_b = _make_comp(db, project.id, name="B", parent_id=parent)
+        _add_dep_edge(db, project.id, sub_a, sub_b)
+        _enqueue_subcomparch_job(db, project.id, sub_b)
+        ready, reason = subcomparch_sibling_deps_settled(db, project.id, (sub_a,))
+        assert ready is False
+        assert reason.startswith("deferred")
+        assert sub_b in reason
+
+    def test_does_not_defer_on_self_running_job(self, db, project):
+        parent = _make_comp(db, project.id, name="P")
+        sub_a = _make_comp(db, project.id, name="A", parent_id=parent)
+        _enqueue_subcomparch_job(db, project.id, sub_a, status="running")
+        ready, _ = subcomparch_sibling_deps_settled(db, project.id, (sub_a,))
+        assert ready is True
+
+    def test_cross_parent_deps_are_ignored(self, db, project):
+        # Subs in different parents don't count — that's the
+        # comparch_dep_comps_settled / cross-tier wakeup chain's job.
+        parent_a = _make_comp(db, project.id, name="ParentA")
+        parent_b = _make_comp(db, project.id, name="ParentB")
+        sub_a = _make_comp(db, project.id, name="A", parent_id=parent_a)
+        sub_b = _make_comp(db, project.id, name="B", parent_id=parent_b)
+        _add_dep_edge(db, project.id, sub_a, sub_b)
+        _enqueue_subcomparch_job(db, project.id, sub_b)
+        ready, _ = subcomparch_sibling_deps_settled(db, project.id, (sub_a,))
+        # B is a different-parent sub, not a same-parent sibling →
+        # this predicate doesn't fire on it.
+        assert ready is True
+
+
+class TestWakeDeferredDependentsCrossTier:
+    def test_top_level_persist_wakes_subcomp_dependent(self, db, project):
+        # A sub that depended on a top-level comp got deferred.
+        # When the top-level comp persists, the wakeup should
+        # re-enqueue v2.generate_subcomparch for that sub.
+        parent = _make_comp(db, project.id, name="P", content="<comparch/>")
+        sub = _make_comp(db, project.id, name="Sub", parent_id=parent)
+        top = _make_comp(db, project.id, name="Top", content="<comparch/>")
+        _add_dep_edge(db, project.id, sub, top)
+
+        sub_job_id = _enqueue_subcomparch_job(db, project.id, sub)
+        sub_job = db.get(Job, sub_job_id)
+        assert sub_job is not None
+        sub_job.status = "completed"
+        sub_job.is_deferred = True
+        db.commit()
+
+        # Top persists.
+        wake_deferred_dependents(db, project.id, "draft_ignored", (top,), _terminal_ctx())
+
+        # The wakeup should enqueue a v2.generate_subcomparch (not
+        # v2.generate_comparch) for the sub.
+        new_subcomparch_jobs = (
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_subcomparch",
+                    Job.status == "queued",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert any((j.payload or {}).get("component_id") == sub for j in new_subcomparch_jobs), (
+            "wakeup should enqueue v2.generate_subcomparch for the sub-tier dependent"
+        )
+
+        db.refresh(sub_job)
+        assert sub_job.is_deferred is False
+
+    def test_sub_persist_wakes_sibling_sub_dependent(self, db, project):
+        # Two same-parent siblings, A depends on B. A is deferred.
+        # B persists → A's subcomparch is re-enqueued.
+        parent = _make_comp(db, project.id, name="P", content="<comparch/>")
+        sub_a = _make_comp(db, project.id, name="A", parent_id=parent)
+        sub_b = _make_comp(db, project.id, name="B", parent_id=parent, content="<subcomparch/>")
+        _add_dep_edge(db, project.id, sub_a, sub_b)
+
+        a_job_id = _enqueue_subcomparch_job(db, project.id, sub_a)
+        a_job = db.get(Job, a_job_id)
+        assert a_job is not None
+        a_job.status = "completed"
+        a_job.is_deferred = True
+        db.commit()
+
+        wake_deferred_dependents(db, project.id, "draft_ignored", (sub_b,), _terminal_ctx())
+
+        new_jobs = (
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_subcomparch",
+                    Job.status == "queued",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert any((j.payload or {}).get("component_id") == sub_a for j in new_jobs)
 
 
 class TestTerminalGate:

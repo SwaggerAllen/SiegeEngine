@@ -156,7 +156,7 @@ def top_level_comp_exists(
     return (True, "")
 
 
-def wake_deferred_comparchs(
+def wake_deferred_dependents(
     db: "Session",
     project_id: str,
     _draft_id: str,
@@ -165,49 +165,56 @@ def wake_deferred_comparchs(
 ) -> None:
     """Phase F: re-enqueue dependents whose blocking dep just settled.
 
-    Wired into ``COMPARCH_CONFIG.post_persist_hooks``. Runs after a
-    comparch lands. Walks the dependency graph for top-level comps
-    that depend on the just-persisted comp AND have a job in the
-    deferred-completed state (``Job.is_deferred=True``), then
-    re-enqueues a fresh ``v2.generate_comparch`` for each. The
-    freshly-claimed job's readiness predicate runs again; if the
-    dep is now settled the regen proceeds, if not it defers again
-    and the next terminal persist picks it up.
+    Wired into ``COMPARCH_CONFIG.post_persist_hooks`` and
+    ``SUBCOMPARCH_CONFIG.post_persist_hooks``. Runs after any
+    comp-tier arch doc lands (top-level or sub). Walks dependency
+    edges into the just-persisted node, finds dependents (top-level
+    comps OR subs) that have a deferred-completed comparch /
+    subcomparch job, and re-enqueues a fresh job of the right type
+    for each.
+
+    Tier-aware dispatch:
+
+    - dependent is a top-level comp (``parent_id`` None) →
+      re-enqueue ``v2.generate_comparch`` keyed on the comp's id.
+    - dependent is a subcomp (``parent_id`` not None) →
+      re-enqueue ``v2.generate_subcomparch`` keyed on the sub's id.
+
+    The single wakeup handles both the top-level comparch case
+    (Phase F's original target) and the subcomparch sibling case
+    (CLAUDE.md "Known design debt — Topological dispatch within a
+    parent comp's subcomparch batch"). Cross-tier wakeups also
+    work: a top-level comp persisting wakes any sub-tier
+    dependent that referenced it via parent's-sibling refs.
 
     **Gated on ``ctx.is_terminal``.** With auto-revision turned on,
-    a single user-visible regen produces N+1 persists (one per
-    auto-revision pass plus the final). Without the gate, the
-    wakeup walks the deferred set N+1 times per regen — wasteful
-    and could re-fire dependents against intermediate (not yet
-    user-visible) pubapis. The terminal gate fires the wakeup
-    exactly once per user-visible regen, on the persist whose
-    content the user reviews.
+    a single user-visible regen produces N+1 persists. The gate
+    fires the wakeup exactly once per user-visible regen, on the
+    persist whose content the user reviews.
 
     Idempotency: after re-enqueueing, the ``is_deferred`` flag is
-    cleared on the consumed rows so subsequent wakeups don't
-    re-fire on them. The pipeline_queue's payload-dedup against
-    currently-queued jobs catches concurrent re-enqueues.
+    cleared on the consumed rows. The pipeline_queue's payload-
+    dedup against currently-queued jobs catches concurrent
+    re-enqueues.
     """
     if not ctx.is_terminal:
         return
     if not scope_ids:
         return
-    just_persisted_comp_id = scope_ids[0]
+    just_persisted_id = scope_ids[0]
 
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     from backend.models.job import Job
     from backend.models.node import Edge
     from backend.pipeline import queue as pipeline_queue
 
-    # Top-level dependents — comps with a dependency edge to the
-    # just-persisted one. Edge direction: source depends on target.
     dependent_ids = (
         db.execute(
             select(Edge.source_id).where(
                 Edge.project_id == project_id,
                 Edge.edge_type == "dependency",
-                Edge.target_id == just_persisted_comp_id,
+                Edge.target_id == just_persisted_id,
             )
         )
         .scalars()
@@ -215,26 +222,29 @@ def wake_deferred_comparchs(
     )
     if not dependent_ids:
         return
-    top_level_dep_set = {
-        row.id
-        for row in db.execute(
-            select(Node.id).where(
-                Node.id.in_(dependent_ids),
-                Node.project_id == project_id,
-                Node.tier == "comp",
-                Node.parent_id.is_(None),
-            )
-        ).all()
-    }
-    if not top_level_dep_set:
-        return
 
-    # Find deferred jobs for those dependents — typed flag rather
-    # than fragile string discrimination on error_message.
+    # Resolve dependent comp tier — top-level (job_type
+    # v2.generate_comparch) vs sub (v2.generate_subcomparch).
+    dep_rows = db.execute(
+        select(Node.id, Node.parent_id).where(
+            Node.id.in_(dependent_ids),
+            Node.project_id == project_id,
+            Node.tier == "comp",
+        )
+    ).all()
+    if not dep_rows:
+        return
+    top_level_deps: set[str] = {row.id for row in dep_rows if row.parent_id is None}
+    sub_deps: set[str] = {row.id for row in dep_rows if row.parent_id is not None}
+    all_dep_ids = top_level_deps | sub_deps
+
     deferred_rows = (
         db.execute(
             select(Job).where(
-                Job.job_type == "v2.generate_comparch",
+                or_(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.job_type == "v2.generate_subcomparch",
+                ),
                 Job.is_deferred.is_(True),
             )
         )
@@ -247,18 +257,23 @@ def wake_deferred_comparchs(
         if payload.get("project_id") != project_id:
             continue
         comp_id = payload.get("component_id")
-        if comp_id not in top_level_dep_set:
+        if comp_id not in all_dep_ids:
             continue
         assert isinstance(comp_id, str)
         if comp_id in woken:
-            # Multiple deferred markers for the same dependent —
-            # clear all of them but only enqueue once.
             job.is_deferred = False
             continue
+        # Pick the right job type based on the dependent's tier.
+        # The job_type on the deferred row would also work, but
+        # going through the resolved dep set is more robust if a
+        # comp got promoted/demoted between defer and wakeup.
+        next_job_type = (
+            "v2.generate_comparch" if comp_id in top_level_deps else "v2.generate_subcomparch"
+        )
         woken.add(comp_id)
         pipeline_queue.enqueue(
             db,
-            job_type="v2.generate_comparch",
+            job_type=next_job_type,
             payload={
                 "project_id": project_id,
                 "component_id": comp_id,
@@ -268,6 +283,99 @@ def wake_deferred_comparchs(
         job.is_deferred = False
     if woken:
         db.commit()
+
+
+# Backward-compat alias — the original Phase F name was tier-
+# specific (comparch only); the renamed function handles both
+# top-level comparch and subcomparch dependents. Tests retain
+# the old name as a re-export for clarity in the test names.
+wake_deferred_comparchs = wake_deferred_dependents
+
+
+def subcomparch_sibling_deps_settled(
+    db: "Session",
+    project_id: str,
+    scope_ids: tuple[str, ...],
+) -> tuple[bool, str]:
+    """Subcomparch's same-parent sibling deps must be settled before regen.
+
+    Phase F follow-up — same shape as
+    :func:`comparch_dep_comps_settled` but for the subcomparch
+    sibling case CLAUDE.md flagged as known debt: when a parent
+    comp's subcomparch batch is enqueued, subs that race each
+    other should serialize on dependency order.
+
+    Defers (returns ``(False, "deferred — ...")``) when any of
+    this sub's dependency-edge targets has an in-flight
+    ``v2.generate_subcomparch`` job. Top-level dep targets
+    (parent's-sibling comps) gate via
+    :func:`comparch_dep_comps_settled` semantics — they're
+    handled by the comparch wakeup chain when a comparch settles.
+    """
+    from sqlalchemy import select
+
+    from backend.models.job import Job
+    from backend.models.node import Edge
+
+    if not scope_ids:
+        return (False, "subcomparch readiness check missing component_id")
+    sub_id = scope_ids[0]
+
+    dep_targets = (
+        db.execute(
+            select(Edge.target_id).where(
+                Edge.project_id == project_id,
+                Edge.edge_type == "dependency",
+                Edge.source_id == sub_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not dep_targets:
+        return (True, "")
+
+    # Restrict to same-parent siblings — subs whose parent_id
+    # matches the current sub's parent_id.
+    sub_node = db.get(Node, sub_id)
+    if sub_node is None or sub_node.parent_id is None:
+        return (True, "")
+    same_parent_sibling_ids = {
+        row.id
+        for row in db.execute(
+            select(Node.id).where(
+                Node.id.in_(dep_targets),
+                Node.project_id == project_id,
+                Node.tier == "comp",
+                Node.parent_id == sub_node.parent_id,
+            )
+        ).all()
+    }
+    if not same_parent_sibling_ids:
+        return (True, "")
+
+    in_flight_jobs = db.execute(
+        select(Job.id, Job.payload).where(
+            Job.job_type == "v2.generate_subcomparch",
+            Job.status.in_(("queued", "running")),
+        )
+    ).all()
+    in_flight_dep_ids = {
+        row.payload.get("component_id")
+        for row in in_flight_jobs
+        if row.payload
+        and row.payload.get("component_id") in same_parent_sibling_ids
+        and row.payload.get("project_id") == project_id
+        and row.payload.get("component_id") != sub_id
+    }
+    if in_flight_dep_ids:
+        return (
+            False,
+            f"deferred — subcomparch sibling dep(s) {sorted(in_flight_dep_ids)!r} "
+            "have an in-flight regen. Will retry after they settle.",
+        )
+
+    return (True, "")
 
 
 def comparch_dep_comps_settled(

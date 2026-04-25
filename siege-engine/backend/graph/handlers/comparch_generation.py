@@ -33,7 +33,7 @@ from backend.graph.handlers._readiness import (
     comparch_dep_comps_settled,
     parent_subreqs_approved,
     top_level_comp_exists,
-    wake_deferred_comparchs,
+    wake_deferred_dependents,
 )
 from backend.graph.handlers._tier_generation import (
     TierGenerationConfig,
@@ -194,7 +194,7 @@ COMPARCH_CONFIG: TierGenerationConfig = TierGenerationConfig(
         parent_subreqs_approved,
         comparch_dep_comps_settled,
     ),
-    post_persist_hooks=(wake_deferred_comparchs,),
+    post_persist_hooks=(wake_deferred_dependents,),
 )
 
 

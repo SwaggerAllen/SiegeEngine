@@ -32,6 +32,8 @@ from backend.graph.handlers._readiness import (
     all_of,
     parent_comparch_approved,
     subcomp_node_exists,
+    subcomparch_sibling_deps_settled,
+    wake_deferred_dependents,
 )
 from backend.graph.handlers._tier_generation import (
     TierGenerationConfig,
@@ -170,7 +172,12 @@ SUBCOMPARCH_CONFIG: TierGenerationConfig = TierGenerationConfig(
     review_job_type="v2.review_subcomparch",
     scope_payload_keys=("component_id",),
     max_auto_revisions=5,
-    readiness_check=all_of(subcomp_node_exists, parent_comparch_approved),
+    readiness_check=all_of(
+        subcomp_node_exists,
+        parent_comparch_approved,
+        subcomparch_sibling_deps_settled,
+    ),
+    post_persist_hooks=(wake_deferred_dependents,),
 )
 
 
