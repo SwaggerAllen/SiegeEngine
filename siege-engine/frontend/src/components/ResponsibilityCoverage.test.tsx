@@ -146,7 +146,68 @@ describe('ResponsibilityCoverage', () => {
         screen.getByText(/No top-level responsibilities assigned/),
       ).toBeInTheDocument(),
     );
-    expect(screen.getByText(/No subresponsibilities yet/)).toBeInTheDocument();
+    // No subreqs node either — empty hint reflects upstream not bootstrapped.
+    expect(
+      screen.getByText(/No subrequirements node yet/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the "draft pending approval" hint when subreqs exists but is unapproved', async () => {
+    mocked.mockResolvedValue(
+      fixture({
+        nodes: [
+          n('comp_C', 'comp', null),
+          // subreqs node parented to comp_C but with no content yet.
+          {
+            ...n('subreqs_S', 'subreqs', 'comp_C'),
+            has_content: false,
+            has_pending_draft: true,
+          },
+        ],
+      }),
+    );
+
+    render(
+      <TestQueryWrapper>
+        <ResponsibilityCoverage projectId="p1" compId="comp_C" />
+      </TestQueryWrapper>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Approve the subrequirements draft/),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it('warns prominently when subreqs is approved but no subresps exist', async () => {
+    mocked.mockResolvedValue(
+      fixture({
+        nodes: [
+          n('comp_C', 'comp', null),
+          // subreqs node parented to comp_C with content (approved).
+          {
+            ...n('subreqs_S', 'subreqs', 'comp_C'),
+            has_content: true,
+          },
+        ],
+      }),
+    );
+
+    render(
+      <TestQueryWrapper>
+        <ResponsibilityCoverage projectId="p1" compId="comp_C" />
+      </TestQueryWrapper>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/no subresponsibilities were minted/),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText(/v2\.mint_subrequirements/),
+    ).toBeInTheDocument();
   });
 
   it('ignores resps assigned to other comps', async () => {

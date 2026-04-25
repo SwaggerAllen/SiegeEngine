@@ -665,7 +665,13 @@ async def _drain_pipeline_queue() -> None:
     body — no event-wait, no poll interval. Stops as soon as
     ``_claim_next_sync`` returns ``None``.
     """
-    from backend.pipeline.queue import _JOB_HANDLERS, _claim_next_sync, _complete_job_sync
+    from backend.graph.handlers._tier_generation import TierDeferredError
+    from backend.pipeline.queue import (
+        _JOB_HANDLERS,
+        _claim_next_sync,
+        _complete_deferred_job_sync,
+        _complete_job_sync,
+    )
 
     while True:
         claimed = await asyncio.to_thread(_claim_next_sync)
@@ -677,11 +683,18 @@ async def _drain_pipeline_queue() -> None:
             await asyncio.to_thread(_complete_job_sync, job_id, f"Unknown job type: {job_type}")
             continue
         error: str | None = None
+        deferred = False
         try:
             await handler(payload)
+        except TierDeferredError:
+            # Phase F: deferred completion — clean exit, no failure.
+            deferred = True
         except Exception as exc:  # noqa: BLE001 — mirror worker loop exactly
             error = str(exc)[:1000]
-        await asyncio.to_thread(_complete_job_sync, job_id, error)
+        if deferred:
+            await asyncio.to_thread(_complete_deferred_job_sync, job_id)
+        else:
+            await asyncio.to_thread(_complete_job_sync, job_id, error)
 
 
 def _approve_all_pending_drafts(factory, project_id: str) -> int:

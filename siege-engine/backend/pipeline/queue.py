@@ -271,6 +271,34 @@ def _complete_job_sync(job_id: str, error: str | None = None, cancelled: bool = 
         db.close()
 
 
+def _complete_deferred_job_sync(job_id: str) -> None:
+    """Synchronous: mark a deferred job as completed without recording a failure.
+
+    Phase F: handlers can raise :class:`TierDeferredError` when a
+    readiness predicate signals "retry later" (e.g. a comparch's
+    dep is mid-regen). The worker completes the job cleanly here —
+    no failure on the row, no retry — and the wakeup hook on the
+    blocking dep's persist re-enqueues a fresh job. The row is
+    tagged ``status="completed"`` with an ``error_message`` body
+    so observability can tell deferred completions apart from
+    regular ones; the message is informational, not a failure
+    signal.
+    """
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if not job or job.status != "running":
+            return
+        job.status = "completed"
+        job.is_deferred = True
+        job.error_message = "readiness predicate signalled retry-later"
+        job.completed_at = datetime.utcnow()
+        logger.info(f"Job {job.id} completed (deferred)")
+        db.commit()
+    finally:
+        db.close()
+
+
 # ── Job Handlers ──────────────────────────────────────────────────────────────
 #
 # Handlers are registered by the v2 build phase. The queue infrastructure is
@@ -348,6 +376,7 @@ async def worker_loop(poll_interval: float = 5.0) -> None:
         finally:
             current_job_id_var.reset(token)
         _active_handler_tasks[job_id] = handler_task
+        deferred = False
         try:
             await handler_task
         except asyncio.CancelledError:
@@ -355,10 +384,31 @@ async def worker_loop(poll_interval: float = 5.0) -> None:
             cancelled = True
             error = "Cancelled"
         except Exception as e:
-            logger.exception(f"Job {job_id} ({job_type}) failed")
-            error = str(e)[:1000]
+            # Phase F: TierDeferredError signals "retry later" without
+            # recording a failure. Worker completes the job cleanly;
+            # the staleness ledger row stays so the wakeup hook (or a
+            # future cascade trigger) re-enqueues this work.
+            from backend.graph.handlers._tier_generation import TierDeferredError
+
+            if isinstance(e, TierDeferredError):
+                logger.info(
+                    "Job %s (%s) deferred: %s",
+                    job_id,
+                    job_type,
+                    str(e)[:500],
+                )
+                deferred = True
+            else:
+                logger.exception(f"Job {job_id} ({job_type}) failed")
+                error = str(e)[:1000]
         finally:
             _active_handler_tasks.pop(job_id, None)
+        # Deferred jobs complete cleanly with status="done" + a
+        # marker on the row so observability can distinguish them
+        # from regular completions.
+        if deferred:
+            await asyncio.to_thread(_complete_deferred_job_sync, job_id)
+            continue
 
         await asyncio.to_thread(_complete_job_sync, job_id, error, cancelled)
 

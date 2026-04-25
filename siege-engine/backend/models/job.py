@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -25,3 +25,9 @@ class Job(Base):
     locked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Phase F: True when this job completed via the deferred-retry
+    # path (handler raised TierDeferredError). The wakeup hook keys
+    # off this flag to find rows that should be re-enqueued when
+    # their blocking dep settles. Replaces a fragile "deferred:"
+    # prefix on error_message that was load-bearing string discrimination.
+    is_deferred: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
