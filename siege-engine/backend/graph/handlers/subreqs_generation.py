@@ -174,6 +174,7 @@ SUBREQS_CONFIG: TierGenerationConfig = TierGenerationConfig(
     validate=_validate_subreqs,  # type: ignore[arg-type]
     review_job_type="v2.review_subreqs",
     scope_payload_keys=("component_id",),
+    max_auto_revisions=5,
 )
 
 

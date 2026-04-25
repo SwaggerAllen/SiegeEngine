@@ -186,6 +186,7 @@ IMPL_CONFIG: TierGenerationConfig = TierGenerationConfig(
     validate=_validate_impl,  # type: ignore[arg-type]
     review_job_type="v2.review_impl",
     scope_payload_keys=("owner_id",),
+    max_auto_revisions=5,
     readiness_check=all_of(owner_node_exists, owner_arch_approved),
 )
 

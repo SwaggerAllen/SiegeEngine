@@ -186,6 +186,7 @@ COMPARCH_CONFIG: TierGenerationConfig = TierGenerationConfig(
     validate=_validate_comparch,  # type: ignore[arg-type]
     review_job_type="v2.review_comparch",
     scope_payload_keys=("component_id",),
+    max_auto_revisions=5,
     readiness_check=all_of(top_level_comp_exists, parent_subreqs_approved),
 )
 

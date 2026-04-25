@@ -208,6 +208,7 @@ SYSARCH_CONFIG: TierGenerationConfig = TierGenerationConfig(
     review_job_type="v2.review_sysarch",
     scope_payload_keys=(),
     thinking_effort="max",
+    max_auto_revisions=5,
     readiness_check=all_of(sysarch_node_exists, sysarch_has_top_level_resps),
 )
 

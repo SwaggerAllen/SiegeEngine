@@ -169,6 +169,7 @@ SUBCOMPARCH_CONFIG: TierGenerationConfig = TierGenerationConfig(
     validate=_validate_subcomparch,  # type: ignore[arg-type]
     review_job_type="v2.review_subcomparch",
     scope_payload_keys=("component_id",),
+    max_auto_revisions=5,
     readiness_check=all_of(subcomp_node_exists, parent_comparch_approved),
 )
 

@@ -184,6 +184,7 @@ FEATURE_EXPANSION_CONFIG: TierGenerationConfig = TierGenerationConfig(
     review_job_type="v2.review_expansion",
     scope_payload_keys=(),
     thinking_effort="max",
+    max_auto_revisions=5,
 )
 
 
