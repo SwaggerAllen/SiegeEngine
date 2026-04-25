@@ -184,8 +184,13 @@ def _derived(*ids: str) -> str:
 
 
 def _valid_subreqs(parent_ids: list[str]) -> str:
-    """Two subresps, one per parent, for a clean happy-path fixture."""
+    """Two subresps, one per parent, for a clean happy-path fixture.
+
+    Includes the required <introduction> sibling so the validator's
+    intro check passes.
+    """
     return (
+        "<introduction>Two parent resps, one subresp each.</introduction>"
         "<subrequirements>"
         "<subresponsibility>"
         "<name>Tokenization</name>"
@@ -423,6 +428,7 @@ class TestGenerationDomainParentContext:
 
         # Generate subreqs on the presentational component
         ui_subreqs = (
+            "<introduction>UI side mirrors card-input flow.</introduction>"
             "<subrequirements>"
             "<subresponsibility>"
             "<name>Card Input Rendering</name>"
@@ -510,6 +516,7 @@ class TestGenerationDomainParentContext:
             s.close()
 
         ui_subreqs = (
+            "<introduction>Dashboard surface single subresp.</introduction>"
             "<subrequirements>"
             "<subresponsibility>"
             "<name>Dashboard Render</name>"
@@ -565,6 +572,7 @@ class TestGenerationParseValidate:
         # First attempt references a resp ID that isn't assigned to
         # this component — triggers the leak check.
         bad = (
+            "<introduction>Initial pass.</introduction>"
             "<subrequirements>"
             "<subresponsibility><name>A</name><intent>Ok.</intent>"
             '<derived-from><resp id="resp_strange01"/></derived-from>'

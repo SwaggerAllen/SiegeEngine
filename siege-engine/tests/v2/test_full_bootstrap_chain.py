@@ -348,6 +348,7 @@ def _subrequirements_xml(prompt: str) -> str:
         + "</derived-from>"
     )
     return (
+        "<introduction>Two subresps cover the assigned parent resps.</introduction>"
         "<subrequirements>"
         f"<subresponsibility><name>CoreHandling</name>"
         f"<intent>Primary subresp for this comp.</intent>{derived}"

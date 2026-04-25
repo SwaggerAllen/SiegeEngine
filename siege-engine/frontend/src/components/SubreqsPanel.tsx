@@ -1,4 +1,4 @@
-import { useSubreqs } from '../hooks/queries/useSubreqsQueries';
+import { useMemo } from 'react';
 import {
   useApproveMutation,
   useCancelGenerationMutation,
@@ -6,11 +6,13 @@ import {
   useResetMutation,
   useReviewRetryMutation,
 } from '../hooks/mutations/useSubreqsMutations';
+import { useProjectStructure } from '../hooks/queries/useProjectStructure';
+import { useSubreqs } from '../hooks/queries/useSubreqsQueries';
 import {
   BootstrapDraftPanel,
   type BootstrapPanelLabels,
 } from './BootstrapDraftPanel';
-import { ResponsibilityCoverage } from './ResponsibilityCoverage';
+import { SubreqsListTab } from './SubreqsListTab';
 import { subreqsRenderers } from './xml';
 
 interface Props {
@@ -27,19 +29,29 @@ function makeLabels(componentName: string): BootstrapPanelLabels {
     draftHeading: `${componentName} — Subrequirements Draft`,
     feedbackPlaceholder: 'e.g. Add explicit retry backoff, tighten scope…',
     readOnlyExplanation:
-      'Further subresponsibility-layer edits happen on individual subresp nodes and on this component\u2019s architecture doc once Phase 4 lands.',
+      'Further subresponsibility-layer edits happen on individual subresp nodes and on this component’s architecture doc once Phase 4 lands.',
   };
 }
 
 /**
  * Four-state review panel for a single component's subreqs node.
  *
- * Thin wrapper around :component:`BootstrapDraftPanel`. Labels are
- * parameterized by the component name so users immediately see
- * which component's subreqs they're reviewing.
+ * Modeled on :component:`RequirementsPanel`: the panel hands
+ * :component:`BootstrapDraftPanel` an ``extraTabs`` injection that
+ * adds a "Subresponsibilities" subtab between Document and Review.
+ * The sub-tab parses the draft / approved content and renders
+ * subresps grouped under the parent resps assigned to this
+ * component (mirroring the requirements tab's "responsibilities
+ * with their feature coverage" layout, one tier deeper).
+ *
+ * The owning component's assigned parent resps come from the
+ * project structure snapshot. The pre-tab "Responsibilities"
+ * coverage summary is gone — the new tab structure carries the
+ * same information without doubling the vertical scroll.
  */
 export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
   const { data, error, isLoading } = useSubreqs(projectId, componentId);
+  const { data: structure } = useProjectStructure(projectId);
   const feedbackMutation = useFeedbackMutation(projectId, componentId);
   const approveMutation = useApproveMutation(projectId, componentId);
   const cancelMutation = useCancelGenerationMutation(projectId, componentId);
@@ -53,29 +65,61 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
     resetMutation.isPending ||
     reviewRetryMutation.isPending;
 
+  // Parent resps for this component — top-level resp nodes that
+  // route to this comp via decomposition edges. Order by
+  // display_order so the rendered group headers track the
+  // sysarch ordering.
+  const parentResps = useMemo(() => {
+    if (!structure) return [];
+    const receivedIds = new Set(
+      structure.edges
+        .filter(
+          (e) => e.edge_type === 'decomposition' && e.target_id === componentId,
+        )
+        .map((e) => e.source_id),
+    );
+    return structure.nodes
+      .filter(
+        (n) =>
+          n.tier === 'resp' && n.parent_id === null && receivedIds.has(n.id),
+      )
+      .sort((a, b) => a.display_order - b.display_order)
+      .map((n) => ({ id: n.id, name: n.name }));
+  }, [structure, componentId]);
+
   return (
-    <div className="flex flex-col h-full overflow-auto">
-      <ResponsibilityCoverage projectId={projectId} compId={componentId} />
-      <div className="flex-1 min-h-0">
-        <BootstrapDraftPanel
+    <BootstrapDraftPanel
       projectId={projectId}
-          data={data}
-          isLoading={isLoading}
-          error={error}
-          labels={makeLabels(componentName)}
-          callbacks={{
-            onFeedback: (f, autoRev) =>
-              feedbackMutation.mutate({ feedback: f, autoRevisionsRequested: autoRev ?? 0 }),
-            onApprove: (id) => approveMutation.mutate(id),
-            onRetry: () => feedbackMutation.mutate(''),
-            onCancel: () => cancelMutation.mutate(),
-            onReset: () => resetMutation.mutate(),
-            onRetryReview: () => reviewRetryMutation.mutate(),
-            isBusy,
-          }}
-          contentRenderers={subreqsRenderers}
-        />
-      </div>
-    </div>
+      data={data}
+      isLoading={isLoading}
+      error={error}
+      labels={makeLabels(componentName)}
+      callbacks={{
+        onFeedback: (f, autoRev) =>
+          feedbackMutation.mutate({
+            feedback: f,
+            autoRevisionsRequested: autoRev ?? 0,
+          }),
+        onApprove: (id) => approveMutation.mutate(id),
+        onRetry: () => feedbackMutation.mutate(''),
+        onCancel: () => cancelMutation.mutate(),
+        onReset: () => resetMutation.mutate(),
+        onRetryReview: () => reviewRetryMutation.mutate(),
+        isBusy,
+      }}
+      contentRenderers={subreqsRenderers}
+      extraTabs={({ pendingContent, approvedContent }) => [
+        {
+          id: 'subresps',
+          label: 'Subresponsibilities',
+          content: (
+            <SubreqsListTab
+              content={pendingContent ?? approvedContent}
+              parentResps={parentResps}
+            />
+          ),
+        },
+      ]}
+    />
   );
 }
