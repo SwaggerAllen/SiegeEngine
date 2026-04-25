@@ -149,13 +149,14 @@ class TestWakeDeferredComparchs:
         a_job = db.get(Job, a_job_id)
         assert a_job is not None
         a_job.status = "completed"
-        a_job.error_message = "deferred: readiness predicate signalled retry-later"
+        a_job.is_deferred = True
+        a_job.error_message = "readiness predicate signalled retry-later"
         db.commit()
 
-        # Verify the deferred marker is set.
+        # Verify the deferred flag is set.
         a_job = db.get(Job, a_job_id)
         assert a_job is not None
-        assert a_job.error_message and a_job.error_message.startswith("deferred:")
+        assert a_job.is_deferred is True
 
         # Wakeup fires after B persists. Re-enqueues A.
         wake_deferred_comparchs(db, project.id, "draft_ignored", (b,))
@@ -175,10 +176,10 @@ class TestWakeDeferredComparchs:
             "wakeup should re-enqueue A's comparch when B settles"
         )
 
-        # The deferred marker is rewritten so the next wakeup
-        # doesn't act on this row again.
+        # The deferred flag is cleared so the next wakeup doesn't
+        # act on this row again.
         db.refresh(a_job)
-        assert a_job.error_message and a_job.error_message.startswith("resolved:")
+        assert a_job.is_deferred is False
 
     def test_no_op_when_no_deferred_dependents(self, db, project):
         a = _make_comp(db, project.id, name="A")
@@ -211,7 +212,8 @@ class TestWakeDeferredComparchs:
         x_job = db.get(Job, x_job_id)
         assert x_job is not None
         x_job.status = "completed"
-        x_job.error_message = "deferred: readiness predicate signalled retry-later"
+        x_job.is_deferred = True
+        x_job.error_message = "readiness predicate signalled retry-later"
         db.commit()
 
         wake_deferred_comparchs(db, project.id, "draft_ignored", (b,))

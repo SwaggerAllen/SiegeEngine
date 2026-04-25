@@ -290,10 +290,8 @@ def _complete_deferred_job_sync(job_id: str) -> None:
         if not job or job.status != "running":
             return
         job.status = "completed"
-        # Marker prefix consumed by
-        # ``backend.graph.handlers._readiness.wake_deferred_comparchs``
-        # to find rows the wakeup hook should act on.
-        job.error_message = "deferred: readiness predicate signalled retry-later"
+        job.is_deferred = True
+        job.error_message = "readiness predicate signalled retry-later"
         job.completed_at = datetime.utcnow()
         logger.info(f"Job {job.id} completed (deferred)")
         db.commit()

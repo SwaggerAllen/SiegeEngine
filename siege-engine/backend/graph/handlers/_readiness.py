@@ -154,10 +154,6 @@ def top_level_comp_exists(
     return (True, "")
 
 
-_DEFERRED_PREFIX = "deferred:"
-_RESOLVED_PREFIX = "resolved:"
-
-
 def wake_deferred_comparchs(
     db: "Session",
     project_id: str,
@@ -168,18 +164,17 @@ def wake_deferred_comparchs(
 
     Wired into ``COMPARCH_CONFIG.post_persist_hooks``. Runs after a
     comparch lands. Walks the dependency graph for top-level comps
-    that depend on the just-persisted comp AND have a deferred-
-    completed comparch job, then re-enqueues a fresh
-    ``v2.generate_comparch`` for each. The freshly-claimed job's
-    readiness predicate runs again; if the dep is now settled the
-    regen proceeds, if not it defers again and the next persist
-    picks it up.
+    that depend on the just-persisted comp AND have a job in the
+    deferred-completed state (``Job.is_deferred=True``), then
+    re-enqueues a fresh ``v2.generate_comparch`` for each. The
+    freshly-claimed job's readiness predicate runs again; if the
+    dep is now settled the regen proceeds, if not it defers again
+    and the next persist picks it up.
 
-    Idempotency: after re-enqueueing, the deferred marker is
-    rewritten from ``deferred:`` to ``resolved:`` so subsequent
-    wakeups don't re-fire on the same row. The pipeline_queue's
-    payload-dedup against currently-queued jobs catches concurrent
-    re-enqueues.
+    Idempotency: after re-enqueueing, the ``is_deferred`` flag is
+    cleared on the consumed rows so subsequent wakeups don't
+    re-fire on them. The pipeline_queue's payload-dedup against
+    currently-queued jobs catches concurrent re-enqueues.
     """
     if not scope_ids:
         return
@@ -220,15 +215,13 @@ def wake_deferred_comparchs(
     if not top_level_dep_set:
         return
 
-    # Find deferred-completed jobs for those dependents. The marker
-    # is a "deferred:" prefix on error_message written by
-    # ``_complete_deferred_job_sync``.
+    # Find deferred jobs for those dependents — typed flag rather
+    # than fragile string discrimination on error_message.
     deferred_rows = (
         db.execute(
             select(Job).where(
                 Job.job_type == "v2.generate_comparch",
-                Job.status == "completed",
-                Job.error_message.like(f"{_DEFERRED_PREFIX}%"),
+                Job.is_deferred.is_(True),
             )
         )
         .scalars()
@@ -245,10 +238,8 @@ def wake_deferred_comparchs(
         assert isinstance(comp_id, str)
         if comp_id in woken:
             # Multiple deferred markers for the same dependent —
-            # rewrite all of them but only enqueue once.
-            job.error_message = _RESOLVED_PREFIX + (
-                job.error_message[len(_DEFERRED_PREFIX) :] if job.error_message else ""
-            )
+            # clear all of them but only enqueue once.
+            job.is_deferred = False
             continue
         woken.add(comp_id)
         pipeline_queue.enqueue(
@@ -260,9 +251,7 @@ def wake_deferred_comparchs(
                 "feedback": None,
             },
         )
-        job.error_message = _RESOLVED_PREFIX + (
-            job.error_message[len(_DEFERRED_PREFIX) :] if job.error_message else ""
-        )
+        job.is_deferred = False
     if woken:
         db.commit()
 
