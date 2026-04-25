@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { sliceXmlBlock } from '../lib/sliceXmlBlock';
 import { parseXml } from './xml';
+import { SubresponsibilityCard } from './xml/SubresponsibilityCard';
 import type { XmlElement } from './xml/types';
 
 /**
@@ -9,7 +10,9 @@ import type { XmlElement } from './xml/types';
  * top-level resps. Mirrors the layout pattern of
  * ``RequirementsListTab`` (where features are grouped under
  * responsibilities) but at one tier deeper: parent resps own
- * subresps via ``<derived-from>`` references.
+ * subresps via ``<derived-from>`` references, and each subresp
+ * carries its own ``<feats>`` tag list rendered as collapsible
+ * count pills via :component:`SubresponsibilityCard`.
  *
  * The parent resp set comes from the project structure rather
  * than the subreqs XML itself — the structure carries the resp
@@ -22,9 +25,11 @@ import type { XmlElement } from './xml/types';
 export function SubreqsListTab({
   content,
   parentResps,
+  featureNames = {},
 }: {
   content: string | null | undefined;
   parentResps: ReadonlyArray<{ id: string; name: string }>;
+  featureNames?: Record<string, string>;
 }) {
   const grouped = useMemo(() => parseSubresps(content), [content]);
 
@@ -82,18 +87,16 @@ export function SubreqsListTab({
               <ul className="divide-y divide-gray-800">
                 {subs.map((sub, idx) => (
                   <li key={`${parent.id}-${idx}`} className="px-3 py-2">
-                    <div className="text-sm font-medium text-gray-100">
-                      {sub.name}
-                      {sub.derivedFrom.length > 1 && (
-                        <span className="ml-2 text-[10px] uppercase tracking-wider text-gray-500 font-normal">
-                          shared · {sub.derivedFrom.length} parents
-                        </span>
-                      )}
-                    </div>
-                    {sub.intent && (
-                      <p className="text-xs text-gray-400 mt-0.5 whitespace-pre-wrap">
-                        {sub.intent}
-                      </p>
+                    <SubresponsibilityCard
+                      name={sub.name}
+                      feats={sub.feats}
+                      parentIds={sub.derivedFrom}
+                      featureNames={featureNames}
+                    />
+                    {sub.derivedFrom.length > 1 && (
+                      <div className="mt-1 text-[10px] uppercase tracking-wider text-gray-500">
+                        shared · {sub.derivedFrom.length} parents
+                      </div>
                     )}
                   </li>
                 ))}
@@ -148,7 +151,7 @@ export function SubreqsListTab({
 
 interface SubrespEntry {
   name: string;
-  intent: string;
+  feats: string[];
   derivedFrom: string[];
 }
 
@@ -175,17 +178,25 @@ function parseSubresps(
       continue;
     }
     const name = textOf(child, 'name') ?? 'Untitled';
-    const intent = textOf(child, 'intent') ?? '';
+    const feats: string[] = [];
     const derivedFrom: string[] = [];
     for (const sub of child.children) {
-      if (sub.type !== 'element' || sub.name !== 'derived-from') continue;
-      for (const respChild of sub.children) {
-        if (respChild.type !== 'element' || respChild.name !== 'resp') continue;
-        const id = respChild.attributes.id;
-        if (typeof id === 'string') derivedFrom.push(id);
+      if (sub.type !== 'element') continue;
+      if (sub.name === 'feats') {
+        for (const featChild of sub.children) {
+          if (featChild.type !== 'element' || featChild.name !== 'feat') continue;
+          const id = featChild.attributes.id;
+          if (typeof id === 'string') feats.push(id);
+        }
+      } else if (sub.name === 'derived-from') {
+        for (const respChild of sub.children) {
+          if (respChild.type !== 'element' || respChild.name !== 'resp') continue;
+          const id = respChild.attributes.id;
+          if (typeof id === 'string') derivedFrom.push(id);
+        }
       }
     }
-    const entry: SubrespEntry = { name, intent, derivedFrom };
+    const entry: SubrespEntry = { name, feats, derivedFrom };
     for (const parentId of derivedFrom) {
       const bucket = grouped.get(parentId);
       if (bucket) bucket.push(entry);

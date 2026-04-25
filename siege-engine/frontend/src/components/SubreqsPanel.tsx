@@ -6,6 +6,7 @@ import {
   useResetMutation,
   useReviewRetryMutation,
 } from '../hooks/mutations/useSubreqsMutations';
+import { useFeatures } from '../hooks/queries/useFeatureQueries';
 import { useProjectStructure } from '../hooks/queries/useProjectStructure';
 import { useSubreqs } from '../hooks/queries/useSubreqsQueries';
 import {
@@ -13,7 +14,7 @@ import {
   type BootstrapPanelLabels,
 } from './BootstrapDraftPanel';
 import { SubreqsListTab } from './SubreqsListTab';
-import { subreqsRenderers } from './xml';
+import { makeSubreqsRenderers } from './xml';
 
 interface Props {
   projectId: string;
@@ -52,6 +53,7 @@ function makeLabels(componentName: string): BootstrapPanelLabels {
 export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
   const { data, error, isLoading } = useSubreqs(projectId, componentId);
   const { data: structure } = useProjectStructure(projectId);
+  const { data: featuresData } = useFeatures(projectId);
   const feedbackMutation = useFeedbackMutation(projectId, componentId);
   const approveMutation = useApproveMutation(projectId, componentId);
   const cancelMutation = useCancelGenerationMutation(projectId, componentId);
@@ -87,6 +89,19 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
       .map((n) => ({ id: n.id, name: n.name }));
   }, [structure, componentId]);
 
+  const featureNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const f of featuresData?.features ?? []) {
+      map[f.id] = f.name;
+    }
+    return map;
+  }, [featuresData]);
+
+  const renderers = useMemo(
+    () => makeSubreqsRenderers(featureNames),
+    [featureNames],
+  );
+
   return (
     <BootstrapDraftPanel
       projectId={projectId}
@@ -107,7 +122,7 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
         onRetryReview: () => reviewRetryMutation.mutate(),
         isBusy,
       }}
-      contentRenderers={subreqsRenderers}
+      contentRenderers={renderers}
       extraTabs={({ pendingContent, approvedContent }) => [
         {
           id: 'subresps',
@@ -116,6 +131,7 @@ export function SubreqsPanel({ projectId, componentId, componentName }: Props) {
             <SubreqsListTab
               content={pendingContent ?? approvedContent}
               parentResps={parentResps}
+              featureNames={featureNames}
             />
           ),
         },
