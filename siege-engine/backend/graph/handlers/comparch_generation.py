@@ -3,21 +3,12 @@
 Registered on the pipeline job queue as ``v2.generate_comparch``.
 Payload: ``{"project_id": str, "component_id": str, "feedback": str | None}``.
 
-Three-phase shape matching every other bootstrap generation handler:
-
-1. **Gather inputs.** Resolve the target component, verify its
-   owning subreqs is approved (non-empty content), assemble the
-   full :class:`RegenContext` bundle via the shared stage 2
-   helper, read project settings for the CLI timeout.
-2. **LLM call + parse-validate retry loop.** Delegate to
-   ``run_parse_validate_loop`` with the comparch prompt and the
-   arch-doc validator. The closures pass in the pre-formatted
-   context kwargs and the three known-ID sets the validator
-   needs (subresps, sibling comps, policy-required resps).
-3. **Persist events + telemetry.** DraftDiscarded for any prior
-   pending, DraftGenerated targeting the comp_* node,
-   one GenerationTelemetry row per attempt with
-   ``section="comparch"``.
+Phase C migration: handler delegates to
+:func:`backend.graph.handlers._tier_generation.run_tier_generation`.
+The "subreqs approved" precondition lifts to the
+:func:`parent_subreqs_approved` readiness predicate. Component
+existence / tier / top-level checks stay in :func:`gather_comparch_state`
+and raise :class:`ComparchHandlerError` directly.
 
 The arch doc is stored as content on the comp_* node itself —
 no new node kind. On approval the mint handler (stage 4)
@@ -30,18 +21,28 @@ See ``docs/architecture/v2-roadmap.md`` Phase 4.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from backend.database import SessionLocal
-from backend.graph.handlers._bootstrap_generation import (
-    persist_draft,
-    run_parse_validate_loop,
+from backend.cli.config import CliInvocationConfig
+from backend.database import SessionLocal  # noqa: F401  (chain test patches this attr)
+from backend.graph.handlers._readiness import (
+    all_of,
+    parent_subreqs_approved,
+    top_level_comp_exists,
+)
+from backend.graph.handlers._tier_generation import (
+    TierGenerationConfig,
+    TierPreconditionError,
+    TierState,
+    run_tier_generation,
 )
 from backend.graph.parsers.validators import validate_arch_doc
+from backend.graph.parsers.xml_sections import TagNode
 from backend.graph.prompts.comparch import render_system_prompt, render_user_prompt
 from backend.graph.regen_context import build_regen_context, format_regen_context
-from backend.graph.subrequirements import get_subreqs_node
 from backend.models import Project
 from backend.models.node import Draft, Node
 from backend.pipeline import queue as pipeline_queue
@@ -64,154 +65,163 @@ class ComparchParseRetryExhausted(RuntimeError):
     """Raised when parse-validate retries are exhausted without success."""
 
 
+@dataclass
+class ComparchState:
+    """Per-tier state bundle for comparch generation."""
+
+    # TierState protocol fields:
+    node_id: str
+    prior_approved: str | None
+    prior_pending: str | None
+    prior_pending_id: str | None
+    cli_config: CliInvocationConfig
+    system_prompt: str
+    # Per-tier extras:
+    context_kwargs: dict
+    known_subresp_ids: set[str]
+    known_sibling_comp_ids: set[str]
+    known_resp_ids_for_policies: set[str]
+    target_is_foundation: bool
+
+
+def gather_comparch_state(
+    db: Session, project_id: str, scope_ids: tuple[str, ...]
+) -> ComparchState:
+    if not scope_ids:
+        raise ComparchHandlerError("generate_comparch payload missing component_id")
+    component_id = scope_ids[0]
+
+    comp_node = db.get(Node, component_id)
+    if comp_node is None or comp_node.project_id != project_id:
+        raise ComparchHandlerError(
+            f"Component {component_id!r} not found in project {project_id!r}"
+        )
+    if comp_node.tier != "comp":
+        raise ComparchHandlerError(
+            f"Node {component_id!r} is not a comp_* node (tier={comp_node.tier!r})"
+        )
+    if comp_node.parent_id is not None:
+        raise ComparchHandlerError(
+            f"Component {component_id!r} is a subcomponent "
+            f"(parent_id={comp_node.parent_id!r}). Comparch only "
+            "runs on top-level components; subcomponent arch docs "
+            "are Phase 5."
+        )
+
+    pending = db.execute(
+        select(Draft).where(
+            Draft.project_id == project_id,
+            Draft.target_type == "node",
+            Draft.target_id == component_id,
+            Draft.status == "pending",
+        )
+    ).scalar_one_or_none()
+
+    regen_ctx = build_regen_context(db, component_id)
+    context_kwargs = format_regen_context(regen_ctx)
+
+    known_subresp_ids: set[str] = {r.id for r in regen_ctx.subresps}
+    known_sibling_comp_ids: set[str] = set(regen_ctx.sibling_comp_ids)
+    known_resp_ids_for_policies: set[str] = {
+        r.id for r in regen_ctx.parent_resps
+    } | known_subresp_ids
+    target_is_foundation: bool = bool(comp_node.is_foundation)
+
+    project_row = db.get(Project, project_id)
+    assert project_row is not None
+    settings = get_project_settings(project_row)
+
+    return ComparchState(
+        node_id=component_id,
+        prior_approved=comp_node.content or None,
+        prior_pending=pending.content if pending is not None else None,
+        prior_pending_id=pending.id if pending is not None else None,
+        cli_config=settings.to_cli_config(),
+        system_prompt=render_system_prompt(),
+        context_kwargs=context_kwargs,
+        known_subresp_ids=known_subresp_ids,
+        known_sibling_comp_ids=known_sibling_comp_ids,
+        known_resp_ids_for_policies=known_resp_ids_for_policies,
+        target_is_foundation=target_is_foundation,
+    )
+
+
+def _render_comparch_prompt(
+    state: ComparchState,
+    *,
+    prior_pending: str | None,
+    parse_error: str | None,
+    feedback: str | None,
+    prior_review: str | None,
+) -> str:
+    return render_user_prompt(
+        **state.context_kwargs,
+        prior_approved=state.prior_approved,
+        prior_pending=prior_pending,
+        feedback=feedback,
+        prior_review=prior_review,
+        target_is_foundation=state.target_is_foundation,
+        parse_error=parse_error,
+    )
+
+
+def _validate_comparch(tree: TagNode, _raw: str, state: ComparchState) -> None:
+    validate_arch_doc(
+        tree,
+        known_subresp_ids=state.known_subresp_ids,
+        known_sibling_comp_ids=state.known_sibling_comp_ids,
+        known_resp_ids_for_policies=state.known_resp_ids_for_policies,
+        target_is_foundation=state.target_is_foundation,
+    )
+
+
+COMPARCH_CONFIG: TierGenerationConfig = TierGenerationConfig(
+    tier_name="comparch",
+    generate_job_type=GENERATE_COMPARCH_JOB_TYPE,
+    section="comparch",
+    root_tag="comparch",
+    exhausted_exception_cls=ComparchParseRetryExhausted,
+    gather_state=gather_comparch_state,  # type: ignore[arg-type]
+    render_prompt=_render_comparch_prompt,  # type: ignore[arg-type]
+    validate=_validate_comparch,  # type: ignore[arg-type]
+    review_job_type="v2.review_comparch",
+    scope_payload_keys=("component_id",),
+    readiness_check=all_of(top_level_comp_exists, parent_subreqs_approved),
+)
+
+
 async def generate_comparch(payload: dict) -> None:
     """Job handler for ``v2.generate_comparch``.
 
-    Payload shape: ``{"project_id": str, "component_id": str,
-    "feedback": str | None}``.
+    Phase C migration: delegates to :func:`run_tier_generation`. The
+    thin wrapper converts driver-level errors into the tier-specific
+    typed exceptions:
+
+    - ``ValueError`` (payload-shape) → :class:`ComparchHandlerError`.
+    - ``TierPreconditionError`` from ``parent_subreqs_approved`` —
+      i.e. the message contains "has not been approved" or "blocked"
+      — maps to :class:`ComparchPreconditionError`.
+    - All other ``TierPreconditionError`` (component missing,
+      wrong tier, subcomponent) maps to :class:`ComparchHandlerError`.
+
+    Both subclasses preserve the test contract that asserted on
+    ``ComparchHandlerError`` for the structural checks and
+    ``ComparchPreconditionError`` for the upstream-readiness check.
     """
-    project_id = payload.get("project_id")
-    component_id = payload.get("component_id")
-    if not isinstance(project_id, str) or not project_id:
-        raise ComparchHandlerError("generate_comparch payload missing project_id")
-    if not isinstance(component_id, str) or not component_id:
-        raise ComparchHandlerError("generate_comparch payload missing component_id")
-    feedback: str | None = payload.get("feedback")
-    prior_review: str | None = payload.get("prior_review_text") or None
-
-    # ── Phase 1: gather inputs ──────────────────────────────────────
-    db = SessionLocal()
     try:
-        comp_node = db.get(Node, component_id)
-        if comp_node is None or comp_node.project_id != project_id:
-            raise ComparchHandlerError(
-                f"Component {component_id!r} not found in project {project_id!r}"
-            )
-        if comp_node.tier != "comp":
-            raise ComparchHandlerError(
-                f"Node {component_id!r} is not a comp_* node (tier={comp_node.tier!r})"
-            )
-        if comp_node.parent_id is not None:
-            raise ComparchHandlerError(
-                f"Component {component_id!r} is a subcomponent "
-                f"(parent_id={comp_node.parent_id!r}). Comparch only "
-                "runs on top-level components; subcomponent arch docs "
-                "are Phase 5."
-            )
-
-        # Precondition: subreqs approved for this component.
-        # subreqs node has non-empty content only after DraftApproved
-        # has landed, so "content is non-empty" == "approved".
-        subreqs_node = get_subreqs_node(db, project_id, component_id)
-        if subreqs_node is None or not (subreqs_node.content or "").strip():
-            raise ComparchPreconditionError(
-                f"Comparch generation for {component_id!r} blocked — its "
-                "owning subreqs_* has not been approved yet. Approve the "
-                "component's subrequirements first, which will enqueue "
-                "comparch generation automatically via subreqs_mint."
-            )
-
-        # Prior approved / pending state.
-        prior_approved: str | None = comp_node.content or None
-        pending = db.execute(
-            select(Draft).where(
-                Draft.project_id == project_id,
-                Draft.target_type == "node",
-                Draft.target_id == component_id,
-                Draft.status == "pending",
-            )
-        ).scalar_one_or_none()
-        prior_pending: str | None = pending.content if pending is not None else None
-        prior_pending_id: str | None = pending.id if pending is not None else None
-
-        # Assemble the regen context via the stage 2 helper.
-        regen_ctx = build_regen_context(db, component_id)
-        context_kwargs = format_regen_context(regen_ctx)
-
-        # Validator-input ID sets derived from the same context.
-        # Pre-minted subresps from subreqs:
-        known_subresp_ids: set[str] = {r.id for r in regen_ctx.subresps}
-        # Sibling top-level comps:
-        known_sibling_comp_ids: set[str] = set(regen_ctx.sibling_comp_ids)
-        # Policy-required resps: union of parent resps + subresps
-        # (top-level resps assigned to this component plus its
-        # pre-minted subresps). Cross-component resps are not
-        # allowed as policy <required> targets — that would be
-        # a leak into another component's scope.
-        known_resp_ids_for_policies: set[str] = {
-            r.id for r in regen_ctx.parent_resps
-        } | known_subresp_ids
-
-        # Foundations don't nest: when the target comp was minted
-        # by sysarch with the <foundation/> marker, its own
-        # decomposition must not include another foundation
-        # subcomponent. The validator + prompt handle the carve-out.
-        target_is_foundation: bool = bool(comp_node.is_foundation)
-
-        project_row = db.get(Project, project_id)
-        assert project_row is not None
-        settings = get_project_settings(project_row)
-        cli_config = settings.to_cli_config()
-        system_prompt = render_system_prompt()
-    finally:
-        db.close()
-
-    # ── Phase 2: LLM call + parse-validate retry loop ───────────────
-    logger.info(
-        "generate_comparch project=%s comp=%s prior_pending=%s feedback=%s "
-        "subresps=%d siblings=%d policy_candidates=%d",
-        project_id,
-        component_id,
-        bool(prior_pending),
-        bool(feedback),
-        len(known_subresp_ids),
-        len(known_sibling_comp_ids),
-        len(regen_ctx.top_level_policy_candidates),
-    )
-
-    def _render(*, prior_pending: str | None, parse_error: str | None) -> str:
-        return render_user_prompt(
-            **context_kwargs,
-            prior_approved=prior_approved,
-            prior_pending=prior_pending,
-            feedback=feedback,
-            prior_review=prior_review,
-            target_is_foundation=target_is_foundation,
-            parse_error=parse_error,
-        )
-
-    def _validate(tree, _raw_text) -> None:  # type: ignore[no-untyped-def]
-        validate_arch_doc(
-            tree,
-            known_subresp_ids=known_subresp_ids,
-            known_sibling_comp_ids=known_sibling_comp_ids,
-            known_resp_ids_for_policies=known_resp_ids_for_policies,
-            target_is_foundation=target_is_foundation,
-        )
-
-    validated_output, attempts = await run_parse_validate_loop(
-        root_tag="comparch",
-        system_prompt=system_prompt,
-        cli_config=cli_config,
-        prior_pending=prior_pending,
-        render_prompt=_render,
-        validate=_validate,
-        exhausted_exception_cls=ComparchParseRetryExhausted,
-        log_handler_name="generate_comparch",
-    )
-
-    persist_draft(
-        project_id=project_id,
-        node_id=component_id,
-        section="comparch",
-        validated_output=validated_output,
-        attempts=attempts,
-        prior_pending_id=prior_pending_id,
-        log_handler_name="generate_comparch",
-        review_job_type="v2.review_comparch",
-    )
+        await run_tier_generation(payload, COMPARCH_CONFIG)
+    except TierPreconditionError as exc:
+        msg = str(exc)
+        if "has not been approved" in msg or "blocked" in msg:
+            raise ComparchPreconditionError(msg) from exc
+        raise ComparchHandlerError(msg) from exc
+    except ValueError as exc:
+        raise ComparchHandlerError(str(exc)) from exc
 
 
 def register() -> None:
     """Register the handler with the pipeline job queue."""
     pipeline_queue.register_handler(GENERATE_COMPARCH_JOB_TYPE, generate_comparch)
+
+
+_: type = TierState

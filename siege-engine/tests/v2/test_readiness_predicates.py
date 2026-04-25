@@ -16,7 +16,10 @@ from backend.graph.handlers._readiness import (
     owner_arch_approved,
     parent_comparch_approved,
     parent_subreqs_approved,
+    subcomp_node_exists,
     sysarch_has_top_level_resps,
+    sysarch_node_exists,
+    top_level_comp_exists,
 )
 from backend.graph.ids import Kind, mint
 from backend.graph.reducer import append_event
@@ -132,17 +135,74 @@ class TestParentComparchApproved:
         assert "no approved comparch content" in reason
 
     def test_fails_when_node_missing(self, db, project):
+        # The structural check (subcomp_node_exists) is now a
+        # separate predicate. parent_comparch_approved assumes the
+        # structural check has already passed; with a missing node
+        # it returns the defensive "state invalid" message.
         ready, reason = parent_comparch_approved(db, project.id, ("comp_GHOST001",))
+        assert ready is False
+
+    def test_fails_when_top_level_comp(self, db, project):
+        # parent_comparch_approved alone returns the defensive
+        # "state invalid" path when called against a top-level
+        # comp. The structural rejection lives on
+        # subcomp_node_exists (covered in TestSubcompNodeExists).
+        top_id = _make_node(db, project.id, tier="comp", name="Top")
+        ready, _ = parent_comparch_approved(db, project.id, (top_id,))
+        assert ready is False
+
+
+class TestSysarchNodeExists:
+    def test_passes_when_node_present(self, db, project):
+        from backend.graph.sysarch import bootstrap_sysarch_node
+
+        bootstrap_sysarch_node(db, project.id)
+        ready, reason = sysarch_node_exists(db, project.id, ())
+        assert ready is True
+        assert reason == ""
+
+    def test_fails_when_no_node(self, db, project):
+        ready, reason = sysarch_node_exists(db, project.id, ())
+        assert ready is False
+        assert "no sysarch node" in reason.lower()
+
+
+class TestTopLevelCompExists:
+    def test_passes_for_top_level_comp(self, db, project):
+        comp_id = _make_node(db, project.id, tier="comp", name="Top")
+        ready, _ = top_level_comp_exists(db, project.id, (comp_id,))
+        assert ready is True
+
+    def test_fails_when_node_missing(self, db, project):
+        ready, reason = top_level_comp_exists(db, project.id, ("comp_GONE0001",))
         assert ready is False
         assert "not found" in reason.lower()
 
-    def test_fails_when_top_level_comp(self, db, project):
-        # A top-level comp has parent_id=None. The predicate
-        # rejects with a clear message instead of crashing.
-        top_id = _make_node(db, project.id, tier="comp", name="Top")
-        ready, reason = parent_comparch_approved(db, project.id, (top_id,))
+    def test_fails_for_subcomp(self, db, project):
+        parent_id = _make_node(db, project.id, tier="comp", name="P")
+        sub_id = _make_node(db, project.id, tier="comp", name="Sub", parent_id=parent_id)
+        ready, reason = top_level_comp_exists(db, project.id, (sub_id,))
         assert ready is False
-        assert "no parent" in reason.lower() or "top-level" in reason.lower()
+        assert "subcomponent" in reason.lower()
+
+
+class TestSubcompNodeExists:
+    def test_passes_for_subcomp(self, db, project):
+        parent_id = _make_node(db, project.id, tier="comp", name="P")
+        sub_id = _make_node(db, project.id, tier="comp", name="Sub", parent_id=parent_id)
+        ready, _ = subcomp_node_exists(db, project.id, (sub_id,))
+        assert ready is True
+
+    def test_fails_when_node_missing(self, db, project):
+        ready, reason = subcomp_node_exists(db, project.id, ("comp_GONE0002",))
+        assert ready is False
+        assert "not found" in reason.lower()
+
+    def test_fails_for_top_level_comp(self, db, project):
+        top_id = _make_node(db, project.id, tier="comp", name="Top")
+        ready, reason = subcomp_node_exists(db, project.id, (top_id,))
+        assert ready is False
+        assert "top-level component" in reason.lower()
 
 
 class TestOwnerArchApproved:
@@ -165,13 +225,40 @@ class TestOwnerArchApproved:
         assert "has not yet been approved" in reason.lower()
 
     def test_fails_when_owner_wrong_tier(self, db, project):
+        # Tier-check moved to owner_node_exists (covered in
+        # TestOwnerNodeExists below); owner_arch_approved alone
+        # returns the defensive "not found" / arch-not-approved
+        # message when called on a non-comp node.
         wrong = _make_node(db, project.id, tier="resp", name="Resp")
-        ready, reason = owner_arch_approved(db, project.id, (wrong,))
+        ready, _ = owner_arch_approved(db, project.id, (wrong,))
         assert ready is False
-        assert "not a comp_*" in reason
 
     def test_fails_when_owner_missing(self, db, project):
         ready, reason = owner_arch_approved(db, project.id, ("comp_NOPE0001",))
+        assert ready is False
+        assert "not found" in reason.lower()
+
+
+class TestOwnerNodeExists:
+    def test_passes_for_comp(self, db, project):
+        from backend.graph.handlers._readiness import owner_node_exists
+
+        comp_id = _make_node(db, project.id, tier="comp", name="C")
+        ready, _ = owner_node_exists(db, project.id, (comp_id,))
+        assert ready is True
+
+    def test_fails_for_wrong_tier(self, db, project):
+        from backend.graph.handlers._readiness import owner_node_exists
+
+        wrong = _make_node(db, project.id, tier="resp", name="Resp")
+        ready, reason = owner_node_exists(db, project.id, (wrong,))
+        assert ready is False
+        assert "not a comp_*" in reason
+
+    def test_fails_when_missing(self, db, project):
+        from backend.graph.handlers._readiness import owner_node_exists
+
+        ready, reason = owner_node_exists(db, project.id, ("comp_GHOST002",))
         assert ready is False
         assert "not found" in reason.lower()
 

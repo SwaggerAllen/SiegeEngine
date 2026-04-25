@@ -49,6 +49,31 @@ def all_of(*predicates: ReadinessFn) -> ReadinessFn:
     return combined
 
 
+def sysarch_node_exists(
+    db: "Session",
+    project_id: str,
+    _scope_ids: tuple[str, ...],
+) -> tuple[bool, str]:
+    """Sysarch handler precondition: a sysarch node has been bootstrapped.
+
+    Splits out the "no sysarch node" check from
+    :func:`sysarch_has_top_level_resps` so callers can compose them
+    with :func:`all_of` and get distinct error messages for each
+    failure mode (the existing tests assert specifically on "no
+    sysarch node" vs "no top-level responsibilities").
+    """
+    from backend.graph.sysarch import get_sysarch_node
+
+    node = get_sysarch_node(db, project_id)
+    if node is None:
+        return (
+            False,
+            f"Project {project_id!r} has no sysarch node; was "
+            "bootstrap_sysarch_node called at mint_requirements time?",
+        )
+    return (True, "")
+
+
 def sysarch_has_top_level_resps(
     db: "Session",
     project_id: str,
@@ -91,6 +116,44 @@ def sysarch_has_top_level_resps(
     return (True, "")
 
 
+def top_level_comp_exists(
+    db: "Session",
+    project_id: str,
+    scope_ids: tuple[str, ...],
+) -> tuple[bool, str]:
+    """Comparch precondition: target node exists and is a top-level comp.
+
+    Lifts the comp-existence / tier / top-level checks out of the
+    handler body so the readiness gate fires before we attempt to
+    walk the upstream context. Composed with
+    :func:`parent_subreqs_approved` via :func:`all_of` on
+    ``COMPARCH_CONFIG``.
+    """
+    if not scope_ids:
+        return (False, "comparch readiness check missing component_id")
+    component_id = scope_ids[0]
+    comp_node = db.get(Node, component_id)
+    if comp_node is None or comp_node.project_id != project_id:
+        return (
+            False,
+            f"Component {component_id!r} not found in project {project_id!r}",
+        )
+    if comp_node.tier != "comp":
+        return (
+            False,
+            f"Node {component_id!r} is not a comp_* node (tier={comp_node.tier!r})",
+        )
+    if comp_node.parent_id is not None:
+        return (
+            False,
+            f"Component {component_id!r} is a subcomponent "
+            f"(parent_id={comp_node.parent_id!r}). Comparch only runs "
+            "on top-level components; subcomponent arch docs are "
+            "Phase 5.",
+        )
+    return (True, "")
+
+
 def parent_subreqs_approved(
     db: "Session",
     project_id: str,
@@ -120,26 +183,39 @@ def parent_subreqs_approved(
     return (True, "")
 
 
-def parent_comparch_approved(
+def subcomp_node_exists(
     db: "Session",
     project_id: str,
     scope_ids: tuple[str, ...],
 ) -> tuple[bool, str]:
-    """Subcomparch precondition: parent component's comparch is approved.
+    """Subcomparch precondition: target node exists, comp tier, has a comp parent.
 
-    ``scope_ids = (subcomponent_id,)``. Replaces the inline check
-    in ``subcomparch_generation.py``.
+    Lifts the structural checks out of the handler body so the
+    readiness gate fires before context-gather. Composed with
+    :func:`parent_comparch_approved` via :func:`all_of` on
+    ``SUBCOMPARCH_CONFIG``.
     """
     if not scope_ids:
         return (False, "subcomparch readiness check missing component_id")
     sub_id = scope_ids[0]
     sub_node = db.get(Node, sub_id)
     if sub_node is None or sub_node.project_id != project_id:
-        return (False, f"Subcomponent {sub_id!r} not found in project")
+        return (
+            False,
+            f"Component {sub_id!r} not found in project {project_id!r}",
+        )
     if sub_node.tier != "comp":
-        return (False, f"Node {sub_id!r} is not a comp tier (got {sub_node.tier!r})")
-    if not sub_node.parent_id:
-        return (False, f"Subcomponent {sub_id!r} has no parent (top-level comp?)")
+        return (
+            False,
+            f"Node {sub_id!r} is not a comp_* node (tier={sub_node.tier!r})",
+        )
+    if sub_node.parent_id is None:
+        return (
+            False,
+            f"Component {sub_id!r} is a top-level component "
+            "(parent_id is None). Subcomparch only runs on "
+            "subcomponents; top-level comparch is Phase 4.",
+        )
     parent_node = db.get(Node, sub_node.parent_id)
     if parent_node is None or parent_node.tier != "comp":
         return (
@@ -147,12 +223,66 @@ def parent_comparch_approved(
             f"Subcomponent {sub_id!r} has parent_id {sub_node.parent_id!r} "
             "which is not a comp_* node",
         )
+    return (True, "")
+
+
+def parent_comparch_approved(
+    db: "Session",
+    project_id: str,
+    scope_ids: tuple[str, ...],
+) -> tuple[bool, str]:
+    """Subcomparch precondition: parent component's comparch is approved.
+
+    ``scope_ids = (subcomponent_id,)``. Composes with
+    :func:`subcomp_node_exists` via :func:`all_of` so the structural
+    checks fire first and produce the right error messages.
+    """
+    if not scope_ids:
+        return (False, "subcomparch readiness check missing component_id")
+    sub_id = scope_ids[0]
+    sub_node = db.get(Node, sub_id)
+    # Subcomp existence is gated by subcomp_node_exists in the
+    # composed predicate; here we assume the structural checks have
+    # already passed and fail loudly if not (defensive).
+    if sub_node is None or sub_node.parent_id is None:
+        return (False, f"Subcomponent {sub_id!r} state invalid")
+    parent_node = db.get(Node, sub_node.parent_id)
+    if parent_node is None:
+        return (False, f"Parent of subcomponent {sub_id!r} not found")
     if not (parent_node.content or "").strip():
         return (
             False,
             f"Subcomparch generation for {sub_id!r} blocked — its parent "
             f"component {parent_node.id!r} has no approved comparch content. "
             "Approve the parent's architecture doc first.",
+        )
+    return (True, "")
+
+
+def owner_node_exists(
+    db: "Session",
+    project_id: str,
+    scope_ids: tuple[str, ...],
+) -> tuple[bool, str]:
+    """Impl precondition: the owner comp exists in the project.
+
+    ``scope_ids = (owner_id,)``. Composes with
+    :func:`owner_arch_approved` via :func:`all_of` so the structural
+    check fires first.
+    """
+    if not scope_ids:
+        return (False, "impl readiness check missing owner_id")
+    owner_id = scope_ids[0]
+    owner_node = db.get(Node, owner_id)
+    if owner_node is None or owner_node.project_id != project_id:
+        return (
+            False,
+            f"Owner component {owner_id!r} not found in project {project_id!r}",
+        )
+    if owner_node.tier != "comp":
+        return (
+            False,
+            f"Owner {owner_id!r} is not a comp_* node (tier={owner_node.tier!r})",
         )
     return (True, "")
 
@@ -165,21 +295,16 @@ def owner_arch_approved(
     """Impl precondition: the owner's arch doc is approved.
 
     ``scope_ids = (owner_id,)`` where ``owner_id`` is the comp the
-    impl is implementing (top-level comp for un-fanned-out, the
-    direct subcomponent for sub-impls). Replaces the inline check
-    in ``impl_generation.py``.
+    impl is implementing. Composes with :func:`owner_node_exists`
+    via :func:`all_of` so the structural check fires first; this
+    predicate assumes the owner exists and is a comp tier.
     """
     if not scope_ids:
         return (False, "impl readiness check missing owner_id")
     owner_id = scope_ids[0]
     owner_node = db.get(Node, owner_id)
-    if owner_node is None or owner_node.project_id != project_id:
-        return (False, f"Owner {owner_id!r} not found in project")
-    if owner_node.tier != "comp":
-        return (
-            False,
-            f"Owner {owner_id!r} is not a comp_* node (tier={owner_node.tier!r})",
-        )
+    if owner_node is None:
+        return (False, f"Owner {owner_id!r} not found")
     if not (owner_node.content or "").strip():
         return (
             False,
