@@ -724,23 +724,57 @@ export function BootstrapDraftPanel({
               }
             >
               AI revisions:
-              <input
-                type="number"
-                min={0}
-                max={MAX_AUTO_REVISIONS_UI}
-                value={autoRevisionsRequested}
-                onChange={(e) => {
-                  const raw = Number(e.target.value);
-                  const clamped = Math.max(
-                    0,
-                    Math.min(MAX_AUTO_REVISIONS_UI, Number.isFinite(raw) ? raw : 0),
-                  );
-                  setAutoRevisionsRequested(clamped);
-                }}
-                disabled={callbacks.isBusy || isRegenerating}
-                aria-label="Auto-revision passes"
-                className="w-14 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
-              />
+              <div className="inline-flex items-stretch">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAutoRevisionsRequested((v) => Math.max(0, v - 1))
+                  }
+                  disabled={
+                    callbacks.isBusy ||
+                    isRegenerating ||
+                    autoRevisionsRequested <= 0
+                  }
+                  aria-label="Decrease auto-revision passes"
+                  className="px-1.5 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-900 disabled:text-gray-600 border border-gray-700 rounded-l text-xs text-gray-200"
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min={0}
+                  max={MAX_AUTO_REVISIONS_UI}
+                  value={autoRevisionsRequested}
+                  onChange={(e) => {
+                    const raw = Number(e.target.value);
+                    const clamped = Math.max(
+                      0,
+                      Math.min(MAX_AUTO_REVISIONS_UI, Number.isFinite(raw) ? raw : 0),
+                    );
+                    setAutoRevisionsRequested(clamped);
+                  }}
+                  disabled={callbacks.isBusy || isRegenerating}
+                  aria-label="Auto-revision passes"
+                  className="w-10 bg-gray-900 border-y border-gray-700 px-1 py-1 text-xs text-gray-200 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAutoRevisionsRequested((v) =>
+                      Math.min(MAX_AUTO_REVISIONS_UI, v + 1),
+                    )
+                  }
+                  disabled={
+                    callbacks.isBusy ||
+                    isRegenerating ||
+                    autoRevisionsRequested >= MAX_AUTO_REVISIONS_UI
+                  }
+                  aria-label="Increase auto-revision passes"
+                  className="px-1.5 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-900 disabled:text-gray-600 border border-gray-700 rounded-r text-xs text-gray-200"
+                >
+                  +
+                </button>
+              </div>
             </label>
             <CopyButton content={pending_draft.content} />
           </div>

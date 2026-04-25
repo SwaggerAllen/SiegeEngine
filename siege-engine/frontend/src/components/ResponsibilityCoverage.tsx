@@ -63,6 +63,25 @@ export function ResponsibilityCoverage({ projectId, compId }: Props) {
     .filter((n) => n.tier === 'resp' && n.parent_id === compId)
     .sort((a, b) => a.display_order - b.display_order);
 
+  // The owning subreqs node lets us tell apart the three empty-
+  // computed cases: (1) subreqs not approved yet → expected,
+  // (2) subreqs approved but mint produced no subresps → bug,
+  // (3) subreqs node missing entirely → upstream not bootstrapped.
+  // Without this discrimination the user sees a generic "approve
+  // the draft" hint even when the draft IS approved and something
+  // downstream broke.
+  const subreqsNode = data.nodes.find(
+    (n) => n.tier === 'subreqs' && n.parent_id === compId,
+  );
+  const subreqsApproved = subreqsNode?.has_content ?? false;
+  const computedEmptyHint = !subreqsNode
+    ? 'No subrequirements node yet — sysarch must be approved before this component can decompose.'
+    : subreqsApproved
+      ? "Subrequirements is approved but no subresponsibilities were minted. " +
+        "This is unexpected — check the v2.mint_subrequirements job logs " +
+        "for parse / coverage failures."
+      : 'No subresponsibilities yet. Approve the subrequirements draft to mint them.';
+
   // Silence lint: nodesById is kept to make subtree walks easy
   // for future enhancements (e.g. showing feature-of-origin for
   // each received resp).
@@ -84,7 +103,8 @@ export function ResponsibilityCoverage({ projectId, compId }: Props) {
           heading="Computed"
           subheading="Produced by subreqs — how the component broke its received responsibilities down."
           items={computed}
-          emptyHint="No subresponsibilities yet. Approve the subrequirements draft to mint them."
+          emptyHint={computedEmptyHint}
+          warn={subreqsApproved && computed.length === 0}
         />
       </div>
     </section>
@@ -96,11 +116,13 @@ function ResponsibilityList({
   subheading,
   items,
   emptyHint,
+  warn = false,
 }: {
   heading: string;
   subheading: string;
   items: StructureNode[];
   emptyHint: string;
+  warn?: boolean;
 }) {
   return (
     <div>
@@ -110,7 +132,15 @@ function ResponsibilityList({
       </h4>
       <p className="text-xs text-gray-500 mb-2">{subheading}</p>
       {items.length === 0 ? (
-        <p className="text-xs italic text-gray-500">{emptyHint}</p>
+        <p
+          className={
+            warn
+              ? 'text-xs text-amber-400 border-l-2 border-amber-700 pl-2'
+              : 'text-xs italic text-gray-500'
+          }
+        >
+          {emptyHint}
+        </p>
       ) : (
         <ul className="space-y-1.5">
           {items.map((item) => (

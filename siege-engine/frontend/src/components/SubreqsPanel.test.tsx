@@ -153,6 +153,53 @@ describe('SubreqsPanel', () => {
     );
   });
 
+  it('exposes the AI Review subtab on the pending-draft state', async () => {
+    mockedGet.mockResolvedValue(
+      makeResponse({
+        pending_draft: {
+          id: 'draft_1',
+          content: SAMPLE_DRAFT,
+          created_at: '2026-04-13T00:00:00',
+        },
+        review_text:
+          '<review><intro>Looks ok.</intro><score>80</score>' +
+          '<handles-structure><finding id="h1">Tighten card-tokenization scope.</finding></handles-structure>' +
+          '<architectural-decisions></architectural-decisions></review>',
+      })
+    );
+    renderPanel();
+    // The Review subtab is part of DocumentReviewTabs and labeled "Review".
+    const reviewTab = await screen.findByRole('tab', { name: /Review/i });
+    expect(reviewTab).toBeInTheDocument();
+    fireEvent.click(reviewTab);
+    // Clicking it surfaces the parsed review body.
+    expect(
+      await screen.findByText(/Tighten card-tokenization scope/i),
+    ).toBeInTheDocument();
+  });
+
+  it('exposes the AI Review subtab on the approved state', async () => {
+    mockedGet.mockResolvedValue(
+      makeResponse({
+        node: {
+          id: 'subreqs_1',
+          name: 'Subrequirements',
+          content: '<subrequirements/>',
+          updated_at: '2026-04-13T00:00:00',
+        },
+        review_text:
+          '<review><intro>All good.</intro><score>92</score>' +
+          '<handles-structure></handles-structure>' +
+          '<architectural-decisions></architectural-decisions></review>',
+      })
+    );
+    renderPanel();
+    const reviewTab = await screen.findByRole('tab', { name: /Review/i });
+    expect(reviewTab).toBeInTheDocument();
+    fireEvent.click(reviewTab);
+    expect(await screen.findByText(/All good/i)).toBeInTheDocument();
+  });
+
   it('rejects with empty feedback scoped to the component', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
