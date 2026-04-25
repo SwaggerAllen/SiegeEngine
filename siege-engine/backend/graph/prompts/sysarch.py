@@ -85,6 +85,12 @@ Component, and §Edge type vocabulary.
 
 from __future__ import annotations
 
+from backend.graph.prompts._prior_framing import (
+    render_prior_framing_section,
+    render_prior_review_section,
+    split_prior_introduction,
+)
+
 _SYSTEM_PROMPT_TEMPLATE = """\
 You are producing the **system architecture** for a software \
 project. The entire downstream generation chain — \
@@ -825,6 +831,7 @@ def render_user_prompt(
     prior_approved: str | None,
     prior_pending: str | None,
     feedback: str | None,
+    prior_review: str | None = None,
     parse_error: str | None = None,
     vocab_summary: str = "",
     input_doc: str = "",
@@ -874,11 +881,18 @@ def render_user_prompt(
     parts.append(reqs_summary.strip() or "(no responsibilities minted yet)")
     parts.append("")
 
+    # Split the prior round's <introduction> out from the body so
+    # the model sees its prior thinking as historical commentary
+    # rather than live framing for the new round. Without this, the
+    # introduction's references to prior feedback bleed forward and
+    # each regen anchors on stale critique.
     prior = prior_pending or prior_approved
-    if prior:
+    prior_intro, prior_body = split_prior_introduction(prior)
+    parts.extend(render_prior_framing_section(prior_intro))
+    if prior_body:
         parts.append("# Current version")
         parts.append("")
-        parts.append(prior.strip())
+        parts.append(prior_body)
         parts.append("")
 
     if feedback:
@@ -886,6 +900,8 @@ def render_user_prompt(
         parts.append("")
         parts.append(feedback.strip())
         parts.append("")
+
+    parts.extend(render_prior_review_section(prior_review))
 
     if parse_error:
         parts.append("# Previous output failed structural validation")

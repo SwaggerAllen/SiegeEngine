@@ -71,6 +71,13 @@ async def generate_sysarch(payload: dict) -> None:
     if not isinstance(project_id, str) or not project_id:
         raise SysarchHandlerError("generate_sysarch payload missing project_id")
     feedback: str | None = payload.get("feedback")
+    # ``prior_review_text`` is set by ``bootstrap_feedback`` from the
+    # current pending draft's AI review before that review is cleared
+    # for the regen window. Without it, the AI review never reaches
+    # the regen prompt and recommendations stay trapped on the draft
+    # row. None for fanout-driven regens that don't have a draft to
+    # review yet.
+    prior_review: str | None = payload.get("prior_review_text") or None
 
     # ── Phase 1: gather inputs ──────────────────────────────────────
     db = SessionLocal()
@@ -220,6 +227,7 @@ async def generate_sysarch(payload: dict) -> None:
             prior_approved=prior_approved,
             prior_pending=prior_pending,
             feedback=feedback,
+            prior_review=prior_review,
             parse_error=parse_error,
             vocab_summary=vocab_summary,
             input_doc=input_doc,

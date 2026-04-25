@@ -352,6 +352,17 @@ def bootstrap_feedback(
             detail="auto_revisions_requested must be >= 0",
         )
 
+    # Capture the currently-pending draft's review_text BEFORE the
+    # clear below so the regen prompt can surface the AI critique
+    # alongside any user feedback. Without this, the regen sees only
+    # the prior draft content + user feedback, and the AI review's
+    # recommendations stay trapped on the about-to-be-discarded draft
+    # row — the model has no way to read them.
+    current_pending = config.get_pending_draft(db, project_id, *scope_ids)
+    prior_review_text = (
+        (current_pending.review_text or "").strip() if current_pending is not None else ""
+    )
+
     # Clear the currently-pending draft's review_text and cancel
     # any in-flight review job for it. The old review is about to
     # become a review of content no longer on the pending slot, so
@@ -360,9 +371,9 @@ def bootstrap_feedback(
     # actually land. ``persist_draft`` already cancels the stale
     # review job when it discards the prior pending draft; doing
     # it here too keeps the UI honest during the enqueue→commit
-    # window.
-    current_pending = config.get_pending_draft(db, project_id, *scope_ids)
-    if current_pending is not None and (current_pending.review_text or "").strip():
+    # window. The captured ``prior_review_text`` above rides on
+    # the regen payload, so clearing the row here doesn't lose it.
+    if current_pending is not None and prior_review_text:
         append_event(
             db,
             project_id,
@@ -388,6 +399,8 @@ def bootstrap_feedback(
         feedback,
         scope_payload_keys=config.scope_payload_keys,
     )
+    if prior_review_text:
+        payload["prior_review_text"] = prior_review_text
     if auto_revisions_requested > 0:
         # Seed the auto-revision loop. Tiers that handle the fields
         # (requirements today) read them in their generate handler;

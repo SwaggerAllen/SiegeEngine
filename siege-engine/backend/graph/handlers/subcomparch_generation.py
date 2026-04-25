@@ -83,6 +83,7 @@ async def generate_subcomparch(payload: dict) -> None:
     if not isinstance(component_id, str) or not component_id:
         raise SubcomparchHandlerError("generate_subcomparch payload missing component_id")
     feedback: str | None = payload.get("feedback")
+    prior_review: str | None = payload.get("prior_review_text") or None
 
     # ── Phase 1: gather inputs ──────────────────────────────────────
     db = SessionLocal()
@@ -178,6 +179,7 @@ async def generate_subcomparch(payload: dict) -> None:
             prior_approved=prior_approved,
             prior_pending=prior_pending,
             feedback=feedback,
+            prior_review=prior_review,
             parse_error=parse_error,
         )
 

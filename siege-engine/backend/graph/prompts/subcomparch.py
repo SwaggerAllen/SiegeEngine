@@ -63,6 +63,7 @@ Phase 5.
 from __future__ import annotations
 
 from backend.graph.prompts._change_summary import change_summary_instruction
+from backend.graph.prompts._prior_framing import render_prior_review_section
 
 SYSTEM_PROMPT = """\
 You are producing the **subcomponent architecture document** for \
@@ -265,6 +266,7 @@ def render_user_prompt(
     prior_approved: str | None,
     prior_pending: str | None,
     feedback: str | None,
+    prior_review: str | None = None,
     parse_error: str | None = None,
     vocab_summary: str = "",
     domain_parent_surface: str = "",
@@ -388,6 +390,8 @@ def render_user_prompt(
         parts.append("")
         parts.append(feedback.strip())
         parts.append("")
+
+    parts.extend(render_prior_review_section(prior_review))
 
     if parse_error:
         parts.append("# Previous output failed structural validation")
