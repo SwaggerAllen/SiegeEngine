@@ -28,6 +28,8 @@ from backend.models.node import Node
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
+    from backend.graph.handlers._tier_generation import PostPersistContext
+
 ReadinessFn = Callable[["Session", str, tuple[str, ...]], tuple[bool, str]]
 
 
@@ -159,6 +161,7 @@ def wake_deferred_comparchs(
     project_id: str,
     _draft_id: str,
     scope_ids: tuple[str, ...],
+    ctx: "PostPersistContext",
 ) -> None:
     """Phase F: re-enqueue dependents whose blocking dep just settled.
 
@@ -169,13 +172,24 @@ def wake_deferred_comparchs(
     re-enqueues a fresh ``v2.generate_comparch`` for each. The
     freshly-claimed job's readiness predicate runs again; if the
     dep is now settled the regen proceeds, if not it defers again
-    and the next persist picks it up.
+    and the next terminal persist picks it up.
+
+    **Gated on ``ctx.is_terminal``.** With auto-revision turned on,
+    a single user-visible regen produces N+1 persists (one per
+    auto-revision pass plus the final). Without the gate, the
+    wakeup walks the deferred set N+1 times per regen — wasteful
+    and could re-fire dependents against intermediate (not yet
+    user-visible) pubapis. The terminal gate fires the wakeup
+    exactly once per user-visible regen, on the persist whose
+    content the user reviews.
 
     Idempotency: after re-enqueueing, the ``is_deferred`` flag is
     cleared on the consumed rows so subsequent wakeups don't
     re-fire on them. The pipeline_queue's payload-dedup against
     currently-queued jobs catches concurrent re-enqueues.
     """
+    if not ctx.is_terminal:
+        return
     if not scope_ids:
         return
     just_persisted_comp_id = scope_ids[0]

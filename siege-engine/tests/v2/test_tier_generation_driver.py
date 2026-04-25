@@ -299,10 +299,10 @@ class TestPostPersistHooks:
 
         order: list[str] = []
 
-        def hook_a(_db, _pid, draft_id, _scope):
+        def hook_a(_db, _pid, draft_id, _scope, _ctx):
             order.append(f"a:{draft_id}")
 
-        def hook_b(_db, _pid, draft_id, _scope):
+        def hook_b(_db, _pid, draft_id, _scope, _ctx):
             order.append(f"b:{draft_id}")
 
         config = _make_config(post_persist_hooks=(hook_a, hook_b))
@@ -319,16 +319,37 @@ class TestPostPersistHooks:
         project_id, _ = _seed_project_and_node(factory)
         ran_after: list[bool] = []
 
-        def boom(_db, _pid, _draft, _scope):
+        def boom(_db, _pid, _draft, _scope, _ctx):
             raise RuntimeError("hook crashed")
 
-        def survives(_db, _pid, _draft, _scope):
+        def survives(_db, _pid, _draft, _scope, _ctx):
             ran_after.append(True)
 
         config = _make_config(post_persist_hooks=(boom, survives))
         # Driver should swallow the hook exception and keep going.
         asyncio.run(run_tier_generation({"project_id": project_id}, config))
         assert ran_after == [True]
+
+    def test_hook_receives_terminal_context_when_no_auto_revision(
+        self, shared_session_factory, monkeypatch
+    ):
+        _patch_cli(monkeypatch)
+        factory = shared_session_factory
+        project_id, _ = _seed_project_and_node(factory)
+        captured: list[object] = []
+
+        def capture(_db, _pid, _draft, _scope, ctx):
+            captured.append(ctx)
+
+        config = _make_config(post_persist_hooks=(capture,))
+        # No auto_revisions_remaining in payload → terminal=True.
+        asyncio.run(run_tier_generation({"project_id": project_id}, config))
+
+        assert len(captured) == 1
+        ctx = captured[0]
+        assert ctx.is_terminal is True  # type: ignore[attr-defined]
+        assert ctx.auto_revisions_remaining == 0  # type: ignore[attr-defined]
+        assert ctx.auto_revision_pass == 0  # type: ignore[attr-defined]
 
 
 class TestAutoRevisionContinuation:

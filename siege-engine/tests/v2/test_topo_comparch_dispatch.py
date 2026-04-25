@@ -20,10 +20,28 @@ from backend.graph.handlers._readiness import (
     comparch_dep_comps_settled,
     wake_deferred_comparchs,
 )
-from backend.graph.handlers._tier_generation import TierDeferredError
+from backend.graph.handlers._tier_generation import (
+    PostPersistContext,
+    TierDeferredError,
+)
 from backend.graph.ids import Kind, mint
 from backend.graph.reducer import append_event
 from backend.models.job import Job
+
+
+def _terminal_ctx() -> PostPersistContext:
+    """Build a terminal-pass PostPersistContext for hook tests.
+
+    The wakeup hook is gated on ``ctx.is_terminal`` (Phase F item
+    4). Tests of the wakeup's behaviour pass a terminal context;
+    the dedicated gate test passes a non-terminal context to
+    verify the gate.
+    """
+    return PostPersistContext(
+        auto_revision_pass=0,
+        auto_revisions_remaining=0,
+        is_terminal=True,
+    )
 
 
 def _make_comp(db, project_id, *, name, content="", parent_id=None):
@@ -159,7 +177,7 @@ class TestWakeDeferredComparchs:
         assert a_job.is_deferred is True
 
         # Wakeup fires after B persists. Re-enqueues A.
-        wake_deferred_comparchs(db, project.id, "draft_ignored", (b,))
+        wake_deferred_comparchs(db, project.id, "draft_ignored", (b,), _terminal_ctx())
 
         # New comparch job for A is queued.
         new_jobs = (
@@ -187,7 +205,7 @@ class TestWakeDeferredComparchs:
         _add_dep_edge(db, project.id, a, b)
 
         # No deferred jobs. Wakeup is a no-op.
-        wake_deferred_comparchs(db, project.id, "draft_ignored", (b,))
+        wake_deferred_comparchs(db, project.id, "draft_ignored", (b,), _terminal_ctx())
 
         new_jobs = (
             db.execute(
@@ -216,7 +234,7 @@ class TestWakeDeferredComparchs:
         x_job.error_message = "readiness predicate signalled retry-later"
         db.commit()
 
-        wake_deferred_comparchs(db, project.id, "draft_ignored", (b,))
+        wake_deferred_comparchs(db, project.id, "draft_ignored", (b,), _terminal_ctx())
 
         new_jobs = (
             db.execute(
@@ -231,6 +249,47 @@ class TestWakeDeferredComparchs:
         assert not any((j.payload or {}).get("component_id") == x for j in new_jobs), (
             "X's deferred shouldn't wake when B persists (X doesn't depend on B)"
         )
+
+
+class TestTerminalGate:
+    def test_wakeup_no_op_on_intermediate_persist(self, db, project):
+        # Setup: A depends on B, A has a deferred job, B is the
+        # just-persisted comp. With a NON-terminal ctx (e.g.
+        # auto_revisions_remaining > 0), the wakeup should NOT
+        # re-enqueue A — that would fire on every auto-revision
+        # intermediate, multiplying the cascade work.
+        a = _make_comp(db, project.id, name="A")
+        b = _make_comp(db, project.id, name="B", content="<comparch/>")
+        _add_dep_edge(db, project.id, a, b)
+
+        a_job_id = _enqueue_comparch_job(db, project.id, a)
+        a_job = db.get(Job, a_job_id)
+        assert a_job is not None
+        a_job.status = "completed"
+        a_job.is_deferred = True
+        db.commit()
+
+        non_terminal = PostPersistContext(
+            auto_revision_pass=1,
+            auto_revisions_remaining=2,
+            is_terminal=False,
+        )
+        wake_deferred_comparchs(db, project.id, "draft_intermediate", (b,), non_terminal)
+
+        # No new jobs enqueued, A's deferred flag still set.
+        new_jobs = (
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.status == "queued",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert not any((j.payload or {}).get("component_id") == a for j in new_jobs)
+        db.refresh(a_job)
+        assert a_job.is_deferred is True
 
 
 class TestTierDeferredErrorClass:

@@ -99,13 +99,34 @@ class TierState(Protocol):
     system_prompt: str
 
 
+@dataclass(frozen=True)
+class PostPersistContext:
+    """Lifecycle metadata passed to ``post_persist_hooks``.
+
+    ``is_terminal`` is ``True`` when this persist is the final
+    write for the user-facing regen — either auto-revision is
+    disabled (``max_auto_revisions=0``), or this is the last pass
+    of the auto-revision loop (``auto_revisions_remaining == 0``).
+    Hooks that should only fire once per user-visible regen (e.g.
+    Phase F's comparch wakeup, which would otherwise re-fire on
+    every auto-revision intermediate) should gate on this.
+
+    Hooks that should fire on every persist (e.g. impl-approval
+    fan-in enqueue, if it ever migrates here) ignore the field.
+    """
+
+    auto_revision_pass: int
+    auto_revisions_remaining: int
+    is_terminal: bool
+
+
 # Type aliases for the per-tier callables. Defined at module scope so
 # the dataclass field annotations stay readable.
 GatherStateFn = Callable[["Session", str, ScopeIds], TierState]
 RenderPromptFn = Callable[..., str]
 ValidateFn = Callable[["TagNode", str, TierState], None]
 ReadinessCheckFn = Callable[["Session", str, ScopeIds], tuple[bool, str]]
-PostPersistHookFn = Callable[["Session", str, str, ScopeIds], None]
+PostPersistHookFn = Callable[["Session", str, str, ScopeIds, PostPersistContext], None]
 
 
 @dataclass(frozen=True)
@@ -281,11 +302,20 @@ async def run_tier_generation(
 
     # Phase 5: post-persist hooks. Errors logged + swallowed.
     if config.post_persist_hooks:
+        # ``is_terminal`` is True when auto-revision is disabled
+        # OR this pass is the final pass of the loop. Hooks that
+        # should only fire once per user-visible regen (Phase F's
+        # comparch wakeup is the load-bearing example) gate on it.
+        post_ctx = PostPersistContext(
+            auto_revision_pass=auto_pass,
+            auto_revisions_remaining=auto_remaining,
+            is_terminal=(auto_remaining == 0),
+        )
         db = SessionLocal()
         try:
             for hook in config.post_persist_hooks:
                 try:
-                    hook(db, project_id, new_draft_id, scope_ids)
+                    hook(db, project_id, new_draft_id, scope_ids, post_ctx)
                 except Exception:  # noqa: BLE001 — hook isolation
                     logger.exception(
                         "post_persist_hook failed for tier=%s draft=%s",
