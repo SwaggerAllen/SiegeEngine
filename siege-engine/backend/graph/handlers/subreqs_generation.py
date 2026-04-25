@@ -44,7 +44,10 @@ from backend.graph.handlers._tier_generation import (
     TierState,
     run_tier_generation,
 )
-from backend.graph.parsers.validators import validate_subrequirements
+from backend.graph.parsers.validators import (
+    ValidationError,
+    validate_subrequirements,
+)
 from backend.graph.parsers.xml_sections import TagNode
 from backend.graph.prompts.subrequirements import (
     render_system_prompt,
@@ -158,7 +161,20 @@ def _render_subreqs_prompt(
     )
 
 
-def _validate_subreqs(tree: TagNode, _raw: str, state: SubreqsState) -> None:
+def _validate_subreqs(tree: TagNode, raw_text: str, state: SubreqsState) -> None:
+    # Mirror the requirements / sysarch / feature_expansion validators:
+    # the <introduction> sibling block carries this pass's initial
+    # thinking forward into later regens via prior_pending /
+    # prior_approved. Without it the subreqs Document tab has no
+    # preamble for the user to read alongside the subresp list.
+    if "<introduction" not in raw_text:
+        raise ValidationError(
+            "Output is missing the required <introduction> block. "
+            "Every subrequirements draft must open with a short prose "
+            "<introduction> capturing the initial decomposition "
+            "thinking — which parent resps cluster, where boundaries "
+            "fall. Put it before the <subrequirements> block."
+        )
     validate_subrequirements(tree, known_parent_resp_ids=state.known_parent_resp_ids)
 
 

@@ -206,6 +206,7 @@ def _derived(*ids: str) -> str:
 
 def _valid_subreqs(parent_ids: list[str]) -> str:
     return (
+        "<introduction>Two subresps cover assigned parents.</introduction>"
         "<subrequirements>"
         "<subresponsibility>"
         "<name>Tokenization</name>"

@@ -67,12 +67,30 @@ The relationship is many-to-many within this component's scope.
 
 # Output format
 
-Output a single ``<subrequirements>`` block. Nothing else. \
-Each ``<subresponsibility>`` has exactly one ``<name>``, exactly \
-one ``<intent>``, and exactly one ``<derived-from>`` block \
+Emit two top-level blocks in this order: ``<introduction>`` \
+and ``<subrequirements>``. The ``<introduction>`` is required — \
+a short prose paragraph (2-4 sentences) capturing your initial \
+thinking about how this component's responsibilities want to \
+decompose: which parent resps cluster together, where the \
+boundaries naturally fall, anything you noticed about scope or \
+mirroring (for presentational components) before listing the \
+subresps. Subsequent regens read this preamble as their starting \
+context, so it has to be your own framing — not a summary of \
+the schema.
+
+Then exactly one ``<subrequirements>`` block. Each \
+``<subresponsibility>`` has exactly one ``<name>``, exactly one \
+``<intent>``, and exactly one ``<derived-from>`` block \
 containing one or more ``<resp>`` children with an ``id`` \
 attribute:
 
+    <introduction>
+    Three of the five parent resps cluster around session \
+    state; I'll group them under a single subresp and use \
+    derived-from to record all three parents. The remaining \
+    two are independent operations and each gets its own \
+    subresp. No mirroring concerns — this is a domain comp.
+    </introduction>
     <subrequirements>
       <subresponsibility>
         <name>Card Tokenization</name>
