@@ -126,12 +126,16 @@ def _impl_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
         ).scalars()
     )
     # Dedup just in case (one impl per owner is the invariant).
+    # The is_not(None) filter on the query already excludes nulls,
+    # but Mapped[str | None] doesn't narrow through SQLAlchemy
+    # filters, so we re-check explicitly to satisfy mypy.
     seen: set[str] = set()
     ordered: list[str] = []
     for owner_id in rows:
-        if owner_id not in seen:
-            seen.add(owner_id)
-            ordered.append(owner_id)
+        if owner_id is None or owner_id in seen:
+            continue
+        seen.add(owner_id)
+        ordered.append(owner_id)
     return [(owner_id,) for owner_id in ordered]
 
 
