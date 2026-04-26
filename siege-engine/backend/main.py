@@ -172,6 +172,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 import backend.graph  # noqa: E402,F401
 from backend.auth.routes import router as auth_router  # noqa: E402
 from backend.github.oauth import router as github_router  # noqa: E402
+from backend.graph.debug_routes import router as debug_router  # noqa: E402
 from backend.graph.queue_routes import router as queue_router  # noqa: E402
 from backend.graph.routes import router as graph_router  # noqa: E402
 from backend.graph.tier_ops_routes import router as tier_ops_router  # noqa: E402
@@ -182,6 +183,7 @@ app.include_router(project_router, prefix="/api/projects", tags=["projects"])
 app.include_router(graph_router, prefix="/api/projects", tags=["graph"])
 app.include_router(queue_router, prefix="/api/projects", tags=["queue"])
 app.include_router(tier_ops_router, prefix="/api/projects", tags=["tier-ops"])
+app.include_router(debug_router, prefix="/api/projects", tags=["debug"])
 app.include_router(github_router, prefix="/api/github", tags=["github"])
 
 # Serve SPA static files (production build)

@@ -259,6 +259,8 @@ function RoleIcon({
       return <span className="shrink-0 w-4 text-center text-cyan-300">⇥</span>;
     case 'tier-ops':
       return <span className="shrink-0 w-4 text-center text-cyan-300">⚙</span>;
+    case 'debug':
+      return <span className="shrink-0 w-4 text-center text-cyan-300">⚐</span>;
     case 'edit-root':
       return <span className="shrink-0 w-4 text-center text-gray-400">✎</span>;
     case 'edit-dependencies':
