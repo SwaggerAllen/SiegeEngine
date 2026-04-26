@@ -549,11 +549,14 @@ class TestSubreqsMintFanOut:
                     Node.parent_id == comp,
                 )
             ).scalar_one()
+            # Atomic shape: empty <feats/> is legal here because
+            # the test seeds no features, so the in-scope feat set
+            # is vacuously satisfied by an empty tag list.
             subreqs_node.content = (
                 "<subrequirements>"
                 "<subresponsibility>"
                 "<name>Tokenize</name>"
-                "<intent>Tokenize cards.</intent>"
+                "<feats/>"
                 f'<derived-from><resp id="{resp}"/></derived-from>'
                 "</subresponsibility>"
                 "</subrequirements>"

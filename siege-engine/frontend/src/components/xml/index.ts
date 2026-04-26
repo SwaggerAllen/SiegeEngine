@@ -26,7 +26,7 @@ export {
   requirementsRenderers,
 } from './requirementsRenderers';
 export { subcomparchRenderers } from './subcomparchRenderers';
-export { subreqsRenderers } from './subreqsRenderers';
+export { makeSubreqsRenderers, subreqsRenderers } from './subreqsRenderers';
 export { makeSysarchRenderers, sysarchRenderers } from './sysarchRenderers';
 export type {
   XmlElement,

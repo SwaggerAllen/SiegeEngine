@@ -1,78 +1,94 @@
-import { CollapsibleSection } from './CollapsibleSection';
-import type { XmlRendererMap } from './types';
-import { findChild, findChildText } from './types';
+import type { XmlElement, XmlRendererMap } from './types';
+import { findChild, findChildren } from './types';
+import { SubresponsibilityCard } from './SubresponsibilityCard';
 
 /**
- * Renderer overrides for the subrequirements schema:
+ * Renderer overrides for the atomic subrequirements grammar:
  *
  *   <subrequirements>
  *     <subresponsibility>
  *       <name>Card Tokenization</name>
- *       <intent>…</intent>
+ *       <feats>
+ *         <feat id="feat_payment01"/>
+ *       </feats>
  *       <derived-from>
- *         <resp id="resp_..."/>
+ *         <resp id="resp_payment01"/>
  *       </derived-from>
  *     </subresponsibility>
- *     …
  *   </subrequirements>
  *
- * Parallel to requirementsRenderers but with a <derived-from>
- * chip strip replacing the resp list. Each subresp becomes a
- * bordered card with name + intent + the parent resp IDs it
- * decomposes.
+ * Each atom renders via :component:`SubresponsibilityCard` — name
+ * on the left, two collapsible count pills (feats + parent resps)
+ * on the right. Feature IDs resolve to ``name (feat_xxxxxxxx)``
+ * when the caller supplies a feature name map; otherwise the raw
+ * id appears.
  */
-export const subreqsRenderers: XmlRendererMap = {
-  subrequirements: (node, ctx) => (
-    <div className="not-prose space-y-3">
-      {ctx.renderChildren(node.children)}
-    </div>
-  ),
+export function makeSubreqsRenderers(
+  featureNames: Record<string, string> = {},
+): XmlRendererMap {
+  return {
+    subrequirements: (node, ctx) => (
+      <div className="not-prose space-y-2">
+        {ctx.renderChildren(node.children)}
+      </div>
+    ),
 
-  subresponsibility: (node) => {
-    const name = findChildText(node, 'name') ?? 'Untitled';
-    const intent = findChildText(node, 'intent') ?? '';
-    const derivedNode = findChild(node, 'derived-from');
-    const parentIds: string[] = derivedNode
-      ? derivedNode.children
-          .filter((c) => c.type === 'element' && c.name === 'resp')
-          .map((c) => {
-            if (c.type !== 'element') return '';
-            const id = c.attributes.id;
-            return typeof id === 'string' ? id : '';
-          })
-          .filter(Boolean)
-      : [];
-    const meta =
-      parentIds.length > 0 ? (
-        <span className="text-gray-500">{parentIds.length} from</span>
-      ) : undefined;
-    return (
-      <CollapsibleSection summary={name} meta={meta}>
-        {intent && <p className="text-sm text-gray-300 m-0">{intent}</p>}
-        {parentIds.length > 0 && (
-          <div className="space-y-1">
-            <div className="text-[10px] uppercase tracking-wider text-gray-500">
-              Derived from
-            </div>
-            <div className="flex flex-wrap gap-1">
-              {parentIds.map((pid) => (
-                <span
-                  key={pid}
-                  className="text-[10px] font-mono bg-gray-900/60 border border-gray-700 rounded px-1.5 py-0.5 text-gray-400"
-                >
-                  {pid}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-      </CollapsibleSection>
-    );
-  },
+    subresponsibility: (node) => {
+      const name = findChildText(node, 'name') ?? 'Untitled';
+      const feats = collectFeatIds(node);
+      const parentIds = collectDerivedFromIds(node);
+      return (
+        <SubresponsibilityCard
+          name={name}
+          feats={feats}
+          parentIds={parentIds}
+          featureNames={featureNames}
+        />
+      );
+    },
 
-  // Consumed by parent — null at top level.
-  name: () => null,
-  intent: () => null,
-  'derived-from': () => null,
-  resp: () => null,
-};
+    // Structured children consumed by the <subresponsibility>
+    // renderer above. Render nothing if they bubble up on their
+    // own (schema drift — validator would reject).
+    name: () => null,
+    feats: () => null,
+    feat: () => null,
+    'derived-from': () => null,
+    resp: () => null,
+  };
+}
+
+function findChildText(element: XmlElement, name: string): string | null {
+  const child = findChild(element, name);
+  if (!child) return null;
+  const parts: string[] = [];
+  for (const c of child.children) {
+    if (c.type === 'text') parts.push(c.value);
+  }
+  const joined = parts.join('').trim();
+  return joined || null;
+}
+
+function collectFeatIds(subresp: XmlElement): string[] {
+  const block = findChild(subresp, 'feats');
+  if (!block) return [];
+  return findChildren(block, 'feat')
+    .map((f) => (typeof f.attributes.id === 'string' ? f.attributes.id : null))
+    .filter((id): id is string => id !== null);
+}
+
+function collectDerivedFromIds(subresp: XmlElement): string[] {
+  const block = findChild(subresp, 'derived-from');
+  if (!block) return [];
+  return findChildren(block, 'resp')
+    .map((r) => (typeof r.attributes.id === 'string' ? r.attributes.id : null))
+    .filter((id): id is string => id !== null);
+}
+
+/**
+ * Back-compat module-level export with no feature-name resolution.
+ * Existing callers (tests, non-panel usages) get bare feat IDs;
+ * the dashboard's ``SubreqsPanel`` opts into the factory form so
+ * its cards can show names.
+ */
+export const subreqsRenderers: XmlRendererMap = makeSubreqsRenderers();

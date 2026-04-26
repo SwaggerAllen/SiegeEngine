@@ -64,7 +64,7 @@ const SAMPLE_DRAFT = (
   '<subrequirements>' +
   '<subresponsibility>' +
   '<name>Card Tokenization</name>' +
-  '<intent>Convert raw cards to tokens.</intent>' +
+  '<feats><feat id="feat_card01"/></feats>' +
   '<derived-from><resp id="resp_parent01"/></derived-from>' +
   '</subresponsibility>' +
   '</subrequirements>'
@@ -99,7 +99,12 @@ describe('SubreqsPanel', () => {
     await waitFor(() =>
       expect(screen.getByText('Card Tokenization')).toBeInTheDocument()
     );
-    expect(screen.getByText('resp_parent01')).toBeInTheDocument();
+    // Atomic-card render exposes the parent-resp ID behind a
+    // collapsible pill button, not as inline text. Assert the
+    // pill is present (the resp ID itself is revealed on click).
+    expect(
+      screen.getByRole('button', { name: /1 parent responsibility/i }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Reject & Regenerate' })

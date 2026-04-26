@@ -6,23 +6,33 @@ commits the approved content to the component's subreqs node.
 
 Flow:
 
-1. Open a DB session. Look up the component's subreqs node and
-   the set of top-level resps assigned to this component
-   (``known_parent_resp_ids``).
+1. Open a DB session. Look up the component's subreqs node, the
+   top-level resps assigned to this component
+   (``known_parent_resp_ids``), and the union of feats reachable
+   from those parent resps via ``feat → resp`` decomposition
+   edges (``known_feat_ids``).
 2. **Idempotency check:** if any subresp ``resp_*`` nodes
    already exist with ``parent_id=component_id``, skip.
 3. Parse + validate the approved content via
-   :func:`validate_subrequirements`.
+   :func:`validate_subrequirements`. Validator enforces feat
+   coverage on top of the existing parent-resp coverage check.
 4. For each validated :class:`Subresponsibility`:
    - Mint a ``resp_*`` ID and emit ``NodeCreated`` with
      ``tier="resp"``, ``parent_id=component_id`` (subresps live
      structurally under their owning component),
-     ``display_order`` from the parse order, ``content=intent``.
+     ``display_order`` from the parse order, and content
+     synthesised from the atom name verbatim (mirrors the
+     responsibility atomic mint).
    - For each parent resp id in its ``derived_from`` list, emit
-     an ``EdgeCreated`` with
-     ``edge_type="decomposition"``, ``source_id=parent_resp_id``,
-     ``target_id=subresp_id``. This is the resp → subresp edge
-     (many-to-many within the component).
+     an ``EdgeCreated`` with ``edge_type="decomposition"``,
+     ``source_id=parent_resp_id``, ``target_id=subresp_id``
+     (resp → subresp).
+   - For each feat id in its ``feats`` list, emit a parallel
+     ``EdgeCreated`` with ``source_id=feat_id``,
+     ``target_id=subresp_id`` (feat → subresp). Mirrors the
+     ``requirements_mint`` feat→resp edge minting pattern; lets
+     the staleness-cascade walker fan feat changes out to subresp
+     regens automatically.
 5. Commit.
 6. **Phase 4 hook**: post-commit, enqueue
    ``v2.generate_comparch`` for this component. The comparch
@@ -36,11 +46,14 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy import select
+
 from backend.database import SessionLocal
 from backend.graph import events as ev
 from backend.graph.broadcast import commit_and_publish
 from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
+    Subresponsibility,
     ValidationError,
     validate_subrequirements,
 )
@@ -51,7 +64,7 @@ from backend.graph.queries import (
 )
 from backend.graph.reducer import append_event
 from backend.graph.subrequirements import get_subreqs_node
-from backend.models.node import Node
+from backend.models.node import Edge, Node
 from backend.pipeline import queue as pipeline_queue
 
 logger = logging.getLogger(__name__)
@@ -118,13 +131,33 @@ async def mint_subreqs(payload: dict) -> None:
             )
             return
 
-        # Gather known parent resps for the validator cross-check.
+        # Gather known parent resps for the validator cross-check
+        # and the union of feats reachable from those parent resps
+        # via feat → resp decomposition edges (the in-scope feat
+        # set the validator's feat-coverage check enforces).
         parent_resp_rows = top_level_resps_assigned_to(db, component_id)
         known_parent_resp_ids: set[str] = {r.id for r in parent_resp_rows}
+        known_feat_ids: set[str] = set()
+        if known_parent_resp_ids:
+            for (feat_id,) in db.execute(
+                select(Node.id)
+                .join(Edge, Edge.source_id == Node.id)
+                .where(
+                    Edge.edge_type == "decomposition",
+                    Edge.target_id.in_(known_parent_resp_ids),
+                    Node.tier == "feat",
+                )
+                .distinct()
+            ):
+                known_feat_ids.add(feat_id)
 
         try:
             tree = extract_tag_tree(content, "subrequirements")
-            subresps = validate_subrequirements(tree, known_parent_resp_ids=known_parent_resp_ids)
+            subresps = validate_subrequirements(
+                tree,
+                known_parent_resp_ids=known_parent_resp_ids,
+                known_feat_ids=known_feat_ids,
+            )
         except (ParseError, ValidationError) as exc:
             raise SubreqsMintHandlerError(
                 f"mint_subreqs project={project_id} comp={component_id} "
@@ -145,7 +178,7 @@ async def mint_subreqs(payload: dict) -> None:
                     parent_id=component_id,
                     name=subresp.name,
                     display_order=index,
-                    content=subresp.intent,
+                    content=_render_subresponsibility_content(subresp),
                 ),
             )
             minted_subresp_ids.append(subresp_id)
@@ -163,6 +196,27 @@ async def mint_subreqs(payload: dict) -> None:
                         edge_id=edge_id,
                         edge_type="decomposition",
                         source_id=parent_resp_id,
+                        target_id=subresp_id,
+                    ),
+                )
+                minted_edge_ids.append(edge_id)
+
+            # Mirror the requirements_mint feat→resp edge pattern
+            # one tier deeper: emit feat→subresp decomposition
+            # edges so feature-change cascades fan out to subresp
+            # regens via the staleness-ledger walker. EdgeCreated
+            # dedups in the reducer by
+            # (project_id, edge_type, source_id, target_id) so
+            # re-mint is safe.
+            for feat_id in subresp.feats:
+                edge_id = mint(db, Kind.EDGE)
+                append_event(
+                    db,
+                    project_id,
+                    ev.EdgeCreated(
+                        edge_id=edge_id,
+                        edge_type="decomposition",
+                        source_id=feat_id,
                         target_id=subresp_id,
                     ),
                 )
@@ -223,6 +277,16 @@ async def mint_subreqs(payload: dict) -> None:
             )
     finally:
         db.close()
+
+
+def _render_subresponsibility_content(subresp: Subresponsibility) -> str:
+    """Synthesize the subresp node's ``content`` from the atom.
+
+    Under the atomic grammar, an atom's name is the scope phrase
+    verbatim — so the content downstream readers see is just the
+    name. Mirrors :func:`backend.graph.handlers.requirements_mint._render_responsibility_content`.
+    """
+    return subresp.name
 
 
 def register() -> None:

@@ -15,12 +15,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.prompts.subrequirements import (
     format_component_summary,
     format_domain_parent_context,
+    format_in_scope_feats_summary,
     format_parent_resps_summary,
     format_sibling_dep_context,
 )
@@ -33,7 +35,7 @@ from backend.graph.queries import (
 from backend.graph.references import render_referenced_content_summary
 from backend.graph.subrequirements import get_subreqs_node, pending_subreqs_draft
 from backend.graph.vocabulary import render_vocab_summary_for_node
-from backend.models.node import Draft, Fragment, Node
+from backend.models.node import Draft, Edge, Fragment, Node
 
 
 @dataclass(frozen=True)
@@ -56,7 +58,9 @@ class SubreqsContext:
     prior_pending_id: str | None
     component_summary: str
     parent_resps_summary: str
+    in_scope_feats_summary: str
     known_parent_resp_ids: set[str]
+    known_feat_ids: set[str]
     domain_parent_context: str | None
     sibling_dep_context: str | None
     vocab_summary: str
@@ -97,10 +101,55 @@ def gather_subreqs_context(db: Session, project_id: str, component_id: str) -> S
     )
 
     parent_resp_rows = top_level_resps_assigned_to(db, component_id)
-    parent_resps_summary = format_parent_resps_summary(
-        [{"id": r.id, "name": r.name, "content": r.content} for r in parent_resp_rows]
-    )
     known_parent_resp_ids: set[str] = {r.id for r in parent_resp_rows}
+
+    # In-scope feats: every feat reachable from any assigned
+    # parent resp via the feat→resp decomposition edge. Built
+    # bottom-up so each parent-resp summary line can carry its
+    # implicating feat IDs and the bottom-of-prompt reference
+    # table can list every feat the LLM may tag.
+    feat_rows_by_resp: dict[str, list[Node]] = {rid: [] for rid in known_parent_resp_ids}
+    if known_parent_resp_ids:
+        feat_edge_rows = list(
+            db.execute(
+                select(Edge.target_id, Node)
+                .join(Node, Node.id == Edge.source_id)
+                .where(
+                    Edge.edge_type == "decomposition",
+                    Edge.target_id.in_(known_parent_resp_ids),
+                    Node.tier == "feat",
+                )
+                .order_by(Node.display_order.asc(), Node.id.asc())
+            )
+        )
+        for resp_id, feat_node in feat_edge_rows:
+            feat_rows_by_resp.setdefault(resp_id, []).append(feat_node)
+
+    in_scope_feats: dict[str, Node] = {}
+    for feat_list in feat_rows_by_resp.values():
+        for feat_node in feat_list:
+            in_scope_feats.setdefault(feat_node.id, feat_node)
+    known_feat_ids: set[str] = set(in_scope_feats.keys())
+
+    parent_resps_summary = format_parent_resps_summary(
+        [
+            {
+                "id": r.id,
+                "name": r.name,
+                "feat_ids": [f.id for f in feat_rows_by_resp.get(r.id, [])],
+            }
+            for r in parent_resp_rows
+        ]
+    )
+    in_scope_feats_summary = format_in_scope_feats_summary(
+        [
+            {"id": f.id, "name": f.name}
+            for f in sorted(
+                in_scope_feats.values(),
+                key=lambda n: (n.display_order, n.id),
+            )
+        ]
+    )
 
     domain_parent_context: str | None = None
     if comp_node.kind == "presentational":
@@ -152,7 +201,9 @@ def gather_subreqs_context(db: Session, project_id: str, component_id: str) -> S
         prior_pending_id=prior_pending_id,
         component_summary=component_summary,
         parent_resps_summary=parent_resps_summary,
+        in_scope_feats_summary=in_scope_feats_summary,
         known_parent_resp_ids=known_parent_resp_ids,
+        known_feat_ids=known_feat_ids,
         domain_parent_context=domain_parent_context,
         sibling_dep_context=sibling_dep_context,
         vocab_summary=vocab_summary,

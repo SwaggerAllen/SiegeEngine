@@ -321,40 +321,51 @@ def _subrequirements_xml(prompt: str) -> str:
     # prompt; grab only those so the stub doesn't capture resp IDs
     # from the sibling-dependency block (those belong to peer
     # comps and would fail the cross-component-leak validator).
-    header = "# Top-level responsibilities assigned to this component"
-    if header not in prompt:
+    parents_header = "# Top-level responsibilities assigned to this component"
+    if parents_header not in prompt:
         raise AssertionError(
             "subrequirements stub: missing parent-resps header — handler changed its prompt shape?"
         )
-    # Scope the resp-id grab to the slice between the parent-resps
-    # header and the next top-level ``#`` header. Sibling / domain-
-    # parent context is emitted under its own header, so slicing
-    # out this section and stopping at the next ``#`` keeps the
-    # stub derived-from set accurate for this component.
-    section = prompt.split(header, 1)[1]
-    section = section.split("\n# ", 1)[0]
-    parent_resp_ids = _unique_in_order(_RESP_ID_RE.findall(section))
+    parents_section = prompt.split(parents_header, 1)[1].split("\n# ", 1)[0]
+    parent_resp_ids = _unique_in_order(_RESP_ID_RE.findall(parents_section))
     if not parent_resp_ids:
         raise AssertionError(
             "subrequirements stub: no resp_* IDs under parent-resps "
             "header — handler changed its prompt shape?"
         )
-    # Emit two subresps, each derived from all parent resps, so
-    # the per-resp coverage check passes regardless of the
-    # parent count.
+
+    # In-scope feats are rendered under the new "# Features in
+    # scope" section that the atomic refactor added. Same slicing
+    # trick as the parent-resps header: take the slice and grab
+    # every feat_* id within it.
+    feats_header = "# Features in scope"
+    if feats_header not in prompt:
+        raise AssertionError(
+            "subrequirements stub: missing in-scope feats header — handler "
+            "changed its prompt shape?"
+        )
+    feats_section = prompt.split(feats_header, 1)[1].split("\n# ", 1)[0]
+    feat_ids = _unique_in_order(_FEAT_ID_RE.findall(feats_section))
+
+    # Emit two atomic subresps. Both derive from every parent resp
+    # so per-resp coverage passes; the feat union covers every
+    # in-scope feat. Atomic shape: name + <feats> + <derived-from>.
     derived = (
         "<derived-from>"
         + "".join(f'<resp id="{rid}"/>' for rid in parent_resp_ids)
         + "</derived-from>"
     )
+    feats_block_full = (
+        "<feats>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</feats>"
+        if feat_ids
+        else "<feats/>"
+    )
     return (
-        "<introduction>Two subresps cover the assigned parent resps.</introduction>"
+        "<introduction>Two atomic subresps cover the assigned parent resps + feats.</introduction>"
         "<subrequirements>"
-        f"<subresponsibility><name>CoreHandling</name>"
-        f"<intent>Primary subresp for this comp.</intent>{derived}"
+        f"<subresponsibility><name>CoreHandling</name>{feats_block_full}{derived}"
         f"</subresponsibility>"
-        f"<subresponsibility><name>SupportHandling</name>"
-        f"<intent>Secondary subresp for this comp.</intent>{derived}"
+        f"<subresponsibility><name>SupportHandling</name><feats/>{derived}"
         f"</subresponsibility>"
         "</subrequirements>"
     )
@@ -575,7 +586,7 @@ def stub_cli(monkeypatch, shared_session_factory):
         ("extracting structured features", "features"),
         ("rotating** the problem from user-facing", "requirements"),
         ("producing the **system", "sysarch"),
-        ("expanding a single component", "subrequirements"),
+        ("decomposing a single component", "subrequirements"),
         ("last compression step** before implementation", "comparch"),
     )
 

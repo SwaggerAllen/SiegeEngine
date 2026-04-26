@@ -133,7 +133,31 @@ def _seed_component(
     return comp_id
 
 
-def _seed_top_level_resp(session: Session, project_id: str, name: str, order: int) -> str:
+def _seed_feature(session: Session, project_id: str, name: str, order: int) -> str:
+    feat_id = mint(session, Kind.FEAT)
+    append_event(
+        session,
+        project_id,
+        ev.NodeCreated(
+            node_id=feat_id,
+            tier="feat",
+            kind="domain",
+            parent_id=None,
+            name=name,
+            display_order=order,
+            content=f"{name} intent.",
+        ),
+    )
+    return feat_id
+
+
+def _seed_top_level_resp(
+    session: Session,
+    project_id: str,
+    name: str,
+    order: int,
+    feat_ids: list[str] | None = None,
+) -> str:
     resp_id = mint(session, Kind.RESP)
     append_event(
         session,
@@ -145,17 +169,33 @@ def _seed_top_level_resp(session: Session, project_id: str, name: str, order: in
             parent_id=None,
             name=name,
             display_order=order,
-            content=f"{name} intent.",
+            content=name,
         ),
     )
+    # Mirror requirements_mint: emit feat → resp decomposition
+    # edges so the subreqs gather can compute the in-scope feat
+    # set for this resp's owning component.
+    for feat_id in feat_ids or []:
+        edge_id = mint(session, Kind.EDGE)
+        append_event(
+            session,
+            project_id,
+            ev.EdgeCreated(
+                edge_id=edge_id,
+                edge_type="decomposition",
+                source_id=feat_id,
+                target_id=resp_id,
+            ),
+        )
     return resp_id
 
 
 @pytest.fixture()
 def seeded(shared_session_factory):
-    """A project + two top-level resps + one component with both resps assigned.
+    """A project + two feats + two top-level resps + one component with both resps assigned.
 
-    Returns a dict with ``project_id``, ``comp_id``, and ``parent_ids``.
+    Returns a dict with ``project_id``, ``comp_id``, ``parent_ids``,
+    and ``feat_ids``.
     """
     factory = shared_session_factory
     s: Session = factory()
@@ -163,8 +203,10 @@ def seeded(shared_session_factory):
         project_id = str(uuid.uuid4())
         s.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
         s.flush()
-        parent_a = _seed_top_level_resp(s, project_id, "Payment Collection", 0)
-        parent_b = _seed_top_level_resp(s, project_id, "Invoicing", 1)
+        feat_a = _seed_feature(s, project_id, "Card Payments", 0)
+        feat_b = _seed_feature(s, project_id, "Invoice Delivery", 1)
+        parent_a = _seed_top_level_resp(s, project_id, "Payment Collection", 0, [feat_a])
+        parent_b = _seed_top_level_resp(s, project_id, "Invoicing", 1, [feat_b])
         comp_id = _seed_component(
             s,
             project_id,
@@ -174,7 +216,12 @@ def seeded(shared_session_factory):
             parent_resp_ids=[parent_a, parent_b],
         )
         s.commit()
-        yield {"project_id": project_id, "comp_id": comp_id, "parent_ids": [parent_a, parent_b]}
+        yield {
+            "project_id": project_id,
+            "comp_id": comp_id,
+            "parent_ids": [parent_a, parent_b],
+            "feat_ids": [feat_a, feat_b],
+        }
     finally:
         s.close()
 
@@ -183,8 +230,12 @@ def _derived(*ids: str) -> str:
     return "<derived-from>" + "".join(f'<resp id="{rid}"/>' for rid in ids) + "</derived-from>"
 
 
-def _valid_subreqs(parent_ids: list[str]) -> str:
-    """Two subresps, one per parent, for a clean happy-path fixture.
+def _feats(*ids: str) -> str:
+    return "<feats>" + "".join(f'<feat id="{fid}"/>' for fid in ids) + "</feats>"
+
+
+def _valid_subreqs(parent_ids: list[str], feat_ids: list[str]) -> str:
+    """Two atomic subresps covering both parents and both feats.
 
     Includes the required <introduction> sibling so the validator's
     intro check passes.
@@ -192,14 +243,12 @@ def _valid_subreqs(parent_ids: list[str]) -> str:
     return (
         "<introduction>Two parent resps, one subresp each.</introduction>"
         "<subrequirements>"
-        "<subresponsibility>"
-        "<name>Tokenization</name>"
-        "<intent>Convert raw cards to opaque tokens.</intent>"
+        "<subresponsibility><name>Tokenization</name>"
+        + _feats(feat_ids[0])
         + _derived(parent_ids[0])
         + "</subresponsibility>"
-        "<subresponsibility>"
-        "<name>Delivery</name>"
-        "<intent>Send invoices to recipients.</intent>"
+        "<subresponsibility><name>Delivery</name>"
+        + _feats(feat_ids[1])
         + _derived(parent_ids[1])
         + "</subresponsibility>"
         "</subrequirements>"
@@ -247,7 +296,7 @@ def _patch_cli_sequence(monkeypatch, outputs: list[str]):
 
 class TestGenerationHappyPath:
     def test_generates_pending_draft(self, shared_session_factory, seeded, monkeypatch):
-        xml = _valid_subreqs(seeded["parent_ids"])
+        xml = _valid_subreqs(seeded["parent_ids"], seeded["feat_ids"])
         calls = _patch_cli(monkeypatch, xml)
         asyncio.run(
             generate_subreqs(
@@ -280,7 +329,7 @@ class TestGenerationHappyPath:
             session.close()
 
     def test_regen_with_feedback(self, shared_session_factory, seeded, monkeypatch):
-        first = _valid_subreqs(seeded["parent_ids"])
+        first = _valid_subreqs(seeded["parent_ids"], seeded["feat_ids"])
         _patch_cli(monkeypatch, first)
         asyncio.run(
             generate_subreqs(
@@ -291,7 +340,7 @@ class TestGenerationHappyPath:
                 }
             )
         )
-        calls = _patch_cli(monkeypatch, _valid_subreqs(seeded["parent_ids"]))
+        calls = _patch_cli(monkeypatch, _valid_subreqs(seeded["parent_ids"], seeded["feat_ids"]))
         asyncio.run(
             generate_subreqs(
                 {
@@ -320,7 +369,7 @@ class TestGenerationDomainParentContext:
         """A domain component (kind=domain) gets no domain-parent context
         block even if the codebase has domain_parent edges pointing
         somewhere."""
-        xml = _valid_subreqs(seeded["parent_ids"])
+        xml = _valid_subreqs(seeded["parent_ids"], seeded["feat_ids"])
         calls = _patch_cli(monkeypatch, xml)
         asyncio.run(
             generate_subreqs(
@@ -432,9 +481,7 @@ class TestGenerationDomainParentContext:
             "<subrequirements>"
             "<subresponsibility>"
             "<name>Card Input Rendering</name>"
-            "<intent>Render the card input form.</intent>"
-            + _derived(ui_resp)
-            + "</subresponsibility>"
+            "<feats/>" + _derived(ui_resp) + "</subresponsibility>"
             "</subrequirements>"
         )
         calls = _patch_cli(monkeypatch, ui_subreqs)
@@ -520,7 +567,7 @@ class TestGenerationDomainParentContext:
             "<subrequirements>"
             "<subresponsibility>"
             "<name>Dashboard Render</name>"
-            "<intent>Render the dashboard.</intent>" + _derived(ui_resp) + "</subresponsibility>"
+            "<feats/>" + _derived(ui_resp) + "</subresponsibility>"
             "</subrequirements>"
         )
         calls = _patch_cli(monkeypatch, ui_subreqs)
@@ -574,12 +621,13 @@ class TestGenerationParseValidate:
         bad = (
             "<introduction>Initial pass.</introduction>"
             "<subrequirements>"
-            "<subresponsibility><name>A</name><intent>Ok.</intent>"
-            '<derived-from><resp id="resp_strange01"/></derived-from>'
-            "</subresponsibility>"
+            "<subresponsibility><name>A</name>"
+            + _feats(seeded["feat_ids"][0], seeded["feat_ids"][1])
+            + '<derived-from><resp id="resp_strange01"/></derived-from>'
+            + "</subresponsibility>"
             "</subrequirements>"
         )
-        good = _valid_subreqs(seeded["parent_ids"])
+        good = _valid_subreqs(seeded["parent_ids"], seeded["feat_ids"])
         calls = _patch_cli_sequence(monkeypatch, [bad, good])
         asyncio.run(
             generate_subreqs(
@@ -626,7 +674,9 @@ class TestMintHappyPath:
         factory = shared_session_factory
         s = factory()
         try:
-            _set_subreqs_content(s, seeded["comp_id"], _valid_subreqs(seeded["parent_ids"]))
+            _set_subreqs_content(
+                s, seeded["comp_id"], _valid_subreqs(seeded["parent_ids"], seeded["feat_ids"])
+            )
         finally:
             s.close()
 
@@ -649,9 +699,12 @@ class TestMintHappyPath:
             )
             assert [r.name for r in subresps] == ["Tokenization", "Delivery"]
             assert all(r.id.startswith("resp_") for r in subresps)
+            # Atom content is the name verbatim — mirror the
+            # responsibility atomic mint.
+            assert [r.content for r in subresps] == ["Tokenization", "Delivery"]
 
-            # Two decomposition edges — one per (parent_id, subresp_id)
-            # pairing from the <derived-from> blocks.
+            # Decomposition edges into each subresp: one per parent
+            # resp and one per tagged feat.
             decomp_edges = list(
                 s.execute(
                     select(Edge).where(
@@ -660,14 +713,16 @@ class TestMintHappyPath:
                     )
                 ).scalars()
             )
-            # Include the original 2 resp→comp edges seeded at fixture time
             subresp_edges = [
                 e for e in decomp_edges if any(e.target_id == sr.id for sr in subresps)
             ]
-            assert len(subresp_edges) == 2
             pairs = {(e.source_id, e.target_id) for e in subresp_edges}
+            # Parent resp → subresp pairs from <derived-from>.
             assert (seeded["parent_ids"][0], subresps[0].id) in pairs
             assert (seeded["parent_ids"][1], subresps[1].id) in pairs
+            # Feat → subresp pairs from <feats>.
+            assert (seeded["feat_ids"][0], subresps[0].id) in pairs
+            assert (seeded["feat_ids"][1], subresps[1].id) in pairs
         finally:
             s.close()
 
@@ -677,7 +732,9 @@ class TestMintIdempotency:
         factory = shared_session_factory
         s = factory()
         try:
-            _set_subreqs_content(s, seeded["comp_id"], _valid_subreqs(seeded["parent_ids"]))
+            _set_subreqs_content(
+                s, seeded["comp_id"], _valid_subreqs(seeded["parent_ids"], seeded["feat_ids"])
+            )
         finally:
             s.close()
 
