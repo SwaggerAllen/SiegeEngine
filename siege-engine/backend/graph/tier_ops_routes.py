@@ -34,9 +34,11 @@ from backend.graph.bootstrap_routes import (
     BootstrapTierConfig,
     bootstrap_reset,
     bootstrap_retry_review,
+    build_job_payload,
 )
 from backend.models import Project, User
 from backend.models.node import Node
+from backend.pipeline import queue as pipeline_queue
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +242,7 @@ def reset_tier(
 
     scopes = iter_scope_ids(db, project_id)
     succeeded = 0
+    succeeded_scopes: list[tuple[str, ...]] = []
     skipped: list[dict[str, Any]] = []
     total_jobs_cancelled = 0
     total_drafts_discarded = 0
@@ -260,16 +263,47 @@ def reset_tier(
             )
             continue
         succeeded += 1
+        succeeded_scopes.append(scope_ids)
         total_jobs_cancelled += int(result.get("jobs_cancelled", 0))
         total_drafts_discarded += int(result.get("drafts_discarded", 0))
         total_nodes_deleted += int(result.get("nodes_deleted", 0))
 
+    # Each per-scope ``bootstrap_reset`` cancels every job of every
+    # ``downstream_job_types`` (project-wide) and then enqueues this
+    # tier's generate. For tiers like subreqs whose downstream tuple
+    # includes ``v2.generate_subrequirements`` itself, the next
+    # iteration's cancel-pass wipes the previous scope's just-
+    # enqueued generate. After the loop only the final scope has a
+    # generate queued. Fix: cancel this tier's generate once at the
+    # end, then re-enqueue per succeeded scope.
+    if succeeded_scopes and config.generate_job_type:
+        pipeline_queue.cancel_jobs_by_type(
+            db,
+            config.generate_job_type,
+            project_id=project_id,
+        )
+        jobs_enqueued = 0
+        for scope_ids in succeeded_scopes:
+            pipeline_queue.enqueue(
+                db,
+                job_type=config.generate_job_type,
+                payload=build_job_payload(
+                    project_id,
+                    scope_ids,
+                    scope_payload_keys=config.scope_payload_keys,
+                ),
+            )
+            jobs_enqueued += 1
+    else:
+        jobs_enqueued = 0
+
     logger.info(
-        "tier_ops.reset_tier project=%s tier=%s succeeded=%d skipped=%d",
+        "tier_ops.reset_tier project=%s tier=%s succeeded=%d skipped=%d enqueued=%d",
         project_id,
         tier,
         succeeded,
         len(skipped),
+        jobs_enqueued,
     )
     return {
         "ok": True,
@@ -278,6 +312,7 @@ def reset_tier(
         "scopes_succeeded": succeeded,
         "scopes_skipped": skipped,
         "jobs_cancelled": total_jobs_cancelled,
+        "jobs_enqueued": jobs_enqueued,
         "drafts_discarded": total_drafts_discarded,
         "nodes_deleted": total_nodes_deleted,
     }

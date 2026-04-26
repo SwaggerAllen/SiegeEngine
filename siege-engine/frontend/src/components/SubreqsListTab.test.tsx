@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { SubreqsListTab } from './SubreqsListTab';
 
@@ -84,6 +84,25 @@ describe('SubreqsListTab', () => {
     expect(
       screen.getByText(/No subresponsibilities derived from this parent/),
     ).toBeInTheDocument();
+  });
+
+  it('resolves parent resp ids to names when expanded', () => {
+    render(
+      <SubreqsListTab
+        content={TWO_SUBRESPS}
+        parentResps={PARENTS}
+        featureNames={FEATURE_NAMES}
+      />,
+    );
+    // Find the parent-resp pill button and expand it.
+    const parentButton = screen.getAllByRole('button', {
+      name: /Show 1 parent responsibility/i,
+    })[0];
+    fireEvent.click(parentButton);
+    // The resp id is rendered alongside the resolved name in the
+    // expanded chip; the section header above already shows the
+    // raw name, so disambiguate via the parens-formatted id.
+    expect(screen.getByText('(resp_billing01)')).toBeInTheDocument();
   });
 
   it('flags a multi-parent subresp as shared', () => {

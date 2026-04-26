@@ -207,7 +207,7 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
             </div>
           );
         }
-        return <ComponentOverviewPanel component={node} />;
+        return <ComponentOverviewPanel projectId={projectId} component={node} />;
       }
       // Subcomponent → subcomparch panel.
       return (

@@ -12,11 +12,17 @@ export function SubresponsibilityCard({
   feats,
   parentIds,
   featureNames,
+  parentNames = {},
 }: {
   name: string;
   feats: string[];
   parentIds: string[];
   featureNames: Record<string, string>;
+  /** Optional ``resp_id → display name`` map. When supplied,
+   * each parent-resp chip renders ``Name (resp_xxx)``. Without
+   * it, chips show the raw id (back-compat for callers that
+   * don't have the structure snapshot loaded yet). */
+  parentNames?: Record<string, string>;
 }) {
   const [featsExpanded, setFeatsExpanded] = useState(false);
   const [parentsExpanded, setParentsExpanded] = useState(false);
@@ -84,7 +90,14 @@ export function SubresponsibilityCard({
                   key={pid}
                   className="rounded bg-gray-800/80 px-1.5 py-0.5 font-mono text-gray-300"
                 >
-                  {pid}
+                  {parentNames[pid] ? (
+                    <>
+                      <span className="text-gray-200">{parentNames[pid]}</span>{' '}
+                      <span className="text-gray-500">({pid})</span>
+                    </>
+                  ) : (
+                    pid
+                  )}
                 </li>
               ))}
             </ul>
