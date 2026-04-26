@@ -1501,26 +1501,33 @@ def validate_subrequirements(
 ) -> list[Subresponsibility]:
     """Validate a parsed ``<subrequirements>`` tree.
 
-    Shape parallels ``validate_requirements`` but scoped to a
-    single component. Two cross-cutting allowlists:
+    Subresps are an **optional** decomposition of a component's
+    parent responsibilities. A parent resp that fits cleanly into
+    a single subcomponent shouldn't be decomposed at all — it
+    maps wholesale at comparch time. So the doc may legally:
 
-    * ``known_parent_resp_ids`` — the top-level resps assigned to
-      *this* component (via the ``decomposition`` edges minted at
-      sysarch approval). Every ``<resp id=...>`` reference in any
-      ``<derived-from>`` block must be in this set; cross-component
-      leaks are parse errors.
-    * ``known_feat_ids`` — the union of feat IDs reachable from
-      this component's assigned parent resps via ``feat → resp``
-      decomposition edges. Every ``<feat id=...>`` reference in
-      any ``<feats>`` block must be in this set.
+    * Be empty (no ``<subresponsibility>`` entries) — every parent
+      resp goes wholesale to a subcomponent.
+    * Cover only a subset of parent resps — the uncovered ones go
+      wholesale; only the covered ones get split into atoms.
 
-    Coverage checks:
+    Cross-cutting validation that still applies:
 
-    * Every known parent resp must appear in at least one
-      ``<derived-from>`` across the full validated set.
-    * Every known feat must appear in at least one ``<feats>``.
+    * Every ``<resp id=…>`` reference must be in
+      ``known_parent_resp_ids`` (cross-component leak protection).
+    * Every ``<feat id=…>`` reference must be in
+      ``known_feat_ids`` (in-scope-feat leak protection).
+    * No two subresps share a normalized name.
 
-    Both coverage failures fail parse and feed the retry loop.
+    The previous "every parent resp must appear in derived-from"
+    coverage rule was load-bearing for nothing — its only effect
+    was forcing the LLM to invent a token-thin one-to-one subresp
+    for parents that didn't need decomposition, which became a
+    smell when the user noticed parents with exactly one subresp
+    that paraphrased their parent. The "every in-scope feat must
+    appear in <feats>" rule was symmetrical and also dropped: in
+    the new semantics, feats fall through wholesale alongside
+    their parent resp.
     """
     if tree.tag != "subrequirements":
         raise ValidationError(
@@ -1548,12 +1555,7 @@ def validate_subrequirements(
             )
         )
 
-    if not result:
-        raise ValidationError(
-            "<subrequirements> block contains no <subresponsibility> "
-            "entries. A component with assigned responsibilities must "
-            "have at least one subresponsibility."
-        )
+    # Empty subrequirements is legal — see docstring.
 
     # Name-dedup: no two atoms may share a normalized name.
     name_owner: dict[str, list[str]] = {}
@@ -1566,36 +1568,6 @@ def validate_subrequirements(
             "<subrequirements> has subresponsibilities with duplicate names. "
             "Every atom must have a unique name (normalized by lowercasing "
             "and whitespace collapse). Offending names:\n" + "\n".join(lines)
-        )
-
-    # Parent-resp coverage: every parent resp must be covered.
-    covered_parents: set[str] = set()
-    for subresp in result:
-        covered_parents.update(subresp.derived_from)
-    missing_parents = sorted(known_parent_resp_ids - covered_parents)
-    if missing_parents:
-        raise ValidationError(
-            "<subrequirements> does not cover every parent responsibility "
-            "assigned to this component. Missing: "
-            f"{', '.join(missing_parents)}. Every assigned responsibility must "
-            "appear in at least one <derived-from> block."
-        )
-
-    # Feat-coverage: every in-scope feat must appear in at least
-    # one subresp's <feats>. An uncovered feat means the rotation
-    # left a feature stranded with no implementing concern.
-    covered_feats: set[str] = set()
-    for subresp in result:
-        covered_feats.update(subresp.feats)
-    missing_feats = sorted(known_feat_ids - covered_feats)
-    if missing_feats:
-        raise ValidationError(
-            f"<subrequirements> has feature(s) with no subresp tag: "
-            f"{', '.join(missing_feats)}. Every in-scope feature (those "
-            "tagged on at least one parent responsibility assigned to this "
-            "component) must appear in at least one <subresponsibility>'s "
-            '<feats>. Add a <feat id=".."/> entry on each subresp whose '
-            "concern that feature implicates."
         )
 
     return result
