@@ -28,6 +28,7 @@ export interface NavItem {
     | 'dag'
     | 'queue'
     | 'tier-ops'
+    | 'debug'
     | 'edit-root'
     | 'edit-dependencies'
     | 'edit-domain-parents'
@@ -80,6 +81,8 @@ export const SYNTHETIC_IDS = {
   QUEUE: ':queue',
   // Tier ops — bulk reset / bulk AI-review per tier.
   TIER_OPS: ':tier-ops',
+  // Debug snapshot — copy project state + recent events/jobs.
+  DEBUG: ':debug',
   // Phase 11 structured-edit UIs. Each synthetic id routes to a
   // dedicated editor page in NavDetail.
   EDIT_ROOT: ':edit',
@@ -244,6 +247,14 @@ export function buildNavTree(nodes: StructureNode[]): NavItem[] {
     label: 'Tier Ops',
     node: null,
     role: 'tier-ops',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.DEBUG,
+    label: 'Debug Snapshot',
+    node: null,
+    role: 'debug',
     children: [],
     status: { ...EMPTY_STATUS },
   });

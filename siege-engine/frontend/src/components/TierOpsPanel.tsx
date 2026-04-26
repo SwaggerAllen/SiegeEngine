@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
   TIER_NAMES,
+  type ResetAllResult,
+  type ReviewSweepResult,
   type TierInfo,
   type TierName,
   getTierInfo,
@@ -54,23 +56,24 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
     queryFn: () => getTierInfo(projectId, tier),
   });
   const [confirming, setConfirming] = useState(false);
-  const [lastMessage, setLastMessage] = useState<{
-    tone: 'ok' | 'warn' | 'err';
-    text: string;
-  } | null>(null);
+  const [lastResult, setLastResult] = useState<
+    | {
+        kind: 'reset';
+        result: ResetAllResult;
+      }
+    | {
+        kind: 'review';
+        result: ReviewSweepResult;
+      }
+    | { kind: 'error'; text: string }
+    | null
+  >(null);
 
   const resetMutation = useMutation({
     mutationFn: () => resetTier(projectId, tier),
     onSuccess: (result) => {
       setConfirming(false);
-      const skipped = result.scopes_skipped.length;
-      const ok = result.scopes_succeeded;
-      setLastMessage({
-        tone: skipped > 0 ? 'warn' : 'ok',
-        text: skipped
-          ? `Reset ${ok} scope${ok === 1 ? '' : 's'} (${skipped} skipped) · ${result.jobs_cancelled} jobs cancelled.`
-          : `Reset ${ok} scope${ok === 1 ? '' : 's'} · ${result.jobs_cancelled} jobs cancelled.`,
-      });
+      setLastResult({ kind: 'reset', result });
       queryClient.invalidateQueries({ queryKey });
       // Other panels' caches may be stale — invalidate broadly.
       queryClient.invalidateQueries({ queryKey: ['structure', projectId] });
@@ -79,28 +82,21 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         (err instanceof Error ? err.message : String(err));
-      setLastMessage({ tone: 'err', text: `Reset failed: ${detail}` });
+      setLastResult({ kind: 'error', text: `Reset failed: ${detail}` });
     },
   });
 
   const reviewMutation = useMutation({
     mutationFn: () => reviewSweepTier(projectId, tier),
     onSuccess: (result) => {
-      const skipped = result.scopes_skipped.length;
-      const enqueued = result.jobs_enqueued;
-      setLastMessage({
-        tone: skipped > 0 ? 'warn' : 'ok',
-        text: skipped
-          ? `Enqueued ${enqueued} review${enqueued === 1 ? '' : 's'} (${skipped} skipped).`
-          : `Enqueued ${enqueued} review${enqueued === 1 ? '' : 's'}.`,
-      });
+      setLastResult({ kind: 'review', result });
       queryClient.invalidateQueries({ queryKey });
     },
     onError: (err: unknown) => {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         (err instanceof Error ? err.message : String(err));
-      setLastMessage({ tone: 'err', text: `Review sweep failed: ${detail}` });
+      setLastResult({ kind: 'error', text: `Review sweep failed: ${detail}` });
     },
   });
 
@@ -124,19 +120,8 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
             </>
           ) : null}
         </div>
-        {lastMessage && (
-          <div
-            className={`text-xs mt-1 ${
-              lastMessage.tone === 'ok'
-                ? 'text-emerald-400'
-                : lastMessage.tone === 'warn'
-                  ? 'text-amber-400'
-                  : 'text-red-400'
-            }`}
-            data-testid={`tier-row-${tier}-message`}
-          >
-            {lastMessage.text}
-          </div>
+        {lastResult && (
+          <ResultLine result={lastResult} tier={tier} />
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -189,5 +174,66 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
           ))}
       </div>
     </li>
+  );
+}
+
+function ResultLine({
+  result,
+  tier,
+}: {
+  result:
+    | { kind: 'reset'; result: ResetAllResult }
+    | { kind: 'review'; result: ReviewSweepResult }
+    | { kind: 'error'; text: string };
+  tier: string;
+}) {
+  if (result.kind === 'error') {
+    return (
+      <div
+        className="text-xs mt-1 text-red-400"
+        data-testid={`tier-row-${tier}-message`}
+      >
+        {result.text}
+      </div>
+    );
+  }
+  const skipped = result.result.scopes_skipped;
+  const tone = skipped.length > 0 ? 'warn' : 'ok';
+  const summary =
+    result.kind === 'reset'
+      ? skipped.length
+        ? `Reset ${result.result.scopes_succeeded} scope${result.result.scopes_succeeded === 1 ? '' : 's'} (${skipped.length} skipped) · ${result.result.jobs_cancelled} jobs cancelled.`
+        : `Reset ${result.result.scopes_succeeded} scope${result.result.scopes_succeeded === 1 ? '' : 's'} · ${result.result.jobs_cancelled} jobs cancelled.`
+      : skipped.length
+        ? `Enqueued ${result.result.jobs_enqueued} review${result.result.jobs_enqueued === 1 ? '' : 's'} (${skipped.length} skipped).`
+        : `Enqueued ${result.result.jobs_enqueued} review${result.result.jobs_enqueued === 1 ? '' : 's'}.`;
+  return (
+    <div className="mt-1 space-y-1" data-testid={`tier-row-${tier}-message`}>
+      <div
+        className={`text-xs ${
+          tone === 'ok' ? 'text-emerald-400' : 'text-amber-400'
+        }`}
+      >
+        {summary}
+      </div>
+      {skipped.length > 0 && (
+        <details className="text-[10px] text-amber-300/80">
+          <summary className="cursor-pointer hover:text-amber-200">
+            Show skip reasons
+          </summary>
+          <ul className="mt-1 ml-3 space-y-0.5 font-mono">
+            {skipped.map((s, idx) => (
+              <li key={idx}>
+                <span className="text-gray-500">[{s.status}]</span>{' '}
+                <span className="text-gray-400">{s.scope_ids.join('/') || '(singleton)'}</span>{' '}
+                <span className="text-amber-200">
+                  {typeof s.detail === 'string' ? s.detail : JSON.stringify(s.detail)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
   );
 }
