@@ -27,6 +27,7 @@ export interface NavItem {
     | 'references'
     | 'dag'
     | 'queue'
+    | 'tier-ops'
     | 'edit-root'
     | 'edit-dependencies'
     | 'edit-domain-parents'
@@ -77,6 +78,8 @@ export const SYNTHETIC_IDS = {
   DAG: ':dag',
   // Phase 11 — the pending-change queue panel.
   QUEUE: ':queue',
+  // Tier ops — bulk reset / bulk AI-review per tier.
+  TIER_OPS: ':tier-ops',
   // Phase 11 structured-edit UIs. Each synthetic id routes to a
   // dedicated editor page in NavDetail.
   EDIT_ROOT: ':edit',
@@ -233,6 +236,14 @@ export function buildNavTree(nodes: StructureNode[]): NavItem[] {
     label: 'Pending Changes',
     node: null,
     role: 'queue',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.TIER_OPS,
+    label: 'Tier Ops',
+    node: null,
+    role: 'tier-ops',
     children: [],
     status: { ...EMPTY_STATUS },
   });

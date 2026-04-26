@@ -14,6 +14,7 @@ const FullDagView = lazy(() =>
 );
 import { ImplPanel } from '../ImplPanel';
 import { QueuePanel } from '../QueuePanel';
+import { TierOpsPanel } from '../TierOpsPanel';
 import { ReferencesList } from '../ReferencesList';
 import { RequirementsPanel } from '../RequirementsPanel';
 import { SubcomparchPanel } from '../SubcomparchPanel';
@@ -87,6 +88,13 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
     return (
       <div className="h-full overflow-auto">
         <QueuePanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.TIER_OPS) {
+    return (
+      <div className="h-full overflow-auto">
+        <TierOpsPanel projectId={projectId} />
       </div>
     );
   }
