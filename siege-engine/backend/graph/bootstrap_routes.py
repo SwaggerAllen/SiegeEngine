@@ -621,15 +621,27 @@ def bootstrap_reset(
     scope_ids: tuple[str, ...],
     config: BootstrapTierConfig,
     require_project: Callable,
+    *,
+    force: bool = False,
 ) -> dict[str, Any]:
-    """Generic POST reset handler."""
+    """Generic POST reset handler.
+
+    ``force=True`` skips the ``has_been_approved`` gate. The per-
+    tier per-node Reset & Regenerate buttons run with the default
+    ``force=False`` because their UI only mounts in the approved
+    state, so the gate doubles as a defence-in-depth check. The
+    bulk tier-ops sweep passes ``force=True`` because the operator
+    intent is "wipe everything in this tier and regenerate" — a
+    pending-draft-only node should still be discardable + regen-
+    able, not 409 the whole sweep.
+    """
     if config.collect_downstream_nodes is None:
         raise HTTPException(status_code=501, detail="Reset not supported for this tier")
     require_project(db, project_id)
     node = config.get_node(db, project_id, *scope_ids)
     if node is None:
         raise HTTPException(status_code=404, detail=f"{config.tier_name} node missing")
-    if config.has_been_approved is not None:
+    if not force and config.has_been_approved is not None:
         if not config.has_been_approved(db, project_id, *scope_ids):
             raise HTTPException(
                 status_code=409,

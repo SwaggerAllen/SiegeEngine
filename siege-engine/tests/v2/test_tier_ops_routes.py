@@ -267,6 +267,27 @@ class TestResetAll:
         r = client.post(f"/api/projects/{uuid.uuid4()}/tiers/sysarch/reset-all")
         assert r.status_code == 404
 
+    def test_force_resets_unapproved_scope(self, client, db, seeded):
+        """A pending-draft-only subreqs (no approved content) must
+        still reset under the bulk sweep — force=True bypasses the
+        approval gate. Mirrors the dev-project case the user hit."""
+        from backend.graph.subrequirements import get_subreqs_node
+
+        # Wipe one comp's subreqs back to no-content (pending state).
+        unapproved = get_subreqs_node(db, seeded["project_id"], seeded["comp_ids"][0])
+        assert unapproved is not None
+        unapproved.content = ""
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/subreqs/reset-all")
+        assert r.status_code == 200
+        body = r.json()
+        # Both scopes succeeded — the unapproved one was force-reset
+        # rather than skipped with 409.
+        assert body["scopes_total"] == 2
+        assert body["scopes_succeeded"] == 2
+        assert body["scopes_skipped"] == []
+
 
 # ── /tiers/{tier}/review-sweep ─────────────────────────────────────
 

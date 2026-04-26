@@ -246,7 +246,14 @@ def reset_tier(
     total_nodes_deleted = 0
     for scope_ids in scopes:
         try:
-            result = bootstrap_reset(db, project_id, scope_ids, config, _require_project)
+            result = bootstrap_reset(
+                db,
+                project_id,
+                scope_ids,
+                config,
+                _require_project,
+                force=True,
+            )
         except HTTPException as exc:
             skipped.append(
                 {"scope_ids": list(scope_ids), "status": exc.status_code, "detail": exc.detail}
