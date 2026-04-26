@@ -188,9 +188,9 @@ def get_debug_snapshot(
         "staleness": [
             {
                 "stale_node_id": r.stale_node_id,
-                "upstream_node_id": r.upstream_node_id,
-                "trigger_event_offset": r.trigger_event_offset,
-                "trigger_reason": r.trigger_reason,
+                "source_node_id": r.source_node_id,
+                "source_offset": r.source_offset,
+                "reason": r.reason,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in ledger_rows

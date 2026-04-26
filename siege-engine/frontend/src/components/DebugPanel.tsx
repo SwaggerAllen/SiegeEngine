@@ -104,9 +104,9 @@ export function DebugPanel({ projectId }: { projectId: string }) {
         defaultOpen={false}
         primaryColumns={[
           'stale_node_id',
-          'upstream_node_id',
-          'trigger_event_offset',
-          'trigger_reason',
+          'source_node_id',
+          'source_offset',
+          'reason',
         ]}
       />
       <Section
