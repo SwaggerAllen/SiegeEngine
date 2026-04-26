@@ -586,7 +586,7 @@ def stub_cli(monkeypatch, shared_session_factory):
         ("extracting structured features", "features"),
         ("rotating** the problem from user-facing", "requirements"),
         ("producing the **system", "sysarch"),
-        ("decomposing a single component", "subrequirements"),
+        ("deciding whether — and how — to decompose", "subrequirements"),
         ("last compression step** before implementation", "comparch"),
     )
 

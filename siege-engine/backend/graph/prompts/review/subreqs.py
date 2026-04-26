@@ -17,18 +17,16 @@ from backend.graph.prompts.review._shared import (
 from backend.graph.review_context.subreqs import SubreqsContext
 
 _HANDLES_INTRO = """\
-Subreqs is the scope-bounded atomic decomposition of one \
-component's top-level responsibilities. Each subresp is an \
-**atom** — one component-territory concern, named by its scope \
-phrase, tagged with the in-scope feats it implicates and the \
-parent resps it derives from. The pass is local to one \
-component, so cross-component leaks (a derived-from or feats \
-reference to an id the validator wouldn't have allowed) and \
-non-atomic atoms (one subresp grouping several concerns under \
-a paraphrased parent name) hurt the most. Comparch reads these \
-to draw subcomponent boundaries; if the subresps don't slice \
-along a coherent axis or under-cover the in-scope feats, \
-comparch can't cluster cleanly.
+Subreqs is the **optional** atomic decomposition of a \
+component's top-level responsibilities. A parent resp that \
+fits cleanly inside a single subcomponent shouldn't be \
+decomposed at all — it gets assigned wholesale at comparch \
+time. So an empty subreqs doc, or one that covers only some \
+parents, is a deliberate decision, not a coverage failure. \
+The pass is local to one component, so cross-component leaks \
+hurt; the most common quality problem is over-decomposition \
+— a parent resp split into a single subresp that paraphrases \
+it, adding tokens without adding signal.
 """
 
 _HANDLES = """\
@@ -39,22 +37,25 @@ names too broad for a single subcomponent to own, or names \
 that collide with sibling subresps (the validator catches \
 exact dedup; flag soft collisions like "Token Cache" + \
 "Token Caching").
-- Are the atoms truly atomic? Flag any subresp tagged with the \
-same feat-set as its only parent resp (a paraphrase of the \
-parent), or tagged with so many feats that it's clearly \
-grouping (more than three feats on one atom often means \
-clustering — comparch's job, not subreqs').
+- **Over-decomposition check.** Flag any parent resp that has \
+exactly one subresp covering it where that subresp's feat-set \
+mirrors the parent's and its name paraphrases the parent. \
+That's not a decomposition — it's the parent in disguise. \
+Either it should split into two-or-more genuinely-distinct \
+atoms, or the parent should be left wholesale (no subresps for \
+it at all). Cross-cutting subresps that derive from multiple \
+parents are exempt — they earn their keep by spanning \
+boundaries.
+- **Under-decomposition check.** Conversely, flag any parent \
+resp emitted with **no** subresps where the work plausibly \
+splits across two-or-more subcomponents. Storage + retrieval, \
+read + write, sync + async — these are typical signals that \
+wholesale assignment will overload one subcomp.
 - Is the feat clustering reasonable? Each atom should describe \
 **what it does**, not **what it groups**. Cross-cutting concerns \
 (retry scheduling, audit logging, idempotency) legitimately tag \
 multiple feats; storage-of-record concerns usually tag one. \
 Flag obvious mismatches.
-- Is ``<derived-from>`` coverage complete? Every assigned \
-parent resp must appear in at least one subresp's \
-derived-from. Flag missing coverage.
-- Is ``<feats>`` coverage complete? Every in-scope feat (from \
-the "# Features in scope" reference table) must appear in at \
-least one subresp's feats. Flag any feat with no covering atom.
 - Are there cross-component leaks? Every id in derived-from or \
 feats must be in the component's allowed sets. The validator \
 will have rejected outright leaks, but flag soft hints — e.g. \
@@ -63,9 +64,7 @@ dependency.
 - For presentational components: is the UI-side rotation \
 coherent? Subresps should articulate the user-facing / \
 view-state / feedback-affordance dimensions of the parent \
-resps, not duplicate the domain side's mechanism slicing. The \
-feat tags should reflect that rotation — both sides tag the \
-same feats from a different angle.
+resps, not duplicate the domain side's mechanism slicing.
 """
 
 _ARCHITECTURE_INTRO = """\

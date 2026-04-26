@@ -50,15 +50,30 @@ from __future__ import annotations
 from backend.graph.prompts._prior_framing import render_prior_review_section
 
 _SYSTEM_PROMPT_TEMPLATE = """\
-You are decomposing a single component's top-level \
-responsibilities into **atomic subresponsibilities**, bounded to \
-this component's territory. Your downstream reader is the \
-**comparch pass**, which will draw subcomponent boundaries by \
-clustering these atoms. Write each subresp as one concrete \
-component-internal concern that comparch could assign to a \
-single subcomponent — not a grouping. Clustering is comparch's \
-job, not yours; if your subresp set looks like the parent-resp \
-list with different names, you haven't decomposed.
+You are deciding whether — and how — to decompose this \
+component's top-level responsibilities into **atomic \
+subresponsibilities**. Your downstream reader is the **comparch \
+pass**, which will draw subcomponent boundaries. Subresps are \
+**optional**: a parent resp that fits cleanly inside a single \
+subcomponent shouldn't be decomposed at all — it maps wholesale \
+to that subcomp at comparch time. Only emit subresps for parent \
+resps whose work is large or heterogeneous enough that comparch \
+would need to spread them across multiple subcomponents.
+
+Concretely: if a single subcomponent could plausibly own the \
+entire parent resp, don't produce subresps for it. If you'd \
+have to invent a subresp that paraphrases the parent resp's \
+name with the same feat-set, you're decomposing for its own \
+sake — drop it. A parent resp covered by exactly one subresp \
+that mirrors its scope is a smell; either split it into two or \
+more genuinely-distinct atoms, or omit subresps for that parent \
+entirely.
+
+When you do decompose, write each subresp as one concrete \
+component-internal concern comparch could assign to a single \
+subcomponent. Clustering is comparch's job, not yours; if your \
+subresp set looks like the parent-resp list with different \
+names, you haven't decomposed — you've renamed.
 
 You will be given:
 
@@ -71,10 +86,13 @@ list of feature IDs it implicates.
 the prompt — the canonical ID-to-name map for every ``feat_*`` \
 you may tag.
 
-Each subresponsibility names which assigned parent resps it \
-decomposes (via ``<derived-from>``) and which in-scope features \
-it implicates (via ``<feats>``). Both relationships are \
-many-to-many within this component's scope.
+Each subresp names which parent resps it decomposes (via \
+``<derived-from>``) and which in-scope features it implicates \
+(via ``<feats>``). Both relationships are many-to-many within \
+this component's scope. Parent resps **not** referenced by any \
+subresp will be assigned wholesale to a single subcomponent at \
+comparch time; that's the deliberate signal that no \
+decomposition was needed.
 
 # Output format
 
@@ -97,11 +115,14 @@ atoms with no direct feature cause; ``<derived-from>`` must \
 have at least one ``<resp>`` child:
 
     <introduction>
-    Three of the five parent resps cluster around session \
-    state; I'll factor session-token issuance, refresh, and \
-    revocation as three separate atoms. The remaining two \
-    parent resps each split cleanly into two concerns. No \
-    mirroring — this is a domain comp.
+    Five parent resps. Payment Collection splits into three \
+    distinct slices (tokenization, retry, ledger) — different \
+    code, different storage. Audit Trail is a single concern \
+    a single subcomponent will own end-to-end, so I'm not \
+    decomposing it. Session Lifecycle is similar — fits in \
+    one subcomp. The remaining two parent resps share retry \
+    machinery, so I'll let one cross-cutting subresp handle \
+    that and otherwise leave them un-decomposed.
     </introduction>
     <subrequirements>
       <subresponsibility>
@@ -125,13 +146,22 @@ have at least one ``<resp>`` child:
         </derived-from>
       </subresponsibility>
       <subresponsibility>
-        <name>Token Cache Eviction</name>
-        <feats/>
+        <name>Settlement Ledger</name>
+        <feats>
+          <feat id="feat_payment01"/>
+        </feats>
         <derived-from>
           <resp id="resp_payment01"/>
         </derived-from>
       </subresponsibility>
     </subrequirements>
+
+Three subresps total — Payment Collection genuinely splits \
+three ways, the cross-cutting Retry Scheduling pulls in its \
+second parent (Invoicing), and the other parent resps \
+(Audit Trail, Session Lifecycle, plus Invoicing's non-retry \
+work) will be assigned wholesale to subcomps at comparch \
+time. Resist the urge to add a one-to-one subresp for those.
 
 # Rules
 
@@ -139,6 +169,24 @@ have at least one ``<resp>`` child:
 ``<subresponsibility>`` has exactly one ``<name>``, exactly one \
 ``<feats>``, and exactly one ``<derived-from>`` block. No other \
 tags inside.
+* **An empty ``<subrequirements/>`` block is legal.** If every \
+parent resp fits in a single subcomponent, emit zero subresps. \
+That's the right answer — no split needed.
+* **Decompose only when one subcomp couldn't own the whole \
+parent resp.** Before emitting any subresp, ask: could a single \
+subcomponent reasonably own this parent resp end-to-end? If \
+yes, don't write a subresp for it — leave it for comparch to \
+assign wholesale. Write subresps only when the work is large \
+or heterogeneous enough that you'd be forcing two separate \
+code-territories into one box otherwise.
+* **A parent resp covered by exactly one subresp is almost \
+always wrong.** If you only emit one subresp for a parent, \
+either the work was atomic (drop the subresp; let comparch \
+assign the parent wholesale), or it actually splits two-or- \
+more ways (emit the additional atoms). The only legitimate \
+single-subresp case is a cross-cutting atom whose name and \
+feat-set are strictly narrower than the parent's, derived from \
+multiple parents.
 * ``<name>`` is the **scope phrase verbatim** — a short noun \
 phrase, typically 2 to 5 words, title case, naming one \
 component-territory concern. "Card Tokenization" names the \
@@ -153,32 +201,27 @@ responsible for, not just the "primary" one — many-to-many is \
 expected, since a cross-cutting concern (retry scheduling, \
 audit logging, idempotency) typically supports multiple \
 features. Empty ``<feats/>`` is legal for component-emergent \
-atoms (internal cache, plumbing, lifecycle hooks) — but use it \
-sparingly; most concerns derive from at least one feature.
+atoms (internal cache, plumbing, lifecycle hooks).
 * **Cross-component leaks are forbidden in ``<feats>``.** Every \
 ``<feat id=…>`` must reference one of the in-scope features \
 listed in the ``# Features in scope`` table. Referencing a feat \
 not tagged on any of this component's parent resps is a parse \
 error.
-* ``<derived-from>`` is **required** and must contain at least \
-one ``<resp>`` child. Each ``<resp>`` carries an ``id`` \
-attribute matching one of this component's top-level \
+* ``<derived-from>`` is **required** on every subresp and must \
+contain at least one ``<resp>`` child. Each ``<resp>`` carries \
+an ``id`` attribute matching one of this component's top-level \
 responsibility IDs shown in the input list.
 * **Cross-component leaks are forbidden in ``<derived-from>``.** \
 Every id must be one of the top-level resps assigned to this \
 component. A top-level resp may appear under multiple \
 ``<derived-from>`` blocks — many-to-many within this \
 component's scope.
-* **Coverage:** every assigned parent resp must appear in at \
-least one ``<derived-from>``, and every in-scope feat must \
-appear in at least one ``<feats>``. Missing coverage on either \
-axis is a parse error. Before emitting, mentally check both \
-sets against the input.
-* **Atomicity check.** A subresp tagged with the same set of \
-feats as its only parent resp, with a name that paraphrases the \
-parent, is not an atom — it's the parent in disguise. Either \
-split it into smaller concerns or fold it into siblings. \
-Comparch can't draw boundaries around redundant atoms.
+* **Atomicity test.** A subresp tagged with the same set of \
+feats as its only parent resp, with a name that paraphrases \
+the parent, is not an atom — it's the parent in disguise. \
+Either split it into two or more genuinely-distinct atoms, or \
+drop the subresp entirely so comparch handles the parent \
+wholesale.
 * **Presentational components: rotate mirrored parent resps to \
 UI-side articulation.** If this component is presentational, \
 its top-level responsibilities are (by sysarch design) mirrors \

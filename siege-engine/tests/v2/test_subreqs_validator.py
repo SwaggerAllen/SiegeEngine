@@ -123,13 +123,17 @@ class TestRootLevel:
                 "</subrequirements>"
             )
 
-    def test_empty_rejected(self):
-        with pytest.raises(ValidationError, match="no <subresponsibility>"):
-            validate_subrequirements(
-                _parse("<subrequirements></subrequirements>"),
-                known_parent_resp_ids=set(),
-                known_feat_ids=set(),
-            )
+    def test_empty_block_legal(self):
+        # Empty <subrequirements/> is legal under the new
+        # decomposition-on-demand semantics — every parent resp
+        # gets assigned wholesale to a subcomponent at comparch
+        # time. No coverage failure to report.
+        result = validate_subrequirements(
+            _parse("<subrequirements></subrequirements>"),
+            known_parent_resp_ids={"resp_parent001"},
+            known_feat_ids={"feat_alpha001"},
+        )
+        assert result == []
 
 
 class TestSubrespStructure:
@@ -283,34 +287,40 @@ class TestDerivedFromValidation:
             )
 
 
-class TestCoverage:
-    def test_uncovered_parent_rejected(self):
-        # Only covers parent001, parent002 is uncovered.
-        with pytest.raises(ValidationError, match="does not cover every parent"):
-            _validate(
-                "<subrequirements>"
-                "<subresponsibility><name>A</name>"
-                + _feats("feat_alpha001", "feat_beta0002")
-                + _derived("resp_parent001")
-                + "</subresponsibility>"
-                "</subrequirements>"
-            )
+class TestSelectiveDecomposition:
+    """Subresps are an optional decomposition. Parents not
+    referenced by any subresp will be assigned wholesale to a
+    subcomponent at comparch time — no coverage rule applies."""
 
-    def test_uncovered_feat_rejected(self):
-        # Only tags feat_alpha001, feat_beta0002 is uncovered.
-        with pytest.raises(ValidationError, match="feature.* with no subresp tag.* feat_beta0002"):
-            _validate(
-                "<subrequirements>"
-                "<subresponsibility><name>A</name>"
-                + _feats("feat_alpha001")
-                + _derived("resp_parent001")
-                + "</subresponsibility>"
-                "<subresponsibility><name>B</name>"
-                + _feats("feat_alpha001")
-                + _derived("resp_parent002")
-                + "</subresponsibility>"
-                "</subrequirements>"
-            )
+    def test_uncovered_parent_legal(self):
+        # parent001 has a subresp; parent002 has none and is
+        # expected to flow through wholesale.
+        subresps = _validate(
+            "<subrequirements>"
+            "<subresponsibility><name>A</name>"
+            + _feats("feat_alpha001", "feat_beta0002")
+            + _derived("resp_parent001")
+            + "</subresponsibility>"
+            "</subrequirements>"
+        )
+        assert len(subresps) == 1
+
+    def test_uncovered_feat_legal(self):
+        # feat_alpha001 tagged on a subresp; feat_beta0002 not
+        # tagged — that's fine, it falls through with its parent.
+        subresps = _validate(
+            "<subrequirements>"
+            "<subresponsibility><name>A</name>"
+            + _feats("feat_alpha001")
+            + _derived("resp_parent001")
+            + "</subresponsibility>"
+            "<subresponsibility><name>B</name>"
+            + _feats("feat_alpha001")
+            + _derived("resp_parent002")
+            + "</subresponsibility>"
+            "</subrequirements>"
+        )
+        assert len(subresps) == 2
 
     def test_union_coverage_accepted(self):
         # Both axes covered by the union of two atoms.
