@@ -114,6 +114,7 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
   }, []);
 
   const nodes = useMemo(() => structure?.nodes ?? [], [structure]);
+  const edges = useMemo(() => structure?.edges ?? [], [structure]);
   const selectedNode = selectedId ? nodes.find((n) => n.id === selectedId) : null;
   const breadcrumb = selectedNode?.name ?? breadcrumbForSyntheticId(selectedId);
   const scope = useMemo(
@@ -200,6 +201,7 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
               ) : (
                 <NavTree
                   nodes={nodes}
+                  edges={edges}
                   selectedId={selectedId}
                   onSelect={handleSelect}
                 />
@@ -229,6 +231,7 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
                 ) : (
                   <NavTree
                     nodes={nodes}
+                    edges={edges}
                     selectedId={selectedId}
                     onSelect={handleSelect}
                     onLeafSelect={handleLeafSelect}

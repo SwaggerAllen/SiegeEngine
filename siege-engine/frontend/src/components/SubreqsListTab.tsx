@@ -32,6 +32,11 @@ export function SubreqsListTab({
   featureNames?: Record<string, string>;
 }) {
   const grouped = useMemo(() => parseSubresps(content), [content]);
+  const parentNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const p of parentResps) map[p.id] = p.name;
+    return map;
+  }, [parentResps]);
 
   if (!content || !content.trim()) {
     return (
@@ -92,6 +97,7 @@ export function SubreqsListTab({
                       feats={sub.feats}
                       parentIds={sub.derivedFrom}
                       featureNames={featureNames}
+                      parentNames={parentNames}
                     />
                     {sub.derivedFrom.length > 1 && (
                       <div className="mt-1 text-[10px] uppercase tracking-wider text-gray-500">
@@ -137,7 +143,11 @@ export function SubreqsListTab({
                   <span className="font-medium">{sub.name}</span> —
                   derived from{' '}
                   <span className="font-mono text-gray-500">
-                    {sub.derivedFrom.join(', ')}
+                    {sub.derivedFrom
+                      .map((pid) =>
+                        parentNames[pid] ? `${parentNames[pid]} (${pid})` : pid,
+                      )
+                      .join(', ')}
                   </span>
                 </li>
               ))}

@@ -43,6 +43,7 @@ export const ResetAllResultSchema = z.object({
   scopes_succeeded: z.number(),
   scopes_skipped: z.array(SkipSchema),
   jobs_cancelled: z.number(),
+  jobs_enqueued: z.number(),
   drafts_discarded: z.number(),
   nodes_deleted: z.number(),
 });

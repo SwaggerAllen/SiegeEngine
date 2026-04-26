@@ -236,12 +236,22 @@ class TestResetAll:
         sysarch_node = db.get(Node, seeded["sysarch_id"])
         assert sysarch_node is not None
         assert (sysarch_node.content or "") == ""
-        jobs = [
+        # The bulk handler does a final cancel+re-enqueue pass (so
+        # earlier scopes don't get nuked by later scopes' cascading
+        # cancels), leaving the original bootstrap_reset enqueue
+        # cancelled and a fresh one queued. Filter to queued status.
+        queued_jobs = [
             j
-            for j in db.execute(select(Job).where(Job.job_type == "v2.generate_sysarch")).scalars()
+            for j in db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_sysarch",
+                    Job.status == "queued",
+                )
+            ).scalars()
             if j.payload.get("project_id") == seeded["project_id"]
         ]
-        assert len(jobs) == 1
+        assert len(queued_jobs) == 1
+        assert body["jobs_enqueued"] == 1
 
     def test_per_comp_resets_each_top_level_comp(self, client, db, seeded):
         r = client.post(f"/api/projects/{seeded['project_id']}/tiers/subreqs/reset-all")
@@ -250,12 +260,21 @@ class TestResetAll:
         assert body["tier"] == "subreqs"
         assert body["scopes_total"] == 2
         assert body["scopes_succeeded"] == 2
+        # Bulk reset must queue a generate per scope. Each per-scope
+        # bootstrap_reset cancels the tier's generate_job_type
+        # project-wide before re-enqueueing, so the bulk handler
+        # does a final cancel + per-scope re-enqueue pass to ensure
+        # every succeeded scope ends up with a fresh queued job.
+        assert body["jobs_enqueued"] == 2
 
-        # Two generate_subrequirements jobs enqueued, one per comp.
+        # Two generate_subrequirements jobs in the queue, one per comp.
         jobs = [
             j
             for j in db.execute(
-                select(Job).where(Job.job_type == "v2.generate_subrequirements")
+                select(Job).where(
+                    Job.job_type == "v2.generate_subrequirements",
+                    Job.status == "queued",
+                )
             ).scalars()
             if j.payload.get("project_id") == seeded["project_id"]
         ]
@@ -287,6 +306,19 @@ class TestResetAll:
         assert body["scopes_total"] == 2
         assert body["scopes_succeeded"] == 2
         assert body["scopes_skipped"] == []
+        # And both got a queued generate.
+        assert body["jobs_enqueued"] == 2
+        queued = [
+            j
+            for j in db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_subrequirements",
+                    Job.status == "queued",
+                )
+            ).scalars()
+            if j.payload.get("project_id") == seeded["project_id"]
+        ]
+        assert len(queued) == 2
 
 
 # ── /tiers/{tier}/review-sweep ─────────────────────────────────────

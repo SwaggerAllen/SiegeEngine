@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { StructureNode } from '../../api/structure';
+import type { StructureEdge, StructureNode } from '../../api/structure';
 import {
   ancestorIds,
   buildNavTree,
@@ -10,6 +10,11 @@ import {
 
 interface Props {
   nodes: StructureNode[];
+  /** Project edges; threaded through to ``buildNavTree`` so it can
+   * topologically sort top-level comps by their ``dependency``
+   * edges. Defaults to ``[]`` for callers (mostly tests) that
+   * don't have edge data — sort falls back to ``display_order``. */
+  edges?: ReadonlyArray<StructureEdge>;
   selectedId: string | null;
   onSelect: (id: string) => void;
   /** Invoked when the user taps a leaf node on mobile (closes the drawer). */
@@ -23,8 +28,8 @@ interface Props {
  * every ancestor of the current selection so deep-linking lands
  * the user on an already-visible row.
  */
-export function NavTree({ nodes, selectedId, onSelect, onLeafSelect }: Props) {
-  const items = useMemo(() => buildNavTree(nodes), [nodes]);
+export function NavTree({ nodes, edges, selectedId, onSelect, onLeafSelect }: Props) {
+  const items = useMemo(() => buildNavTree(nodes, edges), [nodes, edges]);
   const [expanded, setExpanded] = useState<Set<string>>(() => defaultExpandedIds());
 
   // Keep ancestors of the selected node expanded. This runs after

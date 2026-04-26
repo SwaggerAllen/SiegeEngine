@@ -88,6 +88,7 @@ describe('TierOpsPanel', () => {
       scopes_succeeded: 2,
       scopes_skipped: [],
       jobs_cancelled: 4,
+      jobs_enqueued: 2,
       drafts_discarded: 0,
       nodes_deleted: 0,
     });
@@ -104,7 +105,7 @@ describe('TierOpsPanel', () => {
     // Success message reflects scopes_succeeded.
     await waitFor(() =>
       expect(screen.getByTestId('tier-row-subreqs-message')).toHaveTextContent(
-        /Reset 2 scopes · 4 jobs cancelled/,
+        /Reset 2 scopes · 2 generations queued/,
       ),
     );
   });

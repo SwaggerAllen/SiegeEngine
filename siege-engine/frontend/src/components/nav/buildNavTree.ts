@@ -1,4 +1,5 @@
-import type { StructureNode } from '../../api/structure';
+import type { StructureEdge, StructureNode } from '../../api/structure';
+import { topoSortComps } from './topoSortComps';
 
 /**
  * A single item in the rendered sidebar tree.
@@ -173,7 +174,10 @@ function rollUpStatus(self: NavItem['status'], children: NavItem[]): NavItem['st
  *       [each subcomponent]
  *         Implementation (if sub has an impl child)
  */
-export function buildNavTree(nodes: StructureNode[]): NavItem[] {
+export function buildNavTree(
+  nodes: StructureNode[],
+  edges: ReadonlyArray<StructureEdge> = [],
+): NavItem[] {
   const items: NavItem[] = [];
 
   const expansion = singleNode(nodes, (n) => n.tier === 'expansion');
@@ -317,9 +321,10 @@ export function buildNavTree(nodes: StructureNode[]): NavItem[] {
   });
 
   // Top-level components + their subtrees.
-  const topLevelComps = nodes
-    .filter((n) => n.tier === 'comp' && n.parent_id === null)
-    .sort((a, b) => a.display_order - b.display_order);
+  const topLevelComps = topoSortComps(
+    nodes.filter((n) => n.tier === 'comp' && n.parent_id === null),
+    edges,
+  );
 
   if (topLevelComps.length > 0) {
     const componentItems: NavItem[] = topLevelComps.map((comp) =>
