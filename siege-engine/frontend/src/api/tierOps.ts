@@ -74,3 +74,62 @@ export async function reviewSweepTier(
   const r = await api.post(`/projects/${projectId}/tiers/${tier}/review-sweep`);
   return ReviewSweepResultSchema.parse(r.data);
 }
+
+// ── Review summary (read-only dashboard) ───────────────────────────
+
+const ReviewEntrySchema = z.object({
+  scope_id: z.string(),
+  scope_label: z.string(),
+  score: z.number().int(),
+  intro: z.string(),
+  handles_count: z.number().int(),
+  arch_count: z.number().int(),
+  approved_at: z.string().nullable(),
+});
+export type ReviewEntry = z.infer<typeof ReviewEntrySchema>;
+
+const ReviewMissingSchema = z.object({
+  scope_id: z.string(),
+  scope_label: z.string(),
+  reason: z.string(),
+});
+export type ReviewMissing = z.infer<typeof ReviewMissingSchema>;
+
+const ScoreStatsSchema = z.object({
+  min: z.number().int(),
+  max: z.number().int(),
+  mean: z.number(),
+  median: z.number(),
+});
+export type ScoreStats = z.infer<typeof ScoreStatsSchema>;
+
+const ScoreBucketsSchema = z.object({
+  band_0_30: z.number().int(),
+  band_31_60: z.number().int(),
+  band_61_85: z.number().int(),
+  band_86_100: z.number().int(),
+});
+export type ScoreBuckets = z.infer<typeof ScoreBucketsSchema>;
+
+export const TierReviewSummarySchema = z.object({
+  tier: z.string(),
+  tier_name: z.string(),
+  draft_count: z.number().int(),
+  reviewed_count: z.number().int(),
+  missing_count: z.number().int(),
+  score_stats: ScoreStatsSchema.nullable(),
+  score_buckets: ScoreBucketsSchema,
+  handles_count_mean: z.number().nullable(),
+  arch_count_mean: z.number().nullable(),
+  reviews: z.array(ReviewEntrySchema),
+  missing: z.array(ReviewMissingSchema),
+});
+export type TierReviewSummary = z.infer<typeof TierReviewSummarySchema>;
+
+export async function getTierReviewSummary(
+  projectId: string,
+  tier: TierName,
+): Promise<TierReviewSummary> {
+  const r = await api.get(`/projects/${projectId}/tiers/${tier}/review-summary`);
+  return TierReviewSummarySchema.parse(r.data);
+}

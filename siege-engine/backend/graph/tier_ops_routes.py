@@ -212,6 +212,82 @@ def get_tier_info(
     }
 
 
+@router.get("/{project_id}/tiers/{tier}/review-summary")
+def get_tier_review_summary(
+    project_id: str,
+    tier: TierName,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Aggregate per-tier AI self-review intros + scores.
+
+    Read-only dashboard endpoint. Walks every node in the tier,
+    parses each currently-approved draft's ``review_text`` via
+    :func:`backend.graph.parsers.review_xml.parse_review`, and
+    returns a panel-ready bundle: aggregate stats (min / mean /
+    median / max + 4-bucket score distribution), a per-review
+    list ordered worst-first, and a "missing" list naming the
+    scopes whose review couldn't be summarised + why.
+
+    The reviews list is what the user copy-pastes into a
+    workshop conversation to iterate the tier's prompt: each
+    entry has the scope label, score, and intro paragraph.
+    """
+    from backend.graph.review_summary import gather_tier_review_summary
+
+    _require_project(db, project_id)
+    try:
+        summary = gather_tier_review_summary(db, project_id, tier)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown tier: {tier}") from exc
+
+    return {
+        "tier": summary.tier,
+        "tier_name": summary.tier_name,
+        "draft_count": summary.draft_count,
+        "reviewed_count": summary.reviewed_count,
+        "missing_count": summary.missing_count,
+        "score_stats": (
+            None
+            if summary.score_stats is None
+            else {
+                "min": summary.score_stats.min,
+                "max": summary.score_stats.max,
+                "mean": summary.score_stats.mean,
+                "median": summary.score_stats.median,
+            }
+        ),
+        "score_buckets": {
+            "band_0_30": summary.score_buckets.band_0_30,
+            "band_31_60": summary.score_buckets.band_31_60,
+            "band_61_85": summary.score_buckets.band_61_85,
+            "band_86_100": summary.score_buckets.band_86_100,
+        },
+        "handles_count_mean": summary.handles_count_mean,
+        "arch_count_mean": summary.arch_count_mean,
+        "reviews": [
+            {
+                "scope_id": r.scope_id,
+                "scope_label": r.scope_label,
+                "score": r.score,
+                "intro": r.intro,
+                "handles_count": r.handles_count,
+                "arch_count": r.arch_count,
+                "approved_at": r.approved_at,
+            }
+            for r in summary.reviews
+        ],
+        "missing": [
+            {
+                "scope_id": m.scope_id,
+                "scope_label": m.scope_label,
+                "reason": m.reason,
+            }
+            for m in summary.missing
+        ],
+    }
+
+
 @router.post("/{project_id}/tiers/{tier}/reset-all")
 def reset_tier(
     project_id: str,
