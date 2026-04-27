@@ -206,6 +206,52 @@ class TestTierInfo:
         body = r.json()
         assert body["node_count"] == 2
         assert body["nodes_with_content"] == 2
+        # Approved content counts as reviewable.
+        assert body["reviewable_count"] == 2
+
+    def test_reviewable_count_includes_pending_drafts(self, client, db, seeded):
+        """A scope with only a pending draft (no approved content)
+        is still reviewable — bootstrap_retry_review accepts the
+        pending draft as the review target."""
+        from backend.models.node import Draft, Node
+
+        # Find the two seeded comps and clear their content so they're
+        # back in the "pending draft" state — only the draft on one of
+        # them carries a pending row.
+        comps = (
+            db.execute(
+                select(Node).where(
+                    Node.project_id == seeded["project_id"],
+                    Node.tier == "comp",
+                    Node.parent_id.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for comp in comps:
+            comp.content = ""
+        # Add a pending draft on the first comp; leave the second
+        # with neither content nor draft.
+        db.add(
+            Draft(
+                id=f"draft_{uuid.uuid4().hex[:8]}",
+                project_id=seeded["project_id"],
+                target_type="node",
+                target_id=comps[0].id,
+                content="<comparch>regen wip</comparch>",
+                status="pending",
+                batch_id=f"batch_{uuid.uuid4().hex[:8]}",
+            )
+        )
+        db.commit()
+
+        r = client.get(f"/api/projects/{seeded['project_id']}/tiers/comparch/info")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["nodes_with_content"] == 0
+        # Only the comp with a pending draft is reviewable.
+        assert body["reviewable_count"] == 1
 
     def test_unknown_tier_404s(self, client, seeded):
         r = client.get(f"/api/projects/{seeded['project_id']}/tiers/bogus/info")

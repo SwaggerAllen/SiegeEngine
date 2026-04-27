@@ -193,20 +193,51 @@ def get_tier_info(
     # Filter to scopes whose node actually exists; singleton tiers
     # may have a bootstrapped-but-empty node, which still counts as
     # "exists" so the user can sweep an in-flight tier.
+    #
+    # ``reviewable_count`` matches what ``bootstrap_retry_review``
+    # accepts: a scope is reviewable iff it has a pending draft
+    # (in-flight regen) or non-empty approved content. The Review
+    # All / Review summary buttons gate on this — drafts that
+    # haven't been approved yet are still reviewable, since the
+    # review pass runs against the draft body.
+    from backend.models.node import Draft
+
     existing = 0
     has_content = 0
+    reviewable = 0
     for scope_ids in scopes:
         node = config.get_node(db, project_id, *scope_ids)
         if node is None:
             continue
         existing += 1
-        if (node.content or "").strip():
+        node_has_content = bool((node.content or "").strip())
+        if node_has_content:
             has_content += 1
+        if node_has_content:
+            reviewable += 1
+            continue
+        # No approved content; check for a pending draft.
+        pending = (
+            db.execute(
+                select(Draft.id)
+                .where(
+                    Draft.project_id == project_id,
+                    Draft.target_id == node.id,
+                    Draft.status == "pending",
+                )
+                .limit(1)
+            )
+            .scalars()
+            .first()
+        )
+        if pending is not None:
+            reviewable += 1
     return {
         "tier": tier,
         "tier_name": config.tier_name,
         "node_count": existing,
         "nodes_with_content": has_content,
+        "reviewable_count": reviewable,
         "supports_reset": config.collect_downstream_nodes is not None,
         "supports_review": bool(config.review_job_type),
     }

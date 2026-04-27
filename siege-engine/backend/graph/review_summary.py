@@ -42,8 +42,9 @@ class ReviewMissing:
     """One tier scope whose review couldn't be summarised.
 
     ``reason`` is one of:
-    - ``"no approved draft"`` — node exists but never got past pending
-    - ``"empty review"`` — approved draft exists but its review didn't run
+    - ``"no draft"`` — node exists but no pending or approved draft
+    - ``"empty review"`` — draft exists but its review didn't run yet
+      (or is still in flight)
     - ``"parse failed: …"`` — review_text is present but malformed
     """
 
@@ -117,33 +118,39 @@ def gather_tier_review_summary(
         scope_id = scope_ids[-1] if scope_ids else node.id
         scope_label = node.name or scope_id
 
-        approved_draft = (
+        # Reviews live on drafts of any non-discarded status. Prefer
+        # the most recent draft overall — pending drafts win over
+        # older approved ones, since pending is what the user is
+        # actively iterating on. Discarded drafts are noise; their
+        # review_text references prior content that's been
+        # superseded.
+        target_draft = (
             db.execute(
                 select(Draft)
                 .where(
                     Draft.project_id == project_id,
                     Draft.target_id == node.id,
-                    Draft.status == "approved",
+                    Draft.status.in_(("pending", "approved")),
                 )
                 .order_by(Draft.created_at.desc())
             )
             .scalars()
             .first()
         )
-        if approved_draft is None:
+        if target_draft is None:
             missing.append(
                 ReviewMissing(
-                    scope_id=scope_id, scope_label=scope_label, reason="no approved draft"
+                    scope_id=scope_id, scope_label=scope_label, reason="no draft"
                 )
             )
             continue
-        if not (approved_draft.review_text or "").strip():
+        if not (target_draft.review_text or "").strip():
             missing.append(
                 ReviewMissing(scope_id=scope_id, scope_label=scope_label, reason="empty review")
             )
             continue
         try:
-            parsed = parse_review(approved_draft.review_text)
+            parsed = parse_review(target_draft.review_text)
         except ReviewXMLError as exc:
             missing.append(
                 ReviewMissing(
@@ -153,7 +160,7 @@ def gather_tier_review_summary(
                 )
             )
             continue
-        approved_at = approved_draft.created_at.isoformat() if approved_draft.created_at else None
+        approved_at = target_draft.created_at.isoformat() if target_draft.created_at else None
         reviews.append(
             ReviewEntry(
                 scope_id=scope_id,
