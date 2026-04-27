@@ -10,8 +10,8 @@ interface Props {
  * Hidden when there are no tabs (no selection, synthetic view,
  * or an unrecognised tier). The scope label above the tabs gives
  * the user a persistent indicator of what they're viewing — e.g.
- * "Billing" while clicking through that comp's Overview / Subreqs
- * / Comparch tabs.
+ * "Billing" while clicking through that comp's Overview / Comparch
+ * tabs.
  */
 export function TabStrip({ scope, onSelectTab }: Props) {
   if (scope.tabs.length === 0) return null;

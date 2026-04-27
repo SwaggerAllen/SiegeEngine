@@ -1,4 +1,7 @@
+import { useMemo } from 'react';
 import { useComparch } from '../hooks/queries/useComparchQueries';
+import { useFeatures } from '../hooks/queries/useFeatureQueries';
+import { useResponsibilities } from '../hooks/queries/useRequirementsQueries';
 import {
   useApproveMutation,
   useCancelGenerationMutation,
@@ -10,7 +13,7 @@ import {
   BootstrapDraftPanel,
   type BootstrapPanelLabels,
 } from './BootstrapDraftPanel';
-import { comparchRenderers } from './xml';
+import { makeComparchRenderers } from './xml';
 
 interface Props {
   projectId: string;
@@ -39,6 +42,8 @@ function makeLabels(componentName: string): BootstrapPanelLabels {
  */
 export function ComparchPanel({ projectId, componentId, componentName }: Props) {
   const { data, error, isLoading } = useComparch(projectId, componentId);
+  const { data: respsData } = useResponsibilities(projectId);
+  const { data: featsData } = useFeatures(projectId);
   const feedbackMutation = useFeedbackMutation(projectId, componentId);
   const approveMutation = useApproveMutation(projectId, componentId);
   const cancelMutation = useCancelGenerationMutation(projectId, componentId);
@@ -51,6 +56,22 @@ export function ComparchPanel({ projectId, componentId, componentName }: Props) 
     cancelMutation.isPending ||
     resetMutation.isPending ||
     reviewRetryMutation.isPending;
+
+  // Per-subcomponent <owns> rendering needs project-level resp +
+  // feat name lookups so each claim shows ``Name (resp_id)`` and
+  // each feat-slice chip shows ``FeatName (feat_id)`` instead of
+  // bare IDs.
+  const renderers = useMemo(() => {
+    const respNames: Record<string, string> = {};
+    for (const r of respsData?.responsibilities ?? []) {
+      respNames[r.id] = r.name;
+    }
+    const featureNames: Record<string, string> = {};
+    for (const f of featsData?.features ?? []) {
+      featureNames[f.id] = f.name;
+    }
+    return makeComparchRenderers(respNames, featureNames);
+  }, [respsData, featsData]);
 
   return (
     <BootstrapDraftPanel
@@ -69,7 +90,7 @@ export function ComparchPanel({ projectId, componentId, componentName }: Props) 
         onRetryReview: () => reviewRetryMutation.mutate(),
         isBusy,
       }}
-      contentRenderers={comparchRenderers}
+      contentRenderers={renderers}
     />
   );
 }

@@ -49,7 +49,7 @@ import { findChild, findChildText, findChildren, hasChild, textContent } from '.
  *   "requires" line to render ``name (resp_xxxxxxxx)`` instead
  *   of bare IDs.
  * - ``pendingByName``: component name → pending-draft kind
- *   (``"subreqs"`` / ``"comparch"`` / ``"subcomparch"``), used to
+ *   (``"comparch"`` / ``"subcomparch"``), used to
  *   badge component cards with a "waiting on approval" indicator.
  *   Keyed by name because the sysarch document only contains
  *   aliases + names; the owning panel resolves name → comp_id via
@@ -64,7 +64,6 @@ export function makeSysarchRenderers(
   pendingByName: Record<string, string> = {}
 ): XmlRendererMap {
   const WAITING_LABELS: Record<string, string> = {
-    subreqs: 'Waiting — subreqs',
     comparch: 'Waiting — comparch',
     subcomparch: 'Waiting — subcomparch',
   };

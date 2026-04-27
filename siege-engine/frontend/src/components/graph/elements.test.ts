@@ -181,12 +181,11 @@ describe('externalContextFor', () => {
 describe('drillElements', () => {
   const drilledId = 'comp_C1';
 
-  it('includes subresps / subcomps / fanin / local policies', () => {
+  it('includes subcomps / fanin / local policies', () => {
     const elements = drillElements(
       drilledId,
       [
         n(drilledId, 'comp', null),
-        n('resp_subR', 'resp', drilledId),
         n('comp_sub1', 'comp', drilledId),
         n('fanin_FN', 'fanin', drilledId),
         n('policy_local', 'policy', drilledId),
@@ -199,8 +198,22 @@ describe('drillElements', () => {
       'comp_sub1',
       'fanin_FN',
       'policy_local',
-      'resp_subR',
     ]);
+  });
+
+  it('drops orphan subresps from the drill view', () => {
+    // Pre-Phase-A subresps may linger as tier="resp" rows with
+    // parent_id pointing at a comp; the drill walk should ignore
+    // them so the decomposition graph stays clean.
+    const elements = drillElements(
+      drilledId,
+      [
+        n(drilledId, 'comp', null),
+        n('resp_orphanSub', 'resp', drilledId),
+      ],
+      [],
+    );
+    expect(ids(elements)).not.toContain('resp_orphanSub');
   });
 
   it('hides impls by default, reveals when subcomp id is in the set', () => {

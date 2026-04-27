@@ -273,7 +273,6 @@ function RoleIcon({
     case 'edit-decomposition':
     case 'edit-feat-resp':
     case 'edit-resp-comp':
-    case 'edit-subresp-subcomp':
       return <span className="shrink-0 w-4 text-center text-gray-500">·</span>;
     case 'components-root':
       return <span className="shrink-0 w-4 text-center text-gray-500">⋯</span>;
@@ -281,8 +280,6 @@ function RoleIcon({
       return <span className={`shrink-0 w-4 text-center ${domainColour}`}>■</span>;
     case 'component-sub':
       return <span className={`shrink-0 w-4 text-center ${domainColour}`}>▪</span>;
-    case 'component-subreqs':
-      return <span className="shrink-0 w-4 text-center text-green-400">§</span>;
     case 'component-fanin':
       return <span className="shrink-0 w-4 text-center text-purple-300">⬢</span>;
     case 'component-impl':

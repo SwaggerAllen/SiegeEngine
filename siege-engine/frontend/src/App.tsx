@@ -14,7 +14,6 @@ import {
   RedirectComponentComparch,
   RedirectComponentFanIn,
   RedirectComponentImpl,
-  RedirectComponentSubreqs,
   RedirectSubcomponentImpl,
   RedirectSubcomponentSubcomparch,
   RedirectToSynthetic,
@@ -105,14 +104,6 @@ export default function App() {
         {/* Legacy deep links — resolve to the workspace with the
             matching node selected. Bookmarks from the pre-workspace
             nav still land on the right place. */}
-        <Route
-          path="/projects/:id/components/:compId/subreqs"
-          element={
-            <ProtectedRoute>
-              <RedirectComponentSubreqs />
-            </ProtectedRoute>
-          }
-        />
         <Route
           path="/projects/:id/components/:compId/comparch"
           element={

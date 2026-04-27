@@ -23,7 +23,7 @@ interface Props {
  *   components arranged by `dependency` topology within the comp
  *   band.
  * - **Drill** — a single component's internal subgraph (component-
- *   local policies, subresps, subcomps, fan-in, revealed impls)
+ *   local policies, subcomps, fan-in, revealed impls)
  *   plus the external-context layer (top-level feat / resp / policy
  *   that trace into this comp).
  *

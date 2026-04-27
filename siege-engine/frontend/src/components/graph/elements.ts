@@ -26,7 +26,6 @@ import type { StructureEdge, StructureNode } from '../../api/structure';
 export type NodeType =
   | 'feat'
   | 'resp-top'
-  | 'resp-sub'
   | 'policy-top'
   | 'policy-local'
   | 'comp-top'
@@ -47,14 +46,13 @@ const TOP_LEVEL_PARTITION = {
 } as const;
 
 // Partition ordering for the drill-in view. External context at the
-// top (L0), then local policies, subresps, subcomps, fanin, and
-// revealed impl leaves at the bottom.
+// top (L0), then local policies, subcomps, fanin, and revealed impl
+// leaves at the bottom.
 const DRILL_PARTITION = {
   'external-feat': 0,
   'external-resp': 0,
   'external-policy': 0,
   'policy-local': 1,
-  'resp-sub': 2,
   'comp-sub': 3,
   fanin: 4,
   impl: 5,
@@ -110,7 +108,7 @@ function edgeData(e: StructureEdge): ElementDefinition {
 /**
  * Top-level DAG view: features, top-level responsibilities,
  * top-level policies, top-level components + every edge among them.
- * Sub-tier nodes (subresps, subcomps, fanin, impl) are excluded.
+ * Sub-tier nodes (subcomps, fanin, impl) are excluded.
  */
 export function topLevelElements(
   nodes: StructureNode[],
@@ -250,8 +248,10 @@ export function drillElements(
       kept.set(n.id, 'policy-local');
       elements.push(nodeData(n, 'policy-local', DRILL_PARTITION['policy-local']));
     } else if (n.tier === 'resp') {
-      kept.set(n.id, 'resp-sub');
-      elements.push(nodeData(n, 'resp-sub', DRILL_PARTITION['resp-sub']));
+      // Pre-Phase-A subresps (tier="resp", parent_id != null) are
+      // orphan dead data — the comparch tier no longer mints them
+      // and the drill-in graph doesn't surface them.
+      continue;
     } else if (n.tier === 'comp') {
       subcompIds.add(n.id);
       kept.set(n.id, 'comp-sub');

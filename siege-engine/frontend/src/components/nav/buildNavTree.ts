@@ -36,11 +36,9 @@ export interface NavItem {
     | 'edit-decomposition'
     | 'edit-feat-resp'
     | 'edit-resp-comp'
-    | 'edit-subresp-subcomp'
     | 'components-root'
     | 'component-top'
     | 'component-sub'
-    | 'component-subreqs'
     | 'component-fanin'
     | 'component-impl'
     | 'subcomponent-impl';
@@ -92,7 +90,6 @@ export const SYNTHETIC_IDS = {
   EDIT_DECOMPOSITION: ':edit-decomposition',
   EDIT_FEAT_RESP: ':edit-feat-resp',
   EDIT_RESP_COMP: ':edit-resp-comp',
-  EDIT_SUBRESP_SUBCOMP: ':edit-subresp-subcomp',
   COMPONENTS_ROOT: ':components',
 } as const;
 
@@ -293,14 +290,6 @@ export function buildNavTree(
         status: { ...EMPTY_STATUS },
       },
       {
-        id: SYNTHETIC_IDS.EDIT_SUBRESP_SUBCOMP,
-        label: 'Subresps → Subcomponents',
-        node: null,
-        role: 'edit-subresp-subcomp',
-        children: [],
-        status: { ...EMPTY_STATUS },
-      },
-      {
         id: SYNTHETIC_IDS.EDIT_DEPS,
         label: 'Dependencies',
         node: null,
@@ -347,19 +336,6 @@ export function buildNavTree(
 
 function buildComponentSubtree(comp: StructureNode, nodes: StructureNode[]): NavItem {
   const children: NavItem[] = [];
-
-  // Subrequirements — a singleton subreqs_* node parented to the comp.
-  const subreqs = nodes.find((n) => n.tier === 'subreqs' && n.parent_id === comp.id);
-  if (subreqs) {
-    children.push({
-      id: subreqs.id,
-      label: 'Subrequirements',
-      node: subreqs,
-      role: 'component-subreqs',
-      children: [],
-      status: statusFor(subreqs),
-    });
-  }
 
   // Fan-in — a singleton fanin_* node parented to the comp (only
   // exists for fanned-out domain comps).

@@ -21,8 +21,8 @@ const mockedReview = tierOpsApi.reviewSweepTier as unknown as ReturnType<typeof 
 
 function makeInfo(overrides: Partial<tierOpsApi.TierInfo> = {}): tierOpsApi.TierInfo {
   return {
-    tier: 'subreqs',
-    tier_name: 'Subrequirements',
+    tier: 'comparch',
+    tier_name: 'Comparch',
     node_count: 2,
     nodes_with_content: 2,
     supports_reset: true,
@@ -45,7 +45,7 @@ beforeEach(() => {
   // but most buttons are disabled. Individual tests override by
   // queueing per-call responses.
   mockedGetInfo.mockResolvedValue(
-    makeInfo({ tier: 'subreqs', node_count: 0, nodes_with_content: 0 }),
+    makeInfo({ tier: 'comparch', node_count: 0, nodes_with_content: 0 }),
   );
 });
 
@@ -59,7 +59,6 @@ describe('TierOpsPanel', () => {
       'expansion',
       'requirements',
       'sysarch',
-      'subreqs',
       'comparch',
       'subcomparch',
       'impl',
@@ -70,11 +69,11 @@ describe('TierOpsPanel', () => {
 
   it('shows node count from the tier info endpoint', async () => {
     mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
-      makeInfo({ tier, node_count: tier === 'subreqs' ? 3 : 0, nodes_with_content: 1 }),
+      makeInfo({ tier, node_count: tier === 'comparch' ? 3 : 0, nodes_with_content: 1 }),
     );
     renderPanel();
-    const subreqsRow = await screen.findByTestId('tier-row-subreqs');
-    await waitFor(() => expect(subreqsRow).toHaveTextContent(/3 nodes · 1 with content/));
+    const comparchRow = await screen.findByTestId('tier-row-comparch');
+    await waitFor(() => expect(comparchRow).toHaveTextContent(/3 nodes · 1 with content/));
   });
 
   it('Reset All requires a confirm tap before firing', async () => {
@@ -83,7 +82,7 @@ describe('TierOpsPanel', () => {
     );
     mockedReset.mockResolvedValue({
       ok: true,
-      tier: 'subreqs',
+      tier: 'comparch',
       scopes_total: 2,
       scopes_succeeded: 2,
       scopes_skipped: [],
@@ -93,18 +92,18 @@ describe('TierOpsPanel', () => {
       nodes_deleted: 0,
     });
     renderPanel();
-    const button = await screen.findByTestId('tier-row-subreqs-reset-button');
+    const button = await screen.findByTestId('tier-row-comparch-reset-button');
     fireEvent.click(button);
     // The reset endpoint must NOT have fired yet — confirm step.
     expect(mockedReset).not.toHaveBeenCalled();
     const confirmButton = await screen.findByTestId(
-      'tier-row-subreqs-confirm-reset-button',
+      'tier-row-comparch-confirm-reset-button',
     );
     fireEvent.click(confirmButton);
-    await waitFor(() => expect(mockedReset).toHaveBeenCalledWith('proj_1', 'subreqs'));
+    await waitFor(() => expect(mockedReset).toHaveBeenCalledWith('proj_1', 'comparch'));
     // Success message reflects scopes_succeeded.
     await waitFor(() =>
-      expect(screen.getByTestId('tier-row-subreqs-message')).toHaveTextContent(
+      expect(screen.getByTestId('tier-row-comparch-message')).toHaveTextContent(
         /Reset 2 scopes · 2 generations queued/,
       ),
     );
@@ -116,7 +115,7 @@ describe('TierOpsPanel', () => {
     );
     mockedReview.mockResolvedValue({
       ok: true,
-      tier: 'subreqs',
+      tier: 'comparch',
       scopes_total: 2,
       jobs_enqueued: 1,
       scopes_skipped: [
@@ -124,13 +123,13 @@ describe('TierOpsPanel', () => {
       ],
     });
     renderPanel();
-    const button = await screen.findByTestId('tier-row-subreqs-review-button');
+    const button = await screen.findByTestId('tier-row-comparch-review-button');
     fireEvent.click(button);
     await waitFor(() =>
-      expect(mockedReview).toHaveBeenCalledWith('proj_1', 'subreqs'),
+      expect(mockedReview).toHaveBeenCalledWith('proj_1', 'comparch'),
     );
     await waitFor(() =>
-      expect(screen.getByTestId('tier-row-subreqs-message')).toHaveTextContent(
+      expect(screen.getByTestId('tier-row-comparch-message')).toHaveTextContent(
         /Enqueued 1 review \(1 skipped\)/,
       ),
     );
@@ -141,7 +140,7 @@ describe('TierOpsPanel', () => {
       makeInfo({ tier, node_count: 0, nodes_with_content: 0 }),
     );
     renderPanel();
-    const button = await screen.findByTestId('tier-row-subreqs-reset-button');
+    const button = await screen.findByTestId('tier-row-comparch-reset-button');
     expect(button).toBeDisabled();
   });
 
@@ -150,7 +149,7 @@ describe('TierOpsPanel', () => {
       makeInfo({ tier, node_count: 2, nodes_with_content: 0 }),
     );
     renderPanel();
-    const button = await screen.findByTestId('tier-row-subreqs-review-button');
+    const button = await screen.findByTestId('tier-row-comparch-review-button');
     expect(button).toBeDisabled();
   });
 });

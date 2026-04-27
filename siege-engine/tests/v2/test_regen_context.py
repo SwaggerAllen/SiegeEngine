@@ -387,10 +387,6 @@ class TestBuildRegenContext:
         # Parent resps = just billing
         assert [r.id for r in ctx.parent_resps] == [seeded["resp_bill"]]
 
-        # Subresps are gone post-Phase-A; the field stays on the
-        # dataclass but is always empty for new projects.
-        assert ctx.subresps == ()
-
         # Sibling top-level comps: auth + foundation (not billing itself)
         assert set(ctx.sibling_comp_ids) == {
             seeded["comp_auth"],

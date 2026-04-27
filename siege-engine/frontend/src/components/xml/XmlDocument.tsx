@@ -30,8 +30,8 @@ interface Props {
  * This component is schema-agnostic on its own — you get a
  * reasonable prose rendering of any XML tree out of the box — and
  * becomes schema-specific when you pass a ``renderers`` map. Each
- * pipeline bootstrap doc (features, reqs, sysarch, subreqs,
- * manifest) ships its own renderer map alongside its React panel
+ * pipeline bootstrap doc (features, reqs, sysarch, manifest)
+ * ships its own renderer map alongside its React panel
  * and composes them in.
  *
  * Parsing happens in ``useMemo`` so re-renders don't re-parse

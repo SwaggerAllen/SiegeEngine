@@ -42,7 +42,7 @@ function CopyButton({
 /**
  * The data shape this panel walks its state machine off of.
  * Every bootstrap-doc endpoint (expansion, requirements, sysarch,
- * subreqs, manifest) returns the same five pieces — the panel
+ * manifest) returns the same five pieces — the panel
  * takes a pre-extracted snapshot so callers can supply it from
  * whatever Zod schema their endpoint happens to use.
  */
@@ -316,8 +316,8 @@ function ResetApprovedStateControl({
             Reset &amp; Regenerate
           </button>
           <span className="text-xs text-gray-500">
-            Deletes every downstream component, policy, subreqs, and
-            pending draft this approval minted, then regenerates
+            Deletes every downstream component, policy, and pending
+            draft this approval minted, then regenerates
             against the current prompt. Upstream state (features,
             top-level responsibilities) is untouched.
           </span>
@@ -492,7 +492,7 @@ function PendingDraftDocumentTab({
  * The four-state bootstrap-doc panel shell.
  *
  * Each of the v2 bootstrap docs (expansion, requirements, sysarch,
- * subreqs, manifest) goes through the same state machine —
+ * manifest) goes through the same state machine —
  * loading → generating → pending-draft review → approved
  * read-only → failed-no-content. This component owns that state
  * machine. Callers hook up their own react-query data source and
