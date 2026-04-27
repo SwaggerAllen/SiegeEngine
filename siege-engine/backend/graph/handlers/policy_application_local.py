@@ -32,7 +32,7 @@ from sqlalchemy import select
 
 from backend.database import SessionLocal
 from backend.graph import events as ev
-from backend.graph.fragments import FragmentKind, fragment_id
+from backend.graph.fragments import FragmentKind, best_layered_fragment_content
 from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
 from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
@@ -47,7 +47,7 @@ from backend.graph.prompts.policy_application import (
 )
 from backend.graph.reducer import append_event
 from backend.models import Project
-from backend.models.node import Edge, Fragment, Node
+from backend.models.node import Edge, Node
 from backend.pipeline import queue as pipeline_queue
 from backend.projects.settings import get_project_settings
 
@@ -193,13 +193,16 @@ async def apply_component_local_policies(payload: dict) -> None:
                 )
                 continue
 
-            ts_frag = db.get(Fragment, fragment_id(sub.id, FragmentKind.TECHSPEC))
-            pa_frag = db.get(Fragment, fragment_id(sub.id, FragmentKind.PUBAPI))
+            # Layered read so the local-policy prompt sees the
+            # rich subcomparch content when available, falling back
+            # to the comparch-mint skeletal seed.
+            techspec = best_layered_fragment_content(db, sub, FragmentKind.TECHSPEC)
+            pubapi = best_layered_fragment_content(db, sub, FragmentKind.PUBAPI)
             targets_to_process.append(
                 (
                     sub,
-                    ts_frag.content if ts_frag is not None else "",
-                    pa_frag.content if pa_frag is not None else "",
+                    techspec,
+                    pubapi,
                     _format_sub_responsibilities(db, project_id, sub),
                 )
             )

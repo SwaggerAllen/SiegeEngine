@@ -139,9 +139,7 @@ def gather_tier_review_summary(
         )
         if target_draft is None:
             missing.append(
-                ReviewMissing(
-                    scope_id=scope_id, scope_label=scope_label, reason="no draft"
-                )
+                ReviewMissing(scope_id=scope_id, scope_label=scope_label, reason="no draft")
             )
             continue
         if not (target_draft.review_text or "").strip():

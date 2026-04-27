@@ -296,3 +296,67 @@ class TestReset:
             and j.status in ("queued", "running")
         ]
         assert len(fresh) >= 1
+
+    def test_reset_clears_comparch_layer_but_preserves_sysarch_seeds(
+        self, client, project_with_comp, db
+    ):
+        """Comparch reset wipes the rich ``comparch*`` slots but
+        leaves the sysarch-tier ``techspec`` / ``pubapi`` seeds in
+        place so a hard refresh re-runs comparch from the seed
+        rather than from a void. See the layered-fragment model in
+        ``backend/graph/fragments.py``.
+        """
+        from backend.graph.fragments import FragmentKind, fragment_id
+        from backend.models.node import Fragment
+
+        pid = project_with_comp["project"].id
+        comp_id = project_with_comp["comp_id"]
+
+        # Approve comparch + seed both layers.
+        comp = db.get(Node, comp_id)
+        comp.content = "<comparch></comparch>"
+        for kind, body in (
+            (FragmentKind.TECHSPEC, "sysarch seed: role"),
+            (FragmentKind.PUBAPI, "sysarch seed: api"),
+            (FragmentKind.COMPARCH_TECHSPEC, "rich comparch techspec"),
+            (FragmentKind.COMPARCH_PUBAPI, "rich comparch pubapi"),
+            (FragmentKind.COMPARCH_PRIVAPI, "rich comparch privapi"),
+            (FragmentKind.COMPARCH_POLICIES, "<policies/>"),
+            (FragmentKind.COMPARCH_DEPS, "<dependencies/>"),
+            (FragmentKind.COMPARCH_FAILURE_SURFACE, "rich failure"),
+        ):
+            append_event(
+                db,
+                pid,
+                ev.FragmentUpdated(
+                    fragment_id=fragment_id(comp_id, kind),
+                    owner_id=comp_id,
+                    fragment_kind=kind,
+                    new_content=body,
+                ),
+            )
+        db.commit()
+
+        resp = client.post(f"/api/projects/{pid}/components/{comp_id}/comparch/reset")
+        assert resp.status_code == 200, resp.text
+
+        # Sysarch seeds survive — readers fall back to them while
+        # the rich layer is empty.
+        ts_seed = db.get(Fragment, fragment_id(comp_id, FragmentKind.TECHSPEC))
+        pa_seed = db.get(Fragment, fragment_id(comp_id, FragmentKind.PUBAPI))
+        assert ts_seed is not None and ts_seed.content == "sysarch seed: role"
+        assert pa_seed is not None and pa_seed.content == "sysarch seed: api"
+
+        # Every comparch-layer slot has been wiped.
+        for kind in (
+            FragmentKind.COMPARCH_TECHSPEC,
+            FragmentKind.COMPARCH_PUBAPI,
+            FragmentKind.COMPARCH_PRIVAPI,
+            FragmentKind.COMPARCH_POLICIES,
+            FragmentKind.COMPARCH_DEPS,
+            FragmentKind.COMPARCH_FAILURE_SURFACE,
+        ):
+            frag = db.get(Fragment, fragment_id(comp_id, kind))
+            assert frag is not None and frag.content == "", (
+                f"comparch reset should have cleared {kind.value}; got {frag.content!r}"
+            )

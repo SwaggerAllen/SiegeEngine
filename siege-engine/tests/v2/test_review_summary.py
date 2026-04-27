@@ -385,9 +385,7 @@ class TestGatherTierReviewSummary:
             project_id,
             name="Billing",
             order=0,
-            review_text=_review_xml(
-                intro="Approved verdict", score=80, h_findings=1, a_findings=0
-            ),
+            review_text=_review_xml(intro="Approved verdict", score=80, h_findings=1, a_findings=0),
             draft_status="approved",
         )
         # Add a newer pending draft on the same node.

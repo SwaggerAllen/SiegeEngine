@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from backend.graph import events as ev
 from backend.graph import queries
 from backend.graph.broadcast import commit_and_publish
+from backend.graph.fragments import fragment_id
 from backend.graph.reducer import append_event
 from backend.models.node import Draft
 from backend.pipeline import queue as pipeline_queue
@@ -95,6 +96,16 @@ class BootstrapTierConfig:
     additional_nodes_to_clear: Callable[..., list] | None = None
     # Additional singleton pending drafts to discard on reset.
     additional_drafts_to_discard: Callable[..., list] | None = None
+    # Per-tier fragment slots to clear on reset. Returns a list of
+    # ``(owner_id, FragmentKind)`` pairs whose fragment row content
+    # should be wiped via a ``FragmentUpdated`` event with
+    # ``new_content=""``. Used by the layered-fragment model so a
+    # comparch / subcomparch reset clears just the rich layer kinds
+    # it owns (``comparch*`` / ``subcomparch*``) without touching
+    # the lower-tier sysarch / comparch-mint skeletal seeds in the
+    # legacy slots. See ``backend/graph/fragments.py``.
+    # Signature: (db, project_id, *scope_ids) -> list[tuple[str, FragmentKind]]
+    additional_fragment_kinds_to_clear: Callable[..., list] | None = None
 
     # ── Prompt preview ─────────────────────────────────────────────
     # Gathers context and renders system + user prompts.
@@ -710,6 +721,21 @@ def bootstrap_reset(
                 db,
                 project_id,
                 ev.BootstrapNodeContentCleared(node_id=clear_node.id),
+            )
+
+    if config.additional_fragment_kinds_to_clear is not None:
+        for owner_id, frag_kind in config.additional_fragment_kinds_to_clear(
+            db, project_id, *scope_ids
+        ):
+            append_event(
+                db,
+                project_id,
+                ev.FragmentUpdated(
+                    fragment_id=fragment_id(owner_id, frag_kind),
+                    owner_id=owner_id,
+                    fragment_kind=frag_kind,
+                    new_content="",
+                ),
             )
 
     append_event(

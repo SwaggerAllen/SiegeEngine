@@ -235,23 +235,32 @@ class TestHappyPath:
 
         s = factory()
         try:
-            # Four fragments updated
+            # Four subcomparch-layer fragments populated
             for kind in (
-                FragmentKind.TECHSPEC,
-                FragmentKind.PUBAPI,
-                FragmentKind.PRIVAPI,
-                FragmentKind.DEPS,
+                FragmentKind.SUBCOMPARCH_TECHSPEC,
+                FragmentKind.SUBCOMPARCH_PUBAPI,
+                FragmentKind.SUBCOMPARCH_PRIVAPI,
+                FragmentKind.SUBCOMPARCH_DEPS,
             ):
                 frag = s.get(Fragment, fragment_id(seeded["sub_store"], kind))
                 assert frag is not None, f"missing {kind}"
                 assert frag.content
-            # techspec overwritten (not skeletal anymore)
-            ts = s.get(Fragment, fragment_id(seeded["sub_store"], FragmentKind.TECHSPEC))
-            assert ts is not None
-            assert "Real techspec" in ts.content
-            assert "Skeletal" not in ts.content
+            # Rich techspec lands in the subcomparch slot — the
+            # legacy ``techspec`` slot keeps the comparch-mint
+            # skeletal seed so a subcomparch reset can fall back
+            # to it.
+            rich_ts = s.get(
+                Fragment, fragment_id(seeded["sub_store"], FragmentKind.SUBCOMPARCH_TECHSPEC)
+            )
+            assert rich_ts is not None
+            assert "Real techspec" in rich_ts.content
+            seed_ts = s.get(Fragment, fragment_id(seeded["sub_store"], FragmentKind.TECHSPEC))
+            assert seed_ts is not None
+            assert "Skeletal" in seed_ts.content
             # deps fragment is the serialized XML with the real sibling id
-            deps_frag = s.get(Fragment, fragment_id(seeded["sub_store"], FragmentKind.DEPS))
+            deps_frag = s.get(
+                Fragment, fragment_id(seeded["sub_store"], FragmentKind.SUBCOMPARCH_DEPS)
+            )
             assert deps_frag is not None
             assert seeded["sub_found"] in deps_frag.content
 
@@ -380,7 +389,9 @@ class TestHappyPath:
                 ).scalars()
             )
             assert edges == []
-            deps_frag = s.get(Fragment, fragment_id(seeded["sub_found"], FragmentKind.DEPS))
+            deps_frag = s.get(
+                Fragment, fragment_id(seeded["sub_found"], FragmentKind.SUBCOMPARCH_DEPS)
+            )
             assert deps_frag is not None
             assert deps_frag.content == "<dependencies></dependencies>"
         finally:

@@ -165,23 +165,42 @@ with these five children in this order: ``<techspec>``, \
     </introduction>
     <sysarch>
       <techspec>
-        <runtime>Python 3.11 FastAPI process per environment; \
-a single-process async event loop fronts the API.</runtime>
-        <persistence>PostgreSQL primary with SQLAlchemy; every \
-domain entity maps to its own table keyed by a typed ID.</persistence>
-        <write-path>All domain writes go through a single \
-event-sourced reducer; no direct ORM writes from handlers.</write-path>
-        <concurrency>Background jobs run on a custom worker pool; \
-long-lived external calls are isolated behind the reducer's \
-event boundary.</concurrency>
-        <testing>pytest unit coverage on handlers plus a \
-full-chain integration test that drains the job queue in a \
-single-threaded harness.</testing>
-        <deploy>Docker image built by CI; deployed as a single \
-container with a Postgres sidecar on Fly.io.</deploy>
-        <technologies>FastAPI, SQLAlchemy, PostgreSQL, React 18, \
-Vite, React Query, Anthropic Claude via the claude CLI, \
-Fly.io, Docker.</technologies>
+        <runtime>{Pick the language and runtime that fit the \
+project's constraints — e.g., a typed compiled language for a \
+performance-critical data plane, an actor-based VM for \
+high-concurrency message routing, a managed runtime for a \
+forms-heavy admin app. Name the version pin and the process \
+shape (per-environment, per-tenant, sidecar pattern, \
+serverless).}</runtime>
+        <persistence>{Name the durable store and the schema \
+shape. Be specific about whether ownership is per-component \
+(each comp has its own tables / namespace) or shared, and how \
+identity flows (typed IDs, UUIDs, scoped foreign keys). Mention \
+any caching layer + invalidation rule.}</persistence>
+        <write-path>{Describe how mutations land. Single \
+event-sourced reducer? Direct ORM writes? Outbox pattern with \
+async projection? CQRS split with read replicas? Whatever the \
+shape, name it specifically — downstream impl tiers read this \
+to decide handler patterns.}</write-path>
+        <concurrency>{Concurrency model + isolation boundaries. \
+Examples: "supervised actor trees per project; long-running \
+external calls isolated in their own supervisor", "async \
+event loop with bounded worker pool for blocking I/O", \
+"per-request goroutines with channels for fan-out". Be \
+specific enough that impl can pick libraries from this.}</concurrency>
+        <testing>{Test strategy that downstream tiers will \
+follow. Unit coverage approach, integration harness shape, \
+property-based testing for invariants, full-chain drain harness, \
+etc.}</testing>
+        <deploy>{Build + deploy shape. Container image, binary, \
+function bundle. Hosting target (your cloud / on-prem / \
+self-hosted). Runtime topology (single-process, multi-replica, \
+horizontally-scaled).}</deploy>
+        <technologies>{Comma-separated short list of the load- \
+bearing tech choices — language + framework + persistence + \
+deploy + any other choice impl needs to know about. Be specific \
+to your project; this list anchors every comparch + impl tier \
+that follows.}</technologies>
       </techspec>
       <components>
         <component alias="billing">

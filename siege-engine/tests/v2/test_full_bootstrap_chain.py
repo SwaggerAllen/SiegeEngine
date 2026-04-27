@@ -1013,10 +1013,16 @@ class TestFullBootstrapChain:
                 assert comp.content, f"comp {comp.id} ({comp.name}) has empty content"
                 assert comp.content.lstrip().startswith(("<comparch>", "<subcomparch>"))
 
-            # Fragments: every top-level comp should have the five
-            # comparch fragments (techspec/pubapi/privapi/policies/deps).
-            # Every subcomponent should have the four subcomparch
-            # fragments (techspec/pubapi/privapi/deps — no policies).
+            # Fragments: every top-level comp should have its
+            # sysarch skeletal seed (``techspec`` / ``pubapi``)
+            # plus the six comparch-layer slots written by
+            # comparch_mint. Every subcomp should have its
+            # comparch-mint skeletal seed (``techspec`` /
+            # ``pubapi``) plus the four subcomparch-layer slots
+            # written by subcomparch_mint. The split lets a
+            # comparch / subcomparch reset clear the rich layer
+            # without losing the lower-tier seed — see
+            # ``backend/graph/fragments.py``.
             for comp in top_comps:
                 frag_kinds = set(
                     row[0]
@@ -1027,10 +1033,12 @@ class TestFullBootstrapChain:
                 assert frag_kinds == {
                     "techspec",
                     "pubapi",
-                    "privapi",
-                    "policies",
-                    "deps",
-                    "failuresurface",
+                    "comparchtechspec",
+                    "comparchpubapi",
+                    "comparchprivapi",
+                    "comparchpolicies",
+                    "comparchdeps",
+                    "comparchfailuresurface",
                 }, f"{comp.id} fragments = {frag_kinds}"
             for sub in subcomps:
                 frag_kinds = set(
@@ -1042,8 +1050,10 @@ class TestFullBootstrapChain:
                 assert frag_kinds == {
                     "techspec",
                     "pubapi",
-                    "privapi",
-                    "deps",
+                    "subcomparchtechspec",
+                    "subcomparchpubapi",
+                    "subcomparchprivapi",
+                    "subcomparchdeps",
                 }, f"{sub.id} fragments = {frag_kinds}"
 
             # ── Phase 8: impl leaves minted + filled ──────────────

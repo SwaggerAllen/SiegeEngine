@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from 'react';
-import { parseXml } from './parser';
+import { parseXmlAll } from './parser';
 import { renderUnknownElement } from './defaultRenderers';
 import type { XmlNode, XmlRendererMap, XmlRenderContext } from './types';
 
@@ -50,16 +50,23 @@ export function XmlDocument({
 }: Props) {
   const parsed = useMemo(() => {
     try {
-      return { root: parseXml(content), error: null as Error | null };
+      const roots = parseXmlAll(content);
+      if (roots.length === 0) {
+        return {
+          roots: null,
+          error: new Error('No root element found in XML'),
+        };
+      }
+      return { roots, error: null as Error | null };
     } catch (err) {
       return {
-        root: null,
+        roots: null,
         error: err instanceof Error ? err : new Error(String(err)),
       };
     }
   }, [content]);
 
-  if (parsed.root === null) {
+  if (parsed.roots === null) {
     if (fallback) return <>{fallback(content, parsed.error!)}</>;
     return (
       <pre className="whitespace-pre-wrap break-words text-xs text-gray-400">
@@ -68,13 +75,20 @@ export function XmlDocument({
     );
   }
 
+  // Render every top-level element in document order. Bootstrap
+  // tiers (expansion / requirements / sysarch) emit two roots —
+  // an ``<introduction>`` preamble plus the main block — so a
+  // single-root render would silently drop everything past the
+  // introduction.
   return (
     <div
       className={
         className ?? 'prose prose-invert prose-sm max-w-none prose-headings:mb-2'
       }
     >
-      <XmlNodeView node={parsed.root} depth={0} renderers={renderers} />
+      {parsed.roots.map((root, i) => (
+        <XmlNodeView key={i} node={root} depth={0} renderers={renderers} />
+      ))}
     </div>
   );
 }
