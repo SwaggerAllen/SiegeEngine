@@ -80,9 +80,22 @@ const DEFAULT_LAYOUT = {
     algorithm: 'layered',
     'elk.direction': 'DOWN',
     'elk.spacing.nodeNode': 40,
-    'elk.layered.spacing.nodeNodeBetweenLayers': 80,
+    'elk.layered.spacing.nodeNodeBetweenLayers': 120,
     'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
     'elk.partitioning.activate': true,
+  },
+  // cytoscape-elk reads per-node ELK options through this callback.
+  // Editors that want tiered band layout (feat / resp / policy /
+  // comp) set ``data.partition`` on each node and the callback
+  // forwards it as ``elk.partitioning.partition``. Editors that
+  // don't set ``partition`` get the empty dict and ELK falls back
+  // to pure topological layering, which is fine for surfaces like
+  // the decomposition tree where everything is one tier.
+  nodeLayoutOptions: (node: cytoscape.NodeSingular) => {
+    const partition = node.data('partition');
+    return typeof partition === 'number'
+      ? { 'elk.partitioning.partition': partition }
+      : {};
   },
   nodeDimensionsIncludeLabels: true,
   fit: true,

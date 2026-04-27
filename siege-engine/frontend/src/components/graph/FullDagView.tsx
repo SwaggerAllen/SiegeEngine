@@ -180,9 +180,21 @@ export function FullDagView({ projectId }: Props) {
         algorithm: 'layered',
         'elk.direction': 'DOWN',
         'elk.spacing.nodeNode': 40,
-        'elk.layered.spacing.nodeNodeBetweenLayers': 80,
+        'elk.layered.spacing.nodeNodeBetweenLayers': 120,
         'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
         'elk.partitioning.activate': true,
+      },
+      // cytoscape-elk reads per-node ELK options via this callback
+      // (see node_modules/cytoscape-elk/src/layout.js makeNode).
+      // ``data.partition`` is set per-tier in ``elements.ts``;
+      // forwarding it as ``elk.partitioning.partition`` is what
+      // makes the feat / resp / policy / comp bands actually
+      // separate instead of mixing together under pure topology.
+      nodeLayoutOptions: (node: cytoscape.NodeSingular) => {
+        const partition = node.data('partition');
+        return typeof partition === 'number'
+          ? { 'elk.partitioning.partition': partition }
+          : {};
       },
       nodeDimensionsIncludeLabels: true,
       fit: true,

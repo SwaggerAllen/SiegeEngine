@@ -137,6 +137,34 @@ describe('topLevelElements', () => {
     const data = elements[0].data as { isStale?: string };
     expect(data.isStale).toBe('1');
   });
+
+  it('writes data.partition per tier so the ELK callback can forward it', () => {
+    // Regression: the partition value used to live as a top-level
+    // ``layoutOptions`` field on the ElementDefinition, which
+    // cytoscape-elk silently ignored — every node defaulted to the
+    // same partition and ELK fell back to mixing tiers across
+    // layers. cytoscape-elk only reads per-node options through the
+    // ``nodeLayoutOptions(node)`` callback, which our layout config
+    // wires to ``node.data('partition')``.
+    const elements = topLevelElements(
+      [
+        n('feat_F1', 'feat', null),
+        n('resp_R1', 'resp', null),
+        n('policy_P1', 'policy', null),
+        n('comp_C1', 'comp', null),
+      ],
+      [],
+    );
+    const partitionByType: Record<string, number | undefined> = {};
+    for (const el of elements) {
+      const d = el.data as { type?: string; partition?: number };
+      if (d.type) partitionByType[d.type] = d.partition;
+    }
+    expect(partitionByType.feat).toBe(0);
+    expect(partitionByType['resp-top']).toBe(1);
+    expect(partitionByType['policy-top']).toBe(2);
+    expect(partitionByType['comp-top']).toBe(3);
+  });
 });
 
 describe('externalContextFor', () => {

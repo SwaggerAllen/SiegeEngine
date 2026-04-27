@@ -70,27 +70,26 @@ function nodeData(
   type: NodeType,
   partition: number,
 ): ElementDefinition {
+  // ``partition`` lives in ``data`` so the cytoscape-elk extension's
+  // ``nodeLayoutOptions(node)`` callback (configured on the layout
+  // in ``FullDagView`` / ``EditableGraph``) can read it back via
+  // ``node.data('partition')`` and forward it to ELK as
+  // ``elk.partitioning.partition``. Putting it on the
+  // ``ElementDefinition`` top-level (or in a ``layoutOptions`` field
+  // on the element) does not work — cytoscape doesn't propagate
+  // unknown element fields to the layout, and cytoscape-elk only
+  // reads per-node options via the callback path.
   const data: Record<string, string | number | undefined> = {
     id: n.id,
     name: n.name,
     type,
     kind: n.kind,
     tier: n.tier,
+    partition,
   };
   if (n.has_pending_draft) data.pendingDraft = '1';
   if (n.is_stale) data.isStale = '1';
-  return {
-    data,
-    // `layoutOptions` on the element is a cytoscape-elk convention —
-    // the extension picks it up and forwards each key as an ELK
-    // layoutOption for that node.
-    //
-    // @ts-expect-error ElementDefinition doesn't type layoutOptions but
-    // cytoscape-elk reads it at runtime.
-    layoutOptions: {
-      'elk.partitioning.partition': partition,
-    },
-  };
+  return { data };
 }
 
 function edgeData(e: StructureEdge): ElementDefinition {
