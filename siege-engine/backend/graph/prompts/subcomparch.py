@@ -335,7 +335,9 @@ def render_user_prompt(
         "what code territory this subcomponent is for."
     )
     parts.append("")
-    parts.append(owns_summary.strip() or "(this subcomponent does not anchor any parent responsibility)")
+    parts.append(
+        owns_summary.strip() or "(this subcomponent does not anchor any parent responsibility)"
+    )
     parts.append("")
     parts.append("# Same-parent sibling subcomponents (allowed <dep> targets)")
     parts.append("")

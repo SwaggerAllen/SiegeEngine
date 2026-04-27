@@ -175,7 +175,6 @@ class TestPromptsThreadReferencedContent:
         prompt = comparch_prompt(
             component_summary="Comp",
             parent_resps_summary="Resps",
-            subresps_summary="Subresps",
             sibling_comps_summary="Siblings",
             dep_pubapi_summary="",
             top_level_policy_candidates_summary="",
@@ -192,7 +191,6 @@ class TestPromptsThreadReferencedContent:
         prompt = comparch_prompt(
             component_summary="Comp",
             parent_resps_summary="Resps",
-            subresps_summary="Subresps",
             sibling_comps_summary="Siblings",
             dep_pubapi_summary="",
             top_level_policy_candidates_summary="",
@@ -208,7 +206,7 @@ class TestPromptsThreadReferencedContent:
         prompt = subcomparch_prompt(
             subcomponent_summary="Sub",
             parent_component_summary="Parent",
-            subresps_summary="",
+            owns_summary="",
             sibling_subcomps_summary="",
             parent_sibling_comps_summary="",
             dep_pubapi_summary="",

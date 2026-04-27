@@ -215,7 +215,8 @@ Example (abbreviated):
             <operation>resolve a token into a session</operation>
             <operation>rotate expired sessions</operation>
           </primary-operations>
-          <responsibilities>Persists session state and serves token lookups for the component's other subcomps and outside dependents.</responsibilities>
+          <responsibilities>Persists session state and serves token lookups for the
+    component's other subcomps and outside dependents.</responsibilities>
           <owns>
             <resp id="resp_session01">
               <feat id="feat_authsess01"/>
@@ -235,7 +236,8 @@ Example (abbreviated):
             <operation>delegate session creation to the session store</operation>
             <operation>emit a failed-auth event on mismatch</operation>
           </primary-operations>
-          <responsibilities>Verifies plaintext credentials, hands off to SessionStore to mint a session on success, emits failed-auth events on mismatch.</responsibilities>
+          <responsibilities>Verifies plaintext credentials, hands off to SessionStore to mint
+    a session on success, emits failed-auth events on mismatch.</responsibilities>
           <owns>
             <resp id="resp_authn0001">
               <feat id="feat_login0001"/>
@@ -257,7 +259,8 @@ Example (abbreviated):
             <operation>configure logging for this component</operation>
             <operation>expose shared base classes</operation>
           </primary-operations>
-          <responsibilities>Component-internal plumbing — settings loader, logging config, shared base classes. No parent resp claims.</responsibilities>
+          <responsibilities>Component-internal plumbing — settings loader, logging config,
+    shared base classes. No parent resp claims.</responsibilities>
           <owns/>
           <foundation/>
         </subcomponent>

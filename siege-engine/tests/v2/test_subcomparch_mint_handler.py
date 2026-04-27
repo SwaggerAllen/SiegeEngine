@@ -134,12 +134,23 @@ def _set_content(session: Session, node_id: str, content: str) -> None:
 def _sub_xml(
     alias: str,
     name: str,
-    resp_ids: tuple[str, ...],
+    owns: list[tuple[str, list[str]]],
     *,
     foundation: bool = False,
 ) -> str:
-    """Render a ``<subcomponent>`` in the micro-field grammar."""
-    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    """Render a ``<subcomponent>`` in the micro-field grammar.
+
+    ``owns`` is a list of ``(resp_id, [feat_ids])`` pairs; an empty
+    list yields the legal self-closing ``<owns/>`` form.
+    """
+    if owns:
+        blocks = []
+        for rid, fids in owns:
+            feats = "".join(f'<feat id="{fid}"/>' for fid in fids)
+            blocks.append(f'<resp id="{rid}">{feats}</resp>')
+        owns_xml = f"<owns>{''.join(blocks)}</owns>"
+    else:
+        owns_xml = "<owns/>"
     foundation_marker = "<foundation/>" if foundation else ""
     return (
         f'<subcomponent alias="{alias}">'
@@ -154,7 +165,8 @@ def _sub_xml(
         f"<operation>mutate {name}</operation>"
         f"<operation>emit {name}</operation>"
         f"</primary-operations>"
-        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"<responsibilities>{name} prose describing what this subcomp does.</responsibilities>"
+        f"{owns_xml}"
         f"{foundation_marker}"
         "</subcomponent>"
     )
@@ -569,37 +581,38 @@ class TestComparchMintFanOut:
                 ),
             )
 
-            # Subresps under billing
-            sub_token = mint(s, Kind.RESP)
+            # feat tagging the parent resp so the comparch's <owns>
+            # block can claim a (resp, feat) slice that the validator
+            # accepts.
+            feat_pay = mint(s, Kind.FEAT)
             append_event(
                 s,
                 project_id,
                 ev.NodeCreated(
-                    node_id=sub_token,
-                    tier="resp",
+                    node_id=feat_pay,
+                    tier="feat",
                     kind="domain",
-                    parent_id=comp_billing,
-                    name="Tokenization",
+                    parent_id=None,
+                    name="Accept payments",
                     display_order=0,
-                    content="Tokenization intent.",
+                    content="Accept payments.",
                 ),
             )
-            sub_retry = mint(s, Kind.RESP)
+            edge_id = mint(s, Kind.EDGE)
             append_event(
                 s,
                 project_id,
-                ev.NodeCreated(
-                    node_id=sub_retry,
-                    tier="resp",
-                    kind="domain",
-                    parent_id=comp_billing,
-                    name="RetryScheduling",
-                    display_order=1,
-                    content="Retry intent.",
+                ev.EdgeCreated(
+                    edge_id=edge_id,
+                    edge_type="decomposition",
+                    source_id=feat_pay,
+                    target_id=resp_bill,
                 ),
             )
 
-            # Write approved comparch content on billing
+            # Write approved comparch content on billing. TokenStore
+            # claims (resp_bill, [feat_pay]); Foundation's <owns/> is
+            # empty (legal for foundation / internal plumbing).
             billing_doc = (
                 "<comparch>"
                 "<technical-specification>Python.</technical-specification>"
@@ -609,8 +622,8 @@ class TestComparchMintFanOut:
                 "<policies></policies>"
                 f'<dependencies><dep to="{comp_auth}"/></dependencies>'
                 "<subcomponents>"
-                + _sub_xml("token_store", "TokenStore", (sub_token,))
-                + _sub_xml("foundation", "Foundation", (sub_retry,), foundation=True)
+                + _sub_xml("token_store", "TokenStore", [(resp_bill, [feat_pay])])
+                + _sub_xml("foundation", "Foundation", [], foundation=True)
                 + "</subcomponents>"
                 "<sub-dependencies>"
                 '<dep from="token_store" to="foundation"/>'

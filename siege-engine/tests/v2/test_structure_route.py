@@ -212,13 +212,16 @@ class TestTierCoverage:
             "ref": _mint(db, project.id, Kind.REF, tier="ref", name="Ref"),
         }
         sub_id = _mint(db, project.id, Kind.COMP, tier="comp", name="Sub", parent_id=ids["comp"])
-        ids["subreqs"] = _mint(
-            db, project.id, Kind.SUBREQS, tier="subreqs", name="SR", parent_id=ids["comp"]
-        )
         ids["fanin"] = _mint(
             db, project.id, Kind.FANIN, tier="fanin", name="FI", parent_id=ids["comp"]
         )
         ids["impl"] = _mint(db, project.id, Kind.IMPL, tier="impl", name="IM", parent_id=sub_id)
+        # Mint an orphan subreqs node — the subreqs tier was retired in
+        # Phase 11; the structure route deliberately omits it so the
+        # frontend ignores legacy data.
+        legacy_subreqs = _mint(
+            db, project.id, Kind.SUBREQS, tier="subreqs", name="SR", parent_id=ids["comp"]
+        )
         db.commit()
 
         resp = client.get(f"/api/projects/{project.id}/structure")
@@ -226,6 +229,7 @@ class TestTierCoverage:
         body = resp.json()
         node_ids = {n["id"] for n in body["nodes"]}
         assert set(ids.values()) | {sub_id} <= node_ids
+        assert legacy_subreqs not in node_ids
 
 
 class TestEdges:

@@ -82,8 +82,6 @@ _MODULES_WITH_SESSION_LOCAL = (
     "backend.graph.handlers.requirements_mint",
     "backend.graph.handlers.sysarch_generation",
     "backend.graph.handlers.sysarch_mint",
-    "backend.graph.handlers.subreqs_generation",
-    "backend.graph.handlers.subreqs_mint",
     "backend.graph.handlers.comparch_generation",
     "backend.graph.handlers.comparch_mint",
     "backend.graph.handlers.policy_application_top",
@@ -315,136 +313,118 @@ def _sysarch_xml(session, project_id: str) -> str:
     )
 
 
-def _subrequirements_xml(prompt: str) -> str:
-    # Parent resps are rendered under the "Top-level
-    # responsibilities assigned to this component" header in the
-    # prompt; grab only those so the stub doesn't capture resp IDs
-    # from the sibling-dependency block (those belong to peer
-    # comps and would fail the cross-component-leak validator).
-    parents_header = "# Top-level responsibilities assigned to this component"
-    if parents_header not in prompt:
-        raise AssertionError(
-            "subrequirements stub: missing parent-resps header — handler changed its prompt shape?"
-        )
-    parents_section = prompt.split(parents_header, 1)[1].split("\n# ", 1)[0]
-    parent_resp_ids = _unique_in_order(_RESP_ID_RE.findall(parents_section))
-    if not parent_resp_ids:
-        raise AssertionError(
-            "subrequirements stub: no resp_* IDs under parent-resps "
-            "header — handler changed its prompt shape?"
-        )
-
-    # In-scope feats are rendered under the new "# Features in
-    # scope" section that the atomic refactor added. Same slicing
-    # trick as the parent-resps header: take the slice and grab
-    # every feat_* id within it.
-    feats_header = "# Features in scope"
-    if feats_header not in prompt:
-        raise AssertionError(
-            "subrequirements stub: missing in-scope feats header — handler "
-            "changed its prompt shape?"
-        )
-    feats_section = prompt.split(feats_header, 1)[1].split("\n# ", 1)[0]
-    feat_ids = _unique_in_order(_FEAT_ID_RE.findall(feats_section))
-
-    # Emit two atomic subresps. Both derive from every parent resp
-    # so per-resp coverage passes; the feat union covers every
-    # in-scope feat. Atomic shape: name + <feats> + <derived-from>.
-    derived = (
-        "<derived-from>"
-        + "".join(f'<resp id="{rid}"/>' for rid in parent_resp_ids)
-        + "</derived-from>"
-    )
-    feats_block_full = (
-        "<feats>" + "".join(f'<feat id="{fid}"/>' for fid in feat_ids) + "</feats>"
-        if feat_ids
-        else "<feats/>"
-    )
-    return (
-        "<introduction>Two atomic subresps cover the assigned parent resps + feats.</introduction>"
-        "<subrequirements>"
-        f"<subresponsibility><name>CoreHandling</name>{feats_block_full}{derived}"
-        f"</subresponsibility>"
-        f"<subresponsibility><name>SupportHandling</name><feats/>{derived}"
-        f"</subresponsibility>"
-        "</subrequirements>"
-    )
-
-
 def _comparch_xml(session, project_id: str, prompt: str) -> str:
-    # Target discovery: read the first resp_* id out of the
-    # rendered prompt and walk its ``parent_id`` back to the
-    # owning top-level comp. The comparch prompt renders the
-    # target's pre-minted subresps via ``subresps_summary`` as a
-    # bullet list keyed by real resp IDs, so any subresp in the
-    # prompt is unambiguously owned by this comp. This is more
-    # robust than a DB heuristic (which breaks once comparch jobs
-    # are enqueued out of display order — Phase 6's ordering
-    # change makes the presentational comp's comparch fire after
-    # its domain parent's, not in display order).
-    resp_ids = _unique_in_order(_RESP_ID_RE.findall(prompt))
-    target: Node | None = None
-    for rid in resp_ids:
-        resp_node = session.get(Node, rid)
-        if resp_node is None or resp_node.parent_id is None:
-            continue  # top-level resps (parent_id=None) don't resolve to a comp here
-        parent_comp = session.get(Node, resp_node.parent_id)
-        if parent_comp is not None and parent_comp.tier == "comp":
-            target = parent_comp
-            break
-    assert target is not None, (
-        "comparch stub: could not infer target top-level comp from prompt — "
-        "expected at least one subresp id rendered via subresps_summary"
+    # Target discovery: every comparch prompt opens with a
+    # "# Component" section whose first line carries the target
+    # comp's name plus its real comp_* id. Pull the id directly so
+    # multi-comp parent resps (e.g. presentational + domain pair)
+    # don't ambiguate the lookup.
+    component_header = "# Component"
+    assert component_header in prompt, (
+        "comparch stub: missing component header — handler changed its prompt shape?"
     )
-    subresps = list(
+    component_section = prompt.split(component_header, 1)[1].split("\n# ", 1)[0]
+    target_match = re.search(r"comp_[A-Za-z0-9]+", component_section)
+    assert target_match is not None, (
+        "comparch stub: no comp_* id in component section — handler changed its prompt shape?"
+    )
+    target = session.get(Node, target_match.group(0))
+    assert target is not None, f"comparch stub: prompt id {target_match.group(0)} not in DB"
+
+    # Parent resps assigned to this comp: walk decomposition edges
+    # source=resp(parent_id IS NULL), target=this comp.
+    parent_resp_rows = list(
         session.execute(
             select(Node)
+            .join(Edge, Edge.source_id == Node.id)
             .where(
-                Node.project_id == project_id,
+                Edge.project_id == project_id,
+                Edge.edge_type == "decomposition",
+                Edge.target_id == target.id,
                 Node.tier == "resp",
-                Node.parent_id == target.id,
+                Node.parent_id.is_(None),
             )
             .order_by(Node.display_order, Node.id)
         ).scalars()
     )
-    assert subresps, f"comparch stub: target {target.id} has no subresps"
-    # Foundations don't nest: when the target comp was minted with
-    # the foundation role, the decomposition must NOT include
-    # another foundation subcomponent. Concrete subcomponents
-    # divide the foundation's territory exhaustively instead.
+    parent_resp_ids = [r.id for r in parent_resp_rows]
+    assert parent_resp_ids, (
+        f"comparch stub: target {target.id} has no parent resp decomposition edges"
+    )
+
+    # Per-resp feat slice: walk feat → resp decomposition edges so
+    # the <owns> block claims every in-scope feat for each resp
+    # assigned to this comp. Coverage is satisfied by piling all
+    # claims onto a single non-foundation subcomp.
+    feats_by_resp: dict[str, list[str]] = {rid: [] for rid in parent_resp_ids}
+    feat_edge_rows = list(
+        session.execute(
+            select(Edge.target_id, Edge.source_id).where(
+                Edge.project_id == project_id,
+                Edge.edge_type == "decomposition",
+                Edge.target_id.in_(parent_resp_ids),
+            )
+        )
+    )
+    for resp_id, feat_id in feat_edge_rows:
+        if feat_id and feat_id.startswith("feat_"):
+            feats_by_resp.setdefault(resp_id, []).append(feat_id)
+
+    owns_inner = "".join(
+        f'<resp id="{rid}">'
+        + "".join(f'<feat id="{fid}"/>' for fid in feats_by_resp[rid])
+        + "</resp>"
+        for rid in parent_resp_ids
+    )
+    owns_xml = f"<owns>{owns_inner}</owns>" if parent_resp_ids else "<owns/>"
+
+    # Two subcomps: a "core" sub claims every parent resp + feat
+    # slice, and a foundation sub with empty <owns/>. When the
+    # target itself is a foundation, foundations don't nest — emit
+    # two non-foundation subs that share the claims to keep
+    # coverage satisfied.
     target_is_foundation = bool(target.is_foundation)
-    subs: list[str] = []
-    for i, r in enumerate(subresps):
-        alias = f"sub{i}"
-        if target_is_foundation:
-            foundation_tag = ""
-        else:
-            foundation_tag = "<foundation/>" if i == len(subresps) - 1 else ""
-        subs.append(
-            f'<subcomponent alias="{alias}">'
-            f"<name>{target.name}{r.name}</name>"
-            f"<purpose>Owns the {r.name} slice of {target.name}.</purpose>"
-            f"<owned-invariants>"
-            f"<invariant>{r.name} state stays consistent</invariant>"
-            f"<invariant>{r.name} writes are journaled</invariant>"
-            f"</owned-invariants>"
-            f"<primary-operations>"
-            f"<operation>read {r.name} state</operation>"
-            f"<operation>mutate {r.name} state</operation>"
-            f"<operation>emit {r.name} events</operation>"
-            f"</primary-operations>"
-            f'<responsibilities><resp id="{r.id}"/></responsibilities>'
-            f"{foundation_tag}"
-            f"</subcomponent>"
-        )
     if target_is_foundation:
-        # No foundation sub → no foundation-dep requirement.
-        sub_deps = ""
+        subs = [
+            _chain_sub_xml(
+                "core",
+                f"{target.name}Core",
+                target.name,
+                "Core",
+                owns_xml,
+                foundation=False,
+            ),
+            _chain_sub_xml(
+                "support",
+                f"{target.name}Support",
+                target.name,
+                "Support",
+                "<owns/>",
+                foundation=False,
+            ),
+        ]
+        sub_deps = '<dep from="support" to="core"/>'
     else:
-        foundation_alias = f"sub{len(subresps) - 1}"
-        sub_deps = "".join(
-            f'<dep from="sub{i}" to="{foundation_alias}"/>' for i in range(len(subresps) - 1)
-        )
+        subs = [
+            _chain_sub_xml(
+                "core",
+                f"{target.name}Core",
+                target.name,
+                "Core",
+                owns_xml,
+                foundation=False,
+            ),
+            _chain_sub_xml(
+                "foundation",
+                f"{target.name}Foundation",
+                target.name,
+                "Foundation",
+                "<owns/>",
+                foundation=True,
+            ),
+        ]
+        sub_deps = '<dep from="core" to="foundation"/>'
+
     return (
         "<comparch>"
         "<technical-specification>Typical Python stack for this component."
@@ -458,6 +438,36 @@ def _comparch_xml(session, project_id: str, prompt: str) -> str:
         f"<subcomponents>{''.join(subs)}</subcomponents>"
         f"<sub-dependencies>{sub_deps}</sub-dependencies>"
         "</comparch>"
+    )
+
+
+def _chain_sub_xml(
+    alias: str,
+    name: str,
+    parent_name: str,
+    role: str,
+    owns_xml: str,
+    *,
+    foundation: bool,
+) -> str:
+    foundation_tag = "<foundation/>" if foundation else ""
+    return (
+        f'<subcomponent alias="{alias}">'
+        f"<name>{name}</name>"
+        f"<purpose>Owns the {role} slice of {parent_name}.</purpose>"
+        f"<owned-invariants>"
+        f"<invariant>{role} state stays consistent</invariant>"
+        f"<invariant>{role} writes are journaled</invariant>"
+        f"</owned-invariants>"
+        f"<primary-operations>"
+        f"<operation>read {role} state</operation>"
+        f"<operation>mutate {role} state</operation>"
+        f"<operation>emit {role} events</operation>"
+        f"</primary-operations>"
+        f"<responsibilities>{role} prose for the chain integration test stub.</responsibilities>"
+        f"{owns_xml}"
+        f"{foundation_tag}"
+        f"</subcomponent>"
     )
 
 
@@ -586,7 +596,6 @@ def stub_cli(monkeypatch, shared_session_factory):
         ("extracting structured features", "features"),
         ("rotating** the problem from user-facing", "requirements"),
         ("producing the **system", "sysarch"),
-        ("deciding whether — and how — to decompose", "subrequirements"),
         ("last compression step** before implementation", "comparch"),
     )
 
@@ -630,8 +639,6 @@ def stub_cli(monkeypatch, shared_session_factory):
                 text = _requirements_xml(session, project_id)
             elif phase == "sysarch":
                 text = _sysarch_xml(session, project_id)
-            elif phase == "subrequirements":
-                text = _subrequirements_xml(prompt)
             elif phase == "comparch":
                 text = _comparch_xml(session, project_id, prompt)
             elif phase == "subcomparch":
@@ -752,13 +759,6 @@ def _approve_all_pending_drafts(factory, project_id: str) -> int:
                     session,
                     job_type="v2.mint_sysarch",
                     payload={"project_id": project_id},
-                )
-            elif node.tier == "subreqs":
-                assert node.parent_id is not None
-                pipeline_queue.enqueue(
-                    session,
-                    job_type="v2.mint_subrequirements",
-                    payload={"project_id": project_id, "component_id": node.parent_id},
                 )
             elif node.tier == "comp":
                 if node.parent_id is None:
@@ -910,15 +910,6 @@ class TestFullBootstrapChain:
                     )
                 ).scalars()
             )
-            subresps = list(
-                session.execute(
-                    select(Node).where(
-                        Node.project_id == project_id,
-                        Node.tier == "resp",
-                        Node.parent_id.isnot(None),
-                    )
-                ).scalars()
-            )
             subcomps = list(
                 session.execute(
                     select(Node).where(
@@ -933,10 +924,20 @@ class TestFullBootstrapChain:
             # slice alongside the three pre-existing domain resps.
             assert len(top_resps) == 4
             assert len(top_comps) == 4
-            # Each comp has 2 subresps → 8 subresps total.
-            assert len(subresps) == 8
             # Each comp decomposes into 2 subcomponents → 8 subcomps.
             assert len(subcomps) == 8
+
+            # Subreqs is gone post-Phase-A — no nested resps.
+            nested_resps = list(
+                session.execute(
+                    select(Node).where(
+                        Node.project_id == project_id,
+                        Node.tier == "resp",
+                        Node.parent_id.isnot(None),
+                    )
+                ).scalars()
+            )
+            assert nested_resps == []
 
             # Phase 13: the reqs stub seeds a <change-summary>; assert
             # its body landed on the drafts table column and the tag
@@ -1085,8 +1086,9 @@ class TestFullBootstrapChain:
                 )
 
             # The decomposition edge network is populated. Every
-            # subresp has at least one decomposition edge to a
-            # subcomponent (from comparch mint).
+            # parent resp now has decomposition edges to the subcomp
+            # claiming it via the parent comparch's <owns> block,
+            # plus per-claimed-feat edges feat → sub.
             decomp_edges = list(
                 session.execute(
                     select(Edge).where(
@@ -1095,12 +1097,12 @@ class TestFullBootstrapChain:
                     )
                 ).scalars()
             )
-            # Features → top-level resps is many-to-many via covers,
-            # plus top-level resps → top-level comps (3),
-            # plus subresps → subcomps (6). The exact count depends
-            # on the covers stub but at minimum we should see the
-            # non-covers structural edges.
-            assert len(decomp_edges) >= 9
+            # Features → top-level resps via the requirements stub,
+            # plus top-level resps → top-level comps (4), plus the
+            # per-resp claim edges parent_resp → core sub and the
+            # per-feat claim edges feat → core sub from each
+            # comparch's <owns> block.
+            assert len(decomp_edges) >= 12
 
             # The chain exercised every generation phase at least
             # once. policy_application is EXPECTED to be absent —
@@ -1111,7 +1113,6 @@ class TestFullBootstrapChain:
                 "features",
                 "requirements",
                 "sysarch",
-                "subrequirements",
                 "comparch",
                 "subcomparch",
                 "impl",
@@ -1185,52 +1186,52 @@ class TestFullBootstrapChain:
             assert presentational_comp.name == "BillingUIService"
             assert domain_target_comp.name == "BillingDomainService"
 
-            # The comparch prompt rendered for the presentational
-            # comp must contain the "# This component presents"
-            # block carrying the domain target's id and pubapi
-            # snippet. Exactly one prompt should carry that section
-            # — only BillingUI's own comparch regen runs through
-            # the presentational branch of build_regen_context.
-            # (The presentational comp's *own* id does not appear
-            # in its own prompt because _format_component_summary
-            # prints only the name, not the id. We locate the
-            # prompt by the section header instead.)
+            # The comparch prompts rendered for the presentational
+            # comp carry a "# This component presents" block with
+            # the domain target's id + pubapi. Without subreqs, the
+            # presentational's comparch re-fires on every domain
+            # fan-in commit (the Phase 7 unblock walk), so multiple
+            # presents prompts are expected; assert they all target
+            # the presentational comp by name.
             comparch_prompts = stub_cli["prompts"]["comparch"]
             prompts_with_presenting = [
                 p for p in comparch_prompts if "# This component presents" in p
             ]
-            assert len(prompts_with_presenting) == 1, (
-                f"expected exactly one comparch prompt to carry the "
-                f"'# This component presents' section, got "
-                f"{len(prompts_with_presenting)}"
+            assert prompts_with_presenting, (
+                "no comparch prompt carried the '# This component presents' "
+                "section — presentational regen branch did not fire"
             )
-            presentational_comparch_prompt = prompts_with_presenting[0]
-            # The presenting section must reference the domain
-            # target by real comp_* id, and carry the pubapi text.
-            assert domain_target_comp.id in presentational_comparch_prompt
-            assert "public API for BillingDomain" in presentational_comparch_prompt
-            # And the prompt's own component_summary should show
-            # the presentational comp's name (but not id — see
-            # comment above).
-            assert "BillingUIService" in presentational_comparch_prompt
+            for p in prompts_with_presenting:
+                assert "BillingUIService" in p, "non-presentational prompt carries presents section"
+            # Each presents prompt must reference the domain target
+            # by real comp_* id and carry the presentational comp's
+            # name in its component_summary header.
+            for p in prompts_with_presenting:
+                assert domain_target_comp.id in p
+                assert "BillingUIService" in p
 
-            # Ordering proof: domain_parent edges count as a
-            # dependency for comparch regen order, so BillingUI's
-            # comparch must run *after* BillingDomain's comparch
-            # has been approved and comparch_mint has replaced
-            # the skeletal sysarch-time techspec ("Own the
-            # BillingDomain subsystem.") with the comparch-level
-            # techspec ("Typical Python stack for this
-            # component."). If the ordering were still FIFO /
-            # display-order, BillingUI would fire before
-            # BillingDomain's approval and its domain-parent
-            # block would still carry the sysarch seed.
-            assert "Typical Python stack for this component." in (presentational_comparch_prompt), (
-                "presentational comparch prompt still shows the "
-                "sysarch-time techspec seed; domain-parent ordering "
-                "did not take effect"
+            # Ordering proof: at least one of BillingUI's presents
+            # prompts must surface BillingDomain's *approved
+            # comparch* techspec + pubapi (not the sysarch seed).
+            # The Phase 7 unblock-on-fanin walk fires after every
+            # domain fan-in commit, so a late prompt always sees
+            # the post-comparch state. If no presents prompt ever
+            # carried the comparch-level fragments, the unblock
+            # walk never re-fired the presentational regen.
+            late_prompts = [
+                p
+                for p in prompts_with_presenting
+                if "Typical Python stack for this component." in p
+                and "public API for BillingDomain" in p
+            ]
+            assert late_prompts, (
+                "no post-comparch presentational prompt observed; "
+                "domain-parent unblock-on-fanin walk did not re-fire "
+                "the presentational comparch after BillingDomain's "
+                "comparch approval"
             )
-            assert "Own the BillingDomain subsystem." not in (presentational_comparch_prompt), (
+            presentational_comparch_prompt = late_prompts[-1]
+            assert "Own the BillingDomain subsystem." not in presentational_comparch_prompt, (
                 "presentational comparch prompt still carries the "
                 "sysarch-time role seed instead of the approved "
                 "comparch techspec"

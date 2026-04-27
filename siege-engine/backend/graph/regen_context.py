@@ -1071,8 +1071,7 @@ def _format_subcomp_owns_summary(ctx: RegenContext) -> str:
     if owned_feat_ids and resp_rows:
         feat_edge_rows = list(
             session.execute(
-                select(Edge.target_id, Edge.source_id)
-                .where(
+                select(Edge.target_id, Edge.source_id).where(
                     Edge.edge_type == "decomposition",
                     Edge.target_id.in_({r.id for r in resp_rows}),
                     Edge.source_id.in_(owned_feat_ids),

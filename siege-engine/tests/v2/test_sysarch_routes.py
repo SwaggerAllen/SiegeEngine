@@ -406,8 +406,9 @@ class TestReset:
 
     def test_reset_cascades_approved_state(self, client, project_with_sysarch, db, monkeypatch):
         # Approve a sysarch draft, hand-mint some downstream state
-        # (comps + policies + subreqs + a nested resp + a fragment +
-        # a pending draft on one of the comps), then reset.
+        # (comps + policies + a nested resp orphan + a fragment + a
+        # pending comparch draft on one of the comps + a queued
+        # comparch job), then reset and assert the cascade.
         draft_xml = _valid_sysarch(_resp_ids(db, project_with_sysarch.id))
         _patch_cli(monkeypatch, draft_xml)
         asyncio.run(generate_sysarch({"project_id": project_with_sysarch.id, "feedback": None}))
@@ -458,22 +459,9 @@ class TestReset:
             ),
         )
 
-        subreqs_id = mint(db, Kind.SUBREQS)
-        append_event(
-            db,
-            project_with_sysarch.id,
-            ev.NodeCreated(
-                node_id=subreqs_id,
-                tier="subreqs",
-                kind="domain",
-                parent_id=comp_ids[0],
-                name="Auth subreqs",
-                display_order=0,
-                content="",
-            ),
-        )
-
-        # Nested subresp — tier='resp' but parent_id set to a comp.
+        # Nested resp orphan — tier='resp' but parent_id set to a
+        # comp. Pre-Phase-A subreqs minted these as subresponsibilities;
+        # the reset walker still scrubs any that linger.
         subresp_id = mint(db, Kind.RESP)
         append_event(
             db,
@@ -522,13 +510,13 @@ class TestReset:
             ),
         )
 
-        # Also queue a downstream job that should be cancelled.
+        # Also queue a downstream comparch job that should be cancelled.
         import backend.pipeline.queue as pq
 
         pq.enqueue(
             db,
-            job_type="v2.generate_subrequirements",
-            payload={"project_id": project_with_sysarch.id, "comp_id": comp_ids[0]},
+            job_type="v2.generate_comparch",
+            payload={"project_id": project_with_sysarch.id, "component_id": comp_ids[0]},
         )
 
         db.commit()
@@ -557,11 +545,11 @@ class TestReset:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["ok"] is True
-        # 2 comps + 1 policy + 1 subreqs + 1 nested resp = 5 nodes
-        assert body["nodes_deleted"] == 5
+        # 2 comps + 1 policy + 1 nested resp = 4 nodes
+        assert body["nodes_deleted"] == 4
         # 1 pending comparch draft on comp_ids[0]
         assert body["drafts_discarded"] == 1
-        # 1 queued subrequirements job + however many mint_sysarch /
+        # 1 queued comparch job + however many mint_sysarch /
         # generate_sysarch jobs the approve flow queued. At least 1.
         assert body["jobs_cancelled"] >= 1
 
@@ -591,15 +579,6 @@ class TestReset:
             not db.execute(
                 select(Node).where(
                     Node.project_id == project_with_sysarch.id, Node.tier == "policy"
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assert (
-            not db.execute(
-                select(Node).where(
-                    Node.project_id == project_with_sysarch.id, Node.tier == "subreqs"
                 )
             )
             .scalars()
@@ -646,13 +625,12 @@ class TestReset:
         ]
         assert fresh_jobs, "reset should enqueue a fresh generate_sysarch job"
 
-        # And the previously-queued downstream subreqs job got cancelled.
-        subreqs_jobs = (
-            db.execute(select(Job).where(Job.job_type == "v2.generate_subrequirements"))
-            .scalars()
-            .all()
+        # And the previously-queued downstream comparch job got cancelled.
+        comparch_jobs = (
+            db.execute(select(Job).where(Job.job_type == "v2.generate_comparch")).scalars().all()
         )
-        assert all(j.status == "cancelled" for j in subreqs_jobs)
+        assert comparch_jobs
+        assert all(j.status == "cancelled" for j in comparch_jobs)
 
         # ``FeedbackCleared`` marks the cutoff that hides pre-reset
         # prose feedback + AI review text in the Feedback History

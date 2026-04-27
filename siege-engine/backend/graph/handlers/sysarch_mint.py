@@ -347,12 +347,11 @@ async def mint_sysarch(payload: dict) -> None:
             )
 
         logger.info(
-            "mint_sysarch project=%s minted %d comp_* nodes, %d policy_* nodes, "
-            "%d subreqs_* nodes; deps=%d domain_parents=%d",
+            "mint_sysarch project=%s minted %d comp_* nodes, %d policy_* nodes; "
+            "deps=%d domain_parents=%d",
             project_id,
             len(minted_comp_ids),
             len(minted_policy_ids),
-            len(subreqs_targets),
             len(doc.deps),
             len(doc.domain_parents),
         )

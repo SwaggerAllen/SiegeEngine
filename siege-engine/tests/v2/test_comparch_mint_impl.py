@@ -47,12 +47,23 @@ def shared_session_factory(monkeypatch):
 def _sub_xml(
     alias: str,
     name: str,
-    resp_ids: tuple[str, ...],
+    owns: list[tuple[str, list[str]]],
     *,
     foundation: bool = False,
 ) -> str:
-    """Render a ``<subcomponent>`` in the micro-field grammar."""
-    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    """Render a ``<subcomponent>`` in the micro-field grammar.
+
+    ``owns`` is a list of ``(resp_id, [feat_ids])`` pairs; pass an
+    empty list for the legal self-closing ``<owns/>`` form.
+    """
+    if owns:
+        blocks = []
+        for rid, fids in owns:
+            feats = "".join(f'<feat id="{fid}"/>' for fid in fids)
+            blocks.append(f'<resp id="{rid}">{feats}</resp>')
+        owns_xml = f"<owns>{''.join(blocks)}</owns>"
+    else:
+        owns_xml = "<owns/>"
     foundation_marker = "<foundation/>" if foundation else ""
     return (
         f'<subcomponent alias="{alias}">'
@@ -67,14 +78,21 @@ def _sub_xml(
         f"<operation>mutate {name}</operation>"
         f"<operation>emit {name}</operation>"
         f"</primary-operations>"
-        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"<responsibilities>{name} prose describing what this subcomp does.</responsibilities>"
+        f"{owns_xml}"
         f"{foundation_marker}"
         "</subcomponent>"
     )
 
 
 def _fanned_out_comparch() -> str:
-    """Minimal valid comparch that mints two subcomponents + no external deps."""
+    """Minimal valid comparch with two subcomponents + no external deps.
+
+    SubA claims the parent resp + its feat slice; SubB is the
+    foundation with empty ``<owns/>``. The placeholders
+    ``{resp_a}`` / ``{feat_a}`` are filled in at seed time with
+    real ids.
+    """
     return (
         "<comparch>"
         "<technical-specification>Python.</technical-specification>"
@@ -84,8 +102,8 @@ def _fanned_out_comparch() -> str:
         "<policies></policies>"
         "<dependencies></dependencies>"
         "<subcomponents>"
-        + _sub_xml("a", "SubA", ("{resp_a}",))
-        + _sub_xml("b", "SubB", ("{resp_b}",), foundation=True)
+        + _sub_xml("a", "SubA", [("{resp_a}", ["{feat_a}"])])
+        + _sub_xml("b", "SubB", [], foundation=True)
         + "</subcomponents>"
         # 'b' is the foundation; non-foundation subs must declare
         # a dep to the foundation per the arch-doc validator.
@@ -110,15 +128,16 @@ def _un_fanned_out_comparch() -> str:
 
 
 def _seed_project_with_comp(
-    factory, comparch_content: str, *, num_subresps: int = 2
+    factory, comparch_content: str, *, fanned_out: bool = True
 ) -> tuple[str, str]:
-    """Seed project + top-level comp + subresps (if any).
+    """Seed project + top-level comp + (optional) parent resp + feat.
 
-    For the fanned-out case, seed 2 subresps and format the
-    comparch to assign them to subcomponents. For the
-    un-fanned-out case, seed 0 subresps and use a template with
-    no placeholders — a comp with no subresps plus an empty
-    ``<subcomponents>`` block is the valid un-fanned-out shape.
+    For the fanned-out case, seed one parent resp with one feat
+    tagged on it, wire ``feat → resp`` and ``resp → comp``
+    decomposition edges, and format the comparch template with
+    those ids. For the un-fanned-out case, seed nothing extra —
+    a comp with no parent resps + an empty ``<subcomponents>``
+    block is the legal degenerate shape.
     """
     session: Session = factory()
     try:
@@ -137,8 +156,7 @@ def _seed_project_with_comp(
                 name="TopComp",
             ),
         )
-        resp_ids: list[str] = []
-        for i in range(num_subresps):
+        if fanned_out:
             resp_id = mint(session, Kind.RESP)
             append_event(
                 session,
@@ -147,16 +165,40 @@ def _seed_project_with_comp(
                     node_id=resp_id,
                     tier="resp",
                     kind="domain",
-                    parent_id=comp_id,
-                    name=f"Subresp{i}",
-                    content=f"Intent {i}",
+                    parent_id=None,
+                    name="ParentResp",
+                    content="Intent",
                 ),
             )
-            resp_ids.append(resp_id)
-        # Substitute placeholders if the template has any; no-op
-        # otherwise (un-fanned-out case).
-        if num_subresps >= 2:
-            filled = comparch_content.format(resp_a=resp_ids[0], resp_b=resp_ids[1])
+            feat_id = mint(session, Kind.FEAT)
+            append_event(
+                session,
+                project_id,
+                ev.NodeCreated(
+                    node_id=feat_id,
+                    tier="feat",
+                    kind="domain",
+                    parent_id=None,
+                    name="ParentFeat",
+                    content="Feat.",
+                ),
+            )
+            # resp → comp + feat → resp decomposition edges; the
+            # comparch validator reads these to build the parent-
+            # resp allow-set and per-resp feat slice.
+            for src, tgt in ((resp_id, comp_id), (feat_id, resp_id)):
+                edge_id = mint(session, Kind.EDGE)
+                append_event(
+                    session,
+                    project_id,
+                    ev.EdgeCreated(
+                        edge_id=edge_id,
+                        edge_type="decomposition",
+                        source_id=src,
+                        target_id=tgt,
+                    ),
+                )
+            filled = comparch_content.format(resp_a=resp_id, feat_a=feat_id)
         else:
             filled = comparch_content
         append_event(
@@ -224,7 +266,7 @@ class TestFannedOutCase:
 class TestUnFannedOutCase:
     def test_mints_single_impl_under_top_level(self, shared_session_factory):
         project_id, comp_id = _seed_project_with_comp(
-            shared_session_factory, _un_fanned_out_comparch(), num_subresps=0
+            shared_session_factory, _un_fanned_out_comparch(), fanned_out=False
         )
         asyncio.run(mint_comparch({"project_id": project_id, "component_id": comp_id}))
 

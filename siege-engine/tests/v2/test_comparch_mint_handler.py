@@ -51,6 +51,24 @@ def shared_session_factory(monkeypatch):
     engine.dispose()
 
 
+def _seed_feat(session, project_id, name, order):
+    fid = mint(session, Kind.FEAT)
+    append_event(
+        session,
+        project_id,
+        ev.NodeCreated(
+            node_id=fid,
+            tier="feat",
+            kind="domain",
+            parent_id=None,
+            name=name,
+            display_order=order,
+            content=f"{name}.",
+        ),
+    )
+    return fid
+
+
 def _seed_top_resp(session, project_id, name, order):
     rid = mint(session, Kind.RESP)
     append_event(
@@ -99,22 +117,18 @@ def _seed_comp(session, project_id, name, order, parent_resp_ids, *, content="")
     return cid
 
 
-def _seed_subresp(session, project_id, parent_comp, name, order):
-    sid = mint(session, Kind.RESP)
+def _link_feat_to_resp(session, project_id, feat_id, resp_id):
+    eid = mint(session, Kind.EDGE)
     append_event(
         session,
         project_id,
-        ev.NodeCreated(
-            node_id=sid,
-            tier="resp",
-            kind="domain",
-            parent_id=parent_comp,
-            name=name,
-            display_order=order,
-            content=f"{name} intent.",
+        ev.EdgeCreated(
+            edge_id=eid,
+            edge_type="decomposition",
+            source_id=feat_id,
+            target_id=resp_id,
         ),
     )
-    return sid
 
 
 def _set_comp_content(session, comp_id, content):
@@ -127,12 +141,23 @@ def _set_comp_content(session, comp_id, content):
 def _sub_xml(
     alias: str,
     name: str,
-    resp_ids: tuple[str, ...],
+    owns: list[tuple[str, list[str]]],
     *,
     foundation: bool = False,
 ) -> str:
-    """Render a ``<subcomponent>`` in the micro-field grammar."""
-    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    """Render a ``<subcomponent>`` in the micro-field grammar.
+
+    ``owns`` is a list of ``(resp_id, [feat_ids])`` pairs; an empty
+    list yields the legal self-closing ``<owns/>`` form.
+    """
+    if owns:
+        blocks = []
+        for rid, fids in owns:
+            feats = "".join(f'<feat id="{fid}"/>' for fid in fids)
+            blocks.append(f'<resp id="{rid}">{feats}</resp>')
+        owns_xml = f"<owns>{''.join(blocks)}</owns>"
+    else:
+        owns_xml = "<owns/>"
     foundation_marker = "<foundation/>" if foundation else ""
     return (
         f'<subcomponent alias="{alias}">'
@@ -147,7 +172,8 @@ def _sub_xml(
         f"<operation>mutate {name}</operation>"
         f"<operation>emit {name}</operation>"
         f"</primary-operations>"
-        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"<responsibilities>{name} prose describing what this subcomp does.</responsibilities>"
+        f"{owns_xml}"
         f"{foundation_marker}"
         "</subcomponent>"
     )
@@ -155,8 +181,8 @@ def _sub_xml(
 
 def _arch_doc(
     *,
-    sub_token_id: str,
-    sub_retry_id: str,
+    resp_id: str,
+    feat_id: str,
     sibling_comp_id: str,
     with_policy: bool = False,
 ) -> str:
@@ -166,7 +192,7 @@ def _arch_doc(
             "<policy>"
             "<name>Telemetry</name>"
             "<trigger>any LLM call</trigger>"
-            f"<required>{sub_token_id}</required>"
+            f"<required>{resp_id}</required>"
             "<rationale>Record token refreshes for audit.</rationale>"
             "</policy>"
         )
@@ -179,8 +205,8 @@ def _arch_doc(
         f"<policies>{policy_block}</policies>"
         f'<dependencies><dep to="{sibling_comp_id}"/></dependencies>'
         "<subcomponents>"
-        + _sub_xml("token_store", "TokenStore", (sub_token_id,))
-        + _sub_xml("foundation", "Foundation", (sub_retry_id,), foundation=True)
+        + _sub_xml("token_store", "TokenStore", [(resp_id, [feat_id])])
+        + _sub_xml("foundation", "Foundation", [], foundation=True)
         + "</subcomponents>"
         "<sub-dependencies>"
         '<dep from="token_store" to="foundation"/>'
@@ -198,22 +224,24 @@ def seeded(shared_session_factory):
         s.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
         s.flush()
 
+        feat_pay = _seed_feat(s, project_id, "Accept payments", 0)
         resp_bill = _seed_top_resp(s, project_id, "Billing", 0)
         resp_auth = _seed_top_resp(s, project_id, "Auth", 1)
 
+        # feat_pay tags resp_bill so the comparch's <owns> block can
+        # claim that resp+feat pair.
+        _link_feat_to_resp(s, project_id, feat_pay, resp_bill)
+
         comp_billing = _seed_comp(s, project_id, "BillingService", 0, [resp_bill])
         comp_auth = _seed_comp(s, project_id, "AuthService", 1, [resp_auth])
-
-        sub_token = _seed_subresp(s, project_id, comp_billing, "Tokenization", 0)
-        sub_retry = _seed_subresp(s, project_id, comp_billing, "RetryScheduling", 1)
 
         s.commit()
         yield {
             "project_id": project_id,
             "comp_billing": comp_billing,
             "comp_auth": comp_auth,
-            "sub_token": sub_token,
-            "sub_retry": sub_retry,
+            "feat_pay": feat_pay,
+            "resp_bill": resp_bill,
         }
     finally:
         s.close()
@@ -228,8 +256,8 @@ class TestHappyPath:
                 s,
                 seeded["comp_billing"],
                 _arch_doc(
-                    sub_token_id=seeded["sub_token"],
-                    sub_retry_id=seeded["sub_retry"],
+                    resp_id=seeded["resp_bill"],
+                    feat_id=seeded["feat_pay"],
                     sibling_comp_id=seeded["comp_auth"],
                 ),
             )
@@ -320,19 +348,27 @@ class TestHappyPath:
             assert len(sub_dep_edges) == 1
             assert sub_dep_edges[0].target_id == sub_by_name["Foundation"].id
 
-            # Decomposition edges: subresp → sub
+            # Decomposition edges: parent_resp → claiming sub, plus
+            # one feat → claiming sub per claimed feat slice. The
+            # foundation subcomp's <owns/> is empty so it gets no
+            # decomposition incoming edges from the comparch mint.
             decomp_edges = list(
                 s.execute(
                     select(Edge).where(
                         Edge.project_id == seeded["project_id"],
                         Edge.edge_type == "decomposition",
-                        Edge.target_id.in_([s.id for s in subs]),
+                        Edge.target_id.in_([sub.id for sub in subs]),
                     )
                 ).scalars()
             )
             pairs = {(e.source_id, e.target_id) for e in decomp_edges}
-            assert (seeded["sub_token"], sub_by_name["TokenStore"].id) in pairs
-            assert (seeded["sub_retry"], sub_by_name["Foundation"].id) in pairs
+            token_store_id = sub_by_name["TokenStore"].id
+            foundation_id = sub_by_name["Foundation"].id
+            assert (seeded["resp_bill"], token_store_id) in pairs
+            assert (seeded["feat_pay"], token_store_id) in pairs
+            # Foundation has empty <owns/>: no incoming decomposition
+            # edges from this comparch_mint pass.
+            assert not any(target == foundation_id for _src, target in pairs)
         finally:
             s.close()
 
@@ -344,8 +380,8 @@ class TestHappyPath:
                 s,
                 seeded["comp_billing"],
                 _arch_doc(
-                    sub_token_id=seeded["sub_token"],
-                    sub_retry_id=seeded["sub_retry"],
+                    resp_id=seeded["resp_bill"],
+                    feat_id=seeded["feat_pay"],
                     sibling_comp_id=seeded["comp_auth"],
                     with_policy=True,
                 ),
@@ -387,8 +423,8 @@ class TestHappyPath:
                 s,
                 seeded["comp_billing"],
                 _arch_doc(
-                    sub_token_id=seeded["sub_token"],
-                    sub_retry_id=seeded["sub_retry"],
+                    resp_id=seeded["resp_bill"],
+                    feat_id=seeded["feat_pay"],
                     sibling_comp_id=seeded["comp_auth"],
                 ),
             )
@@ -439,8 +475,8 @@ class TestIdempotency:
                 s,
                 seeded["comp_billing"],
                 _arch_doc(
-                    sub_token_id=seeded["sub_token"],
-                    sub_retry_id=seeded["sub_retry"],
+                    resp_id=seeded["resp_bill"],
+                    feat_id=seeded["feat_pay"],
                     sibling_comp_id=seeded["comp_auth"],
                 ),
             )
@@ -516,5 +552,3 @@ class TestFailureModes:
                     }
                 )
             )
-
-
