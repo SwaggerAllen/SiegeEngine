@@ -67,10 +67,6 @@ from backend.graph.handlers.subcomparch_generation import (
     GENERATE_SUBCOMPARCH_JOB_TYPE,
 )
 from backend.graph.handlers.subcomparch_mint import MINT_SUBCOMPARCH_JOB_TYPE
-from backend.graph.handlers.subreqs_generation import (
-    GENERATE_SUBREQS_JOB_TYPE,
-)
-from backend.graph.handlers.subreqs_mint import MINT_SUBREQS_JOB_TYPE
 from backend.graph.handlers.sysarch_generation import GENERATE_SYSARCH_JOB_TYPE
 from backend.graph.handlers.sysarch_mint import MINT_SYSARCH_JOB_TYPE
 from backend.graph.reducer import append_event
@@ -83,12 +79,6 @@ from backend.graph.requirements import (
     collect_downstream_nodes as reqs_collect_downstream_nodes,
 )
 from backend.graph.requirements import has_been_approved as reqs_has_been_approved
-from backend.graph.subrequirements import (
-    bootstrap_subreqs_node,
-    get_subreqs_node,
-    pending_subreqs_draft,
-)
-from backend.graph.subrequirements import has_been_approved as subreqs_has_been_approved
 from backend.graph.sysarch import (
     bootstrap_sysarch_node,
     get_sysarch_node,
@@ -407,8 +397,6 @@ EXPANSION_CONFIG = BootstrapTierConfig(
         "v2.mint_requirements",
         "v2.generate_sysarch",
         "v2.mint_sysarch",
-        "v2.generate_subrequirements",
-        "v2.mint_subrequirements",
         "v2.generate_comparch",
         "v2.mint_comparch",
         "v2.generate_subcomparch",
@@ -571,8 +559,6 @@ REQUIREMENTS_CONFIG = BootstrapTierConfig(
         "v2.mint_requirements",
         "v2.generate_sysarch",
         "v2.mint_sysarch",
-        "v2.generate_subrequirements",
-        "v2.mint_subrequirements",
         "v2.generate_comparch",
         "v2.mint_comparch",
         "v2.generate_subcomparch",
@@ -731,8 +717,6 @@ SYSARCH_CONFIG = BootstrapTierConfig(
     downstream_job_types=(
         "v2.generate_sysarch",
         "v2.mint_sysarch",
-        "v2.generate_subrequirements",
-        "v2.mint_subrequirements",
         "v2.generate_comparch",
         "v2.mint_comparch",
         "v2.generate_subcomparch",
@@ -1109,66 +1093,13 @@ def post_reqs_review_retry(
     )
 
 
-# ── Subreqs response models ─────────────────────────────────────────
-
-
-class SubreqsNodeResponse(BaseModel):
-    id: str
-    name: str
-    content: str
-    updated_at: str
-
-
-class SubreqsDraftResponse(BaseModel):
-    id: str
-    content: str
-    created_at: str
-    change_summary: str | None = None
-
-
-class SubreqsResponse(BaseModel):
-    node: SubreqsNodeResponse
-    pending_draft: SubreqsDraftResponse | None
-    previous_draft_content: str | None = None
-    auto_revision_intermediates: list[AutoRevisionIntermediateResponse] = []
-    generation_status: queries.GenerationStatus
-    last_error: str | None
-    latest_telemetry: TelemetrySummary | None
-    generation_started_at: str | None = None
-    current_attempt: int | None = None
-    max_attempts: int | None = None
-    failed_raw_output: str | None = None
-    # Phase 8 — AI self-review fields. Populated when the tier
-    # has a configured review_job_type; empty string / "idle"
-    # for tiers that don't run reviews.
-    review_text: str = ""
-    review_status: queries.GenerationStatus = "idle"
-    review_last_error: str | None = None
-    review_started_at: str | None = None
-    review_current_attempt: int | None = None
-    review_max_attempts: int | None = None
-
-
-class SubreqsApproveResponse(BaseModel):
-    node: SubreqsNodeResponse
-
-
-def _serialize_subreqs_node(node) -> SubreqsNodeResponse:
-    return SubreqsNodeResponse(
-        id=node.id,
-        name=node.name,
-        content=node.content,
-        updated_at=node.updated_at.isoformat() if node.updated_at else "",
-    )
-
-
 def _require_top_level_comp(db: Session, project_id: str, comp_id: str) -> Node:
     """404 unless ``comp_id`` is a top-level ``comp_*`` in the project.
 
-    Used by the per-component subreqs routes to validate the
-    ``comp_id`` path parameter before dispatching. Rejects
-    unknown IDs, IDs belonging to other projects, subcomponent
-    IDs (``parent_id`` is a comp), and non-comp tier nodes.
+    Used by the per-component routes (comparch, fan-in, etc.) to
+    validate the ``comp_id`` path parameter. Rejects unknown IDs,
+    IDs belonging to other projects, subcomponent IDs
+    (``parent_id`` is a comp), and non-comp tier nodes.
     """
     node = db.get(Node, comp_id)
     if node is None or node.project_id != project_id:
@@ -1176,198 +1107,8 @@ def _require_top_level_comp(db: Session, project_id: str, comp_id: str) -> Node:
     if node.tier != "comp":
         raise HTTPException(status_code=404, detail="Not a component")
     if node.parent_id is not None:
-        # Phase 3 subreqs is per top-level comp only. Subcomponents
-        # get their own arch doc flow in Phase 4; they don't have
-        # their own subreqs.
-        raise HTTPException(status_code=404, detail="Subreqs are per top-level component only")
+        raise HTTPException(status_code=404, detail="Subcomponent endpoint not allowed here")
     return node
-
-
-# ── Subreqs endpoints (per-component scoping) ───────────────────────
-
-
-SUBREQS_CONFIG = BootstrapTierConfig(
-    tier_name="Subrequirements",
-    get_node=get_subreqs_node,
-    get_pending_draft=pending_subreqs_draft,
-    has_been_approved=subreqs_has_been_approved,
-    bootstrap_node=bootstrap_subreqs_node,
-    generate_job_type=GENERATE_SUBREQS_JOB_TYPE,
-    mint_job_type=MINT_SUBREQS_JOB_TYPE,
-    serialize_node=_node_to_dict,
-    serialize_draft=_draft_to_dict,
-    feedback_readonly_detail=(
-        "Subrequirements is read-only after approval; further "
-        "subresponsibility-layer edits happen via individual "
-        "subresp nodes and structural edit UIs."
-    ),
-    collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_subreqs,
-    collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
-    downstream_job_types=per_comp_reset.subreqs_downstream_job_types(),
-    additional_nodes_to_clear=per_comp_reset.additional_nodes_to_clear_subreqs,
-    review_job_type="v2.review_subreqs",
-)
-
-
-@router.get(
-    "/{project_id}/components/{comp_id}/subrequirements",
-    response_model=SubreqsResponse,
-)
-def get_subreqs(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> SubreqsResponse:
-    _require_top_level_comp(db, project_id, comp_id)
-    return SubreqsResponse(
-        **bootstrap_get_state(
-            db,
-            project_id,
-            (comp_id,),
-            SUBREQS_CONFIG,
-            _require_project,
-        )
-    )
-
-
-@router.post(
-    "/{project_id}/components/{comp_id}/subrequirements/feedback",
-    response_model=FeedbackResponse,
-)
-def post_subreqs_feedback(
-    project_id: str,
-    comp_id: str,
-    req: FeedbackRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> FeedbackResponse:
-    _require_top_level_comp(db, project_id, comp_id)
-    return FeedbackResponse(
-        **bootstrap_feedback(
-            db,
-            project_id,
-            (comp_id,),
-            req.feedback,
-            SUBREQS_CONFIG,
-            _require_project,
-            auto_revisions_requested=req.auto_revisions_requested,
-        )
-    )
-
-
-@router.post(
-    "/{project_id}/components/{comp_id}/subrequirements/approve",
-    response_model=SubreqsApproveResponse,
-)
-def post_subreqs_approve(
-    project_id: str,
-    comp_id: str,
-    req: DraftIdRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> SubreqsApproveResponse:
-    _require_top_level_comp(db, project_id, comp_id)
-    result = bootstrap_approve(
-        db,
-        project_id,
-        (comp_id,),
-        req.draft_id,
-        SUBREQS_CONFIG,
-        _require_project,
-    )
-    return SubreqsApproveResponse(node=SubreqsNodeResponse(**result["node"]))
-
-
-@router.post(
-    "/{project_id}/components/{comp_id}/subrequirements/discard",
-    response_model=DiscardResponse,
-)
-def post_subreqs_discard(
-    project_id: str,
-    comp_id: str,
-    req: DraftIdRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> DiscardResponse:
-    _require_top_level_comp(db, project_id, comp_id)
-    return DiscardResponse(
-        **bootstrap_discard(
-            db,
-            project_id,
-            (comp_id,),
-            req.draft_id,
-            SUBREQS_CONFIG,
-            _require_project,
-        )
-    )
-
-
-@router.post(
-    "/{project_id}/components/{comp_id}/subrequirements/cancel",
-    response_model=CancelResponse,
-)
-def post_subreqs_cancel(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> CancelResponse:
-    _require_top_level_comp(db, project_id, comp_id)
-    return CancelResponse(
-        **bootstrap_cancel(
-            db,
-            project_id,
-            (comp_id,),
-            SUBREQS_CONFIG,
-            _require_project,
-        )
-    )
-
-
-@router.post(
-    "/{project_id}/components/{comp_id}/subrequirements/reset",
-    response_model=ResetResponse,
-)
-def post_subreqs_reset(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> ResetResponse:
-    _require_top_level_comp(db, project_id, comp_id)
-    return ResetResponse(
-        **bootstrap_reset(
-            db,
-            project_id,
-            (comp_id,),
-            SUBREQS_CONFIG,
-            _require_project,
-        )
-    )
-
-
-@router.post(
-    "/{project_id}/components/{comp_id}/subrequirements/review/retry",
-    response_model=FeedbackResponse,
-)
-def post_subreqs_review_retry(
-    project_id: str,
-    comp_id: str,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> FeedbackResponse:
-    """Manually re-enqueue the AI review for this subreqs draft."""
-    _require_top_level_comp(db, project_id, comp_id)
-    return FeedbackResponse(
-        **bootstrap_retry_review(
-            db,
-            project_id,
-            (comp_id,),
-            SUBREQS_CONFIG,
-            _require_project,
-        )
-    )
 
 
 # ── Comparch response models ───────────────────────────────────────
@@ -1968,7 +1709,7 @@ class StructureNodeResponse(BaseModel):
     display_order: int
     # Content is included inline for the "light" tiers whose
     # only UI is a list view — resp, feat, policy, vocab, ref.
-    # Heavy tiers (comp, subreqs, impl, fanin, expansion, reqs,
+    # Heavy tiers (comp, impl, fanin, expansion, reqs,
     # sysarch) have dedicated detail endpoints that ship the
     # full XML draft + telemetry, so we leave their ``content``
     # empty here to keep the snapshot payload small. The
@@ -2053,7 +1794,6 @@ _STRUCTURE_TIERS = (
     "feat",
     "resp",
     "comp",
-    "subreqs",
     "fanin",
     "impl",
     "policy",

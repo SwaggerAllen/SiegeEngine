@@ -14,8 +14,6 @@ Importing this package also registers the v2 job handlers:
   * ``v2.mint_requirements``
   * ``v2.generate_sysarch``
   * ``v2.mint_sysarch``
-  * ``v2.generate_subrequirements``
-  * ``v2.mint_subrequirements``
   * ``v2.generate_comparch``
   * ``v2.mint_comparch``
   * ``v2.apply_top_level_policies``
@@ -47,12 +45,9 @@ from backend.graph.handlers import review_fanin as _review_fanin_handler
 from backend.graph.handlers import review_impl as _review_impl_handler
 from backend.graph.handlers import review_requirements as _review_requirements_handler
 from backend.graph.handlers import review_subcomparch as _review_subcomparch_handler
-from backend.graph.handlers import review_subreqs as _review_subreqs_handler
 from backend.graph.handlers import review_sysarch as _review_sysarch_handler
 from backend.graph.handlers import subcomparch_generation as _subcomparch_gen_handler
 from backend.graph.handlers import subcomparch_mint as _subcomparch_mint_handler
-from backend.graph.handlers import subreqs_generation as _subreqs_gen_handler
-from backend.graph.handlers import subreqs_mint as _subreqs_mint_handler
 from backend.graph.handlers import sysarch_generation as _sysarch_gen_handler
 from backend.graph.handlers import sysarch_mint as _sysarch_mint_handler
 
@@ -65,8 +60,6 @@ _requirements_gen_handler.register()
 _requirements_mint_handler.register()
 _sysarch_gen_handler.register()
 _sysarch_mint_handler.register()
-_subreqs_gen_handler.register()
-_subreqs_mint_handler.register()
 _comparch_gen_handler.register()
 _comparch_mint_handler.register()
 _policy_app_top_handler.register()
@@ -79,7 +72,6 @@ _fanin_gen_handler.register()
 _review_expansion_handler.register()
 _review_requirements_handler.register()
 _review_sysarch_handler.register()
-_review_subreqs_handler.register()
 _review_comparch_handler.register()
 _review_subcomparch_handler.register()
 _review_impl_handler.register()

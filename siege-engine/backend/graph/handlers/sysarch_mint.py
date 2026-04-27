@@ -85,7 +85,6 @@ from backend.graph.parsers.validators import (
 )
 from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
 from backend.graph.reducer import append_event
-from backend.graph.subrequirements import bootstrap_subreqs_node, get_subreqs_node
 from backend.graph.sysarch import get_sysarch_node
 from backend.models.node import Node
 from backend.pipeline import queue as pipeline_queue
@@ -97,7 +96,7 @@ MINT_SYSARCH_JOB_TYPE = "v2.mint_sysarch"
 # String — avoids circular import with subreqs_generation. We just
 # need the job type name to enqueue fan-out jobs; the handler
 # registration is in a different module.
-_GENERATE_SUBREQS_JOB_TYPE = "v2.generate_subrequirements"
+_GENERATE_COMPARCH_JOB_TYPE = "v2.generate_comparch"
 
 
 class SysarchMintHandlerError(RuntimeError):
@@ -327,32 +326,24 @@ async def mint_sysarch(payload: dict) -> None:
                 ),
             )
 
-        # ── Phase 8a: bootstrap subreqs nodes in same tx ────────
-        # Each top-level comp gets a subreqs_* node parented to it.
-        # We create the nodes here, inside the main transaction,
-        # so the atomic "mint everything on approval" story holds.
-        # The enqueue of the generation job happens post-commit
-        # (queue writes its own transaction).
-        subreqs_targets: list[str] = []  # comp_ids whose subreqs we created
-        for comp_id in minted_comp_ids:
-            if get_subreqs_node(db, project_id, comp_id) is None:
-                bootstrap_subreqs_node(db, project_id, comp_id)
-                subreqs_targets.append(comp_id)
-
         # commit_and_publish so the NodeCreated events for comp_* /
-        # policy_* / subreqs_* broadcast over SSE and the sidebar +
-        # Components tab update without a manual refresh (B1).
+        # policy_* broadcast over SSE and the sidebar + Components
+        # tab update without a manual refresh (B1).
         commit_and_publish(db, project_id)
 
-        # ── Phase 8b: enqueue subreqs generation post-commit ────
-        # Transient enqueue failure leaves a bootstrap node without
-        # a job, which the GET /components/{id}/subrequirements
-        # lazy-bootstrap path will heal on next open.
-        for comp_id in subreqs_targets:
+        # Enqueue comparch generation directly per top-level comp
+        # post-commit. The subreqs tier is gone; comparch is the
+        # immediate next stage and reads parent resps + their feat
+        # tags directly via regen_context.
+        for comp_id in minted_comp_ids:
             pipeline_queue.enqueue(
                 db,
-                job_type=_GENERATE_SUBREQS_JOB_TYPE,
-                payload={"project_id": project_id, "component_id": comp_id},
+                job_type=_GENERATE_COMPARCH_JOB_TYPE,
+                payload={
+                    "project_id": project_id,
+                    "component_id": comp_id,
+                    "feedback": None,
+                },
             )
 
         logger.info(

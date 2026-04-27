@@ -18,7 +18,6 @@ from backend.graph.prompts.review import (
     impl,
     requirements,
     subcomparch,
-    subreqs,
     sysarch,
 )
 from backend.graph.prompts.review._shared import render_review_system_prompt
@@ -30,7 +29,6 @@ from backend.graph.prompts.review._shared import render_review_system_prompt
         (expansion, "expansion"),
         (requirements, "requirements"),
         (sysarch, "sysarch"),
-        (subreqs, "subreqs"),
         (comparch, "comparch"),
         (subcomparch, "subcomparch"),
         (impl, "impl"),

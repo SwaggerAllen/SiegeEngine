@@ -196,7 +196,7 @@ def compute_staleness_changes(
     # prerequisites are met. Without this filter, fanout auto-
     # enqueues regens on never-generated nodes, which the tier
     # handlers' readiness gates then hard-fail (e.g., a comparch
-    # regen firing before the comp's subreqs have been approved).
+    # regen firing before the dep chain has settled).
     # Clears are kept regardless — removing a ledger entry is
     # harmless.
     changes.marks = [m for m in changes.marks if _has_approved_content(session, m.stale_node_id)]
@@ -527,13 +527,6 @@ def regen_job_for_node(project_id: str, node: Node) -> tuple[str, dict] | None:
         return ("v2.generate_requirements", {**base, "feedback": None})
     if tier == "sysarch":
         return ("v2.generate_sysarch", {**base, "feedback": None})
-    if tier == "subreqs":
-        if node.parent_id is None:
-            return None
-        return (
-            "v2.generate_subreqs",
-            {**base, "component_id": node.parent_id, "feedback": None},
-        )
     if tier == "comp":
         # Top-level → comparch regen; subcomp → subcomparch regen.
         if node.parent_id is None:

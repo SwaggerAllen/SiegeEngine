@@ -15,7 +15,6 @@ from backend.graph.handlers._readiness import (
     all_of,
     owner_arch_approved,
     parent_comparch_approved,
-    parent_subreqs_approved,
     subcomp_node_exists,
     sysarch_has_top_level_resps,
     sysarch_node_exists,
@@ -72,40 +71,6 @@ class TestSysarchHasTopLevelResps:
         assert ready is False
 
 
-class TestParentSubreqsApproved:
-    def test_passes_when_subreqs_has_content(self, db, project):
-        comp_id = _make_node(db, project.id, tier="comp", name="Comp")
-        # Subreqs is a subreqs-tier node parented to the comp.
-        from backend.graph.subrequirements import bootstrap_subreqs_node
-
-        subreqs_id = bootstrap_subreqs_node(db, project.id, comp_id)
-        # Bootstrap creates an empty subreqs node. Set content to
-        # simulate approval.
-        from backend.models.node import Node
-
-        node = db.get(Node, subreqs_id)
-        assert node is not None
-        node.content = "<subrequirements>...approved...</subrequirements>"
-        db.flush()
-
-        ready, reason = parent_subreqs_approved(db, project.id, (comp_id,))
-        assert ready is True
-        assert reason == ""
-
-    def test_fails_when_subreqs_empty(self, db, project):
-        comp_id = _make_node(db, project.id, tier="comp", name="Comp")
-        from backend.graph.subrequirements import bootstrap_subreqs_node
-
-        bootstrap_subreqs_node(db, project.id, comp_id)
-        ready, reason = parent_subreqs_approved(db, project.id, (comp_id,))
-        assert ready is False
-        assert "subreqs_*" in reason or "subrequirements" in reason.lower()
-
-    def test_fails_when_subreqs_missing(self, db, project):
-        comp_id = _make_node(db, project.id, tier="comp", name="Comp")
-        ready, reason = parent_subreqs_approved(db, project.id, (comp_id,))
-        assert ready is False
-        assert "blocked" in reason.lower()
 
     def test_fails_when_no_scope_id(self, db, project):
         ready, reason = parent_subreqs_approved(db, project.id, ())

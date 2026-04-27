@@ -8,7 +8,7 @@ Covers:
   per node with content, skipping empties.
 
 Two tier shapes are exercised: a singleton (sysarch — single node
-per project) and a per-comp tier (subreqs — one node per top-level
+per project) and a per-comp tier (comparch — one node per top-level
 comp). The seeded fixture has two top-level comps so the per-comp
 sweep produces two enqueues / resets.
 """
@@ -41,7 +41,6 @@ from backend.graph import events as ev  # noqa: E402
 from backend.graph.fragments import FragmentKind, fragment_id  # noqa: E402
 from backend.graph.ids import Kind, mint  # noqa: E402
 from backend.graph.reducer import append_event  # noqa: E402
-from backend.graph.subrequirements import bootstrap_subreqs_node  # noqa: E402
 from backend.graph.sysarch import bootstrap_sysarch_node  # noqa: E402
 from backend.main import app  # noqa: E402
 from backend.models import Project  # noqa: E402
@@ -78,7 +77,7 @@ def db(engine_and_factory):
 
 def _seed_project_with_two_comps(db: Session) -> dict:
     """Seed a project with sysarch approved + two top-level comps,
-    each with bootstrapped subreqs and a parent resp.
+    each with approved comparch content and a parent resp.
 
     Returns ``project_id``, ``comp_ids``, ``sysarch_id``.
     """
@@ -149,14 +148,14 @@ def _seed_project_with_two_comps(db: Session) -> dict:
                 target_id=comp_id,
             ),
         )
-        subreqs_id = bootstrap_subreqs_node(db, project_id, comp_id)
-        # Approve the subreqs node so reset-all has something to act on.
+        # Approve comparch content directly on the comp_* node so
+        # reset-all has something to act on.
         append_event(
             db,
             project_id,
             ev.NodeContentUpdated(
-                node_id=subreqs_id,
-                new_content=f"<subrequirements>{name}</subrequirements>",
+                node_id=comp_id,
+                new_content=f"<comparch>{name}</comparch>",
             ),
         )
         comp_ids.append(comp_id)
@@ -201,8 +200,8 @@ class TestTierInfo:
         assert body["supports_reset"] is True
         assert body["supports_review"] is True
 
-    def test_per_comp_subreqs_reports_two_nodes(self, client, seeded):
-        r = client.get(f"/api/projects/{seeded['project_id']}/tiers/subreqs/info")
+    def test_per_comp_comparch_reports_two_nodes(self, client, seeded):
+        r = client.get(f"/api/projects/{seeded['project_id']}/tiers/comparch/info")
         assert r.status_code == 200
         body = r.json()
         assert body["node_count"] == 2
@@ -254,10 +253,10 @@ class TestResetAll:
         assert body["jobs_enqueued"] == 1
 
     def test_per_comp_resets_each_top_level_comp(self, client, db, seeded):
-        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/subreqs/reset-all")
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/reset-all")
         assert r.status_code == 200
         body = r.json()
-        assert body["tier"] == "subreqs"
+        assert body["tier"] == "comparch"
         assert body["scopes_total"] == 2
         assert body["scopes_succeeded"] == 2
         # Bulk reset must queue a generate per scope. Each per-scope
@@ -267,12 +266,12 @@ class TestResetAll:
         # every succeeded scope ends up with a fresh queued job.
         assert body["jobs_enqueued"] == 2
 
-        # Two generate_subrequirements jobs in the queue, one per comp.
+        # Two generate_comparch jobs in the queue, one per comp.
         jobs = [
             j
             for j in db.execute(
                 select(Job).where(
-                    Job.job_type == "v2.generate_subrequirements",
+                    Job.job_type == "v2.generate_comparch",
                     Job.status == "queued",
                 )
             ).scalars()
@@ -287,18 +286,16 @@ class TestResetAll:
         assert r.status_code == 404
 
     def test_force_resets_unapproved_scope(self, client, db, seeded):
-        """A pending-draft-only subreqs (no approved content) must
-        still reset under the bulk sweep — force=True bypasses the
-        approval gate. Mirrors the dev-project case the user hit."""
-        from backend.graph.subrequirements import get_subreqs_node
-
-        # Wipe one comp's subreqs back to no-content (pending state).
-        unapproved = get_subreqs_node(db, seeded["project_id"], seeded["comp_ids"][0])
+        """A comp with no approved comparch content must still reset
+        under the bulk sweep — force=True bypasses the approval
+        gate. Mirrors the dev-project case the user hit."""
+        # Wipe one comp's content back to empty (pre-approval state).
+        unapproved = db.get(Node, seeded["comp_ids"][0])
         assert unapproved is not None
         unapproved.content = ""
         db.commit()
 
-        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/subreqs/reset-all")
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/reset-all")
         assert r.status_code == 200
         body = r.json()
         # Both scopes succeeded — the unapproved one was force-reset
@@ -312,7 +309,7 @@ class TestResetAll:
             j
             for j in db.execute(
                 select(Job).where(
-                    Job.job_type == "v2.generate_subrequirements",
+                    Job.job_type == "v2.generate_comparch",
                     Job.status == "queued",
                 )
             ).scalars()
@@ -342,7 +339,7 @@ class TestReviewSweep:
         assert len(review_jobs) == 1
 
     def test_per_comp_enqueues_review_per_comp(self, client, db, seeded):
-        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/subreqs/review-sweep")
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/review-sweep")
         assert r.status_code == 200
         body = r.json()
         assert body["scopes_total"] == 2
@@ -350,34 +347,23 @@ class TestReviewSweep:
 
         review_jobs = [
             j
-            for j in db.execute(select(Job).where(Job.job_type == "v2.review_subreqs")).scalars()
+            for j in db.execute(select(Job).where(Job.job_type == "v2.review_comparch")).scalars()
             if j.payload.get("project_id") == seeded["project_id"]
         ]
         assert len(review_jobs) == 2
         targeted_node_ids = {j.payload.get("node_id") for j in review_jobs}
-        # Each of the two subreqs nodes minted in the fixture should
-        # have a review job.
-        subreqs_ids = {
-            row[0]
-            for row in db.execute(
-                select(Node.id).where(
-                    Node.project_id == seeded["project_id"],
-                    Node.tier == "subreqs",
-                )
-            )
-        }
-        assert targeted_node_ids == subreqs_ids
+        # Each of the two top-level comps in the fixture should
+        # have a review job targeting its own comp_* id.
+        assert targeted_node_ids == set(seeded["comp_ids"])
 
     def test_skips_nodes_with_no_content(self, client, db, seeded):
-        # Clear one comp's subreqs content so the review-sweep skips it.
-        from backend.graph.subrequirements import get_subreqs_node
-
-        target = get_subreqs_node(db, seeded["project_id"], seeded["comp_ids"][0])
+        # Clear one comp's content so the review-sweep skips it.
+        target = db.get(Node, seeded["comp_ids"][0])
         assert target is not None
         target.content = ""
         db.commit()
 
-        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/subreqs/review-sweep")
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/review-sweep")
         assert r.status_code == 200
         body = r.json()
         assert body["jobs_enqueued"] == 1

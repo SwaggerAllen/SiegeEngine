@@ -31,7 +31,6 @@ from backend.graph.handlers.requirements_generation import (
 from backend.graph.handlers.subcomparch_generation import (
     GENERATE_SUBCOMPARCH_JOB_TYPE,
 )
-from backend.graph.handlers.subreqs_generation import GENERATE_SUBREQS_JOB_TYPE
 from backend.graph.handlers.sysarch_generation import GENERATE_SYSARCH_JOB_TYPE
 from backend.models.job import Job
 from backend.models.node import Node
@@ -47,7 +46,6 @@ REVIEW_JOB_TYPES: frozenset[str] = frozenset(
         "v2.review_expansion",
         "v2.review_requirements",
         "v2.review_sysarch",
-        "v2.review_subreqs",
         "v2.review_comparch",
         "v2.review_subcomparch",
         "v2.review_impl",
@@ -60,7 +58,6 @@ _TIER_JOB_TYPES = frozenset(
         GENERATE_FEATURE_EXPANSION_JOB_TYPE,
         GENERATE_REQUIREMENTS_JOB_TYPE,
         GENERATE_SYSARCH_JOB_TYPE,
-        GENERATE_SUBREQS_JOB_TYPE,
         GENERATE_COMPARCH_JOB_TYPE,
         GENERATE_SUBCOMPARCH_JOB_TYPE,
         GENERATE_FANIN_JOB_TYPE,
@@ -81,8 +78,6 @@ def running_node_ids(db: Session, project_id: str) -> set[str]:
     - ``expansion`` / ``reqs`` / ``sysarch`` — project-level
       singletons, no scope key; we look up the project's
       singleton node of that tier.
-    - ``subreqs`` — ``payload.component_id`` is the owning
-      comp; the subreqs node is that comp's singleton child.
     - ``comp`` (top-level) — ``payload.component_id`` is the
       comp itself.
     - ``comp`` (subcomponent) — generate_subcomparch with
@@ -140,23 +135,6 @@ def running_node_ids(db: Session, project_id: str) -> set[str]:
         if node is not None:
             running.add(node)
 
-    # ── subreqs: payload.component_id points at owning comp;
-    #    subreqs node is that comp's singleton subreqs child.
-    subreqs_comp_ids = [
-        p.get("component_id")
-        for p in by_type.get(GENERATE_SUBREQS_JOB_TYPE, [])
-        if isinstance(p.get("component_id"), str)
-    ]
-    if subreqs_comp_ids:
-        rows = db.execute(
-            select(Node.id, Node.parent_id).where(
-                Node.project_id == project_id,
-                Node.tier == "subreqs",
-                Node.parent_id.in_(subreqs_comp_ids),
-            )
-        ).all()
-        for node_id, _parent in rows:
-            running.add(node_id)
 
     # ── top-level comp: payload.component_id IS the comp ──────────
     for p in by_type.get(GENERATE_COMPARCH_JOB_TYPE, []):
@@ -285,21 +263,6 @@ def errored_node_ids(db: Session, project_id: str) -> set[str]:
         if node_id is not None:
             errored.add(node_id)
 
-    # ── subreqs: scope=component_id; node = subreqs child of comp
-    subreqs_comp_ids = latest_failed_scopes(
-        by_type.get(GENERATE_SUBREQS_JOB_TYPE, []), "component_id"
-    )
-    if subreqs_comp_ids:
-        rows = db.execute(
-            select(Node.id).where(
-                Node.project_id == project_id,
-                Node.tier == "subreqs",
-                Node.parent_id.in_(subreqs_comp_ids),
-            )
-        ).scalars()
-        for nid in rows:
-            errored.add(nid)
-
     # ── comparch / subcomparch: scope=component_id; node IS the comp
     for cid in latest_failed_scopes(by_type.get(GENERATE_COMPARCH_JOB_TYPE, []), "component_id"):
         errored.add(cid)
@@ -399,18 +362,12 @@ def user_action_needed_node_ids(db: Session, project_id: str) -> set[str]:
         if tier == "sysarch":
             reqs = next((n for n in all_nodes if n.tier == "reqs"), None)
             return reqs is not None and bool((reqs.content or "").strip())
-        if tier == "subreqs":
-            # Subreqs nodes only get minted at sysarch-mint time,
-            # so their existence already implies sysarch approved.
-            return True
         if tier == "comp":
             if node.parent_id is None:
-                # Top-level comparch: subreqs child must be approved.
-                sr = next(
-                    (n for n in all_nodes if n.tier == "subreqs" and n.parent_id == node.id),
-                    None,
-                )
-                return sr is not None and bool((sr.content or "").strip())
+                # Top-level comparch: ready as soon as the comp node
+                # exists (sysarch_mint minted it + enqueued comparch
+                # generation directly).
+                return True
             # Subcomp: parent comp's comparch content must be approved.
             return has_content(node.parent_id)
         if tier == "impl":
@@ -498,20 +455,6 @@ def _cancelled_node_ids(db: Session, project_id: str) -> set[str]:
         ).scalar_one_or_none()
         if node_id is not None:
             cancelled.add(node_id)
-
-    subreqs_comp_ids = latest_cancelled_scopes(
-        by_type.get(GENERATE_SUBREQS_JOB_TYPE, []), "component_id"
-    )
-    if subreqs_comp_ids:
-        rows = db.execute(
-            select(Node.id).where(
-                Node.project_id == project_id,
-                Node.tier == "subreqs",
-                Node.parent_id.in_(subreqs_comp_ids),
-            )
-        ).scalars()
-        for nid in rows:
-            cancelled.add(nid)
 
     for cid in latest_cancelled_scopes(by_type.get(GENERATE_COMPARCH_JOB_TYPE, []), "component_id"):
         cancelled.add(cid)

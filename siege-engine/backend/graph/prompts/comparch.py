@@ -4,11 +4,17 @@ The comparch pass is the Phase 4 per-component deep dive. Each
 top-level ``comp_*`` gets an architecture doc that describes its
 role-level techspec, public/private API surfaces, component-local
 policies, external dependencies to sibling top-level components,
-and its own subcomponent decomposition. The arch doc is approved
-as a unit; on approval its fragment sections project into five
-transcluded fragments and its mint-time sections project into
-subcomponent ``comp_*`` mints, component-local ``policy_*`` mints,
-and edge emissions.
+and its own subcomponent decomposition. **Comparch is also where
+the parent responsibilities assigned to this component get carved
+into subcomp-shaped slices** — there is no longer an intermediate
+subreqs tier; the LLM declares per-subcomp ownership of (parent
+resp, feat-slice) pairs directly via the ``<owns>`` block.
+
+Multi-owner is allowed: the same parent resp may appear under
+multiple subcomps' ``<owns>`` blocks (each claiming its own feat
+slice), and the same feat may be claimed by multiple subcomps
+that genuinely cooperate on that feature (cross-cutting work
+like retry scheduling or audit logging).
 
 Output format (parsed by :mod:`backend.graph.parsers.xml_sections`
 and validated by
@@ -43,9 +49,12 @@ and validated by
             <operation>…</operation>
             <operation>…</operation>
           </primary-operations>
-          <responsibilities>
-            <resp id="resp_sub_xyz"/>
-          </responsibilities>
+          <responsibilities>Free text — what this subcomp does.</responsibilities>
+          <owns>
+            <resp id="resp_payment01">
+              <feat id="feat_payment_v01"/>
+            </resp>
+          </owns>
           <foundation/>
         </subcomponent>
       </subcomponents>
@@ -57,9 +66,11 @@ and validated by
 Eight sections in fixed order. First four are fragments
 (persistent, transcluded into dependents' regen prompts). Last
 two are mint-time directives: ``<subcomponents>`` mints
-``comp_*`` children and ``<sub-dependencies>`` emits dependency
-edges between them. Both may be empty for un-fanned-out
-components that will grow a single ``impl_*`` leaf instead.
+``comp_*`` children plus ``decomposition`` edges from each claimed
+parent resp / feat to the owning subcomp, and
+``<sub-dependencies>`` emits dependency edges between subcomps.
+Both may be empty for un-fanned-out components that will grow a
+single ``impl_*`` leaf instead.
 
 Design notes:
 
@@ -69,12 +80,14 @@ Design notes:
   minted by the mint handler at approval time, so their IDs don't
   exist yet at generation time).
 - Subcomponents inherit their kind (domain / presentational) from
-  the owning component and do not redeclare it — a presentational
-  top-level component's subcomponents are all presentational by
-  construction.
+  the owning component and do not redeclare it.
 - Policies come before dependencies for the same reason as sysarch:
   a policy can induce a dep edge, so the LLM reasons about policies
   first and the resulting deps land naturally in the next section.
+- ``<responsibilities>`` is now **free-text prose** describing what
+  the subcomp does; the structured "which parent resp does this
+  subcomp claim a slice of" data lives in ``<owns>`` for
+  validator-checked coverage.
 
 See ``docs/architecture/v2-rearchitecture.md`` §Architecture
 documents are parseable, §Policies, §Foundation components, and
@@ -99,23 +112,34 @@ patterns. Vagueness at this tier gets multiplied across every \
 impl file under this component. The pressure on handle quality \
 is highest here.
 
+**You also decompose the component**: each subcomponent declares \
+which of the parent component's responsibilities it claims a \
+slice of, and which specific feats of those responsibilities it \
+handles. Multi-owner is allowed at both axes — multiple subcomps \
+can claim the same parent resp (each owning a different feat \
+slice), and the same feat can be claimed by multiple subcomps \
+that genuinely cooperate (cross-cutting work like retry \
+scheduling or audit logging that spans several subcomp \
+territories).
+
 You will be given the component's metadata from the \
 system-architecture pass (name, role paragraph, intended API), \
-the top-level responsibilities assigned to it, its pre-minted \
-subresponsibilities (which you will map to subcomponents below), \
-the list of sibling components it may declare dependencies on, \
-the public surfaces of any of those siblings that are already \
-fully architected, the top-level policy candidates the system has \
-minted so far, and optionally prior approved / pending drafts, \
-user feedback, and parse-validate errors.
+the top-level responsibilities assigned to it (each with its \
+feat-tag set), the list of sibling components it may declare \
+dependencies on, the public surfaces of any of those siblings \
+that are already fully architected, the top-level policy \
+candidates the system has minted so far, and optionally prior \
+approved / pending drafts, user feedback, and parse-validate \
+errors.
 
 Your job is to produce a single ``<comparch>`` block containing \
 eight sections in a fixed order: a role-level technical \
 specification, the component's public surface, its private \
 surface, the concrete failure surface this component can \
 produce, the policies it mints locally, its external \
-dependencies, its subcomponent decomposition, and the dependency \
-edges between those subcomponents. The block is parsed and \
+dependencies, its subcomponent decomposition (with per-subcomp \
+``<owns>`` claims on parent resps + feat slices), and the \
+dependency edges between subcomponents. The block is parsed and \
 validated — structural errors are fed back to you on retry.
 
 # Output format
@@ -191,9 +215,13 @@ Example (abbreviated):
             <operation>resolve a token into a session</operation>
             <operation>rotate expired sessions</operation>
           </primary-operations>
-          <responsibilities>
-            <resp id="resp_sub_sess"/>
-          </responsibilities>
+          <responsibilities>Persists session state and serves token lookups for the component's other subcomps and outside dependents.</responsibilities>
+          <owns>
+            <resp id="resp_session01">
+              <feat id="feat_authsess01"/>
+              <feat id="feat_authrefr02"/>
+            </resp>
+          </owns>
         </subcomponent>
         <subcomponent alias="credential_gate">
           <name>CredentialGate</name>
@@ -207,9 +235,15 @@ Example (abbreviated):
             <operation>delegate session creation to the session store</operation>
             <operation>emit a failed-auth event on mismatch</operation>
           </primary-operations>
-          <responsibilities>
-            <resp id="resp_sub_cred"/>
-          </responsibilities>
+          <responsibilities>Verifies plaintext credentials, hands off to SessionStore to mint a session on success, emits failed-auth events on mismatch.</responsibilities>
+          <owns>
+            <resp id="resp_authn0001">
+              <feat id="feat_login0001"/>
+            </resp>
+            <resp id="resp_session01">
+              <feat id="feat_authsess01"/>
+            </resp>
+          </owns>
         </subcomponent>
         <subcomponent alias="foundation">
           <name>Foundation</name>
@@ -223,9 +257,8 @@ Example (abbreviated):
             <operation>configure logging for this component</operation>
             <operation>expose shared base classes</operation>
           </primary-operations>
-          <responsibilities>
-            <resp id="resp_sub_found"/>
-          </responsibilities>
+          <responsibilities>Component-internal plumbing — settings loader, logging config, shared base classes. No parent resp claims.</responsibilities>
+          <owns/>
           <foundation/>
         </subcomponent>
       </subcomponents>
@@ -352,12 +385,12 @@ underscores, 1-32 characters; regex \
 ``<subcomponents>``.
 * Each ``<subcomponent>`` has exactly one ``<name>``, one \
 ``<purpose>``, one ``<owned-invariants>``, one \
-``<primary-operations>``, and one ``<responsibilities>`` block. \
-Subcomponents **inherit the kind** (domain / presentational) of \
-the owning component and do NOT have their own ``<kind>`` tag — \
-do not add one. The micro-field grammar matches the sysarch \
-Component grammar deliberately; downstream readers get one \
-schema at both tiers.
+``<primary-operations>``, one ``<responsibilities>``, and one \
+``<owns>`` block. Subcomponents **inherit the kind** (domain / \
+presentational) of the owning component and do NOT have their \
+own ``<kind>`` tag — do not add one. The micro-field grammar \
+matches the sysarch Component grammar deliberately; downstream \
+readers get one schema at both tiers.
 * ``<name>`` is a short identifier — title case. Name the \
 subcomponent project-specifically. "SessionStore" is sharper \
 than "DataLayer"; "CredentialGate" is sharper than "Validator". \
@@ -386,16 +419,98 @@ credentials and return a principal id", "rotate expired \
 sessions". Phase 5 elaborates these into real pubapi signatures; \
 at this tier we just need the action handles. No "handle X" / \
 "manage Y" category verbs — rewrite as concrete actions.
-* ``<responsibilities>`` contains one or more ``<resp \
-id="resp_..."/>`` children. **Every resp ID must match one of \
-this component's pre-minted subresponsibilities** shown in the \
-input list, verbatim. No cross-component leaks, no invention, \
-no renaming.
-* **Every pre-minted subresponsibility in the input must be \
-assigned to exactly one subcomponent** when the component is \
-decomposed — orphans and duplicates are structural errors. \
-Un-fanned-out is the only way to leave subresps unassigned \
-(see next section).
+* ``<responsibilities>`` is **free-text prose** (one to three \
+sentences) describing what this subcomp does. The subcomparch \
+pass reads it as framing alongside the structured ``<owns>`` \
+claims below. Write the prose so a reader can understand the \
+subcomp's role without reading the rest of the doc.
+
+## The `<owns>` block (parent-resp + feat-slice claims)
+
+This is where the structured decomposition lives. Each subcomp's \
+``<owns>`` block declares which of the parent component's \
+**top-level responsibilities** this subcomp claims a slice of, \
+and which specific **feats** of those resps it handles.
+
+Shape:
+
+    <owns>
+      <resp id="resp_payment01">
+        <feat id="feat_payment_v01"/>
+        <feat id="feat_3ds_chal01"/>
+      </resp>
+      <resp id="resp_invoice02">
+        <feat id="feat_invoice_v01"/>
+      </resp>
+    </owns>
+
+* Every ``<resp id=...>`` must match one of this component's \
+**parent responsibilities** shown in the input list (the resps \
+sysarch assigned to this comp via decomposition edges). No \
+cross-component leaks; no invention; no renaming.
+* Every ``<feat id=...>`` inside a ``<resp>`` must be one of the \
+feats tagged on that parent resp (shown in the input as \
+bracketed ids next to each parent-resp row).
+* **Multi-owner is allowed and expected** for cross-cutting \
+work. Two subcomps may claim the same parent resp (each owning \
+a different feat slice), and the same feat may appear under \
+multiple subcomps that genuinely cooperate on it. Don't force \
+artificial 1:1 assignments — if retry scheduling spans the \
+payment subcomp and the invoice subcomp, both should claim the \
+shared feats from those resps.
+* **Empty ``<owns/>`` is legal** for foundation / internal \
+plumbing subcomps that earn their keep structurally rather than \
+by anchoring a parent resp (e.g., a settings loader, shared \
+base types, a lock manager). Most subcomps will have non-empty \
+``<owns>``; an empty block is a deliberate "this subcomp \
+doesn't anchor any parent resp" signal.
+* **Coverage at the component level** (validator-enforced):
+  - **Every parent resp** assigned to this component must be \
+claimed by ≥1 subcomp. A parent resp with no claimants is a \
+coverage gap.
+  - **Every feat** tagged on a parent resp must be claimed by \
+≥1 subcomp that claims that resp. A feat with no owning subcomp \
+under its parent resp is a coverage gap.
+* The structured ``<owns>`` block is what the validator and the \
+mint handler read; the prose ``<responsibilities>`` block above \
+is the human-facing framing.
+
+## Per-medium decomposition guidance
+
+How you draw subcomp boundaries depends on the component's \
+**medium** (its kind + purpose):
+
+* **Presentational components (kind=presentational)** front a \
+domain via UI, CLI, dashboard, docs site, etc. Subcomp \
+boundaries naturally split along **interaction surfaces**: per \
+form, per view, per flow stage (input collection, validation, \
+submission, error display, navigation). A "Card Payment Form" \
+component might decompose into ``card_input`` (form rendering), \
+``input_validation`` (sync field-level validation), \
+``submit_flow`` (server submission + retry), \
+``error_display`` (inline + summary error UX). Multi-owner is \
+common at this tier — the "card-payment" feat genuinely spans \
+all four subcomps.
+* **Domain components (kind=domain)** own data and operations. \
+Subcomp boundaries naturally split along **data/operation \
+seams**: per persistence layer (writer / reader / cache), per \
+operation kind (sync API / async worker), per concern (lock \
+manager / idempotency tracker / event emitter). A "Billing" \
+component might decompose into ``payment_writer``, \
+``settlement_reader``, ``payment_cache``, ``retry_scheduler``. \
+Multi-owner is rarer here but still legitimate — \
+``retry_scheduler`` might claim feats from both the \
+payment-collection and invoice-delivery resps.
+
+If your decomposition's subcomp names sound like the parent \
+component's name with a noun suffix ("BillingService" → \
+``billing_writer``, ``billing_reader``, ``billing_cache``), \
+that's usually fine for domain components. If they sound like \
+flow stages or UI elements, that's usually right for \
+presentational components. **Mismatches are a smell**: a \
+domain component decomposing along UI-interaction lines \
+suggests the work actually belongs in a presentational \
+component upstream.
 
 ## Un-fanned-out components
 
@@ -406,15 +521,15 @@ a single code territory. In that case:
 * Emit ``<subcomponents></subcomponents>`` empty.
 * Emit ``<sub-dependencies></sub-dependencies>`` empty.
 * No foundation subcomponent is required.
-* The pre-minted subresponsibilities from the input will be \
-left unassigned at the subcomponent layer; Phase 6 will \
-project them into a single ``impl_*`` leaf attached directly \
-to this component instead.
+* The component's parent responsibilities will be projected \
+wholesale into a single ``impl_*`` leaf attached directly to \
+this component instead. Coverage rules degenerate to no-ops in \
+this case.
 
 Un-fanned-out is the right choice when a component's \
-subresponsibilities are all tightly coupled to the same code \
+responsibilities are all tightly coupled to the same code \
 territory and splitting them would create artificial seams. \
-Decomposing is the right choice when the subresponsibilities \
+Decomposing is the right choice when the responsibilities \
 genuinely describe distinct roles that want distinct code \
 locations.
 
@@ -549,7 +664,6 @@ def render_user_prompt(
     *,
     component_summary: str,
     parent_resps_summary: str,
-    subresps_summary: str,
     sibling_comps_summary: str,
     dep_pubapi_summary: str,
     top_level_policy_candidates_summary: str,
@@ -574,11 +688,9 @@ def render_user_prompt(
     - ``component_summary``: component name + role + api-intent
       (the sysarch-time fragment content as context).
     - ``parent_resps_summary``: top-level resps assigned to this
-      component via decomposition edges — context for reasoning
-      about what policies might apply.
-    - ``subresps_summary``: the pre-minted subresps this component
-      owns. The LLM echoes their IDs into ``<responsibilities>``
-      blocks inside ``<subcomponents>`` when decomposing.
+      component, each rendered with its name + bracketed feat-id
+      list. The LLM echoes resp ids into ``<owns><resp id=…>``
+      and feat ids into ``<owns><resp><feat id=…>``.
     - ``sibling_comps_summary``: allowed targets for
       ``<dependencies>``. Each entry carries a stable ``comp_*``
       ID plus name + role for context.
@@ -641,11 +753,14 @@ def render_user_prompt(
     parts.append("")
     parts.append("# Top-level responsibilities assigned to this component")
     parts.append("")
+    parts.append(
+        "Each parent resp is rendered with its name and bracketed "
+        "feat-id list. The LLM echoes resp ids into "
+        "``<owns><resp id=…>`` and feat ids into the nested "
+        "``<feat id=…>`` children."
+    )
+    parts.append("")
     parts.append(parent_resps_summary.strip() or "(no responsibilities assigned)")
-    parts.append("")
-    parts.append("# Pre-minted subresponsibilities to assign to subcomponents")
-    parts.append("")
-    parts.append(subresps_summary.strip() or "(no subresponsibilities minted)")
     parts.append("")
     parts.append("# Sibling components (allowed <dependencies> targets)")
     parts.append("")

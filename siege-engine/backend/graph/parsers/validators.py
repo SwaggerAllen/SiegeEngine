@@ -1703,6 +1703,25 @@ def _validate_derived_from(
 
 
 @dataclass(frozen=True)
+class OwnedResp:
+    """A single parent-resp claim emitted by a subcomponent.
+
+    A subcomponent's ``<owns>`` block lists zero-or-more ``<resp>``
+    children, each naming a parent responsibility this subcomp
+    claims a slice of, plus zero-or-more ``<feat>`` children
+    inside that ``<resp>`` naming the specific feats this subcomp
+    handles for that resp. Multi-owner is allowed: the same
+    ``resp_id`` may appear under multiple subcomponents'
+    ``<owns>`` blocks (each with its own feat slice), and the
+    same ``feat_id`` may be claimed by multiple subcomponents
+    that genuinely cooperate on that feature.
+    """
+
+    resp_id: str
+    feat_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Subcomponent:
     """A single validated subcomponent entry from a ``<comparch>`` block.
 
@@ -1713,17 +1732,14 @@ class Subcomponent:
 
     Subcomponents do **not** carry a ``kind`` field; they
     inherit the kind (domain / presentational) of the owning
-    top-level component. ``resp_refs`` holds the pre-minted
-    subresp IDs this subcomponent owns; the 1:1 subresp →
-    subcomponent assignment is enforced at the ``<subcomponents>``
-    block level so every minted subresp lands in exactly one
-    subcomponent.
+    top-level component. ``owns`` lists this subcomp's claims
+    on the owning component's parent responsibilities — each
+    entry names a parent ``resp_id`` and the slice of feats
+    this subcomp owns for that resp. Multi-owner is allowed.
 
-    Shape matches the sysarch Component micro-field grammar:
-    ``purpose`` (one sentence) + 2-4 ``owned_invariants`` +
-    3-6 ``primary_operations``. Keeping the two tiers in sync
-    means downstream readers (impl prompts, subcomparch review)
-    have one schema to parse instead of two.
+    ``responsibilities`` is now free-text prose describing what
+    this subcomponent does (the subcomparch pass reads it as
+    framing alongside the structured ``owns`` claims).
     """
 
     alias: str
@@ -1731,7 +1747,8 @@ class Subcomponent:
     purpose: str
     owned_invariants: tuple[str, ...]
     primary_operations: tuple[str, ...]
-    resp_refs: tuple[str, ...]
+    responsibilities: str
+    owns: tuple[OwnedResp, ...]
     is_foundation: bool
 
 
@@ -1790,65 +1807,69 @@ _SUBCOMPONENT_ALLOWED_CHILDREN = {
     "owned-invariants",
     "primary-operations",
     "responsibilities",
+    "owns",
     "foundation",
 }
+_OWNS_ALLOWED_CHILDREN = {"resp"}
+_OWNS_RESP_ALLOWED_CHILDREN = {"feat"}
 _SUB_DEPENDENCIES_ALLOWED_CHILDREN = {"dep"}
 
 
 def validate_arch_doc(
     tree: TagNode,
     *,
-    known_subresp_ids: set[str],
+    known_parent_resp_ids: dict[str, frozenset[str]],
     known_sibling_comp_ids: set[str],
-    known_resp_ids_for_policies: set[str],
     target_is_foundation: bool = False,
 ) -> ArchDoc:
     """Validate a parsed ``<comparch>`` tree and return an ArchDoc.
 
-    Enforces the seven-section structure described in
-    :mod:`backend.graph.prompts.comparch`: single root, seven
+    Enforces the eight-section structure described in
+    :mod:`backend.graph.prompts.comparch`: single root, eight
     sections in order, non-empty fragment text for the first
-    three, policy sub-grammar referencing resps from the
-    project-wide + component-local allowed set, ``<dependencies>``
+    four, policy sub-grammar referencing resps from the
+    component's parent-resp allowlist, ``<dependencies>``
     references constrained to the sibling comp allowlist,
     ``<subcomponents>`` with alias syntax / uniqueness / kind
     inheritance (no ``<kind>`` tag) / exactly-one-foundation (if
-    decomposing) / subresp coverage, and ``<sub-dependencies>``
-    acyclicity + foundation-dep rule.
+    decomposing) / parent-resp + feat coverage, and
+    ``<sub-dependencies>`` acyclicity + foundation-dep rule.
 
-    ``known_subresp_ids`` is the set of pre-minted subresp IDs
-    owned by this component (from its approved ``subreqs_*``).
-    Every resp reference in ``<subcomponents>/<responsibilities>``
-    must come from this set and every ID in the set must be
-    assigned to exactly one subcomponent when decomposing.
+    ``known_parent_resp_ids`` is a mapping from each top-level
+    parent ``resp_*`` id assigned to this component (via the
+    sysarch-time ``decomposition`` edges) to the frozenset of
+    feature ids tagged on that resp. Each subcomp's ``<owns>``
+    block references parent resps and per-resp feat slices from
+    this map. Multi-owner is allowed at both axes: the same
+    resp may appear under multiple subcomps' ``<owns>``, and the
+    same feat may be claimed by multiple subcomps that genuinely
+    cooperate.
+
+    Coverage at the component level: every parent resp in
+    ``known_parent_resp_ids`` must be claimed by ≥1 subcomp;
+    every feat tagged on a parent resp must be claimed by ≥1
+    subcomp claiming that resp.
 
     ``known_sibling_comp_ids`` is the set of top-level
     ``comp_*`` IDs other than this component. ``<dependencies>``
     may only reference IDs from this set.
 
-    ``known_resp_ids_for_policies`` is the union of
-    (a) top-level resp_* IDs assigned to this component and
-    (b) the component's pre-minted subresps. Component-local
-    policies' ``<required>`` field must reference an ID from
-    this set — top-level resps owned by OTHER components are
-    cross-component leaks.
+    Component-local policy ``<required>`` IDs are validated
+    against the keys of ``known_parent_resp_ids`` — only top-level
+    resps assigned to this component are referenceable.
 
     ``target_is_foundation`` flips the "foundations don't nest"
     carve-out: when the component being decomposed is itself a
     foundation (top-level or sub), the ``<subcomponents>`` block
     must *not* include another foundation marker, and the
     "every non-foundation sub depends on the foundation"
-    check is skipped (there's no foundation sub to depend on).
-    Instead, the foundation decomposes exhaustively into concrete
-    subcomponents that collectively own all its territory. See
-    ``docs/architecture/v2-rearchitecture.md`` §Foundation
-    components.
+    check is skipped.
 
     Un-fanned-out is legal: both ``<subcomponents>`` and
-    ``<sub-dependencies>`` may be empty. In that case there is
-    no foundation requirement and no subresp coverage check —
-    the subresps will be projected into a single ``impl_*``
-    leaf by Phase 6.
+    ``<sub-dependencies>`` may be empty. In that case the
+    component's parent resps roll wholesale into a single
+    ``impl_*`` leaf at mint time and the coverage rules
+    degenerate to no-ops.
     """
     if tree.tag != "comparch":
         raise ValidationError(
@@ -1888,14 +1909,14 @@ def validate_arch_doc(
     failure_surface = _validate_fragment_section(section_map["failure-surface"], "failure-surface")
 
     policies = _validate_arch_doc_policies(
-        section_map["policies"], known_resp_ids=known_resp_ids_for_policies
+        section_map["policies"], known_resp_ids=set(known_parent_resp_ids.keys())
     )
     external_deps = _validate_arch_doc_external_dependencies(
         section_map["dependencies"], known_sibling_comp_ids=known_sibling_comp_ids
     )
     subcomponents = _validate_arch_doc_subcomponents(
         section_map["subcomponents"],
-        known_subresp_ids=known_subresp_ids,
+        known_parent_resp_ids=known_parent_resp_ids,
         target_is_foundation=target_is_foundation,
     )
 
@@ -2032,25 +2053,30 @@ def _validate_arch_doc_external_dependencies(
 def _validate_arch_doc_subcomponents(
     node: TagNode,
     *,
-    known_subresp_ids: set[str],
+    known_parent_resp_ids: dict[str, frozenset[str]],
     target_is_foundation: bool = False,
 ) -> tuple[Subcomponent, ...]:
     """Validate ``<subcomponents>`` and return a tuple of Subcomponent.
 
     May legitimately be empty (un-fanned-out component). If
     populated: enforces alias syntax + uniqueness, per-subcomponent
-    field completeness, and coverage of every pre-minted subresp
-    in ``known_subresp_ids``.
+    field completeness, validity of each ``<owns>`` claim against
+    ``known_parent_resp_ids`` (resp id and per-resp feat ids must
+    match), and component-level coverage — every parent resp must
+    be claimed by ≥1 subcomp; every feat tagged on a parent resp
+    must be claimed by ≥1 subcomp claiming that resp.
+
+    Multi-owner is allowed: same resp may appear under multiple
+    subcomps' ``<owns>`` blocks (each with its own feat slice);
+    same feat may be claimed by multiple subcomps that genuinely
+    cooperate on that feature.
 
     The foundation-marker rule depends on ``target_is_foundation``:
 
     - **Normal component** (default): exactly one subcomponent
-      must carry the ``<foundation/>`` marker. Zero or two+ are
-      rejected.
+      must carry the ``<foundation/>`` marker.
     - **Foundation target**: *no* subcomponent may carry the
-      ``<foundation/>`` marker. Foundations don't nest — the
-      decomposition is required to divide the foundation's
-      territory exhaustively without a sub-foundation catch-all.
+      ``<foundation/>`` marker. Foundations don't nest.
     """
     for child in node.children:
         if child.tag not in _SUBCOMPONENTS_ALLOWED_CHILDREN:
@@ -2060,27 +2086,27 @@ def _validate_arch_doc_subcomponents(
             )
     subcomponent_nodes = [c for c in node.children if c.tag == "subcomponent"]
     if not subcomponent_nodes:
-        # Un-fanned-out: valid only if there are no subresps to cover.
-        if known_subresp_ids:
-            raise ValidationError(
-                "<subcomponents> is empty but the owning component has "
-                f"{len(known_subresp_ids)} pre-minted subresponsibilities "
-                "from its subreqs approval. Decompose the component into "
-                "at least one subcomponent that owns them, or if this "
-                "component really has no decomposition, the subreqs "
-                "pass should not have produced subresps in the first "
-                "place. Missing subresps: "
-                f"{', '.join(sorted(known_subresp_ids))}."
-            )
+        # Un-fanned-out: legal regardless of how many parent resps
+        # this component carries. The parent resps roll wholesale
+        # into a single ``impl_*`` leaf at mint time.
         return ()
 
     subcomponents: list[Subcomponent] = []
     seen_aliases: set[str] = set()
-    assigned_subresp_ids: dict[str, str] = {}
     foundation_aliases: list[str] = []
+    # alias-of-each-subcomp keyed by parent resp id, so we can
+    # report the multi-owner picture in coverage failures.
+    resp_to_owners: dict[str, list[str]] = {}
+    # (resp_id, feat_id) → list of owning subcomp aliases — used
+    # to compute per-resp feat coverage at the end.
+    feat_to_owners: dict[tuple[str, str], list[str]] = {}
 
     for index, snode in enumerate(subcomponent_nodes):
-        sub = _validate_subcomponent(snode, index=index, known_subresp_ids=known_subresp_ids)
+        sub = _validate_subcomponent(
+            snode,
+            index=index,
+            known_parent_resp_ids=known_parent_resp_ids,
+        )
         if sub.alias in seen_aliases:
             raise ValidationError(
                 f"<subcomponents> contains two <subcomponent> entries "
@@ -2090,22 +2116,13 @@ def _validate_arch_doc_subcomponents(
         seen_aliases.add(sub.alias)
         if sub.is_foundation:
             foundation_aliases.append(sub.alias)
-        for rid in sub.resp_refs:
-            if rid in assigned_subresp_ids:
-                raise ValidationError(
-                    f"Subresponsibility {rid!r} is assigned to both "
-                    f"{assigned_subresp_ids[rid]!r} and {sub.alias!r}. "
-                    "Each pre-minted subresp must be assigned to "
-                    "exactly one subcomponent."
-                )
-            assigned_subresp_ids[rid] = sub.alias
+        for owned in sub.owns:
+            resp_to_owners.setdefault(owned.resp_id, []).append(sub.alias)
+            for fid in owned.feat_ids:
+                feat_to_owners.setdefault((owned.resp_id, fid), []).append(sub.alias)
         subcomponents.append(sub)
 
     if target_is_foundation:
-        # Foundations don't nest. The foundation role is "catch-all
-        # at this level"; nesting another foundation inside it would
-        # double-count the role, so the validator rejects any
-        # <foundation/> marker in a foundation's own decomposition.
         if foundation_aliases:
             raise ValidationError(
                 "<subcomponents> contains a foundation subcomponent "
@@ -2135,21 +2152,46 @@ def _validate_arch_doc_subcomponents(
                 "foundation."
             )
 
-    missing = sorted(known_subresp_ids - set(assigned_subresp_ids.keys()))
-    if missing:
+    # Resp coverage: every parent resp must be claimed by ≥1 subcomp.
+    missing_resps = sorted(set(known_parent_resp_ids.keys()) - set(resp_to_owners.keys()))
+    if missing_resps:
         raise ValidationError(
-            "<subcomponents> does not assign every pre-minted "
-            "subresponsibility to a subcomponent. Missing: "
-            f"{', '.join(missing)}. Every subresp from the input list "
-            "must appear in exactly one subcomponent's "
-            "<responsibilities> block."
+            "<subcomponents> does not claim every parent responsibility "
+            "assigned to this component. Missing: "
+            f"{', '.join(missing_resps)}. Every parent resp must appear "
+            "in at least one subcomponent's <owns> block (multi-owner is "
+            "allowed; this is a hard coverage requirement, not a 1:1 "
+            "assignment)."
+        )
+
+    # Per-resp feat coverage: every feat tagged on a parent resp must
+    # be claimed by ≥1 subcomp that claims that resp.
+    missing_feats: list[tuple[str, str]] = []
+    for resp_id, feats_in_scope in known_parent_resp_ids.items():
+        owners = resp_to_owners.get(resp_id, [])
+        if not owners:
+            continue  # caught by missing_resps above
+        for fid in feats_in_scope:
+            if (resp_id, fid) not in feat_to_owners:
+                missing_feats.append((resp_id, fid))
+    if missing_feats:
+        rendered = "; ".join(f"{rid} → {fid}" for rid, fid in sorted(missing_feats))
+        raise ValidationError(
+            "<subcomponents> coverage gap: some feats tagged on parent "
+            "resps are not claimed by any subcomponent that claims that "
+            f"resp. Missing (resp → feat): {rendered}. Add a <feat "
+            'id="..."/> entry under the relevant <resp> in some '
+            "subcomp's <owns> block."
         )
 
     return tuple(subcomponents)
 
 
 def _validate_subcomponent(
-    node: TagNode, *, index: int, known_subresp_ids: set[str]
+    node: TagNode,
+    *,
+    index: int,
+    known_parent_resp_ids: dict[str, frozenset[str]],
 ) -> Subcomponent:
     """Validate a single ``<subcomponent>`` entry."""
     pos = f"<subcomponent> at position {index}"
@@ -2197,6 +2239,7 @@ def _validate_subcomponent(
     owned_invariants_node = _require_one("owned-invariants")
     primary_operations_node = _require_one("primary-operations")
     responsibilities_node = _require_one("responsibilities")
+    owns_node = _require_one("owns")
 
     name = (name_node.text or "").strip()
     if not name:
@@ -2277,45 +2320,28 @@ def _validate_subcomponent(
             )
         primary_operations.append(text)
 
-    for rchild in responsibilities_node.children:
-        if rchild.tag not in _RESPONSIBILITIES_ALLOWED_CHILDREN:
-            raise ValidationError(
-                f"{pos} (alias={alias!r}) has a <responsibilities> "
-                f"block containing an unexpected child <{rchild.tag}>. "
-                'Only <resp id="resp_..."/> entries are allowed.'
-            )
-    resp_nodes = responsibilities_node.find_all("resp")
-    if not resp_nodes:
+    if responsibilities_node.children:
+        raise ValidationError(
+            f"{pos} (alias={alias!r}) has nested tags inside "
+            "<responsibilities>. Responsibilities is now a free-text "
+            "prose section describing what this subcomponent does. "
+            'The structured "which parent resp does this subcomp '
+            'claim a slice of" data lives in the new <owns> block; '
+            "see the comparch prompt for shape."
+        )
+    responsibilities_text = (responsibilities_node.text or "").strip()
+    if not responsibilities_text:
         raise ValidationError(
             f"{pos} (alias={alias!r}) has an empty <responsibilities> "
-            "block. Every subcomponent must be assigned at least one "
-            'pre-minted subresponsibility via a <resp id="resp_..."/> child.'
+            "block. Use a short prose paragraph describing what this "
+            "subcomponent does (one to three sentences)."
         )
-    resp_refs: list[str] = []
-    seen_refs: set[str] = set()
-    for ri, rnode in enumerate(resp_nodes):
-        rid = rnode.attrs.get("id", "").strip()
-        if not rid:
-            raise ValidationError(
-                f"{pos} (alias={alias!r}) has a <resp> entry at position "
-                f"{ri} with no id attribute. Every <resp> must carry "
-                'an id="resp_..." attribute referencing a pre-minted '
-                "subresponsibility."
-            )
-        if rid in seen_refs:
-            raise ValidationError(
-                f"{pos} (alias={alias!r}) has duplicate <resp> reference "
-                f"{rid!r}. Each subresponsibility may be listed at most "
-                "once per subcomponent."
-            )
-        seen_refs.add(rid)
-        if rid not in known_subresp_ids:
-            raise ValidationError(
-                f"{pos} (alias={alias!r}) references unknown "
-                f"subresponsibility {rid!r}. Valid pre-minted subresps "
-                f"for this component: {', '.join(sorted(known_subresp_ids))}."
-            )
-        resp_refs.append(rid)
+
+    owns = _validate_subcomponent_owns(
+        owns_node,
+        pos=f"{pos} (alias={alias!r})",
+        known_parent_resp_ids=known_parent_resp_ids,
+    )
 
     is_foundation = len(node.find_all("foundation")) > 0
 
@@ -2325,9 +2351,125 @@ def _validate_subcomponent(
         purpose=purpose,
         owned_invariants=tuple(owned_invariants),
         primary_operations=tuple(primary_operations),
-        resp_refs=tuple(resp_refs),
+        responsibilities=responsibilities_text,
+        owns=owns,
         is_foundation=is_foundation,
     )
+
+
+def _validate_subcomponent_owns(
+    node: TagNode,
+    *,
+    pos: str,
+    known_parent_resp_ids: dict[str, frozenset[str]],
+) -> tuple[OwnedResp, ...]:
+    """Validate a subcomponent's ``<owns>`` block.
+
+    Returns a tuple of :class:`OwnedResp`. Each ``<resp>`` child
+    declares a parent-resp claim and contains zero-or-more
+    ``<feat>`` children naming the per-resp feat slice this
+    subcomponent owns. The caller enforces component-level coverage
+    (every parent resp claimed; every feat covered).
+
+    Allowed shapes:
+
+    - Empty ``<owns/>`` — subcomponent claims nothing (foundation
+      / internal plumbing whose value is structural, not
+      resp-anchored). Legal.
+    - ``<owns><resp id="resp_X"/></owns>`` — claim resp_X but no
+      specific feat slice (subcomp acts on the resp's feat-set as
+      a whole or doesn't directly handle any individual feat).
+    - ``<owns><resp id="resp_X"><feat id="feat_Y"/></resp></owns>``
+      — claim feat_Y of resp_X.
+
+    Per-subcomp validation:
+
+    - Each ``<resp>`` ``id`` must be in ``known_parent_resp_ids``.
+    - Each ``<feat>`` ``id`` inside a ``<resp>`` must be a feat
+      tagged on that parent resp (per ``known_parent_resp_ids``
+      mapping).
+    - Same ``resp_id`` may not appear twice within one subcomp's
+      ``<owns>`` block (collapse them into one ``<resp>`` with the
+      union of feat ids).
+    - Same ``feat_id`` may not appear twice under the same
+      ``<resp>`` in one subcomp.
+    """
+    for child in node.children:
+        if child.tag not in _OWNS_ALLOWED_CHILDREN:
+            raise ValidationError(
+                f"{pos} has an <owns> block containing an unexpected "
+                f"child <{child.tag}>. Only <resp> entries are allowed; "
+                "feat ids live inside <resp> children."
+            )
+
+    resp_nodes = node.find_all("resp")
+    owns: list[OwnedResp] = []
+    seen_resps: set[str] = set()
+
+    for ri, rnode in enumerate(resp_nodes):
+        rid = rnode.attrs.get("id", "").strip()
+        if not rid:
+            raise ValidationError(
+                f"{pos} has an <owns><resp> entry at position {ri} with "
+                'no id attribute. Every <resp> must carry id="resp_..." '
+                "naming a parent responsibility this subcomponent claims."
+            )
+        if rid in seen_resps:
+            raise ValidationError(
+                f"{pos} has duplicate <owns><resp id={rid!r}>. Collapse "
+                "the two entries into one <resp> with the union of "
+                "<feat> children."
+            )
+        seen_resps.add(rid)
+        if rid not in known_parent_resp_ids:
+            valid = sorted(known_parent_resp_ids.keys())
+            raise ValidationError(
+                f"{pos} has an <owns><resp> referencing {rid!r}, which "
+                "is not one of this component's parent responsibilities. "
+                f"Valid parent resps: {', '.join(valid) if valid else '(none)'}. "
+                "Cross-component leaks are forbidden."
+            )
+
+        for fchild in rnode.children:
+            if fchild.tag not in _OWNS_RESP_ALLOWED_CHILDREN:
+                raise ValidationError(
+                    f"{pos} has an <owns><resp id={rid!r}> entry "
+                    f"containing an unexpected child <{fchild.tag}>. "
+                    'Only <feat id="feat_..."/> entries are allowed '
+                    "inside an <owns><resp>."
+                )
+
+        feat_nodes = rnode.find_all("feat")
+        feat_ids: list[str] = []
+        seen_feats: set[str] = set()
+        valid_feats = known_parent_resp_ids[rid]
+        for fi, fnode in enumerate(feat_nodes):
+            fid = fnode.attrs.get("id", "").strip()
+            if not fid:
+                raise ValidationError(
+                    f"{pos} has an <owns><resp id={rid!r}> with a <feat> "
+                    f"entry at position {fi} missing the id attribute."
+                )
+            if fid in seen_feats:
+                raise ValidationError(
+                    f"{pos} has duplicate <feat id={fid!r}> inside "
+                    f"<owns><resp id={rid!r}>. Each feat may appear at "
+                    "most once per resp claim within one subcomponent."
+                )
+            seen_feats.add(fid)
+            if fid not in valid_feats:
+                in_scope = sorted(valid_feats)
+                raise ValidationError(
+                    f"{pos} has <owns><resp id={rid!r}> claiming "
+                    f"<feat id={fid!r}>, but that feat is not tagged on "
+                    f"{rid!r}. Valid feats for this resp: "
+                    f"{', '.join(in_scope) if in_scope else '(none)'}."
+                )
+            feat_ids.append(fid)
+
+        owns.append(OwnedResp(resp_id=rid, feat_ids=tuple(feat_ids)))
+
+    return tuple(owns)
 
 
 def format_subcomponent_techspec(sub: Subcomponent) -> str:

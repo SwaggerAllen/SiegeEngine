@@ -646,8 +646,7 @@ def format_regen_context(ctx: RegenContext) -> dict[str, str]:
     :func:`backend.graph.prompts.comparch.render_user_prompt`:
 
     - ``component_summary``
-    - ``parent_resps_summary``
-    - ``subresps_summary``
+    - ``parent_resps_summary`` (with bracketed feat-id lists)
     - ``sibling_comps_summary``
     - ``dep_pubapi_summary``
     - ``top_level_policy_candidates_summary``
@@ -667,14 +666,7 @@ def format_regen_context(ctx: RegenContext) -> dict[str, str]:
     """
     return {
         "component_summary": _format_component_summary(ctx),
-        "parent_resps_summary": _format_node_bullet_list(
-            ctx.parent_resps,
-            empty_fallback="(no top-level responsibilities assigned)",
-        ),
-        "subresps_summary": _format_node_bullet_list(
-            ctx.subresps,
-            empty_fallback="(no pre-minted subresponsibilities)",
-        ),
+        "parent_resps_summary": _format_parent_resps_with_feats(ctx),
         "sibling_comps_summary": _format_sibling_comps_summary(ctx.sibling_comps),
         "dep_pubapi_summary": _format_dep_pubapi_summary(
             ctx.sibling_comps, ctx.dep_pubapi_fragments
@@ -749,12 +741,11 @@ def format_regen_context_for_sub(ctx: RegenContext) -> dict[str, str]:
     return {
         "subcomponent_summary": _format_subcomponent_summary(ctx),
         "parent_component_summary": _format_parent_component_summary(ctx),
-        # For subcomponents, subresps is empty via the ORM snapshot
-        # (subresps live under the parent comp, not the sub). What
-        # we really want here is the subresps assigned to THIS
-        # subcomponent — the resps reached by walking decomposition
-        # edges to the sub's own id. Surface that instead.
-        "subresps_summary": _format_subcomp_owned_subresps(ctx),
+        # For a subcomp, what we want is the parent resps + feat
+        # slices the parent comparch's <owns> block claimed for this
+        # sub. Walked from incoming decomposition edges in
+        # _format_subcomp_owns_summary.
+        "owns_summary": _format_subcomp_owns_summary(ctx),
         "sibling_subcomps_summary": _format_sibling_subcomps_summary(
             ctx.sibling_subcomps,
             ctx.sibling_subcomp_pubapi_fragments,
@@ -983,32 +974,67 @@ def _format_parent_component_summary(ctx: RegenContext) -> str:
     return "\n".join(parts).rstrip()
 
 
-def _format_subcomp_owned_subresps(ctx: RegenContext) -> str:
-    """Render the subresponsibilities assigned to this subcomponent.
+def _format_parent_resps_with_feats(ctx: RegenContext) -> str:
+    """Render the component's parent resps with their feat-tag lists.
 
-    Subresps are pre-minted resp_* nodes with ``parent_id`` =
-    owning top-level comp. The comparch mint handler attached
-    them to this subcomponent via ``decomposition`` edges
-    (resp → sub) at Phase 4 mint time. We walk those edges here
-    so the LLM sees exactly which subresps this subcomponent is
-    responsible for.
-
-    For MVP the RegenContext doesn't carry the walked subresps
-    for subcomponents (the ``subresps`` field holds what
-    ``get_component_context`` fetches, which for a subcomponent
-    is the subresps under the *sub* itself — always empty since
-    the reducer's depth cap forbids a third-level resp tree).
-    Instead we re-query the incoming decomposition edges here.
+    Each parent resp is rendered as ``- `resp_xxx` **Name** [feat_aaa, feat_bbb]``
+    so the comparch LLM can echo both the resp id and per-resp feat
+    ids into the per-subcomp ``<owns>`` block. Walks incoming
+    decomposition edges from feat_* sources to compute each parent
+    resp's in-scope feat set.
     """
-    # Delayed import to avoid circular dependency at module load
-    # between regen_context and queries.
-    from backend.models.node import Edge  # noqa: F401 (re-import for clarity)
+    if not ctx.parent_resps:
+        return "(no top-level responsibilities assigned)"
+    session = _session_from_node(ctx.component)
+    feats_by_resp: dict[str, list[Node]] = {r.id: [] for r in ctx.parent_resps}
+    if session is not None:
+        feat_edge_rows = list(
+            session.execute(
+                select(Edge.target_id, Node)
+                .join(Node, Node.id == Edge.source_id)
+                .where(
+                    Edge.edge_type == "decomposition",
+                    Edge.target_id.in_({r.id for r in ctx.parent_resps}),
+                    Node.tier == "feat",
+                )
+                .order_by(Node.display_order.asc(), Node.id.asc())
+            )
+        )
+        for resp_id, feat_node in feat_edge_rows:
+            feats_by_resp.setdefault(resp_id, []).append(feat_node)
+    lines: list[str] = []
+    for resp in ctx.parent_resps:
+        rid = resp.id
+        name = (resp.name or "").strip() or "(unnamed)"
+        feat_ids = [f.id for f in feats_by_resp.get(rid, [])]
+        suffix = f" [{', '.join(feat_ids)}]" if feat_ids else " []"
+        lines.append(f"- `{rid}` **{name}**{suffix}")
+    return "\n".join(lines)
 
+
+def _format_subcomp_owns_summary(ctx: RegenContext) -> str:
+    """Render the parent resps + feat-slice this subcomp owns.
+
+    Walks incoming ``decomposition`` edges to ``ctx.component.id``
+    where the source is a parent resp (``tier="resp"``,
+    ``parent_id=None``) or a feat (``tier="feat"``). The owning
+    parent comp's comparch produced these edges from each subcomp's
+    ``<owns>`` block at mint time.
+
+    Returns a per-claim bullet list:
+
+        - `resp_payment01` **Payment Collection** (owns feats: feat_card_v01, feat_3ds_chal01)
+        - `resp_invoice02` **Invoicing** (owns whole resp)
+
+    Empty fallback when the subcomp claims nothing (foundation /
+    plumbing).
+    """
     session = _session_from_node(ctx.component)
     if session is None:
-        return "(subresp list unavailable without a DB session)"
+        return "(ownership unavailable without a DB session)"
 
-    rows = list(
+    # Owned parent resps (top-level resps this sub claims).
+    resp_rows = list(
         session.execute(
             select(Node)
             .join(Edge, Edge.source_id == Node.id)
@@ -1016,14 +1042,57 @@ def _format_subcomp_owned_subresps(ctx: RegenContext) -> str:
                 Edge.edge_type == "decomposition",
                 Edge.target_id == ctx.component.id,
                 Node.tier == "resp",
+                Node.parent_id.is_(None),
             )
             .order_by(Node.display_order.asc(), Node.id.asc())
         ).scalars()
     )
-    return _format_node_bullet_list(
-        tuple(rows),
-        empty_fallback="(no subresponsibilities assigned to this subcomponent)",
+    if not resp_rows:
+        return "(this subcomponent does not anchor any parent responsibility)"
+
+    # Owned feats (feat_* sources of decomposition edges into this sub).
+    feat_rows = list(
+        session.execute(
+            select(Node)
+            .join(Edge, Edge.source_id == Node.id)
+            .where(
+                Edge.edge_type == "decomposition",
+                Edge.target_id == ctx.component.id,
+                Node.tier == "feat",
+            )
+            .order_by(Node.display_order.asc(), Node.id.asc())
+        ).scalars()
     )
+    owned_feat_ids: set[str] = {f.id for f in feat_rows}
+
+    # For each owned resp, the feat-slice intersection: which feats
+    # tagged on the resp does this sub also claim?
+    feats_by_resp: dict[str, list[str]] = {}
+    if owned_feat_ids and resp_rows:
+        feat_edge_rows = list(
+            session.execute(
+                select(Edge.target_id, Edge.source_id)
+                .where(
+                    Edge.edge_type == "decomposition",
+                    Edge.target_id.in_({r.id for r in resp_rows}),
+                    Edge.source_id.in_(owned_feat_ids),
+                )
+            )
+        )
+        for resp_id, feat_id in feat_edge_rows:
+            feats_by_resp.setdefault(resp_id, []).append(feat_id)
+
+    lines: list[str] = []
+    for resp in resp_rows:
+        rid = resp.id
+        name = (resp.name or "").strip() or "(unnamed)"
+        slice_ids = sorted(feats_by_resp.get(rid, []))
+        if slice_ids:
+            tag = f"(owns feats: {', '.join(slice_ids)})"
+        else:
+            tag = "(owns whole resp — no feat-slice narrowing)"
+        lines.append(f"- `{rid}` **{name}** {tag}")
+    return "\n".join(lines)
 
 
 def _session_from_node(node: Node) -> Session | None:

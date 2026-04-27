@@ -26,7 +26,6 @@ from backend.graph.handlers.comparch_generation import (
 )
 from backend.graph.ids import Kind, mint
 from backend.graph.reducer import append_event
-from backend.graph.subrequirements import bootstrap_subreqs_node
 from backend.models import Project
 from backend.models.node import Draft, Node
 from backend.models.telemetry import GenerationTelemetry
@@ -271,10 +270,6 @@ def seeded_project(shared_session_factory):
         _seed_dep(s, project_id, comp_billing, comp_auth)
         _seed_dep(s, project_id, comp_billing, comp_foundation)
         _seed_dep(s, project_id, comp_auth, comp_foundation)
-
-        bootstrap_subreqs_node(s, project_id, comp_billing)
-        bootstrap_subreqs_node(s, project_id, comp_auth)
-        bootstrap_subreqs_node(s, project_id, comp_foundation)
 
         sub_token = _seed_subresp(s, project_id, comp_billing, "Tokenization", 0)
         sub_retry = _seed_subresp(s, project_id, comp_billing, "Retry", 1)

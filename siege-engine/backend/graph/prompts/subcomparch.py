@@ -259,7 +259,7 @@ def render_user_prompt(
     *,
     subcomponent_summary: str,
     parent_component_summary: str,
-    subresps_summary: str,
+    owns_summary: str,
     sibling_subcomps_summary: str,
     parent_sibling_comps_summary: str,
     dep_pubapi_summary: str,
@@ -287,8 +287,10 @@ def render_user_prompt(
       component's identity, techspec, public surface, and
       private surface — this subcomponent's cover for the
       parent's slice of the system.
-    - ``subresps_summary``: the subresponsibilities this
-      subcomponent owns (from the comparch decomposition pass).
+    - ``owns_summary``: the parent responsibilities (and per-resp
+      feat slices) this subcomponent claims, as declared in the
+      parent's comparch ``<owns>`` block. Walked from incoming
+      decomposition edges (resp → sub, feat → sub) at format time.
     - ``sibling_subcomps_summary``: same-parent sibling
       subcomponents listed by real ``comp_*`` ID + name + role.
       Allowed targets for ``<dep to="comp_..."/>`` entries.
@@ -322,9 +324,18 @@ def render_user_prompt(
     parts.append("")
     parts.append(parent_component_summary.strip() or "(parent details missing)")
     parts.append("")
-    parts.append("# Subresponsibilities assigned to this subcomponent")
+    parts.append("# Parent responsibilities + feat slices this subcomponent claims")
     parts.append("")
-    parts.append(subresps_summary.strip() or "(no subresponsibilities assigned)")
+    parts.append(
+        "Read from the parent comparch's ``<owns>`` block (one entry "
+        "per parent resp this subcomp claims, plus the feat-slice "
+        "narrowed within that resp). Multi-owner is allowed: the "
+        "same parent resp may also be claimed by sibling subcomps "
+        "(each owning a different feat slice). Use this to anchor "
+        "what code territory this subcomponent is for."
+    )
+    parts.append("")
+    parts.append(owns_summary.strip() or "(this subcomponent does not anchor any parent responsibility)")
     parts.append("")
     parts.append("# Same-parent sibling subcomponents (allowed <dep> targets)")
     parts.append("")
