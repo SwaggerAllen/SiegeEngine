@@ -189,22 +189,6 @@ def seeded(db):
     _seed_dep(db, project_id, comp_billing, comp_foundation)
     _seed_dep(db, project_id, comp_auth, comp_foundation)
 
-    # Subresp under billing
-    subresp = mint(db, Kind.RESP)
-    append_event(
-        db,
-        project_id,
-        ev.NodeCreated(
-            node_id=subresp,
-            tier="resp",
-            kind="domain",
-            parent_id=comp_billing,
-            name="Tokenization",
-            display_order=0,
-            content="Convert cards to tokens.",
-        ),
-    )
-
     db.commit()
     return {
         "project_id": project_id,
@@ -214,7 +198,6 @@ def seeded(db):
         "resp_auth": resp_auth,
         "resp_bill": resp_bill,
         "resp_found": resp_found,
-        "subresp": subresp,
     }
 
 
@@ -229,9 +212,6 @@ class TestGetComponentContext:
 
         # Parent resps: just "Billing"
         assert [r.id for r in ctx.parent_resps] == [seeded["resp_bill"]]
-
-        # Subresps: the one we seeded under billing
-        assert [r.id for r in ctx.subresps] == [seeded["subresp"]]
 
         # Outbound deps: billing → auth, billing → foundation
         outbound_ids = {n.id for n in ctx.outbound_deps}
@@ -268,10 +248,6 @@ class TestGetComponentContext:
         assert ctx.techspec == ""
         assert ctx.pubapi == ""
         assert ctx.node.name == "NoFragments"
-
-    def test_component_with_no_subresps(self, db, seeded):
-        ctx = get_component_context(db, seeded["comp_auth"])
-        assert ctx.subresps == ()
 
     def test_unknown_component_raises(self, db, seeded):
         with pytest.raises(ValueError, match="No node with id"):

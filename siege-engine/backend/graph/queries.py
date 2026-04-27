@@ -47,7 +47,6 @@ class ComponentContext:
     techspec: str
     pubapi: str
     parent_resps: tuple[Node, ...]
-    subresps: tuple[Node, ...]
     outbound_deps: tuple[Node, ...]
     inbound_deps: tuple[Node, ...]
 
@@ -110,24 +109,6 @@ def top_level_resps_assigned_to(session: Session, comp_id: str) -> list[Node]:
                 Edge.target_id == comp_id,
                 Node.tier == "resp",
                 Node.parent_id.is_(None),
-            )
-            .order_by(Node.display_order.asc(), Node.id.asc())
-        ).scalars()
-    )
-
-
-def list_subresponsibilities(session: Session, comp_id: str) -> list[Node]:
-    """Return the subresponsibilities under a given component.
-
-    Subresps minted by ``v2.mint_subrequirements`` have
-    ``parent_id=comp_id``. Ordered by display_order.
-    """
-    return list(
-        session.execute(
-            select(Node)
-            .where(
-                Node.tier == "resp",
-                Node.parent_id == comp_id,
             )
             .order_by(Node.display_order.asc(), Node.id.asc())
         ).scalars()
@@ -348,7 +329,6 @@ def get_component_context(session: Session, comp_id: str) -> ComponentContext:
     pubapi = pubapi_frag.content if pubapi_frag is not None else ""
 
     parent_resps = tuple(top_level_resps_assigned_to(session, comp_id))
-    subresps = tuple(list_subresponsibilities(session, comp_id))
 
     # Dependency neighborhood: one SELECT that returns every dep
     # edge touching this component at either end. Split into
@@ -383,7 +363,6 @@ def get_component_context(session: Session, comp_id: str) -> ComponentContext:
         techspec=techspec,
         pubapi=pubapi,
         parent_resps=parent_resps,
-        subresps=subresps,
         outbound_deps=outbound_deps,
         inbound_deps=inbound_deps,
     )

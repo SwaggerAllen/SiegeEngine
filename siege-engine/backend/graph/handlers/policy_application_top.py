@@ -48,10 +48,7 @@ from backend.graph.prompts.policy_application import (
     format_candidate_policies,
     render_user_prompt,
 )
-from backend.graph.queries import (
-    list_subresponsibilities,
-    top_level_resps_assigned_to,
-)
+from backend.graph.queries import top_level_resps_assigned_to
 from backend.graph.reducer import append_event
 from backend.models import Project
 from backend.models.node import Edge, Fragment, Node
@@ -131,7 +128,6 @@ async def apply_top_level_policies(payload: dict) -> None:
         pubapi = pubapi_frag.content if pubapi_frag is not None else ""
 
         parent_resps = top_level_resps_assigned_to(db, component_id)
-        subresps = list_subresponsibilities(db, component_id)
 
         # Per-candidate context: parse the inline <policy> blob to
         # extract trigger + required + rationale. Top-level policies
@@ -181,9 +177,7 @@ async def apply_top_level_policies(payload: dict) -> None:
         target_summary = f"**{comp_node.name}** (`{comp_node.id}`)"
         resp_lines: list[str] = []
         for r in parent_resps:
-            resp_lines.append(f"- `{r.id}` (top-level) **{r.name}**: {(r.content or '').strip()}")
-        for r in subresps:
-            resp_lines.append(f"- `{r.id}` (subresp) **{r.name}**: {(r.content or '').strip()}")
+            resp_lines.append(f"- `{r.id}` **{r.name}**: {(r.content or '').strip()}")
         resp_summary = "\n".join(resp_lines)
         candidates_summary = format_candidate_policies(candidate_dicts)
 

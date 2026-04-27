@@ -66,8 +66,6 @@ class RegenContext:
       placeholders, so they're normally populated).
     - ``parent_resps``: top-level resps assigned to this component
       via decomposition edges at sysarch approval.
-    - ``subresps``: pre-minted subresps under this component
-      (parent_id = comp_id, from subreqs approval).
     - ``related_features``: features reachable via the
       decomposition walk ``feat_* → resp_* → comp_*`` — the
       ultimate source of user-visible work this component serves.
@@ -134,7 +132,6 @@ class RegenContext:
     component_techspec: str
     component_pubapi: str
     parent_resps: tuple[Node, ...]
-    subresps: tuple[Node, ...]
     related_features: tuple[Node, ...]
     sibling_comp_ids: tuple[str, ...]
     sibling_comps: tuple[Node, ...]
@@ -414,7 +411,6 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         component_techspec=cc.techspec,
         component_pubapi=cc.pubapi,
         parent_resps=cc.parent_resps,
-        subresps=cc.subresps,
         related_features=related_features,
         sibling_comp_ids=sibling_ids,
         sibling_comps=siblings,

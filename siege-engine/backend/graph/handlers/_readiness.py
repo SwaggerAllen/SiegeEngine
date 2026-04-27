@@ -15,7 +15,8 @@ fails so the caller (driver) can surface it on the failed Job row.
 
 A small ``all_of`` combinator composes predicates without inventing
 a chain syntax — useful for Phase F where comparch's readiness is
-``parent_subreqs_approved AND comparch_dep_comps_settled``.
+``top_level_comp_exists AND comparch_dep_comps_settled`` (the
+subreqs gate was retired in Phase 11 alongside the subreqs tier).
 """
 
 from __future__ import annotations
@@ -128,7 +129,7 @@ def top_level_comp_exists(
     Lifts the comp-existence / tier / top-level checks out of the
     handler body so the readiness gate fires before we attempt to
     walk the upstream context. Composed with
-    :func:`parent_subreqs_approved` via :func:`all_of` on
+    :func:`comparch_dep_comps_settled` via :func:`all_of` on
     ``COMPARCH_CONFIG``.
     """
     if not scope_ids:
@@ -391,9 +392,8 @@ def comparch_dep_comps_settled(
     is in flight, defer this regen so we generate against the
     up-to-date pubapi rather than the pre-update version.
 
-    Composes with :func:`top_level_comp_exists` and
-    :func:`parent_subreqs_approved` via :func:`all_of` on
-    ``COMPARCH_CONFIG.readiness_check``.
+    Composes with :func:`top_level_comp_exists` via :func:`all_of`
+    on ``COMPARCH_CONFIG.readiness_check``.
 
     Raises :class:`TierDeferredError` (via the driver's
     ``readiness_check`` failure path) when a dep is mid-regen, so
