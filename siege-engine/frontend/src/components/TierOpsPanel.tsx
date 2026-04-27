@@ -10,6 +10,7 @@ import {
   resetTier,
   reviewSweepTier,
 } from '../api/tierOps';
+import { TierReviewSummaryPanel } from './TierReviewSummaryPanel';
 
 /**
  * Tier-ops panel — bulk reset + bulk AI-review per tier.
@@ -56,6 +57,7 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
     queryFn: () => getTierInfo(projectId, tier),
   });
   const [confirming, setConfirming] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
   const [lastResult, setLastResult] = useState<
     | {
         kind: 'reset';
@@ -103,7 +105,8 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
   const isBusy = resetMutation.isPending || reviewMutation.isPending;
 
   return (
-    <li className="px-4 py-3 flex flex-wrap items-center gap-3" data-testid={`tier-row-${tier}`}>
+    <li className="px-4 py-3 flex flex-col gap-3" data-testid={`tier-row-${tier}`}>
+      <div className="flex flex-wrap items-center gap-3">
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium text-gray-100">
           {data?.tier_name ?? tier}
@@ -125,6 +128,17 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setShowSummary((v) => !v)}
+          disabled={isBusy || (data?.nodes_with_content ?? 0) === 0}
+          className="px-3 py-1.5 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
+          title="Aggregate AI self-review intros + scores for this tier"
+          data-testid={`tier-row-${tier}-review-summary-button`}
+          aria-expanded={showSummary}
+        >
+          {showSummary ? 'Hide review summary' : 'Review summary'}
+        </button>
         {data?.supports_review && (
           <button
             type="button"
@@ -173,6 +187,8 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
             </button>
           ))}
       </div>
+      </div>
+      {showSummary && <TierReviewSummaryPanel projectId={projectId} tier={tier} />}
     </li>
   );
 }

@@ -10,6 +10,7 @@ vi.mock('../api/tierOps', async (importOriginal) => {
     getTierInfo: vi.fn(),
     resetTier: vi.fn(),
     reviewSweepTier: vi.fn(),
+    getTierReviewSummary: vi.fn(),
   };
 });
 
@@ -151,5 +152,32 @@ describe('TierOpsPanel', () => {
     renderPanel();
     const button = await screen.findByTestId('tier-row-comparch-review-button');
     expect(button).toBeDisabled();
+  });
+
+  it('Review summary toggle flips aria-expanded state', async () => {
+    mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
+      makeInfo({ tier, node_count: 3, nodes_with_content: 3 }),
+    );
+    // Inline panel itself is exercised by its own test file. Here we
+    // only verify the toggle button renders + dispatches a click that
+    // flips its expansion state once the tier-info query resolves and
+    // enables it.
+    renderPanel();
+    const toggle = await screen.findByTestId('tier-row-comparch-review-summary-button');
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'true'));
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'false'));
+  });
+
+  it('Review summary toggle is disabled when the tier has zero content', async () => {
+    mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
+      makeInfo({ tier, node_count: 0, nodes_with_content: 0 }),
+    );
+    renderPanel();
+    const toggle = await screen.findByTestId('tier-row-comparch-review-summary-button');
+    expect(toggle).toBeDisabled();
   });
 });
