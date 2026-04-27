@@ -16,7 +16,7 @@
 export { XmlDocument } from './XmlDocument';
 export { parseXml } from './parser';
 export { renderUnknownElement } from './defaultRenderers';
-export { comparchRenderers } from './comparchRenderers';
+export { comparchRenderers, makeComparchRenderers } from './comparchRenderers';
 export { faninRenderers } from './faninRenderers';
 export { featureRenderers } from './featureRenderers';
 export { implRenderers } from './implRenderers';
