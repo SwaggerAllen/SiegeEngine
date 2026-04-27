@@ -50,16 +50,6 @@ export const fullDagStylesheet: StylesheetCSS[] = [
     },
   },
   {
-    selector: 'node[type = "resp-sub"]',
-    css: {
-      'background-color': '#064e3b',
-      'border-color': '#059669',
-      width: 100,
-      height: 26,
-      'font-size': 9,
-    },
-  },
-  {
     selector: 'node[type = "policy-top"]',
     css: {
       'background-color': '#78350f',

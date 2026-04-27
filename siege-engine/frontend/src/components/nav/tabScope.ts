@@ -7,10 +7,10 @@ import type { StructureNode } from '../../api/structure';
  * - **System** — selected node is expansion / reqs / sysarch.
  *   Tabs link across the three system-level pages.
  * - **Top-level component** — selected is a ``comp_*`` with
- *   ``parent_id === null`` or any of its child tiers (subreqs /
- *   fanin / un-fanned-out impl). Tabs cycle the comp's views:
- *   Overview (sysarch fragments), Subreqs, Comparch, Fanin (if
- *   present), Implementation (if present).
+ *   ``parent_id === null`` or any of its child tiers (fanin /
+ *   un-fanned-out impl). Tabs cycle the comp's views:
+ *   Overview (sysarch fragments), Comparch, Fanin (if present),
+ *   Implementation (if present).
  * - **Subcomponent** — selected is a sub ``comp_*`` or its impl
  *   child. Tabs: Subcomparch, Implementation (if present).
  *
@@ -28,7 +28,6 @@ export type TabKey =
   | 'reqs'
   | 'sysarch'
   | 'overview'
-  | 'subreqs'
   | 'comparch'
   | 'fanin'
   | 'impl'
@@ -119,7 +118,7 @@ function findOwnerComp(
 ): StructureNode | null {
   if (selected.tier === 'comp') return selected;
   // Child tiers of a comp carry parent_id pointing at it.
-  if (selected.tier === 'subreqs' || selected.tier === 'fanin' || selected.tier === 'impl') {
+  if (selected.tier === 'fanin' || selected.tier === 'impl') {
     if (!selected.parent_id) return null;
     const parent = nodes.find((n) => n.id === selected.parent_id);
     if (!parent || parent.tier !== 'comp') return null;
@@ -132,8 +131,6 @@ function topLevelCompTabs(comp: StructureNode, nodes: StructureNode[]): Tab[] {
   const tabs: Tab[] = [
     { key: 'overview', label: 'Overview', targetNodeId: comp.id, targetView: 'overview' },
   ];
-  const subreqs = nodes.find((n) => n.tier === 'subreqs' && n.parent_id === comp.id);
-  if (subreqs) tabs.push({ key: 'subreqs', label: 'Subrequirements', targetNodeId: subreqs.id });
   tabs.push({
     key: 'comparch',
     label: 'Comparch',
@@ -166,7 +163,6 @@ function activeKeyForTopLevel(
   if (selected.id === comp.id) {
     return view === 'comparch' ? 'comparch' : 'overview';
   }
-  if (selected.tier === 'subreqs') return 'subreqs';
   if (selected.tier === 'fanin') return 'fanin';
   if (selected.tier === 'impl') return 'impl';
   return 'overview';

@@ -54,7 +54,7 @@ function makeSnapshot(): debugApi.DebugSnapshot {
     drafts: [
       {
         id: 'draft_1',
-        target_id: 'subreqs_1',
+        target_id: 'comp_1',
         status: 'pending',
         content_length: 200,
       },
@@ -63,7 +63,7 @@ function makeSnapshot(): debugApi.DebugSnapshot {
     recent_jobs: [
       {
         id: 'job_1',
-        job_type: 'v2.generate_subrequirements',
+        job_type: 'v2.generate_comparch',
         status: 'queued',
         retry_count: 0,
         is_deferred: false,
@@ -101,7 +101,7 @@ describe('DebugPanel', () => {
     expect(screen.getByText('Recent jobs (1)')).toBeInTheDocument();
     expect(screen.getByText('Recent events (1)')).toBeInTheDocument();
     // Job error_message renders as the dash for null.
-    expect(screen.getByText('v2.generate_subrequirements')).toBeInTheDocument();
+    expect(screen.getByText('v2.generate_comparch')).toBeInTheDocument();
   });
 
   it('Copy snapshot writes the JSON blob to the clipboard', async () => {

@@ -19,7 +19,6 @@ import { TierOpsPanel } from '../TierOpsPanel';
 import { ReferencesList } from '../ReferencesList';
 import { RequirementsPanel } from '../RequirementsPanel';
 import { SubcomparchPanel } from '../SubcomparchPanel';
-import { SubreqsPanel } from '../SubreqsPanel';
 import { SysarchPanel } from '../SysarchPanel';
 import { VocabularyList } from '../VocabularyList';
 import { DecompositionEditorPanel } from '../editors/DecompositionEditorPanel';
@@ -27,7 +26,6 @@ import { DependencyEditorPanel } from '../editors/DependencyEditorPanel';
 import { DomainParentEditorPanel } from '../editors/DomainParentEditorPanel';
 import { FeatRespEditorPanel } from '../editors/FeatRespEditorPanel';
 import { RespCompEditorPanel } from '../editors/RespCompEditorPanel';
-import { SubrespSubcompEditorPanel } from '../editors/SubrespSubcompEditorPanel';
 import { SYNTHETIC_IDS } from './buildNavTree';
 
 interface Props {
@@ -127,13 +125,6 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
       </div>
     );
   }
-  if (selectedId === SYNTHETIC_IDS.EDIT_SUBRESP_SUBCOMP) {
-    return (
-      <div className="h-full overflow-auto">
-        <SubrespSubcompEditorPanel projectId={projectId} />
-      </div>
-    );
-  }
   if (selectedId === SYNTHETIC_IDS.EDIT_FEAT_RESP) {
     return (
       <div className="h-full overflow-auto">
@@ -176,20 +167,6 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
           <SysarchPanel projectId={projectId} />
         </div>
       );
-    case 'subreqs': {
-      // Subreqs node's parent_id is the owning comp.
-      if (!node.parent_id) return <MissingParent />;
-      const comp = nodes.find((n) => n.id === node.parent_id);
-      return (
-        <div className="h-full overflow-auto">
-          <SubreqsPanel
-            projectId={projectId}
-            componentId={node.parent_id}
-            componentName={comp?.name ?? node.parent_id}
-          />
-        </div>
-      );
-    }
     case 'comp': {
       if (node.parent_id === null) {
         // Top-level component — Overview is the default tab, users

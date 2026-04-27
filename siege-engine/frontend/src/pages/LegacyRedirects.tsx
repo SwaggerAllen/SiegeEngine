@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useProjectStructure } from '../hooks/queries/useProjectStructure';
 
-type ChildTier = 'subreqs' | 'fanin' | 'impl';
+type ChildTier = 'fanin' | 'impl';
 
 /**
  * Resolves old deep-link URLs to the new workspace nav scheme by
@@ -52,12 +52,6 @@ function RedirectPlaceholder() {
 export function RedirectComponentComparch() {
   const { id, compId } = useParams<{ id: string; compId: string }>();
   useLegacyRedirect(id, compId, null);
-  return <RedirectPlaceholder />;
-}
-
-export function RedirectComponentSubreqs() {
-  const { id, compId } = useParams<{ id: string; compId: string }>();
-  useLegacyRedirect(id, compId, 'subreqs');
   return <RedirectPlaceholder />;
 }
 

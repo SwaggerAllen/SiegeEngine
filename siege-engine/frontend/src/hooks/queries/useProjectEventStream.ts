@@ -199,10 +199,6 @@ function tierDetailKeyFor(
       return ['requirements', projectId];
     case 'sysarch':
       return ['sysarch', projectId];
-    case 'subreqs':
-      // subreqs node's parent_id is the owning comp; the
-      // subreqs hook keys on (projectId, compId).
-      return node.parent_id ? ['subreqs', projectId, node.parent_id] : null;
     case 'comp':
       if (node.parent_id === null) {
         return ['comparch', projectId, node.id];

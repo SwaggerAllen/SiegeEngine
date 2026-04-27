@@ -44,7 +44,7 @@ const LABELS: BootstrapPanelLabels = {
  *    bare IDs.
  * 2. A component-name → pending-draft-kind map from
  *    ``useComponents`` so each component card can show a
- *    "Waiting — subreqs / comparch / subcomparch" badge while
+ *    "Waiting — comparch / subcomparch" badge while
  *    downstream drafts are awaiting user approval. The sysarch
  *    document only contains aliases + names, so the lookup is
  *    name-keyed — the components list query resolves name →

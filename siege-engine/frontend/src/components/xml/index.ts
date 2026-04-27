@@ -10,8 +10,8 @@
 //   - featureRenderers — renderer map for <features>/<group>/<feature>
 //
 // Future phases add siblings here: reqsRenderers, sysarchRenderers,
-// subreqsRenderers, manifestRenderers. Each is a plain object of
-// the XmlRendererMap shape.
+// manifestRenderers. Each is a plain object of the XmlRendererMap
+// shape.
 
 export { XmlDocument } from './XmlDocument';
 export { parseXml } from './parser';
@@ -26,7 +26,6 @@ export {
   requirementsRenderers,
 } from './requirementsRenderers';
 export { subcomparchRenderers } from './subcomparchRenderers';
-export { makeSubreqsRenderers, subreqsRenderers } from './subreqsRenderers';
 export { makeSysarchRenderers, sysarchRenderers } from './sysarchRenderers';
 export type {
   XmlElement,

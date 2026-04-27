@@ -71,10 +71,9 @@ describe('buildNavTree', () => {
     ]);
   });
 
-  it('nests subreqs + fan-in + subcomps under their owning comp', () => {
+  it('nests fan-in + subcomps under their owning comp', () => {
     const items = buildNavTree([
       n('comp_A', 'comp', null, { name: 'Billing' }),
-      n('subreqs_A', 'subreqs', 'comp_A'),
       n('fanin_A', 'fanin', 'comp_A'),
       n('comp_Asub', 'comp', 'comp_A', { name: 'BillingStore' }),
       n('impl_Asub', 'impl', 'comp_Asub'),
@@ -83,13 +82,21 @@ describe('buildNavTree', () => {
     expect(componentsRoot).toBeDefined();
     const comp = componentsRoot!.children[0];
     expect(comp.id).toBe('comp_A');
-    expect(comp.children.map((c) => c.id)).toEqual([
-      'subreqs_A',
-      'fanin_A',
-      'comp_Asub',
-    ]);
+    expect(comp.children.map((c) => c.id)).toEqual(['fanin_A', 'comp_Asub']);
     const sub = comp.children.find((c) => c.id === 'comp_Asub')!;
     expect(sub.children.map((c) => c.id)).toEqual(['impl_Asub']);
+  });
+
+  it('omits orphan subreqs nodes from the tree', () => {
+    // Pre-Phase-A subreqs nodes might still exist in the projection;
+    // the nav tree should ignore them rather than render a dead branch.
+    const items = buildNavTree([
+      n('comp_A', 'comp', null, { name: 'Billing' }),
+      n('subreqs_A', 'subreqs', 'comp_A'),
+    ]);
+    const componentsRoot = items.find((i) => i.id === SYNTHETIC_IDS.COMPONENTS_ROOT);
+    const comp = componentsRoot!.children[0];
+    expect(comp.children.find((c) => c.id === 'subreqs_A')).toBeUndefined();
   });
 
   it('places implementation directly under un-fanned-out comps', () => {

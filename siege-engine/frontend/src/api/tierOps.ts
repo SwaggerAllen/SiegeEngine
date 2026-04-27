@@ -13,7 +13,6 @@ export const TIER_NAMES = [
   'expansion',
   'requirements',
   'sysarch',
-  'subreqs',
   'comparch',
   'subcomparch',
   'impl',

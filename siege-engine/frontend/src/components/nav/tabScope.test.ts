@@ -60,7 +60,6 @@ describe('tabScope', () => {
   it('top-level comp: Overview default, all tabs when fanin + impl exist', () => {
     const nodes = [
       n('comp_1', 'comp', null, { name: 'Billing' }),
-      n('subreqs_1', 'subreqs', 'comp_1'),
       n('fanin_1', 'fanin', 'comp_1'),
       n('impl_1', 'impl', 'comp_1'),
     ];
@@ -69,7 +68,6 @@ describe('tabScope', () => {
     expect(scope.activeKey).toBe('overview');
     expect(scope.tabs.map((t) => t.key)).toEqual([
       'overview',
-      'subreqs',
       'comparch',
       'fanin',
       'impl',
@@ -85,19 +83,16 @@ describe('tabScope', () => {
   it('child tiers of a top-level comp fall under that comp scope', () => {
     const nodes = [
       n('comp_1', 'comp', null, { name: 'Billing' }),
-      n('subreqs_1', 'subreqs', 'comp_1'),
+      n('fanin_1', 'fanin', 'comp_1'),
     ];
-    const scope = tabScope('subreqs_1', null, nodes);
+    const scope = tabScope('fanin_1', null, nodes);
     expect(scope.scopeLabel).toBe('Billing');
-    expect(scope.activeKey).toBe('subreqs');
+    expect(scope.activeKey).toBe('fanin');
     expect(scope.tabs.map((t) => t.key)).toContain('overview');
   });
 
   it('presentational comp hides the Fan-in tab (no fanin node)', () => {
-    const nodes = [
-      n('comp_1', 'comp', null, { name: 'UI', kind: 'presentational' }),
-      n('subreqs_1', 'subreqs', 'comp_1'),
-    ];
+    const nodes = [n('comp_1', 'comp', null, { name: 'UI', kind: 'presentational' })];
     const scope = tabScope('comp_1', null, nodes);
     expect(scope.tabs.map((t) => t.key)).not.toContain('fanin');
   });

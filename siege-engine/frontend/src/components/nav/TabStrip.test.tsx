@@ -29,8 +29,8 @@ describe('TabStrip', () => {
           activeKey: 'overview',
           tabs: [
             { key: 'overview', label: 'Overview', targetNodeId: 'comp_1', targetView: 'overview' },
-            { key: 'subreqs', label: 'Subrequirements', targetNodeId: 'subreqs_1' },
             { key: 'comparch', label: 'Comparch', targetNodeId: 'comp_1', targetView: 'comparch' },
+            { key: 'fanin', label: 'Fan-in', targetNodeId: 'fanin_1' },
           ],
         })}
         onSelectTab={() => {}}
@@ -41,7 +41,7 @@ describe('TabStrip', () => {
       'aria-selected',
       'true',
     );
-    expect(screen.getByRole('tab', { name: 'Subrequirements' })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: 'Comparch' })).toHaveAttribute(
       'aria-selected',
       'false',
     );

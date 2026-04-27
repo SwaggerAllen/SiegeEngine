@@ -17,7 +17,7 @@ export const StructureNodeSchema = z.object({
   // Content is populated for "light" tiers (resp, feat, policy,
   // vocab, ref) whose only UI is a list view — the text appears
   // directly in ResponsibilityCoverage / lists. Heavy tiers
-  // (comp, subreqs, impl, fanin, expansion, reqs, sysarch) have
+  // (comp, impl, fanin, expansion, reqs, sysarch) have
   // dedicated detail endpoints and leave this empty.
   content: z.string(),
   has_content: z.boolean(),
