@@ -10,11 +10,13 @@ into subcomp-shaped slices** — there is no longer an intermediate
 subreqs tier; the LLM declares per-subcomp ownership of (parent
 resp, feat-slice) pairs directly via the ``<owns>`` block.
 
-Multi-owner is allowed: the same parent resp may appear under
-multiple subcomps' ``<owns>`` blocks (each claiming its own feat
-slice), and the same feat may be claimed by multiple subcomps
-that genuinely cooperate on that feature (cross-cutting work
-like retry scheduling or audit logging).
+Default is **single-owner**: each parent resp gets one
+subcomponent that anchors it. Multi-owner is legal but
+*exceptional* — the validator allows it, but the generator
+prompt reserves it for two named patterns (UI flow splits and
+read/write path splits) where the work genuinely cooperates
+across subcomp seams. See ``## The <owns> block`` for the
+detailed rule.
 
 Output format (parsed by :mod:`backend.graph.parsers.xml_sections`
 and validated by
@@ -115,12 +117,10 @@ is highest here.
 **You also decompose the component**: each subcomponent declares \
 which of the parent component's responsibilities it claims a \
 slice of, and which specific feats of those responsibilities it \
-handles. Multi-owner is allowed at both axes — multiple subcomps \
-can claim the same parent resp (each owning a different feat \
-slice), and the same feat can be claimed by multiple subcomps \
-that genuinely cooperate (cross-cutting work like retry \
-scheduling or audit logging that spans several subcomp \
-territories).
+handles. Aim for **single-owner**: each parent resp anchored by \
+exactly one subcomponent. Multi-owner is allowed but reserved \
+for two named patterns where the cooperation is real, not \
+incidental — see ``## The <owns> block`` below.
 
 You will be given the component's metadata from the \
 system-architecture pass (name, role paragraph, intended API), \
@@ -394,11 +394,22 @@ presentational) of the owning component and do NOT have their \
 own ``<kind>`` tag — do not add one. The micro-field grammar \
 matches the sysarch Component grammar deliberately; downstream \
 readers get one schema at both tiers.
-* ``<name>`` is a short identifier — title case. Name the \
-subcomponent project-specifically. "SessionStore" is sharper \
-than "DataLayer"; "CredentialGate" is sharper than "Validator". \
-If two unrelated components could plausibly have a subcomponent \
-with this name, it's too generic.
+* ``<name>`` is a short identifier — title case. **Match name \
+specificity to responsibility specificity.** A subcomp with \
+domain-specific invariants and operations gets a domain-specific \
+name ("SessionStore", "CredentialGate", "PaymentReconciler"). A \
+subcomp that is genuinely generic infrastructure — a registry \
+of provider adapters, a gateway over external SaaS calls, a \
+dispatcher routing to per-tier handlers — gets a structural \
+name ("ProviderAdapterRegistry", "WebhookGateway", \
+"DispatcherCore"). The anti-pattern is wrapping domain logic \
+in a generic shell ("BillingManager" for payment-reconciliation \
+logic, "AuthService" for credential-verification logic) — that \
+hides what the subcomp actually owns. If your subcomp's \
+invariants and operations name a specific domain concern, the \
+name must too; if they name a generic plumbing concern, the \
+name should reflect that plumbing role rather than dressing it \
+up.
 * ``<purpose>`` is the one-sentence reason this subcomponent \
 exists. The subcomparch pass (Phase 5) reads it first when \
 deciding the subcomponent's internal structure, and impl nodes \
@@ -454,13 +465,38 @@ cross-component leaks; no invention; no renaming.
 * Every ``<feat id=...>`` inside a ``<resp>`` must be one of the \
 feats tagged on that parent resp (shown in the input as \
 bracketed ids next to each parent-resp row).
-* **Multi-owner is allowed and expected** for cross-cutting \
-work. Two subcomps may claim the same parent resp (each owning \
-a different feat slice), and the same feat may appear under \
-multiple subcomps that genuinely cooperate on it. Don't force \
-artificial 1:1 assignments — if retry scheduling spans the \
-payment subcomp and the invoice subcomp, both should claim the \
-shared feats from those resps.
+* **Default is single-owner**: each parent resp gets one \
+subcomp that anchors it. Multi-owner is legal but reserved for \
+two specific patterns where the work genuinely splits along a \
+seam. **Outside these patterns, do not double-claim a resp** — \
+if you find yourself reaching for it, the decomposition axis is \
+probably wrong; refactor the subcomp boundaries instead.
+* **Recognized multi-owner pattern 1: UI flow split.** A \
+presentational component decomposing along interaction stages \
+(per-element form / validation / submission / error display) \
+will frequently have all stages claiming the same parent resp \
+because each stage handles a slice of the same user-visible \
+flow. The seam is "what stage of the interaction is this?", not \
+"what data does this touch?". When you use this pattern, every \
+subcomp claiming the shared resp must name its stage in the \
+free-text ``<responsibilities>`` (e.g., "owns the validation \
+stage of feat_payment01; co-owners: card_input handles capture, \
+submit_flow handles server submission").
+* **Recognized multi-owner pattern 2: read-path / write-path \
+split.** A domain component decomposing into a query-side \
+subcomp (read path) and a mutation-side subcomp (write path) \
+that legitimately co-own the same parent resp because the same \
+feat manifests on both sides of the data direction. The seam \
+is "which direction does the data flow?". When you use this \
+pattern, the read-side subcomp's ``<responsibilities>`` should \
+say "read path for resp_X; co-owns with X_writer" and the \
+write-side subcomp's prose should say the symmetric thing.
+* **No other multi-owner patterns are accepted by the prompt.** \
+If your decomposition needs three subs claiming the same resp, \
+or two subs claiming the same resp without one of the two \
+seams above, the validator may accept it but the reviewer will \
+flag it and impl will be confused about who's accountable. \
+Refactor instead.
 * **Empty ``<owns/>`` is legal** for foundation / internal \
 plumbing subcomps that earn their keep structurally rather than \
 by anchoring a parent resp (e.g., a settings loader, shared \
@@ -491,9 +527,12 @@ submission, error display, navigation). A "Card Payment Form" \
 component might decompose into ``card_input`` (form rendering), \
 ``input_validation`` (sync field-level validation), \
 ``submit_flow`` (server submission + retry), \
-``error_display`` (inline + summary error UX). Multi-owner is \
-common at this tier — the "card-payment" feat genuinely spans \
-all four subcomps.
+``error_display`` (inline + summary error UX). When the \
+interaction stages all act on the same user-visible feat, \
+that's the **UI flow split** multi-owner pattern — each stage \
+co-claims the shared resp and its prose names its stage. \
+Outside that pattern, prefer single-owner (one resp anchored \
+by the stage that genuinely owns it).
 * **Domain components (kind=domain)** own data and operations. \
 Subcomp boundaries naturally split along **data/operation \
 seams**: per persistence layer (writer / reader / cache), per \
@@ -501,9 +540,13 @@ operation kind (sync API / async worker), per concern (lock \
 manager / idempotency tracker / event emitter). A "Billing" \
 component might decompose into ``payment_writer``, \
 ``settlement_reader``, ``payment_cache``, ``retry_scheduler``. \
-Multi-owner is rarer here but still legitimate — \
-``retry_scheduler`` might claim feats from both the \
-payment-collection and invoice-delivery resps.
+Multi-owner is rare on domain components: the legitimate \
+case is **read-path / write-path split** — query subcomp + \
+mutation subcomp co-owning a resp because the same feat \
+manifests on both sides of the data direction. A cross-cutting \
+sub like ``retry_scheduler`` should anchor its own resps \
+(retry-policy, dead-letter routing) rather than re-claim feats \
+from payment-collection and invoice-delivery resps.
 
 If your decomposition's subcomp names sound like the parent \
 component's name with a noun suffix ("BillingService" → \
@@ -570,6 +613,39 @@ every other subcomponent's code reaches into it at runtime. \
 This is enforced by the validator and mirrors the analogous \
 rule for top-level components at the sysarch layer.
 
+
+## Self-checks before emitting
+
+Before you write the closing ``</comparch>`` tag, scan the \
+artifact as a whole and verify:
+
+* **Cross-section consistency.** The techspec, owned-invariants, \
+public surface, and failure surface must not contradict each \
+other. Examples of contradictions to catch and fix:
+  - Techspec claims "no partial writes" but the failure surface \
+    describes a partial-write scenario as a real failure mode.
+  - A subcomp's owned-invariant says "X is always Y" but the \
+    failure surface lists a path where X is observably not Y.
+  - A primary-operation lists an action that has no public-surface \
+    entry-point and no private-surface dispatch path.
+  - The techspec routes work to a sibling component whose \
+    pubapi (shown in the input dep summary) has no matching \
+    operation.
+* **Public / private surface placement.** Types referenced in \
+the public surface must be defined in the public surface (or \
+imported from a stable external dependency you actually depend \
+on). Types defined in the private surface must not appear in \
+any public-surface signature — that's an internal leak. \
+Conversely, anything that only the subcomps under this \
+component will ever read belongs in private, not public; a \
+helper that only one subcomp uses doesn't deserve either \
+surface entry.
+* **Single-owner default.** Re-read your ``<owns>`` blocks \
+across all subcomps. Any parent resp claimed by more than one \
+subcomp should fit either the UI flow split or the read/write \
+path split pattern; if it doesn't, refactor the subcomp \
+boundaries before emitting. Drive-by multi-owner is the \
+single most common defect in this tier.
 
 ## Meta-rules
 

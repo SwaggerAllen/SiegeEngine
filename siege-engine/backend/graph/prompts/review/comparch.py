@@ -12,16 +12,31 @@ _HANDLES_INTRO = """\
 Comparch is the last compression before impl. Subcomponent \
 names, purposes, owned-invariants, primary-operations, and the \
 pubapi / privapi split are the handles impl (and sibling \
-subcomponents) reason against. Vague handles here — "Manager", \
-"Service", generic purposes — let impl ship generic code that \
-misses the specifics. The pubapi/privapi split matters: a \
-bloated pubapi leaks internals across sibling boundaries.
+subcomponents) reason against. Vague handles let impl ship \
+generic code that misses the specifics. The pubapi/privapi \
+split matters: a bloated pubapi leaks internals across sibling \
+boundaries.
+
+Two cross-cutting consistency checks are load-bearing here. The \
+``<owns>`` block determines who is accountable for each parent \
+resp + feat slice; the default is **one resp → one subcomponent** \
+and multi-owner is reserved for two specific patterns (UI flow \
+splits, read/write path splits) called out in the generator \
+prompt. The other check is internal coherence: techspec claims, \
+owned-invariants, and failure-surface scenarios must not \
+contradict each other.
 """
 
 _HANDLES = """\
-- Are subcomponent names distinctive and domain-specific? Flag \
-anti-patterns (Manager / Helper / Utils / Service) and names \
-that restate the parent comp.
+- Are subcomponent names the right specificity for the \
+responsibility? A domain-specific responsibility wants a \
+domain-specific name; a generic infrastructure responsibility \
+(``Registry``, ``Gateway``, ``Dispatcher``, ``Coordinator``) is \
+correctly named structurally. The anti-pattern is wrapping \
+domain logic in a generic shell — ``BillingManager`` for \
+payment-reconciliation logic — not naming a registry \
+``Registry``. Flag a generic name only when the subcomp's \
+invariants and operations are actually domain-specific.
 - Is each subcomponent's ``<purpose>`` a single specific \
 sentence that names the subcomponent-distinctive *why*? Flag \
 category-speak ("handles X", "manages Y").
@@ -31,20 +46,40 @@ impact-category padding ("must be reliable") or invariants \
 that could belong to any subcomponent.
 - Does each ``<primary-operations>`` list 3-6 concrete verb \
 phrases? Flag category verbs ("handle", "manage", "coordinate") \
-and operations invented beyond the subresponsibilities.
-- Every pre-minted subresp must appear in exactly one \
-subcomponent's ``<responsibilities>``. Flag orphans or doubles.
+and operations invented beyond the subcomponent's claimed \
+ownership.
+- ``<owns>`` ownership is **one resp → one subcomponent by \
+default**. Multi-owner is legal only in two named patterns: \
+(a) UI flow split — the same resp owned by per-stage subcomps \
+(input / validate / submit / error) on a presentational \
+component; (b) read-path / write-path split — query subcomp + \
+mutation subcomp co-owning the resp's feats with a clear \
+data-direction seam. Outside those two patterns, treat any \
+shared ``<resp id=…>`` across subcomps as a finding **unless** \
+the subcomp's free-text ``<responsibilities>`` explicitly \
+names the cooperation rationale (e.g., "co-owns resp_X with \
+credential_writer; this sub handles the read path"). When a \
+named pattern *is* claimed, validate it: do the feat slices \
+divide coherently along that seam, or is one subcomp shadowing \
+the other?
+- Every parent resp in scope must be claimed by ≥1 subcomp; \
+every feat tagged on a parent resp must be claimed by ≥1 \
+subcomp claiming that resp. Flag coverage gaps.
 - ``<dependencies>`` and ``<sub-dependencies>`` reference only \
 valid sibling or parent-sibling comp IDs. Flag unknown IDs.
-- Policy ``<required>`` references must be in the \
-parent-resp + subresp set for this component.
+- Policy ``<required>`` references must be in the parent-resp \
+set for this component.
 - ``<technical-specification>`` is paragraph-shaped (blank \
 lines between concerns), specific about concurrency / \
 persistence / testing / build — not a one-liner.
 - ``<public-surface>`` names types, signatures, events — not \
-just method names.
-- ``<private-surface>`` is genuinely internal (helpers only \
-the subs of this comp call), not re-exported public API.
+just method names. Types referenced in the public surface must \
+be defined there or come from a stable external dependency. \
+``<private-surface>`` is genuinely internal (helpers only the \
+subs of this comp call), not re-exported public API. Flag \
+private types leaking through public-surface signatures and \
+public-surface entries that don't actually need to cross a \
+sibling boundary.
 - ``<failure-surface>`` names **concrete failure modes** \
 (auth bypass, invariant violation, data loss, silent \
 degradation, specific wrong-output shapes) rather than impact \
@@ -53,6 +88,13 @@ Flag vague surfaces — the component-local failure surface is \
 sharper than the sysarch one because comparch has the full \
 techspec + pubapi in hand; if it reads the same as a sysarch \
 sketch, it's under-specified.
+- Cross-section consistency. Scan the artifact as a whole and \
+flag direct contradictions: a techspec claim ("no partial \
+writes", "all events are atomic") versus a failure-surface \
+scenario describing exactly that failure mode; an \
+owned-invariant versus a failure-surface scenario asserting \
+the opposite; a primary-operation that has no public-surface \
+entry-point and no private-surface helper to dispatch through.
 """
 
 _ARCHITECTURE_INTRO = """\
