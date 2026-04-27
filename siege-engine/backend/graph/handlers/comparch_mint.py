@@ -68,13 +68,13 @@ from backend.graph.parsers.validators import (
 )
 from backend.graph.parsers.xml_sections import ParseError, extract_tag_tree
 from backend.graph.queries import (
-    list_subresponsibilities,
     list_top_level_components,
     top_level_resps_assigned_to,
 )
 from backend.graph.reducer import append_event
-from backend.models.node import Node
+from backend.models.node import Edge, Node
 from backend.pipeline import queue as pipeline_queue
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -150,25 +150,42 @@ async def mint_comparch(payload: dict) -> None:
             )
             return
 
-        # Rebuild the known-ID sets the validator needs. These are
-        # the same sets the generation handler used, but we read
-        # them fresh from the DB to catch any drift between
-        # generation and approval (e.g., if a sibling comp was
-        # renamed or a subresp was deleted post-generation).
+        # Rebuild the known-ID sets the validator needs. Read fresh
+        # from the DB to catch any drift between generation and
+        # approval (e.g., a sibling renamed, a parent resp's feat
+        # set changed).
         parent_resp_rows = top_level_resps_assigned_to(db, component_id)
-        subresp_rows = list_subresponsibilities(db, component_id)
-        known_subresp_ids: set[str] = {r.id for r in subresp_rows}
+        parent_resp_ids: set[str] = {r.id for r in parent_resp_rows}
+        # Build the parent-resp → feat-set map by walking incoming
+        # feat → resp decomposition edges. The validator needs to
+        # know which feats each parent resp legitimately tags so
+        # the per-resp feat-slice claims can be checked.
+        known_parent_resp_ids: dict[str, frozenset[str]] = {rid: frozenset() for rid in parent_resp_ids}
+        if parent_resp_ids:
+            feat_edge_rows = list(
+                db.execute(
+                    select(Edge.target_id, Edge.source_id)
+                    .where(
+                        Edge.edge_type == "decomposition",
+                        Edge.target_id.in_(parent_resp_ids),
+                    )
+                )
+            )
+            grouped: dict[str, set[str]] = {rid: set() for rid in parent_resp_ids}
+            for resp_id, feat_id in feat_edge_rows:
+                if feat_id and feat_id.startswith("feat_"):
+                    grouped[resp_id].add(feat_id)
+            known_parent_resp_ids = {rid: frozenset(feats) for rid, feats in grouped.items()}
+
         siblings = [c for c in list_top_level_components(db, project_id) if c.id != component_id]
         known_sibling_comp_ids: set[str] = {c.id for c in siblings}
-        known_resp_ids_for_policies: set[str] = {r.id for r in parent_resp_rows} | known_subresp_ids
 
         try:
             tree = extract_tag_tree(content, "comparch")
             doc = validate_arch_doc(
                 tree,
-                known_subresp_ids=known_subresp_ids,
+                known_parent_resp_ids=known_parent_resp_ids,
                 known_sibling_comp_ids=known_sibling_comp_ids,
-                known_resp_ids_for_policies=known_resp_ids_for_policies,
                 target_is_foundation=bool(comp_node.is_foundation),
             )
         except (ParseError, ValidationError) as exc:
@@ -246,19 +263,38 @@ async def mint_comparch(payload: dict) -> None:
                 format_subcomponent_pubapi(subcomp),
             )
 
-            # Decomposition edges: subresp → this subcomponent.
-            for subresp_id in subcomp.resp_refs:
-                edge_id = mint(db, Kind.EDGE)
+            # Decomposition edges: parent resp → this subcomp, plus
+            # one feat → this subcomp per claimed feat slice. The
+            # reducer dedups on
+            # ``(project_id, edge_type, source_id, target_id)`` so a
+            # re-mint is safe. Multi-owner cases produce multiple
+            # edges from the same source to different subcomp
+            # targets — the staleness walker handles that fan-out
+            # naturally.
+            for owned in subcomp.owns:
+                resp_edge_id = mint(db, Kind.EDGE)
                 append_event(
                     db,
                     project_id,
                     ev.EdgeCreated(
-                        edge_id=edge_id,
+                        edge_id=resp_edge_id,
                         edge_type="decomposition",
-                        source_id=subresp_id,
+                        source_id=owned.resp_id,
                         target_id=sub_id,
                     ),
                 )
+                for feat_id in owned.feat_ids:
+                    feat_edge_id = mint(db, Kind.EDGE)
+                    append_event(
+                        db,
+                        project_id,
+                        ev.EdgeCreated(
+                            edge_id=feat_edge_id,
+                            edge_type="decomposition",
+                            source_id=feat_id,
+                            target_id=sub_id,
+                        ),
+                    )
 
         # ── Phase 3: component-local policy minting ─────────────
         minted_policy_ids: list[str] = []

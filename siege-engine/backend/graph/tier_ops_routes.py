@@ -9,7 +9,7 @@ one place.
 
 The seven tiers exposed are the BootstrapTierConfig-driven
 generation tiers: ``expansion``, ``requirements``, ``sysarch``,
-``subreqs``, ``comparch``, ``subcomparch``, ``impl``. Fanin uses
+``comparch``, ``subcomparch``, ``impl``. Fanin uses
 a bespoke reset path (no draft cycle) and reference has no reset
 at all — both are deliberately out of scope here; they can be
 added later by wrapping their bespoke handlers if a use case
@@ -50,7 +50,6 @@ TierName = Literal[
     "expansion",
     "requirements",
     "sysarch",
-    "subreqs",
     "comparch",
     "subcomparch",
     "impl",
@@ -73,7 +72,7 @@ def _singleton_scope(_db: Session, _project_id: str) -> list[tuple[str, ...]]:
 
 
 def _top_level_comp_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
-    """Per-comp tiers (subreqs, comparch) iterate top-level comps."""
+    """Per-comp tiers (comparch) iterate top-level comps."""
     rows = list(
         db.execute(
             select(Node.id)
@@ -160,7 +159,6 @@ def _registry() -> dict[str, tuple[BootstrapTierConfig, _ScopeIter]]:
         "expansion": (_routes.EXPANSION_CONFIG, _singleton_scope),
         "requirements": (_routes.REQUIREMENTS_CONFIG, _singleton_scope),
         "sysarch": (_routes.SYSARCH_CONFIG, _singleton_scope),
-        "subreqs": (_routes.SUBREQS_CONFIG, _top_level_comp_scope),
         "comparch": (_routes.COMPARCH_CONFIG, _top_level_comp_scope),
         "subcomparch": (_routes.SUBCOMPARCH_CONFIG, _subcomp_scope),
         "impl": (_routes.IMPL_CONFIG, _impl_scope),
@@ -270,12 +268,12 @@ def reset_tier(
 
     # Each per-scope ``bootstrap_reset`` cancels every job of every
     # ``downstream_job_types`` (project-wide) and then enqueues this
-    # tier's generate. For tiers like subreqs whose downstream tuple
-    # includes ``v2.generate_subrequirements`` itself, the next
-    # iteration's cancel-pass wipes the previous scope's just-
-    # enqueued generate. After the loop only the final scope has a
-    # generate queued. Fix: cancel this tier's generate once at the
-    # end, then re-enqueue per succeeded scope.
+    # tier's generate. Some tiers' downstream tuples include their
+    # own generate job type, so the next iteration's cancel-pass
+    # wipes the previous scope's just-enqueued generate. After the
+    # loop only the final scope has a generate queued. Fix: cancel
+    # this tier's generate once at the end, then re-enqueue per
+    # succeeded scope.
     if succeeded_scopes and config.generate_job_type:
         pipeline_queue.cancel_jobs_by_type(
             db,

@@ -474,35 +474,6 @@ def comparch_dep_comps_settled(
     return (True, "")
 
 
-def parent_subreqs_approved(
-    db: "Session",
-    project_id: str,
-    scope_ids: tuple[str, ...],
-) -> tuple[bool, str]:
-    """Comparch precondition: this component's subreqs has approved content.
-
-    ``scope_ids = (component_id,)``. Replaces the inline check in
-    ``comparch_generation.py`` (today raises
-    ``ComparchPreconditionError``). The subreqs node has non-empty
-    content only after DraftApproved has landed, so "content is
-    non-empty" == "approved."
-    """
-    from backend.graph.subrequirements import get_subreqs_node
-
-    if not scope_ids:
-        return (False, "comparch readiness check missing component_id")
-    component_id = scope_ids[0]
-    subreqs_node = get_subreqs_node(db, project_id, component_id)
-    if subreqs_node is None or not (subreqs_node.content or "").strip():
-        return (
-            False,
-            f"Comparch generation for {component_id!r} blocked — its "
-            "owning subreqs_* has not been approved yet. Approve the "
-            "component's subrequirements first.",
-        )
-    return (True, "")
-
-
 def subcomp_node_exists(
     db: "Session",
     project_id: str,

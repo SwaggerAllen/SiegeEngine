@@ -26,7 +26,6 @@ from backend.graph.queries import (
     pending_draft_kinds_by_comp,
 )
 from backend.graph.reducer import append_event
-from backend.graph.subrequirements import bootstrap_subreqs_node
 from backend.models import Project
 
 
@@ -206,7 +205,6 @@ def seeded(db):
         ),
     )
 
-    bootstrap_subreqs_node(db, project_id, comp_billing)
     db.commit()
     return {
         "project_id": project_id,
@@ -306,32 +304,6 @@ def _seed_pending_node_draft(session: Session, project_id: str, target_id: str) 
     )
 
 
-def _seed_subreqs_node(session: Session, project_id: str, owning_comp_id: str) -> str:
-    """Seed a subreqs_* node parented to a top-level comp.
-
-    Mirrors ``bootstrap_subreqs_node`` but without the tier
-    bootstrap side effects — this helper's only job is to
-    produce a subreqs node whose ``parent_id`` is the owning
-    comp, so the pending-draft helper can attribute its draft
-    back to that comp.
-    """
-    subreqs_id = mint(session, Kind.SUBREQS)
-    append_event(
-        session,
-        project_id,
-        ev.NodeCreated(
-            node_id=subreqs_id,
-            tier="subreqs",
-            kind="domain",
-            parent_id=owning_comp_id,
-            name="subreqs for comp",
-            display_order=0,
-            content="",
-        ),
-    )
-    return subreqs_id
-
-
 class TestPendingDraftKindsByComp:
     def test_empty_when_no_pending_drafts(self, db, seeded):
         assert pending_draft_kinds_by_comp(db, seeded["project_id"]) == {}
@@ -341,16 +313,6 @@ class TestPendingDraftKindsByComp:
         db.commit()
         result = pending_draft_kinds_by_comp(db, seeded["project_id"])
         assert result == {seeded["comp_billing"]: "comparch"}
-
-    def test_subreqs_kind_reported_under_owning_comp(self, db, seeded):
-        subreqs_id = _seed_subreqs_node(db, seeded["project_id"], seeded["comp_billing"])
-        _seed_pending_node_draft(db, seeded["project_id"], subreqs_id)
-        db.commit()
-        result = pending_draft_kinds_by_comp(db, seeded["project_id"])
-        # Reported under comp_billing (the subreqs node's parent),
-        # not under subreqs_id — the dashboard surfaces waiting
-        # state per component, not per bootstrap node.
-        assert result == {seeded["comp_billing"]: "subreqs"}
 
     def test_subcomparch_kind_for_subcomponent_draft(self, db, seeded):
         # Mint a subcomponent under comp_billing and seed a draft on it.
@@ -374,13 +336,12 @@ class TestPendingDraftKindsByComp:
         assert result == {sub_id: "subcomparch"}
 
     def test_multiple_comps_each_waiting_on_their_own_kind(self, db, seeded):
-        subreqs_id = _seed_subreqs_node(db, seeded["project_id"], seeded["comp_auth"])
-        _seed_pending_node_draft(db, seeded["project_id"], subreqs_id)
+        _seed_pending_node_draft(db, seeded["project_id"], seeded["comp_auth"])
         _seed_pending_node_draft(db, seeded["project_id"], seeded["comp_billing"])
         db.commit()
         result = pending_draft_kinds_by_comp(db, seeded["project_id"])
         assert result == {
-            seeded["comp_auth"]: "subreqs",
+            seeded["comp_auth"]: "comparch",
             seeded["comp_billing"]: "comparch",
         }
 

@@ -266,16 +266,10 @@ def _unblock_presentationals_on_fanin_commit(
     When a domain component's fan-in content lands, walk every
     presentational comp that declares the owning domain comp as a
     ``domain_parent`` and check readiness. A presentational is
-    "ready" when (a) its subreqs node carries approved content,
-    and (b) every one of its domain parents (including the one
-    that just landed) has a populated fan-in. The ready set gets
-    ``v2.generate_comparch`` enqueued.
+    "ready" when every one of its domain parents (including the
+    one that just landed) has a populated fan-in. The ready set
+    gets ``v2.generate_comparch`` enqueued.
 
-    This replaces the Phase 6 comparch_mint-time unblock walk.
-    Moving the trigger from "domain parent's comparch lands" to
-    "domain parent's fan-in lands" deepens the sequencing —
-    presentational comparch now waits on the domain's
-    bottom-up synthesis, not just its top-down arch intent.
     Errors are logged and swallowed: a failure to unblock here
     must not roll back the fan-in content commit.
     """
@@ -283,7 +277,6 @@ def _unblock_presentationals_on_fanin_commit(
         all_domain_parents_have_populated_fanin,
         presentational_children_of,
     )
-    from backend.graph.subrequirements import get_subreqs_node
     from backend.models.node import Node
 
     try:
@@ -296,12 +289,6 @@ def _unblock_presentationals_on_fanin_commit(
 
         presentational_children = presentational_children_of(db, owner_comp_id)
         for child in presentational_children:
-            child_subreqs = get_subreqs_node(db, project_id, child.id)
-            if child_subreqs is None or not (child_subreqs.content or "").strip():
-                # Presentational's own subreqs hasn't been approved
-                # yet; its subreqs_mint will run later and will see
-                # this fan-in populated at that point.
-                continue
             if not all_domain_parents_have_populated_fanin(db, child.id):
                 continue
             pipeline_queue.enqueue(

@@ -3,17 +3,22 @@
 Registered on the pipeline job queue as ``v2.generate_comparch``.
 Payload: ``{"project_id": str, "component_id": str, "feedback": str | None}``.
 
-Phase C migration: handler delegates to
+Handler delegates to
 :func:`backend.graph.handlers._tier_generation.run_tier_generation`.
-The "subreqs approved" precondition lifts to the
-:func:`parent_subreqs_approved` readiness predicate. Component
-existence / tier / top-level checks stay in :func:`gather_comparch_state`
-and raise :class:`ComparchHandlerError` directly.
+Readiness gates on ``top_level_comp_exists`` and
+``comparch_dep_comps_settled`` (Phase F dep-chain dispatch).
+
+Comparch is the single decomposition tier — there is no longer a
+subreqs intermediary. The arch doc declares per-subcomp ``<owns>``
+claims directly against the component's parent responsibilities;
+``regen_context.format_regen_context`` builds the parent-resp +
+feat-tag context the LLM needs.
 
 The arch doc is stored as content on the comp_* node itself —
-no new node kind. On approval the mint handler (stage 4)
-projects the content into its five fragments, subcomponent
-mints, component-local policy mints, and edge emissions.
+no new node kind. On approval the mint handler projects the
+content into its five fragments, subcomponent mints,
+component-local policy mints, and decomposition edges
+(parent_resp → sub, feat → sub) per subcomp's ``<owns>`` block.
 
 See ``docs/architecture/v2-roadmap.md`` Phase 4.
 """
@@ -31,7 +36,6 @@ from backend.database import SessionLocal  # noqa: F401  (chain test patches thi
 from backend.graph.handlers._readiness import (
     all_of,
     comparch_dep_comps_settled,
-    parent_subreqs_approved,
     top_level_comp_exists,
     wake_deferred_dependents,
 )
@@ -80,9 +84,8 @@ class ComparchState:
     system_prompt: str
     # Per-tier extras:
     context_kwargs: dict
-    known_subresp_ids: set[str]
+    known_parent_resp_ids: dict[str, frozenset[str]]
     known_sibling_comp_ids: set[str]
-    known_resp_ids_for_policies: set[str]
     target_is_foundation: bool
 
 
@@ -122,11 +125,33 @@ def gather_comparch_state(
     regen_ctx = build_regen_context(db, component_id)
     context_kwargs = format_regen_context(regen_ctx)
 
-    known_subresp_ids: set[str] = {r.id for r in regen_ctx.subresps}
+    # Build the parent-resp → feat-set map by walking incoming
+    # feat → resp decomposition edges. The validator needs to know
+    # which feats each parent resp legitimately tags so per-resp
+    # feat-slice claims in <owns> can be checked.
+    parent_resp_ids_set: set[str] = {r.id for r in regen_ctx.parent_resps}
+    known_parent_resp_ids: dict[str, frozenset[str]] = {
+        rid: frozenset() for rid in parent_resp_ids_set
+    }
+    if parent_resp_ids_set:
+        from backend.models.node import Edge as _Edge
+
+        feat_edge_rows = list(
+            db.execute(
+                select(_Edge.target_id, _Edge.source_id)
+                .where(
+                    _Edge.edge_type == "decomposition",
+                    _Edge.target_id.in_(parent_resp_ids_set),
+                )
+            )
+        )
+        grouped: dict[str, set[str]] = {rid: set() for rid in parent_resp_ids_set}
+        for resp_id, feat_id in feat_edge_rows:
+            if feat_id and feat_id.startswith("feat_"):
+                grouped[resp_id].add(feat_id)
+        known_parent_resp_ids = {rid: frozenset(feats) for rid, feats in grouped.items()}
+
     known_sibling_comp_ids: set[str] = set(regen_ctx.sibling_comp_ids)
-    known_resp_ids_for_policies: set[str] = {
-        r.id for r in regen_ctx.parent_resps
-    } | known_subresp_ids
     target_is_foundation: bool = bool(comp_node.is_foundation)
 
     project_row = db.get(Project, project_id)
@@ -141,9 +166,8 @@ def gather_comparch_state(
         cli_config=settings.to_cli_config(),
         system_prompt=render_system_prompt(),
         context_kwargs=context_kwargs,
-        known_subresp_ids=known_subresp_ids,
+        known_parent_resp_ids=known_parent_resp_ids,
         known_sibling_comp_ids=known_sibling_comp_ids,
-        known_resp_ids_for_policies=known_resp_ids_for_policies,
         target_is_foundation=target_is_foundation,
     )
 
@@ -170,9 +194,8 @@ def _render_comparch_prompt(
 def _validate_comparch(tree: TagNode, _raw: str, state: ComparchState) -> None:
     validate_arch_doc(
         tree,
-        known_subresp_ids=state.known_subresp_ids,
+        known_parent_resp_ids=state.known_parent_resp_ids,
         known_sibling_comp_ids=state.known_sibling_comp_ids,
-        known_resp_ids_for_policies=state.known_resp_ids_for_policies,
         target_is_foundation=state.target_is_foundation,
     )
 
@@ -191,7 +214,6 @@ COMPARCH_CONFIG: TierGenerationConfig = TierGenerationConfig(
     max_auto_revisions=5,
     readiness_check=all_of(
         top_level_comp_exists,
-        parent_subreqs_approved,
         comparch_dep_comps_settled,
     ),
     post_persist_hooks=(wake_deferred_dependents,),
@@ -201,20 +223,15 @@ COMPARCH_CONFIG: TierGenerationConfig = TierGenerationConfig(
 async def generate_comparch(payload: dict) -> None:
     """Job handler for ``v2.generate_comparch``.
 
-    Phase C migration: delegates to :func:`run_tier_generation`. The
-    thin wrapper converts driver-level errors into the tier-specific
-    typed exceptions:
+    Delegates to :func:`run_tier_generation`. The thin wrapper
+    converts driver-level errors into the tier-specific typed
+    exceptions:
 
     - ``ValueError`` (payload-shape) → :class:`ComparchHandlerError`.
-    - ``TierPreconditionError`` from ``parent_subreqs_approved`` —
-      i.e. the message contains "has not been approved" or "blocked"
-      — maps to :class:`ComparchPreconditionError`.
-    - All other ``TierPreconditionError`` (component missing,
-      wrong tier, subcomponent) maps to :class:`ComparchHandlerError`.
-
-    Both subclasses preserve the test contract that asserted on
-    ``ComparchHandlerError`` for the structural checks and
-    ``ComparchPreconditionError`` for the upstream-readiness check.
+    - ``TierPreconditionError`` (component missing, wrong tier,
+      subcomponent, dep-chain not settled) maps to
+      :class:`ComparchHandlerError` or
+      :class:`ComparchPreconditionError` depending on the message.
     """
     try:
         await run_tier_generation(payload, COMPARCH_CONFIG)
