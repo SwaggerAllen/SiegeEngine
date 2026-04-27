@@ -1,8 +1,8 @@
 """Tests for backend.graph.handlers.comparch_generation.
 
-Mirrors test_sysarch_handler.py / test_subreqs_handler.py shape.
-The CLI is mocked; the real parse-validate retry loop runs
-through the arch doc validator from stage 1.
+Mirrors test_sysarch_handler.py shape. The CLI is mocked; the
+real parse-validate retry loop runs through the arch doc
+validator from stage 1.
 """
 
 from __future__ import annotations
@@ -21,13 +21,12 @@ from backend.graph.fragments import FragmentKind, fragment_id
 from backend.graph.handlers.comparch_generation import (
     ComparchHandlerError,
     ComparchParseRetryExhausted,
-    ComparchPreconditionError,
     generate_comparch,
 )
 from backend.graph.ids import Kind, mint
 from backend.graph.reducer import append_event
 from backend.models import Project
-from backend.models.node import Draft, Node
+from backend.models.node import Draft
 from backend.models.telemetry import GenerationTelemetry
 
 
@@ -158,26 +157,6 @@ def _seed_comp(
     return cid
 
 
-def _seed_subresp(
-    session: Session, project_id: str, parent_comp: str, name: str, order: int
-) -> str:
-    sid = mint(session, Kind.RESP)
-    append_event(
-        session,
-        project_id,
-        ev.NodeCreated(
-            node_id=sid,
-            tier="resp",
-            kind="domain",
-            parent_id=parent_comp,
-            name=name,
-            display_order=order,
-            content=f"{name} intent.",
-        ),
-    )
-    return sid
-
-
 def _seed_dep(session: Session, project_id: str, src: str, dst: str) -> None:
     edge_id = mint(session, Kind.EDGE)
     append_event(
@@ -192,25 +171,28 @@ def _seed_dep(session: Session, project_id: str, src: str, dst: str) -> None:
     )
 
 
-def _approve_subreqs(session: Session, project_id: str, comp_id: str) -> None:
-    """Simulate subreqs approval by writing content to the subreqs node."""
-    node = session.execute(
-        select(Node).where(
-            Node.project_id == project_id,
-            Node.tier == "subreqs",
-            Node.parent_id == comp_id,
-        )
-    ).scalar_one()
-    node.content = "<subrequirements>approved</subrequirements>"
-    session.commit()
+def _link_feat_to_resp(session: Session, project_id: str, feat_id: str, resp_id: str) -> None:
+    """Wire a ``feat → resp`` decomposition edge."""
+    edge_id = mint(session, Kind.EDGE)
+    append_event(
+        session,
+        project_id,
+        ev.EdgeCreated(
+            edge_id=edge_id,
+            edge_type="decomposition",
+            source_id=feat_id,
+            target_id=resp_id,
+        ),
+    )
 
 
 @pytest.fixture()
 def seeded_project(shared_session_factory):
-    """Project with features + top-level resps + three components +
-    subreqs approved on billing + two subresps under billing.
+    """Project with features + top-level resps + three components.
 
-    Return dict with project_id, comp IDs, subresp IDs.
+    Billing carries one parent resp (``resp_bill``) tagged with one
+    feat (``feat_pay``); the test comparch claims that resp+feat
+    in TokenStore and leaves the Foundation subcomp's <owns/> empty.
     """
     factory = shared_session_factory
     s: Session = factory()
@@ -225,19 +207,11 @@ def seeded_project(shared_session_factory):
         resp_auth = _seed_top_resp(s, project_id, "Authentication", 1)
         resp_found = _seed_top_resp(s, project_id, "Foundation", 2)
 
-        # feat → resp
+        # feat → resp decomposition: feat_pay tags resp_bill (so the
+        # billing comp's <owns> can claim that resp+feat pair) and
+        # also resp_found (so the foundation comp has feat coverage).
         for rid in (resp_bill, resp_found):
-            edge_id = mint(s, Kind.EDGE)
-            append_event(
-                s,
-                project_id,
-                ev.EdgeCreated(
-                    edge_id=edge_id,
-                    edge_type="decomposition",
-                    source_id=feat_pay,
-                    target_id=rid,
-                ),
-            )
+            _link_feat_to_resp(s, project_id, feat_pay, rid)
 
         comp_billing = _seed_comp(
             s,
@@ -271,19 +245,13 @@ def seeded_project(shared_session_factory):
         _seed_dep(s, project_id, comp_billing, comp_foundation)
         _seed_dep(s, project_id, comp_auth, comp_foundation)
 
-        sub_token = _seed_subresp(s, project_id, comp_billing, "Tokenization", 0)
-        sub_retry = _seed_subresp(s, project_id, comp_billing, "Retry", 1)
-
         s.commit()
-        # Simulate subreqs approval on billing so the precondition passes
-        _approve_subreqs(s, project_id, comp_billing)
         yield {
             "project_id": project_id,
             "comp_billing": comp_billing,
             "comp_auth": comp_auth,
             "comp_foundation": comp_foundation,
-            "sub_token": sub_token,
-            "sub_retry": sub_retry,
+            "feat_pay": feat_pay,
             "resp_bill": resp_bill,
         }
     finally:
@@ -293,12 +261,24 @@ def seeded_project(shared_session_factory):
 def _sub_xml(
     alias: str,
     name: str,
-    resp_ids: tuple[str, ...],
+    owns: list[tuple[str, list[str]]],
     *,
     foundation: bool = False,
 ) -> str:
-    """Render a ``<subcomponent>`` in the micro-field grammar."""
-    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    """Render a ``<subcomponent>`` in the micro-field grammar.
+
+    ``owns`` is a list of ``(resp_id, [feat_ids])`` pairs rendered
+    as ``<owns><resp id="..."><feat id="..."/></resp></owns>``. An
+    empty list yields the legal self-closing ``<owns/>`` form.
+    """
+    if owns:
+        resp_blocks = []
+        for rid, feat_ids in owns:
+            feats_xml = "".join(f'<feat id="{fid}"/>' for fid in feat_ids)
+            resp_blocks.append(f'<resp id="{rid}">{feats_xml}</resp>')
+        owns_xml = f"<owns>{''.join(resp_blocks)}</owns>"
+    else:
+        owns_xml = "<owns/>"
     foundation_marker = "<foundation/>" if foundation else ""
     return (
         f'<subcomponent alias="{alias}">'
@@ -313,14 +293,20 @@ def _sub_xml(
         f"<operation>mutate {name}</operation>"
         f"<operation>emit {name}</operation>"
         f"</primary-operations>"
-        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"<responsibilities>{name} prose describing what this subcomp does.</responsibilities>"
+        f"{owns_xml}"
         f"{foundation_marker}"
         "</subcomponent>"
     )
 
 
-def _valid_comparch_simple(sub_ids: list[str], sibling_comp_ids: list[str]) -> str:
-    """A simpler valid comparch with 2 subs (one foundation) covering 2 subresps."""
+def _valid_comparch_simple(resp_id: str, feat_ids: list[str], sibling_comp_ids: list[str]) -> str:
+    """Valid comparch with 2 subs (one foundation).
+
+    TokenStore claims ``resp_id`` with the full ``feat_ids`` slice;
+    Foundation's ``<owns/>`` is empty (legal). Resp + feat coverage
+    are both satisfied by TokenStore alone.
+    """
     sibling_dep = f'<dep to="{sibling_comp_ids[0]}"/>' if sibling_comp_ids else ""
     return (
         "<comparch>"
@@ -331,8 +317,8 @@ def _valid_comparch_simple(sub_ids: list[str], sibling_comp_ids: list[str]) -> s
         "<policies></policies>"
         f"<dependencies>{sibling_dep}</dependencies>"
         "<subcomponents>"
-        + _sub_xml("token_store", "TokenStore", (sub_ids[0],))
-        + _sub_xml("foundation", "Foundation", (sub_ids[1],), foundation=True)
+        + _sub_xml("token_store", "TokenStore", [(resp_id, feat_ids)])
+        + _sub_xml("foundation", "Foundation", [], foundation=True)
         + "</subcomponents>"
         "<sub-dependencies>"
         '<dep from="token_store" to="foundation"/>'
@@ -383,7 +369,8 @@ def _patch_cli_sequence(monkeypatch, values: list[str]):
 class TestHappyPath:
     def test_generates_pending_draft(self, shared_session_factory, seeded_project, monkeypatch):
         draft_xml = _valid_comparch_simple(
-            [seeded_project["sub_token"], seeded_project["sub_retry"]],
+            seeded_project["resp_bill"],
+            [seeded_project["feat_pay"]],
             [seeded_project["comp_auth"]],
         )
         calls = _patch_cli(monkeypatch, draft_xml)
@@ -398,9 +385,9 @@ class TestHappyPath:
         )
         assert len(calls) == 1
         prompt = calls[0]["prompt"]
-        # Context includes component name + subresp IDs + sibling IDs
+        # Context includes component name + parent resp ids + sibling IDs
         assert "BillingService" in prompt
-        assert seeded_project["sub_token"] in prompt
+        assert seeded_project["resp_bill"] in prompt
         assert seeded_project["comp_auth"] in prompt
 
         session = shared_session_factory()
@@ -421,7 +408,8 @@ class TestHappyPath:
         self, shared_session_factory, seeded_project, monkeypatch
     ):
         first = _valid_comparch_simple(
-            [seeded_project["sub_token"], seeded_project["sub_retry"]],
+            seeded_project["resp_bill"],
+            [seeded_project["feat_pay"]],
             [seeded_project["comp_auth"]],
         )
         _patch_cli(monkeypatch, first)
@@ -461,35 +449,6 @@ class TestHappyPath:
             assert statuses.count("discarded") == 1
         finally:
             session.close()
-
-
-class TestPrecondition:
-    def test_subreqs_not_approved_raises(self, shared_session_factory, seeded_project, monkeypatch):
-        # Clear the subreqs approval
-        s = shared_session_factory()
-        try:
-            node = s.execute(
-                select(Node).where(
-                    Node.project_id == seeded_project["project_id"],
-                    Node.tier == "subreqs",
-                    Node.parent_id == seeded_project["comp_billing"],
-                )
-            ).scalar_one()
-            node.content = ""
-            s.commit()
-        finally:
-            s.close()
-
-        with pytest.raises(ComparchPreconditionError, match="has not been approved"):
-            asyncio.run(
-                generate_comparch(
-                    {
-                        "project_id": seeded_project["project_id"],
-                        "component_id": seeded_project["comp_billing"],
-                        "feedback": None,
-                    }
-                )
-            )
 
 
 class TestFailureModes:
@@ -554,7 +513,8 @@ class TestParseValidateRetry:
         self, shared_session_factory, seeded_project, monkeypatch
     ):
         good = _valid_comparch_simple(
-            [seeded_project["sub_token"], seeded_project["sub_retry"]],
+            seeded_project["resp_bill"],
+            [seeded_project["feat_pay"]],
             [seeded_project["comp_auth"]],
         )
         bad = good.replace("<foundation/>", "")
@@ -571,12 +531,13 @@ class TestParseValidateRetry:
         assert len(calls) == 2
         assert "no foundation subcomponent" in calls[1]["prompt"]
 
-    def test_retry_on_unknown_subresp(self, shared_session_factory, seeded_project, monkeypatch):
+    def test_retry_on_unknown_owns_resp(self, shared_session_factory, seeded_project, monkeypatch):
         good = _valid_comparch_simple(
-            [seeded_project["sub_token"], seeded_project["sub_retry"]],
+            seeded_project["resp_bill"],
+            [seeded_project["feat_pay"]],
             [seeded_project["comp_auth"]],
         )
-        bad = good.replace(seeded_project["sub_token"], "resp_mystery01")
+        bad = good.replace(seeded_project["resp_bill"], "resp_mystery01")
         calls = _patch_cli_sequence(monkeypatch, [bad, good])
         asyncio.run(
             generate_comparch(
@@ -588,7 +549,7 @@ class TestParseValidateRetry:
             )
         )
         assert len(calls) == 2
-        assert "unknown subresponsibility" in calls[1]["prompt"]
+        assert "not one of this component's parent responsibilities" in calls[1]["prompt"]
 
     def test_retry_exhaustion_raises(self, shared_session_factory, seeded_project, monkeypatch):
         from backend.graph.handlers.feature_expansion import MAX_PARSE_RETRIES
@@ -612,7 +573,8 @@ class TestTelemetry:
         _patch_cli(
             monkeypatch,
             _valid_comparch_simple(
-                [seeded_project["sub_token"], seeded_project["sub_retry"]],
+                seeded_project["resp_bill"],
+                [seeded_project["feat_pay"]],
                 [seeded_project["comp_auth"]],
             ),
         )

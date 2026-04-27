@@ -172,26 +172,6 @@ def _seed_dep_edge(session: Session, project_id: str, from_comp: str, to_comp: s
     )
 
 
-def _seed_subresp(
-    session: Session, project_id: str, parent_comp: str, name: str, order: int
-) -> str:
-    sid = mint(session, Kind.RESP)
-    append_event(
-        session,
-        project_id,
-        ev.NodeCreated(
-            node_id=sid,
-            tier="resp",
-            kind="domain",
-            parent_id=parent_comp,
-            name=name,
-            display_order=order,
-            content=f"{name} intent.",
-        ),
-    )
-    return sid
-
-
 def _seed_subcomponent(
     session: Session,
     project_id: str,
@@ -238,10 +218,13 @@ def _seed_subcomponent(
     return sub_id
 
 
-def _seed_subresp_to_comp_edge(
-    session: Session, project_id: str, resp_id: str, comp_id: str
-) -> None:
-    """Emit a decomposition edge from a (sub)resp to a (sub)component."""
+def _seed_decomp_edge(session: Session, project_id: str, source_id: str, target_id: str) -> None:
+    """Emit a decomposition edge from any source to any target.
+
+    Used to wire (parent resp → sub) and (feat → sub) edges for the
+    multi-owner ``<owns>`` ownership picture, in addition to the
+    feat→resp and resp→comp edges seeded elsewhere.
+    """
     edge_id = mint(session, Kind.EDGE)
     append_event(
         session,
@@ -249,8 +232,8 @@ def _seed_subresp_to_comp_edge(
         ev.EdgeCreated(
             edge_id=edge_id,
             edge_type="decomposition",
-            source_id=resp_id,
-            target_id=comp_id,
+            source_id=source_id,
+            target_id=target_id,
         ),
     )
 
@@ -368,10 +351,6 @@ def seeded(db):
     _seed_dep_edge(db, project_id, comp_billing, comp_foundation)
     _seed_dep_edge(db, project_id, comp_auth, comp_foundation)
 
-    # Subresps under billing (simulating post-subreqs-approval state)
-    sub_token = _seed_subresp(db, project_id, comp_billing, "Tokenization", 0)
-    sub_retry = _seed_subresp(db, project_id, comp_billing, "Retry", 1)
-
     # Top-level policies
     policy_tele = _seed_top_level_policy(db, project_id, "Telemetry", 0)
     policy_audit = _seed_top_level_policy(db, project_id, "Audit", 1)
@@ -390,8 +369,6 @@ def seeded(db):
         "comp_billing": comp_billing,
         "comp_auth": comp_auth,
         "comp_foundation": comp_foundation,
-        "sub_token": sub_token,
-        "sub_retry": sub_retry,
         "policy_tele": policy_tele,
         "policy_audit": policy_audit,
     }
@@ -410,8 +387,9 @@ class TestBuildRegenContext:
         # Parent resps = just billing
         assert [r.id for r in ctx.parent_resps] == [seeded["resp_bill"]]
 
-        # Subresps under billing, in display order
-        assert [s.id for s in ctx.subresps] == [seeded["sub_token"], seeded["sub_retry"]]
+        # Subresps are gone post-Phase-A; the field stays on the
+        # dataclass but is always empty for new projects.
+        assert ctx.subresps == ()
 
         # Sibling top-level comps: auth + foundation (not billing itself)
         assert set(ctx.sibling_comp_ids) == {
@@ -492,15 +470,6 @@ class TestBuildRegenContext:
         feat_ids = [f.id for f in ctx.related_features]
         assert len(feat_ids) == len(set(feat_ids)), "related_features should be deduplicated by id"
 
-    def test_component_with_no_subresps(self, db, seeded):
-        """A component without subreqs approval has empty subresps,
-        but the rest of the context is still populated."""
-        ctx = build_regen_context(db, seeded["comp_auth"])
-        assert ctx.subresps == ()
-        assert ctx.component.name == "AuthService"
-        # Auth has one parent resp
-        assert len(ctx.parent_resps) == 1
-
     def test_unknown_component_raises(self, db, seeded):
         with pytest.raises(ValueError, match="No node with id"):
             build_regen_context(db, "comp_missingX")
@@ -517,7 +486,6 @@ class TestFormatRegenContext:
         expected_keys = {
             "component_summary",
             "parent_resps_summary",
-            "subresps_summary",
             "sibling_comps_summary",
             "dep_pubapi_summary",
             "top_level_policy_candidates_summary",
@@ -539,23 +507,16 @@ class TestFormatRegenContext:
         assert "Handles payments" in summary
         assert "get_billing_state" in summary
 
-    def test_parent_resps_bullets_include_ids_and_content(self, db, seeded):
+    def test_parent_resps_bullets_include_ids_and_feats(self, db, seeded):
+        """parent_resps_summary renders each resp as a bullet with its
+        id, name, and the bracketed feat-id slice tagged on that resp.
+        feat_pay tags resp_bill in the seed, so the billing context's
+        resp bullet must surface it."""
         ctx = build_regen_context(db, seeded["comp_billing"])
         summary = format_regen_context(ctx)["parent_resps_summary"]
         assert seeded["resp_bill"] in summary
         assert "Billing" in summary
-        assert "Billing intent" in summary
-
-    def test_subresps_bullets(self, db, seeded):
-        ctx = build_regen_context(db, seeded["comp_billing"])
-        summary = format_regen_context(ctx)["subresps_summary"]
-        assert seeded["sub_token"] in summary
-        assert "Tokenization" in summary
-
-    def test_empty_subresps_uses_fallback(self, db, seeded):
-        ctx = build_regen_context(db, seeded["comp_auth"])
-        summary = format_regen_context(ctx)["subresps_summary"]
-        assert "no pre-minted subresponsibilities" in summary
+        assert seeded["feat_pay"] in summary
 
     def test_sibling_comps_summary_excludes_self(self, db, seeded):
         ctx = build_regen_context(db, seeded["comp_billing"])
@@ -628,9 +589,12 @@ def seeded_with_sub(db, seeded):
     """Extend the seeded fixture with a subcomponent layout under billing.
 
     Seeds three subcomponents (session_store, credential_gate,
-    foundation) under billing, plus subresp→sub decomposition
-    edges mapping each subresp to one of the subs, and a parent
-    privapi on billing.
+    foundation) under billing, plus the parent_resp→sub and
+    feat→sub decomposition edges mimicking what comparch_mint
+    emits from the parent's ``<owns>`` block, and a parent
+    privapi on billing. session_store is the resp+feat owner;
+    credential_gate is a co-owner of the resp (multi-owner) but
+    claims no feats; foundation has empty ownership.
     """
     project_id = seeded["project_id"]
     # Give billing a private surface fragment
@@ -669,11 +633,14 @@ def seeded_with_sub(db, seeded):
         pubapi="load_settings(). configure_logging().",
     )
 
-    # Decomposition edges from the pre-existing subresps to the
-    # subcomponents — mimicking comparch_mint's post-approval
-    # edge emissions.
-    _seed_subresp_to_comp_edge(db, project_id, seeded["sub_token"], sub_store)
-    _seed_subresp_to_comp_edge(db, project_id, seeded["sub_retry"], sub_gate)
+    # parent_resp → sub and feat → sub decomposition edges mirroring
+    # comparch_mint's post-approval edge emissions from the parent's
+    # <owns> block. session_store claims (resp_bill, feat_pay);
+    # credential_gate co-claims resp_bill (multi-owner) without any
+    # feat-slice; foundation has empty ownership.
+    _seed_decomp_edge(db, project_id, seeded["resp_bill"], sub_store)
+    _seed_decomp_edge(db, project_id, seeded["feat_pay"], sub_store)
+    _seed_decomp_edge(db, project_id, seeded["resp_bill"], sub_gate)
 
     db.commit()
     return {
@@ -780,7 +747,7 @@ class TestFormatRegenContextForSub:
         expected = {
             "subcomponent_summary",
             "parent_component_summary",
-            "subresps_summary",
+            "owns_summary",
             "sibling_subcomps_summary",
             "parent_sibling_comps_summary",
             "dep_pubapi_summary",
@@ -832,12 +799,23 @@ class TestFormatRegenContextForSub:
         summary = format_regen_context_for_sub(ctx)["dep_pubapi_summary"]
         assert "authenticate" in summary or "load_settings" in summary
 
-    def test_subresps_summary_shows_assigned_subresps(self, db, seeded_with_sub):
+    def test_owns_summary_shows_claimed_resp_and_feat(self, db, seeded_with_sub):
         ctx = build_regen_context(db, seeded_with_sub["sub_store"])
-        summary = format_regen_context_for_sub(ctx)["subresps_summary"]
-        # sub_store has sub_token routed to it via decomposition edge
-        assert seeded_with_sub["sub_token"] in summary
-        assert "Tokenization" in summary
+        summary = format_regen_context_for_sub(ctx)["owns_summary"]
+        # sub_store claims (resp_bill, [feat_pay]) via the seeded
+        # decomposition edges that mirror comparch_mint's <owns>
+        # block emissions.
+        assert seeded_with_sub["resp_bill"] in summary
+        assert "Billing" in summary
+        assert seeded_with_sub["feat_pay"] in summary
+
+    def test_owns_summary_empty_for_foundation_subcomp(self, db, seeded_with_sub):
+        """foundation subcomp claims no parent resps in the seed; the
+        owns_summary surfaces the empty-claim sentinel rather than an
+        empty string so the prompt section is always present."""
+        ctx = build_regen_context(db, seeded_with_sub["sub_found"])
+        summary = format_regen_context_for_sub(ctx)["owns_summary"]
+        assert "does not anchor any parent responsibility" in summary
 
     def test_raises_on_top_level_context(self, db, seeded):
         ctx = build_regen_context(db, seeded["comp_billing"])

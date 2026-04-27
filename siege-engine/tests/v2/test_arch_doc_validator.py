@@ -5,8 +5,9 @@ validation (root + section order), fragment section rules
 (non-empty, no nested tags), policy sub-grammar, external
 dependencies (real comp IDs from the allowlist), subcomponent
 structure (alias syntax, kind-inheritance-no-kind-tag, foundation
-requirement, subresp coverage), sub-dependency rules (DAG,
-self-loop, foundation-dep), and the un-fanned-out happy path.
+requirement, ``<owns>`` claims, parent-resp + per-resp feat
+coverage), sub-dependency rules (DAG, self-loop, foundation-dep),
+and the un-fanned-out happy path.
 """
 
 from __future__ import annotations
@@ -21,84 +22,101 @@ def _parse(raw: str) -> TagNode:
     return extract_tag_tree(raw, "comparch")
 
 
-# Reusable test fixtures: a full-coverage subresp set and a
-# sibling-comp allowlist that satisfies most tests without
-# per-test customization. known_resp_ids_for_policies always
-# includes the subresps so policy <required> references can
-# reach them.
-KNOWN_SUBRESPS = {"resp_sub_sess", "resp_sub_cred", "resp_sub_found"}
+# Reusable test fixtures: a parent-resp → feat-set map covering
+# the default three-subcomponent layout, plus a sibling-comp
+# allowlist used by the dependencies tests. Policy <required>
+# IDs are validated against the keys of KNOWN_PARENT_RESPS — the
+# old "subresps OR top-level" two-tier rule collapsed when subreqs
+# was retired.
+KNOWN_PARENT_RESPS: dict[str, frozenset[str]] = {
+    "resp_sess0001": frozenset({"feat_sessl0001", "feat_sessr0002"}),
+    "resp_cred0001": frozenset({"feat_login0001"}),
+}
 KNOWN_SIBLINGS = {"comp_audit9999", "comp_foundati1"}
-KNOWN_POLICY_RESPS = KNOWN_SUBRESPS | {"resp_top_audit"}
 
 
 def _sub(
     alias: str,
     name: str,
-    role: str,
-    api_intent: str,
-    resp_ids: tuple[str, ...],
+    owns: list[tuple[str, list[str]]],
     *,
     foundation: bool = False,
     purpose: str | None = None,
     owned_invariants: tuple[str, ...] | None = None,
     primary_operations: tuple[str, ...] | None = None,
+    responsibilities: str | None = None,
 ) -> str:
     """Render a ``<subcomponent>`` in the micro-field grammar.
 
-    ``role`` / ``api_intent`` are still positional for test-site
-    brevity but are used as defaults for ``purpose`` / the first
-    primary operation when the explicit overrides aren't supplied.
-    Tests that exercise the new micro-fields directly pass them in.
+    ``owns`` is a list of ``(resp_id, [feat_ids])`` pairs rendered
+    as ``<owns><resp id="..."><feat id="..."/></resp></owns>``. An
+    empty list yields the legal self-closing ``<owns/>`` form.
+    Tests can override ``purpose`` / ``owned_invariants`` /
+    ``primary_operations`` / ``responsibilities`` to drive the
+    micro-field validators directly.
     """
-    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    if owns:
+        blocks = []
+        for rid, fids in owns:
+            feats = "".join(f'<feat id="{fid}"/>' for fid in fids)
+            blocks.append(f'<resp id="{rid}">{feats}</resp>')
+        owns_xml = f"<owns>{''.join(blocks)}</owns>"
+    else:
+        owns_xml = "<owns/>"
     foundation_marker = "<foundation/>" if foundation else ""
-    actual_purpose = purpose if purpose is not None else (role or f"{name} exists.")
+    actual_purpose = purpose if purpose is not None else f"{name} exists."
     invariants = owned_invariants or (
         f"{name} invariant one",
         f"{name} invariant two",
     )
     operations = primary_operations or (
-        api_intent or f"do {name} one",
+        f"do {name} one",
         f"do {name} two",
         f"do {name} three",
     )
     inv_xml = "".join(f"<invariant>{inv}</invariant>" for inv in invariants)
     op_xml = "".join(f"<operation>{op}</operation>" for op in operations)
+    resp_text = (
+        responsibilities
+        if responsibilities is not None
+        else f"{name} prose describing what this subcomp does."
+    )
     return (
         f'<subcomponent alias="{alias}">'
         f"<name>{name}</name>"
         f"<purpose>{actual_purpose}</purpose>"
         f"<owned-invariants>{inv_xml}</owned-invariants>"
         f"<primary-operations>{op_xml}</primary-operations>"
-        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"<responsibilities>{resp_text}</responsibilities>"
+        f"{owns_xml}"
         f"{foundation_marker}"
         "</subcomponent>"
     )
 
 
 def _default_subcomponents() -> str:
-    """Three-subcomponent layout covering all three KNOWN_SUBRESPS."""
+    """Three-subcomponent layout covering both default parent resps.
+
+    session_store claims (resp_sess0001, [both feats]); credential_gate
+    claims (resp_cred0001, [feat_login0001]); foundation has empty
+    ``<owns/>`` and carries the foundation marker. Coverage is
+    satisfied for every parent resp + every feat tagged on it.
+    """
     return (
         _sub(
             "session_store",
             "SessionStore",
-            "Persist sessions.",
-            "create_session(pid).",
-            ("resp_sub_sess",),
+            [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
         )
         + _sub(
             "credential_gate",
             "CredentialGate",
-            "Verify credentials.",
-            "verify(creds).",
-            ("resp_sub_cred",),
+            [("resp_cred0001", ["feat_login0001"])],
         )
         + _sub(
             "foundation",
             "Foundation",
-            "Own the component root.",
-            "load_settings().",
-            ("resp_sub_found",),
+            [],
             foundation=True,
         )
     )
@@ -151,20 +169,18 @@ def _policy(name: str, trigger: str, required: str, rationale: str) -> str:
 def _validate(
     raw: str,
     *,
-    known_subresp_ids: set[str] | None = None,
+    known_parent_resp_ids: dict[str, frozenset[str]] | None = None,
     known_sibling_comp_ids: set[str] | None = None,
-    known_resp_ids_for_policies: set[str] | None = None,
     target_is_foundation: bool = False,
 ):
     return validate_arch_doc(
         _parse(raw),
-        known_subresp_ids=known_subresp_ids if known_subresp_ids is not None else KNOWN_SUBRESPS,
-        known_sibling_comp_ids=known_sibling_comp_ids
-        if known_sibling_comp_ids is not None
-        else KNOWN_SIBLINGS,
-        known_resp_ids_for_policies=known_resp_ids_for_policies
-        if known_resp_ids_for_policies is not None
-        else KNOWN_POLICY_RESPS,
+        known_parent_resp_ids=(
+            known_parent_resp_ids if known_parent_resp_ids is not None else KNOWN_PARENT_RESPS
+        ),
+        known_sibling_comp_ids=(
+            known_sibling_comp_ids if known_sibling_comp_ids is not None else KNOWN_SIBLINGS
+        ),
         target_is_foundation=target_is_foundation,
     )
 
@@ -196,7 +212,7 @@ class TestHappyPath:
                 policies=_policy(
                     "Audit Logging",
                     "any failed auth",
-                    "resp_sub_sess",
+                    "resp_sess0001",
                     "Audit failed auths for compliance.",
                 ),
                 dependencies='<dep to="comp_audit9999"/><dep to="comp_foundati1"/>',
@@ -206,14 +222,20 @@ class TestHappyPath:
         )
         assert len(doc.policies) == 1
         assert doc.policies[0].name == "Audit Logging"
-        assert doc.policies[0].required_resp_id == "resp_sub_sess"
+        assert doc.policies[0].required_resp_id == "resp_sess0001"
         assert set(doc.external_deps) == {"comp_audit9999", "comp_foundati1"}
 
     def test_un_fanned_out_happy_path(self):
-        """Empty subresps + empty sub sections → valid un-fanned-out."""
+        """Empty parent_resp map + empty sub sections → valid un-fanned-out.
+
+        With no parent resps assigned to this comp, coverage rules
+        degenerate to no-ops and an empty <subcomponents> block is
+        legal (the comp's territory rolls wholesale into a single
+        impl_* leaf at mint time).
+        """
         doc = _validate(
             _arch_doc(subcomponents="", sub_dependencies=""),
-            known_subresp_ids=set(),
+            known_parent_resp_ids={},
         )
         assert doc.subcomponents == ()
         assert doc.sub_deps == ()
@@ -229,9 +251,8 @@ class TestRootAndSectionOrder:
         with pytest.raises(ValidationError, match="Expected root tag <comparch>"):
             validate_arch_doc(
                 tree,
-                known_subresp_ids=set(),
+                known_parent_resp_ids={},
                 known_sibling_comp_ids=set(),
-                known_resp_ids_for_policies=set(),
             )
 
     def test_missing_section_rejected(self):
@@ -247,7 +268,7 @@ class TestRootAndSectionOrder:
             "</comparch>"
         )
         with pytest.raises(ValidationError, match="not in the required order"):
-            _validate(raw, known_subresp_ids=set())
+            _validate(raw, known_parent_resp_ids={})
 
     def test_wrong_section_order_rejected(self):
         # swap subcomponents and sub-dependencies
@@ -264,7 +285,7 @@ class TestRootAndSectionOrder:
             "</comparch>"
         )
         with pytest.raises(ValidationError, match="not in the required order"):
-            _validate(raw, known_subresp_ids=set())
+            _validate(raw, known_parent_resp_ids={})
 
     def test_duplicate_section_rejected(self):
         raw = (
@@ -281,7 +302,7 @@ class TestRootAndSectionOrder:
             "</comparch>"
         )
         with pytest.raises(ValidationError, match="more than one <technical-specification>"):
-            _validate(raw, known_subresp_ids=set())
+            _validate(raw, known_parent_resp_ids={})
 
     def test_unknown_section_rejected(self):
         raw = _arch_doc(subcomponents=_default_subcomponents(), sub_dependencies=_DEFAULT_SUB_DEPS)
@@ -332,7 +353,7 @@ class TestFragmentSections:
             "</comparch>"
         )
         with pytest.raises(ValidationError, match="must contain plain text"):
-            _validate(raw, known_subresp_ids=set())
+            _validate(raw, known_parent_resp_ids={})
 
     def test_empty_failure_surface_rejected(self):
         raw = _arch_doc(
@@ -412,7 +433,7 @@ class TestPolicies:
                 policies=_policy(
                     "Telemetry",
                     "any LLM call",
-                    "resp_sub_found",
+                    "resp_cred0001",
                     "Cost audit.",
                 ),
                 subcomponents=_default_subcomponents(),
@@ -435,7 +456,7 @@ class TestPolicies:
     def test_policy_missing_trigger_rejected(self):
         bad = (
             "<policy><name>Bad</name>"
-            "<required>resp_sub_found</required>"
+            "<required>resp_cred0001</required>"
             "<rationale>x</rationale></policy>"
         )
         raw = _arch_doc(
@@ -457,13 +478,21 @@ class TestPolicies:
         assert doc.policies == ()
 
 
+_SOLO_RESP_MAP: dict[str, frozenset[str]] = {"resp_sess0001": frozenset({"feat_sessl0001"})}
+
+
 class TestSubcomponentStructure:
     def test_missing_alias_rejected(self):
         bad = (
             "<subcomponent>"
-            "<name>X</name><role>x</role>"
-            "<api-intent>x</api-intent>"
-            "<responsibilities></responsibilities>"
+            "<name>X</name>"
+            "<purpose>x</purpose>"
+            "<owned-invariants><invariant>a</invariant><invariant>b</invariant></owned-invariants>"
+            "<primary-operations>"
+            "<operation>a</operation><operation>b</operation><operation>c</operation>"
+            "</primary-operations>"
+            "<responsibilities>x</responsibilities>"
+            "<owns/>"
             "</subcomponent>"
         )
         raw = _arch_doc(subcomponents=bad, sub_dependencies="")
@@ -474,21 +503,19 @@ class TestSubcomponentStructure:
         bad = _sub(
             "Bad-Alias!",
             "X",
-            "x",
-            "x",
-            ("resp_sub_sess",),
+            [("resp_sess0001", ["feat_sessl0001"])],
         )
         raw = _arch_doc(subcomponents=bad, sub_dependencies="")
         with pytest.raises(ValidationError, match="invalid alias"):
-            _validate(raw, known_subresp_ids={"resp_sub_sess"})
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)
 
     def test_duplicate_alias_rejected(self):
-        dupe = _sub("dup", "First", "x", "x", ("resp_sub_sess",)) + _sub(
-            "dup", "Second", "y", "y", ("resp_sub_cred",), foundation=True
+        dupe = _sub("dup", "First", [("resp_sess0001", ["feat_sessl0001"])]) + _sub(
+            "dup", "Second", [("resp_cred0001", ["feat_login0001"])], foundation=True
         )
         raw = _arch_doc(subcomponents=dupe, sub_dependencies="")
         with pytest.raises(ValidationError, match="same alias 'dup'"):
-            _validate(raw, known_subresp_ids={"resp_sub_sess", "resp_sub_cred"})
+            _validate(raw)
 
     def test_kind_tag_rejected(self):
         # Subcomponents must NOT redeclare kind — they inherit from
@@ -497,131 +524,161 @@ class TestSubcomponentStructure:
             '<subcomponent alias="thing">'
             "<name>X</name>"
             "<kind>domain</kind>"
-            "<role>x</role>"
-            "<api-intent>x</api-intent>"
-            '<responsibilities><resp id="resp_sub_sess"/></responsibilities>'
+            "<purpose>x</purpose>"
+            "<owned-invariants><invariant>a</invariant><invariant>b</invariant></owned-invariants>"
+            "<primary-operations>"
+            "<operation>a</operation><operation>b</operation><operation>c</operation>"
+            "</primary-operations>"
+            "<responsibilities>x</responsibilities>"
+            '<owns><resp id="resp_sess0001"><feat id="feat_sessl0001"/></resp></owns>'
             "<foundation/>"
             "</subcomponent>"
         )
         raw = _arch_doc(subcomponents=bad, sub_dependencies="")
         with pytest.raises(ValidationError, match="unexpected child <kind>"):
-            _validate(raw, known_subresp_ids={"resp_sub_sess"})
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)
 
     def test_empty_name_rejected(self):
-        bad = _sub("x", "", "role", "api", ("resp_sub_sess",), foundation=True)
+        bad = _sub(
+            "x",
+            "",
+            [("resp_sess0001", ["feat_sessl0001"])],
+            foundation=True,
+        )
         raw = _arch_doc(subcomponents=bad, sub_dependencies="")
         with pytest.raises(ValidationError, match="empty <name>"):
-            _validate(raw, known_subresp_ids={"resp_sub_sess"})
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)
 
     def test_empty_purpose_rejected(self):
         bad = _sub(
             "x",
             "Name",
-            "role-placeholder",
-            "api",
-            ("resp_sub_sess",),
+            [("resp_sess0001", ["feat_sessl0001"])],
             foundation=True,
             purpose="",
         )
         raw = _arch_doc(subcomponents=bad, sub_dependencies="")
         with pytest.raises(ValidationError, match="empty <purpose>"):
-            _validate(raw, known_subresp_ids={"resp_sub_sess"})
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)
 
     def test_too_few_subcomp_invariants_rejected(self):
         bad = _sub(
             "x",
             "Name",
-            "role",
-            "api",
-            ("resp_sub_sess",),
+            [("resp_sess0001", ["feat_sessl0001"])],
             foundation=True,
             owned_invariants=("only one",),
         )
         raw = _arch_doc(subcomponents=bad, sub_dependencies="")
         with pytest.raises(ValidationError, match=r"1 <invariant> entries"):
-            _validate(raw, known_subresp_ids={"resp_sub_sess"})
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)
 
     def test_too_few_subcomp_operations_rejected(self):
         bad = _sub(
             "x",
             "Name",
-            "role",
-            "api",
-            ("resp_sub_sess",),
+            [("resp_sess0001", ["feat_sessl0001"])],
             foundation=True,
             primary_operations=("do a", "do b"),
         )
         raw = _arch_doc(subcomponents=bad, sub_dependencies="")
         with pytest.raises(ValidationError, match=r"2 <operation> entries"):
-            _validate(raw, known_subresp_ids={"resp_sub_sess"})
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)
 
     def test_empty_responsibilities_rejected(self):
-        bad = _sub("x", "Name", "role", "api", (), foundation=True)
+        # <responsibilities> is now free-text prose; an empty body
+        # is rejected with the prose-section error.
+        bad = _sub(
+            "x",
+            "Name",
+            [("resp_sess0001", ["feat_sessl0001"])],
+            foundation=True,
+            responsibilities="",
+        )
         raw = _arch_doc(subcomponents=bad, sub_dependencies="")
         with pytest.raises(ValidationError, match="empty <responsibilities>"):
-            _validate(raw, known_subresp_ids={"resp_sub_sess"})
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)
 
-    def test_unknown_subresp_rejected(self):
-        bad = _sub("x", "Name", "role", "api", ("resp_unknown1",), foundation=True)
+    def test_responsibilities_with_nested_tags_rejected(self):
+        # The pre-Phase-A grammar carried <resp id=…/> children
+        # inside <responsibilities>; in the new grammar those live
+        # in <owns> and any nested tag inside <responsibilities>
+        # is rejected.
+        bad = _sub(
+            "x",
+            "Name",
+            [("resp_sess0001", ["feat_sessl0001"])],
+            foundation=True,
+            responsibilities='<resp id="resp_sess0001"/>',
+        )
         raw = _arch_doc(subcomponents=bad, sub_dependencies="")
-        with pytest.raises(ValidationError, match="unknown subresponsibility"):
-            _validate(raw, known_subresp_ids={"resp_sub_sess"})
+        with pytest.raises(ValidationError, match="nested tags inside <responsibilities>"):
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)
 
 
 class TestSubcomponentCoverage:
-    def test_unassigned_subresp_rejected(self):
-        # Two subs cover only two of three known subresps
-        subs = _sub("store", "SessionStore", "x", "x", ("resp_sub_sess",)) + _sub(
-            "foundation",
-            "Foundation",
-            "x",
-            "x",
-            ("resp_sub_found",),
-            foundation=True,
-        )
+    def test_uncaimed_parent_resp_rejected(self):
+        # Two subs cover only one of two known parent resps —
+        # resp_cred0001 is left unclaimed.
+        subs = _sub(
+            "store",
+            "SessionStore",
+            [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
+        ) + _sub("foundation", "Foundation", [], foundation=True)
         raw = _arch_doc(
             subcomponents=subs,
             sub_dependencies='<dep from="store" to="foundation"/>',
         )
-        with pytest.raises(ValidationError, match="does not assign every pre-minted"):
+        with pytest.raises(ValidationError, match="does not claim every parent responsibility"):
             _validate(raw)
 
-    def test_double_assigned_subresp_rejected(self):
+    def test_uncovered_feat_under_claimed_resp_rejected(self):
+        # session_store claims resp_sess0001 but only one of its two
+        # feats; no other subcomp picks up the missing feat.
         subs = (
-            _sub("store", "SessionStore", "x", "x", ("resp_sub_sess", "resp_sub_cred"))
-            + _sub("gate", "CredentialGate", "x", "x", ("resp_sub_cred",))
-            + _sub(
-                "foundation",
-                "Foundation",
-                "x",
-                "x",
-                ("resp_sub_found",),
-                foundation=True,
+            _sub(
+                "store",
+                "SessionStore",
+                [("resp_sess0001", ["feat_sessl0001"])],
             )
+            + _sub(
+                "credential_gate",
+                "CredentialGate",
+                [("resp_cred0001", ["feat_login0001"])],
+            )
+            + _sub("foundation", "Foundation", [], foundation=True)
         )
         raw = _arch_doc(
             subcomponents=subs,
-            sub_dependencies=(
-                '<dep from="store" to="foundation"/><dep from="gate" to="foundation"/>'
-            ),
+            sub_dependencies=_DEFAULT_SUB_DEPS,
         )
-        with pytest.raises(ValidationError, match="assigned to both"):
+        with pytest.raises(ValidationError, match="some feats tagged on parent"):
             _validate(raw)
 
-    def test_empty_subcomponents_with_known_subresps_rejected(self):
-        # Un-fanned-out is only legal when there are no subresps.
-        # If subreqs produced subresps, you must decompose.
+    def test_un_fanned_out_with_parent_resps_is_legal(self):
+        """Empty <subcomponents> is legal even when the comp carries
+        parent resps — the resps roll wholesale into a single impl
+        leaf at mint time and the coverage rules degenerate."""
         raw = _arch_doc(subcomponents="", sub_dependencies="")
-        with pytest.raises(ValidationError, match="pre-minted subresponsibilities"):
-            _validate(raw)
+        doc = _validate(raw)
+        assert doc.subcomponents == ()
+        assert doc.sub_deps == ()
 
 
 class TestFoundationSubcomponent:
     def test_no_foundation_rejected_when_decomposing(self):
         subs = (
-            _sub("store", "SessionStore", "x", "x", ("resp_sub_sess",))
-            + _sub("gate", "CredentialGate", "x", "x", ("resp_sub_cred",))
-            + _sub("config", "Config", "x", "x", ("resp_sub_found",))
+            _sub(
+                "store",
+                "SessionStore",
+                [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
+            )
+            + _sub(
+                "gate",
+                "CredentialGate",
+                [("resp_cred0001", ["feat_login0001"])],
+            )
+            + _sub("config", "Config", [])
         )
         raw = _arch_doc(subcomponents=subs, sub_dependencies="")
         with pytest.raises(ValidationError, match="no foundation subcomponent"):
@@ -629,16 +686,14 @@ class TestFoundationSubcomponent:
 
     def test_multiple_foundations_rejected(self):
         subs = (
-            _sub("store", "S", "x", "x", ("resp_sub_sess",), foundation=True)
-            + _sub("gate", "G", "x", "x", ("resp_sub_cred",))
-            + _sub(
-                "foundation",
-                "Foundation",
-                "x",
-                "x",
-                ("resp_sub_found",),
+            _sub(
+                "store",
+                "S",
+                [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
                 foundation=True,
             )
+            + _sub("gate", "G", [("resp_cred0001", ["feat_login0001"])])
+            + _sub("foundation", "Foundation", [], foundation=True)
         )
         raw = _arch_doc(subcomponents=subs, sub_dependencies="")
         with pytest.raises(ValidationError, match="2 foundation subcomponents"):
@@ -660,59 +715,41 @@ class TestFoundationDecomposingAFoundation:
     """
 
     def _exhaustive_subs_no_foundation(self) -> str:
-        """Three subcomponents covering all known subresps,
-        none of which carry ``<foundation/>``."""
-        return (
-            _sub(
-                "bootstrap",
-                "Bootstrap",
-                "Entry point + DI wiring.",
-                "main() -> None.",
-                ("resp_sub_sess",),
-            )
-            + _sub(
-                "config_loader",
-                "ConfigLoader",
-                "Read and validate project settings.",
-                "load_settings() -> Settings.",
-                ("resp_sub_cred",),
-            )
-            + _sub(
-                "shared_utils",
-                "SharedUtils",
-                "Cross-cutting helpers.",
-                "format_log(record) -> str.",
-                ("resp_sub_found",),
-            )
+        """Two subcomponents covering all parent resps + their feats,
+        neither of which carries ``<foundation/>``."""
+        return _sub(
+            "bootstrap",
+            "Bootstrap",
+            [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
+        ) + _sub(
+            "config_loader",
+            "ConfigLoader",
+            [("resp_cred0001", ["feat_login0001"])],
         )
 
     def test_accepts_exhaustive_decomposition(self):
         """A foundation comp may decompose into subcomponents with
-        no <foundation/> marker, as long as every subresp is
-        covered and sub-deps are acyclic."""
+        no <foundation/> marker, as long as every parent resp +
+        feat is covered and sub-deps are acyclic."""
         raw = _arch_doc(
             subcomponents=self._exhaustive_subs_no_foundation(),
             sub_dependencies="",
         )
         doc = _validate(raw, target_is_foundation=True)
-        assert len(doc.subcomponents) == 3
+        assert len(doc.subcomponents) == 2
         # None of the minted subs are foundations.
         assert all(not s.is_foundation for s in doc.subcomponents)
 
     def test_rejects_nested_foundation_marker(self):
         """A foundation decomposing into subs with a <foundation/>
         marker is rejected with a clear error."""
-        subs = (
-            _sub("bootstrap", "B", "x", "x", ("resp_sub_sess",))
-            + _sub("config_loader", "C", "x", "x", ("resp_sub_cred",))
-            + _sub(
-                "shared_utils",
-                "Foundation",
-                "x",
-                "x",
-                ("resp_sub_found",),
-                foundation=True,
-            )
+        subs = _sub(
+            "bootstrap", "B", [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])]
+        ) + _sub(
+            "config_loader",
+            "Foundation",
+            [("resp_cred0001", ["feat_login0001"])],
+            foundation=True,
         )
         raw = _arch_doc(subcomponents=subs, sub_dependencies="")
         with pytest.raises(ValidationError, match="Foundations do not nest"):
@@ -750,10 +787,10 @@ class TestFoundationDecomposingAFoundation:
         the carve-out only kicks in when decomposition actually
         happens."""
         raw = _arch_doc(subcomponents="", sub_dependencies="")
-        # With no pre-minted subresps, empty <subcomponents> is fine.
+        # With no parent resps assigned, empty <subcomponents> is fine.
         doc = _validate(
             raw,
-            known_subresp_ids=set(),
+            known_parent_resp_ids={},
             target_is_foundation=True,
         )
         assert doc.subcomponents == ()
@@ -810,3 +847,210 @@ class TestSubDependencies:
         )
         assert len(doc.sub_deps) == 2
         assert all(d.to_alias == "foundation" for d in doc.sub_deps)
+
+
+class TestOwns:
+    """Coverage of the new ``<owns>`` invariants.
+
+    Replaces the retired pre-Phase-A subresp-assignment tests:
+    ``<owns>`` collapses subreqs and the parent-resp claim into
+    a single block. Multi-owner is allowed at both axes (same
+    resp under multiple subcomps; same feat across subcomps that
+    cooperate). The validator now enforces resp + feat coverage
+    at the component level instead of 1:1 assignment.
+    """
+
+    def test_empty_owns_is_legal_for_foundation(self):
+        """An empty ``<owns/>`` is the canonical foundation /
+        internal-plumbing shape — no parent resp claims, value
+        comes from the structural marker plus other subcomps'
+        ownership picture."""
+        doc = _validate(
+            _arch_doc(
+                subcomponents=_default_subcomponents(),
+                sub_dependencies=_DEFAULT_SUB_DEPS,
+            )
+        )
+        foundation = next(s for s in doc.subcomponents if s.alias == "foundation")
+        assert foundation.owns == ()
+
+    def test_multi_owner_same_resp_accepted(self):
+        """Two subcomponents may both claim the same parent resp
+        as long as their feat slices together cover every feat
+        tagged on the resp. The validator must accept this and
+        return both subcomps' OwnedResp entries."""
+        subs = (
+            _sub(
+                "store",
+                "SessionStore",
+                [("resp_sess0001", ["feat_sessl0001"])],
+            )
+            + _sub(
+                "credential_gate",
+                "CredentialGate",
+                [
+                    ("resp_sess0001", ["feat_sessr0002"]),
+                    ("resp_cred0001", ["feat_login0001"]),
+                ],
+            )
+            + _sub("foundation", "Foundation", [], foundation=True)
+        )
+        doc = _validate(
+            _arch_doc(
+                subcomponents=subs,
+                sub_dependencies=(
+                    '<dep from="store" to="foundation"/>'
+                    '<dep from="credential_gate" to="foundation"/>'
+                ),
+            )
+        )
+        owners_of_sess = [
+            s.alias
+            for s in doc.subcomponents
+            if any(owned.resp_id == "resp_sess0001" for owned in s.owns)
+        ]
+        assert sorted(owners_of_sess) == ["credential_gate", "store"]
+
+    def test_multi_owner_same_feat_accepted(self):
+        """Two subcomponents may both claim the same feat under
+        the same parent resp when they genuinely cooperate on
+        that feature; uniqueness is per-(subcomp, resp), not
+        across the component."""
+        subs = (
+            _sub(
+                "store",
+                "SessionStore",
+                [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
+            )
+            + _sub(
+                "co_owner",
+                "CoOwner",
+                [
+                    ("resp_sess0001", ["feat_sessl0001"]),
+                    ("resp_cred0001", ["feat_login0001"]),
+                ],
+            )
+            + _sub("foundation", "Foundation", [], foundation=True)
+        )
+        doc = _validate(
+            _arch_doc(
+                subcomponents=subs,
+                sub_dependencies=(
+                    '<dep from="store" to="foundation"/><dep from="co_owner" to="foundation"/>'
+                ),
+            )
+        )
+        # Both store and co_owner list feat_sessl0001 under
+        # resp_sess0001 — multi-feat-owner is legal.
+        owners_of_feat = [
+            s.alias
+            for s in doc.subcomponents
+            for owned in s.owns
+            if owned.resp_id == "resp_sess0001" and "feat_sessl0001" in owned.feat_ids
+        ]
+        assert sorted(owners_of_feat) == ["co_owner", "store"]
+
+    def test_unknown_resp_id_rejected(self):
+        """A ``<resp id=…>`` referencing an id outside this
+        component's parent-resp allowlist fails the cross-
+        component-leak check."""
+        subs = _sub(
+            "store",
+            "SessionStore",
+            [("resp_mystery01", ["feat_sessl0001"])],
+            foundation=True,
+        )
+        raw = _arch_doc(subcomponents=subs, sub_dependencies="")
+        with pytest.raises(
+            ValidationError,
+            match="not one of this component's parent responsibilities",
+        ):
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)
+
+    def test_feat_not_tagged_on_resp_rejected(self):
+        """A ``<feat id=…>`` inside ``<owns><resp>`` must be tagged
+        on that parent resp; an unrelated feat id is rejected."""
+        subs = _sub(
+            "store",
+            "SessionStore",
+            [("resp_sess0001", ["feat_unrelated"])],
+            foundation=True,
+        )
+        raw = _arch_doc(subcomponents=subs, sub_dependencies="")
+        with pytest.raises(
+            ValidationError,
+            match=r"is not tagged on 'resp_sess0001'",
+        ):
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)
+
+    def test_missing_resp_coverage_rejected(self):
+        """Every parent resp in the allowlist must be claimed by
+        at least one subcomponent; otherwise the comparch is
+        incomplete and the validator surfaces the missing ids."""
+        subs = _sub(
+            "store",
+            "SessionStore",
+            [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
+        ) + _sub("foundation", "Foundation", [], foundation=True)
+        raw = _arch_doc(
+            subcomponents=subs,
+            sub_dependencies='<dep from="store" to="foundation"/>',
+        )
+        with pytest.raises(
+            ValidationError,
+            match="does not claim every parent responsibility",
+        ):
+            _validate(raw)
+
+    def test_missing_feat_coverage_rejected(self):
+        """Per-resp feat coverage: every feat tagged on a parent
+        resp must be claimed by at least one subcomponent that
+        also claims that resp."""
+        subs = (
+            _sub(
+                "store",
+                "SessionStore",
+                [("resp_sess0001", ["feat_sessl0001"])],  # missing feat_sessr0002
+            )
+            + _sub(
+                "credential_gate",
+                "CredentialGate",
+                [("resp_cred0001", ["feat_login0001"])],
+            )
+            + _sub("foundation", "Foundation", [], foundation=True)
+        )
+        raw = _arch_doc(
+            subcomponents=subs,
+            sub_dependencies=_DEFAULT_SUB_DEPS,
+        )
+        with pytest.raises(
+            ValidationError,
+            match=r"resp_sess0001 → feat_sessr0002",
+        ):
+            _validate(raw)
+
+    def test_duplicate_resp_within_one_subcomp_rejected(self):
+        """The same ``<resp id=…>`` cannot appear twice inside
+        one subcomp's ``<owns>`` — the validator demands a single
+        ``<resp>`` entry with the union of feat children."""
+        bad_subcomp = (
+            '<subcomponent alias="store">'
+            "<name>SessionStore</name>"
+            "<purpose>x</purpose>"
+            "<owned-invariants>"
+            "<invariant>a</invariant><invariant>b</invariant>"
+            "</owned-invariants>"
+            "<primary-operations>"
+            "<operation>a</operation><operation>b</operation><operation>c</operation>"
+            "</primary-operations>"
+            "<responsibilities>prose</responsibilities>"
+            "<owns>"
+            '<resp id="resp_sess0001"><feat id="feat_sessl0001"/></resp>'
+            '<resp id="resp_sess0001"><feat id="feat_sessr0002"/></resp>'
+            "</owns>"
+            "<foundation/>"
+            "</subcomponent>"
+        )
+        raw = _arch_doc(subcomponents=bad_subcomp, sub_dependencies="")
+        with pytest.raises(ValidationError, match="duplicate <owns><resp"):
+            _validate(raw, known_parent_resp_ids=_SOLO_RESP_MAP)

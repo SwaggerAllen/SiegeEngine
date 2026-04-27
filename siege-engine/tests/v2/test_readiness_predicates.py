@@ -71,13 +71,6 @@ class TestSysarchHasTopLevelResps:
         assert ready is False
 
 
-
-    def test_fails_when_no_scope_id(self, db, project):
-        ready, reason = parent_subreqs_approved(db, project.id, ())
-        assert ready is False
-        assert "missing component_id" in reason
-
-
 class TestParentComparchApproved:
     def test_passes_when_parent_has_content(self, db, project):
         parent_id = _make_node(

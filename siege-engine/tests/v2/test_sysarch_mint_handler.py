@@ -298,7 +298,15 @@ class TestHappyPath:
         finally:
             s.close()
 
-    def test_subreqs_bootstrap_fan_out(self, shared_session_factory):
+    def test_comparch_generate_fan_out(self, shared_session_factory):
+        """Sysarch_mint enqueues v2.generate_comparch per top-level comp.
+
+        The subreqs tier was retired in Phase 11; comparch reads
+        parent resps + their feat tags directly via regen_context, so
+        sysarch_mint hands off to comparch generation immediately. No
+        subreqs_* nodes should land; no v2.generate_subrequirements
+        jobs should be enqueued.
+        """
         factory = shared_session_factory
         s = factory()
         try:
@@ -311,28 +319,39 @@ class TestHappyPath:
 
         s = factory()
         try:
-            # One subreqs_* per top-level comp (3 total).
-            subreqs = list(
+            # No subreqs_* nodes — that tier is gone.
+            subreqs_nodes = list(
                 s.execute(
                     select(Node).where(Node.project_id == project_id, Node.tier == "subreqs")
                 ).scalars()
             )
-            assert len(subreqs) == 3
-            assert all(sr.id.startswith("subreqs_") for sr in subreqs)
-            # Each parented to a comp_*
-            for sr in subreqs:
-                assert sr.parent_id is not None
-                assert sr.parent_id.startswith("comp_")
+            assert subreqs_nodes == []
 
-            # One v2.generate_subrequirements job per comp.
-            jobs = list(
+            # No v2.generate_subrequirements jobs.
+            stale_jobs = list(
                 s.execute(
                     select(Job).where(Job.job_type == "v2.generate_subrequirements")
                 ).scalars()
             )
-            job_comp_ids = {j.payload.get("component_id") for j in jobs}
-            comp_ids = {sr.parent_id for sr in subreqs}
-            assert job_comp_ids == comp_ids
+            assert stale_jobs == []
+
+            # One v2.generate_comparch job per minted top-level comp.
+            comps = list(
+                s.execute(
+                    select(Node).where(
+                        Node.project_id == project_id,
+                        Node.tier == "comp",
+                        Node.parent_id.is_(None),
+                    )
+                ).scalars()
+            )
+            jobs = list(
+                s.execute(select(Job).where(Job.job_type == "v2.generate_comparch")).scalars()
+            )
+            assert {j.payload["component_id"] for j in jobs} == {c.id for c in comps}
+            for job in jobs:
+                assert job.payload["project_id"] == project_id
+                assert job.payload["feedback"] is None
         finally:
             s.close()
 

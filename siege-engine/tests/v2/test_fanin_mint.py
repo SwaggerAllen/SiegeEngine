@@ -56,12 +56,23 @@ def shared_session_factory(monkeypatch):
 def _sub_xml(
     alias: str,
     name: str,
-    resp_ids: tuple[str, ...],
+    owns: list[tuple[str, list[str]]],
     *,
     foundation: bool = False,
 ) -> str:
-    """Render a ``<subcomponent>`` in the micro-field grammar."""
-    resp_xml = "".join(f'<resp id="{rid}"/>' for rid in resp_ids)
+    """Render a ``<subcomponent>`` in the micro-field grammar.
+
+    ``owns`` is a list of ``(resp_id, [feat_ids])`` pairs; an empty
+    list yields the legal self-closing ``<owns/>`` form.
+    """
+    if owns:
+        blocks = []
+        for rid, fids in owns:
+            feats = "".join(f'<feat id="{fid}"/>' for fid in fids)
+            blocks.append(f'<resp id="{rid}">{feats}</resp>')
+        owns_xml = f"<owns>{''.join(blocks)}</owns>"
+    else:
+        owns_xml = "<owns/>"
     foundation_marker = "<foundation/>" if foundation else ""
     return (
         f'<subcomponent alias="{alias}">'
@@ -76,7 +87,8 @@ def _sub_xml(
         f"<operation>mutate {name}</operation>"
         f"<operation>emit {name}</operation>"
         f"</primary-operations>"
-        f"<responsibilities>{resp_xml}</responsibilities>"
+        f"<responsibilities>{name} prose describing what this subcomp does.</responsibilities>"
+        f"{owns_xml}"
         f"{foundation_marker}"
         "</subcomponent>"
     )
@@ -92,8 +104,8 @@ def _fanned_out_comparch() -> str:
         "<policies></policies>"
         "<dependencies></dependencies>"
         "<subcomponents>"
-        + _sub_xml("a", "SubA", ("{resp_a}",))
-        + _sub_xml("b", "SubB", ("{resp_b}",), foundation=True)
+        + _sub_xml("a", "SubA", [("{resp_a}", ["{feat_a}"])])
+        + _sub_xml("b", "SubB", [], foundation=True)
         + "</subcomponents>"
         '<sub-dependencies><dep from="a" to="b"/></sub-dependencies>'
         "</comparch>"
@@ -119,9 +131,18 @@ def _seed_project_with_comp(
     factory,
     comparch_content: str,
     *,
-    num_subresps: int = 2,
+    fanned_out: bool = True,
     comp_kind: str = "domain",
 ) -> tuple[str, str]:
+    """Seed project + top-level comp + (optional) one parent resp + feat.
+
+    Wires ``feat → resp`` and ``resp → comp`` decomposition edges
+    so the new comparch_mint validator can read parent resps + their
+    feat slices and accept the ``<owns>`` block. Pass
+    ``fanned_out=False`` to skip the resp/feat seeds and the
+    template ``.format(...)`` call — the caller is expected to
+    pass the un-fanned-out template that has no placeholders.
+    """
     session: Session = factory()
     try:
         project_id = str(uuid.uuid4())
@@ -139,8 +160,7 @@ def _seed_project_with_comp(
                 name="TopComp",
             ),
         )
-        resp_ids: list[str] = []
-        for i in range(num_subresps):
+        if fanned_out:
             resp_id = mint(session, Kind.RESP)
             append_event(
                 session,
@@ -149,14 +169,37 @@ def _seed_project_with_comp(
                     node_id=resp_id,
                     tier="resp",
                     kind=comp_kind,  # type: ignore[arg-type]
-                    parent_id=comp_id,
-                    name=f"Subresp{i}",
-                    content=f"Intent {i}",
+                    parent_id=None,
+                    name="ParentResp",
+                    content="Intent",
                 ),
             )
-            resp_ids.append(resp_id)
-        if num_subresps >= 2:
-            filled = comparch_content.format(resp_a=resp_ids[0], resp_b=resp_ids[1])
+            feat_id = mint(session, Kind.FEAT)
+            append_event(
+                session,
+                project_id,
+                ev.NodeCreated(
+                    node_id=feat_id,
+                    tier="feat",
+                    kind=comp_kind,  # type: ignore[arg-type]
+                    parent_id=None,
+                    name="ParentFeat",
+                    content="Feat.",
+                ),
+            )
+            for src, tgt in ((resp_id, comp_id), (feat_id, resp_id)):
+                edge_id = mint(session, Kind.EDGE)
+                append_event(
+                    session,
+                    project_id,
+                    ev.EdgeCreated(
+                        edge_id=edge_id,
+                        edge_type="decomposition",
+                        source_id=src,
+                        target_id=tgt,
+                    ),
+                )
+            filled = comparch_content.format(resp_a=resp_id, feat_a=feat_id)
         else:
             filled = comparch_content
         append_event(
@@ -233,7 +276,7 @@ class TestUnFannedOutDomain:
         project_id, comp_id = _seed_project_with_comp(
             shared_session_factory,
             _un_fanned_out_comparch(),
-            num_subresps=0,
+            fanned_out=False,
         )
         asyncio.run(mint_comparch({"project_id": project_id, "component_id": comp_id}))
 

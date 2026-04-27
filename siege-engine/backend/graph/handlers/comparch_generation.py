@@ -138,8 +138,7 @@ def gather_comparch_state(
 
         feat_edge_rows = list(
             db.execute(
-                select(_Edge.target_id, _Edge.source_id)
-                .where(
+                select(_Edge.target_id, _Edge.source_id).where(
                     _Edge.edge_type == "decomposition",
                     _Edge.target_id.in_(parent_resp_ids_set),
                 )

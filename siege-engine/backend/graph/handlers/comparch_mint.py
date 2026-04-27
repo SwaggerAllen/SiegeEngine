@@ -54,6 +54,8 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy import select
+
 from backend.database import SessionLocal
 from backend.graph import events as ev
 from backend.graph.broadcast import commit_and_publish
@@ -74,7 +76,6 @@ from backend.graph.queries import (
 from backend.graph.reducer import append_event
 from backend.models.node import Edge, Node
 from backend.pipeline import queue as pipeline_queue
-from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -160,12 +161,13 @@ async def mint_comparch(payload: dict) -> None:
         # feat → resp decomposition edges. The validator needs to
         # know which feats each parent resp legitimately tags so
         # the per-resp feat-slice claims can be checked.
-        known_parent_resp_ids: dict[str, frozenset[str]] = {rid: frozenset() for rid in parent_resp_ids}
+        known_parent_resp_ids: dict[str, frozenset[str]] = {
+            rid: frozenset() for rid in parent_resp_ids
+        }
         if parent_resp_ids:
             feat_edge_rows = list(
                 db.execute(
-                    select(Edge.target_id, Edge.source_id)
-                    .where(
+                    select(Edge.target_id, Edge.source_id).where(
                         Edge.edge_type == "decomposition",
                         Edge.target_id.in_(parent_resp_ids),
                     )

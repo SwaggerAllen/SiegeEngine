@@ -135,7 +135,6 @@ def running_node_ids(db: Session, project_id: str) -> set[str]:
         if node is not None:
             running.add(node)
 
-
     # ── top-level comp: payload.component_id IS the comp ──────────
     for p in by_type.get(GENERATE_COMPARCH_JOB_TYPE, []):
         cid = p.get("component_id")
