@@ -2,9 +2,14 @@
 
 Working notes for Claude Code sessions on this repo. Read this first
 after resuming, then `git log --oneline -20` to catch up on recent
-commits. Canonical architecture docs live under
-`docs/architecture/`; this file captures operational stuff + anything
-load-bearing that hasn't made it into a plan file yet.
+commits.
+
+**Source of truth split.** The phase plan + per-phase status lives in
+`docs/architecture/v2-roadmap.md`; the data model + meaning-engine
+treatment lives in `docs/architecture/v2-rearchitecture.md`. This
+file is operational only — verification commands, working patterns,
+load-bearing invariants, durable decisions. Anything that reads like
+"current progress" belongs in the roadmap, not here.
 
 ## Layout
 
@@ -17,10 +22,7 @@ subprocess (`backend/cli/manager.py`), not the Anthropic API directly.
 
 Event-sourced model: every write goes through
 `backend.graph.reducer.append_event`; projections (nodes, edges,
-fragments, drafts) are derived from the event log. Read
-`docs/architecture/v2-rearchitecture.md` for the data model and
-`docs/architecture/v2-roadmap.md` for the phase plan. The active
-branch is `claude/dragons-JF20l`.
+fragments, drafts) are derived from the event log.
 
 ## Verification commands
 
@@ -62,199 +64,28 @@ Env vars use `SIEGE_` prefix (e.g. `SIEGE_ANTHROPIC_API_KEY`,
 
 ## Git conventions
 
-- Develop on `claude/dragons-JF20l`. Never push to main without
-  explicit permission.
+- Develop on the per-session feature branch the harness assigns
+  (visible via `git branch --show-current`). Never push to main
+  without explicit permission.
 - Commit messages: short first line, 2-4 line body explaining the
   why, trailing `https://claude.ai/code/session_...` link.
 - Never `--no-verify` / `--amend` / force-push without being asked.
 - Prefer adding files by name over `git add -A` when there's a risk
   of sweeping in unrelated state.
 
-## Phase status (as of last session)
+## Phase status
 
-**Complete:** Phases 0 through 7.5 + Phase 8 (AI self-review) + Phase 9 (staleness ledger) + Phase 10 (layered DAG view) + Phase 11 (pending-change queue + structured edit UIs) + Phase 12 (batched review + regen-time diff).
+See `docs/architecture/v2-roadmap.md` for the live phase plan,
+what's complete, and what's queued. This file deliberately doesn't
+mirror that — phase status drifts faster than CLAUDE.md updates can
+keep up with.
 
-- **Phases 0-5.5** — v2 bootstrap chain end-to-end: project →
-  expansion → features → requirements → sysarch → subreqs (per
-  top-level comp) → comparch (per top-level comp) → policy
-  application → subcomparch (per subcomponent). Per-tier draft
-  panels, decomposition graph, vocabulary, references.
-- **Phase 6** — presentational components + domain-parent edges.
-  `RegenContext` carries `domain_parents` + techspecs + pubapis for
-  presentational tops and their subs. Comparch renders "# This
-  component presents", subcomparch renders "# Grandparent domain
-  context". End-to-end chain test covers the presentational path.
-  Structured UI #6 (domain-parent editor) deferred to Phase 11.
-- **Phase 6.6 (read-path consolidation)** — `GET /projects/:id/structure`
-  snapshot + `GET /projects/:id/events/stream` SSE channel replace
-  ~14 per-tier read endpoints and all client polling.
-  `backend/graph/broadcast.py` runs an in-process per-project
-  async pub/sub. Frontend's `useProjectEventStream` hook drives
-  cache invalidations via a single event-type → queryKey dispatch
-  table. Per-tier detail GETs remain but refetch on SSE events.
-- **Phase 7** — fan-in synthesis (`fanin_*` nodes). Bottom-up
-  summary of what a domain comp as-built actually exposes,
-  driven by the `on_impl_approved` hook + `all_impls_populated_for`
-  first-pass gate (see scheduling notes below).
-- **Phase 7.5 backlog** — nav/UI/reset/prompts/scheduling cleanup:
-  red dot errors + blue dot needs-user-action + green dot approved
-  in the sidebar tree, contextual tab strip with Component Overview
-  tab, force-reset buttons on every per-comp tier, techspec
-  paragraph formatting, sibling-dependency pubapi + top-level
-  resps in subreqs prompts, presentational comparch waits for
-  domain fan-in (not comparch), fan-in waits for first-pass impl
-  completion then regens on change.
-- **Phase 8 (AI self-review)** — every generated draft (and fan-in
-  commit) triggers a review LLM pass that critiques the
-  generator's output against the same context the generator
-  saw. Advisory only — never blocks approval. Lives as a
-  collapsible markdown block on the draft panel, with four
-  render states (idle-with-text, running, failed, hidden).
-  Review failures carry their own transient-CLI retry counter
-  and expose a manual "Retry review" button. See the
-  "AI self-review" section below.
-- **Phase 9 (staleness ledger & fanout decision)** —
-  `staleness_ledger` projection table tracks which nodes are
-  stale w.r.t. which upstreams. Central fanout dispatcher in
-  `backend/graph/fanout.py` runs inside `append_event` after
-  each trigger, walks the edges table, and mutates the ledger
-  directly (derived state — not event-sourced, replay wipes
-  it). Non-destructive triggers auto-enqueue regens via
-  `regen_job_for_node`; destructive structural ops (delete /
-  merge / split / promote / demote / reparent) halt the cascade
-  so the user can review. Fuchsia stale dot in the sidebar tree
-  renders orthogonally to the existing amber/red/blue/green —
-  an approved-but-stale node shows green + fuchsia.
-  **Scope note**: the fanout dispatcher walks edges only. The
-  two bespoke hooks `on_impl_approved` (impl → owning domain
-  comp's fanin) and `_unblock_presentationals_on_fanin_commit`
-  (fanin → presentational comparchs gated on domain_parent)
-  traverse `parent_id` structural chains, not edges, so they
-  stay in place. Fanout is silent for those paths (no edges
-  exist in that direction), so docs come out identical — the
-  only consequence is those specific cascades don't populate
-  the ledger, so the fuchsia stale badge doesn't appear on the
-  fanin or presentational comparchs during the brief window
-  between the impl/fanin commit and the regen running; instead
-  they show pulsing-amber when the regen job picks up. Retiring
-  the hooks cleanly needs either synthetic edges at mint time
-  or parent-id walking in the dispatcher; deferred until a flow
-  beyond scaffolding actually needs that generality.
+## V3-spec items out of v2 scope
 
-- **Phase 10 (layered DAG view)** — single navigable canvas for
-  the whole project graph. Features, top-level resps, top-level
-  policies, top-level comps with `dependency` topology arranged
-  by ELK's layered algorithm under cytoscape-elk. Double-click
-  a comp to drill into its internal subgraph (component-local
-  policies, subresps, subcomps, fan-in, revealed impls) plus an
-  external-context layer that traces back to the top-level
-  feats / resps / policies pointing at this comp. Single-click
-  selects a node and highlights its reachable-down (yellow) and
-  reachable-up (pink) subgraphs. Phase 9 staleness renders as a
-  fuchsia double-border overlay — same visual language as the
-  sidebar tree. Lives under `frontend/src/components/graph/`.
-  Replaces the old force-directed `DecompositionGraph.tsx`.
-  The DAG chunk is code-split (elkjs adds ~1.5MB), loaded lazily
-  when the user clicks the "Decomposition Graph" sidebar entry.
-  Sidebar synthetic id renamed from `:decomposition-graph` to
-  `:dag` — label stays "Decomposition Graph" for continuity.
+Several items in the v3 platform spec are deliberately **not**
+implemented in v2. If a future session touches one, flag it and
+confirm the scope change is intended:
 
-- **Phase 11 (pending-change queue + structured edit UIs)** —
-  All six structured edit UIs shipped. Queue panel
-  (list / discard / apply with halt-on-failure sequential
-  invariant) lives at `QueuePanel.tsx` + `queue_routes.py`.
-  Rename routes through `v2.rename_rewrite` (LLM prose rewrite).
-  Graph view primary on UIs #3 / #5 / #6 via a shared
-  `EditableGraph` wrapper (`components/editors/graph/`) with a
-  two-tap edge-add state machine; list view preserved as the
-  accessibility fallback (`Graph | List` toggle on each panel).
-  `NodeActionSidebar` centralizes per-node actions (Create /
-  Rename / Delete / Move / Promote / Demote / Split) on the
-  Decomposition graph; Merge lives on multi-select triggered
-  either by toolbar toggle or long-press (`taphold`). Sidebar
-  drops to a bottom sheet below 768px via `useIsNarrowViewport`.
-  A single `<QueueAnnounceRegion>` aria-live region reads out
-  every successful enqueue for screen-reader users.
-  Deliberately deferred (noted in "Things to not relitigate"):
-  drag-to-connect and node drag-repositioning — two-tap is the
-  working pattern and ELK layout is authoritative.
-
-- **Phase 12 (batched review + regen-time diff)** —
-  Four PRs landed in sequence. **12a** adds a pending-before-
-  vs-pending-after diff on the Document tab for every bootstrap
-  tier's Reject & Regenerate loop. "Before" resolves to the
-  most-recently-discarded draft row (preserved by
-  `_apply_draft_discarded` across cycles), falling back to
-  approved content on first regen and to raw render on brand-
-  new bootstraps. `DraftDiffView` wraps `react-diff-view` with
-  a dark-theme CSS-var scope (`.diff-view-dark`) and a
-  side-by-side / unified toggle. **12b** adds two primary-state
-  tables: `review_batches` pins the latest `GraphEvent.offset`
-  at batch open so the stale-set evaluation is stable under
-  concurrent writes, and `projection_snapshots` caches JSON
-  dumps of `projection_snapshot` at each offset (built via
-  `rebuild_projections` inside a `session.begin_nested()`
-  savepoint that rolls back after serialization so the live
-  projection survives). **12c** ships the walker UI at
-  `/projects/:id/review/:batchId` — tier-ranked ordered list in
-  the left rail, per-node content diff + per-fragment
-  accordion in the detail pane, both rendered via the same
-  `DraftDiffView` the regen loop uses. Fan-in tier is excluded
-  from the walker per the roadmap. **12d** wires the accept
-  endpoint: non-destructive accept clears the node's ledger
-  rows (downstream cascade already fired via Phase 9
-  auto-enqueue); destructive accept (any
-  `structural_change` reason) additionally enqueues a regen
-  for the accepted node, which re-fires the halted cascade
-  naturally via fanout on the new `DraftGenerated` event.
-  Accept is idempotent — a second click is a no-op.
-  Workspace header sprouts a `Review` button that opens a
-  fresh batch; sidebar integration is deliberately minimal
-  pending a multi-batch review flow.
-
-**Next:** Phase 13 (change summaries).
-
-## V3 spec scope vs V2 implementation
-
-Three new seed docs describe Catapult at a higher abstraction level
-than v2 implements:
-
-- `seed-docs/catapult-spec-v3.md` — platform spec (event-sourced
-  reducer, reactive schema, flows as schema deltas, two primitives,
-  review/feedback, bundles, etc.)
-- `seed-docs/catapult-default-bundle-v3.md` — the default bundle
-  (tier/edge/fragment/structural-rules vocabulary)
-- `seed-docs/catapult-default-bundle-v3-examples.md` — YAML schema
-  examples, per-flow sketches, running Part 3 open-changes list
-
-**The v2 siege engine implements the v3 default bundle's scaffolding
-walk imperatively in Python.** Everything past that is v3-spec
-territory, not v2 implementation.
-
-V2 tiers/edges/structural rules already done that match v3's default
-bundle:
-- `feat` / `resp` / `comp` / `subcomp` / `impl` tiers
-- `policy` tier + `policy_application` edges resolved at comparch
-- `vocab`, `ref`, `fanin` tiers
-- AI self-review
-- All five fragment kinds (techspec, pubapi, privapi, policies, deps)
-- All five edge instances (dependency, domain_parent,
-  policy_application, decomposition, reference)
-- Foundation rule, depth cap, domain/presentational DAG, fan-in
-  synthesis
-
-V2 remaining gaps in the scaffolding walk:
-- `plan` tier — Phase 14
-- `code` tier — Phase 14
-- `manifest` bootstrap — Phase 14
-
-V2 supporting work adjacent to scaffolding:
-- Phases 9–13 (staleness, DAG view, structural edit UIs, batched
-  review, change summaries)
-- Phase 15 (Catapult smoke test)
-- Phase 16 (project export)
-
-Explicit v3-spec items **out of v2 scope**:
 - Four non-scaffolding flows (feature-request, refactor, bug-fix,
   downward propagation, upward propagation)
 - Bundle configuration system (platform spec §A.11)
@@ -265,9 +96,6 @@ Explicit v3-spec items **out of v2 scope**:
 - `<assessment>` grammar for up-then-down flows
 - Everything in the Part 3 core-platform-changes list
 - Cross-project references (meta-design escape hatch)
-
-If a future session touches anything on the out-of-scope list,
-flag it and confirm the scope change is intended.
 
 ## Thinking effort per tier (B6)
 
@@ -296,8 +124,12 @@ compression, expansion, and rotation:
 - **Feature expansion** — extraction from raw input
 - **Requirements** — rotation (user-facing → system-level axis)
 - **Sysarch** — compression (resps → components)
-- **Subreqs** — scope-bounded expansion
-- **Comparch** — last compression before impl
+- **Comparch** — last compression before impl; carves a comp into
+  subcomps and per-subcomp `<owns>` claims on the parent's resps +
+  feat slices (multi-owner allowed; the same resp may be split
+  across subcomps that each handle a different feat-slice). Replaces
+  the retired subreqs tier — the scope-bounded expansion that used
+  to live there folded into comparch's `<owns>` block.
 - **Subcomparch** — leaf articulation, no more tiers to correct
 
 Every prompt names its downstream reader, pushes against
@@ -312,15 +144,18 @@ See `docs/architecture/v2-rearchitecture.md` §The system as a
 meaning engine and `seed-docs/catapult-spec-v2.md` §A.3.1a for
 the full treatment.
 
-## Scheduling invariants (Phase 7.5)
+## Scheduling invariants
 
 - **Presentational comparch gate**: a presentational comp's
   comparch waits until every one of its `domain_parent` targets
   has a populated `fanin_*` node. Helper:
-  `queries.all_domain_parents_have_populated_fanin`. Deferral
-  in `subreqs_mint`; unblock walk runs in
-  `fanin_generation._unblock_presentationals_on_fanin_commit`
-  after each fan-in content commit.
+  `queries.all_domain_parents_have_populated_fanin`. After the
+  subreqs retirement, the unblock-on-fanin-commit walk in
+  `fanin_generation._unblock_presentationals_on_fanin_commit` is
+  the only path that re-enqueues a deferred presentational
+  comparch — it fires after each fan-in content commit, so a
+  presentational comp's comparch can run multiple times during
+  bootstrap as its domain parents settle one by one.
 - **Fan-in first-pass gate**: `on_impl_approved` only enqueues
   `v2.generate_fanin` when `all_impls_populated_for(owner)`
   returns true. Before first-pass, partial impl coverage leaves
@@ -378,12 +213,34 @@ CLI call count).
   cycle). `DraftReviewUpdated` event routes by
   `target_type="draft" | "node"` and the reducer writes to the
   right row.
-- **Prompt contract.** One markdown response with two top-level
-  sections: `## Handles & structure` (coverage, naming, scope-
-  fit, downstream-readability) and `## Architectural decisions`
-  (tech-stack soundness, boundaries, anti-patterns). On tiers
-  that don't make tech decisions — expansion, requirements,
-  subreqs, fan-in — the second section critiques the
+- **Prompt contract.** One XML response, parsed via
+  `backend/graph/parsers/review_xml.py` into a `ParsedReview`
+  dataclass. Schema:
+
+  ```xml
+  <review>
+    <intro>One or two short paragraphs (3–6 sentences total)
+  giving a "how close to finished" read on the artifact. Display-
+  only — does not feed the regen loop.</intro>
+    <score>0</score>  <!-- integer 0–100 -->
+    <handles-structure>
+      <finding id="h1">…</finding>
+      …
+    </handles-structure>
+    <architectural-decisions>
+      <finding id="a1">…</finding>
+      …
+    </architectural-decisions>
+  </review>
+  ```
+
+  Both `<intro>` and `<score>` are required. Score buckets are
+  0–30 (fundamental rework), 31–60 (structural fixes), 61–85
+  (minor refinements), 86–100 (ready). Each section's findings
+  are individually-addressable so the frontend can offer
+  selective apply-as-feedback later. On tiers that don't make
+  tech decisions — expansion, requirements, fan-in — the
+  `<architectural-decisions>` section critiques the
   decomposition axis instead.
 - **Frontend render states.** `BootstrapDraftPanel` and
   `FanInPanel` both show a review block with four states keyed
@@ -405,6 +262,29 @@ CLI call count).
   `persist_draft`'s prior-draft-discard block cancels the stale
   draft's review; fan-in reset cancels its node-scoped review.
   The new draft / node starts with `review_text=""`.
+
+## Tier-ops dashboards
+
+The Tier Operations sidebar entry (`:tier-ops`) hosts per-tier
+bulk operations + a read-only review-summary dashboard:
+
+- **Reset All** — destructive sweep of every node in the tier
+  with confirm-tap. Wraps the per-node `bootstrap_reset`.
+- **Review All** — non-destructive sweep that enqueues a fresh
+  AI self-review job per node with content. Wraps
+  `bootstrap_retry_review`.
+- **Review summary** (`GET /projects/:id/tiers/:tier/review-summary`)
+  — aggregates parsed `<review>` blocks across the tier into
+  score min/mean/median/max, a 4-bucket histogram, and a
+  copy-paste-ready markdown block of per-scope intros ordered
+  worst-first. Backed by `backend/graph/review_summary.py`;
+  rendered by `TierReviewSummaryPanel` inline beneath each row.
+  The panel has a worst-N slider + score-threshold filter so the
+  iteration loop on a multi-comp project stays scoped.
+
+The registry that drives all three is
+`backend.graph.tier_ops_routes._registry()` — adding a new tier
+to any of these dashboards is a one-line entry there.
 
 ## Frontend patterns
 
@@ -481,12 +361,13 @@ delegating. Not a code change.
 
 ## Things to not relitigate
 
-- Phase 11 closure: structured edit UIs 1–6 all shipped. Graph
-  view primary on UIs #3 / #5 / #6; list view is the a11y
-  fallback, not a different product. Don't add list-only
-  affordances that the graph view can't reach, and don't add
-  graph-only affordances that break the list fallback.
-- Playwright / full browser E2E testing is deferred until the UI
+- **Structured edit UIs: graph primary, list a11y fallback.** UIs
+  #3 / #5 / #6 are graph-first via the shared `EditableGraph`
+  wrapper; the `Graph | List` toggle exposes a list view as the
+  accessibility fallback, not as a parallel product. Don't add
+  list-only affordances the graph view can't reach, and don't
+  add graph-only affordances that break the list fallback.
+- **Playwright / full browser E2E** is deferred until the UI
   stops churning. The full bootstrap chain integration test gets
   most of the value at 5% of the maintenance cost.
 - **Drag-to-connect on graph editors.** HTML5 pointer-event drag
@@ -499,6 +380,12 @@ delegating. Not a code change.
   for layout on every graph editor. Users adjusting positions
   manually fights the layout engine and the adjustments don't
   persist through re-layouts.
+- **Subreqs tier was retired.** Comparch carries the parent-resp +
+  feat-slice ownership picture directly via per-subcomp `<owns>`
+  blocks; legacy subreqs nodes (`tier="subreqs"`, `tier="resp"`
+  with `parent_id != None`) may linger in pre-retirement
+  projections but are filtered out of the structure projection
+  and the nav tree. Don't reintroduce a separate subreqs tier.
 
 ## Deployment
 
