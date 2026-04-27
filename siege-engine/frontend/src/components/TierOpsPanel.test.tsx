@@ -21,11 +21,17 @@ const mockedReset = tierOpsApi.resetTier as unknown as ReturnType<typeof vi.fn>;
 const mockedReview = tierOpsApi.reviewSweepTier as unknown as ReturnType<typeof vi.fn>;
 
 function makeInfo(overrides: Partial<tierOpsApi.TierInfo> = {}): tierOpsApi.TierInfo {
+  // Default ``reviewable_count`` mirrors ``nodes_with_content`` so
+  // the legacy tests that only set ``nodes_with_content`` still get
+  // sensible gate behaviour. Tests that exercise the pending-draft
+  // case override ``reviewable_count`` explicitly.
+  const nodes_with_content = overrides.nodes_with_content ?? 2;
   return {
     tier: 'comparch',
     tier_name: 'Comparch',
     node_count: 2,
-    nodes_with_content: 2,
+    nodes_with_content,
+    reviewable_count: nodes_with_content,
     supports_reset: true,
     supports_review: true,
     ...overrides,
@@ -179,5 +185,26 @@ describe('TierOpsPanel', () => {
     renderPanel();
     const toggle = await screen.findByTestId('tier-row-comparch-review-summary-button');
     expect(toggle).toBeDisabled();
+  });
+
+  it('Review All + Review summary enable on pending drafts (no approved content yet)', async () => {
+    // The actual user-bug case: 40 comparch comps with pending
+    // drafts but no approvals. nodes_with_content = 0 but
+    // reviewable_count = 40 — the buttons should fire.
+    mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
+      makeInfo({
+        tier,
+        node_count: 40,
+        nodes_with_content: 0,
+        reviewable_count: 40,
+      }),
+    );
+    renderPanel();
+    const reviewAll = await screen.findByTestId('tier-row-comparch-review-button');
+    const summary = await screen.findByTestId('tier-row-comparch-review-summary-button');
+    await waitFor(() => {
+      expect(reviewAll).not.toBeDisabled();
+      expect(summary).not.toBeDisabled();
+    });
   });
 });

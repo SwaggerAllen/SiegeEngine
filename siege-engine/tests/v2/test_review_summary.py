@@ -108,13 +108,17 @@ def _seed_comp_with_review(
     name: str,
     order: int,
     review_text: str | None,
+    draft_status: str = "approved",
     parent_resp_id: str | None = None,
 ) -> str:
-    """Seed a top-level comp + an approved draft carrying ``review_text``.
+    """Seed a top-level comp + a draft carrying ``review_text``.
 
     Pass ``review_text=None`` to skip the draft entirely (simulates
-    "no approved draft" missing case). Pass an empty string to seed
-    an approved draft with empty review_text ("empty review" case).
+    "no draft" missing case). Pass an empty string to seed a draft
+    with empty review_text ("empty review" case). ``draft_status``
+    defaults to ``"approved"`` (matches the legacy summary path);
+    pass ``"pending"`` for the in-flight regen case the gate now
+    accepts.
     """
     comp_id = mint(db, Kind.COMP)
     append_event(
@@ -163,7 +167,7 @@ def _seed_comp_with_review(
             target_type="node",
             target_id=comp_id,
             content=f"<comparch>{name}</comparch>",
-            status="approved",
+            status=draft_status,
             batch_id=f"batch_{uuid.uuid4().hex[:8]}",
             review_text=review_text,
             created_at=datetime(2026, 4, 1, 12, 0, order),
@@ -312,7 +316,7 @@ class TestGatherTierReviewSummary:
         assert summary.reviewed_count == 1
         assert summary.missing_count == 3
         reasons_by_label = {m.scope_label: m.reason for m in summary.missing}
-        assert reasons_by_label["NoDraft"] == "no approved draft"
+        assert reasons_by_label["NoDraft"] == "no draft"
         assert reasons_by_label["EmptyReview"] == "empty review"
         assert reasons_by_label["BadXml"].startswith("parse failed:")
 
@@ -351,6 +355,62 @@ class TestGatherTierReviewSummary:
         db.commit()
         with pytest.raises(KeyError):
             gather_tier_review_summary(db, project_id, "manifest")
+
+    def test_pending_drafts_are_summarised(self, db):
+        """The summary pulls reviews from drafts in any non-discarded
+        status — pending drafts that haven't been approved yet still
+        carry review_text and are what the user is workshopping."""
+        project_id = _seed_project(db)
+        _seed_comp_with_review(
+            db,
+            project_id,
+            name="WIP",
+            order=0,
+            review_text=_review_xml(intro="WIP intro", score=58, h_findings=3, a_findings=2),
+            draft_status="pending",
+        )
+        db.commit()
+        summary = gather_tier_review_summary(db, project_id, "comparch")
+        assert summary.reviewed_count == 1
+        assert summary.reviews[0].scope_label == "WIP"
+        assert summary.reviews[0].score == 58
+
+    def test_pending_wins_over_older_approved_draft(self, db):
+        """When both a pending and an older approved draft exist,
+        the summary picks the pending one — that's the active
+        regen the user is iterating on."""
+        project_id = _seed_project(db)
+        comp_id = _seed_comp_with_review(
+            db,
+            project_id,
+            name="Billing",
+            order=0,
+            review_text=_review_xml(
+                intro="Approved verdict", score=80, h_findings=1, a_findings=0
+            ),
+            draft_status="approved",
+        )
+        # Add a newer pending draft on the same node.
+        db.add(
+            Draft(
+                id=f"draft_pending_{uuid.uuid4().hex[:8]}",
+                project_id=project_id,
+                target_type="node",
+                target_id=comp_id,
+                content="<comparch>regen</comparch>",
+                status="pending",
+                batch_id=f"batch_{uuid.uuid4().hex[:8]}",
+                review_text=_review_xml(
+                    intro="Pending verdict", score=42, h_findings=4, a_findings=2
+                ),
+                created_at=datetime(2026, 4, 2, 12, 0, 0),
+            )
+        )
+        db.commit()
+        summary = gather_tier_review_summary(db, project_id, "comparch")
+        assert summary.reviewed_count == 1
+        assert summary.reviews[0].score == 42
+        assert summary.reviews[0].intro == "Pending verdict"
 
 
 # ── Endpoint smoke tests ───────────────────────────────────────────

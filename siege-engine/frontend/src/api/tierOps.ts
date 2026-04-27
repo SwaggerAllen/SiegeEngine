@@ -24,6 +24,10 @@ export const TierInfoSchema = z.object({
   tier_name: z.string(),
   node_count: z.number(),
   nodes_with_content: z.number(),
+  // Scopes the Review All / Review summary buttons can act on:
+  // pending drafts count as reviewable even before approval, since
+  // the AI review pass runs against the draft body.
+  reviewable_count: z.number(),
   supports_reset: z.boolean(),
   supports_review: z.boolean(),
 });

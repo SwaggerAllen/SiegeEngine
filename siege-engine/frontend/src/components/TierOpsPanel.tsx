@@ -131,7 +131,7 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
         <button
           type="button"
           onClick={() => setShowSummary((v) => !v)}
-          disabled={isBusy || (data?.nodes_with_content ?? 0) === 0}
+          disabled={isBusy || (data?.reviewable_count ?? 0) === 0}
           className="px-3 py-1.5 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
           title="Aggregate AI self-review intros + scores for this tier"
           data-testid={`tier-row-${tier}-review-summary-button`}
@@ -143,9 +143,9 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
           <button
             type="button"
             onClick={() => reviewMutation.mutate()}
-            disabled={isBusy || data.nodes_with_content === 0}
+            disabled={isBusy || data.reviewable_count === 0}
             className="px-3 py-1.5 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
-            title="Enqueue a fresh AI self-review for every node in this tier with content"
+            title="Enqueue a fresh AI self-review for every node in this tier with a pending draft or approved content"
             data-testid={`tier-row-${tier}-review-button`}
           >
             {reviewMutation.isPending ? 'Reviewing…' : 'Review All'}
