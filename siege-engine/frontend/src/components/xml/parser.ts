@@ -8,11 +8,38 @@ import type { XmlElement, XmlNode } from './types';
  * order of children is maintained, which matters for rendering
  * features/sections in the order the LLM emitted them.
  *
+ * Returns the first top-level element. Use :func:`parseXmlAll` if
+ * the document has multiple top-level elements (e.g. the bootstrap
+ * tiers that emit ``<introduction>`` alongside their main block —
+ * sysarch, requirements, expansion). ``parseXml`` is kept for
+ * call sites that genuinely want a single root.
+ *
  * Throws on any parse failure or when no root element is found.
  * Callers should catch and render a fallback; the ``XmlDocument``
  * component does this automatically.
  */
 export function parseXml(raw: string): XmlElement {
+  const roots = parseXmlAll(raw);
+  if (roots.length === 0) {
+    throw new Error('No root element found in XML');
+  }
+  return roots[0];
+}
+
+/**
+ * Parse a raw XML string into all top-level elements in document
+ * order. Skips text nodes, XML declarations, and comments.
+ *
+ * The bootstrap tiers (expansion, requirements, sysarch) emit two
+ * top-level blocks: an ``<introduction>`` preamble plus the main
+ * tier output (``<features>``, ``<requirements>``, ``<sysarch>``).
+ * Tiers below the top three emit a single root, in which case this
+ * returns a one-element array.
+ *
+ * Throws on parse failure. Returns ``[]`` if the document parses
+ * but contains no element nodes.
+ */
+export function parseXmlAll(raw: string): XmlElement[] {
   const parser = new XMLParser({
     preserveOrder: true,
     ignoreAttributes: false,
@@ -24,15 +51,14 @@ export function parseXml(raw: string): XmlElement {
   if (!Array.isArray(tree)) {
     throw new Error('fast-xml-parser returned a non-array top-level tree');
   }
-  // Find the first real element at the top level (skipping any
-  // stray text nodes, XML declarations, or comments).
+  const roots: XmlElement[] = [];
   for (const entry of tree) {
     const node = convertEntry(entry);
     if (node && node.type === 'element') {
-      return node;
+      roots.push(node);
     }
   }
-  throw new Error('No root element found in XML');
+  return roots;
 }
 
 /** Convert one ``preserveOrder`` entry into our XmlNode shape.

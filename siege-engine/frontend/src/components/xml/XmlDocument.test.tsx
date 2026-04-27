@@ -45,6 +45,26 @@ describe('XmlDocument (schema-agnostic default rendering)', () => {
     expect(screen.getByText('not xml at all')).toBeInTheDocument();
   });
 
+  it('renders every top-level element when the document has multiple roots', () => {
+    // Bootstrap tiers (expansion / requirements / sysarch) emit
+    // ``<introduction>...</introduction><main-block>...</main-block>``.
+    // The default renderer turned a leaf <runtime>FastAPI</runtime> into
+    // its inner text, so its presence is the "did the second root render"
+    // signal.
+    const { container } = render(
+      <XmlDocument
+        content={
+          '<introduction>Preamble prose.</introduction>' +
+          '<sysarch>' +
+          '<techspec><runtime>FastAPI</runtime></techspec>' +
+          '</sysarch>'
+        }
+      />,
+    );
+    expect(container.textContent).toContain('Preamble prose.');
+    expect(container.textContent).toContain('FastAPI');
+  });
+
   it('calls the custom fallback when provided', () => {
     render(
       <XmlDocument
