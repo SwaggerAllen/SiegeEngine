@@ -484,6 +484,100 @@ class TestFailureModes:
             asyncio.run(apply_top_level_policies({}))
 
 
+class TestRequiredRespOwnerWalk:
+    """``_find_required_resp_owner`` must return the canonical
+    top-level domain comp even when the required resp has multiple
+    outgoing decomposition edges. Two sources of multiplicity:
+    sysarch presentational mirroring (resp assigned to both a
+    domain comp and its presentational counterpart) and comparch
+    multi-owner subs (parent resp claimed by N subcomps under the
+    parent comp). Both shapes coexist with comparch already minted,
+    and the dep-edge patcher only wants the top-level domain comp.
+    """
+
+    def test_picks_domain_top_level_with_presentational_mirror_and_multi_owner_subs(
+        self, shared_session_factory, seeded
+    ):
+        from backend.graph.handlers.policy_application_top import (
+            _find_required_resp_owner,
+        )
+
+        s = shared_session_factory()
+        try:
+            project_id = seeded["project_id"]
+            resp_audit = seeded["resp_audit"]
+            comp_audit = seeded["comp_audit"]
+
+            # Presentational mirror: a second top-level comp with
+            # kind="presentational" that also decomposes from the
+            # same resp. Sysarch allows this when the presentational
+            # has a domain_parent edge to the domain comp.
+            comp_audit_pres = mint(s, Kind.COMP)
+            append_event(
+                s,
+                project_id,
+                ev.NodeCreated(
+                    node_id=comp_audit_pres,
+                    tier="comp",
+                    kind="presentational",
+                    parent_id=None,
+                    name="AuditServiceUI",
+                    display_order=99,
+                    content="",
+                ),
+            )
+            for source, edge_type in (
+                (resp_audit, "decomposition"),
+                (comp_audit_pres, "domain_parent"),
+            ):
+                eid = mint(s, Kind.EDGE)
+                append_event(
+                    s,
+                    project_id,
+                    ev.EdgeCreated(
+                        edge_id=eid,
+                        edge_type=edge_type,
+                        source_id=source,
+                        target_id=(comp_audit_pres if edge_type == "decomposition" else comp_audit),
+                    ),
+                )
+
+            # Multi-owner subs under the domain comp: two subs each
+            # claim the parent resp via comparch_mint's <owns> walk.
+            for sub_name in ("WriterSub", "QuerySub"):
+                sub_id = mint(s, Kind.COMP)
+                append_event(
+                    s,
+                    project_id,
+                    ev.NodeCreated(
+                        node_id=sub_id,
+                        tier="comp",
+                        kind="domain",
+                        parent_id=comp_audit,
+                        name=sub_name,
+                        display_order=0,
+                        content="",
+                    ),
+                )
+                eid = mint(s, Kind.EDGE)
+                append_event(
+                    s,
+                    project_id,
+                    ev.EdgeCreated(
+                        edge_id=eid,
+                        edge_type="decomposition",
+                        source_id=resp_audit,
+                        target_id=sub_id,
+                    ),
+                )
+            s.commit()
+
+            owner = _find_required_resp_owner(s, project_id, seeded["policy_tele"])
+            assert owner == comp_audit
+        finally:
+            s.close()
+
+
 class TestParseValidateRetry:
     def test_retry_on_missing_coverage(self, shared_session_factory, seeded, monkeypatch):
         # First attempt misses one candidate

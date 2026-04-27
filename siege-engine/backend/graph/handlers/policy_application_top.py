@@ -329,13 +329,26 @@ async def apply_top_level_policies(payload: dict) -> None:
 
 
 def _find_required_resp_owner(session, project_id: str, policy_id: str) -> str | None:
-    """Return the comp_id that owns the resp a policy's <required>
-    points at, or None if the resp has no owning component.
+    """Return the top-level domain comp_id that owns the resp a
+    policy's ``<required>`` points at, or None if the resp resolves
+    to no top-level domain comp.
 
     Walks: policy_* content -> parse blob -> required resp_* ->
-    decomposition edge (resp → comp) or parent_id (sub resp).
-    Returns the comp_* that the resp decomposes into or is
-    parented to; None if neither path resolves.
+    sysarch decomposition edge filtered to a top-level domain comp.
+
+    A required resp can have multiple outgoing decomposition edges:
+    sysarch lets a resp be assigned to both a domain comp and its
+    presentational mirror (``validators.py`` lines 770-783), and
+    once comparch_mint runs the same resp gains one decomposition
+    edge per claiming subcomp via the parent's ``<owns>`` block
+    (multi-owner is allowed; see
+    ``docs/architecture/v2-rearchitecture.md``). The dep-edge
+    patching that calls this helper operates between top-level
+    comps, so we filter to the canonical owner: the top-level
+    (``parent_id IS NULL``) domain (``kind="domain"``) comp the
+    resp decomposes into. Presentational mirrors and subcomp
+    owners are intentionally excluded — they're not the right
+    target for a top-level dependency edge.
     """
     from backend.graph.parsers.xml_sections import extract_tag_tree
 
@@ -354,31 +367,19 @@ def _find_required_resp_owner(session, project_id: str, policy_id: str) -> str |
     if not required_resp_id:
         return None
 
-    resp_node = session.get(Node, required_resp_id)
-    if resp_node is None:
-        return None
-
-    # If the resp is a subresp (parent_id is a comp), that's the owner.
-    if resp_node.parent_id:
-        parent = session.get(Node, resp_node.parent_id)
-        if parent is not None and parent.tier == "comp":
-            return parent.id
-
-    # Otherwise the owner is whichever comp the resp decomposes into
-    # via a decomposition edge.
-    edge_row = session.execute(
-        select(Edge).where(
+    target = session.execute(
+        select(Node)
+        .join(Edge, Edge.target_id == Node.id)
+        .where(
             Edge.project_id == project_id,
             Edge.edge_type == "decomposition",
             Edge.source_id == required_resp_id,
+            Node.tier == "comp",
+            Node.parent_id.is_(None),
+            Node.kind == "domain",
         )
     ).scalar_one_or_none()
-    if edge_row is None:
-        return None
-    target_node = session.get(Node, edge_row.target_id)
-    if target_node is None or target_node.tier != "comp":
-        return None
-    return target_node.id
+    return target.id if target is not None else None
 
 
 def register() -> None:
