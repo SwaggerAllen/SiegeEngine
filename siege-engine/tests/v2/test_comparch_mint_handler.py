@@ -308,14 +308,20 @@ class TestHappyPath:
                 assert ts.content  # non-empty
                 assert pa.content
 
-            # Billing itself got 5 updated fragments
+            # Billing itself got 6 comparch-layer fragments
+            # (techspec, pubapi, privapi, policies, deps, failuresurface).
+            # Rich content goes to the prefixed slots so the
+            # sysarch skeletal seeds in the unprefixed slots
+            # survive a comparch reset — see the layered-fragment
+            # model in ``backend/graph/fragments.py``.
             billing_id = seeded["comp_billing"]
             for kind in (
-                FragmentKind.TECHSPEC,
-                FragmentKind.PUBAPI,
-                FragmentKind.PRIVAPI,
-                FragmentKind.POLICIES,
-                FragmentKind.DEPS,
+                FragmentKind.COMPARCH_TECHSPEC,
+                FragmentKind.COMPARCH_PUBAPI,
+                FragmentKind.COMPARCH_PRIVAPI,
+                FragmentKind.COMPARCH_POLICIES,
+                FragmentKind.COMPARCH_DEPS,
+                FragmentKind.COMPARCH_FAILURE_SURFACE,
             ):
                 frag = s.get(Fragment, fragment_id(billing_id, kind))
                 assert frag is not None, f"missing {kind}"

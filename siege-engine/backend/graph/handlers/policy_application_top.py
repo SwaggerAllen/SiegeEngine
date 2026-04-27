@@ -36,7 +36,7 @@ from sqlalchemy import select
 
 from backend.database import SessionLocal
 from backend.graph import events as ev
-from backend.graph.fragments import FragmentKind, fragment_id
+from backend.graph.fragments import FragmentKind, best_layered_fragment_content
 from backend.graph.handlers._bootstrap_generation import run_parse_validate_loop
 from backend.graph.ids import Kind, mint
 from backend.graph.parsers.validators import (
@@ -51,7 +51,7 @@ from backend.graph.prompts.policy_application import (
 from backend.graph.queries import top_level_resps_assigned_to
 from backend.graph.reducer import append_event
 from backend.models import Project
-from backend.models.node import Edge, Fragment, Node
+from backend.models.node import Edge, Node
 from backend.pipeline import queue as pipeline_queue
 from backend.projects.settings import get_project_settings
 
@@ -121,11 +121,12 @@ async def apply_top_level_policies(payload: dict) -> None:
             )
             return
 
-        # Target context: component name, techspec, pubapi, resps
-        techspec_frag = db.get(Fragment, fragment_id(component_id, FragmentKind.TECHSPEC))
-        pubapi_frag = db.get(Fragment, fragment_id(component_id, FragmentKind.PUBAPI))
-        techspec = techspec_frag.content if techspec_frag is not None else ""
-        pubapi = pubapi_frag.content if pubapi_frag is not None else ""
+        # Target context: component name, techspec, pubapi, resps.
+        # Layered read so the policy-application prompt sees the
+        # rich comparch content when available, falling back to the
+        # sysarch skeletal seed otherwise.
+        techspec = best_layered_fragment_content(db, comp_node, FragmentKind.TECHSPEC)
+        pubapi = best_layered_fragment_content(db, comp_node, FragmentKind.PUBAPI)
 
         parent_resps = top_level_resps_assigned_to(db, component_id)
 

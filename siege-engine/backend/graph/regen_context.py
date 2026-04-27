@@ -40,7 +40,11 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.graph.fragments import FragmentKind, fragment_id
+from backend.graph.fragments import (
+    FragmentKind,
+    best_layered_fragment_content,
+    fragment_id,
+)
 from backend.graph.queries import (
     domain_parents_of,
     get_component_context,
@@ -273,10 +277,12 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
 
         # Parent fragments: a subcomponent is allowed to read all
         # three of its parent's fragment sections (including
-        # private-surface). Missing fragment → empty string.
-        parent_techspec = _fragment_content(session, parent_node.id, FragmentKind.TECHSPEC)
-        parent_pubapi = _fragment_content(session, parent_node.id, FragmentKind.PUBAPI)
-        parent_privapi = _fragment_content(session, parent_node.id, FragmentKind.PRIVAPI)
+        # private-surface). Layered read so we see the parent's
+        # rich comparch content (``comparch*``) when populated and
+        # fall back to the sysarch skeletal seed otherwise.
+        parent_techspec = _layered_fragment(session, parent_node, FragmentKind.TECHSPEC)
+        parent_pubapi = _layered_fragment(session, parent_node, FragmentKind.PUBAPI)
+        parent_privapi = _layered_fragment(session, parent_node, FragmentKind.PRIVAPI)
 
         # Same-parent siblings (excluding self)
         all_subcomps = list_subcomponents_of(session, parent_node.id)
@@ -284,8 +290,8 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         sibling_subcomps = siblings_same_parent
         sibling_subcomp_ids = tuple(s.id for s in siblings_same_parent)
         for sib in siblings_same_parent:
-            sibling_subcomp_pubapi_fragments[sib.id] = _fragment_content(
-                session, sib.id, FragmentKind.PUBAPI
+            sibling_subcomp_pubapi_fragments[sib.id] = _layered_fragment(
+                session, sib, FragmentKind.PUBAPI
             )
 
         # Parent's sibling top-level comps — the allowed real-id
@@ -302,7 +308,7 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         parent_cc = get_component_context(session, parent_node.id)
         dep_pubapi: dict[str, str] = {}
         for dep_node in parent_cc.outbound_deps:
-            dep_pubapi[dep_node.id] = _fragment_content(session, dep_node.id, FragmentKind.PUBAPI)
+            dep_pubapi[dep_node.id] = _layered_fragment(session, dep_node, FragmentKind.PUBAPI)
     else:
         # Top-level comp: sibling set is every other top-level,
         # dep pubapis are this component's own outbound deps.
@@ -312,7 +318,7 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
 
         dep_pubapi = {}
         for dep_node in cc.outbound_deps:
-            dep_pubapi[dep_node.id] = _fragment_content(session, dep_node.id, FragmentKind.PUBAPI)
+            dep_pubapi[dep_node.id] = _layered_fragment(session, dep_node, FragmentKind.PUBAPI)
 
     # Related features: walk backwards from parent_resps via
     # decomposition edges to find the feat_* nodes that decompose
@@ -379,11 +385,11 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         parent_rows = domain_parents_of(session, domain_parent_lookup_source)
         domain_parents_tuple = tuple(parent_rows)
         for parent in parent_rows:
-            domain_parent_techspec_map[parent.id] = _fragment_content(
-                session, parent.id, FragmentKind.TECHSPEC
+            domain_parent_techspec_map[parent.id] = _layered_fragment(
+                session, parent, FragmentKind.TECHSPEC
             )
-            domain_parent_pubapi_map[parent.id] = _fragment_content(
-                session, parent.id, FragmentKind.PUBAPI
+            domain_parent_pubapi_map[parent.id] = _layered_fragment(
+                session, parent, FragmentKind.PUBAPI
             )
             # Phase 7: if the domain parent has a fan-in child
             # with non-empty content, surface it alongside the
@@ -482,7 +488,7 @@ def build_fanin_synthesis_context(
             {
                 "sub_name": sub.name or "",
                 "sub_id": sub.id,
-                "pubapi": _fragment_content(session, sub.id, FragmentKind.PUBAPI),
+                "pubapi": _layered_fragment(session, sub, FragmentKind.PUBAPI),
             }
         )
 
@@ -576,9 +582,28 @@ def _fanin_content_for_comp(session: Session, comp_id: str) -> str:
 
 
 def _fragment_content(session: Session, owner_id: str, kind: FragmentKind) -> str:
-    """Read a fragment's content, returning empty string if missing."""
+    """Read a fragment's content, returning empty string if missing.
+
+    Layer-naive read — used internally by callers that have already
+    resolved which kind they want. For "best available across the
+    sysarch / comparch / subcomparch layers" reads, prefer
+    :func:`_layered_fragment` which dispatches by owner tier.
+    """
     frag = session.get(Fragment, fragment_id(owner_id, kind))
     return frag.content if frag is not None else ""
+
+
+def _layered_fragment(session: Session, owner_node: Node, sysarch_kind: FragmentKind) -> str:
+    """Read the layered "best available" content for ``owner_node``.
+
+    Wrapper around :func:`backend.graph.fragments.best_layered_fragment_content`
+    so call sites can stay short. ``sysarch_kind`` names the
+    section semantically (TECHSPEC / PUBAPI / …); the helper picks
+    COMPARCH_X for top-level comps or SUBCOMPARCH_X for subcomps,
+    falling back to the legacy slot when the layered slot is
+    empty.
+    """
+    return best_layered_fragment_content(session, owner_node, sysarch_kind)
 
 
 def _collect_related_features(
@@ -819,7 +844,7 @@ def _format_impl_owner_summary(ctx: RegenContext) -> str:
     # a privapi fragment (subcomponent or comparch leaf post-mint).
     session = _session_from_node(ctx.component)
     if session is not None:
-        privapi = _fragment_content(session, ctx.component.id, FragmentKind.PRIVAPI)
+        privapi = _layered_fragment(session, ctx.component, FragmentKind.PRIVAPI)
         if privapi.strip():
             parts.append("")
             parts.append("*Private surface:*")

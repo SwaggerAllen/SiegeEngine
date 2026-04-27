@@ -33,8 +33,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.graph.fragments import FragmentKind, fragment_id
-from backend.models.node import Edge, Fragment, Node
+from backend.graph.fragments import FragmentKind, best_layered_fragment_content
+from backend.models.node import Edge, Node
 
 REF_TIER = "ref"
 REFERENCE_EDGE_TYPE = "reference"
@@ -149,15 +149,13 @@ def _render_target_chunk(session: Session, project_id: str, target: Node) -> str
     if target.tier == REF_TIER:
         return _render_reference_content(target)
     if target.tier == "comp":
-        fid = fragment_id(target.id, FragmentKind.PUBAPI)
-        fragment = session.execute(
-            select(Fragment).where(
-                Fragment.project_id == project_id,
-                Fragment.id == fid,
-            )
-        ).scalar_one_or_none()
-        if fragment is not None and (fragment.content or "").strip():
-            return fragment.content.strip()
+        # Layered read so a referenced top-level comp returns its
+        # rich comparch pubapi (and a referenced subcomp returns
+        # its subcomparch pubapi); falls through to the sysarch
+        # skeletal seed when the higher layer is empty.
+        rendered = best_layered_fragment_content(session, target, FragmentKind.PUBAPI)
+        if rendered.strip():
+            return rendered.strip()
         return (target.content or "").strip()
     # feat / resp / policy / vocab / everything else: fall back to
     # the node's own content.

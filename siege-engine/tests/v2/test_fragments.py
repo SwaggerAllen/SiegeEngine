@@ -15,12 +15,25 @@ from backend.graph.fragments import (
 class TestFragmentKind:
     def test_vocabulary(self):
         assert {k.value for k in FragmentKind} == {
+            # Sysarch / legacy slots — the lowest layer.
             "techspec",
             "pubapi",
             "privapi",
             "policies",
             "deps",
             "failuresurface",
+            # Comparch-layer slots — written by comparch_mint.
+            "comparchtechspec",
+            "comparchpubapi",
+            "comparchprivapi",
+            "comparchpolicies",
+            "comparchdeps",
+            "comparchfailuresurface",
+            # Subcomparch-layer slots — written by subcomparch_mint.
+            "subcomparchtechspec",
+            "subcomparchpubapi",
+            "subcomparchprivapi",
+            "subcomparchdeps",
         }
 
     def test_all_kinds_are_single_token(self):

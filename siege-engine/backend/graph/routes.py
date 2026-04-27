@@ -44,7 +44,12 @@ from backend.graph.expansion import (
 from backend.graph.expansion import (
     collect_downstream_nodes as expansion_collect_downstream_nodes,
 )
-from backend.graph.fragments import FragmentKind, fragment_id
+from backend.graph.fragments import (
+    COMPARCH_LAYER_KINDS,
+    SUBCOMPARCH_LAYER_KINDS,
+    FragmentKind,
+    fragment_id,
+)
 from backend.graph.handlers.comparch_generation import (
     GENERATE_COMPARCH_JOB_TYPE,
 )
@@ -1187,6 +1192,19 @@ def _comparch_approved(db: Session, project_id: str, comp_id: str) -> bool:
     return bool(node and (node.content or "").strip())
 
 
+def _comparch_fragment_kinds_to_clear(
+    db: Session, project_id: str, comp_id: str
+) -> list[tuple[str, FragmentKind]]:
+    """Comparch reset clears its own ``comparch*`` layer slots.
+
+    The legacy / sysarch slots (``techspec`` / ``pubapi``) survive
+    so the next sysarch regen can re-seed them; until then the
+    reader fallback picks them up automatically. See the
+    layered-fragment model in ``backend/graph/fragments.py``.
+    """
+    return [(comp_id, kind) for kind in COMPARCH_LAYER_KINDS]
+
+
 COMPARCH_CONFIG = BootstrapTierConfig(
     tier_name="Component architecture",
     get_node=_get_comp_node,
@@ -1204,6 +1222,7 @@ COMPARCH_CONFIG = BootstrapTierConfig(
     collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_comparch,
     collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
     downstream_job_types=per_comp_reset.comparch_downstream_job_types(),
+    additional_fragment_kinds_to_clear=_comparch_fragment_kinds_to_clear,
     review_job_type="v2.review_comparch",
 )
 
@@ -1488,6 +1507,18 @@ def _subcomparch_approved(db: Session, project_id: str, sub_id: str) -> bool:
     return bool(node and (node.content or "").strip())
 
 
+def _subcomparch_fragment_kinds_to_clear(
+    db: Session, project_id: str, sub_id: str
+) -> list[tuple[str, FragmentKind]]:
+    """Subcomparch reset clears its own ``subcomparch*`` layer slots.
+
+    The comparch-mint skeletal seeds in the legacy ``techspec`` /
+    ``pubapi`` slots survive so a re-run reads from the fall-back
+    layer. See ``backend/graph/fragments.py``.
+    """
+    return [(sub_id, kind) for kind in SUBCOMPARCH_LAYER_KINDS]
+
+
 SUBCOMPARCH_CONFIG = BootstrapTierConfig(
     tier_name="Subcomponent architecture",
     get_node=_get_sub_node,
@@ -1505,6 +1536,7 @@ SUBCOMPARCH_CONFIG = BootstrapTierConfig(
     collect_downstream_nodes=per_comp_reset.collect_downstream_nodes_subcomparch,
     collect_pending_drafts_for_nodes=per_comp_reset.collect_pending_drafts_for_nodes,
     downstream_job_types=per_comp_reset.subcomparch_downstream_job_types(),
+    additional_fragment_kinds_to_clear=_subcomparch_fragment_kinds_to_clear,
     review_job_type="v2.review_subcomparch",
 )
 
@@ -1886,26 +1918,57 @@ def get_project_structure(
     # ``StructureNodeResponse.content`` for the rationale.
     light_content_tiers = {"feat", "resp", "policy", "vocab", "ref"}
 
-    # Bulk-load the sysarch-minted techspec + pubapi fragments for
-    # every comp in the project. Two indexed lookups per comp on
-    # the ComponentOverviewPanel would be fine but the payload is
-    # small and this keeps the structure fetch to one-query-per-
-    # table.
-    comp_ids = [n.id for n in node_rows if n.tier == "comp"]
-    fragment_by_id: dict[str, str] = {}
-    if comp_ids:
-        wanted_fragment_ids: list[str] = []
-        for cid in comp_ids:
-            wanted_fragment_ids.append(fragment_id(cid, FragmentKind.TECHSPEC))
-            wanted_fragment_ids.append(fragment_id(cid, FragmentKind.PUBAPI))
+    # Bulk-load the techspec + pubapi fragments for every comp in
+    # the project. Reads each comp's layered slot first (comparch*
+    # for top-level, subcomparch* for subcomp) and falls back to
+    # the sysarch skeletal seed when the layer slot is empty —
+    # mirrors the per-comp ``best_layered_fragment_content``
+    # dispatch but in one bulk query so the structure fetch stays
+    # one-query-per-table.
+    comp_nodes = [n for n in node_rows if n.tier == "comp"]
+    techspec_by_comp: dict[str, str] = {}
+    pubapi_by_comp: dict[str, str] = {}
+    if comp_nodes:
+        wanted_fragment_ids = []
+        for n in comp_nodes:
+            wanted_fragment_ids.append(fragment_id(n.id, FragmentKind.TECHSPEC))
+            wanted_fragment_ids.append(fragment_id(n.id, FragmentKind.PUBAPI))
+            if n.parent_id is None:
+                wanted_fragment_ids.append(fragment_id(n.id, FragmentKind.COMPARCH_TECHSPEC))
+                wanted_fragment_ids.append(fragment_id(n.id, FragmentKind.COMPARCH_PUBAPI))
+            else:
+                wanted_fragment_ids.append(fragment_id(n.id, FragmentKind.SUBCOMPARCH_TECHSPEC))
+                wanted_fragment_ids.append(fragment_id(n.id, FragmentKind.SUBCOMPARCH_PUBAPI))
         frag_rows = db.execute(
             select(Fragment.id, Fragment.content).where(
                 Fragment.project_id == project_id,
                 Fragment.id.in_(wanted_fragment_ids),
             )
         ).all()
-        for fid, fcontent in frag_rows:
-            fragment_by_id[fid] = fcontent or ""
+        fragment_by_id = {fid: (fcontent or "") for fid, fcontent in frag_rows}
+        for n in comp_nodes:
+            layered_ts = (
+                FragmentKind.COMPARCH_TECHSPEC
+                if n.parent_id is None
+                else FragmentKind.SUBCOMPARCH_TECHSPEC
+            )
+            layered_pa = (
+                FragmentKind.COMPARCH_PUBAPI
+                if n.parent_id is None
+                else FragmentKind.SUBCOMPARCH_PUBAPI
+            )
+            layered_ts_content = fragment_by_id.get(fragment_id(n.id, layered_ts), "")
+            techspec_by_comp[n.id] = (
+                layered_ts_content
+                if layered_ts_content.strip()
+                else fragment_by_id.get(fragment_id(n.id, FragmentKind.TECHSPEC), "")
+            )
+            layered_pa_content = fragment_by_id.get(fragment_id(n.id, layered_pa), "")
+            pubapi_by_comp[n.id] = (
+                layered_pa_content
+                if layered_pa_content.strip()
+                else fragment_by_id.get(fragment_id(n.id, FragmentKind.PUBAPI), "")
+            )
 
     return StructureResponse(
         offset=offset,
@@ -1925,12 +1988,8 @@ def get_project_structure(
                 needs_user_action=n.id in user_action_ids,
                 is_stale=n.id in stale_reasons_by_id,
                 staleness_reasons=stale_reasons_by_id.get(n.id, []),
-                techspec=fragment_by_id.get(fragment_id(n.id, FragmentKind.TECHSPEC), "")
-                if n.tier == "comp"
-                else "",
-                pubapi=fragment_by_id.get(fragment_id(n.id, FragmentKind.PUBAPI), "")
-                if n.tier == "comp"
-                else "",
+                techspec=techspec_by_comp.get(n.id, "") if n.tier == "comp" else "",
+                pubapi=pubapi_by_comp.get(n.id, "") if n.tier == "comp" else "",
                 is_deferred=n.is_deferred,
             )
             for n in node_rows

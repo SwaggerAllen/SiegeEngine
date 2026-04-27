@@ -58,7 +58,37 @@ EDGE_TYPES = (
     "decomposition",
     "reference",
 )
-FRAGMENT_KINDS = ("techspec", "pubapi", "privapi", "policies", "deps", "failuresurface")
+FRAGMENT_KINDS = (
+    # Sysarch / legacy slots — sysarch_mint writes ``techspec`` /
+    # ``pubapi`` skeletons here at top-level-comp creation time;
+    # comparch_mint writes the same skeletons on each subcomp it
+    # mints. Kept as the readable "lowest layer" fallback so a
+    # comparch reset can clear the rich layer without losing the
+    # sysarch seed underneath. ``privapi`` / ``policies`` / ``deps``
+    # / ``failuresurface`` exist here only for legacy projects whose
+    # rich content predates the layer split — fresh writes go to the
+    # ``comparch*`` slots below.
+    "techspec",
+    "pubapi",
+    "privapi",
+    "policies",
+    "deps",
+    "failuresurface",
+    # Comparch-layer slots — comparch_mint writes the rich
+    # per-comp content here, comparch reset clears just these.
+    "comparchtechspec",
+    "comparchpubapi",
+    "comparchprivapi",
+    "comparchpolicies",
+    "comparchdeps",
+    "comparchfailuresurface",
+    # Subcomparch-layer slots — subcomparch_mint writes the rich
+    # per-subcomp content here, subcomparch reset clears just these.
+    "subcomparchtechspec",
+    "subcomparchpubapi",
+    "subcomparchprivapi",
+    "subcomparchdeps",
+)
 DRAFT_TARGET_TYPES = ("node", "fragment")
 DRAFT_STATUSES = ("pending", "approved", "discarded")
 # Phase 9 staleness ledger reasons. Each marker records why a
@@ -185,7 +215,9 @@ class Fragment(Base):
     owner_id: Mapped[str] = mapped_column(
         ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False
     )
-    fragment_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Length 32 covers the longest layer-prefixed kind ("comparchfailuresurface"
+    # = 22 chars). SQLite ignores VARCHAR length but other engines wouldn't.
+    fragment_kind: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

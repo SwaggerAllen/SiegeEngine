@@ -7,12 +7,15 @@ commits the approved arch doc content to the subcomponent
 
 Smaller than :mod:`backend.graph.handlers.comparch_mint`:
 
-1. ``FragmentUpdated`` × 4 — one per fragment section
-   (techspec, pubapi, privapi, deps). The first three
-   overwrite the skeletal fragments comparch_mint wrote at
-   subcomponent mint time with the full subcomparch-produced
-   content. The ``deps`` fragment is new at this tier —
-   comparch_mint didn't seed it for subcomponents.
+1. ``FragmentUpdated`` × 4 — one per fragment section, written
+   to the **subcomparch layer** kinds (``subcomparchtechspec``,
+   ``subcomparchpubapi``, ``subcomparchprivapi``,
+   ``subcomparchdeps``). The legacy unprefixed slots
+   (``techspec`` / ``pubapi``) keep the skeletal seeds
+   comparch_mint wrote at subcomponent mint time so a
+   subcomparch reset can clear the rich layer without losing
+   the comparch-mint fall-back. ``privapi`` / ``deps`` stay
+   empty in the legacy slot — they're new at this tier.
 2. ``EdgeCreated(edge_type='dependency')`` per entry in
    ``<dependencies>``. Every target is already a real
    ``comp_*`` ID — same-parent siblings were minted by the
@@ -29,10 +32,11 @@ will pick up the next layer (impl nodes hanging off each
 subcomponent).
 
 Idempotency: skip (return without work) if the subcomponent
-already has a non-empty ``deps`` fragment. ``deps`` is the
-only fragment comparch_mint did NOT seed for subcomponents, so
-its non-empty presence is a reliable "subcomparch has already
-been minted" marker. The reducer's fragment write is idempotent
+already has a non-empty ``subcomparchdeps`` fragment.
+``subcomparchdeps`` is unique to this tier — neither
+sysarch_mint nor comparch_mint writes it — so its non-empty
+presence is a reliable "subcomparch has already been minted"
+marker. The reducer's fragment write is idempotent
 on its own (it records a new FragmentUpdated event whose
 content replaces the prior version), but skipping early avoids
 unnecessary event-log churn on crash-recovery replays.
@@ -116,11 +120,12 @@ async def mint_subcomparch(payload: dict) -> None:
                 "was mint_subcomparch enqueued before DraftApproved?"
             )
 
-        # Idempotency: a non-empty deps fragment is the unique
-        # marker for "subcomparch already minted" because
-        # comparch_mint seeded techspec + pubapi but NOT deps at
-        # subcomponent creation time.
-        existing_deps_frag = db.get(Fragment, fragment_id(component_id, FragmentKind.DEPS))
+        # Idempotency: a non-empty ``subcomparchdeps`` fragment
+        # is the unique marker for "subcomparch already minted" —
+        # only this handler writes that slot.
+        existing_deps_frag = db.get(
+            Fragment, fragment_id(component_id, FragmentKind.SUBCOMPARCH_DEPS)
+        )
         if existing_deps_frag is not None and (existing_deps_frag.content or "").strip():
             logger.info(
                 "mint_subcomparch project=%s sub=%s skipped (deps fragment already populated)",
@@ -154,11 +159,20 @@ async def mint_subcomparch(payload: dict) -> None:
             ) from exc
 
         # ── Phase 1: fragment projection ────────────────────────
-        _emit_fragment(db, project_id, component_id, FragmentKind.TECHSPEC, doc.techspec)
-        _emit_fragment(db, project_id, component_id, FragmentKind.PUBAPI, doc.pubapi)
-        _emit_fragment(db, project_id, component_id, FragmentKind.PRIVAPI, doc.privapi)
+        # Writes target the **subcomparch layer** kinds so the
+        # rich content sits one tier above the comparch-mint
+        # skeletal seeds (``techspec`` / ``pubapi``) on the sub.
+        # Subcomparch reset clears just these prefixed slots; the
+        # comparch seed underneath survives. See
+        # ``backend/graph/fragments.py`` for layered-reader
+        # semantics.
+        _emit_fragment(
+            db, project_id, component_id, FragmentKind.SUBCOMPARCH_TECHSPEC, doc.techspec
+        )
+        _emit_fragment(db, project_id, component_id, FragmentKind.SUBCOMPARCH_PUBAPI, doc.pubapi)
+        _emit_fragment(db, project_id, component_id, FragmentKind.SUBCOMPARCH_PRIVAPI, doc.privapi)
         deps_body = _serialize_deps_fragment(doc)
-        _emit_fragment(db, project_id, component_id, FragmentKind.DEPS, deps_body)
+        _emit_fragment(db, project_id, component_id, FragmentKind.SUBCOMPARCH_DEPS, deps_body)
 
         # ── Phase 2: dependency edge emission ───────────────────
         # Every dep target is already a real comp_* ID at this

@@ -16,7 +16,10 @@ from typing import Literal
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from backend.graph.fragments import FragmentKind, fragment_id
+from backend.graph.fragments import (
+    FragmentKind,
+    best_layered_fragment_content,
+)
 from backend.models.graph_event import GraphEvent
 from backend.models.job import Job
 from backend.models.node import Draft, Edge, Fragment, Node, StalenessLedger
@@ -323,10 +326,12 @@ def get_component_context(session: Session, comp_id: str) -> ComponentContext:
     if node.tier != "comp":
         raise ValueError(f"Node {comp_id!r} is tier={node.tier!r}, not a component")
 
-    techspec_frag = session.get(Fragment, fragment_id(comp_id, FragmentKind.TECHSPEC))
-    pubapi_frag = session.get(Fragment, fragment_id(comp_id, FragmentKind.PUBAPI))
-    techspec = techspec_frag.content if techspec_frag is not None else ""
-    pubapi = pubapi_frag.content if pubapi_frag is not None else ""
+    # Layered read: prefer the comparch / subcomparch slot when
+    # populated, fall back to the sysarch skeletal seed otherwise.
+    # The same call works for top-level comps and subcomps —
+    # ``best_layered_fragment_content`` dispatches by parent_id.
+    techspec = best_layered_fragment_content(session, node, FragmentKind.TECHSPEC)
+    pubapi = best_layered_fragment_content(session, node, FragmentKind.PUBAPI)
 
     parent_resps = tuple(top_level_resps_assigned_to(session, comp_id))
 

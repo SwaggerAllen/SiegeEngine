@@ -7,10 +7,16 @@ commits the approved arch doc content to the comp_* node.
 The arch doc is parsed and re-validated (same validator that
 ran during generation) and projected into the event stream as:
 
-1. ``FragmentUpdated`` × 5 — one per fragment section
-   (techspec, pubapi, privapi, policies, deps). These overwrite
-   the skeletal fragments sysarch_mint wrote at top-level-comp
-   creation time with the full comparch-produced content.
+1. ``FragmentUpdated`` × 6 — one per fragment section, written
+   to the **comparch layer** kinds (``comparchtechspec``,
+   ``comparchpubapi``, ``comparchprivapi``, ``comparchpolicies``,
+   ``comparchdeps``, ``comparchfailuresurface``). The legacy
+   unprefixed slots (``techspec`` / ``pubapi``) keep the
+   skeletal seeds sysarch_mint wrote at top-level-comp creation
+   time so that a comparch reset can clear the rich layer
+   without losing the sysarch fall-back. See
+   ``backend/graph/fragments.py`` for the layered-fragment
+   reader semantics.
 2. ``NodeCreated`` per subcomponent in ``<subcomponents>`` —
    minted as ``comp_*`` with ``parent_id=<owning comp>``,
    ``kind`` inherited from the owning comp, plus skeletal
@@ -197,14 +203,22 @@ async def mint_comparch(payload: dict) -> None:
             ) from exc
 
         # ── Phase 1: fragment projection ────────────────────────
-        _emit_fragment(db, project_id, component_id, FragmentKind.TECHSPEC, doc.techspec)
-        _emit_fragment(db, project_id, component_id, FragmentKind.PUBAPI, doc.pubapi)
-        _emit_fragment(db, project_id, component_id, FragmentKind.PRIVAPI, doc.privapi)
+        # Writes target the **comparch layer** kinds so the
+        # rich content sits one tier above the sysarch skeletal
+        # seeds (``techspec`` / ``pubapi``) that sysarch_mint
+        # wrote at top-level-comp creation time. Comparch reset
+        # clears just these prefixed slots; the sysarch seed
+        # underneath survives. See
+        # ``backend/graph/fragments.py`` for the layered-reader
+        # semantics.
+        _emit_fragment(db, project_id, component_id, FragmentKind.COMPARCH_TECHSPEC, doc.techspec)
+        _emit_fragment(db, project_id, component_id, FragmentKind.COMPARCH_PUBAPI, doc.pubapi)
+        _emit_fragment(db, project_id, component_id, FragmentKind.COMPARCH_PRIVAPI, doc.privapi)
         _emit_fragment(
             db,
             project_id,
             component_id,
-            FragmentKind.FAILURE_SURFACE,
+            FragmentKind.COMPARCH_FAILURE_SURFACE,
             doc.failure_surface,
         )
         # The policies and deps sections are stored as their raw
@@ -213,8 +227,14 @@ async def mint_comparch(payload: dict) -> None:
         # can re-parse them if needed.
         policies_fragment_body = _serialize_policies_fragment(doc.policies)
         deps_fragment_body = _serialize_deps_fragment(doc.external_deps)
-        _emit_fragment(db, project_id, component_id, FragmentKind.POLICIES, policies_fragment_body)
-        _emit_fragment(db, project_id, component_id, FragmentKind.DEPS, deps_fragment_body)
+        _emit_fragment(
+            db,
+            project_id,
+            component_id,
+            FragmentKind.COMPARCH_POLICIES,
+            policies_fragment_body,
+        )
+        _emit_fragment(db, project_id, component_id, FragmentKind.COMPARCH_DEPS, deps_fragment_body)
 
         # ── Phase 2: subcomponent minting ───────────────────────
         alias_to_sub_id: dict[str, str] = {}
