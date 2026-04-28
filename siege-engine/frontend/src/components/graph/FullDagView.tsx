@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import type cytoscape from 'cytoscape';
 import CytoscapeComponent from 'react-cytoscapejs';
 import { useProjectStructure } from '../../hooks/queries/useProjectStructure';
+import { useIsNarrowViewport } from '../../hooks/useMatchMedia';
 // Registers cytoscape-elk side-effectfully. Imported here rather
 // than in main.tsx so the heavy ELK bundle only loads alongside
 // this component (which itself is lazy-loaded from NavDetail).
@@ -173,12 +174,18 @@ export function FullDagView({ projectId }: Props) {
     };
   }, [drillCompId, enterDrill, subCompIds, topLevelCompIds]);
 
+  // Narrow viewports (≤768 px) get a left-to-right layout so the
+  // tier layers stack horizontally and the wide sibling rows that
+  // overflow a portrait phone in DOWN mode become vertical columns
+  // that pan instead of wrap.
+  const isNarrow = useIsNarrowViewport();
+  const direction = isNarrow ? 'RIGHT' : 'DOWN';
   const layout = useMemo(
     () => ({
       name: 'elk',
       elk: {
         algorithm: 'layered',
-        'elk.direction': 'DOWN',
+        'elk.direction': direction,
         'elk.spacing.nodeNode': 40,
         'elk.layered.spacing.nodeNodeBetweenLayers': 80,
         'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
@@ -189,8 +196,22 @@ export function FullDagView({ projectId }: Props) {
       padding: 40,
       animate: false,
     }),
-    [],
+    [direction],
   );
+
+  // Cytoscape only runs the layout on mount; flipping `direction`
+  // after that needs an explicit re-layout. Skip the first run so
+  // we don't double-layout on initial mount.
+  const directionMounted = useRef(false);
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    if (!directionMounted.current) {
+      directionMounted.current = true;
+      return;
+    }
+    cy.layout(layout as unknown as cytoscape.LayoutOptions).run();
+  }, [layout]);
 
   if (isLoading) {
     return <div className="p-6 text-sm text-gray-400">Loading graph…</div>;
