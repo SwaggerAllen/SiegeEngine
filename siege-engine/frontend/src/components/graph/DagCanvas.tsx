@@ -62,6 +62,14 @@ export function DagCanvas({
         'elk.direction': direction,
         'elk.spacing.nodeNode': 40,
         'elk.layered.spacing.nodeNodeBetweenLayers': 80,
+        // LONGEST_PATH layering pushes each node to the latest
+        // layer its descendants allow, which makes the tier bands
+        // separate cleanly: impls (sinks) anchor the bottom and
+        // each upstream tier stacks one layer above. NETWORK_SIMPLEX
+        // (the ELK default) minimizes total edge length and was
+        // collapsing partitions into shared layers because partition
+        // values are an ordering constraint, not a separation one.
+        'elk.layered.layering.strategy': 'LONGEST_PATH',
         'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
         'elk.partitioning.activate': true,
       },

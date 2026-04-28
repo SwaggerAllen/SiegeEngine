@@ -138,21 +138,17 @@ function topLevelCompTabs(comp: StructureNode, nodes: StructureNode[]): Tab[] {
     targetNodeId: comp.id,
     targetView: 'comparch',
   });
-  // Decomposition tab sits between Comparch (the design) and
-  // Fan-in (upward synthesis from impls). Only render it when the
-  // comp actually has subcomponents — un-fanned-out comps have no
-  // internal graph to draw.
-  const hasSubcomps = nodes.some(
-    (n) => n.tier === 'comp' && n.parent_id === comp.id,
-  );
-  if (hasSubcomps) {
-    tabs.push({
-      key: 'decomposition',
-      label: 'Decomposition',
-      targetNodeId: comp.id,
-      targetView: 'decomposition',
-    });
-  }
+  // Decomposition tab is always present for top-level comps. The
+  // project-wide DAG can navigate any comp here regardless of
+  // whether it has subcomponents (un-fanned-out comps still show
+  // their external context + comp + impl). Hiding the tab when
+  // the panel itself is reachable would orphan it.
+  tabs.push({
+    key: 'decomposition',
+    label: 'Decomposition',
+    targetNodeId: comp.id,
+    targetView: 'decomposition',
+  });
   const fanin = nodes.find((n) => n.tier === 'fanin' && n.parent_id === comp.id);
   if (fanin) tabs.push({ key: 'fanin', label: 'Fan-in', targetNodeId: fanin.id });
   const topLevelImpl = nodes.find((n) => n.tier === 'impl' && n.parent_id === comp.id);

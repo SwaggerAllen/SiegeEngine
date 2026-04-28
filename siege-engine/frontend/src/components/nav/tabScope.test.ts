@@ -69,6 +69,7 @@ describe('tabScope', () => {
     expect(scope.tabs.map((t) => t.key)).toEqual([
       'overview',
       'comparch',
+      'decomposition',
       'fanin',
       'impl',
     ]);
@@ -119,24 +120,27 @@ describe('tabScope', () => {
     expect(scope.activeKey).toBe('sub-impl');
   });
 
-  it('top-level comp with subcomponents exposes a Decomposition tab', () => {
-    const nodes = [
+  it('top-level comp exposes a Decomposition tab regardless of subcomponent count', () => {
+    const withSubs = tabScope('comp_1', null, [
       n('comp_1', 'comp', null, { name: 'Billing' }),
       n('comp_sub', 'comp', 'comp_1', { name: 'TokenStore' }),
-    ];
-    const scope = tabScope('comp_1', null, nodes);
-    const keys = scope.tabs.map((t) => t.key);
-    expect(keys).toContain('decomposition');
-    // Tab order: overview → comparch → decomposition → fanin? → impl?
+    ]);
+    expect(withSubs.tabs.map((t) => t.key)).toContain('decomposition');
+
+    // Un-fanned-out comp still renders the decomposition view
+    // (external context + comp + impl), so the tab must be present
+    // — otherwise the project-wide DAG's double-click navigation
+    // lands on a tab that doesn't exist in the strip.
+    const withoutSubs = tabScope('comp_1', null, [
+      n('comp_1', 'comp', null, { name: 'Billing' }),
+    ]);
+    expect(withoutSubs.tabs.map((t) => t.key)).toContain('decomposition');
+
+    // Tab order stays: overview → comparch → decomposition → fanin? → impl?
+    const keys = withSubs.tabs.map((t) => t.key);
     expect(keys.indexOf('decomposition')).toBeGreaterThan(
       keys.indexOf('comparch'),
     );
-  });
-
-  it('top-level comp without subcomponents hides the Decomposition tab', () => {
-    const nodes = [n('comp_1', 'comp', null, { name: 'Billing' })];
-    const scope = tabScope('comp_1', null, nodes);
-    expect(scope.tabs.map((t) => t.key)).not.toContain('decomposition');
   });
 
   it('top-level comp with ?view=decomposition activates the decomposition tab', () => {
