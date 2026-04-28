@@ -99,20 +99,29 @@ confirm the scope change is intended:
 
 ## Thinking effort per tier (B6)
 
-The three top-of-chain tiers (feature expansion, requirements,
-sysarch) pass ``thinking_effort="max"`` to
+Top-of-chain tiers (feature expansion, requirements, sysarch)
+plus comparch pass ``thinking_effort="max"`` to
 ``cli_manager.generate_with_usage``. The CLI manager forwards
 that as ``CLAUDE_CODE_EFFORT_LEVEL=max`` on the single
 subprocess invocation (scoped per-call via
 ``_build_subprocess_env``, not process-wide).
 
-Propagation tiers (comparch, subcomparch, impl, fanin,
+Comparch is on max because it carries the in-prompt
+reconciliation pass (cross-section consistency, surface
+closure, dep grounding, single-owner discipline,
+rationale-not-inventory) — the cheaper way to fold that work
+in without a separate reviewer round-trip is to pay for deeper
+thinking on the existing generator turn. Per-comp cost shifts
+into extraction-tier territory; revisit if budget pressure
+shows up at scale.
+
+The remaining propagation tiers (subcomparch, impl, fanin,
 references, reviews) deliberately leave ``thinking_effort``
 unset so ``CLI_MAX_BUDGET_USD`` isn't consumed by thinking
 tokens before the real reasoning finishes. Handle quality
 upstream is the investment that pays off downstream; the
-compression tiers don't need deep thinking because the handles
-they read are already the compressed form.
+late-stage compression tiers don't need deep thinking because
+the handles they read are already the compressed form.
 
 ## Meaning-engine model
 

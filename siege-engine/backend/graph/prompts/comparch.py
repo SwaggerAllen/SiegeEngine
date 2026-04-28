@@ -248,7 +248,7 @@ Example (abbreviated):
           </owns>
         </subcomponent>
         <subcomponent alias="foundation">
-          <name>Foundation</name>
+          <name>AuthCore</name>
           <purpose>Owns this component's root folder and shared base types.</purpose>
           <owned-invariants>
             <invariant>shared base types stay versioned together</invariant>
@@ -591,9 +591,21 @@ this component).
 (there are no subcomponents at all).
 * The foundation subcomponent is otherwise a normal \
 subcomponent with its own name, purpose, owned-invariants, \
-primary-operations, and at least one responsibility. The \
-conventional default name is ``Foundation`` unless the \
-component has a more specific convention.
+primary-operations, and at least one responsibility. **Do \
+NOT name it ``Foundation``.** That bare name is reserved for \
+the project's top-level Foundation component, and reusing it \
+as a subcomp name collides with the sibling-component roster \
+every time this comparch's parent has Foundation as a \
+sibling. The alias attribute (``alias="foundation"``) stays \
+fine because aliases are local; the visible ``<name>`` must \
+be component-specific. Use a name that reflects this \
+subcomp's role inside the component — its substrate \
+contribution (``AuthCore``, ``BillingPlumbing``, \
+``GraphSubstrate``), shared-types responsibility \
+(``BillingSharedTypes``, ``RuntimeShell``), or runtime concern \
+(``BillingRuntime``, ``AuthRuntimeBootstrap``). The name \
+should still read as the component-internal catch-all; it \
+just must not be the bare token "Foundation".
 
 ## Sub-dependencies
 
@@ -616,36 +628,67 @@ rule for top-level components at the sysarch layer.
 
 ## Self-checks before emitting
 
-Before you write the closing ``</comparch>`` tag, scan the \
-artifact as a whole and verify:
+Before you write the closing ``</comparch>`` tag, walk the \
+artifact as a whole and reconcile the sections against each \
+other. These are not optional examples — each scan below \
+targets one of the most common defects this tier produces. \
+Where a scan turns up a contradiction, fix it in the artifact \
+before emitting; do not rationalize it.
 
-* **Cross-section consistency.** The techspec, owned-invariants, \
-public surface, and failure surface must not contradict each \
-other. Examples of contradictions to catch and fix:
-  - Techspec claims "no partial writes" but the failure surface \
-    describes a partial-write scenario as a real failure mode.
-  - A subcomp's owned-invariant says "X is always Y" but the \
-    failure surface lists a path where X is observably not Y.
-  - A primary-operation lists an action that has no public-surface \
-    entry-point and no private-surface dispatch path.
-  - The techspec routes work to a sibling component whose \
-    pubapi (shown in the input dep summary) has no matching \
-    operation.
-* **Public / private surface placement.** Types referenced in \
-the public surface must be defined in the public surface (or \
-imported from a stable external dependency you actually depend \
-on). Types defined in the private surface must not appear in \
-any public-surface signature — that's an internal leak. \
-Conversely, anything that only the subcomps under this \
-component will ever read belongs in private, not public; a \
-helper that only one subcomp uses doesn't deserve either \
-surface entry.
+* **Owned-invariant ↔ failure-surface scan.** For each \
+``<invariant>`` on each subcomponent, read the failure surface \
+and look for any scenario describing the invariant being \
+violated. The two must not coexist: either the invariant is \
+overclaiming (weaken it to what the design actually \
+guarantees) or the failure mode is fabricated (rewrite it as a \
+residual risk that survives the invariant, or delete it). The \
+same scan applies to techspec promises — atomicity, ordering, \
+single-frame render, no-truncation, single-event semantics. If \
+the failure surface lists a scenario describing exactly the \
+violation a techspec promise should prevent, one of them is \
+wrong. **This is the single most common defect in this tier**; \
+running this scan explicitly will catch most of them.
+* **Public-surface closure.** For each type, struct, event, or \
+module name that appears in a ``<public-surface>`` signature, \
+confirm one of: (a) it is defined in the public surface, (b) \
+it is a language primitive or stdlib type, or (c) it is \
+imported from an external dependency you actually declare in \
+the techspec. Types defined only in the private surface must \
+not appear in any public-surface signature — that is a leak \
+that breaks every dependent's ability to construct call \
+arguments. Conversely, every ``<private-surface>`` entry must \
+back at least one primary-operation; a private helper that no \
+operation references doesn't deserve a private-surface entry.
+* **Operation ↔ surface homing.** For each function or event \
+in the public surface, confirm exactly one subcomponent's \
+``<primary-operations>`` claims it (page-level orchestration \
+is a real subcomp, not a free-floating layer outside the \
+decomposition). For each subcomp's primary-operation that \
+names a side-effect or response, confirm a public-surface or \
+private-surface entry exists to actually invoke it.
+* **Dependency grounding.** For each ``<dep to="comp_..."/>``, \
+confirm the techspec or a primary-operation describes how this \
+component actually uses the sibling — what data flows, which \
+sibling pubapi gets called, what event gets subscribed to. An \
+ungrounded dep is either spurious (delete it) or evidence of \
+an unwritten section (write it).
 * **Single-owner default.** Re-read your ``<owns>`` blocks \
 across all subcomps. Any parent resp claimed by more than one \
-subcomp should fit either the UI flow split or the read/write \
-path split pattern; if it doesn't, refactor the subcomp \
-boundaries before emitting. Drive-by multi-owner is the \
-single most common defect in this tier.
+subcomp must fit either the UI flow split or the read/write \
+path split pattern named above; if it doesn't, refactor the \
+subcomp boundaries before emitting. Drive-by multi-owner is \
+the second most common defect in this tier.
+* **Rationale, not inventory.** For each subcomp's \
+``<purpose>``, each ``<invariant>``, each \
+``<primary-operation>``, and the ``<responsibilities>`` prose, \
+ask: does this name a distinctive *why* or *what*, or is it a \
+list of contents and category-speak ("handles X", "manages Y", \
+"aggregates ...", "contains ...")? Inventory framing reads as \
+filler to downstream readers and produces vague impl. Rewrite \
+category-speak into concrete actions and distinctive \
+rationale. The same applies to the foundation subcomp — its \
+purpose should name the substrate role it plays, not list its \
+contents.
 
 ## Meta-rules
 
