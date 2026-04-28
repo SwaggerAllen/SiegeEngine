@@ -172,6 +172,38 @@ def cancel_jobs_by_type(db: Session, job_type: str, **payload_filters) -> int:
     return cancelled
 
 
+def reap_orphaned_running_jobs(db: Session) -> int:
+    """Mark every ``status='running'`` job as cancelled.
+
+    Called from the lifespan startup hook before the worker loop
+    begins polling. The pipeline runs as a single in-process worker
+    (``backend.main`` starts exactly one ``worker_loop`` task per
+    process), so any row in ``running`` at startup is a tombstone
+    from a previous process that died mid-flight — there is no
+    in-process continuation that could finish it.
+
+    Marks them ``cancelled`` (rather than ``failed``) with an
+    explicit ``error_message`` so the queue panel surfaces the
+    "abandoned at restart" reason rather than reading like a real
+    failure. The Resume Tier flow's "latest review/gen was
+    cancelled → resume-eligible" rule then picks them up on the
+    next click.
+
+    Returns the number of rows reaped.
+    """
+    rows = db.query(Job).filter(Job.status == "running").all()
+    if not rows:
+        return 0
+    now = datetime.utcnow()
+    for job in rows:
+        job.status = "cancelled"
+        job.error_message = "Abandoned at server restart"
+        job.completed_at = now
+    db.commit()
+    logger.info("Reaped %d orphaned running jobs at startup", len(rows))
+    return len(rows)
+
+
 def find_active_job(
     db: Session,
     job_type: str,

@@ -503,6 +503,42 @@ class TestResumeTier:
         assert body["reviews_enqueued"] == 2
         assert body["scopes_skipped"] == []
 
+    def test_resumes_after_startup_reaper_cancels_a_review(self, client, db, seeded):
+        """End-to-end of the kill-server-then-resume flow: a row
+        left in ``running`` from a previous process is reaped to
+        ``cancelled`` at startup, then resume picks it up."""
+        from backend.pipeline import queue as pipeline_queue
+
+        # Stamp a "running" row for the first comp's review — the
+        # state we'd see if the previous server died with this job
+        # in flight.
+        db.add(
+            Job(
+                job_type="v2.review_comparch",
+                status="running",
+                payload={
+                    "project_id": seeded["project_id"],
+                    "node_id": seeded["comp_ids"][0],
+                    "draft_id": None,
+                },
+            )
+        )
+        db.commit()
+
+        # Reaper flips it to cancelled (this is what the lifespan
+        # hook does before the new worker boots).
+        n = pipeline_queue.reap_orphaned_running_jobs(db)
+        assert n == 1
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        # Both comps now have either no review (second comp) or a
+        # cancelled review (first comp, post-reap), so resume fires
+        # both.
+        assert body["reviews_enqueued"] == 2
+        assert body["scopes_skipped"] == []
+
     def test_skips_scope_with_active_review(self, client, db, seeded):
         """A queued review job for the scope means the queue already
         has it covered."""

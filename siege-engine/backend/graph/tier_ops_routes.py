@@ -552,8 +552,9 @@ def resume_tier(
             ),
             None,
         )
-        should_fire_review = latest_for_node is None or latest_for_node.status == "cancelled"
-        if not should_fire_review:
+        if latest_for_node is not None and latest_for_node.status != "cancelled":
+            # completed or failed — leave alone (completed has a
+            # result; failed has its own per-tier Retry button).
             skipped.append(
                 {
                     "scope_ids": list(scope_ids),

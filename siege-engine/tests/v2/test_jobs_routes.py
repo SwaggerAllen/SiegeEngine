@@ -197,6 +197,43 @@ class TestReprioritize:
         assert r.status_code == 422
 
 
+class TestReapOrphanedRunningJobs:
+    """The startup reaper that lifespan calls before worker_loop starts.
+
+    Any row left in ``running`` at startup is a tombstone from a
+    previous process that died mid-flight. The reaper flips them
+    to ``cancelled`` with an "abandoned at restart" message so
+    the Resume Tier flow can pick them up.
+    """
+
+    def test_reaps_running_rows(self, db, project_id):
+        from backend.pipeline import queue as pipeline_queue
+
+        running_id = _make_job(db, project_id, status="running")
+        queued_id = _make_job(db, project_id, status="queued")
+        completed_id = _make_job(db, project_id, status="completed")
+
+        n = pipeline_queue.reap_orphaned_running_jobs(db)
+        assert n == 1
+
+        db.expire_all()
+        running = db.get(Job, running_id)
+        assert running.status == "cancelled"
+        assert running.error_message == "Abandoned at server restart"
+        assert running.completed_at is not None
+        # Other statuses untouched.
+        assert db.get(Job, queued_id).status == "queued"
+        assert db.get(Job, completed_id).status == "completed"
+
+    def test_no_running_rows_is_a_noop(self, db, project_id):
+        from backend.pipeline import queue as pipeline_queue
+
+        _make_job(db, project_id, status="queued")
+        _make_job(db, project_id, status="completed")
+        n = pipeline_queue.reap_orphaned_running_jobs(db)
+        assert n == 0
+
+
 class TestDelete:
     def test_deletes_terminal_job(self, client, db, project_id):
         jid = _make_job(db, project_id, status="completed")

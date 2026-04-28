@@ -48,6 +48,17 @@ async def lifespan(app: FastAPI):
     if os.environ.get("SIEGE_DISABLE_WORKER_LOOP"):
         logger.info("SIEGE_DISABLE_WORKER_LOOP set — pipeline worker loop not started")
     else:
+        # Reap any rows left in ``status="running"`` from a previous
+        # process death. The new worker has no continuation for them,
+        # so they're tombstones — flip to ``cancelled`` so the
+        # resume-tier flow can pick them back up.
+        from backend.database import SessionLocal as _SessionLocal
+
+        _reap_db = _SessionLocal()
+        try:
+            pipeline_queue.reap_orphaned_running_jobs(_reap_db)
+        finally:
+            _reap_db.close()
         worker_task = asyncio.create_task(pipeline_queue.worker_loop())
         logger.info("Pipeline worker loop started")
 
