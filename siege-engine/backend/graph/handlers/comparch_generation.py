@@ -162,7 +162,7 @@ def gather_comparch_state(
         prior_approved=comp_node.content or None,
         prior_pending=pending.content if pending is not None else None,
         prior_pending_id=pending.id if pending is not None else None,
-        cli_config=settings.to_cli_config(),
+        cli_config=settings.to_cli_config(thinking_effort="max"),
         system_prompt=render_system_prompt(),
         context_kwargs=context_kwargs,
         known_parent_resp_ids=known_parent_resp_ids,
@@ -210,6 +210,7 @@ COMPARCH_CONFIG: TierGenerationConfig = TierGenerationConfig(
     validate=_validate_comparch,  # type: ignore[arg-type]
     review_job_type="v2.review_comparch",
     scope_payload_keys=("component_id",),
+    thinking_effort="max",
     max_auto_revisions=5,
     readiness_check=all_of(
         top_level_comp_exists,
