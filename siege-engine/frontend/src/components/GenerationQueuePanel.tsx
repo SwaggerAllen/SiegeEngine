@@ -8,6 +8,7 @@ import {
   listJobs,
   reprioritizeJob,
 } from '../api/jobs';
+import { useProjectStructure } from '../hooks/queries/useProjectStructure';
 import { describeApiError } from '../lib/describeApiError';
 
 const ACTIVE_STATUSES: JobStatus[] = ['queued', 'running'];
@@ -37,6 +38,19 @@ const ALL_STATUSES: JobStatus[] = [
 export function GenerationQueuePanel({ projectId }: { projectId: string }) {
   const [activeOnly, setActiveOnly] = useState(true);
   const queryClient = useQueryClient();
+
+  // Resolve payload IDs (component_id, sub_id, owner_id, node_id …)
+  // to display names where possible. The structure query is shared
+  // across the workspace so this is a free piggyback — no extra
+  // request when the sidebar tree already loaded it.
+  const { data: structure } = useProjectStructure(projectId);
+  const idToName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const node of structure?.nodes ?? []) {
+      if (node.name) map.set(node.id, node.name);
+    }
+    return map;
+  }, [structure]);
 
   const { data, error, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['generation-queue', projectId, activeOnly],
@@ -146,6 +160,7 @@ export function GenerationQueuePanel({ projectId }: { projectId: string }) {
                 <JobRowView
                   key={job.id}
                   job={job}
+                  idToName={idToName}
                   onCancel={() => cancelMutation.mutate(job.id)}
                   onReprioritize={(priority) =>
                     reprioritizeMutation.mutate({ jobId: job.id, priority })
@@ -177,12 +192,14 @@ function Stat({ label, value }: { label: string; value: number }) {
 
 function JobRowView({
   job,
+  idToName,
   onCancel,
   onReprioritize,
   onDelete,
   busy,
 }: {
   job: JobRow;
+  idToName: Map<string, string>;
   onCancel: () => void;
   onReprioritize: (priority: number) => void;
   onDelete: () => void;
@@ -199,7 +216,7 @@ function JobRowView({
       </td>
       <td className="px-3 py-2 text-gray-300">{job.job_type}</td>
       <td className="px-3 py-2 text-gray-400">
-        <ScopeCell payload={job.payload} />
+        <ScopeCell payload={job.payload} idToName={idToName} />
         {job.error_message && (
           <div className="text-amber-400 mt-1 whitespace-pre-wrap break-words max-w-md">
             {job.error_message}
@@ -279,13 +296,23 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
-function ScopeCell({ payload }: { payload: Record<string, unknown> }) {
+function ScopeCell({
+  payload,
+  idToName,
+}: {
+  payload: Record<string, unknown>;
+  idToName: Map<string, string>;
+}) {
   const interesting = ['component_id', 'sub_id', 'owner_id', 'node_id', 'draft_id', 'ref_id'];
   const parts: string[] = [];
   for (const key of interesting) {
     const v = payload[key];
     if (typeof v === 'string' && v) {
-      parts.push(`${key}=${v}`);
+      // Resolve to a display name where possible. Drafts and refs
+      // aren't in the structure tree so they'll fall through to
+      // their raw IDs; that's expected.
+      const name = idToName.get(v);
+      parts.push(`${key}=${name ?? v}`);
     }
   }
   if (parts.length === 0) return <span className="text-gray-600">—</span>;
