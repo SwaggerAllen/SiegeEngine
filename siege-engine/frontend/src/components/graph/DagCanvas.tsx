@@ -7,6 +7,7 @@ import { useIsNarrowViewport } from '../../hooks/useMatchMedia';
 // (FullDagView, ComponentDecompositionPanel) get the ELK chunk via
 // their own lazy imports without each having to register manually.
 import '../../lib/cytoscapeExtensions';
+import type { NodeType } from './elements';
 import { reachableSets } from './reachable';
 
 interface Props {
@@ -15,6 +16,11 @@ interface Props {
   /** Called when a node is double-tapped. The id is the cytoscape
    *  node id. Background double-taps are ignored. */
   onNodeDoubleTap?: (nodeId: string) => void;
+  /** Tier-filter set: nodes whose ``data.type`` is in this set get
+   *  the ``.hidden`` class (display:none) and the layout re-runs so
+   *  the visible subset uses the freed space. Empty / undefined
+   *  means show everything. */
+  hiddenNodeTypes?: ReadonlySet<NodeType>;
 }
 
 /**
@@ -34,7 +40,12 @@ interface Props {
  * Consumers stay thin: they build the element list and decide
  * what double-tap means in their context (drill / navigate / …).
  */
-export function DagCanvas({ elements, stylesheet, onNodeDoubleTap }: Props) {
+export function DagCanvas({
+  elements,
+  stylesheet,
+  onNodeDoubleTap,
+  hiddenNodeTypes,
+}: Props) {
   const cyRef = useRef<cytoscape.Core | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -107,6 +118,37 @@ export function DagCanvas({ elements, stylesheet, onNodeDoubleTap }: Props) {
       });
     });
   }, [elements, selectedId]);
+
+  // Tier filter: apply ``.hidden`` to nodes whose data.type is in
+  // ``hiddenNodeTypes``, then re-run layout so the visible subset
+  // uses the freed space. The stylesheet's ``.hidden`` rule sets
+  // ``display: none`` which both hides the node visually and
+  // excludes it from the layout pass.
+  const hiddenKey = useMemo(
+    () => (hiddenNodeTypes ? [...hiddenNodeTypes].sort().join(',') : ''),
+    [hiddenNodeTypes],
+  );
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.batch(() => {
+      cy.nodes().removeClass('hidden');
+      if (!hiddenNodeTypes || hiddenNodeTypes.size === 0) return;
+      cy.nodes().forEach((n) => {
+        const t = n.data('type') as string | undefined;
+        if (t && (hiddenNodeTypes as ReadonlySet<string>).has(t)) {
+          n.addClass('hidden');
+        }
+      });
+    });
+    cy.layout(layout as unknown as cytoscape.LayoutOptions).run();
+    // ``layout`` is referenced here for the relayout call but the
+    // effect should re-run only when the *filter set* or element
+    // shape changes — direction-driven layout changes are handled
+    // by the dedicated direction effect above. Including ``layout``
+    // here would relayout twice on viewport rotation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hiddenKey, elements]);
 
   // Pulse the ``[generating]`` nodes by toggling a ``pulse-on``
   // class on a fixed interval. The stylesheet's two ``[generating]``

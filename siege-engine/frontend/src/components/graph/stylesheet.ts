@@ -202,6 +202,16 @@ export const fullDagStylesheet: StylesheetCSS[] = [
       'border-width': 7,
     },
   },
+  // Tier-filter hide. ``display: none`` removes the element from
+  // the rendered output AND from the next layout pass, so toggling
+  // a filter chip causes the visible subset to reflow into the
+  // freed space.
+  {
+    selector: '.hidden',
+    css: {
+      display: 'none',
+    },
+  },
   // Edges.
   {
     selector: 'edge',

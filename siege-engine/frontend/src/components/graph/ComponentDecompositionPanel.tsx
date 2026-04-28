@@ -4,6 +4,14 @@ import { useProjectStructure } from '../../hooks/queries/useProjectStructure';
 import { DagCanvas } from './DagCanvas';
 import { drillElements } from './elements';
 import { fullDagStylesheet } from './stylesheet';
+import { TierFilterChips } from './TierFilterChips';
+import {
+  availableGroups,
+  expandToTypes,
+  parseHiddenParam,
+  serializeHiddenParam,
+  type TierGroupKey,
+} from './tierFilter';
 
 interface Props {
   projectId: string;
@@ -61,9 +69,30 @@ export function ComponentDecompositionPanel({ projectId, componentId }: Props) {
       const next = new URLSearchParams(searchParams);
       next.set('node', nodeId);
       next.delete('view');
+      next.delete('hide');
       setSearchParams(next, { replace: false });
     },
     [componentId, searchParams, setSearchParams],
+  );
+
+  const available = useMemo(() => availableGroups(elements), [elements]);
+  const hidden = useMemo(
+    () => parseHiddenParam(searchParams.get('hide')),
+    [searchParams],
+  );
+  const hiddenNodeTypes = useMemo(() => expandToTypes(hidden), [hidden]);
+  const handleToggleGroup = useCallback(
+    (key: TierGroupKey) => {
+      const next = new Set(hidden);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      const params = new URLSearchParams(searchParams);
+      const serialized = serializeHiddenParam(next);
+      if (serialized) params.set('hide', serialized);
+      else params.delete('hide');
+      setSearchParams(params, { replace: false });
+    },
+    [hidden, searchParams, setSearchParams],
   );
 
   if (isLoading) {
@@ -87,12 +116,24 @@ export function ComponentDecompositionPanel({ projectId, componentId }: Props) {
   }
 
   return (
-    <div className="h-full w-full cursor-pointer">
-      <DagCanvas
-        elements={elements}
-        stylesheet={fullDagStylesheet}
-        onNodeDoubleTap={handleDoubleTap}
-      />
+    <div className="h-full w-full flex flex-col">
+      {available.length > 0 && (
+        <div className="flex items-center px-3 py-1.5 border-b border-gray-800">
+          <TierFilterChips
+            available={available}
+            hidden={hidden}
+            onToggle={handleToggleGroup}
+          />
+        </div>
+      )}
+      <div className="flex-1 min-h-0 cursor-pointer">
+        <DagCanvas
+          elements={elements}
+          stylesheet={fullDagStylesheet}
+          onNodeDoubleTap={handleDoubleTap}
+          hiddenNodeTypes={hiddenNodeTypes}
+        />
+      </div>
     </div>
   );
 }

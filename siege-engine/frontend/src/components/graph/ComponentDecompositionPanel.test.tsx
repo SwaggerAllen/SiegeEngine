@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,14 +7,17 @@ import type { StructureNode } from '../../api/structure';
 
 let lastDoubleTap: ((nodeId: string) => void) | undefined;
 let lastElements: ElementDefinition[] | undefined;
+let lastHiddenTypes: ReadonlySet<string> | undefined;
 vi.mock('./DagCanvas', () => ({
   DagCanvas: (props: {
     elements: ElementDefinition[];
     stylesheet: StylesheetCSS[];
     onNodeDoubleTap?: (nodeId: string) => void;
+    hiddenNodeTypes?: ReadonlySet<string>;
   }) => {
     lastElements = props.elements;
     lastDoubleTap = props.onNodeDoubleTap;
+    lastHiddenTypes = props.hiddenNodeTypes;
     return <div data-testid="cy-canvas" />;
   },
 }));
@@ -87,6 +90,7 @@ beforeEach(() => {
   mockedStructure.mockReset();
   lastDoubleTap = undefined;
   lastElements = undefined;
+  lastHiddenTypes = undefined;
 });
 
 describe('ComponentDecompositionPanel', () => {
@@ -174,6 +178,62 @@ describe('ComponentDecompositionPanel', () => {
     act(() => lastDoubleTap?.('comp_1'));
     expect(screen.getByTestId('loc').textContent).toBe(
       '/p?view=decomposition',
+    );
+  });
+
+  it('?hide= is preserved across selection but cleared on subcomp navigation', () => {
+    mockedStructure.mockReturnValue({
+      data: {
+        offset: 1,
+        nodes: [
+          n('comp_1', 'comp', null, { name: 'Billing' }),
+          n('comp_sub1', 'comp', 'comp_1', { name: 'TokenStore' }),
+        ],
+        edges: [],
+      },
+      isLoading: false,
+    });
+    renderAt('/p?view=decomposition&hide=implementations', 'comp_1');
+    expect(lastHiddenTypes?.has('impl')).toBe(true);
+    // Navigating to a subcomp clears ``hide`` so the subcomp lands
+    // on a fresh, unfiltered view of its own decomposition.
+    act(() => lastDoubleTap?.('comp_sub1'));
+    expect(screen.getByTestId('loc').textContent).toBe('/p?node=comp_sub1');
+  });
+
+  it('renders the tier filter chip row when groups are available', () => {
+    mockedStructure.mockReturnValue({
+      data: {
+        offset: 1,
+        nodes: [
+          n('comp_1', 'comp', null, { name: 'Billing' }),
+          n('comp_sub1', 'comp', 'comp_1', { name: 'TokenStore' }),
+        ],
+        edges: [],
+      },
+      isLoading: false,
+    });
+    renderAt('/p?view=decomposition', 'comp_1');
+    expect(screen.getByTestId('tier-filter-chips')).toBeInTheDocument();
+    expect(screen.getByTestId('tier-filter-chip-subcomponents')).toBeInTheDocument();
+  });
+
+  it('toggling a chip writes ?hide= alongside ?view=decomposition', () => {
+    mockedStructure.mockReturnValue({
+      data: {
+        offset: 1,
+        nodes: [
+          n('comp_1', 'comp', null, { name: 'Billing' }),
+          n('comp_sub1', 'comp', 'comp_1', { name: 'TokenStore' }),
+        ],
+        edges: [],
+      },
+      isLoading: false,
+    });
+    renderAt('/p?view=decomposition', 'comp_1');
+    fireEvent.click(screen.getByTestId('tier-filter-chip-subcomponents'));
+    expect(screen.getByTestId('loc').textContent).toBe(
+      '/p?view=decomposition&hide=subcomponents',
     );
   });
 });

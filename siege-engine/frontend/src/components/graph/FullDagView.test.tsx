@@ -1,23 +1,27 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ElementDefinition, StylesheetCSS } from 'cytoscape';
 
 // Mock DagCanvas so we can capture its props (notably
-// ``onNodeDoubleTap``) and invoke them imperatively without
-// spinning up a real cytoscape instance. Layout-direction behavior
-// lives in ``DagCanvas.test.tsx`` so this mock can stay pure.
+// ``onNodeDoubleTap`` and ``hiddenNodeTypes``) and invoke them
+// imperatively without spinning up a real cytoscape instance.
+// Layout-direction behavior lives in ``DagCanvas.test.tsx`` so
+// this mock can stay pure.
 let lastDoubleTap: ((nodeId: string) => void) | undefined;
 let lastElements: ElementDefinition[] | undefined;
+let lastHiddenTypes: ReadonlySet<string> | undefined;
 vi.mock('./DagCanvas', () => ({
   DagCanvas: (props: {
     elements: ElementDefinition[];
     stylesheet: StylesheetCSS[];
     onNodeDoubleTap?: (nodeId: string) => void;
+    hiddenNodeTypes?: ReadonlySet<string>;
   }) => {
     lastElements = props.elements;
     lastDoubleTap = props.onNodeDoubleTap;
+    lastHiddenTypes = props.hiddenNodeTypes;
     return <div data-testid="cy-canvas" />;
   },
 }));
@@ -82,6 +86,7 @@ beforeEach(() => {
   mockedStructure.mockReset();
   lastDoubleTap = undefined;
   lastElements = undefined;
+  lastHiddenTypes = undefined;
 });
 
 describe('FullDagView', () => {
@@ -131,5 +136,32 @@ describe('FullDagView', () => {
     act(() => lastDoubleTap?.('feat_xxx'));
     // URL stays on the original entry.
     expect(screen.getByTestId('loc').textContent).toBe('/p?something=else');
+  });
+
+  it('passes hiddenNodeTypes derived from ?hide= to DagCanvas', () => {
+    mockedStructure.mockReturnValue({ data: makeStructure(), isLoading: false });
+    renderAt('/p?hide=components');
+    expect(lastHiddenTypes?.has('comp-top')).toBe(true);
+  });
+
+  it('renders the tier filter chip row when groups are available', () => {
+    mockedStructure.mockReturnValue({ data: makeStructure(), isLoading: false });
+    renderAt('/p');
+    expect(screen.getByTestId('tier-filter-chips')).toBeInTheDocument();
+    expect(screen.getByTestId('tier-filter-chip-components')).toBeInTheDocument();
+  });
+
+  it('toggling a chip writes ?hide= to the URL', () => {
+    mockedStructure.mockReturnValue({ data: makeStructure(), isLoading: false });
+    renderAt('/p');
+    fireEvent.click(screen.getByTestId('tier-filter-chip-components'));
+    expect(screen.getByTestId('loc').textContent).toBe('/p?hide=components');
+  });
+
+  it('toggling a hidden chip back removes ?hide= from the URL', () => {
+    mockedStructure.mockReturnValue({ data: makeStructure(), isLoading: false });
+    renderAt('/p?hide=components');
+    fireEvent.click(screen.getByTestId('tier-filter-chip-components'));
+    expect(screen.getByTestId('loc').textContent).toBe('/p');
   });
 });
