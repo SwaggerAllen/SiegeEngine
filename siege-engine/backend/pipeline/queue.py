@@ -47,6 +47,14 @@ _job_notify = asyncio.Event()
 # turn kills the CLI subprocess — see ``backend.cli.manager._invoke``).
 _active_handler_tasks: dict[str, asyncio.Task] = {}
 
+# Default priority for a generation / mint job. Lower number wins.
+DEFAULT_JOB_PRIORITY = 10
+# AI self-review jobs run in the same single-worker queue as
+# generations but jump ahead of pending generations so a finished
+# draft gets its critique while the user is still looking at it,
+# rather than waiting behind every queued downstream regen.
+REVIEW_JOB_PRIORITY = 5
+
 
 def enqueue(
     db: Session,
@@ -162,6 +170,38 @@ def cancel_jobs_by_type(db: Session, job_type: str, **payload_filters) -> int:
     if commit_needed:
         db.commit()
     return cancelled
+
+
+def reap_orphaned_running_jobs(db: Session) -> int:
+    """Mark every ``status='running'`` job as cancelled.
+
+    Called from the lifespan startup hook before the worker loop
+    begins polling. The pipeline runs as a single in-process worker
+    (``backend.main`` starts exactly one ``worker_loop`` task per
+    process), so any row in ``running`` at startup is a tombstone
+    from a previous process that died mid-flight — there is no
+    in-process continuation that could finish it.
+
+    Marks them ``cancelled`` (rather than ``failed``) with an
+    explicit ``error_message`` so the queue panel surfaces the
+    "abandoned at restart" reason rather than reading like a real
+    failure. The Resume Tier flow's "latest review/gen was
+    cancelled → resume-eligible" rule then picks them up on the
+    next click.
+
+    Returns the number of rows reaped.
+    """
+    rows = db.query(Job).filter(Job.status == "running").all()
+    if not rows:
+        return 0
+    now = datetime.utcnow()
+    for job in rows:
+        job.status = "cancelled"
+        job.error_message = "Abandoned at server restart"
+        job.completed_at = now
+    db.commit()
+    logger.info("Reaped %d orphaned running jobs at startup", len(rows))
+    return len(rows)
 
 
 def find_active_job(

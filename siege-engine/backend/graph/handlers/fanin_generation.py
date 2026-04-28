@@ -251,6 +251,7 @@ def persist_fanin_content(
                     "node_id": node_id,
                     "draft_id": None,
                 },
+                priority=_pipeline_queue.REVIEW_JOB_PRIORITY,
             )
     finally:
         db.close()

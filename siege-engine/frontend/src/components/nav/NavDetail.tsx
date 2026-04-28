@@ -13,6 +13,7 @@ const FullDagView = lazy(() =>
   import('../graph/FullDagView').then((m) => ({ default: m.FullDagView })),
 );
 import { DebugPanel } from '../DebugPanel';
+import { GenerationQueuePanel } from '../GenerationQueuePanel';
 import { ImplPanel } from '../ImplPanel';
 import { QueuePanel } from '../QueuePanel';
 import { TierOpsPanel } from '../TierOpsPanel';
@@ -87,6 +88,13 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
     return (
       <div className="h-full overflow-auto">
         <QueuePanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.GEN_QUEUE) {
+    return (
+      <div className="h-full overflow-auto">
+        <GenerationQueuePanel projectId={projectId} />
       </div>
     );
   }

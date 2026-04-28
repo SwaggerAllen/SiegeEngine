@@ -262,6 +262,8 @@ function RoleIcon({
       return <span className="shrink-0 w-4 text-center text-cyan-300">◇</span>;
     case 'queue':
       return <span className="shrink-0 w-4 text-center text-cyan-300">⇥</span>;
+    case 'gen-queue':
+      return <span className="shrink-0 w-4 text-center text-cyan-300">⏵</span>;
     case 'tier-ops':
       return <span className="shrink-0 w-4 text-center text-cyan-300">⚙</span>;
     case 'debug':

@@ -48,6 +48,7 @@ def get_debug_snapshot(
     project_id: str,
     events: int = 200,
     jobs: int = 100,
+    staleness: int = 200,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -60,10 +61,15 @@ def get_debug_snapshot(
       (default 200). Capped at 2000.
     - ``jobs`` — number of trailing Job rows (default 100).
       Capped at 500.
+    - ``staleness`` — number of StalenessLedger rows to include
+      (default 200). Capped at 2000. Without a cap, a project with
+      a large stale set can balloon the response past what the
+      debug panel can copy to the clipboard.
     """
     project = _require_project(db, project_id)
     events_limit = max(0, min(events, 2000))
     jobs_limit = max(0, min(jobs, 500))
+    staleness_limit = max(0, min(staleness, 2000))
 
     nodes = list(
         db.execute(
@@ -97,6 +103,7 @@ def get_debug_snapshot(
             select(StalenessLedger)
             .where(StalenessLedger.project_id == project_id)
             .order_by(StalenessLedger.stale_node_id.asc())
+            .limit(staleness_limit)
         ).scalars()
     )
     recent_jobs = list(

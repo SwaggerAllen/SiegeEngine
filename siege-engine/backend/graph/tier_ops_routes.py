@@ -37,6 +37,7 @@ from backend.graph.bootstrap_routes import (
     build_job_payload,
 )
 from backend.models import Project, User
+from backend.models.job import Job
 from backend.models.node import Node
 from backend.pipeline import queue as pipeline_queue
 
@@ -420,6 +421,179 @@ def reset_tier(
         "jobs_enqueued": jobs_enqueued,
         "drafts_discarded": total_drafts_discarded,
         "nodes_deleted": total_nodes_deleted,
+    }
+
+
+@router.post("/{project_id}/tiers/{tier}/resume")
+def resume_tier(
+    project_id: str,
+    tier: TierName,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Re-enqueue generation + missing reviews for every unfinished
+    scope in this tier.
+
+    Designed for the iterate-on-the-engine workflow: while editing
+    SiegeEngine itself, the user kills in-flight jobs to redeploy,
+    then wants a single click to pick up unfinished scopes without
+    resetting (and discarding) work that did land.
+
+    Two passes per scope:
+
+    1. **Generation.** Fire if the scope has no approved content,
+       no pending draft awaiting review, and no active gen job.
+       Skips approved + pending-draft scopes (those landed work
+       worth keeping).
+    2. **Review.** Fire if the tier has a configured ``review_job_type``,
+       the scope has reviewable content (approved or pending draft),
+       no active review job, and the latest review job either never
+       ran or was cancelled. Failed reviews are left alone — those
+       have their own per-tier Retry button.
+
+    The two passes are mutually exclusive in practice: a scope
+    that needs generation has no content for review to chew on.
+
+    The queue's payload-level dedup makes this safe to spam — a
+    second click while the first batch is still queued is a no-op.
+    """
+    _require_project(db, project_id)
+    config, iter_scope_ids = _resolve(tier)
+
+    scopes = iter_scope_ids(db, project_id)
+    generations_enqueued: list[str] = []
+    reviews_enqueued: list[str] = []
+    skipped: list[dict[str, Any]] = []
+    for scope_ids in scopes:
+        node = config.get_node(db, project_id, *scope_ids)
+        if node is None:
+            skipped.append({"scope_ids": list(scope_ids), "status": 404, "detail": "node missing"})
+            continue
+        pending = config.get_pending_draft(db, project_id, *scope_ids)
+        has_content = bool((node.content or "").strip())
+
+        # ── Generation pass ─────────────────────────────────────
+        if not has_content and pending is None:
+            payload_filters: dict[str, Any] = {"project_id": project_id}
+            for idx, sid in enumerate(scope_ids):
+                if idx < len(config.scope_payload_keys):
+                    payload_filters[config.scope_payload_keys[idx]] = sid
+            active_gen = pipeline_queue.find_active_job(
+                db,
+                config.generate_job_type,
+                payload_filters=payload_filters,
+            )
+            if active_gen is not None:
+                skipped.append(
+                    {
+                        "scope_ids": list(scope_ids),
+                        "status": 409,
+                        "detail": f"active gen job {active_gen.id}",
+                    }
+                )
+                continue
+            job_id = pipeline_queue.enqueue(
+                db,
+                job_type=config.generate_job_type,
+                payload=build_job_payload(
+                    project_id,
+                    scope_ids,
+                    scope_payload_keys=config.scope_payload_keys,
+                ),
+            )
+            generations_enqueued.append(job_id)
+            continue
+
+        # ── Review pass ─────────────────────────────────────────
+        # Only meaningful for tiers with an AI-review handler.
+        if not config.review_job_type:
+            skipped.append(
+                {
+                    "scope_ids": list(scope_ids),
+                    "status": 409,
+                    "detail": "already approved",
+                }
+            )
+            continue
+        # Skip if a review is already in flight for this node.
+        active_review = pipeline_queue.find_active_job(
+            db,
+            config.review_job_type,
+            payload_filters={"project_id": project_id, "node_id": node.id},
+        )
+        if active_review is not None:
+            skipped.append(
+                {
+                    "scope_ids": list(scope_ids),
+                    "status": 409,
+                    "detail": f"active review job {active_review.id}",
+                }
+            )
+            continue
+        # Look up the most recent review job for this node, scanning
+        # the recent tail. We treat "never ran" and "last was
+        # cancelled" as resume-eligible; "completed" and "failed"
+        # are left alone (completed has a result; failed has its
+        # own per-tier Retry button).
+        recent_review_jobs = list(
+            db.execute(
+                select(Job)
+                .where(Job.job_type == config.review_job_type)
+                .order_by(Job.created_at.desc())
+                .limit(50)
+            ).scalars()
+        )
+        latest_for_node = next(
+            (
+                j
+                for j in recent_review_jobs
+                if (j.payload or {}).get("project_id") == project_id
+                and (j.payload or {}).get("node_id") == node.id
+            ),
+            None,
+        )
+        if latest_for_node is not None and latest_for_node.status != "cancelled":
+            # completed or failed — leave alone (completed has a
+            # result; failed has its own per-tier Retry button).
+            skipped.append(
+                {
+                    "scope_ids": list(scope_ids),
+                    "status": 409,
+                    "detail": f"latest review {latest_for_node.status}",
+                }
+            )
+            continue
+        # Resolve the draft target — pending draft if present,
+        # else None (fanin / approved-only style).
+        draft_id = pending.id if pending is not None else None
+        review_job_id = pipeline_queue.enqueue(
+            db,
+            job_type=config.review_job_type,
+            payload={
+                "project_id": project_id,
+                "node_id": node.id,
+                "draft_id": draft_id,
+            },
+            priority=pipeline_queue.REVIEW_JOB_PRIORITY,
+        )
+        reviews_enqueued.append(review_job_id)
+
+    logger.info(
+        "tier_ops.resume_tier project=%s tier=%s gens=%d reviews=%d skipped=%d",
+        project_id,
+        tier,
+        len(generations_enqueued),
+        len(reviews_enqueued),
+        len(skipped),
+    )
+    return {
+        "ok": True,
+        "tier": tier,
+        "scopes_total": len(scopes),
+        "generations_enqueued": len(generations_enqueued),
+        "reviews_enqueued": len(reviews_enqueued),
+        "jobs_enqueued": len(generations_enqueued) + len(reviews_enqueued),
+        "scopes_skipped": skipped,
     }
 
 

@@ -385,6 +385,8 @@ class TestReviewSweep:
         assert len(review_jobs) == 1
 
     def test_per_comp_enqueues_review_per_comp(self, client, db, seeded):
+        from backend.pipeline import queue as pipeline_queue
+
         r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/review-sweep")
         assert r.status_code == 200
         body = r.json()
@@ -401,6 +403,10 @@ class TestReviewSweep:
         # Each of the two top-level comps in the fixture should
         # have a review job targeting its own comp_* id.
         assert targeted_node_ids == set(seeded["comp_ids"])
+        # AI-review jobs run in their own priority band so they
+        # jump ahead of pending generations in the worker queue.
+        assert all(j.priority == pipeline_queue.REVIEW_JOB_PRIORITY for j in review_jobs)
+        assert pipeline_queue.REVIEW_JOB_PRIORITY < pipeline_queue.DEFAULT_JOB_PRIORITY
 
     def test_skips_nodes_with_no_content(self, client, db, seeded):
         # Clear one comp's content so the review-sweep skips it.
@@ -415,3 +421,261 @@ class TestReviewSweep:
         assert body["jobs_enqueued"] == 1
         assert len(body["scopes_skipped"]) == 1
         assert body["scopes_skipped"][0]["status"] == 409
+
+
+# ── /tiers/{tier}/resume ───────────────────────────────────────────
+
+
+class TestResumeTier:
+    def test_seeded_approved_fires_missing_reviews(self, client, db, seeded):
+        """The seed leaves both comps approved with no review_text and
+        no review jobs in the queue, so resume should fire the two
+        missing reviews."""
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["scopes_total"] == 2
+        assert body["generations_enqueued"] == 0
+        assert body["reviews_enqueued"] == 2
+        assert body["jobs_enqueued"] == 2
+        assert body["scopes_skipped"] == []
+
+        review_jobs = [
+            j
+            for j in db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.review_comparch",
+                    Job.status == "queued",
+                )
+            ).scalars()
+            if j.payload.get("project_id") == seeded["project_id"]
+        ]
+        assert len(review_jobs) == 2
+        assert {j.payload.get("node_id") for j in review_jobs} == set(seeded["comp_ids"])
+        # Reviews enqueue at the priority lane.
+        from backend.pipeline import queue as pipeline_queue
+
+        assert all(j.priority == pipeline_queue.REVIEW_JOB_PRIORITY for j in review_jobs)
+
+    def test_skips_review_when_completed_already(self, client, db, seeded):
+        """Approved + a completed review on file → leave it alone."""
+        # Stamp a completed review for both comps so resume skips them.
+        for comp_id in seeded["comp_ids"]:
+            db.add(
+                Job(
+                    job_type="v2.review_comparch",
+                    status="completed",
+                    payload={
+                        "project_id": seeded["project_id"],
+                        "node_id": comp_id,
+                        "draft_id": None,
+                    },
+                )
+            )
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["jobs_enqueued"] == 0
+        assert len(body["scopes_skipped"]) == 2
+        assert all("latest review completed" in s["detail"] for s in body["scopes_skipped"])
+
+    def test_resumes_cancelled_review(self, client, db, seeded):
+        """The killed-mid-deploy case: latest review was cancelled,
+        so resume re-fires it. Other comp has no review job → also
+        resumed."""
+        cancelled = Job(
+            job_type="v2.review_comparch",
+            status="cancelled",
+            payload={
+                "project_id": seeded["project_id"],
+                "node_id": seeded["comp_ids"][0],
+                "draft_id": None,
+            },
+        )
+        db.add(cancelled)
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["reviews_enqueued"] == 2
+        assert body["scopes_skipped"] == []
+
+    def test_resumes_after_startup_reaper_cancels_a_review(self, client, db, seeded):
+        """End-to-end of the kill-server-then-resume flow: a row
+        left in ``running`` from a previous process is reaped to
+        ``cancelled`` at startup, then resume picks it up."""
+        from backend.pipeline import queue as pipeline_queue
+
+        # Stamp a "running" row for the first comp's review — the
+        # state we'd see if the previous server died with this job
+        # in flight.
+        db.add(
+            Job(
+                job_type="v2.review_comparch",
+                status="running",
+                payload={
+                    "project_id": seeded["project_id"],
+                    "node_id": seeded["comp_ids"][0],
+                    "draft_id": None,
+                },
+            )
+        )
+        db.commit()
+
+        # Reaper flips it to cancelled (this is what the lifespan
+        # hook does before the new worker boots).
+        n = pipeline_queue.reap_orphaned_running_jobs(db)
+        assert n == 1
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        # Both comps now have either no review (second comp) or a
+        # cancelled review (first comp, post-reap), so resume fires
+        # both.
+        assert body["reviews_enqueued"] == 2
+        assert body["scopes_skipped"] == []
+
+    def test_skips_scope_with_active_review(self, client, db, seeded):
+        """A queued review job for the scope means the queue already
+        has it covered."""
+        db.add(
+            Job(
+                job_type="v2.review_comparch",
+                status="queued",
+                payload={
+                    "project_id": seeded["project_id"],
+                    "node_id": seeded["comp_ids"][0],
+                    "draft_id": None,
+                },
+            )
+        )
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        # First comp skipped (active review), second comp gets a new review.
+        assert body["reviews_enqueued"] == 1
+        assert len(body["scopes_skipped"]) == 1
+        assert "active review job" in body["scopes_skipped"][0]["detail"]
+
+    def test_enqueues_for_unapproved_scopes(self, client, db, seeded):
+        """Wiping content + having no active job should resume both
+        as generations (not reviews — there's nothing to review)."""
+        for comp_id in seeded["comp_ids"]:
+            comp = db.get(Node, comp_id)
+            assert comp is not None
+            comp.content = ""
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["generations_enqueued"] == 2
+        assert body["reviews_enqueued"] == 0
+        assert body["jobs_enqueued"] == 2
+        assert body["scopes_skipped"] == []
+
+        queued = [
+            j
+            for j in db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.status == "queued",
+                )
+            ).scalars()
+            if j.payload.get("project_id") == seeded["project_id"]
+        ]
+        assert len(queued) == 2
+        assert {j.payload.get("component_id") for j in queued} == set(seeded["comp_ids"])
+
+    def test_skips_scope_with_active_gen_job(self, client, db, seeded):
+        """An already-queued generate for one comp must short-circuit."""
+        for comp_id in seeded["comp_ids"]:
+            comp = db.get(Node, comp_id)
+            assert comp is not None
+            comp.content = ""
+        # Pre-seed a queued generate for the first comp.
+        existing = Job(
+            job_type="v2.generate_comparch",
+            status="queued",
+            payload={
+                "project_id": seeded["project_id"],
+                "component_id": seeded["comp_ids"][0],
+                "feedback": None,
+            },
+        )
+        db.add(existing)
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["generations_enqueued"] == 1
+        assert body["reviews_enqueued"] == 0
+        assert len(body["scopes_skipped"]) == 1
+        assert body["scopes_skipped"][0]["status"] == 409
+        assert "active gen job" in body["scopes_skipped"][0]["detail"]
+        queued_for = [
+            j.payload.get("component_id")
+            for j in db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.status == "queued",
+                )
+            ).scalars()
+            if j.payload.get("project_id") == seeded["project_id"]
+        ]
+        assert seeded["comp_ids"][0] in queued_for  # the pre-seeded one
+        assert seeded["comp_ids"][1] in queued_for  # the new one
+        assert len(queued_for) == 2
+
+    def test_pending_draft_triggers_review_pass(self, client, db, seeded):
+        """A scope with a pending draft is reviewable — resume should
+        fire a review against the pending draft (not start a fresh
+        generation, which would discard the draft)."""
+        from backend.models.node import Draft
+
+        target_id = seeded["comp_ids"][0]
+        target = db.get(Node, target_id)
+        assert target is not None
+        target.content = ""
+        draft_id = f"draft_{uuid.uuid4().hex[:8]}"
+        db.add(
+            Draft(
+                id=draft_id,
+                project_id=seeded["project_id"],
+                target_type="node",
+                target_id=target_id,
+                content="<comparch>wip</comparch>",
+                status="pending",
+                batch_id=f"batch_{uuid.uuid4().hex[:8]}",
+            )
+        )
+        # Wipe the second comp's content too so it gets a generation.
+        other = db.get(Node, seeded["comp_ids"][1])
+        assert other is not None
+        other.content = ""
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        # The first comp (pending draft) → review against the draft.
+        # The second comp (no content, no draft) → generation.
+        assert body["reviews_enqueued"] == 1
+        assert body["generations_enqueued"] == 1
+        assert body["scopes_skipped"] == []
+        review_jobs = [
+            j
+            for j in db.execute(
+                select(Job).where(Job.job_type == "v2.review_comparch", Job.status == "queued")
+            ).scalars()
+            if j.payload.get("project_id") == seeded["project_id"]
+        ]
+        assert len(review_jobs) == 1
+        assert review_jobs[0].payload.get("draft_id") == draft_id
