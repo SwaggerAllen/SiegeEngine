@@ -3,6 +3,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TestQueryWrapper } from '../test/queryWrapper';
 import { DebugPanel } from './DebugPanel';
 
+function makeNodes(count: number, baseLength = 200) {
+  return Array.from({ length: count }, (_, i) => ({
+    id: `node_${i.toString().padStart(4, '0')}`,
+    tier: 'feat',
+    kind: 'domain',
+    name: `Filler node ${i}`.padEnd(baseLength, '.'),
+    parent_id: null,
+    content_length: baseLength,
+  }));
+}
+
 vi.mock('../api/debug', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/debug')>();
   return {
@@ -120,6 +131,80 @@ describe('DebugPanel', () => {
     const parsed = JSON.parse(blob);
     expect(parsed.project.id).toBe('proj_1');
     expect(parsed.recent_events[0].event_type).toBe('NodeCreated');
+  });
+
+  it('shows total character count for the snapshot', async () => {
+    mockedGet.mockResolvedValue(makeSnapshot());
+    render(
+      <TestQueryWrapper>
+        <DebugPanel projectId="proj_1" />
+      </TestQueryWrapper>,
+    );
+    const totalChars = await screen.findByTestId('debug-total-chars');
+    expect(Number(totalChars.textContent?.replace(/,/g, ''))).toBeGreaterThan(0);
+  });
+
+  it('Copy section button copies just that section as JSON', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    mockedGet.mockResolvedValue(makeSnapshot());
+    render(
+      <TestQueryWrapper>
+        <DebugPanel projectId="proj_1" />
+      </TestQueryWrapper>,
+    );
+    const sectionCopy = await screen.findByTestId('debug-copy-recent_jobs');
+    fireEvent.click(sectionCopy);
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    const payload = writeText.mock.calls[0][0] as string;
+    const parsed = JSON.parse(payload);
+    expect(Object.keys(parsed)).toEqual(['recent_jobs']);
+    expect(parsed.recent_jobs[0].job_type).toBe('v2.generate_comparch');
+    expect(parsed.project).toBeUndefined();
+  });
+
+  it('exposes per-chunk copy buttons when a section exceeds the chunk size', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const snap = makeSnapshot();
+    snap.nodes = makeNodes(40, 400);
+    mockedGet.mockResolvedValue(snap);
+    render(
+      <TestQueryWrapper>
+        <DebugPanel projectId="proj_1" />
+      </TestQueryWrapper>,
+    );
+    // Shrink chunk size so we definitely split into multiple parts.
+    const chunkInput = (await screen.findByTestId(
+      'debug-chunk-size-input',
+    )) as HTMLInputElement;
+    fireEvent.change(chunkInput, { target: { value: '5000' } });
+
+    const firstChunk = await screen.findByTestId('debug-copy-nodes-chunk-1');
+    const secondChunk = await screen.findByTestId('debug-copy-nodes-chunk-2');
+    fireEvent.click(firstChunk);
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const firstPayload = JSON.parse(writeText.mock.calls[0][0] as string);
+    expect(firstPayload._chunk.index).toBe(1);
+    expect(firstPayload._chunk.total).toBeGreaterThan(1);
+    expect(firstPayload.nodes.length).toBe(firstPayload._chunk.rows_in_chunk);
+    expect((writeText.mock.calls[0][0] as string).length).toBeLessThanOrEqual(6000);
+
+    fireEvent.click(secondChunk);
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    const secondPayload = JSON.parse(writeText.mock.calls[1][0] as string);
+    expect(secondPayload._chunk.index).toBe(2);
+  });
+
+  it('does not show chunk buttons for a section that fits in one chunk', async () => {
+    mockedGet.mockResolvedValue(makeSnapshot());
+    render(
+      <TestQueryWrapper>
+        <DebugPanel projectId="proj_1" />
+      </TestQueryWrapper>,
+    );
+    await screen.findByTestId('debug-copy-recent_jobs');
+    expect(screen.queryByTestId('debug-copy-recent_jobs-chunk-1')).toBeNull();
   });
 
   it('renders an error state when the request fails', async () => {
