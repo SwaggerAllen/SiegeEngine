@@ -65,6 +65,8 @@ export const ResumeTierResultSchema = z.object({
   ok: z.boolean(),
   tier: z.string(),
   scopes_total: z.number(),
+  generations_enqueued: z.number(),
+  reviews_enqueued: z.number(),
   jobs_enqueued: z.number(),
   scopes_skipped: z.array(SkipSchema),
 });

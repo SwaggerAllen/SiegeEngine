@@ -254,9 +254,15 @@ function ResultLine({
       ? `Reset ${result.result.scopes_succeeded} scope${result.result.scopes_succeeded === 1 ? '' : 's'} (${skipped.length} skipped) · ${result.result.jobs_enqueued} generation${result.result.jobs_enqueued === 1 ? '' : 's'} queued.`
       : `Reset ${result.result.scopes_succeeded} scope${result.result.scopes_succeeded === 1 ? '' : 's'} · ${result.result.jobs_enqueued} generation${result.result.jobs_enqueued === 1 ? '' : 's'} queued.`;
   } else if (result.kind === 'resume') {
+    const gens = result.result.generations_enqueued;
+    const reviews = result.result.reviews_enqueued;
+    const parts: string[] = [];
+    if (gens > 0) parts.push(`${gens} generation${gens === 1 ? '' : 's'}`);
+    if (reviews > 0) parts.push(`${reviews} review${reviews === 1 ? '' : 's'}`);
+    const enqueuedText = parts.length === 0 ? 'nothing to resume' : `enqueued ${parts.join(' + ')}`;
     summary = skipped.length
-      ? `Resumed ${result.result.jobs_enqueued} scope${result.result.jobs_enqueued === 1 ? '' : 's'} (${skipped.length} skipped).`
-      : `Resumed ${result.result.jobs_enqueued} scope${result.result.jobs_enqueued === 1 ? '' : 's'}.`;
+      ? `Resume: ${enqueuedText} (${skipped.length} skipped).`
+      : `Resume: ${enqueuedText}.`;
   } else {
     summary = skipped.length
       ? `Enqueued ${result.result.jobs_enqueued} review${result.result.jobs_enqueued === 1 ? '' : 's'} (${skipped.length} skipped).`
