@@ -108,6 +108,25 @@ export function DagCanvas({ elements, stylesheet, onNodeDoubleTap }: Props) {
     });
   }, [elements, selectedId]);
 
+  // Pulse the ``[generating]`` nodes by toggling a ``pulse-on``
+  // class on a fixed interval. The stylesheet's two ``[generating]``
+  // rules alternate as the class toggles, producing the same
+  // attention-grabbing pulse the sidebar tree uses for queued /
+  // running jobs. Cytoscape doesn't support CSS animations (canvas
+  // renderer), so a plain timer is the simplest way to do this.
+  // A toggle on an empty selector is essentially free; no need to
+  // gate on whether any generating nodes exist.
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const handle = setInterval(() => {
+      cy.batch(() => {
+        cy.nodes('[generating]').toggleClass('pulse-on');
+      });
+    }, 600);
+    return () => clearInterval(handle);
+  }, []);
+
   // Tap + double-tap handlers.
   useEffect(() => {
     const cy = cyRef.current;
