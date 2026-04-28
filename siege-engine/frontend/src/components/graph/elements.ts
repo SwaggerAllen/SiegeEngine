@@ -79,6 +79,7 @@ function nodeData(
   };
   if (n.has_pending_draft) data.pendingDraft = '1';
   if (n.is_stale) data.isStale = '1';
+  if (n.generation_running) data.generating = '1';
   return {
     data,
     // `layoutOptions` on the element is a cytoscape-elk convention —

@@ -137,6 +137,24 @@ describe('topLevelElements', () => {
     const data = elements[0].data as { isStale?: string };
     expect(data.isStale).toBe('1');
   });
+
+  it('sets generating attribute when generation_running is true', () => {
+    const elements = topLevelElements(
+      [n('comp_C1', 'comp', null, { generation_running: true })],
+      [],
+    );
+    const data = elements[0].data as { generating?: string };
+    expect(data.generating).toBe('1');
+  });
+
+  it('omits generating attribute when generation_running is false', () => {
+    const elements = topLevelElements(
+      [n('comp_C1', 'comp', null, { generation_running: false })],
+      [],
+    );
+    const data = elements[0].data as { generating?: string };
+    expect(data.generating).toBeUndefined();
+  });
 });
 
 describe('externalContextFor', () => {

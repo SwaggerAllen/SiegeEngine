@@ -162,10 +162,17 @@ export const fullDagStylesheet: StylesheetCSS[] = [
       shape: 'pentagon',
     },
   },
-  // Status badges. pendingDraft amber overlay, stale fuchsia overlay.
-  // The two can stack — fuchsia wins for the border color so staleness
-  // is the salient signal (pending is a subset of "something will
-  // happen").
+  // Status badges. pendingDraft amber overlay, stale fuchsia overlay,
+  // generating bright-amber pulsing overlay. Stack order is deliberate:
+  //   pendingDraft (dim amber, solid)
+  //   isStale (fuchsia, double — wins over pendingDraft for "something
+  //     drifted" salience)
+  //   generating (bright amber, pulsing — wins over both because an
+  //     in-flight job is the most actionable signal)
+  // The pulse alternation toggles the ``pulse-on`` class on generating
+  // nodes from a setInterval inside DagCanvas; both rules below apply
+  // to ``[generating]`` nodes, the second only when the pulse class
+  // is currently set.
   {
     selector: 'node[pendingDraft]',
     css: {
@@ -179,6 +186,30 @@ export const fullDagStylesheet: StylesheetCSS[] = [
       'border-color': '#e879f9',
       'border-width': 4,
       'border-style': 'double',
+    },
+  },
+  {
+    selector: 'node[generating]',
+    css: {
+      'border-color': '#fbbf24',
+      'border-width': 4,
+    },
+  },
+  {
+    selector: 'node[generating].pulse-on',
+    css: {
+      'border-color': '#fde68a',
+      'border-width': 7,
+    },
+  },
+  // Tier-filter hide. ``display: none`` removes the element from
+  // the rendered output AND from the next layout pass, so toggling
+  // a filter chip causes the visible subset to reflow into the
+  // freed space.
+  {
+    selector: '.hidden',
+    css: {
+      display: 'none',
     },
   },
   // Edges.

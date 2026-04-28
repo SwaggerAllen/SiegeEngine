@@ -29,6 +29,7 @@ export type TabKey =
   | 'sysarch'
   | 'overview'
   | 'comparch'
+  | 'decomposition'
   | 'fanin'
   | 'impl'
   | 'subcomparch'
@@ -41,7 +42,7 @@ export interface Tab {
   targetNodeId: string;
   /** URL ``?view=`` value — only set for the comp scope tabs
    *  that share a node id but differ in rendered view. */
-  targetView?: 'overview' | 'comparch';
+  targetView?: 'overview' | 'comparch' | 'decomposition';
 }
 
 export interface TabScope {
@@ -137,6 +138,21 @@ function topLevelCompTabs(comp: StructureNode, nodes: StructureNode[]): Tab[] {
     targetNodeId: comp.id,
     targetView: 'comparch',
   });
+  // Decomposition tab sits between Comparch (the design) and
+  // Fan-in (upward synthesis from impls). Only render it when the
+  // comp actually has subcomponents — un-fanned-out comps have no
+  // internal graph to draw.
+  const hasSubcomps = nodes.some(
+    (n) => n.tier === 'comp' && n.parent_id === comp.id,
+  );
+  if (hasSubcomps) {
+    tabs.push({
+      key: 'decomposition',
+      label: 'Decomposition',
+      targetNodeId: comp.id,
+      targetView: 'decomposition',
+    });
+  }
   const fanin = nodes.find((n) => n.tier === 'fanin' && n.parent_id === comp.id);
   if (fanin) tabs.push({ key: 'fanin', label: 'Fan-in', targetNodeId: fanin.id });
   const topLevelImpl = nodes.find((n) => n.tier === 'impl' && n.parent_id === comp.id);
@@ -161,7 +177,9 @@ function activeKeyForTopLevel(
   comp: StructureNode,
 ): TabKey {
   if (selected.id === comp.id) {
-    return view === 'comparch' ? 'comparch' : 'overview';
+    if (view === 'comparch') return 'comparch';
+    if (view === 'decomposition') return 'decomposition';
+    return 'overview';
   }
   if (selected.tier === 'fanin') return 'fanin';
   if (selected.tier === 'impl') return 'impl';

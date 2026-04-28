@@ -118,4 +118,33 @@ describe('tabScope', () => {
     const scope = tabScope('impl_sub', null, nodes);
     expect(scope.activeKey).toBe('sub-impl');
   });
+
+  it('top-level comp with subcomponents exposes a Decomposition tab', () => {
+    const nodes = [
+      n('comp_1', 'comp', null, { name: 'Billing' }),
+      n('comp_sub', 'comp', 'comp_1', { name: 'TokenStore' }),
+    ];
+    const scope = tabScope('comp_1', null, nodes);
+    const keys = scope.tabs.map((t) => t.key);
+    expect(keys).toContain('decomposition');
+    // Tab order: overview → comparch → decomposition → fanin? → impl?
+    expect(keys.indexOf('decomposition')).toBeGreaterThan(
+      keys.indexOf('comparch'),
+    );
+  });
+
+  it('top-level comp without subcomponents hides the Decomposition tab', () => {
+    const nodes = [n('comp_1', 'comp', null, { name: 'Billing' })];
+    const scope = tabScope('comp_1', null, nodes);
+    expect(scope.tabs.map((t) => t.key)).not.toContain('decomposition');
+  });
+
+  it('top-level comp with ?view=decomposition activates the decomposition tab', () => {
+    const nodes = [
+      n('comp_1', 'comp', null, { name: 'Billing' }),
+      n('comp_sub', 'comp', 'comp_1'),
+    ];
+    const scope = tabScope('comp_1', 'decomposition', nodes);
+    expect(scope.activeKey).toBe('decomposition');
+  });
 });
