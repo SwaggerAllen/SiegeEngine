@@ -6,11 +6,17 @@ import { FanInPanel } from '../FanInPanel';
 import { FeatureExpansionPanel } from '../FeatureExpansionPanel';
 
 // Phase 10's DAG view pulls in elkjs (~1.5MB minified). Keep it
-// out of the initial bundle by code-splitting on the import — the
-// chunk only loads when the user selects the Decomposition Graph
-// entry in the sidebar.
+// out of the initial bundle by code-splitting both DAG entry
+// points — the chunk only loads when the user picks the
+// Decomposition Graph sidebar entry or opens a comp's
+// Decomposition tab.
 const FullDagView = lazy(() =>
   import('../graph/FullDagView').then((m) => ({ default: m.FullDagView })),
+);
+const ComponentDecompositionPanel = lazy(() =>
+  import('../graph/ComponentDecompositionPanel').then((m) => ({
+    default: m.ComponentDecompositionPanel,
+  })),
 );
 import { DebugPanel } from '../DebugPanel';
 import { GenerationQueuePanel } from '../GenerationQueuePanel';
@@ -36,8 +42,9 @@ interface Props {
    *  metadata (name, parent_id) for the selected id. */
   nodes: StructureNode[];
   /** ``?view=`` URL param. When a top-level comp is selected this
-   *  chooses between Overview (default / ``overview``) and
-   *  Comparch (``comparch``). Ignored for other tiers. */
+   *  chooses between Overview (default / ``overview``), Comparch
+   *  (``comparch``), and Decomposition (``decomposition``).
+   *  Ignored for other tiers. */
   view: string | null;
 }
 
@@ -178,9 +185,10 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
     case 'comp': {
       if (node.parent_id === null) {
         // Top-level component — Overview is the default tab, users
-        // flip to Comparch via ``?view=comparch``. Fan-in and Impl
-        // tabs navigate to their own child nodes, so they don't
-        // land here.
+        // flip to Comparch via ``?view=comparch`` or to the
+        // decomposition graph via ``?view=decomposition``. Fan-in
+        // and Impl tabs navigate to their own child nodes, so they
+        // don't land here.
         if (view === 'comparch') {
           return (
             <div className="h-full overflow-auto">
@@ -189,6 +197,24 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
                 componentId={node.id}
                 componentName={node.name}
               />
+            </div>
+          );
+        }
+        if (view === 'decomposition') {
+          return (
+            <div className="h-full w-full">
+              <Suspense
+                fallback={
+                  <div className="p-6 text-sm text-gray-400">
+                    Loading graph…
+                  </div>
+                }
+              >
+                <ComponentDecompositionPanel
+                  projectId={projectId}
+                  componentId={node.id}
+                />
+              </Suspense>
             </div>
           );
         }
