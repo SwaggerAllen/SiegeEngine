@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -76,6 +76,87 @@ describe('GenerationQueuePanel scope rendering', () => {
     // Raw IDs no longer surfaced when names resolve.
     expect(screen.queryByText(/comp_TOP00001/)).toBeNull();
     expect(screen.queryByText(/comp_SUB00007/)).toBeNull();
+  });
+
+  it('Generation tab hides v2.review_* jobs; Reviews tab shows them', async () => {
+    mockedStructure.mockReturnValue({
+      data: {
+        offset: 1,
+        nodes: [{ id: 'comp_TOP00001', name: 'Billing' }],
+        edges: [],
+      },
+    });
+    mockedListJobs.mockResolvedValue({
+      jobs: [
+        {
+          id: 'job_gen',
+          job_type: 'v2.generate_comparch',
+          status: 'queued',
+          priority: 50,
+          retry_count: 0,
+          max_retries: 3,
+          error_message: null,
+          payload: { component_id: 'comp_TOP00001' },
+          created_at: '2026-04-26T12:00:00',
+        },
+        {
+          id: 'job_rev',
+          job_type: 'v2.review_comparch',
+          status: 'queued',
+          priority: 50,
+          retry_count: 0,
+          max_retries: 3,
+          error_message: null,
+          payload: { component_id: 'comp_TOP00001' },
+          created_at: '2026-04-26T12:00:01',
+        },
+      ],
+      status_counts: { queued: 2 },
+      total_returned: 2,
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByText('v2.generate_comparch')).toBeInTheDocument(),
+    );
+    // Generation tab is the default — review job hidden.
+    expect(screen.queryByText('v2.review_comparch')).toBeNull();
+    // Switching to Reviews flips the visible row.
+    fireEvent.click(screen.getByTestId('queue-tab-reviews'));
+    await waitFor(() =>
+      expect(screen.getByText('v2.review_comparch')).toBeInTheDocument(),
+    );
+    expect(screen.queryByText('v2.generate_comparch')).toBeNull();
+  });
+
+  it('Reviews tab shows an empty state when no review jobs match', async () => {
+    mockedStructure.mockReturnValue({
+      data: { offset: 1, nodes: [], edges: [] },
+    });
+    mockedListJobs.mockResolvedValue({
+      jobs: [
+        {
+          id: 'job_gen',
+          job_type: 'v2.generate_comparch',
+          status: 'queued',
+          priority: 50,
+          retry_count: 0,
+          max_retries: 3,
+          error_message: null,
+          payload: {},
+          created_at: '2026-04-26T12:00:00',
+        },
+      ],
+      status_counts: { queued: 1 },
+      total_returned: 1,
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByText('v2.generate_comparch')).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId('queue-tab-reviews'));
+    expect(
+      await screen.findByText(/No active review jobs/i),
+    ).toBeInTheDocument();
   });
 
   it('falls back to the raw ID when no structure node matches', async () => {

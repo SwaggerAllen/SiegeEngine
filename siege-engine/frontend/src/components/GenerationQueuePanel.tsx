@@ -20,6 +20,26 @@ const ALL_STATUSES: JobStatus[] = [
   'completed',
 ];
 
+// Tab keys partition the queue by what kind of work the job
+// represents. Currently a binary split — anything whose job_type
+// starts with ``v2.review_`` is a review pass; everything else is
+// generation (drafts, mints, fan-in, references, ...). The split
+// is purely client-side; both kinds live in the same Job table
+// and use the same cancel/reprioritize/delete endpoints.
+const QUEUE_TABS = [
+  { key: 'generation', label: 'Generation' },
+  { key: 'reviews', label: 'Reviews' },
+] as const;
+type QueueTab = (typeof QUEUE_TABS)[number]['key'];
+
+function isReviewJobType(jobType: string): boolean {
+  return jobType.startsWith('v2.review_');
+}
+
+function jobMatchesTab(jobType: string, tab: QueueTab): boolean {
+  return tab === 'reviews' ? isReviewJobType(jobType) : !isReviewJobType(jobType);
+}
+
 /**
  * Generation queue panel — view + manage the project's job rows.
  *
@@ -37,6 +57,7 @@ const ALL_STATUSES: JobStatus[] = [
  */
 export function GenerationQueuePanel({ projectId }: { projectId: string }) {
   const [activeOnly, setActiveOnly] = useState(true);
+  const [tab, setTab] = useState<QueueTab>('generation');
   const queryClient = useQueryClient();
 
   // Resolve payload IDs (component_id, sub_id, owner_id, node_id …)
@@ -85,17 +106,30 @@ export function GenerationQueuePanel({ projectId }: { projectId: string }) {
     onSuccess: invalidate,
   });
 
-  const counts = data?.status_counts ?? {};
-  const activeCount = (counts.running ?? 0) + (counts.queued ?? 0);
-
   const sortedJobs = useMemo(() => data?.jobs ?? [], [data?.jobs]);
+  const tabJobs = useMemo(
+    () => sortedJobs.filter((j) => jobMatchesTab(j.job_type, tab)),
+    [sortedJobs, tab],
+  );
+
+  // Per-tab counts. The backend's ``status_counts`` mixes both
+  // tabs, so we recompute against the filtered set so the header
+  // numbers match what the user actually sees.
+  const tabCounts = useMemo(() => {
+    const out: Partial<Record<JobStatus, number>> = {};
+    for (const j of tabJobs) {
+      out[j.status as JobStatus] = (out[j.status as JobStatus] ?? 0) + 1;
+    }
+    return out;
+  }, [tabJobs]);
+  const activeCount = (tabCounts.running ?? 0) + (tabCounts.queued ?? 0);
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-4">
       <header className="flex flex-wrap items-baseline gap-3">
         <h2 className="text-lg font-semibold">Generation Queue</h2>
         <span className="text-xs text-gray-500">
-          {activeCount} active · {data?.total_returned ?? 0} shown
+          {activeCount} active · {tabJobs.length} shown
         </span>
         <div className="ml-auto flex items-center gap-2">
           <label className="flex items-center gap-2 text-xs text-gray-300">
@@ -117,10 +151,35 @@ export function GenerationQueuePanel({ projectId }: { projectId: string }) {
         </div>
       </header>
 
+      <div
+        className="flex border-b border-gray-800"
+        role="tablist"
+        data-testid="queue-tab-strip"
+      >
+        {QUEUE_TABS.map((spec) => (
+          <button
+            key={spec.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === spec.key}
+            data-testid={`queue-tab-${spec.key}`}
+            onClick={() => setTab(spec.key)}
+            className={[
+              'px-4 py-2 text-sm border-b-2 transition-colors',
+              tab === spec.key
+                ? 'border-blue-500 text-blue-400'
+                : 'border-transparent text-gray-400 hover:text-gray-200',
+            ].join(' ')}
+          >
+            {spec.label}
+          </button>
+        ))}
+      </div>
+
       {!activeOnly && (
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
           {ALL_STATUSES.map((s) => (
-            <Stat key={s} label={s} value={counts[s] ?? 0} />
+            <Stat key={s} label={s} value={tabCounts[s] ?? 0} />
           ))}
         </div>
       )}
@@ -133,15 +192,15 @@ export function GenerationQueuePanel({ projectId }: { projectId: string }) {
           {describeApiError(error, 'Failed to load queue')}
         </div>
       )}
-      {!isLoading && !error && sortedJobs.length === 0 && (
+      {!isLoading && !error && tabJobs.length === 0 && (
         <div className="text-sm text-gray-500 italic">
           {activeOnly
-            ? 'No active jobs. Toggle "Active only" off to see history.'
-            : 'No jobs for this project yet.'}
+            ? `No active ${tab === 'reviews' ? 'review' : 'generation'} jobs. Toggle "Active only" off to see history.`
+            : `No ${tab === 'reviews' ? 'review' : 'generation'} jobs for this project yet.`}
         </div>
       )}
 
-      {sortedJobs.length > 0 && (
+      {tabJobs.length > 0 && (
         <div className="overflow-x-auto border border-gray-800 rounded">
           <table className="w-full text-xs font-mono">
             <thead className="bg-gray-900/40 text-gray-500 text-left">
@@ -156,7 +215,7 @@ export function GenerationQueuePanel({ projectId }: { projectId: string }) {
               </tr>
             </thead>
             <tbody>
-              {sortedJobs.map((job) => (
+              {tabJobs.map((job) => (
                 <JobRowView
                   key={job.id}
                   job={job}
