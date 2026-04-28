@@ -385,6 +385,8 @@ class TestReviewSweep:
         assert len(review_jobs) == 1
 
     def test_per_comp_enqueues_review_per_comp(self, client, db, seeded):
+        from backend.pipeline import queue as pipeline_queue
+
         r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/review-sweep")
         assert r.status_code == 200
         body = r.json()
@@ -401,6 +403,10 @@ class TestReviewSweep:
         # Each of the two top-level comps in the fixture should
         # have a review job targeting its own comp_* id.
         assert targeted_node_ids == set(seeded["comp_ids"])
+        # AI-review jobs run in their own priority band so they
+        # jump ahead of pending generations in the worker queue.
+        assert all(j.priority == pipeline_queue.REVIEW_JOB_PRIORITY for j in review_jobs)
+        assert pipeline_queue.REVIEW_JOB_PRIORITY < pipeline_queue.DEFAULT_JOB_PRIORITY
 
     def test_skips_nodes_with_no_content(self, client, db, seeded):
         # Clear one comp's content so the review-sweep skips it.
@@ -415,3 +421,122 @@ class TestReviewSweep:
         assert body["jobs_enqueued"] == 1
         assert len(body["scopes_skipped"]) == 1
         assert body["scopes_skipped"][0]["status"] == 409
+
+
+# ── /tiers/{tier}/resume ───────────────────────────────────────────
+
+
+class TestResumeTier:
+    def test_skips_already_approved_scopes(self, client, db, seeded):
+        """The seed leaves both comps approved, so resume is a no-op."""
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["scopes_total"] == 2
+        assert body["jobs_enqueued"] == 0
+        assert len(body["scopes_skipped"]) == 2
+        assert all(s["status"] == 409 for s in body["scopes_skipped"])
+        assert all("already approved" in s["detail"] for s in body["scopes_skipped"])
+
+    def test_enqueues_for_unapproved_scopes(self, client, db, seeded):
+        """Wiping content + having no active job should resume both."""
+        for comp_id in seeded["comp_ids"]:
+            comp = db.get(Node, comp_id)
+            assert comp is not None
+            comp.content = ""
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["jobs_enqueued"] == 2
+        assert body["scopes_skipped"] == []
+
+        queued = [
+            j
+            for j in db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.status == "queued",
+                )
+            ).scalars()
+            if j.payload.get("project_id") == seeded["project_id"]
+        ]
+        assert len(queued) == 2
+        assert {j.payload.get("component_id") for j in queued} == set(seeded["comp_ids"])
+
+    def test_skips_scope_with_active_job(self, client, db, seeded):
+        """An already-queued generate for one comp must short-circuit."""
+        for comp_id in seeded["comp_ids"]:
+            comp = db.get(Node, comp_id)
+            assert comp is not None
+            comp.content = ""
+        # Pre-seed a queued generate for the first comp.
+        existing = Job(
+            job_type="v2.generate_comparch",
+            status="queued",
+            payload={
+                "project_id": seeded["project_id"],
+                "component_id": seeded["comp_ids"][0],
+                "feedback": None,
+            },
+        )
+        db.add(existing)
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        # Only the second comp got enqueued; the first was skipped.
+        assert body["jobs_enqueued"] == 1
+        assert len(body["scopes_skipped"]) == 1
+        assert body["scopes_skipped"][0]["status"] == 409
+        assert "active job" in body["scopes_skipped"][0]["detail"]
+        # Verify by component_id that the new enqueue targets the
+        # second comp, not the first.
+        queued_for = [
+            j.payload.get("component_id")
+            for j in db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.status == "queued",
+                )
+            ).scalars()
+            if j.payload.get("project_id") == seeded["project_id"]
+        ]
+        assert seeded["comp_ids"][0] in queued_for  # the pre-seeded one
+        assert seeded["comp_ids"][1] in queued_for  # the new one
+        assert len(queued_for) == 2
+
+    def test_skips_pending_draft(self, client, db, seeded):
+        """A scope with a pending draft is awaiting user review and
+        must not be resumed (would discard the draft)."""
+        from backend.models.node import Draft
+
+        target_id = seeded["comp_ids"][0]
+        target = db.get(Node, target_id)
+        assert target is not None
+        target.content = ""
+        db.add(
+            Draft(
+                id=f"draft_{uuid.uuid4().hex[:8]}",
+                project_id=seeded["project_id"],
+                target_type="node",
+                target_id=target_id,
+                content="<comparch>wip</comparch>",
+                status="pending",
+                batch_id=f"batch_{uuid.uuid4().hex[:8]}",
+            )
+        )
+        # Wipe the second comp's content too so it would otherwise resume.
+        other = db.get(Node, seeded["comp_ids"][1])
+        assert other is not None
+        other.content = ""
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["jobs_enqueued"] == 1
+        assert len(body["scopes_skipped"]) == 1
+        assert "pending draft" in body["scopes_skipped"][0]["detail"]

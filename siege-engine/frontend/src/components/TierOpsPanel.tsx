@@ -3,11 +3,13 @@ import { useState } from 'react';
 import {
   TIER_NAMES,
   type ResetAllResult,
+  type ResumeTierResult,
   type ReviewSweepResult,
   type TierInfo,
   type TierName,
   getTierInfo,
   resetTier,
+  resumeTier,
   reviewSweepTier,
 } from '../api/tierOps';
 import { TierReviewSummaryPanel } from './TierReviewSummaryPanel';
@@ -67,6 +69,10 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
         kind: 'review';
         result: ReviewSweepResult;
       }
+    | {
+        kind: 'resume';
+        result: ResumeTierResult;
+      }
     | { kind: 'error'; text: string }
     | null
   >(null);
@@ -102,7 +108,23 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
     },
   });
 
-  const isBusy = resetMutation.isPending || reviewMutation.isPending;
+  const resumeMutation = useMutation({
+    mutationFn: () => resumeTier(projectId, tier),
+    onSuccess: (result) => {
+      setLastResult({ kind: 'resume', result });
+      queryClient.invalidateQueries({ queryKey });
+      queryClient.invalidateQueries({ queryKey: ['structure', projectId] });
+    },
+    onError: (err: unknown) => {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        (err instanceof Error ? err.message : String(err));
+      setLastResult({ kind: 'error', text: `Resume failed: ${detail}` });
+    },
+  });
+
+  const isBusy =
+    resetMutation.isPending || reviewMutation.isPending || resumeMutation.isPending;
 
   return (
     <li className="px-4 py-3 flex flex-col gap-3" data-testid={`tier-row-${tier}`}>
@@ -138,6 +160,16 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
           aria-expanded={showSummary}
         >
           {showSummary ? 'Hide review summary' : 'Review summary'}
+        </button>
+        <button
+          type="button"
+          onClick={() => resumeMutation.mutate()}
+          disabled={isBusy || (data?.node_count ?? 0) === 0}
+          className="px-3 py-1.5 text-xs rounded border border-emerald-800 text-emerald-300 hover:bg-emerald-950 disabled:opacity-40"
+          title="Re-enqueue generation for every scope in this tier whose last attempt was cancelled (skips approved + pending-draft scopes)"
+          data-testid={`tier-row-${tier}-resume-button`}
+        >
+          {resumeMutation.isPending ? 'Resuming…' : 'Resume Tier'}
         </button>
         {data?.supports_review && (
           <button
@@ -200,6 +232,7 @@ function ResultLine({
   result:
     | { kind: 'reset'; result: ResetAllResult }
     | { kind: 'review'; result: ReviewSweepResult }
+    | { kind: 'resume'; result: ResumeTierResult }
     | { kind: 'error'; text: string };
   tier: string;
 }) {
@@ -215,14 +248,20 @@ function ResultLine({
   }
   const skipped = result.result.scopes_skipped;
   const tone = skipped.length > 0 ? 'warn' : 'ok';
-  const summary =
-    result.kind === 'reset'
-      ? skipped.length
-        ? `Reset ${result.result.scopes_succeeded} scope${result.result.scopes_succeeded === 1 ? '' : 's'} (${skipped.length} skipped) · ${result.result.jobs_enqueued} generation${result.result.jobs_enqueued === 1 ? '' : 's'} queued.`
-        : `Reset ${result.result.scopes_succeeded} scope${result.result.scopes_succeeded === 1 ? '' : 's'} · ${result.result.jobs_enqueued} generation${result.result.jobs_enqueued === 1 ? '' : 's'} queued.`
-      : skipped.length
-        ? `Enqueued ${result.result.jobs_enqueued} review${result.result.jobs_enqueued === 1 ? '' : 's'} (${skipped.length} skipped).`
-        : `Enqueued ${result.result.jobs_enqueued} review${result.result.jobs_enqueued === 1 ? '' : 's'}.`;
+  let summary: string;
+  if (result.kind === 'reset') {
+    summary = skipped.length
+      ? `Reset ${result.result.scopes_succeeded} scope${result.result.scopes_succeeded === 1 ? '' : 's'} (${skipped.length} skipped) · ${result.result.jobs_enqueued} generation${result.result.jobs_enqueued === 1 ? '' : 's'} queued.`
+      : `Reset ${result.result.scopes_succeeded} scope${result.result.scopes_succeeded === 1 ? '' : 's'} · ${result.result.jobs_enqueued} generation${result.result.jobs_enqueued === 1 ? '' : 's'} queued.`;
+  } else if (result.kind === 'resume') {
+    summary = skipped.length
+      ? `Resumed ${result.result.jobs_enqueued} scope${result.result.jobs_enqueued === 1 ? '' : 's'} (${skipped.length} skipped).`
+      : `Resumed ${result.result.jobs_enqueued} scope${result.result.jobs_enqueued === 1 ? '' : 's'}.`;
+  } else {
+    summary = skipped.length
+      ? `Enqueued ${result.result.jobs_enqueued} review${result.result.jobs_enqueued === 1 ? '' : 's'} (${skipped.length} skipped).`
+      : `Enqueued ${result.result.jobs_enqueued} review${result.result.jobs_enqueued === 1 ? '' : 's'}.`;
+  }
   return (
     <div className="mt-1 space-y-1" data-testid={`tier-row-${tier}-message`}>
       <div

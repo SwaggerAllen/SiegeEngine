@@ -61,6 +61,15 @@ export const ReviewSweepResultSchema = z.object({
 });
 export type ReviewSweepResult = z.infer<typeof ReviewSweepResultSchema>;
 
+export const ResumeTierResultSchema = z.object({
+  ok: z.boolean(),
+  tier: z.string(),
+  scopes_total: z.number(),
+  jobs_enqueued: z.number(),
+  scopes_skipped: z.array(SkipSchema),
+});
+export type ResumeTierResult = z.infer<typeof ResumeTierResultSchema>;
+
 export async function getTierInfo(projectId: string, tier: TierName): Promise<TierInfo> {
   const r = await api.get(`/projects/${projectId}/tiers/${tier}/info`);
   return TierInfoSchema.parse(r.data);
@@ -77,6 +86,14 @@ export async function reviewSweepTier(
 ): Promise<ReviewSweepResult> {
   const r = await api.post(`/projects/${projectId}/tiers/${tier}/review-sweep`);
   return ReviewSweepResultSchema.parse(r.data);
+}
+
+export async function resumeTier(
+  projectId: string,
+  tier: TierName,
+): Promise<ResumeTierResult> {
+  const r = await api.post(`/projects/${projectId}/tiers/${tier}/resume`);
+  return ResumeTierResultSchema.parse(r.data);
 }
 
 // ── Review summary (read-only dashboard) ───────────────────────────

@@ -374,6 +374,7 @@ def persist_draft(
                     "node_id": node_id,
                     "draft_id": new_draft_id,
                 },
+                priority=pipeline_queue.REVIEW_JOB_PRIORITY,
             )
         return new_draft_id
     finally:

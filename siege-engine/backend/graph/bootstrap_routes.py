@@ -622,6 +622,7 @@ def bootstrap_retry_review(
             "node_id": node.id,
             "draft_id": draft_id,
         },
+        priority=pipeline_queue.REVIEW_JOB_PRIORITY,
     )
     return {"job_id": job_id}
 

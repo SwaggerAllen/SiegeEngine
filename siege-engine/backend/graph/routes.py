@@ -3263,6 +3263,7 @@ def post_fanin_review_retry(
             "node_id": fanin_node.id,
             "draft_id": None,
         },
+        priority=pipeline_queue.REVIEW_JOB_PRIORITY,
     )
     return FeedbackResponse(job_id=job_id)
 

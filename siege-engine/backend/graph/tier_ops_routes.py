@@ -423,6 +423,100 @@ def reset_tier(
     }
 
 
+@router.post("/{project_id}/tiers/{tier}/resume")
+def resume_tier(
+    project_id: str,
+    tier: TierName,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Re-enqueue generation for every scope in this tier whose
+    last attempt was cancelled or never ran.
+
+    Designed for the iterate-on-the-engine workflow: while editing
+    SiegeEngine itself, the user kills in-flight jobs to redeploy,
+    then wants a single click to pick up the unfinished scopes
+    without resetting (and discarding) work that did land.
+
+    Skips scopes that are:
+      * already approved (have content),
+      * waiting on user review (have a pending draft),
+      * already running or queued (active gen job for the scope).
+
+    The queue's payload-level dedup makes this safe to spam — a
+    second click while the first batch is still queued is a no-op.
+    """
+    _require_project(db, project_id)
+    config, iter_scope_ids = _resolve(tier)
+
+    scopes = iter_scope_ids(db, project_id)
+    enqueued: list[str] = []
+    skipped: list[dict[str, Any]] = []
+    for scope_ids in scopes:
+        node = config.get_node(db, project_id, *scope_ids)
+        if node is None:
+            skipped.append({"scope_ids": list(scope_ids), "status": 404, "detail": "node missing"})
+            continue
+        if (node.content or "").strip():
+            skipped.append(
+                {"scope_ids": list(scope_ids), "status": 409, "detail": "already approved"}
+            )
+            continue
+        pending = config.get_pending_draft(db, project_id, *scope_ids)
+        if pending is not None:
+            skipped.append(
+                {
+                    "scope_ids": list(scope_ids),
+                    "status": 409,
+                    "detail": "pending draft awaiting review",
+                }
+            )
+            continue
+        payload_filters: dict[str, Any] = {"project_id": project_id}
+        for idx, sid in enumerate(scope_ids):
+            if idx < len(config.scope_payload_keys):
+                payload_filters[config.scope_payload_keys[idx]] = sid
+        active = pipeline_queue.find_active_job(
+            db,
+            config.generate_job_type,
+            payload_filters=payload_filters,
+        )
+        if active is not None:
+            skipped.append(
+                {
+                    "scope_ids": list(scope_ids),
+                    "status": 409,
+                    "detail": f"active job {active.id}",
+                }
+            )
+            continue
+        job_id = pipeline_queue.enqueue(
+            db,
+            job_type=config.generate_job_type,
+            payload=build_job_payload(
+                project_id,
+                scope_ids,
+                scope_payload_keys=config.scope_payload_keys,
+            ),
+        )
+        enqueued.append(job_id)
+
+    logger.info(
+        "tier_ops.resume_tier project=%s tier=%s enqueued=%d skipped=%d",
+        project_id,
+        tier,
+        len(enqueued),
+        len(skipped),
+    )
+    return {
+        "ok": True,
+        "tier": tier,
+        "scopes_total": len(scopes),
+        "jobs_enqueued": len(enqueued),
+        "scopes_skipped": skipped,
+    }
+
+
 @router.post("/{project_id}/tiers/{tier}/review-sweep")
 def review_sweep_tier(
     project_id: str,

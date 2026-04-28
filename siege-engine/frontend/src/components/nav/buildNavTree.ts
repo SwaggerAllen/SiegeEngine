@@ -28,6 +28,7 @@ export interface NavItem {
     | 'references'
     | 'dag'
     | 'queue'
+    | 'gen-queue'
     | 'tier-ops'
     | 'debug'
     | 'edit-root'
@@ -78,6 +79,9 @@ export const SYNTHETIC_IDS = {
   DAG: ':dag',
   // Phase 11 — the pending-change queue panel.
   QUEUE: ':queue',
+  // Generation queue — view + manage the project's running / queued
+  // background jobs (cancel, reprioritize, delete).
+  GEN_QUEUE: ':gen-queue',
   // Tier ops — bulk reset / bulk AI-review per tier.
   TIER_OPS: ':tier-ops',
   // Debug snapshot — copy project state + recent events/jobs.
@@ -240,6 +244,14 @@ export function buildNavTree(
     label: 'Pending Changes',
     node: null,
     role: 'queue',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.GEN_QUEUE,
+    label: 'Generation Queue',
+    node: null,
+    role: 'gen-queue',
     children: [],
     status: { ...EMPTY_STATUS },
   });

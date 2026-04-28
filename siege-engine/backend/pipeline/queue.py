@@ -47,6 +47,14 @@ _job_notify = asyncio.Event()
 # turn kills the CLI subprocess — see ``backend.cli.manager._invoke``).
 _active_handler_tasks: dict[str, asyncio.Task] = {}
 
+# Default priority for a generation / mint job. Lower number wins.
+DEFAULT_JOB_PRIORITY = 10
+# AI self-review jobs run in the same single-worker queue as
+# generations but jump ahead of pending generations so a finished
+# draft gets its critique while the user is still looking at it,
+# rather than waiting behind every queued downstream regen.
+REVIEW_JOB_PRIORITY = 5
+
 
 def enqueue(
     db: Session,

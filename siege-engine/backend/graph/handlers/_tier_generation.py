@@ -541,6 +541,7 @@ def _enqueue_async_review_retroactively(
                 "node_id": node_id,
                 "draft_id": draft_id,
             },
+            priority=pipeline_queue.REVIEW_JOB_PRIORITY,
         )
         db.commit()
     finally:
