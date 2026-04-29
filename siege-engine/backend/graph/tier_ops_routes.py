@@ -32,8 +32,8 @@ from backend.auth.routes import get_current_user
 from backend.database import get_db
 from backend.graph.bootstrap_routes import (
     BootstrapTierConfig,
+    bootstrap_feedback,
     bootstrap_reset,
-    bootstrap_retry_review,
     build_job_payload,
 )
 from backend.models import Project, User
@@ -195,12 +195,17 @@ def get_tier_info(
     # may have a bootstrapped-but-empty node, which still counts as
     # "exists" so the user can sweep an in-flight tier.
     #
-    # ``reviewable_count`` matches what ``bootstrap_retry_review``
-    # accepts: a scope is reviewable iff it has a pending draft
-    # (in-flight regen) or non-empty approved content. The Review
-    # All / Review summary buttons gate on this — drafts that
-    # haven't been approved yet are still reviewable, since the
-    # review pass runs against the draft body.
+    # ``reviewable_count`` is the gate for the Review All and
+    # Review summary buttons. A scope counts iff it has a pending
+    # draft (in-flight regen) or non-empty approved content. The
+    # Review summary button reads existing ``review_text`` for both
+    # cases. The Review All button now wraps per-scope
+    # ``bootstrap_feedback`` and only the pending-draft cases will
+    # actually fire a regen — approved-only scopes will 409-skip
+    # and report as such in the result line. We keep the broader
+    # count here so the button is enabled for the same set the
+    # summary button is, and let the per-scope skip messaging
+    # explain the partial sweep.
     from backend.models.node import Draft
 
     existing = 0
@@ -604,12 +609,23 @@ def review_sweep_tier(
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Enqueue a fresh AI self-review for every node in this tier.
+    """Sweep "Reject & Regenerate" across every scope in this tier.
 
-    Wraps the existing per-node ``bootstrap_retry_review`` so the
-    cancel-stale-review + enqueue logic stays in one place. Nodes
-    with no content yet are skipped (the per-node handler raises
-    409 in that case, which we report as a skip).
+    Replaces the prior fresh-AI-review behavior. The button now
+    behaves identically to clicking the per-node "Reject &
+    Regenerate" affordance on each scope: each pending draft's
+    ``review_text`` rides forward as ``prior_review_text`` on the
+    regen payload, the stale review row gets cleared, any in-
+    flight review job for that draft is cancelled, and a fresh
+    generation job is enqueued. The post-commit hook on the new
+    draft fires the next AI review automatically — no separate
+    review enqueue is needed.
+
+    Scopes without a pending draft (already approved + no in-
+    flight regen, or never reached pending) raise 409 from
+    ``bootstrap_feedback`` and are reported as skipped. Use the
+    Reset All button for those — that path forces through the
+    approval gate and cascades.
     """
     _require_project(db, project_id)
     config, iter_scope_ids = _resolve(tier)
@@ -624,7 +640,14 @@ def review_sweep_tier(
     skipped: list[dict[str, Any]] = []
     for scope_ids in scopes:
         try:
-            result = bootstrap_retry_review(db, project_id, scope_ids, config, _require_project)
+            result = bootstrap_feedback(
+                db,
+                project_id,
+                scope_ids,
+                feedback_text="",
+                config=config,
+                require_project=_require_project,
+            )
         except HTTPException as exc:
             skipped.append(
                 {"scope_ids": list(scope_ids), "status": exc.status_code, "detail": exc.detail}

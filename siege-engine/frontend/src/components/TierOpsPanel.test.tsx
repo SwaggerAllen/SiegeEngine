@@ -116,7 +116,7 @@ describe('TierOpsPanel', () => {
     );
   });
 
-  it('Review All fires immediately and reports skipped scopes', async () => {
+  it('Regen From Reviews fires immediately and reports skipped scopes', async () => {
     mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
       makeInfo({ tier, node_count: 2, nodes_with_content: 1 }),
     );
@@ -126,7 +126,7 @@ describe('TierOpsPanel', () => {
       scopes_total: 2,
       jobs_enqueued: 1,
       scopes_skipped: [
-        { scope_ids: ['comp_2'], status: 409, detail: 'no content yet' },
+        { scope_ids: ['comp_2'], status: 409, detail: 'already approved' },
       ],
     });
     renderPanel();
@@ -137,7 +137,7 @@ describe('TierOpsPanel', () => {
     );
     await waitFor(() =>
       expect(screen.getByTestId('tier-row-comparch-message')).toHaveTextContent(
-        /Enqueued 1 review \(1 skipped\)/,
+        /Regenerated 1 scope \(1 skipped\)/,
       ),
     );
   });
