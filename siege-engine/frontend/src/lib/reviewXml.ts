@@ -42,7 +42,7 @@ const ARCH_SECTION = 'architectural-decisions';
 export function parseReview(raw: string): ParsedReview | null {
   if (!raw?.trim()) return null;
 
-  const trimmed = escapeFindingBodies(raw.trim());
+  const trimmed = escapeProseElements(raw.trim());
   // DOMParser's XML mode treats preamble prose as a parse error,
   // so wrap the input in a synthetic root that swallows
   // whitespace/prose outside the actual ``<review>`` tag.
@@ -93,28 +93,41 @@ export function parseReview(raw: string): ParsedReview | null {
 }
 
 /**
- * Escape stray angle brackets inside every ``<finding>…</finding>``
- * body before the text hits ``DOMParser``.
+ * Escape stray angle brackets inside the review's prose-leaf
+ * elements (``<intro>``, ``<score>``, ``<finding>``) before the
+ * text hits ``DOMParser``.
  *
  * Reviewers routinely reference XML tag names in prose —
- * ``"three <covers> entries"``, ``"the <name> child"`` — and the
- * strict XML parser then reads the inline tag name as an open tag
- * and fails the whole review with an "Opening and ending tag
- * mismatch" error. Since finding bodies are pure prose (no nested
- * markup ever rendered), escaping ``<`` and ``>`` between the
- * finding's open and close tags is safe and lossless for display.
+ * ``"three <covers> entries"``, ``"the <name> child"``,
+ * ``"the `<subcomponents>` section is empty"`` — and the strict
+ * XML parser then reads the inline tag name as an open tag and
+ * fails the whole review with an "Opening and ending tag
+ * mismatch" error. This was originally limited to ``<finding>``
+ * bodies, but the same pattern shows up inside ``<intro>`` (the
+ * one-paragraph summary frequently calls out missing or empty
+ * sections by their tag name) — so we apply the same escape pass
+ * to every prose-leaf element. ``<score>`` is included
+ * defensively; in practice it's just an integer.
  *
- * Leaves the finding's opening/closing tags intact so ``id=``
- * attributes and section nesting still parse.
+ * Since these elements are pure prose (no nested markup ever
+ * rendered), escaping ``<`` and ``>`` between their open/close
+ * tags is safe and lossless for display.
+ *
+ * The wrapper element opens — ``<review>``, ``<handles-structure>``,
+ * ``<architectural-decisions>`` — are left intact so the
+ * structural parse still works.
  */
-function escapeFindingBodies(raw: string): string {
-  return raw.replace(
-    /(<finding\b[^>]*>)([\s\S]*?)(<\/finding>)/g,
-    (_match, open: string, body: string, close: string) => {
+function escapeProseElements(raw: string): string {
+  const proseTags = ['intro', 'score', 'finding'];
+  let out = raw;
+  for (const tag of proseTags) {
+    const re = new RegExp(`(<${tag}\\b[^>]*>)([\\s\\S]*?)(</${tag}>)`, 'g');
+    out = out.replace(re, (_match, open: string, body: string, close: string) => {
       const escaped = body.replace(/</g, '&lt;').replace(/>/g, '&gt;');
       return `${open}${escaped}${close}`;
-    },
-  );
+    });
+  }
+  return out;
 }
 
 function extractFindings(section: Element): ReviewFinding[] | null {
@@ -220,7 +233,7 @@ export function diagnoseReview(raw: string): ReviewDiagnostic {
   let doc: Document;
   try {
     doc = new DOMParser().parseFromString(
-      `<root>${escapeFindingBodies(trimmed)}</root>`,
+      `<root>${escapeProseElements(trimmed)}</root>`,
       'application/xml',
     );
   } catch (exc) {

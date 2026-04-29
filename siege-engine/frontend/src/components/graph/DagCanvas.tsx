@@ -62,16 +62,19 @@ export function DagCanvas({
         'elk.direction': direction,
         'elk.spacing.nodeNode': 40,
         'elk.layered.spacing.nodeNodeBetweenLayers': 80,
-        // LONGEST_PATH layering pushes each node to the latest
-        // layer its descendants allow, which makes the tier bands
-        // separate cleanly: impls (sinks) anchor the bottom and
-        // each upstream tier stacks one layer above. NETWORK_SIMPLEX
-        // (the ELK default) minimizes total edge length and was
-        // collapsing partitions into shared layers because partition
-        // values are an ordering constraint, not a separation one.
-        'elk.layered.layering.strategy': 'LONGEST_PATH',
+        // INTERACTIVE layering reads each node's
+        // ``layerChoiceConstraint`` (set by elements.ts via the
+        // computeLayerMap walk) and pins the node to that layer
+        // index. Combined with ``interactiveLayout: true`` at the
+        // root, this is the documented elkjs path for honoring
+        // per-node layer constraints. NETWORK_SIMPLEX (the default
+        // layering strategy) silently ignores the constraint, and
+        // LONGEST_PATH would re-layer based on path topology
+        // independently of our walk. INTERACTIVE is the only
+        // strategy that respects the constraint.
+        'elk.layered.layering.strategy': 'INTERACTIVE',
         'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
-        'elk.partitioning.activate': true,
+        'elk.interactiveLayout': true,
       },
       nodeDimensionsIncludeLabels: true,
       fit: true,

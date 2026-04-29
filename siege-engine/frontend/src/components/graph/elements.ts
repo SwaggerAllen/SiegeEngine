@@ -9,10 +9,23 @@
 //   external context (the top-level feat/resp/policy nodes that
 //   trace into this component).
 //
-// Partitioning: each node carries a layoutOptions hint assigning it
-// to an ELK partition (feature tier = 0, top-level resp = 1, ...).
-// Within a partition the dependency edges drive topological sub-
-// layering. ELK reads these via `elk.partitioning.partition`.
+// Layering: each node carries an `elk.layered.layering.layerChoiceConstraint`
+// computed by `computeLayerMap`. The map is a topological Kahn's BFS
+// over the kept edges plus an implicit parent→child edge for every
+// node with a parent_id in the kept set. Tier separation falls out of
+// path lengths from the sources (feats), and dep edges within a tier
+// push depending nodes to deeper layers — so foundation comp lands
+// above its dependers, depender chains spread vertically, etc. The
+// `INTERACTIVE` layering strategy in DagCanvas reads the constraint
+// values back during a second-pass layout run.
+//
+// Special cases overriding the walk-derived layer:
+// - Policy nodes (top-level / external / local) get pinned because
+//   they have no decomposition ancestors and the walk would treat
+//   them as sources at layer 0.
+// - Fan-in nodes are pinned to max-layer + 1 because they synthesize
+//   from impls upward but visually belong at the bottom of the comp's
+//   internal stack (no incoming edges in the structure).
 //
 // Edge direction flipping is kept from the deleted DecompositionGraph:
 // dependency and domain_parent edges point source → target in the
@@ -36,27 +49,11 @@ export type NodeType =
   | 'external-resp'
   | 'external-policy';
 
-// Partition ordering for the top-level DAG. Lower partitions render
-// above higher ones under `elk.direction = DOWN`.
-const TOP_LEVEL_PARTITION = {
-  feat: 0,
-  'resp-top': 1,
-  'policy-top': 2,
-  'comp-top': 3,
-} as const;
-
-// Partition ordering for the drill-in view. External context at the
-// top (L0), then local policies, subcomps, fanin, and revealed impl
-// leaves at the bottom.
-const DRILL_PARTITION = {
-  'external-feat': 0,
-  'external-resp': 0,
-  'external-policy': 0,
-  'policy-local': 1,
-  'comp-sub': 3,
-  fanin: 4,
-  impl: 5,
-} as const;
+const POLICY_TYPES: ReadonlySet<NodeType> = new Set([
+  'policy-top',
+  'policy-local',
+  'external-policy',
+]);
 
 /** Edge types whose visual arrow runs opposite to the stored direction. */
 const FLIPPED_EDGE_TYPES = new Set(['dependency', 'domain_parent']);
@@ -68,7 +65,7 @@ function isTopLevel(n: StructureNode): boolean {
 function nodeData(
   n: StructureNode,
   type: NodeType,
-  partition: number,
+  layer: number,
 ): ElementDefinition {
   const data: Record<string, string | number | undefined> = {
     id: n.id,
@@ -84,12 +81,15 @@ function nodeData(
     data,
     // `layoutOptions` on the element is a cytoscape-elk convention —
     // the extension picks it up and forwards each key as an ELK
-    // layoutOption for that node.
+    // layoutOption for that node. ``layerChoiceConstraint`` pins
+    // this node to the named layer; honored only when the root
+    // layout sets ``layering.strategy = INTERACTIVE`` and
+    // ``interactiveLayout = true`` (see DagCanvas).
     //
     // @ts-expect-error ElementDefinition doesn't type layoutOptions but
     // cytoscape-elk reads it at runtime.
     layoutOptions: {
-      'elk.partitioning.partition': partition,
+      'elk.layered.layering.layerChoiceConstraint': layer,
     },
   };
 }
@@ -106,6 +106,104 @@ function edgeData(e: StructureEdge): ElementDefinition {
   };
 }
 
+interface KeptNode {
+  id: string;
+  type: NodeType;
+  parent_id: string | null;
+}
+
+interface KeptEdge {
+  source: string;
+  target: string;
+}
+
+/**
+ * Topological-BFS layer assignment over a kept-node set.
+ *
+ * For each node, layer = max(layer(parent)) + 1 across:
+ * - all incoming "kept" edges (source → target after flipping for
+ *   dependency / domain_parent so the arrow's intended consumer is
+ *   on the bottom),
+ * - the implicit parent_id → child edge (so a subcomp sits below
+ *   its drilled-comp parent even when the only structural decomp
+ *   edge runs from external resp directly into the subcomp).
+ *
+ * Sources land at layer 0. Special cases:
+ * - Policy nodes are forced to layer 1 (cross-cutting context, no
+ *   decomposition ancestor would otherwise place them sensibly).
+ * - Fan-in nodes are forced to max-walk-layer + 1 (bottom of the
+ *   stack — they have no incoming edges and "represent" the impl
+ *   leaves).
+ *
+ * Cycle-safe: any node still without a layer after Kahn's pass
+ * (cycle or disconnected) is assigned 0.
+ */
+export function computeLayerMap(
+  nodes: KeptNode[],
+  edges: KeptEdge[],
+): Map<string, number> {
+  const ids = new Set(nodes.map((n) => n.id));
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+  for (const id of ids) {
+    incoming.set(id, []);
+    outgoing.set(id, []);
+  }
+
+  const addEdge = (src: string, tgt: string) => {
+    if (!ids.has(src) || !ids.has(tgt) || src === tgt) return;
+    incoming.get(tgt)!.push(src);
+    outgoing.get(src)!.push(tgt);
+  };
+
+  for (const e of edges) addEdge(e.source, e.target);
+  for (const n of nodes) {
+    if (n.parent_id) addEdge(n.parent_id, n.id);
+  }
+
+  const inDegree = new Map<string, number>();
+  for (const [id, parents] of incoming) inDegree.set(id, parents.length);
+
+  const layers = new Map<string, number>();
+  const queue: string[] = [];
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) {
+      layers.set(id, 0);
+      queue.push(id);
+    }
+  }
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    const myLayer = layers.get(id) ?? 0;
+    for (const childId of outgoing.get(id) ?? []) {
+      const candidate = myLayer + 1;
+      const existing = layers.get(childId);
+      if (existing === undefined || candidate > existing) {
+        layers.set(childId, candidate);
+      }
+      const newDeg = (inDegree.get(childId) ?? 0) - 1;
+      inDegree.set(childId, newDeg);
+      if (newDeg === 0) queue.push(childId);
+    }
+  }
+
+  // Anything still unassigned (cycle or disconnected) → 0.
+  for (const id of ids) {
+    if (!layers.has(id)) layers.set(id, 0);
+  }
+
+  // Special cases.
+  let maxLayer = 0;
+  for (const v of layers.values()) if (v > maxLayer) maxLayer = v;
+  for (const n of nodes) {
+    if (POLICY_TYPES.has(n.type)) layers.set(n.id, 1);
+    if (n.type === 'fanin') layers.set(n.id, maxLayer + 1);
+  }
+
+  return layers;
+}
+
 /**
  * Top-level DAG view: features, top-level responsibilities,
  * top-level policies, top-level components + every edge among them.
@@ -115,9 +213,9 @@ export function topLevelElements(
   nodes: StructureNode[],
   edges: StructureEdge[],
 ): ElementDefinition[] {
-  const kept = new Map<string, NodeType>();
-  const elements: ElementDefinition[] = [];
-
+  // Pass 1: pick keepers + their types.
+  const keptNodes: { node: StructureNode; type: NodeType }[] = [];
+  const keptIds = new Set<string>();
   for (const n of nodes) {
     let type: NodeType | null = null;
     if (n.tier === 'feat') type = 'feat';
@@ -125,13 +223,14 @@ export function topLevelElements(
     else if (n.tier === 'policy' && isTopLevel(n)) type = 'policy-top';
     else if (n.tier === 'comp' && isTopLevel(n)) type = 'comp-top';
     if (type === null) continue;
-    kept.set(n.id, type);
-    elements.push(nodeData(n, type, TOP_LEVEL_PARTITION[type]));
+    keptNodes.push({ node: n, type });
+    keptIds.add(n.id);
   }
 
+  // Pass 2: filter edges to the kept set (and to layout-relevant types).
+  const keptEdges: { edge: StructureEdge; cyEdge: KeptEdge }[] = [];
   for (const e of edges) {
-    if (!kept.has(e.source_id) || !kept.has(e.target_id)) continue;
-    // Only the four edge types that make sense between these tiers.
+    if (!keptIds.has(e.source_id) || !keptIds.has(e.target_id)) continue;
     if (
       e.edge_type !== 'decomposition' &&
       e.edge_type !== 'policy_application' &&
@@ -139,9 +238,34 @@ export function topLevelElements(
       e.edge_type !== 'domain_parent'
     )
       continue;
-    elements.push(edgeData(e));
+    const flipped = FLIPPED_EDGE_TYPES.has(e.edge_type);
+    keptEdges.push({
+      edge: e,
+      cyEdge: {
+        source: flipped ? e.target_id : e.source_id,
+        target: flipped ? e.source_id : e.target_id,
+      },
+    });
   }
 
+  // Pass 3: layer assignment, then materialize elements with the
+  // computed layerChoiceConstraint per node.
+  const layerMap = computeLayerMap(
+    keptNodes.map(({ node, type }) => ({
+      id: node.id,
+      type,
+      parent_id: node.parent_id,
+    })),
+    keptEdges.map((k) => k.cyEdge),
+  );
+
+  const elements: ElementDefinition[] = [];
+  for (const { node, type } of keptNodes) {
+    elements.push(nodeData(node, type, layerMap.get(node.id) ?? 0));
+  }
+  for (const { edge } of keptEdges) {
+    elements.push(edgeData(edge));
+  }
   return elements;
 }
 
@@ -218,11 +342,16 @@ export function drillElements(
   edges: StructureEdge[],
   revealedImplSubcompIds: ReadonlySet<string> = new Set(),
 ): ElementDefinition[] {
-  const kept = new Map<string, NodeType>();
-  const elements: ElementDefinition[] = [];
   const byId = new Map(nodes.map((n) => [n.id, n]));
 
-  // External context layer.
+  // Pass 1: pick keepers + their types.
+  const keptNodes: { node: StructureNode; type: NodeType }[] = [];
+  const keptIds = new Set<string>();
+  const push = (node: StructureNode, type: NodeType) => {
+    keptNodes.push({ node, type });
+    keptIds.add(node.id);
+  };
+
   for (const n of externalContextFor(compId, nodes, edges)) {
     const type: NodeType =
       n.tier === 'feat'
@@ -230,59 +359,44 @@ export function drillElements(
         : n.tier === 'resp'
           ? 'external-resp'
           : 'external-policy';
-    kept.set(n.id, type);
-    elements.push(nodeData(n, type, DRILL_PARTITION[type]));
+    push(n, type);
   }
 
-  // The drilled comp itself — rendered in the subcomp band so it
-  // anchors the internal subgraph visually.
   const comp = byId.get(compId);
-  if (comp) {
-    kept.set(compId, 'comp-sub');
-    elements.push(nodeData(comp, 'comp-sub', DRILL_PARTITION['comp-sub']));
-  }
+  if (comp) push(comp, 'comp-sub');
 
   const subcompIds = new Set<string>();
   for (const n of nodes) {
     if (n.parent_id !== compId) continue;
     if (n.tier === 'policy') {
-      kept.set(n.id, 'policy-local');
-      elements.push(nodeData(n, 'policy-local', DRILL_PARTITION['policy-local']));
+      push(n, 'policy-local');
     } else if (n.tier === 'resp') {
-      // Pre-Phase-A subresps (tier="resp", parent_id != null) are
-      // orphan dead data — the comparch tier no longer mints them
-      // and the drill-in graph doesn't surface them.
+      // Pre-Phase-A subresps — orphan dead data, not surfaced.
       continue;
     } else if (n.tier === 'comp') {
       subcompIds.add(n.id);
-      kept.set(n.id, 'comp-sub');
-      elements.push(nodeData(n, 'comp-sub', DRILL_PARTITION['comp-sub']));
+      push(n, 'comp-sub');
     } else if (n.tier === 'fanin') {
-      kept.set(n.id, 'fanin');
-      elements.push(nodeData(n, 'fanin', DRILL_PARTITION.fanin));
+      push(n, 'fanin');
     } else if (n.tier === 'impl') {
       // Un-fanned-out top-level comp case: impl lives directly
       // under the comp. Reveal iff the comp itself was clicked,
       // modeled here by including compId in the revealed set.
-      if (revealedImplSubcompIds.has(compId)) {
-        kept.set(n.id, 'impl');
-        elements.push(nodeData(n, 'impl', DRILL_PARTITION.impl));
-      }
+      if (revealedImplSubcompIds.has(compId)) push(n, 'impl');
     }
   }
 
-  // Impl leaves under revealed subcomps.
   for (const n of nodes) {
     if (n.tier !== 'impl') continue;
     if (n.parent_id === null || !subcompIds.has(n.parent_id)) continue;
     if (!revealedImplSubcompIds.has(n.parent_id)) continue;
-    kept.set(n.id, 'impl');
-    elements.push(nodeData(n, 'impl', DRILL_PARTITION.impl));
+    push(n, 'impl');
   }
 
-  // Edges: keep anything with both endpoints in the kept set.
+  // Pass 2: filter edges to the kept set + layout-relevant types.
+  const keptEdges: { edge: StructureEdge; cyEdge: KeptEdge }[] = [];
   for (const e of edges) {
-    if (!kept.has(e.source_id) || !kept.has(e.target_id)) continue;
+    if (!keptIds.has(e.source_id) || !keptIds.has(e.target_id)) continue;
     if (
       e.edge_type !== 'decomposition' &&
       e.edge_type !== 'policy_application' &&
@@ -290,8 +404,32 @@ export function drillElements(
       e.edge_type !== 'domain_parent'
     )
       continue;
-    elements.push(edgeData(e));
+    const flipped = FLIPPED_EDGE_TYPES.has(e.edge_type);
+    keptEdges.push({
+      edge: e,
+      cyEdge: {
+        source: flipped ? e.target_id : e.source_id,
+        target: flipped ? e.source_id : e.target_id,
+      },
+    });
   }
 
+  // Pass 3: layer assignment + element materialization.
+  const layerMap = computeLayerMap(
+    keptNodes.map(({ node, type }) => ({
+      id: node.id,
+      type,
+      parent_id: node.parent_id,
+    })),
+    keptEdges.map((k) => k.cyEdge),
+  );
+
+  const elements: ElementDefinition[] = [];
+  for (const { node, type } of keptNodes) {
+    elements.push(nodeData(node, type, layerMap.get(node.id) ?? 0));
+  }
+  for (const { edge } of keptEdges) {
+    elements.push(edgeData(edge));
+  }
   return elements;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StructureEdge, StructureNode } from '../../api/structure';
 import {
+  computeLayerMap,
   drillElements,
   externalContextFor,
   topLevelElements,
@@ -273,5 +274,140 @@ describe('drillElements', () => {
       'policy_P1',
       'resp_R1',
     ]);
+  });
+});
+
+describe('computeLayerMap', () => {
+  it('places sources (no incoming edges) at layer 0', () => {
+    const layers = computeLayerMap(
+      [{ id: 'a', type: 'feat', parent_id: null }],
+      [],
+    );
+    expect(layers.get('a')).toBe(0);
+  });
+
+  it('walks decomposition chain feat → resp → comp', () => {
+    const layers = computeLayerMap(
+      [
+        { id: 'feat_F', type: 'feat', parent_id: null },
+        { id: 'resp_R', type: 'resp-top', parent_id: null },
+        { id: 'comp_C', type: 'comp-top', parent_id: null },
+      ],
+      [
+        { source: 'feat_F', target: 'resp_R' },
+        { source: 'resp_R', target: 'comp_C' },
+      ],
+    );
+    expect(layers.get('feat_F')).toBe(0);
+    expect(layers.get('resp_R')).toBe(1);
+    expect(layers.get('comp_C')).toBe(2);
+  });
+
+  it('takes max(parent.layer) + 1 when a node has multiple parents', () => {
+    // Diamond: foundation comp at L=2, dependee A also at L=2,
+    // depender B has incoming from both → L=3.
+    const layers = computeLayerMap(
+      [
+        { id: 'feat', type: 'feat', parent_id: null },
+        { id: 'resp', type: 'resp-top', parent_id: null },
+        { id: 'foundation', type: 'comp-top', parent_id: null },
+        { id: 'a', type: 'comp-top', parent_id: null },
+        { id: 'b', type: 'comp-top', parent_id: null },
+      ],
+      [
+        { source: 'feat', target: 'resp' },
+        { source: 'resp', target: 'foundation' },
+        { source: 'resp', target: 'a' },
+        { source: 'resp', target: 'b' },
+        // dep edges (post-flip in cytoscape: dependee → depender).
+        { source: 'foundation', target: 'a' },
+        { source: 'foundation', target: 'b' },
+        { source: 'a', target: 'b' },
+      ],
+    );
+    expect(layers.get('foundation')).toBe(2);
+    expect(layers.get('a')).toBe(3); // resp(1)+1=2, foundation(2)+1=3 → max 3
+    expect(layers.get('b')).toBe(4); // a(3)+1=4 wins over foundation+1 and resp+1
+  });
+
+  it('treats parent_id as an implicit decomposition edge', () => {
+    // Drilled comp's only structural edge is from a resp. The
+    // subcomp also has a structural edge from the same resp (Phase 4
+    // comparch creates resp → subcomp directly). Without the
+    // parent_id assist they'd land on the same layer. The implicit
+    // parent_id edge from drilled comp → subcomp pushes the subcomp
+    // one layer below the drilled comp.
+    const layers = computeLayerMap(
+      [
+        { id: 'resp', type: 'external-resp', parent_id: null },
+        { id: 'comp', type: 'comp-sub', parent_id: null },
+        { id: 'sub', type: 'comp-sub', parent_id: 'comp' },
+      ],
+      [
+        { source: 'resp', target: 'comp' },
+        { source: 'resp', target: 'sub' },
+      ],
+    );
+    // resp has no ancestors in this minimal setup (no feat), so it
+    // lands at 0. The relative spacing comp < sub is what matters.
+    expect(layers.get('resp')).toBe(0);
+    expect(layers.get('comp')).toBe(1);
+    expect(layers.get('sub')).toBe(2);
+    expect(layers.get('sub')).toBeGreaterThan(layers.get('comp')!);
+  });
+
+  it('pins policy nodes to layer 1', () => {
+    const layers = computeLayerMap(
+      [
+        { id: 'pt', type: 'policy-top', parent_id: null },
+        { id: 'px', type: 'external-policy', parent_id: null },
+        { id: 'pl', type: 'policy-local', parent_id: 'comp' },
+        { id: 'comp', type: 'comp-sub', parent_id: null },
+      ],
+      [],
+    );
+    expect(layers.get('pt')).toBe(1);
+    expect(layers.get('px')).toBe(1);
+    expect(layers.get('pl')).toBe(1);
+  });
+
+  it('pins fanin to max-walk-layer + 1', () => {
+    const layers = computeLayerMap(
+      [
+        { id: 'feat', type: 'feat', parent_id: null },
+        { id: 'resp', type: 'resp-top', parent_id: null },
+        { id: 'comp', type: 'comp-top', parent_id: null },
+        { id: 'sub', type: 'comp-sub', parent_id: 'comp' },
+        { id: 'impl', type: 'impl', parent_id: 'sub' },
+        { id: 'fan', type: 'fanin', parent_id: 'comp' },
+      ],
+      [
+        { source: 'feat', target: 'resp' },
+        { source: 'resp', target: 'comp' },
+      ],
+    );
+    // walk: feat=0, resp=1, comp=2, sub=3 (parent_id), impl=4 (parent_id).
+    // fan would be 3 from parent_id alone, but the special case
+    // pushes it to max + 1 = 5.
+    expect(layers.get('impl')).toBe(4);
+    expect(layers.get('fan')).toBe(5);
+  });
+
+  it('falls back to 0 for nodes left unassigned (cycle / disconnected)', () => {
+    // Self-edges are ignored (so they don't form a cycle), but a
+    // 2-node cycle would leave both nodes unassigned. Both land at
+    // 0 via the safety pass.
+    const layers = computeLayerMap(
+      [
+        { id: 'x', type: 'comp-top', parent_id: null },
+        { id: 'y', type: 'comp-top', parent_id: null },
+      ],
+      [
+        { source: 'x', target: 'y' },
+        { source: 'y', target: 'x' },
+      ],
+    );
+    expect(layers.get('x')).toBe(0);
+    expect(layers.get('y')).toBe(0);
   });
 });
