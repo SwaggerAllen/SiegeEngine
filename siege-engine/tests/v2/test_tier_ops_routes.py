@@ -4,8 +4,11 @@ Covers:
 - ``GET /tiers/{tier}/info`` returns counts + capability flags.
 - ``POST /tiers/{tier}/reset-all`` iterates the tier's scopes and
   invokes the per-node reset for each, summing results.
-- ``POST /tiers/{tier}/review-sweep`` enqueues a fresh review job
-  per node with content, skipping empties.
+- ``POST /tiers/{tier}/review-sweep`` fans the per-node "Reject &
+  Regenerate" action across every scope: each pending draft's AI
+  review rides forward as ``prior_review_text``, the stale review
+  is cleared, in-flight review jobs are cancelled, and a fresh
+  generation job is enqueued. Approved-only scopes 409-skip.
 
 Two tier shapes are exercised: a singleton (sysarch — single node
 per project) and a per-comp tier (comparch — one node per top-level
@@ -368,59 +371,113 @@ class TestResetAll:
 
 
 class TestReviewSweep:
-    def test_singleton_enqueues_one_review(self, client, db, seeded):
+    """Tier-ops "Regen From Reviews" — per-scope wrapper around
+    ``bootstrap_feedback("")``. Pending-draft scopes regen with
+    ``prior_review_text`` riding forward; approved-only scopes
+    409-skip and report in the result line.
+    """
+
+    def test_skips_approved_singleton(self, client, db, seeded):
+        # Sysarch is seeded as approved with no pending draft.
+        # bootstrap_feedback raises 409 on approved scopes, so the
+        # sweep reports the skip rather than enqueueing a regen.
         r = client.post(f"/api/projects/{seeded['project_id']}/tiers/sysarch/review-sweep")
         assert r.status_code == 200
         body = r.json()
         assert body["tier"] == "sysarch"
         assert body["scopes_total"] == 1
-        assert body["jobs_enqueued"] == 1
-        assert body["scopes_skipped"] == []
+        assert body["jobs_enqueued"] == 0
+        assert len(body["scopes_skipped"]) == 1
+        assert body["scopes_skipped"][0]["status"] == 409
 
+        # No review job enqueued — that pathway is gone.
         review_jobs = [
             j
             for j in db.execute(select(Job).where(Job.job_type == "v2.review_sysarch")).scalars()
             if j.payload.get("project_id") == seeded["project_id"]
         ]
-        assert len(review_jobs) == 1
+        assert len(review_jobs) == 0
 
-    def test_per_comp_enqueues_review_per_comp(self, client, db, seeded):
-        from backend.pipeline import queue as pipeline_queue
+    def test_skips_approved_comps(self, client, db, seeded):
+        # Both seeded comparch comps are approved with no pending
+        # drafts; both should 409-skip.
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/review-sweep")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["scopes_total"] == 2
+        assert body["jobs_enqueued"] == 0
+        assert len(body["scopes_skipped"]) == 2
+        assert all(s["status"] == 409 for s in body["scopes_skipped"])
+
+    def test_pending_draft_regens_with_prior_review_text(self, client, db, seeded):
+        # Convert one comp from approved to pending: clear its
+        # node content so the approval gate opens, then add a
+        # pending draft with a non-empty review_text. The sweep
+        # should enqueue a regen for that scope with the review
+        # riding on the payload, clear the draft's review_text,
+        # and report the still-approved comp as skipped.
+        from backend.models.node import Draft
+
+        target_id = seeded["comp_ids"][0]
+        target = db.get(Node, target_id)
+        assert target is not None
+        target.content = ""
+        draft = Draft(
+            id=f"draft_{uuid.uuid4().hex[:8]}",
+            project_id=seeded["project_id"],
+            target_type="node",
+            target_id=target_id,
+            content="<comparch>pending body</comparch>",
+            status="pending",
+            batch_id=f"batch_{uuid.uuid4().hex[:8]}",
+            review_text="<review><intro>Critique to apply.</intro></review>",
+        )
+        db.add(draft)
+        db.commit()
+        original_review_text = draft.review_text
 
         r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/review-sweep")
         assert r.status_code == 200
         body = r.json()
         assert body["scopes_total"] == 2
-        assert body["jobs_enqueued"] == 2
-
-        review_jobs = [
-            j
-            for j in db.execute(select(Job).where(Job.job_type == "v2.review_comparch")).scalars()
-            if j.payload.get("project_id") == seeded["project_id"]
-        ]
-        assert len(review_jobs) == 2
-        targeted_node_ids = {j.payload.get("node_id") for j in review_jobs}
-        # Each of the two top-level comps in the fixture should
-        # have a review job targeting its own comp_* id.
-        assert targeted_node_ids == set(seeded["comp_ids"])
-        # AI-review jobs run in their own priority band so they
-        # jump ahead of pending generations in the worker queue.
-        assert all(j.priority == pipeline_queue.REVIEW_JOB_PRIORITY for j in review_jobs)
-        assert pipeline_queue.REVIEW_JOB_PRIORITY < pipeline_queue.DEFAULT_JOB_PRIORITY
-
-    def test_skips_nodes_with_no_content(self, client, db, seeded):
-        # Clear one comp's content so the review-sweep skips it.
-        target = db.get(Node, seeded["comp_ids"][0])
-        assert target is not None
-        target.content = ""
-        db.commit()
-
-        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/review-sweep")
-        assert r.status_code == 200
-        body = r.json()
         assert body["jobs_enqueued"] == 1
         assert len(body["scopes_skipped"]) == 1
-        assert body["scopes_skipped"][0]["status"] == 409
+
+        # One generation job for the pending-draft scope, with the
+        # prior review riding forward in the payload.
+        gen_jobs = [
+            j
+            for j in db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.status == "queued",
+                )
+            ).scalars()
+            if j.payload.get("project_id") == seeded["project_id"]
+        ]
+        assert len(gen_jobs) == 1
+        assert gen_jobs[0].payload.get("component_id") == target_id
+        assert gen_jobs[0].payload.get("prior_review_text") == original_review_text
+
+        # Sweep cleared the now-stale review_text on the pending
+        # draft so it doesn't render alongside the about-to-land
+        # successor.
+        db.refresh(draft)
+        assert (draft.review_text or "") == ""
+
+        # No review job enqueued by the sweep — the next review
+        # fires from the post-commit hook on the new draft.
+        review_jobs = [
+            j
+            for j in db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.review_comparch",
+                    Job.status == "queued",
+                )
+            ).scalars()
+            if j.payload.get("project_id") == seeded["project_id"]
+        ]
+        assert len(review_jobs) == 0
 
 
 # ── /tiers/{tier}/resume ───────────────────────────────────────────

@@ -15,21 +15,28 @@ import {
 import { TierReviewSummaryPanel } from './TierReviewSummaryPanel';
 
 /**
- * Tier-ops panel — bulk reset + bulk AI-review per tier.
+ * Tier-ops panel — bulk reset + bulk reject-and-regen per tier.
  *
  * One row per generation tier (the seven BootstrapTierConfig-driven
  * tiers; fanin and reference are out of scope for now). Each row
  * shows the tier's display name, its node count for this project,
- * and two action buttons: Reset All and Review All.
+ * and two action buttons: Reset All and Regen All from Reviews.
  *
- * Reset is destructive and double-tap to confirm — same UX as the
- * per-node Reset button on :component:`BootstrapDraftPanel`.
- * Review sweep is non-destructive and fires on the first click.
+ * Reset All is destructive (deletes downstream nodes, cascades) and
+ * double-taps to confirm — same UX as the per-node Reset button on
+ * :component:`BootstrapDraftPanel`.
  *
- * Both endpoints surface skipped scopes (e.g. a node that was never
- * approved, or a tier with no content yet to review). The panel
- * shows a one-line summary on success ("Reset 3 scopes (2
- * skipped)") so the user can spot a partial sweep.
+ * Regen All from Reviews fans the per-node "Reject & Regenerate"
+ * action across every scope in the tier. Each pending draft's AI
+ * review rides forward as ``prior_review_text`` on the new regen,
+ * so the model iterates on the prior critique. The post-commit
+ * hook on the new draft fires the next AI review automatically —
+ * no separate review enqueue is needed. Approved-only scopes are
+ * skipped (use Reset All for those).
+ *
+ * Both endpoints surface skipped scopes. The panel shows a one-
+ * line summary on success ("Regen 3 scopes (5 skipped)") so the
+ * user can spot a partial sweep.
  */
 export function TierOpsPanel({ projectId }: { projectId: string }) {
   return (
@@ -37,9 +44,10 @@ export function TierOpsPanel({ projectId }: { projectId: string }) {
       <header>
         <h2 className="text-lg font-semibold">Tier Operations</h2>
         <p className="text-xs text-gray-400 mt-1">
-          Bulk reset every node in a tier and re-run generation, or sweep a fresh AI
-          self-review across every approved node. Use sparingly — both fan out across
-          the project's downstream cascade.
+          Bulk reset every node in a tier and re-run generation from scratch, or
+          reject-and-regenerate every pending-draft scope so each one's AI review
+          rides forward as feedback. Use sparingly — both fan out across the
+          project's downstream cascade.
         </p>
       </header>
       <ul className="divide-y divide-gray-800 border border-gray-800 rounded">
@@ -104,7 +112,7 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         (err instanceof Error ? err.message : String(err));
-      setLastResult({ kind: 'error', text: `Review sweep failed: ${detail}` });
+      setLastResult({ kind: 'error', text: `Regen sweep failed: ${detail}` });
     },
   });
 
@@ -177,10 +185,10 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
             onClick={() => reviewMutation.mutate()}
             disabled={isBusy || data.reviewable_count === 0}
             className="px-3 py-1.5 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
-            title="Enqueue a fresh AI self-review for every node in this tier with a pending draft or approved content"
+            title="Reject & regenerate every pending-draft scope in this tier; each scope's AI review rides forward as feedback. Approved-only scopes are skipped — use Reset All for those."
             data-testid={`tier-row-${tier}-review-button`}
           >
-            {reviewMutation.isPending ? 'Reviewing…' : 'Review All'}
+            {reviewMutation.isPending ? 'Regenerating…' : 'Regen From Reviews'}
           </button>
         )}
         {data?.supports_reset &&
@@ -264,9 +272,10 @@ function ResultLine({
       ? `Resume: ${enqueuedText} (${skipped.length} skipped).`
       : `Resume: ${enqueuedText}.`;
   } else {
+    const n = result.result.jobs_enqueued;
     summary = skipped.length
-      ? `Enqueued ${result.result.jobs_enqueued} review${result.result.jobs_enqueued === 1 ? '' : 's'} (${skipped.length} skipped).`
-      : `Enqueued ${result.result.jobs_enqueued} review${result.result.jobs_enqueued === 1 ? '' : 's'}.`;
+      ? `Regenerated ${n} scope${n === 1 ? '' : 's'} (${skipped.length} skipped).`
+      : `Regenerated ${n} scope${n === 1 ? '' : 's'}.`;
   }
   return (
     <div className="mt-1 space-y-1" data-testid={`tier-row-${tier}-message`}>

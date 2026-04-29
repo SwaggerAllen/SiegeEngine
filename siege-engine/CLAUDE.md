@@ -278,10 +278,18 @@ The Tier Operations sidebar entry (`:tier-ops`) hosts per-tier
 bulk operations + a read-only review-summary dashboard:
 
 - **Reset All** — destructive sweep of every node in the tier
-  with confirm-tap. Wraps the per-node `bootstrap_reset`.
-- **Review All** — non-destructive sweep that enqueues a fresh
-  AI self-review job per node with content. Wraps
-  `bootstrap_retry_review`.
+  with confirm-tap. Wraps the per-node `bootstrap_reset` with
+  `force=True` so the approval gate is bypassed.
+- **Regen From Reviews** — fans the per-node "Reject &
+  Regenerate" action across every pending-draft scope in the
+  tier. Wraps `bootstrap_feedback("")` per scope: each pending
+  draft's AI review rides forward as `prior_review_text` on the
+  regen, the stale review row is cleared, in-flight review jobs
+  for the discarded draft are cancelled, and a fresh generation
+  is enqueued. The post-commit hook on the new draft fires the
+  next AI review automatically — no separate review enqueue.
+  Approved-only scopes 409-skip and report in the result line;
+  use Reset All for those.
 - **Review summary** (`GET /projects/:id/tiers/:tier/review-summary`)
   — aggregates parsed `<review>` blocks across the tier into
   score min/mean/median/max, a 4-bucket histogram, and a
