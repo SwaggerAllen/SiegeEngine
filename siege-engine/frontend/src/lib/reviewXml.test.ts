@@ -179,8 +179,8 @@ describe('formatSelectedAsFeedback', () => {
   });
 });
 
-describe('parseReview — tag names inside finding bodies', () => {
-  it('parses reviews that reference XML tag names inline', () => {
+describe('parseReview — tag names inside prose', () => {
+  it('parses reviews that reference XML tag names inside finding bodies', () => {
     // Real-world case: the reviewer writes prose like
     // "three `<covers>` entries" inside a finding body. DOMParser
     // would normally read that as an unclosed ``<covers>`` tag
@@ -205,6 +205,30 @@ describe('parseReview — tag names inside finding bodies', () => {
     // finding text so the reviewer's intent is still readable.
     expect(parsed!.handlesStructure[1].text).toContain('<covers>');
     expect(parsed!.architecturalDecisions[0].text).toContain('<foo>');
+  });
+
+  it('parses reviews that reference XML tag names inside the intro', () => {
+    // Real-world case (Audit Trail Browser, LiveView App Shell):
+    // when a comparch leaves <subcomponents> empty, the reviewer
+    // calls it out by tag name in the intro paragraph. DOMParser
+    // would otherwise see the literal <subcomponents> as an
+    // unclosed tag and fail the whole review.
+    const raw =
+      '<review>' +
+      '<intro>The `<subcomponents>` section is completely empty, ' +
+      'so there is no decomposition to map to impl.</intro>' +
+      '<score>28</score>' +
+      '<handles-structure>' +
+      '<finding id="h1">Empty subcomponents block.</finding>' +
+      '</handles-structure>' +
+      '<architectural-decisions>' +
+      '<finding id="a1">Decomposition depth is zero.</finding>' +
+      '</architectural-decisions>' +
+      '</review>';
+    const parsed = parseReview(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.score).toBe(28);
+    expect(parsed!.intro).toContain('<subcomponents>');
   });
 });
 
