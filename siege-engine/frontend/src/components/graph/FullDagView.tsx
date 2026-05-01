@@ -47,7 +47,12 @@ export function FullDagView({ projectId }: Props) {
     const out = new Set<string>();
     for (const el of elements) {
       const d = (el.data ?? {}) as { id?: string; type?: string };
-      if (d.id && d.type === 'comp-top') out.add(d.id);
+      if (
+        d.id &&
+        (d.type === 'comp-top' || d.type === 'comp-top-presentational')
+      ) {
+        out.add(d.id);
+      }
     }
     return out;
   }, [elements]);

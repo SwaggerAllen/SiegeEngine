@@ -156,6 +156,74 @@ describe('topLevelElements', () => {
     const data = elements[0].data as { generating?: string };
     expect(data.generating).toBeUndefined();
   });
+
+  it('dispatches presentational comps to comp-top-presentational type', () => {
+    const elements = topLevelElements(
+      [
+        n('comp_dom', 'comp', null, { kind: 'domain' }),
+        n('comp_pres', 'comp', null, { kind: 'presentational' }),
+      ],
+      [],
+    );
+    const byId: Record<string, string> = {};
+    for (const el of elements) {
+      const d = el.data as { id?: string; type?: string };
+      if (d.id && d.type) byId[d.id] = d.type;
+    }
+    expect(byId.comp_dom).toBe('comp-top');
+    expect(byId.comp_pres).toBe('comp-top-presentational');
+  });
+
+  it('rolls up policy_application target from a subcomp to its top-level parent', () => {
+    // The subcomp is filtered out of the top-level view, but the
+    // policy still needs to connect somewhere visible. Roll up to
+    // the top-level parent comp so the policy isn't floating
+    // disconnected.
+    const nodes = [
+      n('policy_P1', 'policy', null),
+      n('comp_TOP', 'comp', null),
+      n('comp_SUB', 'comp', 'comp_TOP'),
+    ];
+    const edges = [e('edge_1', 'policy_application', 'policy_P1', 'comp_SUB')];
+    const elements = topLevelElements(nodes, edges);
+    // Subcomp is filtered out; top-level comp + policy stay.
+    const nodeIds = elements
+      .map((el) => (el.data as { id?: string; source?: string }).id)
+      .filter((id): id is string => !!id && !id.startsWith('edge_'));
+    expect(nodeIds).toContain('policy_P1');
+    expect(nodeIds).toContain('comp_TOP');
+    expect(nodeIds).not.toContain('comp_SUB');
+    // The edge target gets rewritten to the rolled-up parent.
+    const edgeData = elements
+      .map((el) => el.data as { source?: string; target?: string; edgeType?: string })
+      .find((d) => d.source === 'policy_P1');
+    expect(edgeData).toBeDefined();
+    expect(edgeData?.target).toBe('comp_TOP');
+    expect(edgeData?.edgeType).toBe('policy_application');
+  });
+
+  it('dedupes rolled-up policy edges when multiple subcomps share a parent', () => {
+    // If the same policy applies to two subcomps under the same
+    // parent comp, both edges roll up to the same source/target
+    // pair. Only one edge should render.
+    const nodes = [
+      n('policy_P1', 'policy', null),
+      n('comp_TOP', 'comp', null),
+      n('comp_SUB1', 'comp', 'comp_TOP'),
+      n('comp_SUB2', 'comp', 'comp_TOP'),
+    ];
+    const edges = [
+      e('edge_1', 'policy_application', 'policy_P1', 'comp_SUB1'),
+      e('edge_2', 'policy_application', 'policy_P1', 'comp_SUB2'),
+    ];
+    const elements = topLevelElements(nodes, edges);
+    const polEdges = elements
+      .map((el) => el.data as { source?: string; target?: string; edgeType?: string })
+      .filter((d) => d.edgeType === 'policy_application');
+    expect(polEdges).toHaveLength(1);
+    expect(polEdges[0].source).toBe('policy_P1');
+    expect(polEdges[0].target).toBe('comp_TOP');
+  });
 });
 
 describe('externalContextFor', () => {
@@ -348,11 +416,13 @@ describe('computeLayerMap', () => {
         { source: 'resp', target: 'sub' },
       ],
     );
-    // resp has no ancestors in this minimal setup (no feat), so it
-    // lands at 0. The relative spacing comp < sub is what matters.
-    expect(layers.get('resp')).toBe(0);
-    expect(layers.get('comp')).toBe(1);
-    expect(layers.get('sub')).toBe(2);
+    // external-resp is pinned to layer 1, comp walks to 2 (resp+1),
+    // sub walks to 3 (max(resp+1=2, comp+1=3) = 3 via the parent_id
+    // implicit edge). The relative spacing comp < sub is what
+    // matters here.
+    expect(layers.get('resp')).toBe(1);
+    expect(layers.get('comp')).toBe(2);
+    expect(layers.get('sub')).toBe(3);
     expect(layers.get('sub')).toBeGreaterThan(layers.get('comp')!);
   });
 
@@ -369,6 +439,78 @@ describe('computeLayerMap', () => {
     expect(layers.get('pt')).toBe(1);
     expect(layers.get('px')).toBe(1);
     expect(layers.get('pl')).toBe(1);
+  });
+
+  it('pins resp / external-resp to layer 1 even without a feat ancestor', () => {
+    // Orphan-resp regression: a resp with no incoming feat edge
+    // would walk to layer 0 and render in the feature row. Pin
+    // forces it into the resp row.
+    const layers = computeLayerMap(
+      [
+        { id: 'r1', type: 'resp-top', parent_id: null },
+        { id: 'r2', type: 'external-resp', parent_id: null },
+      ],
+      [],
+    );
+    expect(layers.get('r1')).toBe(1);
+    expect(layers.get('r2')).toBe(1);
+  });
+
+  it('pins feat / external-feat to layer 0', () => {
+    const layers = computeLayerMap(
+      [
+        { id: 'f1', type: 'feat', parent_id: null },
+        { id: 'f2', type: 'external-feat', parent_id: null },
+      ],
+      [],
+    );
+    expect(layers.get('f1')).toBe(0);
+    expect(layers.get('f2')).toBe(0);
+  });
+
+  it('pins presentational comps to max-walk-layer + 1', () => {
+    // Domain comps spread by dep depth via the walk; presentational
+    // comps land in their own band one row below the deepest
+    // domain layer regardless of their walked position.
+    const layers = computeLayerMap(
+      [
+        { id: 'feat', type: 'feat', parent_id: null },
+        { id: 'resp', type: 'resp-top', parent_id: null },
+        { id: 'd1', type: 'comp-top', parent_id: null },
+        { id: 'd2', type: 'comp-top', parent_id: null },
+        { id: 'pres', type: 'comp-top-presentational', parent_id: null },
+      ],
+      [
+        { source: 'feat', target: 'resp' },
+        { source: 'resp', target: 'd1' },
+        { source: 'resp', target: 'd2' },
+        // d2 depends on d1 — pushes d2 one row below d1.
+        { source: 'd1', target: 'd2' },
+      ],
+    );
+    // walk: feat=0, resp=1 (pinned), d1=2, d2=3 (dep-deep)
+    expect(layers.get('d1')).toBe(2);
+    expect(layers.get('d2')).toBe(3);
+    // presentational pins to max-walk + 1 = 4
+    expect(layers.get('pres')).toBe(4);
+  });
+
+  it('pin overrides propagate to descendants (drilled-comp resp pin)', () => {
+    // Regression: an earlier post-walk pin left descendants with
+    // stale walk-derived layers. Ensure that with the pin applied
+    // during the walk, a comp downstream of a pinned external-resp
+    // gets the pinned-aware layer.
+    const layers = computeLayerMap(
+      [
+        { id: 'resp', type: 'external-resp', parent_id: null },
+        { id: 'comp', type: 'comp-sub', parent_id: null },
+      ],
+      [{ source: 'resp', target: 'comp' }],
+    );
+    // resp pinned to 1; comp walks to resp+1 = 2 (NOT 1 from the
+    // pre-pin walk).
+    expect(layers.get('resp')).toBe(1);
+    expect(layers.get('comp')).toBe(2);
   });
 
   it('pins fanin to max-walk-layer + 1', () => {
