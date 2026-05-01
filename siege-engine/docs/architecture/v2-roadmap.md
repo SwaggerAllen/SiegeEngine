@@ -591,14 +591,17 @@ they're mutually dependent: the manifest defines territory, plans
 are territory-limited, and code generation consumes plans.
 
 **File manifest (`manifest_*`):**
-- [ ] New singleton `manifest` tier node per project, generated after the component tree is first minted
-- [ ] Manifest prompt: component tree + project language settings + framework conventions → file/folder → owning component mapping
-- [ ] Reviewable like any other node (prose feedback, regen, approval flow) — the user can say "controllers belong to the presentational layer"
-- [ ] Regenerated on component-tree changes (create/delete/promote/demote/merge/split at the `comp_*` layer), not on every edit
-- [ ] Generate-parse validation loop
-- [ ] Conflict detection: two components claiming the same file is a parse error
+- [ ] New `manifest` tier node — **one per architectural scope** (project / comp / subcomp), not a single global singleton. Each manifest is generated locally from its scope's state; framework conventions vary by scope so the manifest layer mirrors the structural tree.
+- [ ] Manifest prompt: scope's local state (children, framework conventions, language settings) → file/folder → owner mapping for that scope
+- [ ] Reviewable like any other node (prose feedback, regen, approval flow) — the user can say "controllers belong to the presentational layer" at the manifest's own scope
+- [ ] Regenerated on local-scope changes only (children added / removed / renamed / reparented within the scope), not on unrelated edits elsewhere in the tree
+- [ ] Generate-parse validation loop per manifest
+- [ ] **Refs gain `territory_path` + `role` fields** — refs with `territory_path` set are first-class codebase artifacts (see *Project references* in the architecture doc). The `role` field is a one-or-two-sentence description that lets downstream consumers reference the file by metadata.
+- [ ] **Default chain rendering for territory-bearing refs is metadata only** — `territory_path`, `role`, `<title>`. Full body is omitted from regen context unless the consuming `reference` edge sets the `inline_content` flag explicitly. Sidesteps translation corruption when an impl needs the file path but not the verbatim text.
+- [ ] **Specificity-wins precedence rule.** File-level claims (refs, impls) override folder-level claims (comps, subcomps). A ref with `territory_path = lib/auth/prompts/base.md` carves out a single file from the auth comp's `lib/auth/` claim without the comp manifest enumerating exceptions.
+- [ ] **Global cross-cut pass** over the union of `territory_path`-bearing nodes. Owns three project-wide invariants: collision detection (two same-specificity claims on one path), orphan detection (paths in the repo with no claimant), and disk-vs-content drift on territory-bearing refs (file content no longer matches the ref's stored body, suggesting an out-of-band edit).
 - [ ] Routes mirror expansion / sysarch
-- [ ] UI: read-only manifest view with prose feedback
+- [ ] UI: read-only manifest view with prose feedback, scoped to the manifest's level. Global cross-cut findings surface as a project-wide health page.
 
 **Plan nodes (`plan_*`):**
 - [ ] `plan` tier node, generated when an impl node changes (or when the user re-opens review on an existing plan)
@@ -697,6 +700,7 @@ shippable product.
 - [ ] View-history snapshot optimization beyond the basic Phase 12 cache
 - [ ] Multi-user concurrency on the pending-change queue
 - [ ] WebSocket push instead of polling
+- [ ] `inline_content` opt-in flag on `references_for` edges — for impls that need a ref's verbatim body inlined into their regen context (rather than the metadata-only default for territory-bearing refs). Independent of the territory-ref work; small follow-on once the default rendering lands.
 
 ---
 

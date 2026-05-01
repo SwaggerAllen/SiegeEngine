@@ -1733,6 +1733,21 @@ the normal node lifecycle — project owners can layer
 per-project feedback on top of bundle-shipped content
 without forking the bundle.
 
+**Bundle prompts are refs with territory.** When a bundle ships
+prompts — the LLM-facing text the chain's generation tiers
+consume — each prompt is a `ref` with `territory_path` set to
+where the bundle wants the prompt file to land in the project's
+repo. The runtime loads each prompt from its territory path at
+generation time; the file on disk is the contract. Composition
+between prompts (a base body shared across tiers, per-tier
+overlays) is a bundle-layer concern, not a refs-primitive
+concern: platform refs stay flat (no parent-refs), and a
+bundle's assembly step is responsible for composing the runtime
+form. The default bundle's §8 shows the convention; other
+bundles are free to compose prompts however suits their
+runtime, as long as each prompt is stored as a flat ref with a
+declared territory.
+
 ### A.11.6 Named predicates and named generators
 
 §A.3.5 described the predicate language's six operator
