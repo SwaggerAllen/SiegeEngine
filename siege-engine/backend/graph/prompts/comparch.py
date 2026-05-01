@@ -632,52 +632,81 @@ Before you write the closing ``</comparch>`` tag, walk the \
 artifact as a whole and reconcile the sections against each \
 other. These are not optional examples — each scan below \
 targets one of the most common defects this tier produces. \
-Where a scan turns up a contradiction, fix it in the artifact \
-before emitting; do not rationalize it.
+Where a scan turns up a contradiction or gap, fix it in the \
+artifact before emitting; do not rationalize it.
 
-* **Owned-invariant ↔ failure-surface scan.** For each \
-``<invariant>`` on each subcomponent, read the failure surface \
-and look for any scenario describing the invariant being \
-violated. The two must not coexist: either the invariant is \
-overclaiming (weaken it to what the design actually \
-guarantees) or the failure mode is fabricated (rewrite it as a \
-residual risk that survives the invariant, or delete it). The \
-same scan applies to techspec promises — atomicity, ordering, \
-single-frame render, no-truncation, single-event semantics. If \
-the failure surface lists a scenario describing exactly the \
-violation a techspec promise should prevent, one of them is \
-wrong. **This is the single most common defect in this tier**; \
-running this scan explicitly will catch most of them.
-* **Public-surface closure.** For each type, struct, event, or \
-module name that appears in a ``<public-surface>`` signature, \
-confirm one of: (a) it is defined in the public surface, (b) \
-it is a language primitive or stdlib type, or (c) it is \
-imported from an external dependency you actually declare in \
-the techspec. Types defined only in the private surface must \
-not appear in any public-surface signature — that is a leak \
-that breaks every dependent's ability to construct call \
-arguments. Conversely, every ``<private-surface>`` entry must \
-back at least one primary-operation; a private helper that no \
-operation references doesn't deserve a private-surface entry.
-* **Operation ↔ surface homing.** For each function or event \
-in the public surface, confirm exactly one subcomponent's \
-``<primary-operations>`` claims it (page-level orchestration \
-is a real subcomp, not a free-floating layer outside the \
-decomposition). For each subcomp's primary-operation that \
-names a side-effect or response, confirm a public-surface or \
-private-surface entry exists to actually invoke it.
-* **Dependency grounding.** For each ``<dep to="comp_..."/>``, \
-confirm the techspec or a primary-operation describes how this \
-component actually uses the sibling — what data flows, which \
-sibling pubapi gets called, what event gets subscribed to. An \
-ungrounded dep is either spurious (delete it) or evidence of \
-an unwritten section (write it).
+* **Surface closure (the dominant defect now).** Two passes, \
+both required. Phrase each as an explicit "for every X, \
+identify Y" walk — mismatches go in the artifact, not in \
+your head.
+
+  *Pass A — every public-surface element traces to an owner.* \
+For every type, struct, event, function, and field declared \
+in ``<public-surface>``, identify the subcomponent's \
+``<primary-operation>`` that produces or invokes it. A field \
+or function on the public surface with no producer is either \
+dead (remove it) or missing operation coverage (add the \
+primary-operation, or split the responsibility into a subcomp \
+that claims it). Same scan for type references: every type \
+named in a public-surface signature must be defined in \
+``<public-surface>`` itself, be a language primitive / stdlib \
+type, or be imported from an external dependency you actually \
+declare in the techspec.
+
+  *Pass B — every internal commitment surfaces somewhere.* \
+For every ``<invariant>`` and ``<primary-operation>`` that \
+names a side effect, response, event, or value (published, \
+returned, persisted, dispatched), identify the \
+``<public-surface>`` or ``<private-surface>`` entry that \
+actually invokes or returns it. An operation claimed but not \
+mounted on a surface is half-done — siblings have no way to \
+call it and impl has no signature to write against. \
+Symmetrically, every ``<private-surface>`` entry must back at \
+least one primary-operation; private helpers no operation \
+references shouldn't have a private-surface entry at all.
+
+* **Owned-invariant ↔ failure-surface contradiction.** For \
+each ``<invariant>`` on each subcomponent, read the failure \
+surface and look for any scenario describing the invariant \
+being violated. The two must not coexist: either the \
+invariant is overclaiming (weaken it to what the design \
+actually guarantees) or the failure mode is fabricated \
+(rewrite it as a residual risk that survives the invariant, \
+or delete it). Same scan applies to techspec promises — \
+atomicity, ordering, single-frame render, no-truncation, \
+single-event semantics. If the failure surface describes \
+exactly the violation a techspec promise should prevent, one \
+of them is wrong.
+
+* **Dependency grounding — external AND internal.** Two \
+parallel scans: every declared edge must be grounded, and \
+every cross-edge implied by other sections must be declared.
+
+  *External:* For each ``<dep to="comp_..."/>``, confirm the \
+techspec or a primary-operation describes how this component \
+actually uses the sibling — what data flows, which sibling \
+pubapi gets called, what event gets subscribed to. An \
+ungrounded external dep is either spurious (delete it) or \
+evidence of an unwritten section (write it).
+
+  *Internal:* For each ``<sub-dependencies>`` edge, confirm \
+the source subcomp's ``<primary-operations>`` or \
+``<responsibilities>`` text actually describes calling into \
+the target subcomp. **Symmetrically**, walk every subcomp's \
+operations / invariants / responsibilities and identify \
+every cross-subcomp call site implied by the prose; for each \
+one, confirm a corresponding ``<dep from="A" to="B"/>`` edge \
+exists. Implicit cross-sub calls without declared edges leave \
+the coupling graph incomplete, hide cycles, and mislead impl \
+about which subcomp is allowed to import which.
+
 * **Single-owner default.** Re-read your ``<owns>`` blocks \
 across all subcomps. Any parent resp claimed by more than one \
 subcomp must fit either the UI flow split or the read/write \
 path split pattern named above; if it doesn't, refactor the \
-subcomp boundaries before emitting. Drive-by multi-owner is \
-the second most common defect in this tier.
+subcomp boundaries before emitting. Drive-by multi-owner is a \
+recurring defect in this tier.
+
 * **Rationale, not inventory.** For each subcomp's \
 ``<purpose>``, each ``<invariant>``, each \
 ``<primary-operation>``, and the ``<responsibilities>`` prose, \

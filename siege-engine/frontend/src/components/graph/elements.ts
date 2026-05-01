@@ -42,6 +42,7 @@ export type NodeType =
   | 'policy-top'
   | 'policy-local'
   | 'comp-top'
+  | 'comp-top-presentational'
   | 'comp-sub'
   | 'fanin'
   | 'impl'
@@ -49,10 +50,30 @@ export type NodeType =
   | 'external-resp'
   | 'external-policy';
 
-const POLICY_TYPES: ReadonlySet<NodeType> = new Set([
-  'policy-top',
-  'policy-local',
-  'external-policy',
+// Types whose layer is independent of graph topology — they sit on
+// fixed top rows regardless of how the BFS walk would place them.
+// Without this, an orphan resp (no decomposition edge from a feat)
+// would land at layer 0 (source) and render in the feature row;
+// the same for policies, which have no decomposition ancestors at
+// all. Pinning them keeps the upstream tiers honest.
+const FIXED_TOP_LAYER: Partial<Record<NodeType, number>> = {
+  feat: 0,
+  'external-feat': 0,
+  'resp-top': 1,
+  'external-resp': 1,
+  'policy-top': 1,
+  'policy-local': 1,
+  'external-policy': 1,
+};
+
+// Types pinned to the bottom of the layout — one row below the
+// deepest walk-derived layer. Presentational comps live here
+// (their own band, separate from the dep-spread domain comp band)
+// and fanin nodes (drill view only; synthesize from impls upward
+// but visually anchor the bottom of the comp's internal stack).
+const FIXED_BOTTOM_TYPES: ReadonlySet<NodeType> = new Set([
+  'comp-top-presentational',
+  'fanin',
 ]);
 
 /** Edge types whose visual arrow runs opposite to the stored direction. */
@@ -120,7 +141,7 @@ interface KeptEdge {
 /**
  * Topological-BFS layer assignment over a kept-node set.
  *
- * For each node, layer = max(layer(parent)) + 1 across:
+ * For each non-pinned node, layer = max(layer(parent)) + 1 across:
  * - all incoming "kept" edges (source → target after flipping for
  *   dependency / domain_parent so the arrow's intended consumer is
  *   on the bottom),
@@ -128,12 +149,19 @@ interface KeptEdge {
  *   its drilled-comp parent even when the only structural decomp
  *   edge runs from external resp directly into the subcomp).
  *
- * Sources land at layer 0. Special cases:
- * - Policy nodes are forced to layer 1 (cross-cutting context, no
- *   decomposition ancestor would otherwise place them sensibly).
- * - Fan-in nodes are forced to max-walk-layer + 1 (bottom of the
- *   stack — they have no incoming edges and "represent" the impl
- *   leaves).
+ * Sources without a fixed pin land at layer 0. Two sets of pins
+ * override the walk:
+ * - ``FIXED_TOP_LAYER`` types (feat / resp / policy) lock to a
+ *   canonical top row independently of their incoming edges.
+ *   Without this, an orphan resp lands in the feature row and a
+ *   resp with weird ancestry lands in some third row. Pinning is
+ *   applied at processing time so descendants see the pinned
+ *   position, not the would-have-been walked position.
+ * - ``FIXED_BOTTOM_TYPES`` (comp-top-presentational, fanin) get
+ *   pushed to one row below the deepest walk-derived layer of any
+ *   non-bottom node. This puts presentational components in their
+ *   own band below the dep-spread domain comps, and anchors fan-in
+ *   nodes at the bottom of the drill view.
  *
  * Cycle-safe: any node still without a layer after Kahn's pass
  * (cycle or disconnected) is assigned 0.
@@ -143,6 +171,9 @@ export function computeLayerMap(
   edges: KeptEdge[],
 ): Map<string, number> {
   const ids = new Set(nodes.map((n) => n.id));
+  const typeById = new Map<string, NodeType>();
+  for (const n of nodes) typeById.set(n.id, n.type);
+
   const incoming = new Map<string, string[]>();
   const outgoing = new Map<string, string[]>();
   for (const id of ids) {
@@ -164,24 +195,35 @@ export function computeLayerMap(
   const inDegree = new Map<string, number>();
   for (const [id, parents] of incoming) inDegree.set(id, parents.length);
 
+  // Kahn's BFS. Each node's layer is decided when it's processed
+  // (after all its parents). FIXED_TOP_LAYER values override the
+  // walk-derived value AT processing time so descendants see the
+  // pinned position, not the would-have-been walked position.
   const layers = new Map<string, number>();
   const queue: string[] = [];
   for (const [id, deg] of inDegree) {
-    if (deg === 0) {
-      layers.set(id, 0);
-      queue.push(id);
-    }
+    if (deg === 0) queue.push(id);
   }
 
   while (queue.length > 0) {
     const id = queue.shift()!;
-    const myLayer = layers.get(id) ?? 0;
-    for (const childId of outgoing.get(id) ?? []) {
-      const candidate = myLayer + 1;
-      const existing = layers.get(childId);
-      if (existing === undefined || candidate > existing) {
-        layers.set(childId, candidate);
+    const type = typeById.get(id);
+    const fixed = type !== undefined ? FIXED_TOP_LAYER[type] : undefined;
+
+    let myLayer: number;
+    if (fixed !== undefined) {
+      myLayer = fixed;
+    } else {
+      const parentIds = incoming.get(id) ?? [];
+      myLayer = 0;
+      for (const pid of parentIds) {
+        const pl = layers.get(pid) ?? 0;
+        if (pl + 1 > myLayer) myLayer = pl + 1;
       }
+    }
+    layers.set(id, myLayer);
+
+    for (const childId of outgoing.get(id) ?? []) {
       const newDeg = (inDegree.get(childId) ?? 0) - 1;
       inDegree.set(childId, newDeg);
       if (newDeg === 0) queue.push(childId);
@@ -193,12 +235,18 @@ export function computeLayerMap(
     if (!layers.has(id)) layers.set(id, 0);
   }
 
-  // Special cases.
+  // Bottom-pin overrides. Compute the deepest walk-derived layer
+  // EXCLUDING the bottom-pinned types so the floor reflects the
+  // domain content's depth, not the bottom band's own layer, then
+  // pin every bottom-type node to one row below.
   let maxLayer = 0;
-  for (const v of layers.values()) if (v > maxLayer) maxLayer = v;
   for (const n of nodes) {
-    if (POLICY_TYPES.has(n.type)) layers.set(n.id, 1);
-    if (n.type === 'fanin') layers.set(n.id, maxLayer + 1);
+    if (FIXED_BOTTOM_TYPES.has(n.type)) continue;
+    const v = layers.get(n.id) ?? 0;
+    if (v > maxLayer) maxLayer = v;
+  }
+  for (const n of nodes) {
+    if (FIXED_BOTTOM_TYPES.has(n.type)) layers.set(n.id, maxLayer + 1);
   }
 
   return layers;
@@ -208,11 +256,24 @@ export function computeLayerMap(
  * Top-level DAG view: features, top-level responsibilities,
  * top-level policies, top-level components + every edge among them.
  * Sub-tier nodes (subcomps, fanin, impl) are excluded.
+ *
+ * Top-level comps are typed by ``kind``: ``comp-top`` for domain,
+ * ``comp-top-presentational`` for presentational. The presentational
+ * type pins to its own row at the bottom of the layout (see
+ * ``FIXED_BOTTOM_TYPES``) so the two kinds visually separate.
+ *
+ * ``policy_application`` edges whose target is a subcomp get rolled
+ * up to the subcomp's top-level ancestor — a policy that applies
+ * inside one of this comp's subcomps still belongs to that comp's
+ * picture, and the alternative (filtering the edge out) leaves the
+ * policy floating disconnected.
  */
 export function topLevelElements(
   nodes: StructureNode[],
   edges: StructureEdge[],
 ): ElementDefinition[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+
   // Pass 1: pick keepers + their types.
   const keptNodes: { node: StructureNode; type: NodeType }[] = [];
   const keptIds = new Set<string>();
@@ -221,16 +282,36 @@ export function topLevelElements(
     if (n.tier === 'feat') type = 'feat';
     else if (n.tier === 'resp' && isTopLevel(n)) type = 'resp-top';
     else if (n.tier === 'policy' && isTopLevel(n)) type = 'policy-top';
-    else if (n.tier === 'comp' && isTopLevel(n)) type = 'comp-top';
+    else if (n.tier === 'comp' && isTopLevel(n)) {
+      type = n.kind === 'presentational' ? 'comp-top-presentational' : 'comp-top';
+    }
     if (type === null) continue;
     keptNodes.push({ node: n, type });
     keptIds.add(n.id);
   }
 
+  // Walk parent_id chains to find the first ancestor in the kept
+  // set. Used to roll a policy_application edge's target up from
+  // a subcomp to its top-level comp ancestor when only the
+  // ancestor is in scope for this view.
+  const rollUpToKept = (nodeId: string): string | null => {
+    let current = byId.get(nodeId);
+    while (current) {
+      if (keptIds.has(current.id)) return current.id;
+      if (!current.parent_id) return null;
+      current = byId.get(current.parent_id);
+    }
+    return null;
+  };
+
   // Pass 2: filter edges to the kept set (and to layout-relevant types).
   const keptEdges: { edge: StructureEdge; cyEdge: KeptEdge }[] = [];
+  // Dedup roll-ups: when multiple subcomps share a parent and the
+  // same policy applies to several of them, the rollup would emit
+  // duplicate parent-edges. Cytoscape tolerates them but they
+  // visually clutter; key by ``source/target/edgeType``.
+  const seenRolledEdges = new Set<string>();
   for (const e of edges) {
-    if (!keptIds.has(e.source_id) || !keptIds.has(e.target_id)) continue;
     if (
       e.edge_type !== 'decomposition' &&
       e.edge_type !== 'policy_application' &&
@@ -238,13 +319,34 @@ export function topLevelElements(
       e.edge_type !== 'domain_parent'
     )
       continue;
+
+    const sourceId = e.source_id;
+    let targetId = e.target_id;
+    let isRolledUp = false;
+    if (e.edge_type === 'policy_application' && !keptIds.has(targetId)) {
+      const rolled = rollUpToKept(targetId);
+      if (rolled === null) continue;
+      targetId = rolled;
+      isRolledUp = true;
+    }
+    if (!keptIds.has(sourceId) || !keptIds.has(targetId)) continue;
+
+    if (isRolledUp) {
+      const key = `${sourceId}::${targetId}::${e.edge_type}`;
+      if (seenRolledEdges.has(key)) continue;
+      seenRolledEdges.add(key);
+    }
+
     const flipped = FLIPPED_EDGE_TYPES.has(e.edge_type);
+    const cySource = flipped ? targetId : sourceId;
+    const cyTarget = flipped ? sourceId : targetId;
     keptEdges.push({
-      edge: e,
-      cyEdge: {
-        source: flipped ? e.target_id : e.source_id,
-        target: flipped ? e.source_id : e.target_id,
-      },
+      edge: isRolledUp
+        ? // Synthesize a derived edge so edgeData renders the
+          // rolled-up source/target instead of the originals.
+          { ...e, source_id: sourceId, target_id: targetId }
+        : e,
+      cyEdge: { source: cySource, target: cyTarget },
     });
   }
 

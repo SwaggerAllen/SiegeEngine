@@ -150,6 +150,21 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
             <>
               {data.node_count} node{data.node_count === 1 ? '' : 's'} ·{' '}
               {data.nodes_with_content} with content
+              {data.avg_generation_seconds !== null && (
+                <>
+                  {' '}
+                  · avg gen{' '}
+                  <span
+                    className="text-gray-300"
+                    title={`Mean run-time of ${data.generation_sample_size} completed v2.generate_${tier} job${data.generation_sample_size === 1 ? '' : 's'}; excludes queue wait`}
+                  >
+                    {formatDuration(data.avg_generation_seconds)}
+                  </span>{' '}
+                  <span className="text-gray-600">
+                    (n={data.generation_sample_size})
+                  </span>
+                </>
+              )}
             </>
           ) : null}
         </div>
@@ -306,4 +321,20 @@ function ResultLine({
       )}
     </div>
   );
+}
+
+/**
+ * Render a duration in seconds as a compact human-readable
+ * string. Shorter than ms-precision because the bootstrap chain's
+ * generation jobs run on the order of seconds-to-minutes; sub-
+ * second precision is meaningless here.
+ */
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remSeconds = Math.round(seconds - minutes * 60);
+  if (minutes < 60) return `${minutes}m ${remSeconds}s`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes - hours * 60;
+  return `${hours}h ${remMinutes}m`;
 }

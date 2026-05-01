@@ -83,10 +83,15 @@ export const fullDagStylesheet: StylesheetCSS[] = [
     },
   },
   {
-    selector: 'node[type = "comp-top"][kind = "presentational"]',
+    selector: 'node[type = "comp-top-presentational"]',
     css: {
       'background-color': '#581c87',
       'border-color': '#a855f7',
+      'border-width': 2,
+      width: 160,
+      height: 56,
+      'font-size': 12,
+      'font-weight': 'bold',
     },
   },
   {

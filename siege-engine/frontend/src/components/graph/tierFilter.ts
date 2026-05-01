@@ -64,7 +64,11 @@ const TIER_GROUPS: TierGroupSpec[] = [
   {
     key: 'components',
     label: 'Components',
-    types: ['comp-top'],
+    // Both comp-top (domain) and comp-top-presentational map to
+    // this single chip — the visual layering already separates
+    // them into their own bands; the filter is "show / hide
+    // top-level components" without distinguishing kind.
+    types: ['comp-top', 'comp-top-presentational'],
   },
   {
     key: 'subcomponents',

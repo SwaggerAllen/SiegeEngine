@@ -256,6 +256,57 @@ class TestTierInfo:
         # Only the comp with a pending draft is reviewable.
         assert body["reviewable_count"] == 1
 
+    def test_avg_generation_seconds_is_null_with_no_completed_jobs(self, client, seeded):
+        r = client.get(f"/api/projects/{seeded['project_id']}/tiers/comparch/info")
+        body = r.json()
+        assert body["avg_generation_seconds"] is None
+        assert body["generation_sample_size"] == 0
+
+    def test_avg_generation_seconds_means_completed_run_durations(self, client, db, seeded):
+        from datetime import datetime, timedelta
+
+        # Two completed comparch generations, ran 10s and 20s.
+        # Average should be 15.
+        base = datetime(2026, 4, 29, 12, 0, 0)
+        for delay_seconds, comp_id in zip([10, 20], seeded["comp_ids"]):
+            db.add(
+                Job(
+                    job_type="v2.generate_comparch",
+                    status="completed",
+                    payload={"project_id": seeded["project_id"], "component_id": comp_id},
+                    locked_at=base,
+                    completed_at=base + timedelta(seconds=delay_seconds),
+                )
+            )
+        # A completed generation for a DIFFERENT project — must not
+        # leak into this project's average.
+        db.add(
+            Job(
+                job_type="v2.generate_comparch",
+                status="completed",
+                payload={"project_id": str(uuid.uuid4()), "component_id": "comp_other"},
+                locked_at=base,
+                completed_at=base + timedelta(seconds=99999),
+            )
+        )
+        # A still-running generation for THIS project — must be
+        # excluded (status != completed).
+        db.add(
+            Job(
+                job_type="v2.generate_comparch",
+                status="running",
+                payload={"project_id": seeded["project_id"], "component_id": "comp_x"},
+                locked_at=base,
+                completed_at=None,
+            )
+        )
+        db.commit()
+
+        r = client.get(f"/api/projects/{seeded['project_id']}/tiers/comparch/info")
+        body = r.json()
+        assert body["generation_sample_size"] == 2
+        assert body["avg_generation_seconds"] == 15.0
+
     def test_unknown_tier_404s(self, client, seeded):
         r = client.get(f"/api/projects/{seeded['project_id']}/tiers/bogus/info")
         # FastAPI rejects literal-mismatch with 422 before our handler.
