@@ -30,6 +30,12 @@ export const TierInfoSchema = z.object({
   reviewable_count: z.number(),
   supports_reset: z.boolean(),
   supports_review: z.boolean(),
+  // Mean run-time of completed v2.generate_<tier> jobs for this
+  // project, in seconds. Excludes queue wait — only the
+  // ``locked_at → completed_at`` window. ``null`` when no
+  // completed jobs exist yet.
+  avg_generation_seconds: z.number().nullable(),
+  generation_sample_size: z.number(),
 });
 export type TierInfo = z.infer<typeof TierInfoSchema>;
 

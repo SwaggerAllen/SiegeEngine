@@ -34,6 +34,8 @@ function makeInfo(overrides: Partial<tierOpsApi.TierInfo> = {}): tierOpsApi.Tier
     reviewable_count: nodes_with_content,
     supports_reset: true,
     supports_review: true,
+    avg_generation_seconds: null,
+    generation_sample_size: 0,
     ...overrides,
   };
 }
@@ -81,6 +83,42 @@ describe('TierOpsPanel', () => {
     renderPanel();
     const comparchRow = await screen.findByTestId('tier-row-comparch');
     await waitFor(() => expect(comparchRow).toHaveTextContent(/3 nodes · 1 with content/));
+  });
+
+  it('shows the avg generation time when sample size is non-zero', async () => {
+    mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
+      makeInfo({
+        tier,
+        node_count: 2,
+        nodes_with_content: 2,
+        avg_generation_seconds: 95,
+        generation_sample_size: 8,
+      }),
+    );
+    renderPanel();
+    const comparchRow = await screen.findByTestId('tier-row-comparch');
+    // 95s formats to "1m 35s".
+    await waitFor(() =>
+      expect(comparchRow).toHaveTextContent(/avg gen 1m 35s.*n=8/),
+    );
+  });
+
+  it('hides the avg generation cell when no completed jobs exist yet', async () => {
+    mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
+      makeInfo({
+        tier,
+        node_count: 2,
+        nodes_with_content: 2,
+        avg_generation_seconds: null,
+        generation_sample_size: 0,
+      }),
+    );
+    renderPanel();
+    const comparchRow = await screen.findByTestId('tier-row-comparch');
+    await waitFor(() =>
+      expect(comparchRow).toHaveTextContent(/2 nodes · 2 with content/),
+    );
+    expect(comparchRow).not.toHaveTextContent(/avg gen/);
   });
 
   it('Reset All requires a confirm tap before firing', async () => {

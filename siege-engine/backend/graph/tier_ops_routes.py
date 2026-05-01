@@ -206,6 +206,7 @@ def get_tier_info(
     # count here so the button is enabled for the same set the
     # summary button is, and let the per-scope skip messaging
     # explain the partial sweep.
+    from backend.models.job import Job
     from backend.models.node import Draft
 
     existing = 0
@@ -238,6 +239,33 @@ def get_tier_info(
         )
         if pending is not None:
             reviewable += 1
+
+    # Average run-time per completed generation job for this tier.
+    # Run-time = completed_at - locked_at (excludes queue wait so
+    # the number reflects actual generation work, not load-induced
+    # backpressure). Jobs without both timestamps — historically
+    # unusual but possible from older event-log replays — are
+    # skipped. Project filtering happens payload-side because the
+    # jobs table has no project_id column.
+    completed_gens = list(
+        db.execute(
+            select(Job).where(
+                Job.job_type == config.generate_job_type,
+                Job.status == "completed",
+            )
+        ).scalars()
+    )
+    durations: list[float] = []
+    for j in completed_gens:
+        if (j.payload or {}).get("project_id") != project_id:
+            continue
+        if j.locked_at is None or j.completed_at is None:
+            continue
+        delta = (j.completed_at - j.locked_at).total_seconds()
+        if delta >= 0:
+            durations.append(delta)
+    avg_seconds = sum(durations) / len(durations) if durations else None
+
     return {
         "tier": tier,
         "tier_name": config.tier_name,
@@ -246,6 +274,8 @@ def get_tier_info(
         "reviewable_count": reviewable,
         "supports_reset": config.collect_downstream_nodes is not None,
         "supports_review": bool(config.review_job_type),
+        "avg_generation_seconds": avg_seconds,
+        "generation_sample_size": len(durations),
     }
 
 
