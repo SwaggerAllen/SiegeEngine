@@ -32,9 +32,8 @@ interface Props {
  * that haven't generated once yet).
  */
 export function DocPageMeta({ lastGenerationJob, lastContentUpdatedAt }: Props) {
-  if (!lastGenerationJob && !lastContentUpdatedAt) return null;
   const statusToneClass = (() => {
-    if (!lastGenerationJob) return 'text-gray-500';
+    if (!lastGenerationJob) return 'text-gray-400';
     switch (lastGenerationJob.status) {
       case 'cancelled':
         return 'text-amber-400';
@@ -46,28 +45,39 @@ export function DocPageMeta({ lastGenerationJob, lastContentUpdatedAt }: Props) 
       case 'completed':
         return 'text-emerald-400';
       default:
-        return 'text-gray-400';
+        return 'text-gray-300';
     }
   })();
   const jobTimestamp =
     lastGenerationJob?.completed_at ?? lastGenerationJob?.created_at ?? null;
   return (
-    <div className="text-xs text-gray-500 space-y-0.5" data-testid="doc-page-meta">
-      {lastGenerationJob && jobTimestamp && (
+    <div
+      className="rounded border border-gray-800 bg-gray-900/40 px-3 py-2 text-sm text-gray-300 space-y-1"
+      data-testid="doc-page-meta"
+    >
+      {lastGenerationJob && jobTimestamp ? (
         <div>
-          Last generation:{' '}
+          <span className="text-gray-500">Last generation:</span>{' '}
           <span className={statusToneClass}>{lastGenerationJob.status}</span>
-          {' · '}
-          {formatDateTimeSec(jobTimestamp)}
+          <span className="text-gray-500"> · {formatDateTimeSec(jobTimestamp)}</span>
           {(lastGenerationJob.status === 'cancelled' ||
             lastGenerationJob.status === 'failed') &&
             lastGenerationJob.error_message && (
               <span className="text-gray-500"> — {lastGenerationJob.error_message}</span>
             )}
         </div>
+      ) : (
+        <div className="text-gray-500">Last generation: no prior runs.</div>
       )}
-      {lastContentUpdatedAt && (
-        <div>Approved content last landed: {formatDateTimeSec(lastContentUpdatedAt)}</div>
+      {lastContentUpdatedAt ? (
+        <div>
+          <span className="text-gray-500">Approved content last landed:</span>{' '}
+          {formatDateTimeSec(lastContentUpdatedAt)}
+        </div>
+      ) : (
+        <div className="text-gray-500">
+          Approved content: never written for this node yet.
+        </div>
       )}
     </div>
   );

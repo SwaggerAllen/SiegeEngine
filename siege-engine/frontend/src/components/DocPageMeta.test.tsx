@@ -3,11 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { DocPageMeta } from './DocPageMeta';
 
 describe('DocPageMeta', () => {
-  it('renders nothing when both inputs are null', () => {
-    const { container } = render(
+  it('renders placeholder text when both inputs are null', () => {
+    render(
       <DocPageMeta lastGenerationJob={null} lastContentUpdatedAt={null} />
     );
-    expect(container.firstChild).toBeNull();
+    // Both placeholders render so the user can confirm the panel
+    // is mounted even when there's no history yet.
+    expect(screen.getByText(/Last generation: no prior runs/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Approved content: never written for this node yet/),
+    ).toBeInTheDocument();
   });
 
   it('renders the cancelled status with its error message', () => {
