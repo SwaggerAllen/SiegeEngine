@@ -78,6 +78,21 @@ def _add_dep_edge(db, project_id, source_id, target_id):
     return edge_id
 
 
+def _add_domain_parent_edge(db, project_id, presentational_id, domain_id):
+    edge_id = mint(db, Kind.EDGE)
+    append_event(
+        db,
+        project_id,
+        ev.EdgeCreated(
+            edge_id=edge_id,
+            edge_type="domain_parent",
+            source_id=presentational_id,
+            target_id=domain_id,
+        ),
+    )
+    return edge_id
+
+
 def _enqueue_comparch_job(db, project_id, comp_id, *, status="queued"):
     """Insert a v2.generate_comparch Job row directly for predicate testing."""
     from backend.pipeline import queue as pipeline_queue
@@ -154,6 +169,18 @@ class TestComparchDepCompsSettled:
         # Sub is not top-level, so it doesn't trigger defer.
         assert ready is True
 
+    def test_defers_when_domain_parent_has_in_flight_regen(self, db, project):
+        # Presentational P with domain_parent edge to domain D —
+        # D's in-flight comparch regen should defer P's regen.
+        pres = _make_comp(db, project.id, name="P")
+        dom = _make_comp(db, project.id, name="D", content="<comparch/>")
+        _add_domain_parent_edge(db, project.id, pres, dom)
+        _enqueue_comparch_job(db, project.id, dom)
+        ready, reason = comparch_dep_comps_settled(db, project.id, (pres,))
+        assert ready is False
+        assert reason.startswith("deferred")
+        assert dom in reason
+
 
 class TestWakeDeferredComparchs:
     def test_re_enqueues_dependents_with_deferred_marker(self, db, project):
@@ -220,6 +247,40 @@ class TestWakeDeferredComparchs:
             .all()
         )
         assert new_jobs == []
+
+    def test_re_enqueues_dependents_via_domain_parent_edge(self, db, project):
+        # Presentational P deferred on domain D — when D persists,
+        # the wakeup should re-enqueue P even though there's no
+        # dependency edge, only a domain_parent edge.
+        pres = _make_comp(db, project.id, name="P")
+        dom = _make_comp(db, project.id, name="D", content="<comparch/>")
+        _add_domain_parent_edge(db, project.id, pres, dom)
+
+        p_job_id = _enqueue_comparch_job(db, project.id, pres)
+        p_job = db.get(Job, p_job_id)
+        assert p_job is not None
+        p_job.status = "completed"
+        p_job.is_deferred = True
+        p_job.error_message = "readiness predicate signalled retry-later"
+        db.commit()
+
+        wake_deferred_comparchs(db, project.id, "draft_ignored", (dom,), _terminal_ctx())
+
+        new_jobs = (
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.status == "queued",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert any((j.payload or {}).get("component_id") == pres for j in new_jobs), (
+            "wakeup should re-enqueue P's comparch when its domain parent D settles"
+        )
+        db.refresh(p_job)
+        assert p_job.is_deferred is False
 
     def test_does_not_re_enqueue_unrelated_deferred(self, db, project):
         # X has a deferred job, but X doesn't depend on B. B's

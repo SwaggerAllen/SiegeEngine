@@ -668,3 +668,114 @@ class TestAutoRevisionIntermediates:
         )
         assert len(items) == 1
         assert items[0].label == "After pass 1"
+
+
+def _seed_domain_parent(session: Session, project_id: str, presentational: str, domain: str) -> str:
+    edge_id = mint(session, Kind.EDGE)
+    append_event(
+        session,
+        project_id,
+        ev.EdgeCreated(
+            edge_id=edge_id,
+            edge_type="domain_parent",
+            source_id=presentational,
+            target_id=domain,
+        ),
+    )
+    return edge_id
+
+
+class TestTopoSortTopLevelComps:
+    """Mirrors frontend/src/components/nav/topoSortComps.test.ts."""
+
+    def test_orders_dependencies_before_dependents(self, db):
+        from backend.graph.queries import (
+            list_edges,
+            list_top_level_components,
+            topo_sort_comps,
+        )
+
+        project_id = str(uuid.uuid4())
+        db.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
+        db.flush()
+        # app -> auth -> db (app depends on auth, auth on db).
+        # display_order intentionally unsorted to prove edges drive order.
+        comp_app = _seed_component(db, project_id, "app", 0, [])
+        comp_auth = _seed_component(db, project_id, "auth", 1, [])
+        comp_db_ = _seed_component(db, project_id, "db", 2, [])
+        _seed_dep(db, project_id, comp_app, comp_auth)
+        _seed_dep(db, project_id, comp_auth, comp_db_)
+        db.commit()
+
+        comps = list_top_level_components(db, project_id)
+        edges = list_edges(db, project_id)
+        sorted_ids = [c.id for c in topo_sort_comps(comps, edges)]
+        assert sorted_ids == [comp_db_, comp_auth, comp_app]
+
+    def test_treats_domain_parent_as_ordering_constraint(self, db):
+        from backend.graph.queries import (
+            list_edges,
+            list_top_level_components,
+            topo_sort_comps,
+        )
+
+        project_id = str(uuid.uuid4())
+        db.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
+        db.flush()
+        comp_pres = _seed_component(db, project_id, "presentational", 0, [])
+        comp_dom = _seed_component(db, project_id, "domain", 1, [])
+        _seed_domain_parent(db, project_id, comp_pres, comp_dom)
+        db.commit()
+
+        comps = list_top_level_components(db, project_id)
+        edges = list_edges(db, project_id)
+        sorted_ids = [c.id for c in topo_sort_comps(comps, edges)]
+        # Domain comp must come first — presentational comparch waits
+        # on the domain's fan-in.
+        assert sorted_ids == [comp_dom, comp_pres]
+
+    def test_dedups_parallel_dependency_and_domain_parent(self, db):
+        from backend.graph.queries import (
+            list_edges,
+            list_top_level_components,
+            topo_sort_comps,
+        )
+
+        project_id = str(uuid.uuid4())
+        db.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
+        db.flush()
+        comp_pres = _seed_component(db, project_id, "presentational", 0, [])
+        comp_dom = _seed_component(db, project_id, "domain", 1, [])
+        # Same source/target, different edge types — must count once.
+        _seed_dep(db, project_id, comp_pres, comp_dom)
+        _seed_domain_parent(db, project_id, comp_pres, comp_dom)
+        db.commit()
+
+        comps = list_top_level_components(db, project_id)
+        edges = list_edges(db, project_id)
+        sorted_ids = [c.id for c in topo_sort_comps(comps, edges)]
+        assert sorted_ids == [comp_dom, comp_pres]
+
+    def test_appends_cycle_stranded_nodes_in_display_order(self, db):
+        from backend.graph.queries import (
+            list_edges,
+            list_top_level_components,
+            topo_sort_comps,
+        )
+
+        project_id = str(uuid.uuid4())
+        db.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
+        db.flush()
+        comp_c = _seed_component(db, project_id, "c", 2, [])
+        comp_a = _seed_component(db, project_id, "a", 0, [])
+        comp_b = _seed_component(db, project_id, "b", 1, [])
+        # a -> b -> a cycle; c stays free.
+        _seed_dep(db, project_id, comp_a, comp_b)
+        _seed_dep(db, project_id, comp_b, comp_a)
+        db.commit()
+
+        comps = list_top_level_components(db, project_id)
+        edges = list_edges(db, project_id)
+        sorted_ids = [c.id for c in topo_sort_comps(comps, edges)]
+        # c emits first (no edges), then a + b appended in display order.
+        assert sorted_ids == [comp_c, comp_a, comp_b]

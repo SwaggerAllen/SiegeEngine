@@ -210,11 +210,17 @@ def wake_deferred_dependents(
     from backend.models.node import Edge
     from backend.pipeline import queue as pipeline_queue
 
+    # Walk both ``dependency`` and ``domain_parent`` edges. The latter
+    # encodes presentational→domain ordering (CLAUDE.md scheduling
+    # invariants): a presentational comp's comparch was deferred
+    # waiting on its domain parent, so when the domain parent settles
+    # the presentational needs the same wakeup path as a regular
+    # dependency.
     dependent_ids = (
         db.execute(
             select(Edge.source_id).where(
                 Edge.project_id == project_id,
-                Edge.edge_type == "dependency",
+                Edge.edge_type.in_(("dependency", "domain_parent")),
                 Edge.target_id == just_persisted_id,
             )
         )
@@ -409,13 +415,17 @@ def comparch_dep_comps_settled(
         return (False, "comparch readiness check missing component_id")
     component_id = scope_ids[0]
 
-    # Find dep targets — edges where this comp is the source and the
-    # edge type is "dependency". Direction: source depends on target.
+    # Find dep targets — edges where this comp is the source. Both
+    # ``dependency`` and ``domain_parent`` edges count as ordering
+    # constraints: a presentational comp's comparch needs its domain
+    # parent's content to settle before regenerating, same as a
+    # regular dependency. Direction in both cases: source depends
+    # on target.
     dep_edges = (
         db.execute(
             select(Edge.target_id).where(
                 Edge.project_id == project_id,
-                Edge.edge_type == "dependency",
+                Edge.edge_type.in_(("dependency", "domain_parent")),
                 Edge.source_id == component_id,
             )
         )

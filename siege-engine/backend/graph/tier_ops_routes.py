@@ -36,6 +36,11 @@ from backend.graph.bootstrap_routes import (
     bootstrap_reset,
     build_job_payload,
 )
+from backend.graph.queries import (
+    list_edges,
+    list_top_level_components,
+    topo_sort_comps,
+)
 from backend.models import Project, User
 from backend.models.job import Job
 from backend.models.node import Node
@@ -73,19 +78,34 @@ def _singleton_scope(_db: Session, _project_id: str) -> list[tuple[str, ...]]:
 
 
 def _top_level_comp_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
-    """Per-comp tiers (comparch) iterate top-level comps."""
-    rows = list(
+    """Per-comp tiers (comparch) iterate top-level comps in topo order.
+
+    Uses ``topo_sort_comps`` so the enqueue order matches
+    the sidebar's render order — dependencies and domain parents
+    enqueue before the comps that depend on them.
+    """
+    comps = list_top_level_components(db, project_id)
+    edges = list_edges(db, project_id)
+    return [(c.id,) for c in topo_sort_comps(comps, edges)]
+
+
+def _subcomps_by_parent(db: Session, project_id: str) -> dict[str, list[Node]]:
+    """Return all subcomponents grouped by parent top-level comp id."""
+    subs = list(
         db.execute(
-            select(Node.id)
-            .where(
+            select(Node).where(
                 Node.project_id == project_id,
                 Node.tier == "comp",
-                Node.parent_id.is_(None),
+                Node.parent_id.is_not(None),
             )
-            .order_by(Node.display_order.asc(), Node.id.asc())
         ).scalars()
     )
-    return [(comp_id,) for comp_id in rows]
+    by_parent: dict[str, list[Node]] = {}
+    for sub in subs:
+        if sub.parent_id is None:
+            continue
+        by_parent.setdefault(sub.parent_id, []).append(sub)
+    return by_parent
 
 
 def _subcomp_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
@@ -94,29 +114,36 @@ def _subcomp_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
     Scope tuple is ``(parent_comp_id, sub_id)`` so the per-node
     reset / review-retry handler sees the URL-style scope. Subcomps
     are ``tier="comp", parent_id=top_comp_id``.
+
+    Order: top-level parents in topo order, and within each parent
+    the subcomps are topo-sorted by their ``dependency`` edges
+    (and ``domain_parent`` if present, though sibling subs rarely
+    have those). Project-wide edges are passed to each per-parent
+    sort; ``topo_sort_comps`` filters to edges whose endpoints are
+    in the input list, so cross-parent edges are silently ignored.
     """
-    rows = list(
-        db.execute(
-            select(Node.id, Node.parent_id)
-            .where(
-                Node.project_id == project_id,
-                Node.tier == "comp",
-                Node.parent_id.is_not(None),
-            )
-            .order_by(Node.parent_id.asc(), Node.display_order.asc(), Node.id.asc())
-        )
-    )
-    return [(parent_id, sub_id) for sub_id, parent_id in rows]
+    edges = list_edges(db, project_id)
+    top_levels = topo_sort_comps(list_top_level_components(db, project_id), edges)
+    subs_by_parent = _subcomps_by_parent(db, project_id)
+
+    out: list[tuple[str, ...]] = []
+    for top in top_levels:
+        children = subs_by_parent.get(top.id, [])
+        for sub in topo_sort_comps(children, edges):
+            out.append((top.id, sub.id))
+    return out
 
 
 def _impl_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
     """Impl tier scope is ``(owner_id,)`` for each impl-bearing node.
 
     An impl node lives under either a foundation top-level comp or
-    a subcomp. Walk every impl_* node and emit its parent's id as
-    the owner — matches IMPL_CONFIG.scope_payload_keys.
+    a subcomp. Owners are emitted in dispatch order: top-level
+    comps in topo order, with each top-level's subcomps interleaved
+    in subcomp topo order so a foundation's impl runs before
+    anything that depends on it.
     """
-    rows = list(
+    impl_owners = set(
         db.execute(
             select(Node.parent_id)
             .where(
@@ -124,21 +151,21 @@ def _impl_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
                 Node.tier == "impl",
                 Node.parent_id.is_not(None),
             )
-            .order_by(Node.parent_id.asc(), Node.id.asc())
+            .distinct()
         ).scalars()
     )
-    # Dedup just in case (one impl per owner is the invariant).
-    # The is_not(None) filter on the query already excludes nulls,
-    # but Mapped[str | None] doesn't narrow through SQLAlchemy
-    # filters, so we re-check explicitly to satisfy mypy.
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for owner_id in rows:
-        if owner_id is None or owner_id in seen:
-            continue
-        seen.add(owner_id)
-        ordered.append(owner_id)
-    return [(owner_id,) for owner_id in ordered]
+    edges = list_edges(db, project_id)
+    top_levels = topo_sort_comps(list_top_level_components(db, project_id), edges)
+    subs_by_parent = _subcomps_by_parent(db, project_id)
+
+    out: list[tuple[str, ...]] = []
+    for top in top_levels:
+        if top.id in impl_owners:
+            out.append((top.id,))
+        for sub in topo_sort_comps(subs_by_parent.get(top.id, []), edges):
+            if sub.id in impl_owners:
+                out.append((sub.id,))
+    return out
 
 
 # ── Tier registry ──────────────────────────────────────────────────

@@ -85,14 +85,38 @@ describe('topoSortComps', () => {
     expect(sorted.slice(1, 3).sort()).toEqual(['left', 'right']);
   });
 
-  it('ignores non-dependency edges', () => {
-    const nodes = [comp('a', 0), comp('b', 1)];
+  it('treats domain_parent edges as ordering constraints', () => {
+    // Presentational `b` has a domain_parent edge to domain `a` —
+    // `a` must sort before `b` because `b`'s comparch waits on
+    // `a`'s fan-in.
+    const nodes = [comp('b', 0), comp('a', 1)];
     const edges: StructureEdge[] = [
       { id: 'e1', edge_type: 'domain_parent', source_id: 'b', target_id: 'a' },
     ];
     const sorted = topoSortComps(nodes, edges).map((c) => c.id);
-    // Only display_order tiebreak — domain_parent doesn't reorder.
     expect(sorted).toEqual(['a', 'b']);
+  });
+
+  it('ignores edge types that are neither dependency nor domain_parent', () => {
+    const nodes = [comp('a', 0), comp('b', 1)];
+    const edges: StructureEdge[] = [
+      { id: 'e1', edge_type: 'reference', source_id: 'b', target_id: 'a' },
+    ];
+    const sorted = topoSortComps(nodes, edges).map((c) => c.id);
+    expect(sorted).toEqual(['a', 'b']);
+  });
+
+  it('dedups parallel dependency + domain_parent edges between the same pair', () => {
+    // If a comp has both a dependency and a domain_parent edge to
+    // the same target, we should still only count it as one edge.
+    // Otherwise the indegree could get stuck above zero forever.
+    const nodes = [comp('pres', 0), comp('dom', 1)];
+    const edges: StructureEdge[] = [
+      { id: 'e1', edge_type: 'dependency', source_id: 'pres', target_id: 'dom' },
+      { id: 'e2', edge_type: 'domain_parent', source_id: 'pres', target_id: 'dom' },
+    ];
+    const sorted = topoSortComps(nodes, edges).map((c) => c.id);
+    expect(sorted).toEqual(['dom', 'pres']);
   });
 
   it('appends cycle-stranded nodes in display order', () => {
