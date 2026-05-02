@@ -636,25 +636,29 @@ export function BootstrapDraftPanel({
   // State 1: generating, no pending draft yet.
   if (generation_status === 'running' && !pending_draft) {
     return (
-      <div className="p-6 flex flex-col items-center justify-center gap-3 text-gray-300">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-blue-400" />
-        <div className="text-sm">{labels.generatingMessage}</div>
-        <GenerationClock
-          startedAtIso={generation_started_at}
-          currentAttempt={current_attempt}
-          maxAttempts={max_attempts}
-          variant="block"
-        />
-        <button
-          type="button"
-          onClick={callbacks.onCancel}
-          disabled={callbacks.isBusy}
-          className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
-          title="Stop this generation and return to the previous state"
-          data-testid="generation-stop-button"
-        >
-          Stop
-        </button>
+      <div className="p-6 max-w-4xl mx-auto space-y-4">
+        <h2 className="text-lg font-semibold">{node.name}</h2>
+        {docMeta}
+        <div className="flex flex-col items-center justify-center gap-3 text-gray-300 pt-4">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-blue-400" />
+          <div className="text-sm">{labels.generatingMessage}</div>
+          <GenerationClock
+            startedAtIso={generation_started_at}
+            currentAttempt={current_attempt}
+            maxAttempts={max_attempts}
+            variant="block"
+          />
+          <button
+            type="button"
+            onClick={callbacks.onCancel}
+            disabled={callbacks.isBusy}
+            className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
+            title="Stop this generation and return to the previous state"
+            data-testid="generation-stop-button"
+          >
+            Stop
+          </button>
+        </div>
       </div>
     );
   }
@@ -665,11 +669,8 @@ export function BootstrapDraftPanel({
     return (
       <div className="max-w-4xl mx-auto">
         <div className="p-6 pb-0 space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1 min-w-0">
-              <h2 className="text-lg font-semibold">{labels.draftHeading}</h2>
-              {docMeta}
-            </div>
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold">{labels.draftHeading}</h2>
             {isRegenerating && (
               <div className="flex items-center gap-3 shrink-0">
                 <span className="text-xs text-gray-400">regenerating…</span>
@@ -691,6 +692,7 @@ export function BootstrapDraftPanel({
               </div>
             )}
           </div>
+          {docMeta}
           <DocumentReviewTabs
             idPrefix="pending-draft"
             document={
@@ -851,15 +853,13 @@ export function BootstrapDraftPanel({
   if (node.content) {
     return (
       <div className="p-6 space-y-4 max-w-4xl mx-auto">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1 min-w-0">
-            <h2 className="text-lg font-semibold">{node.name}</h2>
-            {docMeta}
-          </div>
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold">{node.name}</h2>
           <span className="text-xs text-gray-500 uppercase tracking-wide shrink-0">
             Approved · read-only
           </span>
         </div>
+        {docMeta}
         <DocumentReviewTabs
           idPrefix="approved"
           document={
@@ -893,10 +893,8 @@ export function BootstrapDraftPanel({
   // so we include a "Generate" button to kick a fresh run.
   return (
     <div className="p-6 space-y-4 max-w-4xl mx-auto">
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold">{node.name}</h2>
-        {docMeta}
-      </div>
+      <h2 className="text-lg font-semibold">{node.name}</h2>
+      {docMeta}
       <div className="text-sm text-gray-400 italic">No approved content yet.</div>
       <button
         type="button"

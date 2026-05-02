@@ -787,9 +787,7 @@ class TestLastNodeContentUpdatedAt:
 
         # The seeded fixture mints comps via NodeCreated only — no
         # NodeContentUpdated events, so the helper returns None.
-        result = last_node_content_updated_at(
-            db, seeded["project_id"], seeded["comp_billing"]
-        )
+        result = last_node_content_updated_at(db, seeded["project_id"], seeded["comp_billing"])
         assert result is None
 
     def test_returns_iso_timestamp_of_latest_content_update(self, db, seeded):
@@ -813,9 +811,7 @@ class TestLastNodeContentUpdatedAt:
         )
         db.commit()
 
-        result = last_node_content_updated_at(
-            db, seeded["project_id"], seeded["comp_billing"]
-        )
+        result = last_node_content_updated_at(db, seeded["project_id"], seeded["comp_billing"])
         assert result is not None
         # ISO-8601 — datetime.fromisoformat round-trips cleanly.
         from datetime import datetime
@@ -838,9 +834,7 @@ class TestLastNodeContentUpdatedAt:
         billing_result = last_node_content_updated_at(
             db, seeded["project_id"], seeded["comp_billing"]
         )
-        auth_result = last_node_content_updated_at(
-            db, seeded["project_id"], seeded["comp_auth"]
-        )
+        auth_result = last_node_content_updated_at(db, seeded["project_id"], seeded["comp_auth"])
         assert billing_result is not None
         assert auth_result is None
 
@@ -849,14 +843,12 @@ class TestLatestGenerationJobSummary:
     def test_returns_none_when_no_matching_job(self, db, seeded):
         from backend.graph.queries import latest_generation_job_summary
 
-        result = latest_generation_job_summary(
-            db, seeded["project_id"], "v2.generate_comparch"
-        )
+        result = latest_generation_job_summary(db, seeded["project_id"], "v2.generate_comparch")
         assert result is None
 
     def test_preserves_cancelled_status(self, db, seeded):
-        from backend.models.job import Job
         from backend.graph.queries import latest_generation_job_summary
+        from backend.models.job import Job
 
         job = Job(
             job_type="v2.generate_comparch",
