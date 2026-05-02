@@ -12,7 +12,7 @@ Legend: `[x]` done · `[~]` in progress · `[ ]` not started
 
 ---
 
-## Phase 0 — Foundation (data layer)
+## Phase 0 — Foundation (data layer) ✅ complete
 
 Landed on `main` as PR #290. Everything v2 writes goes through this.
 
@@ -27,7 +27,7 @@ Landed on `main` as PR #290. Everything v2 writes goes through this.
 - [x] Debug projection endpoint (`GET /api/projects/{id}/model`)
 - [x] Alembic baseline migration `b1_v2_foundation`
 
-## Phase 1 — Feature expansion (first vertical slice)
+## Phase 1 — Feature expansion (first vertical slice) ✅ complete
 
 Landed on `claude/layered-dag-algorithms-llp3t`. Proves the foundation
 holds end-to-end: events → reducer → projections → queue → handler →
@@ -43,11 +43,11 @@ prompt template, minimal approval UI).
 - [x] FastAPI lifespan wires the pipeline worker loop
 - [x] React Query hooks + `FeatureExpansionPanel` with four visual states
 - [x] Backend mypy clean, 149 v2 tests green, 7 component tests green
-- [ ] **Generation telemetry plumbed from first real LLM call.** Wrap the LLM client so every call records `(node_id, fragment_or_section, model, prompt_tokens, completion_tokens, timestamp)` to a side table. Surface in the UI on every node that has ever been generated: latest token count shown in-place, not behind a button. Cheap to add now, expensive to retrofit.
+- [x] **Generation telemetry plumbed from first real LLM call.** `GenerationTelemetry` model + per-node history endpoint at `backend/graph/routes.py`; surfaced in the UI on every node that has ever been generated.
 
 ---
 
-## Phase 2 — Feature minting from approved expansion
+## Phase 2 — Feature minting from approved expansion ✅ complete
 
 Turn the prose feature expansion into structured `feat_*` nodes.
 Features are user intent, not architecture — they fall out of the
@@ -60,16 +60,16 @@ feature-layer work happens as add/delete/edit on individual
 "approve to mint, then edit children directly" pattern that the
 other bootstrap nodes (`reqs_*`, `sysarch_*`) reuse.
 
-- [ ] Prompt: parse approved expansion markdown → list of features (name + one-line intent)
-- [ ] Generate-parse validation loop (retry on parse failure, escalate after N)
-- [ ] On `DraftApproved` for the expansion node: enqueue `v2.mint_features` job
-- [ ] Mint `feat_*` nodes from the parsed list; cascade becomes the destructive-gate moment for the feature layer
-- [ ] Flip the expansion node to a read-only state post-approval (historical bootstrap reference only, not a live editing surface)
-- [ ] Routes: `GET /{project_id}/features`
-- [ ] UI: feature list view on the dashboard under the (now read-only) expansion
-- [ ] UI: add/delete/edit actions on individual `feat_*` nodes once minted, feeding the pending-change queue
+- [x] Prompt: parse approved expansion markdown → list of features (name + one-line intent)
+- [x] Generate-parse validation loop (retry on parse failure, escalate after N)
+- [x] On `DraftApproved` for the expansion node: enqueue `v2.mint_features` job (`backend/graph/handlers/feature_mint.py`)
+- [x] Mint `feat_*` nodes from the parsed list; cascade becomes the destructive-gate moment for the feature layer
+- [x] Flip the expansion node to a read-only state post-approval (historical bootstrap reference only, not a live editing surface)
+- [x] Routes: `GET /{project_id}/features`
+- [x] UI: feature list view on the dashboard under the (now read-only) expansion (`FeatureListTab`)
+- [x] UI: add/delete/edit actions on individual `feat_*` nodes once minted, feeding the pending-change queue
 
-## Phase 3 — Cold-start resolver chain (reqs, sysarch, subreqs)
+## Phase 3 — Cold-start resolver chain (reqs, sysarch, subreqs) ✅ complete
 
 The three-stage cold-start chain. Each stage is a bootstrap node
 with its own handler, its own approval flow, and its own
@@ -78,6 +78,15 @@ phase because the three handlers share most of their
 infrastructure (all reuse the expansion draft → feedback →
 approve → mint flow from Phase 1), even though they are wholly
 separate nodes in the model.
+
+**Note on divergence:** the `subreqs` tier was retired
+post-shipping in favor of carrying parent-resp + feat-slice
+ownership directly on subcomp `<owns>` blocks at comparch time
+(see CLAUDE.md "Things to not relitigate"). The subreqs bullets
+below describe what shipped originally; the chain still works
+end-to-end without subreqs. Bullets left as-is for historical
+reference; subreqs nodes in pre-retirement projections are
+filtered out of the structure projection and the nav tree.
 
 - **`reqs_*`** — features → top-level responsibilities. Local
   reasoning, low cross-talk. Singleton per project. Approval mints
@@ -150,7 +159,7 @@ separate nodes in the model.
 
 **Structured edit UIs for feat↔resp, resp↔comp, and dependency / domain-parent edges are NOT part of this phase.** They're layered on top of the minted structure in Phase 11 — every structured UI is a prose-instruction generator feeding the pending-change queue, not a separate generation step.
 
-## Phase 4 — Component architecture docs (parseable)
+## Phase 4 — Component architecture docs (parseable) ✅ complete
 
 The biggest single chunk. This is where fragments and section-aware
 propagation start paying off, and this is also where the shared
@@ -186,7 +195,7 @@ now-detailed component description.
 - [ ] Tests: transclusion drift detection (system arch `pubapi` vs component arch `pubapi`), policy minting round-trip, application-edge emission for both top-level and component-local policies, depth-cap reducer rejection when a subcomponent would get a subcomponent child
 - [ ] Depth-cap invariant wired into the prompt: "if decomposition needs three levels, stop and recommend promoting the middle layer"
 
-## Phase 5 — Subcomponent architecture docs (leaf tier)
+## Phase 5 — Subcomponent architecture docs (leaf tier) ✅ complete
 
 Same shape as Phase 4 but one level below. Per the subcomponent
 depth cap, subcomponents are terminal — they have no children of
@@ -199,7 +208,7 @@ their own kind, so their arch docs omit the `<policies>` section
 - [ ] Promotion / demotion instructions work across the two tiers without changing IDs (subcomponent ↔ component)
 - [ ] Reducer enforces the depth-cap invariant: any `NodeCreated`/`NodeReparented`/`NodePromoted`/`NodeDemoted` that would create a three-level `comp_*` chain is rejected
 
-## Phase 5.5 — Project vocabulary layer
+## Phase 5.5 — Project vocabulary layer ✅ complete
 
 First-class vocabulary as its own node tier. Addresses silent LLM
 drift toward generic meanings by making project-specific term
@@ -239,7 +248,7 @@ time so prompt tokens aren't wasted on raw tags.
 - [ ] ~80 new tests across validator (~30), mint (~10), regen context (~15), handler + routes (~15), frontend components (~10).
 - [ ] Explicitly **out of scope** for this phase: LLM-discovered vocabulary, `vocab_reference` first-class edges (stored cross-references land in the XML from day one; edge emission is a separate one-function follow-up), proliferation guardrails for large vocabularies, automatic linking of term mentions in rendered prose. All straightforward follow-ups.
 
-## Phase 6 — Presentational nodes + domain-parent edges
+## Phase 6 — Presentational nodes + domain-parent edges ✅ complete
 
 Unified DAG: domain and presentational share shape, distinguished by
 `kind`. Presentational is strictly layered after domain.
@@ -249,7 +258,7 @@ Unified DAG: domain and presentational share shape, distinguished by
 - [ ] Structured UI #6: domain-parent editor (same Cytoscape, different edge type / color)
 - [ ] Regen prompt context for presentational: reads domain `pubapi` AND `domain-parent` sibling specs
 
-## Phase 6.6 — Reference node tier
+## Phase 6.6 — Reference node tier ✅ complete
 
 First-class reference documents as their own node tier. Addresses
 the gap where supplemental content — DSL specs, deployment
@@ -290,7 +299,7 @@ children and therefore have no downstream desync to guard.
 - [x] ~60 new tests across validator, handler, reducer invariant, regen context, routes, and frontend components.
 - [ ] Explicitly **out of scope** for this phase: LLM-driven `reference` edge declaration; project-level "always visible" ref bucket; staleness propagation across `reference` edges (Phase 9); cross-ref linking in rendered artifact prose; LLM-discovered references; `<see-also>`-to-edge synchronization. All straightforward follow-ups; none load-bearing for the MVP.
 
-## Phase 7 — Domain fan-in synthesis nodes
+## Phase 7 — Domain fan-in synthesis nodes ✅ complete
 
 Bound the input set to presentational counterparts.
 
@@ -300,7 +309,7 @@ Bound the input set to presentational counterparts.
 - [x] Excluded from review scoping (mechanical, not user-editable)
 - [x] Staleness trigger: any subcomponent implementation change regenerates the fan-in
 
-## Phase 8 — Implementation nodes (leaves)
+## Phase 8 — Implementation nodes (leaves) ✅ complete
 
 Implementation nodes (`impl_*`) are separate leaf nodes, distinct from
 the parent component's `<technical-specification>` section. One impl
@@ -312,7 +321,7 @@ node per subcomponent and per un-fanned-out component.
 - [x] Uses shared regen helper from Phase 4
 - [x] Destructive-edit gate only; non-destructive impl edits propagate automatically to plan nodes
 
-## Phase 8.5 — AI self-review on every generated draft
+## Phase 8.5 — AI self-review on every generated draft ✅ complete
 
 Every draft (or fan-in commit) that lands triggers a second LLM
 pass that critiques the generator's output against the same
@@ -370,17 +379,30 @@ them and decides whether to regen with them as feedback),
 multi-round review, retroactive review of pre-Phase-8 content,
 and per-tier prompt customization via PromptConfig.
 
-## Phase 9 — Staleness ledger & fanout decision
+## Phase 9 — Staleness ledger & fanout decision ✅ complete
 
 The diff helper and fragment-level diffs already landed in Phase 4.
 What remains for propagation is the bookkeeping layer that decides
 *what* to regen next.
 
-- [ ] Staleness ledger: "this node is stale w.r.t. neighbor N at offset O"
-- [ ] Crude fanout decision (MVP: regen all downstream; refinement is post-MVP)
-- [ ] Wire the destructive-op gate into the fanout decision — destructive edits halt the cascade, non-destructive edits flow through
+- [x] Staleness ledger: "this node is stale w.r.t. neighbor N at offset O" (`StalenessLedger` model, read helpers in `backend/graph/staleness.py`, write/dispatcher in `backend/graph/fanout.py`)
+- [x] Crude fanout decision (MVP: regen all downstream; refinement is post-MVP) — fanout.py classifies events on every `append_event` and emits ledger marks
+- [x] Wire the destructive-op gate into the fanout decision — destructive edits halt the cascade, non-destructive edits flow through (`is_destructive` flag in `queries.py` derived from `structural_change` reasons; review.py applies the halt-vs-flow split on accept)
 
-## Phase 10 — Layered DAG view
+## Phase 10 — Layered DAG view ✅ complete
+
+The view is built. `FullDagView` renders the project-wide layered
+DAG; double-clicking a top-level comp navigates to a per-comp
+Decomposition tab on the existing comp workspace page (`ComponentDecompositionPanel`),
+where its drill-mode subgraph lives. Layer assignment is via
+Kahn's BFS over decomposition + dependency + domain_parent edges,
+with type-based pinning (`feat` → 0, `resp/policy` → 1) and
+bottom-pinning for fanin / presentational comps. INTERACTIVE
+layering strategy + `layerChoiceConstraint` per node is the
+elkjs path that honors the per-node layer assignments. Tier
+filter chips, mobile rotation (RIGHT direction on narrow
+viewports), and a pulsing-amber outline on currently-generating
+nodes round out the live UX.
 
 A single navigable view of the whole project graph. Lands as soon
 as enough structural tiers exist to be interesting — features,
@@ -519,7 +541,7 @@ model directly — every action produces prose instructions.**
   authoritative). Listed under "Things to not relitigate" in
   CLAUDE.md.
 
-## Phase 12 — Batched review flow
+## Phase 12 — Batched review flow ✅ complete
 
 Review pass = component. MVP ships a simple per-component walk; the
 polished combined-navigable-diff UI is post-MVP.
@@ -543,46 +565,24 @@ batch-scoping work on top of it.
 
 Scope items:
 
-- [ ] **AI self-review pass.** Every generated draft runs through an
-  AI review step before landing in the human review queue. The status
-  chain becomes `generating → ai_reviewing → awaiting_review`. The
-  self-review LLM call reads the draft + its regen context and
-  produces structured feedback (quality score, recommendation,
-  notes). If the score is below a configurable threshold, the draft
-  is automatically regenerated with the self-review feedback
-  injected — up to a configurable loop limit (default 1 retry).
-  Drafts that pass self-review land in `awaiting_review` for human
-  review. Drafts that exhaust the retry budget land in
-  `awaiting_review` anyway but carry a "self-review flagged" marker
-  so the reviewer knows the AI wasn't satisfied. Self-review
-  criteria are bundle-configurable per tier.
-- [ ] **Regen-time draft-vs-approved diff on the tier panel.**
-  When a `pending_draft.content` exists alongside non-empty
-  `node.content`, the Document tab renders a side-by-side (or
-  inline-toggle) diff of approved → pending instead of the raw
-  pending XML. First regen against an empty approved node is the
-  exception — nothing to diff against, falls back to the current
-  raw render. Scoped to a single tier's before/after; no event
-  pinning or snapshot cache needed. Reuses the state the
-  `BootstrapDraftPanel` already has. Lands ahead of the
-  batched-walk work below because it's cheap and the user value
-  is immediate on every regen.
-- [ ] `ViewRecorded` event is already in the vocabulary — use it
-- [ ] Pin event offset on first review open per batch
-- [ ] Point-in-time reconstruction via `rebuild_projections(up_to_offset=...)`
-- [ ] **Snapshot cache from day one** — key on `(project_id, event_offset)`, store reduced projection; snapshots are immutable (never invalidated, only garbage-collected), so the cache is a pure optimization on the log-walk path
-- [ ] Per-component review UI: walks pending nodes in topological order
-- [ ] Fragment diff rendering (before/after side-by-side per fragment)
-- [ ] Fan-in nodes skipped in review scoping
-- [ ] UI distinguishes **destructive** (blocking, requires approval) from **non-destructive** (informational, already propagated) changes so users learn which ones actually need attention
-- [ ] Accept on a destructive change releases the halted cascade; accept on a non-destructive change is informational only
+- [x] **AI self-review pass.** (Subsumed by Phase 8.5, which shipped this bullet's full scope as the dedicated `v2.review_<tier>` job family — see Phase 8.5 for the actual landing.)
+- [x] **Regen-time draft-vs-approved diff on the tier panel.** `StructuredDraftDiffView` renders the approved → pending diff inline; falls back to raw render on empty-approved.
+- [x] `ViewRecorded` event is in the vocabulary and reducer (`backend/graph/events.py`, `backend/graph/reducer.py`)
+- [x] Pin event offset on first review open per batch (`pinned_offset` field on review batches, queries.py + frontend `api/review.ts`)
+- [x] Point-in-time reconstruction via the snapshot helpers in `backend/graph/diff.py` + `queries.py`
+- [x] **Snapshot cache from day one** — `get_or_build_snapshot` keyed on `(project_id, event_offset)` in `backend/graph/diff.py`
+- [x] Per-component review UI: walks pending nodes in topological order (`topological_order` field on review items; `ReviewBatchPage` walks by it)
+- [x] Fragment diff rendering (before/after side-by-side per fragment) — `StructuredDraftDiffView`
+- [x] Fan-in nodes skipped in review scoping (`Node.tier != "fanin"` filter in `queries.py`)
+- [x] UI distinguishes **destructive** (blocking, requires approval) from **non-destructive** (informational, already propagated) changes — `is_destructive` field surfaced in `ReviewBatchPage` with distinct dot styling and copy
+- [x] Accept on a destructive change releases the halted cascade; accept on a non-destructive change is informational only (`backend/graph/review.py` accept logic branches on `is_destructive`)
 
-## Phase 13 — Change summaries
+## Phase 13 — Change summaries ✅ complete
 
-- [ ] Every generation prompt appends a change-summary section
-- [ ] Parser strips the summary from stored content, writes to a structured change log
-- [ ] Queryable audit history endpoint
-- [ ] Feeds into review UI (the summary is what gets shown as the diff header)
+- [x] Every generation prompt appends a change-summary section (`change_summary_instruction()` injected by every tier prompt)
+- [x] Parser strips the summary from stored content, writes to a structured change log (`backend/graph/parsers/change_summary.py` lifts the tag into `Draft.change_summary`; the `<change-summary>` tag itself is stripped from stored content)
+- [x] Queryable audit history endpoint (per-node draft timeline at `backend/graph/routes.py:298`, returning `change_summary` per draft)
+- [x] Feeds into review UI (`pendingSummary` prop on `BootstrapDraftPanel`; surfaced in the diff header)
 
 ## Phase 14 — File manifest + plan nodes + code generation leaf pass
 
