@@ -149,6 +149,38 @@ class TestListJobs:
         r = client.get(f"/api/projects/{uuid.uuid4()}/jobs")
         assert r.status_code == 404
 
+    def test_orders_running_first_then_queued_oldest_first_then_terminal_newest(
+        self, client, db, project_id
+    ):
+        from datetime import datetime, timedelta
+
+        base = datetime(2026, 5, 1, 12, 0, 0)
+
+        def _add(status: str, offset_minutes: int) -> str:
+            jid = _make_job(db, project_id, status=status)
+            row = db.get(Job, jid)
+            assert row is not None
+            row.created_at = base + timedelta(minutes=offset_minutes)
+            db.commit()
+            return jid
+
+        old_running = _add("running", 0)
+        new_queued = _add("queued", 60)
+        old_queued = _add("queued", 30)
+        old_completed = _add("completed", 10)
+        new_completed = _add("completed", 50)
+
+        r = client.get(f"/api/projects/{project_id}/jobs")
+        assert r.status_code == 200
+        ids = [j["id"] for j in r.json()["jobs"]]
+        assert ids == [
+            old_running,
+            old_queued,
+            new_queued,
+            new_completed,
+            old_completed,
+        ]
+
 
 class TestCancelJob:
     def test_cancels_queued_job(self, client, db, project_id):

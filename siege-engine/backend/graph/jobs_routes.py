@@ -110,7 +110,8 @@ def list_project_jobs(
     rows = list(db.execute(query).scalars())
     matched = [j for j in rows if _job_belongs_to_project(j, project_id)]
 
-    # Sort: active jobs first, then by created_at desc.
+    # Sort: running first, then queued in execution order (oldest first),
+    # then terminal statuses newest-first as a history view.
     status_order = {
         "running": 0,
         "queued": 1,
@@ -118,12 +119,14 @@ def list_project_jobs(
         "cancelled": 3,
         "completed": 4,
     }
-    matched.sort(
-        key=lambda j: (
-            status_order.get(j.status, 99),
-            -(j.created_at.timestamp() if j.created_at else 0),
-        )
-    )
+    fifo_statuses = {"running", "queued"}
+
+    def _sort_key(j: Job) -> tuple[int, float]:
+        ts = j.created_at.timestamp() if j.created_at else 0.0
+        bucket = status_order.get(j.status, 99)
+        return (bucket, ts if j.status in fifo_statuses else -ts)
+
+    matched.sort(key=_sort_key)
     matched = matched[:cap]
 
     counts: dict[str, int] = {}
