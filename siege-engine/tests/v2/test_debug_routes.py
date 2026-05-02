@@ -188,8 +188,8 @@ def test_event_payload_strips_long_content_fields(client, db):
     assert big_updated["payload"]["node_id"] == comp_id
 
 
-def test_strip_event_content_handles_review_text_directly():
-    from backend.graph.debug_routes import _strip_event_content
+def test_strip_payload_content_handles_review_text_directly():
+    from backend.graph.debug_routes import _strip_payload_content
 
     big_review = "<review>" + ("y" * 4000) + "</review>"
     payload = {
@@ -198,11 +198,63 @@ def test_strip_event_content_handles_review_text_directly():
         "node_id": "comp_AAAA0000",
         "review_text": big_review,
     }
-    out = _strip_event_content(payload)
+    out = _strip_payload_content(payload)
     assert out is not None
     assert out["review_text"].startswith("[content elided:")
     assert out["draft_id"] == "draft_xxx"
     assert out["node_id"] == "comp_AAAA0000"
+
+
+def test_strip_payload_content_elides_prior_review_text_and_failed_raw_output():
+    from backend.graph.debug_routes import _strip_payload_content
+
+    big_review = "<review>" + ("y" * 4000) + "</review>"
+    big_raw = "raw model output\n" * 1000
+    payload = {
+        "project_id": "proj_xxx",
+        "component_id": "comp_AAAA0000",
+        "feedback": "make it better",
+        "prior_review_text": big_review,
+        "_failed_raw_output": big_raw,
+        "_current_attempt": 3,
+        "_max_attempts": 4,
+    }
+    out = _strip_payload_content(payload)
+    assert out is not None
+    assert out["prior_review_text"].startswith("[content elided:")
+    assert out["_failed_raw_output"].startswith("[content elided:")
+    # Short / non-target fields stay verbatim.
+    assert out["feedback"] == "make it better"
+    assert out["component_id"] == "comp_AAAA0000"
+    assert out["_current_attempt"] == 3
+
+
+def test_recent_jobs_payload_elides_prior_review_text(client, db):
+    c, pid = client
+    big_review = "<review>" + ("y" * 4000) + "</review>"
+    pipeline_queue.enqueue(
+        db,
+        job_type="v2.generate_comparch",
+        payload={
+            "project_id": pid,
+            "component_id": "comp_BIGGGGGG",
+            "feedback": None,
+            "prior_review_text": big_review,
+        },
+    )
+    db.commit()
+
+    r = c.get(f"/api/projects/{pid}/debug/snapshot?jobs=500")
+    body = r.json()
+    big_job = next(
+        j
+        for j in body["recent_jobs"]
+        if (j["payload"] or {}).get("component_id") == "comp_BIGGGGGG"
+    )
+    assert big_job["payload"]["prior_review_text"].startswith("[content elided:")
+    # Other payload fields stay as-is.
+    assert big_job["payload"]["component_id"] == "comp_BIGGGGGG"
+    assert big_job["payload"]["project_id"] == pid
 
 
 def test_short_content_strings_are_not_elided(client, db):
