@@ -213,7 +213,7 @@ def get_debug_snapshot(
                 "is_deferred": getattr(j, "is_deferred", False),
                 "locked_by": j.locked_by,
                 "error_message": j.error_message,
-                "payload": j.payload,
+                "payload": _strip_payload_content(j.payload),
                 "created_at": j.created_at.isoformat() if j.created_at else None,
                 "completed_at": j.completed_at.isoformat() if j.completed_at else None,
             }
@@ -224,9 +224,53 @@ def get_debug_snapshot(
                 "id": e.id,
                 "offset": e.offset,
                 "event_type": e.event_type,
-                "payload": e.payload,
+                "payload": _strip_payload_content(e.payload),
                 "created_at": e.created_at.isoformat() if e.created_at else None,
             }
             for e in recent_events
         ],
     }
+
+
+# Payload fields that carry full document bodies, raw LLM output,
+# or carried-forward review text — they bloat the copy-this-to-
+# clipboard debug snapshot when left raw. Stripped when the
+# snapshot serializes events and jobs; each is replaced with a
+# short ``[content elided: N chars]`` placeholder so the
+# surrounding causality (event_type, draft_id, node_id, offsets,
+# timestamps, payload IDs) stays readable but the dump fits in a
+# normal paste buffer.
+#
+# Covers:
+# - ``content`` / ``new_content`` — event payloads carrying full
+#   tier doc bodies (NodeCreated, NodeContentUpdated,
+#   FragmentUpdated, DraftGenerated, FanInContentUpdated, etc.)
+# - ``review_text`` — event payload carrying the full AI review
+#   XML (DraftReviewUpdated)
+# - ``prior_review_text`` — job payload field carried forward into
+#   a regen so the LLM sees the previous review's findings; the
+#   bulk offender on tier-ops Regen From Reviews queues
+# - ``_failed_raw_output`` — job payload field saved by the
+#   parse-validate retry loop on terminal failure for debugging;
+#   raw LLM text, can be tens of KB
+_ELIDED_PAYLOAD_FIELDS: frozenset[str] = frozenset(
+    {
+        "content",
+        "new_content",
+        "review_text",
+        "prior_review_text",
+        "_failed_raw_output",
+    }
+)
+
+
+def _strip_payload_content(payload: dict | None) -> dict | None:
+    if not isinstance(payload, dict):
+        return payload
+    out: dict = {}
+    for k, v in payload.items():
+        if k in _ELIDED_PAYLOAD_FIELDS and isinstance(v, str) and len(v) > 200:
+            out[k] = f"[content elided: {len(v)} chars]"
+        else:
+            out[k] = v
+    return out
