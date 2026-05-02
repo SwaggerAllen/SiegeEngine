@@ -573,12 +573,18 @@ def list_edges(session: Session, project_id: str) -> list[Edge]:
 _ORDERING_EDGE_TYPES: frozenset[str] = frozenset({"dependency", "domain_parent"})
 
 
-def topo_sort_top_level_comps(comps: list[Node], edges: list[Edge]) -> list[Node]:
+def topo_sort_comps(comps: list[Node], edges: list[Edge]) -> list[Node]:
     """Kahn's topological sort with (foundation desc, display_order, id) tiebreak.
 
-    Operates on already-loaded comps and edges — pure function, no
-    DB access. Cycles fall through to a stable display-order tail
-    so no comp drops from the result.
+    Generic — works on any list of comp nodes + the edges between
+    them. Used for both top-level comps (with dependency +
+    domain_parent edges between them) and subcomps within a parent
+    (with sibling dependency edges). Edges that don't reference
+    nodes in the input list are silently ignored, so callers can
+    pass project-wide edges without filtering.
+
+    Pure function, no DB access. Cycles fall through to a stable
+    display-order tail so no comp drops from the result.
     """
     comp_ids = {c.id for c in comps}
     comp_by_id = {c.id: c for c in comps}

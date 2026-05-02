@@ -692,7 +692,7 @@ class TestTopoSortTopLevelComps:
         from backend.graph.queries import (
             list_edges,
             list_top_level_components,
-            topo_sort_top_level_comps,
+            topo_sort_comps,
         )
 
         project_id = str(uuid.uuid4())
@@ -709,14 +709,14 @@ class TestTopoSortTopLevelComps:
 
         comps = list_top_level_components(db, project_id)
         edges = list_edges(db, project_id)
-        sorted_ids = [c.id for c in topo_sort_top_level_comps(comps, edges)]
+        sorted_ids = [c.id for c in topo_sort_comps(comps, edges)]
         assert sorted_ids == [comp_db_, comp_auth, comp_app]
 
     def test_treats_domain_parent_as_ordering_constraint(self, db):
         from backend.graph.queries import (
             list_edges,
             list_top_level_components,
-            topo_sort_top_level_comps,
+            topo_sort_comps,
         )
 
         project_id = str(uuid.uuid4())
@@ -729,7 +729,7 @@ class TestTopoSortTopLevelComps:
 
         comps = list_top_level_components(db, project_id)
         edges = list_edges(db, project_id)
-        sorted_ids = [c.id for c in topo_sort_top_level_comps(comps, edges)]
+        sorted_ids = [c.id for c in topo_sort_comps(comps, edges)]
         # Domain comp must come first — presentational comparch waits
         # on the domain's fan-in.
         assert sorted_ids == [comp_dom, comp_pres]
@@ -738,7 +738,7 @@ class TestTopoSortTopLevelComps:
         from backend.graph.queries import (
             list_edges,
             list_top_level_components,
-            topo_sort_top_level_comps,
+            topo_sort_comps,
         )
 
         project_id = str(uuid.uuid4())
@@ -753,14 +753,14 @@ class TestTopoSortTopLevelComps:
 
         comps = list_top_level_components(db, project_id)
         edges = list_edges(db, project_id)
-        sorted_ids = [c.id for c in topo_sort_top_level_comps(comps, edges)]
+        sorted_ids = [c.id for c in topo_sort_comps(comps, edges)]
         assert sorted_ids == [comp_dom, comp_pres]
 
     def test_appends_cycle_stranded_nodes_in_display_order(self, db):
         from backend.graph.queries import (
             list_edges,
             list_top_level_components,
-            topo_sort_top_level_comps,
+            topo_sort_comps,
         )
 
         project_id = str(uuid.uuid4())
@@ -776,6 +776,6 @@ class TestTopoSortTopLevelComps:
 
         comps = list_top_level_components(db, project_id)
         edges = list_edges(db, project_id)
-        sorted_ids = [c.id for c in topo_sort_top_level_comps(comps, edges)]
+        sorted_ids = [c.id for c in topo_sort_comps(comps, edges)]
         # c emits first (no edges), then a + b appended in display order.
         assert sorted_ids == [comp_c, comp_a, comp_b]

@@ -329,7 +329,7 @@ export function buildNavTree(
 
   if (topLevelComps.length > 0) {
     const componentItems: NavItem[] = topLevelComps.map((comp) =>
-      buildComponentSubtree(comp, nodes),
+      buildComponentSubtree(comp, nodes, edges),
     );
     const componentsRoot: NavItem = {
       id: SYNTHETIC_IDS.COMPONENTS_ROOT,
@@ -346,7 +346,11 @@ export function buildNavTree(
   return items;
 }
 
-function buildComponentSubtree(comp: StructureNode, nodes: StructureNode[]): NavItem {
+function buildComponentSubtree(
+  comp: StructureNode,
+  nodes: StructureNode[],
+  edges: ReadonlyArray<StructureEdge>,
+): NavItem {
   const children: NavItem[] = [];
 
   // Fan-in — a singleton fanin_* node parented to the comp (only
@@ -376,10 +380,12 @@ function buildComponentSubtree(comp: StructureNode, nodes: StructureNode[]): Nav
     });
   }
 
-  // Subcomponents + their leaves.
-  const subs = nodes
-    .filter((n) => n.tier === 'comp' && n.parent_id === comp.id)
-    .sort((a, b) => a.display_order - b.display_order);
+  // Subcomponents + their leaves. Topo-sort by sibling dep edges
+  // so render order matches the order subcomparch dispatches them.
+  const subs = topoSortComps(
+    nodes.filter((n) => n.tier === 'comp' && n.parent_id === comp.id),
+    edges,
+  );
   for (const sub of subs) {
     const subChildren: NavItem[] = [];
     const subImpl = nodes.find((n) => n.tier === 'impl' && n.parent_id === sub.id);

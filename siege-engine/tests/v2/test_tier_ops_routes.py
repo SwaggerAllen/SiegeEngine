@@ -787,3 +787,129 @@ class TestResumeTier:
         ]
         assert len(review_jobs) == 1
         assert review_jobs[0].payload.get("draft_id") == draft_id
+
+
+class TestScopeIteratorTopoOrder:
+    """The tier-ops scope iterators emit (parent, sub) / (owner) tuples
+    in topological order so enqueue order matches dispatch order. These
+    tests exercise the helpers directly with a fixture that has a real
+    dep + subcomp + impl shape — the broader route tests use a flatter
+    fixture without sibling deps.
+    """
+
+    def _seed_topo_fixture(self, db: Session) -> dict:
+        """Project: foundation comp + app comp (app→foundation dep).
+        Each top-level has two subs with a sibling dep among them.
+        Foundation comp + one sub of each top-level have an impl child.
+        """
+        project_id = str(uuid.uuid4())
+        db.add(Project(id=project_id, name="T", git_repo_path="/tmp/t"))
+        db.flush()
+
+        def _new_comp(name: str, parent_id: str | None, order: int) -> str:
+            cid = mint(db, Kind.COMP)
+            append_event(
+                db,
+                project_id,
+                ev.NodeCreated(
+                    node_id=cid,
+                    tier="comp",
+                    kind="domain",
+                    parent_id=parent_id,
+                    name=name,
+                    display_order=order,
+                    content="",
+                ),
+            )
+            return cid
+
+        def _new_dep(src: str, tgt: str) -> None:
+            eid = mint(db, Kind.EDGE)
+            append_event(
+                db,
+                project_id,
+                ev.EdgeCreated(edge_id=eid, edge_type="dependency", source_id=src, target_id=tgt),
+            )
+
+        # Top-level: app depends on foundation. Foundation should
+        # sort first even though display_order puts app first.
+        comp_app = _new_comp("App", None, 0)
+        comp_foundation = _new_comp("Foundation", None, 1)
+        _new_dep(comp_app, comp_foundation)
+
+        # App's subs: a_left depends on a_right. a_right should
+        # sort first within app.
+        sub_a_left = _new_comp("a_left", comp_app, 0)
+        sub_a_right = _new_comp("a_right", comp_app, 1)
+        _new_dep(sub_a_left, sub_a_right)
+
+        # Foundation's subs: f_first sorts by display_order alone
+        # (no sibling deps).
+        sub_f_first = _new_comp("f_first", comp_foundation, 0)
+        sub_f_second = _new_comp("f_second", comp_foundation, 1)
+
+        # Impls: foundation directly, plus one sub under each top-level.
+        for owner in (comp_foundation, sub_a_right, sub_f_first):
+            iid = mint(db, Kind.IMPL)
+            append_event(
+                db,
+                project_id,
+                ev.NodeCreated(
+                    node_id=iid,
+                    tier="impl",
+                    kind="domain",
+                    parent_id=owner,
+                    name=f"impl_{owner}",
+                    display_order=0,
+                    content="",
+                ),
+            )
+
+        db.commit()
+        return {
+            "project_id": project_id,
+            "comp_app": comp_app,
+            "comp_foundation": comp_foundation,
+            "sub_a_left": sub_a_left,
+            "sub_a_right": sub_a_right,
+            "sub_f_first": sub_f_first,
+            "sub_f_second": sub_f_second,
+        }
+
+    def test_top_level_comp_scope_emits_topo_order(self, db):
+        from backend.graph.tier_ops_routes import _top_level_comp_scope
+
+        s = self._seed_topo_fixture(db)
+        scopes = _top_level_comp_scope(db, s["project_id"])
+        # Foundation first (app depends on it), app second.
+        assert scopes == [(s["comp_foundation"],), (s["comp_app"],)]
+
+    def test_subcomp_scope_emits_parent_topo_then_sub_topo(self, db):
+        from backend.graph.tier_ops_routes import _subcomp_scope
+
+        s = self._seed_topo_fixture(db)
+        scopes = _subcomp_scope(db, s["project_id"])
+        # Foundation's subs (display_order ascending — no deps) before
+        # app's subs (a_right before a_left because a_left depends on
+        # a_right).
+        assert scopes == [
+            (s["comp_foundation"], s["sub_f_first"]),
+            (s["comp_foundation"], s["sub_f_second"]),
+            (s["comp_app"], s["sub_a_right"]),
+            (s["comp_app"], s["sub_a_left"]),
+        ]
+
+    def test_impl_scope_walks_owners_in_combined_topo_order(self, db):
+        from backend.graph.tier_ops_routes import _impl_scope
+
+        s = self._seed_topo_fixture(db)
+        scopes = _impl_scope(db, s["project_id"])
+        # Foundation impl runs before its subcomps; foundation subtree
+        # runs before app subtree because app depends on foundation.
+        # sub_f_first has impl, sub_f_second does not, sub_a_right has
+        # impl, sub_a_left does not.
+        assert scopes == [
+            (s["comp_foundation"],),
+            (s["sub_f_first"],),
+            (s["sub_a_right"],),
+        ]
