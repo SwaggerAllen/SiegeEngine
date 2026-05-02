@@ -323,9 +323,78 @@ declaration carries the following fields:
 - **`produces`** — optional declarations for fragments this
   tier's draft writes on other nodes (typically `self.parent`).
   See A.3.3.
+- **`role`** — optional. Declares that this tier plays a
+  platform-recognized special-purpose role; the platform
+  applies role-specific machinery automatically based on
+  this flag. Currently recognized: `manifest`
+  (territory-bearing, see A.3.1a). Bundles can name their
+  manifest tier whatever fits their vocabulary; the platform
+  identifies it by this field, not by name. Unset is the
+  default — the tier is a normal node kind with no
+  platform-managed special behavior.
 
 A tier without a `draft` is a **join target** — it exists
 purely so edges can terminate on it. Most tiers have drafts.
+
+### A.3.1a Tier roles
+
+The `role` field on a tier declaration tells the platform
+that the tier plays a special-purpose role with attached
+platform-managed machinery. Roles are platform vocabulary,
+not bundle vocabulary — the set of recognized roles ships
+with the platform; bundles opt into a role by setting the
+field on their tier declaration.
+
+#### Role: `manifest`
+
+A tier with `role: manifest` is **territory-bearing**: each
+node of this tier carries a territory claim (one or more
+paths in the project's repo, expressed via the node's
+fields and/or fragments). The platform applies the
+territory machinery uniformly to every tier with this
+role, regardless of what the bundle calls the tier.
+
+The machinery:
+
+- **Per-scope manifests.** Manifests live at every
+  architectural scope — one per project-level entity, one
+  per parent node that mints folder territory below it.
+  The bundle's tier declarations determine the scope
+  hierarchy; the platform applies "one manifest per scope"
+  uniformly. Each manifest is generated locally from its
+  scope's state with no walk over the whole project
+  required.
+- **Specificity wins.** Nodes with file-level territory
+  claims (paths pointing at one specific file) override
+  nodes with folder-level claims (paths pointing at a
+  folder). A territory-bearing ref claiming
+  `lib/auth/prompts/base.md` pokes a hole in a comp's
+  `lib/auth/` claim without the comp's manifest having
+  to enumerate the exception. Same-specificity collisions
+  — two file-level claims on one path, two folder-level
+  claims on overlapping folders — are validation errors.
+- **Global cross-cut pass.** Local manifest generation
+  produces independent territory claims per scope; one
+  global pass walks the union of all territory-bearing
+  nodes and validates the unified file tree. The global
+  pass owns three project-wide invariants: collision
+  detection across same-specificity claims, orphan
+  detection (paths in the repo with no claimant), and
+  disk-vs-content drift on territory-bearing refs (the
+  on-disk file no longer matches the ref's stored content,
+  suggesting an out-of-band edit).
+- **No bundle-prescribed shape.** The platform doesn't
+  read the bundle for "expected folder structure"; that's
+  a flow-time decision driven by project content (a
+  techspec saying "Elixir Phoenix app," a comp's role,
+  the project's conventions). Bundles stay framework-
+  agnostic — folder shape emerges from each project's
+  flow runs, not from the bundle's static declarations.
+
+The `manifest` role is what makes a bundle's manifest
+tier interoperate with the `git_commit` generator
+(§A.16) — the generator reads territory off
+`role: manifest` nodes to know where to write commits.
 
 ### A.3.2 Edges
 
@@ -1732,6 +1801,21 @@ Once seeded, the refs are regeneratable and editable through
 the normal node lifecycle — project owners can layer
 per-project feedback on top of bundle-shipped content
 without forking the bundle.
+
+**Bundle prompts are refs with territory.** When a bundle ships
+prompts — the LLM-facing text the chain's generation tiers
+consume — each prompt is a `ref` with `territory_path` set to
+where the bundle wants the prompt file to land in the project's
+repo. The runtime loads each prompt from its territory path at
+generation time; the file on disk is the contract. Composition
+between prompts (a base body shared across tiers, per-tier
+overlays) is a bundle-layer concern, not a refs-primitive
+concern: platform refs stay flat (no parent-refs), and a
+bundle's assembly step is responsible for composing the runtime
+form. The default bundle's §8 shows the convention; other
+bundles are free to compose prompts however suits their
+runtime, as long as each prompt is stored as a flat ref with a
+declared territory.
 
 ### A.11.6 Named predicates and named generators
 
