@@ -7,6 +7,7 @@ import {
   useFanInReviewRetryMutation,
 } from '../hooks/mutations/useFanInMutations';
 import { describeApiError } from '../lib/describeApiError';
+import { DocPageMeta } from './DocPageMeta';
 import { DocumentReviewTabs } from './DocumentReviewTabs';
 import { FeedbackHistory } from './FeedbackHistory';
 import { XmlDocument, faninRenderers } from './xml';
@@ -80,9 +81,13 @@ export function FanInPanel({ projectId, compId, ownerName }: Props) {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-5">
-      <header className="flex items-center justify-between gap-4">
-        <div>
+      <header className="flex items-start justify-between gap-4">
+        <div className="space-y-1 min-w-0">
           <h2 className="text-lg font-bold text-white">{ownerName} Fan-in</h2>
+          <DocPageMeta
+            lastGenerationJob={data.last_generation_job}
+            lastContentUpdatedAt={data.last_content_updated_at}
+          />
           <p className="text-xs text-gray-500 mt-1 max-w-2xl">
             Bottom-up synthesis of what this component, as built,
             exposes and does at the component level. Driven by the

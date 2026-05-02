@@ -76,6 +76,24 @@ const ResponseSchema = z.object({
   // draft view.
   is_stale: z.boolean().default(false),
   staleness_reasons: z.array(z.string()).default([]),
+  // Doc-page header — "last regenerated" timestamps. The job
+  // summary preserves the raw status (cancelled jobs surface as
+  // cancelled, not folded into idle) so the user can spot a
+  // recently-cancelled regen on a doc page that still shows old
+  // approved content.
+  last_generation_job: z
+    .object({
+      status: z.string(),
+      created_at: z.string(),
+      completed_at: z.string().nullable(),
+      error_message: z.string().nullable(),
+    })
+    .nullable()
+    .default(null),
+  last_content_updated_at: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
 });
 
 const FeedbackResponseSchema = z.object({ job_id: z.string() });

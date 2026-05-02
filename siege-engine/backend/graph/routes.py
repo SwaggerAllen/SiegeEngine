@@ -170,6 +170,21 @@ class TelemetrySummary(BaseModel):
     created_at: str
 
 
+class LastGenerationJob(BaseModel):
+    """Doc-page header — the most recent generation job for a node.
+
+    Distinct from ``generation_status`` which collapses cancelled
+    and completed into ``idle``. This preserves the raw status so
+    the doc-page header can show "last gen: cancelled 12 min ago"
+    explicitly.
+    """
+
+    status: str
+    created_at: str
+    completed_at: str | None = None
+    error_message: str | None = None
+
+
 class AutoRevisionIntermediateResponse(BaseModel):
     """One auto-revision intermediate for the diff dropdown.
 
@@ -1421,6 +1436,8 @@ class SubcomparchResponse(BaseModel):
     review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
+    last_generation_job: LastGenerationJob | None = None
+    last_content_updated_at: str | None = None
 
 
 class SubcomparchApproveResponse(BaseModel):
@@ -2508,6 +2525,8 @@ class ImplResponse(BaseModel):
     review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
+    last_generation_job: LastGenerationJob | None = None
+    last_content_updated_at: str | None = None
 
 
 def _get_impl_by_owner(db: Session, project_id: str, owner_id: str) -> Node | None:
@@ -2587,6 +2606,8 @@ def _impl_response_from_state(state: dict) -> ImplResponse:
         review_started_at=state.get("review_started_at"),
         review_current_attempt=state.get("review_current_attempt"),
         review_max_attempts=state.get("review_max_attempts"),
+        last_generation_job=state.get("last_generation_job"),
+        last_content_updated_at=state.get("last_content_updated_at"),
     )
 
 
@@ -2966,6 +2987,12 @@ class FanInResponse(BaseModel):
     review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
+    # Doc-page header — last generation job status (raw, preserves
+    # cancelled) and last NodeContentUpdated timestamp. See
+    # bootstrap_routes._build_response for the matching fields on
+    # other tier responses.
+    last_generation_job: LastGenerationJob | None = None
+    last_content_updated_at: str | None = None
 
 
 def _get_fanin_by_owner(db: Session, project_id: str, owner_comp_id: str) -> Node | None:
@@ -3040,6 +3067,13 @@ def _fanin_response(
         if telemetry_row is not None
         else None
     )
+    last_job = queries.latest_generation_job_summary(
+        db,
+        project_id,
+        GENERATE_FANIN_JOB_TYPE,
+        payload_filters={"owner_comp_id": owner_comp_id},
+    )
+    last_content_updated_at = queries.last_node_content_updated_at(db, project_id, fanin_node.id)
     return FanInResponse(
         node=FanInNodeResponse(
             id=fanin_node.id,
@@ -3061,6 +3095,17 @@ def _fanin_response(
         review_started_at=_review_started_at,
         review_current_attempt=_review_current_attempt,
         review_max_attempts=_review_max_attempts,
+        last_generation_job=(
+            LastGenerationJob(
+                status=last_job.status,
+                created_at=last_job.created_at,
+                completed_at=last_job.completed_at,
+                error_message=last_job.error_message,
+            )
+            if last_job is not None
+            else None
+        ),
+        last_content_updated_at=last_content_updated_at,
     )
 
 
@@ -3320,6 +3365,8 @@ class ReferenceDetailResponse(BaseModel):
     review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
+    last_generation_job: LastGenerationJob | None = None
+    last_content_updated_at: str | None = None
     outgoing_edges: list[ReferenceEdgeResponse]
     incoming_edges: list[ReferenceEdgeResponse]
 
@@ -3471,6 +3518,8 @@ def get_reference(
         current_attempt=state.get("current_attempt"),
         max_attempts=state.get("max_attempts"),
         failed_raw_output=state.get("failed_raw_output"),
+        last_generation_job=state.get("last_generation_job"),
+        last_content_updated_at=state.get("last_content_updated_at"),
         outgoing_edges=outgoing,
         incoming_edges=incoming,
     )

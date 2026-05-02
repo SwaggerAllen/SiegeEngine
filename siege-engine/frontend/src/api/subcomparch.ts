@@ -50,6 +50,19 @@ export const SubcomparchResponseSchema = z.object({
   review_started_at: z.string().nullish().transform((v) => v ?? null),
   review_current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   review_max_attempts: z.number().int().nullish().transform((v) => v ?? null),
+  last_generation_job: z
+    .object({
+      status: z.string(),
+      created_at: z.string(),
+      completed_at: z.string().nullable(),
+      error_message: z.string().nullable(),
+    })
+    .nullable()
+    .default(null),
+  last_content_updated_at: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
 });
 export type SubcomparchResponse = z.infer<typeof SubcomparchResponseSchema>;
 

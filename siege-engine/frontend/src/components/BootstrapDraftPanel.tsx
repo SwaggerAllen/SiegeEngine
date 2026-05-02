@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { describeApiError } from '../lib/describeApiError';
 import type { DraftDocKind } from '../lib/extractDraftSections';
+import { DocPageMeta, type DocPageLastGenerationJob } from './DocPageMeta';
 import { DocumentReviewTabs, type ExtraTab } from './DocumentReviewTabs';
 import { DraftDiffView } from './DraftDiffView';
 import { FeedbackHistory } from './FeedbackHistory';
@@ -87,6 +88,8 @@ export interface BootstrapPanelIntermediate {
   change_summary?: string | null;
 }
 
+export type BootstrapLastGenerationJob = DocPageLastGenerationJob;
+
 export interface BootstrapPanelData {
   node: BootstrapPanelNode;
   pending_draft: BootstrapPanelDraft | null;
@@ -151,6 +154,25 @@ export interface BootstrapPanelData {
   review_started_at: string | null;
   review_current_attempt: number | null;
   review_max_attempts: number | null;
+  /**
+   * Most recent generation job for this scope. Distinct from
+   * ``generation_status`` — that field collapses cancelled and
+   * completed into ``idle`` so the four-state UI doesn't treat
+   * them as the failure state. This field preserves the raw
+   * status so the doc-page header can show "last gen: cancelled
+   * 12 min ago" when the user is staring at stale approved
+   * content because the regen got cancelled.
+   */
+  last_generation_job: BootstrapLastGenerationJob | null;
+  /**
+   * ISO-8601 timestamp of the most recent ``NodeContentUpdated``
+   * event for this node. Drives the "approved content last
+   * landed" header line so the user can tell when the content
+   * they're reading was actually written. ``null`` for nodes
+   * that have never had a content-update event — typically
+   * brand-new bootstraps that haven't been regenerated yet.
+   */
+  last_content_updated_at: string | null;
 }
 
 /**
@@ -559,7 +581,15 @@ export function BootstrapDraftPanel({
     review_started_at,
     review_current_attempt,
     review_max_attempts,
+    last_generation_job,
+    last_content_updated_at,
   } = data;
+  const docMeta = (
+    <DocPageMeta
+      lastGenerationJob={last_generation_job}
+      lastContentUpdatedAt={last_content_updated_at}
+    />
+  );
 
   // Shared review state bundle — passed to DocumentReviewTabs
   // in both the pending-draft and approved-content branches.
@@ -635,10 +665,13 @@ export function BootstrapDraftPanel({
     return (
       <div className="max-w-4xl mx-auto">
         <div className="p-6 pb-0 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">{labels.draftHeading}</h2>
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1 min-w-0">
+              <h2 className="text-lg font-semibold">{labels.draftHeading}</h2>
+              {docMeta}
+            </div>
             {isRegenerating && (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 shrink-0">
                 <span className="text-xs text-gray-400">regenerating…</span>
                 <GenerationClock
                   startedAtIso={generation_started_at}
@@ -787,6 +820,7 @@ export function BootstrapDraftPanel({
   if (generation_status === 'failed' && !node.content) {
     return (
       <div className="p-6 max-w-4xl mx-auto space-y-4">
+        {docMeta}
         <div className="p-4 border border-red-800 bg-red-950/40 rounded text-sm text-red-300">
           <div className="font-semibold mb-1">Generation failed</div>
           {last_error && <div className="text-red-400/80">{last_error}</div>}
@@ -817,9 +851,12 @@ export function BootstrapDraftPanel({
   if (node.content) {
     return (
       <div className="p-6 space-y-4 max-w-4xl mx-auto">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{node.name}</h2>
-          <span className="text-xs text-gray-500 uppercase tracking-wide">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1 min-w-0">
+            <h2 className="text-lg font-semibold">{node.name}</h2>
+            {docMeta}
+          </div>
+          <span className="text-xs text-gray-500 uppercase tracking-wide shrink-0">
             Approved · read-only
           </span>
         </div>
@@ -856,8 +893,9 @@ export function BootstrapDraftPanel({
   // so we include a "Generate" button to kick a fresh run.
   return (
     <div className="p-6 space-y-4 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between">
+      <div className="space-y-1">
         <h2 className="text-lg font-semibold">{node.name}</h2>
+        {docMeta}
       </div>
       <div className="text-sm text-gray-400 italic">No approved content yet.</div>
       <button
