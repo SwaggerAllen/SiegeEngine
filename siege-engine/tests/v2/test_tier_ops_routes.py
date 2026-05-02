@@ -566,9 +566,16 @@ class TestResumeTier:
         assert all(j.priority == pipeline_queue.REVIEW_JOB_PRIORITY for j in review_jobs)
 
     def test_skips_review_when_completed_already(self, client, db, seeded):
-        """Approved + a completed review on file → leave it alone."""
-        # Stamp a completed review for both comps so resume skips them.
+        """Approved + a completed review with non-empty review_text on
+        file → leave it alone. Resume only re-fires if the actual
+        review_text is empty (the wipe-and-deferred case)."""
+        # Stamp a completed review for both comps + populate the
+        # node's review_text so resume sees the result actually
+        # landed.
         for comp_id in seeded["comp_ids"]:
+            comp = db.get(Node, comp_id)
+            assert comp is not None
+            comp.review_text = "<review>landed</review>"
             db.add(
                 Job(
                     job_type="v2.review_comparch",
@@ -670,6 +677,87 @@ class TestResumeTier:
         assert body["reviews_enqueued"] == 1
         assert len(body["scopes_skipped"]) == 1
         assert "active review job" in body["scopes_skipped"][0]["detail"]
+
+    def test_resumes_completed_review_with_wiped_review_text(self, client, db, seeded):
+        """Wipe-and-deferred case: a regen sweep cleared the prior
+        draft's review_text, the follow-up gen job got deferred so
+        no new draft committed and no fresh review fired, and the
+        latest review job in the table is still the pre-wipe
+        ``completed`` row. Resume Tier should re-enqueue a review
+        anyway, because the actual ``Draft.review_text`` is empty."""
+        from backend.models.node import Draft
+
+        target_id = seeded["comp_ids"][0]
+        # Simulate a pending draft with empty review_text — the
+        # state left after the regen sweep wiped the review row but
+        # the follow-up gen got deferred and never replaced the
+        # draft.
+        draft_id = f"draft_{uuid.uuid4().hex[:8]}"
+        db.add(
+            Draft(
+                id=draft_id,
+                project_id=seeded["project_id"],
+                target_type="node",
+                target_id=target_id,
+                content="<comparch>old draft</comparch>",
+                status="pending",
+                batch_id=f"batch_{uuid.uuid4().hex[:8]}",
+                review_text="",
+            )
+        )
+        # Pre-wipe completed review job — the row Resume Tier used
+        # to skip on.
+        db.add(
+            Job(
+                job_type="v2.review_comparch",
+                status="completed",
+                payload={
+                    "project_id": seeded["project_id"],
+                    "node_id": target_id,
+                    "draft_id": draft_id,
+                },
+            )
+        )
+        # Stamp a completed review on the second comp too, but with
+        # non-empty review_text — that scope should be skipped (the
+        # control case).
+        other_id = seeded["comp_ids"][1]
+        other_comp = db.get(Node, other_id)
+        assert other_comp is not None
+        other_comp.review_text = "<review>landed</review>"
+        db.add(
+            Job(
+                job_type="v2.review_comparch",
+                status="completed",
+                payload={
+                    "project_id": seeded["project_id"],
+                    "node_id": other_id,
+                    "draft_id": None,
+                },
+            )
+        )
+        db.commit()
+
+        r = client.post(f"/api/projects/{seeded['project_id']}/tiers/comparch/resume")
+        assert r.status_code == 200
+        body = r.json()
+        # First comp re-enqueued (completed review but empty text);
+        # second comp skipped (completed review with text on file).
+        assert body["reviews_enqueued"] == 1
+        assert len(body["scopes_skipped"]) == 1
+        assert "latest review completed" in body["scopes_skipped"][0]["detail"]
+        # Confirm the new review job carries the existing draft_id
+        # (it's reviewing the empty-text draft, not generating a new one).
+        new_review_jobs = [
+            j
+            for j in db.execute(
+                select(Job).where(Job.job_type == "v2.review_comparch", Job.status == "queued")
+            ).scalars()
+            if j.payload.get("project_id") == seeded["project_id"]
+        ]
+        assert len(new_review_jobs) == 1
+        assert new_review_jobs[0].payload.get("draft_id") == draft_id
+        assert new_review_jobs[0].payload.get("node_id") == target_id
 
     def test_enqueues_for_unapproved_scopes(self, client, db, seeded):
         """Wiping content + having no active job should resume both
