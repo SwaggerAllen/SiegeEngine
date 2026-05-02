@@ -234,6 +234,8 @@ class ExpansionResponse(BaseModel):
     review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
+    last_generation_job: LastGenerationJob | None = None
+    last_content_updated_at: str | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -539,6 +541,8 @@ class ReqsResponse(BaseModel):
     review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
+    last_generation_job: LastGenerationJob | None = None
+    last_content_updated_at: str | None = None
 
 
 class ReqsApproveResponse(BaseModel):
@@ -699,6 +703,8 @@ class SysarchResponse(BaseModel):
     review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
+    last_generation_job: LastGenerationJob | None = None
+    last_content_updated_at: str | None = None
 
 
 class SysarchApproveResponse(BaseModel):
@@ -1169,6 +1175,8 @@ class ComparchResponse(BaseModel):
     review_started_at: str | None = None
     review_current_attempt: int | None = None
     review_max_attempts: int | None = None
+    last_generation_job: LastGenerationJob | None = None
+    last_content_updated_at: str | None = None
 
 
 class ComparchApproveResponse(BaseModel):
