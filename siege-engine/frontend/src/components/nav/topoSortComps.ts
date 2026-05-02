@@ -1,18 +1,27 @@
 import type { StructureEdge, StructureNode } from '../../api/structure';
 
 /**
- * Topologically sort top-level comps by ``dependency`` edges so
- * dependencies appear before their dependents. A comp's
- * topological position equals "the number of its outbound
- * dependency edges that haven't yet been emitted" — Kahn's
- * algorithm with a (is_foundation desc, display_order asc, id)
- * tiebreak inside each frontier so the rendered order is stable
- * across regenerations and foundations land at the very top.
+ * Topologically sort top-level comps by ``dependency`` and
+ * ``domain_parent`` edges so dependencies and domain parents
+ * appear before their dependents. A presentational comp's
+ * comparch can't run until its domain parents have populated
+ * fan-ins (see CLAUDE.md scheduling invariants), so domain_parent
+ * is a real ordering constraint, not just a scheduling gate.
  *
- * Cycles in the dependency graph (sysarch validator should reject
- * these, but defence-in-depth) get appended in display_order at
- * the end so no comp is dropped from the rendered list.
+ * Kahn's algorithm with a (is_foundation desc, display_order asc,
+ * id) tiebreak inside each frontier so the rendered order is
+ * stable across regenerations and foundations land at the very
+ * top.
+ *
+ * Cycles (sysarch validator should reject these, but
+ * defence-in-depth) get appended in display_order at the end so
+ * no comp is dropped from the rendered list.
  */
+const ORDERING_EDGE_TYPES: ReadonlySet<string> = new Set([
+  'dependency',
+  'domain_parent',
+]);
+
 export function topoSortComps(
   comps: StructureNode[],
   edges: ReadonlyArray<StructureEdge>,
@@ -27,9 +36,15 @@ export function topoSortComps(
     dependsOnCount.set(c.id, 0);
     dependents.set(c.id, []);
   }
+  // Dedup (source, target) pairs so a comp with both a `dependency`
+  // and a `domain_parent` edge to the same target only counts once.
+  const seenEdges = new Set<string>();
   for (const e of edges) {
-    if (e.edge_type !== 'dependency') continue;
+    if (!ORDERING_EDGE_TYPES.has(e.edge_type)) continue;
     if (!compIds.has(e.source_id) || !compIds.has(e.target_id)) continue;
+    const key = `${e.source_id}->${e.target_id}`;
+    if (seenEdges.has(key)) continue;
+    seenEdges.add(key);
     dependsOnCount.set(e.source_id, (dependsOnCount.get(e.source_id) ?? 0) + 1);
     dependents.get(e.target_id)?.push(e.source_id);
   }

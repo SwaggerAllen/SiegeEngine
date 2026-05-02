@@ -559,6 +559,75 @@ def list_edges(session: Session, project_id: str) -> list[Edge]:
     )
 
 
+# ── Topological sort for top-level comps ───────────────────────────
+#
+# Mirrors ``frontend/src/components/nav/topoSortComps.ts`` so the
+# sidebar order, the tier-ops enqueue order, and any other server-
+# side iteration over top-level comps stay aligned. Both
+# ``dependency`` and ``domain_parent`` edges count as ordering
+# constraints — a presentational comp's comparch can't run until
+# its domain parents have populated fan-ins (see CLAUDE.md
+# scheduling invariants), so domain_parent is a real ordering edge,
+# not just a scheduling gate.
+
+_ORDERING_EDGE_TYPES: frozenset[str] = frozenset({"dependency", "domain_parent"})
+
+
+def topo_sort_top_level_comps(comps: list[Node], edges: list[Edge]) -> list[Node]:
+    """Kahn's topological sort with (foundation desc, display_order, id) tiebreak.
+
+    Operates on already-loaded comps and edges — pure function, no
+    DB access. Cycles fall through to a stable display-order tail
+    so no comp drops from the result.
+    """
+    comp_ids = {c.id for c in comps}
+    comp_by_id = {c.id: c for c in comps}
+    depends_on_count: dict[str, int] = {c.id: 0 for c in comps}
+    dependents: dict[str, list[str]] = {c.id: [] for c in comps}
+
+    seen_pairs: set[tuple[str, str]] = set()
+    for e in edges:
+        if e.edge_type not in _ORDERING_EDGE_TYPES:
+            continue
+        if e.source_id not in comp_ids or e.target_id not in comp_ids:
+            continue
+        pair = (e.source_id, e.target_id)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        depends_on_count[e.source_id] += 1
+        dependents[e.target_id].append(e.source_id)
+
+    def _tiebreak_key(node: Node) -> tuple[int, int, str]:
+        # is_foundation desc → sort key returns 0 for foundations, 1 otherwise
+        return (0 if node.is_foundation else 1, node.display_order, node.id)
+
+    frontier = sorted(
+        (c for c in comps if depends_on_count[c.id] == 0),
+        key=_tiebreak_key,
+    )
+    result: list[Node] = []
+    seen: set[str] = set()
+    while frontier:
+        node = frontier.pop(0)
+        if node.id in seen:
+            continue
+        seen.add(node.id)
+        result.append(node)
+        for dep_id in dependents[node.id]:
+            depends_on_count[dep_id] -= 1
+            if depends_on_count[dep_id] == 0 and dep_id not in seen:
+                dep_node = comp_by_id[dep_id]
+                frontier.append(dep_node)
+                frontier.sort(key=_tiebreak_key)
+
+    # Cycle fallback — append leftovers in display order.
+    for c in comps:
+        if c.id not in seen:
+            result.append(c)
+    return result
+
+
 def list_fragments(session: Session, project_id: str) -> list[Fragment]:
     return list(
         session.execute(

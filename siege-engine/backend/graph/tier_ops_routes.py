@@ -36,6 +36,11 @@ from backend.graph.bootstrap_routes import (
     bootstrap_reset,
     build_job_payload,
 )
+from backend.graph.queries import (
+    list_edges,
+    list_top_level_components,
+    topo_sort_top_level_comps,
+)
 from backend.models import Project, User
 from backend.models.job import Job
 from backend.models.node import Node
@@ -73,19 +78,15 @@ def _singleton_scope(_db: Session, _project_id: str) -> list[tuple[str, ...]]:
 
 
 def _top_level_comp_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
-    """Per-comp tiers (comparch) iterate top-level comps."""
-    rows = list(
-        db.execute(
-            select(Node.id)
-            .where(
-                Node.project_id == project_id,
-                Node.tier == "comp",
-                Node.parent_id.is_(None),
-            )
-            .order_by(Node.display_order.asc(), Node.id.asc())
-        ).scalars()
-    )
-    return [(comp_id,) for comp_id in rows]
+    """Per-comp tiers (comparch) iterate top-level comps in topo order.
+
+    Uses ``topo_sort_top_level_comps`` so the enqueue order matches
+    the sidebar's render order — dependencies and domain parents
+    enqueue before the comps that depend on them.
+    """
+    comps = list_top_level_components(db, project_id)
+    edges = list_edges(db, project_id)
+    return [(c.id,) for c in topo_sort_top_level_comps(comps, edges)]
 
 
 def _subcomp_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
