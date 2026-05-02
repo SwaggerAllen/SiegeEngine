@@ -36,6 +36,21 @@ export const FanInResponseSchema = z.object({
   review_started_at: z.string().nullish().transform((v) => v ?? null),
   review_current_attempt: z.number().int().nullish().transform((v) => v ?? null),
   review_max_attempts: z.number().int().nullish().transform((v) => v ?? null),
+  // Doc-page header — see api/bootstrapApi.ts for matching fields
+  // on the other tier responses.
+  last_generation_job: z
+    .object({
+      status: z.string(),
+      created_at: z.string(),
+      completed_at: z.string().nullable(),
+      error_message: z.string().nullable(),
+    })
+    .nullable()
+    .default(null),
+  last_content_updated_at: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
 });
 export type FanInResponse = z.infer<typeof FanInResponseSchema>;
 

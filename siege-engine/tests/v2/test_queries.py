@@ -779,3 +779,105 @@ class TestTopoSortTopLevelComps:
         sorted_ids = [c.id for c in topo_sort_comps(comps, edges)]
         # c emits first (no edges), then a + b appended in display order.
         assert sorted_ids == [comp_c, comp_a, comp_b]
+
+
+class TestLastNodeContentUpdatedAt:
+    def test_returns_none_when_node_has_never_had_content_event(self, db, seeded):
+        from backend.graph.queries import last_node_content_updated_at
+
+        # The seeded fixture mints comps via NodeCreated only — no
+        # NodeContentUpdated events, so the helper returns None.
+        result = last_node_content_updated_at(
+            db, seeded["project_id"], seeded["comp_billing"]
+        )
+        assert result is None
+
+    def test_returns_iso_timestamp_of_latest_content_update(self, db, seeded):
+        from backend.graph.queries import last_node_content_updated_at
+
+        # Two updates in sequence — the helper should return the
+        # second one's timestamp (or at least a non-null ISO string).
+        append_event(
+            db,
+            seeded["project_id"],
+            ev.NodeContentUpdated(
+                node_id=seeded["comp_billing"], new_content="<comparch>v1</comparch>"
+            ),
+        )
+        append_event(
+            db,
+            seeded["project_id"],
+            ev.NodeContentUpdated(
+                node_id=seeded["comp_billing"], new_content="<comparch>v2</comparch>"
+            ),
+        )
+        db.commit()
+
+        result = last_node_content_updated_at(
+            db, seeded["project_id"], seeded["comp_billing"]
+        )
+        assert result is not None
+        # ISO-8601 — datetime.fromisoformat round-trips cleanly.
+        from datetime import datetime
+
+        datetime.fromisoformat(result)
+
+    def test_filters_by_node_id(self, db, seeded):
+        from backend.graph.queries import last_node_content_updated_at
+
+        # Update billing — auth's helper should still return None.
+        append_event(
+            db,
+            seeded["project_id"],
+            ev.NodeContentUpdated(
+                node_id=seeded["comp_billing"], new_content="<comparch>v1</comparch>"
+            ),
+        )
+        db.commit()
+
+        billing_result = last_node_content_updated_at(
+            db, seeded["project_id"], seeded["comp_billing"]
+        )
+        auth_result = last_node_content_updated_at(
+            db, seeded["project_id"], seeded["comp_auth"]
+        )
+        assert billing_result is not None
+        assert auth_result is None
+
+
+class TestLatestGenerationJobSummary:
+    def test_returns_none_when_no_matching_job(self, db, seeded):
+        from backend.graph.queries import latest_generation_job_summary
+
+        result = latest_generation_job_summary(
+            db, seeded["project_id"], "v2.generate_comparch"
+        )
+        assert result is None
+
+    def test_preserves_cancelled_status(self, db, seeded):
+        from backend.models.job import Job
+        from backend.graph.queries import latest_generation_job_summary
+
+        job = Job(
+            job_type="v2.generate_comparch",
+            status="cancelled",
+            payload={
+                "project_id": seeded["project_id"],
+                "component_id": seeded["comp_billing"],
+            },
+            error_message="user cancelled the job",
+        )
+        db.add(job)
+        db.commit()
+
+        result = latest_generation_job_summary(
+            db,
+            seeded["project_id"],
+            "v2.generate_comparch",
+            payload_filters={"component_id": seeded["comp_billing"]},
+        )
+        assert result is not None
+        # Crucial — cancelled stays cancelled instead of folding to idle.
+        assert result.status == "cancelled"
+        assert result.error_message == "user cancelled the job"
+        assert result.created_at  # ISO string is non-empty

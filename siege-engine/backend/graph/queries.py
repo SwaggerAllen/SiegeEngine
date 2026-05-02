@@ -890,6 +890,84 @@ def latest_generation_status(
     return "idle", None, None, None, None, None
 
 
+@dataclass(frozen=True)
+class GenerationJobSummary:
+    """Raw summary of the most recent generation job for a doc page.
+
+    Used by the bootstrap response so the UI can show "last gen:
+    cancelled at 12:34 PM" / "completed 3 min ago" — strictly more
+    information than ``latest_generation_status`` exposes (that
+    helper collapses cancelled and completed into ``idle``).
+    """
+
+    status: str  # raw Job.status: queued|running|completed|failed|cancelled
+    created_at: str  # ISO-8601 (UTC, naive)
+    completed_at: str | None  # ISO-8601 if terminal, else None
+    error_message: str | None
+
+
+def latest_generation_job_summary(
+    session: Session,
+    project_id: str,
+    job_type: str,
+    payload_filters: dict | None = None,
+) -> GenerationJobSummary | None:
+    """Return the latest matching job's raw status + timestamps.
+
+    Sibling to :func:`latest_generation_status` — that helper folds
+    completed/cancelled/no-job into the same ``idle`` bucket because
+    the four-state UI doesn't distinguish them. This helper preserves
+    the distinction so the doc page can show "last generation:
+    cancelled" vs. "completed" vs. "running" with timestamps.
+    Returns ``None`` if no matching job exists.
+    """
+    filters = dict(payload_filters or {})
+    filters.setdefault("project_id", project_id)
+    rows = (
+        session.execute(
+            select(Job).where(Job.job_type == job_type).order_by(Job.created_at.desc()).limit(50)
+        )
+        .scalars()
+        .all()
+    )
+    for job in rows:
+        payload = job.payload or {}
+        if any(payload.get(k) != v for k, v in filters.items()):
+            continue
+        return GenerationJobSummary(
+            status=job.status,
+            created_at=job.created_at.isoformat() if job.created_at else "",
+            completed_at=job.completed_at.isoformat() if job.completed_at else None,
+            error_message=job.error_message,
+        )
+    return None
+
+
+def last_node_content_updated_at(session: Session, project_id: str, node_id: str) -> str | None:
+    """Return the ISO timestamp of the most recent content update for a node.
+
+    Filters ``NodeContentUpdated`` events down to those whose payload
+    ``node_id`` matches via SQLite's ``json_extract`` so we don't have
+    to scan a project-wide window in Python. Used by the doc-page
+    header to show "last regenerated content: 3 min ago".
+
+    Returns ``None`` if the node has no content-update events
+    (e.g., a freshly-bootstrapped node whose initial content was
+    written via the seed path rather than a regen).
+    """
+    row = session.execute(
+        select(GraphEvent.created_at)
+        .where(
+            GraphEvent.project_id == project_id,
+            GraphEvent.event_type == "NodeContentUpdated",
+            func.json_extract(GraphEvent.payload, "$.node_id") == node_id,
+        )
+        .order_by(GraphEvent.created_at.desc())
+        .limit(1)
+    ).scalar()
+    return row.isoformat() if row else None
+
+
 # ── Phase 9: staleness ledger queries ────────────────────────────────
 
 

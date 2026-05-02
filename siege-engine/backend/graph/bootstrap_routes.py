@@ -282,6 +282,20 @@ def bootstrap_get_state(
         node.id,
     )
 
+    # Doc-page header — "last regenerated" timestamps. The job summary
+    # shows the latest generation job in its raw status (so cancelled
+    # jobs surface as cancelled, not folded into idle), and the
+    # content-updated timestamp is the most recent NodeContentUpdated
+    # event so users can see when the content they're looking at
+    # actually landed.
+    last_job = queries.latest_generation_job_summary(
+        db,
+        project_id,
+        config.generate_job_type,
+        payload_filters=payload_filters if payload_filters else None,
+    )
+    last_content_updated_at = queries.last_node_content_updated_at(db, project_id, node.id)
+
     return {
         "node": config.serialize_node(node),
         "pending_draft": config.serialize_draft(draft) if draft else None,
@@ -310,6 +324,17 @@ def bootstrap_get_state(
         "review_max_attempts": review_max_attempts,
         "is_stale": bool(stale_reasons),
         "staleness_reasons": stale_reasons,
+        "last_generation_job": (
+            {
+                "status": last_job.status,
+                "created_at": last_job.created_at,
+                "completed_at": last_job.completed_at,
+                "error_message": last_job.error_message,
+            }
+            if last_job is not None
+            else None
+        ),
+        "last_content_updated_at": last_content_updated_at,
     }
 
 
