@@ -224,9 +224,34 @@ def get_debug_snapshot(
                 "id": e.id,
                 "offset": e.offset,
                 "event_type": e.event_type,
-                "payload": e.payload,
+                "payload": _strip_event_content(e.payload),
                 "created_at": e.created_at.isoformat() if e.created_at else None,
             }
             for e in recent_events
         ],
     }
+
+
+# Payload fields that carry full document bodies and bloat the
+# copy-this-to-clipboard debug snapshot. Stripped when the snapshot
+# serializes events — replaced with a short ``[content elided: N
+# chars]`` placeholder so the surrounding causality is still
+# readable but the dump stays small enough to paste into chat /
+# tickets without scrolling for pages.
+_ELIDED_PAYLOAD_FIELDS: tuple[str, ...] = (
+    "content",
+    "new_content",
+    "review_text",
+)
+
+
+def _strip_event_content(payload: dict | None) -> dict | None:
+    if not isinstance(payload, dict):
+        return payload
+    out: dict = {}
+    for k, v in payload.items():
+        if k in _ELIDED_PAYLOAD_FIELDS and isinstance(v, str) and len(v) > 200:
+            out[k] = f"[content elided: {len(v)} chars]"
+        else:
+            out[k] = v
+    return out

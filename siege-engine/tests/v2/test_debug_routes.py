@@ -139,3 +139,96 @@ def test_event_and_job_limits_clamp(client):
     # Caps at 2000 events / 500 jobs even when caller asks for more.
     assert body["summary"]["events_returned"] <= 2000
     assert body["summary"]["jobs_returned"] <= 500
+
+
+def test_event_payload_strips_long_content_fields(client, db):
+    c, pid = client
+    # Append events that carry a long ``content`` body and a long
+    # ``new_content``. The snapshot should replace each with an
+    # ``[content elided: N chars]`` placeholder so the dump stays
+    # paste-friendly. We exercise NodeCreated.content and
+    # NodeContentUpdated.new_content here; review_text elision is
+    # covered by the unit test on _strip_event_content below.
+    big_body = "<comparch>" + ("x" * 5000) + "</comparch>"
+
+    comp_id = mint(db, Kind.COMP)
+    append_event(
+        db,
+        pid,
+        ev.NodeCreated(
+            node_id=comp_id,
+            tier="comp",
+            kind="domain",
+            parent_id=None,
+            name="Big",
+            display_order=0,
+            content=big_body,
+        ),
+    )
+    append_event(
+        db,
+        pid,
+        ev.NodeContentUpdated(node_id=comp_id, new_content=big_body),
+    )
+    db.commit()
+
+    r = c.get(f"/api/projects/{pid}/debug/snapshot?events=2000")
+    body = r.json()
+    big_created = next(
+        e
+        for e in body["recent_events"]
+        if e["event_type"] == "NodeCreated" and e["payload"].get("node_id") == comp_id
+    )
+    big_updated = next(e for e in body["recent_events"] if e["event_type"] == "NodeContentUpdated")
+
+    assert big_created["payload"]["content"].startswith("[content elided:")
+    assert big_updated["payload"]["new_content"].startswith("[content elided:")
+    # Other payload fields stay as-is.
+    assert big_created["payload"]["node_id"] == comp_id
+    assert big_updated["payload"]["node_id"] == comp_id
+
+
+def test_strip_event_content_handles_review_text_directly():
+    from backend.graph.debug_routes import _strip_event_content
+
+    big_review = "<review>" + ("y" * 4000) + "</review>"
+    payload = {
+        "event_type": "DraftReviewUpdated",
+        "draft_id": "draft_xxx",
+        "node_id": "comp_AAAA0000",
+        "review_text": big_review,
+    }
+    out = _strip_event_content(payload)
+    assert out is not None
+    assert out["review_text"].startswith("[content elided:")
+    assert out["draft_id"] == "draft_xxx"
+    assert out["node_id"] == "comp_AAAA0000"
+
+
+def test_short_content_strings_are_not_elided(client, db):
+    c, pid = client
+    short_body = "<sysarch/>"  # well under 200 chars
+    sysarch_id = mint(db, Kind.SYSARCH)
+    append_event(
+        db,
+        pid,
+        ev.NodeCreated(
+            node_id=sysarch_id,
+            tier="sysarch",
+            kind="domain",
+            parent_id=None,
+            name="Short",
+            display_order=0,
+            content=short_body,
+        ),
+    )
+    db.commit()
+
+    r = c.get(f"/api/projects/{pid}/debug/snapshot?events=2000")
+    body = r.json()
+    short_event = next(
+        e
+        for e in body["recent_events"]
+        if e["event_type"] == "NodeCreated" and e["payload"].get("node_id") == sysarch_id
+    )
+    assert short_event["payload"]["content"] == short_body
