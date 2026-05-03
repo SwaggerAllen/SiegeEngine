@@ -227,21 +227,35 @@ def _resolve(tier: TierName) -> tuple[BootstrapTierConfig, _ScopeIter]:
 def list_batches(
     project_id: str,
     tier: str | None = None,
+    cohort_id: str | None = None,
+    op_type: str | None = None,
     limit: int = 25,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """List recent batches for a project, optionally filtered by tier.
+    """List recent batches for a project with optional filters.
 
-    Used by the review-summary panel's batch dropdown so the user
-    can scope the displayed reviews to a specific operation. ``tier``
-    is the slug ("comparch", "subcomparch", etc); omit to see all
-    batches across the project. Newest first.
+    Used by the review-summary panel's batch dropdown (filter by
+    ``tier``) and by the cohort cycle-history view (filter by
+    ``cohort_id`` + ``op_type="cohort_regenerate"``). ``cohort_id``
+    matches against ``scope_keys.cohort_id`` JSON-side, since
+    that's where cohort-regenerate batches stash the cohort
+    reference. Newest first.
     """
     from backend.graph.batches import list_batches_for_tier
 
     _require_project(db, project_id)
-    rows = list_batches_for_tier(db, project_id, tier, limit=limit)
+    # Pull a wider window when filtering on cohort or op_type so
+    # the post-filter still gives the user a useful list. The
+    # cohort_id filter happens after the SQL fetch because
+    # scope_keys is JSON.
+    fetch_limit = limit if cohort_id is None else max(limit, 100)
+    rows = list_batches_for_tier(db, project_id, tier, limit=fetch_limit)
+    if op_type is not None:
+        rows = [b for b in rows if b.op_type == op_type]
+    if cohort_id is not None:
+        rows = [b for b in rows if (b.scope_keys or {}).get("cohort_id") == cohort_id]
+    rows = rows[:limit]
     return {
         "batches": [
             {

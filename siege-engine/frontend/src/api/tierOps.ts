@@ -186,10 +186,12 @@ const BatchListSchema = z.object({
 
 export async function listBatches(
   projectId: string,
-  options: { tier?: string; limit?: number } = {},
+  options: { tier?: string; cohort_id?: string; op_type?: string; limit?: number } = {},
 ): Promise<Batch[]> {
   const params: Record<string, string | number> = {};
   if (options.tier) params.tier = options.tier;
+  if (options.cohort_id) params.cohort_id = options.cohort_id;
+  if (options.op_type) params.op_type = options.op_type;
   if (options.limit) params.limit = options.limit;
   const r = await api.get(`/projects/${projectId}/batches`, { params });
   return BatchListSchema.parse(r.data).batches;

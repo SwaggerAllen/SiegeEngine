@@ -364,6 +364,57 @@ helper queries (`gaps_in_batch`, `jobs_in_batch`,
 human-curated review-session concept; the new `Batch` model
 records every issued operation, including single-node ones.
 
+## Cohorts (sampling campaigns)
+
+Saved selections of comp IDs that drive iteration campaigns at
+the next tier down. The intended workflow when iterating a
+prompt:
+
+1. Open the per-tier structure summary, hit "Select for cohort",
+   either auto-suggest (stratified greedy sampler against
+   per-tier axis weights) or hand-pick comps, save as a cohort.
+2. Each iteration cycle: kick off cohort regenerate from the
+   Cohorts page. Two modes:
+   - **review** (`bootstrap_feedback("", force=True)` per sub) —
+     keeps approved content, threads `prior_review_text` forward
+     so the model iterates on its own critique.
+   - **fresh** (`bootstrap_reset(force=True)` per sub) — wipes
+     content + downstream cascade, generates from scratch with
+     no prior context.
+3. Add an exploration sample each cycle (`/tiers/subcomparch/
+   exploration-sample`) — picks N comps not in the canonical
+   cohort and not in any prior exploration batch, regenerates
+   their subs. Surfaces pattern-level findings the canonical
+   sample can't see.
+4. After scores plateau, fire the full-corpus action
+   (`/tiers/subcomparch/full-corpus`) once to cover the long tail.
+5. Cycle history view (per-cohort, in `CohortsPanel`) lists
+   prior `cohort_regenerate` batches with mode badge, mean
+   score, and per-mode-pair score deltas (fresh vs prior fresh,
+   review vs prior review — cross-mode batches show stats but
+   no delta arrow because the baselines aren't comparable).
+
+Sampler axis weights live in the `cohort_sampler_configs` table
+— per `(project, tier)` JSON config editable via the
+`/sampler-configs/:tier` GET/PUT endpoint or the inline
+`SamplerConfigEditor` UI on the cohorts page. Defaults seeded on
+first read for the comparch tier (kind / foundation / sub_count
+/ dep_count / multi_owner_resp_count). Tuning weights doesn't
+require a deploy — important so axis edits don't interrupt
+in-flight generations.
+
+The cohort regenerate path uses `bootstrap_feedback`'s
+`force=True` parameter to bypass the `has_been_approved` 409 —
+per-node UI buttons stay gated by default, only campaign
+operations push regen through approved nodes.
+
+Subcomparch's tier-op scope tuples are 1-element `(sub_id,)`
+because `SUBCOMPARCH_CONFIG.get_node` is `_get_sub_node(db,
+project_id, sub_id)`. This was a pre-existing inconsistency
+(2-tuples in `_subcomp_scope` would have crashed Reset All on
+subcomparch); fixed during Phase 3b along with the new
+endpoints.
+
 ## Frontend patterns
 
 - **All Zustand stores use `createSafeStore`** (`frontend/src/store/createSafeStore.ts`)
