@@ -62,9 +62,18 @@ credential_writer; this sub handles the read path"). When a \
 named pattern *is* claimed, validate it: do the feat slices \
 divide coherently along that seam, or is one subcomp shadowing \
 the other?
-- Every parent resp in scope must be claimed by ≥1 subcomp; \
-every feat tagged on a parent resp must be claimed by ≥1 \
-subcomp claiming that resp. Flag coverage gaps.
+- When ``<subcomponents>`` decomposes, every parent resp in \
+scope must be claimed by ≥1 subcomp and every feat tagged on \
+a parent resp must be claimed by ≥1 subcomp claiming that \
+resp; flag coverage gaps. **Empty ``<subcomponents>`` is \
+legitimate** for un-fanned-out leaf components — a small \
+LiveView page, a thin REST surface, a single-purpose helper \
+with no internal seams worth surfacing. Do **not** flag empty \
+``<subcomponents>`` by itself as a structural problem; only \
+flag it when the techspec describes genuinely separable \
+concerns the artifact has chosen not to surface as subs (e.g., \
+distinct LiveView panes that own state independently, separate \
+read / write code paths against different aggregates).
 - ``<dependencies>`` and ``<sub-dependencies>`` reference only \
 valid sibling or parent-sibling comp IDs. Flag unknown IDs.
 - Policy ``<required>`` references must be in the parent-resp \
@@ -77,9 +86,11 @@ just method names. Types referenced in the public surface must \
 be defined there or come from a stable external dependency. \
 ``<private-surface>`` is genuinely internal (helpers only the \
 subs of this comp call), not re-exported public API. Flag \
-private types leaking through public-surface signatures and \
 public-surface entries that don't actually need to cross a \
-sibling boundary.
+sibling boundary. (Private modules leaking into public-surface \
+signatures are caught by the parser — focus on semantic \
+leakage: types or events that *could* be private without \
+breaking sibling consumers.)
 - ``<failure-surface>`` names **concrete failure modes** \
 (auth bypass, invariant violation, data loss, silent \
 degradation, specific wrong-output shapes) rather than impact \
@@ -88,13 +99,29 @@ Flag vague surfaces — the component-local failure surface is \
 sharper than the sysarch one because comparch has the full \
 techspec + pubapi in hand; if it reads the same as a sysarch \
 sketch, it's under-specified.
-- Cross-section consistency. Scan the artifact as a whole and \
-flag direct contradictions: a techspec claim ("no partial \
-writes", "all events are atomic") versus a failure-surface \
-scenario describing exactly that failure mode; an \
-owned-invariant versus a failure-surface scenario asserting \
-the opposite; a primary-operation that has no public-surface \
-entry-point and no private-surface helper to dispatch through.
+- **Cross-section consistency is the highest-yield check.** \
+Scan the artifact as a whole and flag direct contradictions: \
+a techspec claim ("no partial writes", "all events are \
+atomic") versus a failure-surface scenario describing exactly \
+that failure mode; an owned-invariant versus a failure-surface \
+scenario asserting the opposite; a public API return type \
+that cannot express a failure the failure surface explicitly \
+names; a primary-operation that has no public-surface \
+entry-point and no private-surface helper to dispatch \
+through; a public type that documents one shape while another \
+section's prose documents a different one. These are the \
+most common load-bearing findings — be specific about which \
+two sections disagree and what the artifact would need to do \
+to reconcile.
+
+Things you do **not** need to flag (the parser already \
+rejects them, so the artifact you're seeing has already \
+passed these checks): declared sub-dependency cycles in \
+``<sub-dependencies>``; private modules declared in \
+``<private-surface>`` and referenced by full module name in \
+``<public-surface>``; missing parent-resp coverage when \
+``<subcomponents>`` is non-empty; per-resp feat coverage \
+gaps. Spending review budget on these is wasted effort.
 """
 
 _ARCHITECTURE_INTRO = """\
