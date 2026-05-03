@@ -1,16 +1,23 @@
-import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getTierStructureSummary,
   type StructureTierName,
   type TierStructureSummary,
   type StructureNodeRow,
 } from '../api/tierOps';
+import { autoSuggestCohort, createCohort } from '../api/cohorts';
 
 interface Props {
   projectId: string;
   tier: StructureTierName;
 }
+
+// Tiers that support cohort selection. Currently only comparch
+// is wired through; other tiers can opt in by adding their slug
+// here once the campaign workflow extends to them.
+const COHORT_SELECTABLE_TIERS: StructureTierName[] = ['comparch'];
 
 /**
  * Read-only per-tier structure-summary dashboard. Surfaces what the
@@ -47,29 +54,214 @@ export function TierStructureSummaryPanel({ projectId, tier }: Props) {
       </div>
     );
   }
-  return <SummaryBody summary={data} tier={tier} />;
+  return <SummaryBody projectId={projectId} summary={data} tier={tier} />;
 }
 
 function SummaryBody({
+  projectId,
   summary,
   tier,
 }: {
+  projectId: string;
   summary: TierStructureSummary;
   tier: StructureTierName;
 }) {
+  const supportsCohort = COHORT_SELECTABLE_TIERS.includes(tier);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+
+  const toggleSelectionMode = useCallback(() => {
+    setSelectionMode((v) => !v);
+  }, []);
+  const toggleId = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const replaceSelection = useCallback((ids: Iterable<string>) => {
+    setSelected(new Set(ids));
+  }, []);
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
   return (
     <div
       className="space-y-3 rounded border border-gray-800 bg-gray-950/40 p-3"
       data-testid={`tier-structure-summary-${tier}`}
     >
       <Header summary={summary} />
+      {supportsCohort && (
+        <CohortSelectionBar
+          projectId={projectId}
+          tier={tier}
+          summary={summary}
+          selectionMode={selectionMode}
+          toggleSelectionMode={toggleSelectionMode}
+          selected={selected}
+          replaceSelection={replaceSelection}
+          clearSelection={clearSelection}
+        />
+      )}
       <AggregateBlock aggregate={summary.aggregate} tier={tier} />
       {summary.per_node.length > 0 ? (
-        <PerNodeTable rows={summary.per_node} tier={tier} />
+        <PerNodeTable
+          rows={summary.per_node}
+          tier={tier}
+          selectionMode={selectionMode}
+          selected={selected}
+          toggleId={toggleId}
+        />
       ) : (
-        <div className="text-xs text-gray-500 italic">
-          No nodes in this tier yet.
-        </div>
+        <div className="text-xs text-gray-500 italic">No nodes in this tier yet.</div>
+      )}
+    </div>
+  );
+}
+
+function CohortSelectionBar({
+  projectId,
+  tier,
+  summary,
+  selectionMode,
+  toggleSelectionMode,
+  selected,
+  replaceSelection,
+  clearSelection,
+}: {
+  projectId: string;
+  tier: StructureTierName;
+  summary: TierStructureSummary;
+  selectionMode: boolean;
+  toggleSelectionMode: () => void;
+  selected: Set<string>;
+  replaceSelection: (ids: Iterable<string>) => void;
+  clearSelection: () => void;
+}) {
+  const [targetSize, setTargetSize] = useState(8);
+  const [cohortName, setCohortName] = useState('canonical');
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const suggestMutation = useMutation({
+    mutationFn: () =>
+      autoSuggestCohort(projectId, tier, { target_size: targetSize }),
+    onSuccess: (result) => {
+      replaceSelection(result.suggested_ids);
+      setStatusMsg(
+        `Suggested ${result.suggested_ids.length} comp${result.suggested_ids.length === 1 ? '' : 's'} (axes: ${result.axes_used.join(', ') || 'none'}).`,
+      );
+    },
+    onError: (err: unknown) => {
+      setStatusMsg(`Auto-suggest failed: ${err instanceof Error ? err.message : String(err)}`);
+    },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      createCohort(projectId, {
+        tier,
+        name: cohortName.trim() || 'canonical',
+        comp_ids: Array.from(selected),
+      }),
+    onSuccess: (cohort) => {
+      queryClient.invalidateQueries({ queryKey: ['cohorts', projectId] });
+      setStatusMsg(`Saved cohort "${cohort.name}" (${cohort.comp_ids.length} comps).`);
+      clearSelection();
+      navigate(`/projects/${projectId}/cohorts`);
+    },
+    onError: (err: unknown) => {
+      setStatusMsg(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
+    },
+  });
+
+  if (!selectionMode) {
+    return (
+      <div className="flex items-center gap-2 text-xs">
+        <button
+          type="button"
+          onClick={toggleSelectionMode}
+          className="px-2 py-1 rounded border border-gray-700 text-gray-300 hover:bg-gray-800"
+          data-testid={`tier-structure-summary-${tier}-enter-selection`}
+        >
+          Select for cohort
+        </button>
+        <span className="text-gray-500">
+          Pick comps to save as a sampling cohort.
+        </span>
+      </div>
+    );
+  }
+
+  const totalRows = summary.per_node.length;
+  return (
+    <div
+      className="space-y-2 rounded border border-amber-900/60 bg-amber-950/20 p-2 text-xs"
+      data-testid={`tier-structure-summary-${tier}-selection-bar`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-amber-300 font-medium">
+          Selecting {selected.size}/{totalRows}
+        </span>
+        <label className="text-gray-400">
+          Target size:{' '}
+          <input
+            type="number"
+            min={1}
+            max={Math.max(1, totalRows)}
+            value={targetSize}
+            onChange={(e) => setTargetSize(Math.max(1, Number(e.target.value) || 1))}
+            className="w-12 bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => suggestMutation.mutate()}
+          disabled={suggestMutation.isPending}
+          className="px-2 py-1 rounded border border-blue-800 text-blue-200 hover:bg-blue-950 disabled:opacity-40"
+        >
+          {suggestMutation.isPending ? 'Suggesting…' : 'Auto-suggest'}
+        </button>
+        <button
+          type="button"
+          onClick={clearSelection}
+          disabled={selected.size === 0}
+          className="px-2 py-1 rounded border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
+        >
+          Clear
+        </button>
+        <button
+          type="button"
+          onClick={toggleSelectionMode}
+          className="px-2 py-1 rounded border border-gray-700 text-gray-300 hover:bg-gray-800"
+        >
+          Exit selection
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-gray-400">
+          Cohort name:{' '}
+          <input
+            type="text"
+            value={cohortName}
+            onChange={(e) => setCohortName(e.target.value)}
+            className="w-32 bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => saveMutation.mutate()}
+          disabled={selected.size === 0 || saveMutation.isPending}
+          className="px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-40"
+          data-testid={`tier-structure-summary-${tier}-save-cohort`}
+        >
+          {saveMutation.isPending ? 'Saving…' : 'Save selection as cohort'}
+        </button>
+      </div>
+      {statusMsg && (
+        <div className="text-amber-200/80">{statusMsg}</div>
       )}
     </div>
   );
@@ -148,7 +340,19 @@ function AggregateEntry({ label, value }: { label: string; value: unknown }) {
   );
 }
 
-function PerNodeTable({ rows, tier }: { rows: StructureNodeRow[]; tier: string }) {
+function PerNodeTable({
+  rows,
+  tier,
+  selectionMode,
+  selected,
+  toggleId,
+}: {
+  rows: StructureNodeRow[];
+  tier: string;
+  selectionMode: boolean;
+  selected: Set<string>;
+  toggleId: (id: string) => void;
+}) {
   // Column order: id + name first, then metric keys from the first
   // row in declaration order.
   const metricKeys = useMemo(() => Object.keys(rows[0]?.metrics ?? {}), [rows]);
@@ -192,6 +396,7 @@ function PerNodeTable({ rows, tier }: { rows: StructureNodeRow[]; tier: string }
       <table className="min-w-full text-[11px] border-collapse">
         <thead>
           <tr className="border-b border-gray-800 text-left">
+            {selectionMode && <th className="px-2 py-1 w-6" aria-label="Select" />}
             <SortableTh
               label="Name"
               active={sortKey === '__name'}
@@ -210,22 +415,37 @@ function PerNodeTable({ rows, tier }: { rows: StructureNodeRow[]; tier: string }
           </tr>
         </thead>
         <tbody>
-          {sortedRows.map((row) => (
-            <tr
-              key={row.id}
-              className="border-b border-gray-900 hover:bg-gray-900/40"
-              data-testid={`tier-structure-summary-${tier}-row-${row.id}`}
-            >
-              <td className="px-2 py-1 text-gray-200">
-                <div title={row.id}>{row.name}</div>
-              </td>
-              {metricKeys.map((k) => (
-                <td key={k} className="px-2 py-1 font-mono text-gray-300">
-                  {formatScalar(row.metrics[k])}
+          {sortedRows.map((row) => {
+            const isSelected = selectionMode && selected.has(row.id);
+            return (
+              <tr
+                key={row.id}
+                className={`border-b border-gray-900 hover:bg-gray-900/40 ${
+                  isSelected ? 'bg-amber-950/30' : ''
+                }`}
+                data-testid={`tier-structure-summary-${tier}-row-${row.id}`}
+              >
+                {selectionMode && (
+                  <td className="px-2 py-1">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleId(row.id)}
+                      data-testid={`tier-structure-summary-${tier}-select-${row.id}`}
+                    />
+                  </td>
+                )}
+                <td className="px-2 py-1 text-gray-200">
+                  <div title={row.id}>{row.name}</div>
                 </td>
-              ))}
-            </tr>
-          ))}
+                {metricKeys.map((k) => (
+                  <td key={k} className="px-2 py-1 font-mono text-gray-300">
+                    {formatScalar(row.metrics[k])}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

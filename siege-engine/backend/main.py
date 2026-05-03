@@ -183,6 +183,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 import backend.graph  # noqa: E402,F401
 from backend.auth.routes import router as auth_router  # noqa: E402
 from backend.github.oauth import router as github_router  # noqa: E402
+from backend.graph.cohort_routes import router as cohort_router  # noqa: E402
 from backend.graph.debug_routes import router as debug_router  # noqa: E402
 from backend.graph.jobs_routes import router as jobs_router  # noqa: E402
 from backend.graph.queue_routes import router as queue_router  # noqa: E402
@@ -195,6 +196,7 @@ app.include_router(project_router, prefix="/api/projects", tags=["projects"])
 app.include_router(graph_router, prefix="/api/projects", tags=["graph"])
 app.include_router(queue_router, prefix="/api/projects", tags=["queue"])
 app.include_router(tier_ops_router, prefix="/api/projects", tags=["tier-ops"])
+app.include_router(cohort_router, prefix="/api/projects", tags=["cohorts"])
 app.include_router(jobs_router, prefix="/api/projects", tags=["jobs"])
 app.include_router(debug_router, prefix="/api/projects", tags=["debug"])
 app.include_router(github_router, prefix="/api/github", tags=["github"])
