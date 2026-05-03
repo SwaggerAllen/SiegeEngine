@@ -481,6 +481,107 @@ class TestPolicies:
 _SOLO_RESP_MAP: dict[str, frozenset[str]] = {"resp_sess0001": frozenset({"feat_sessl0001"})}
 
 
+class TestPrivateModuleLeak:
+    """Reject when a module declared in <private-surface> is referenced
+    by name in <public-surface>. Reviewers flagged this repeatedly:
+    public types/specs/moduledocs naming a private Internal.Types
+    module force sibling consumers to import internals.
+    """
+
+    def test_private_module_referenced_in_public_surface_rejected(self):
+        """The AI Advisor / Foundation pattern: private Internal.Types
+        is named in a public type definition."""
+        raw = _arch_doc(
+            privapi=(
+                "defmodule Catapult.PrivateAdvisor.Internal.Types do\n"
+                "  @type citation_span :: %{...}\n"
+                "end"
+            ),
+            pubapi=(
+                "defmodule CitationRenderer do\n"
+                '  @doc """Renders citations defined in '
+                'Catapult.PrivateAdvisor.Internal.Types."""\n'
+                "  def render(spans), do: spans\n"
+                "end"
+            ),
+            subcomponents=_default_subcomponents(),
+            sub_dependencies=_DEFAULT_SUB_DEPS,
+        )
+        with pytest.raises(ValidationError, match="Private module.*leaked into public surface"):
+            _validate(raw)
+
+    def test_private_module_referenced_in_public_moduledoc_rejected(self):
+        """The In-App Notification Feed pattern: private Topics module's
+        name appears in a public moduledoc to document the topic
+        format. Still a leak — siblings parsing the moduledoc would
+        have to know the private module exists."""
+        raw = _arch_doc(
+            privapi=(
+                "defmodule CatapultWeb.NotificationFeed.Topics do\n"
+                '  def user_topic(user_id), do: "user:#{user_id}"\n'
+                "end"
+            ),
+            pubapi=(
+                "defmodule CatapultWeb.NotificationFeed.NotificationBellLive do\n"
+                '  @moduledoc """Subscribes to topics constructed '
+                'by CatapultWeb.NotificationFeed.Topics."""\n'
+                "  use Phoenix.LiveView\n"
+                "end"
+            ),
+            subcomponents=_default_subcomponents(),
+            sub_dependencies=_DEFAULT_SUB_DEPS,
+        )
+        with pytest.raises(ValidationError, match="Private module.*leaked into public surface"):
+            _validate(raw)
+
+    def test_private_module_only_referenced_internally_accepted(self):
+        """Private modules can reference each other freely without
+        appearing in the public surface — that's encapsulation
+        working correctly."""
+        doc = _validate(
+            _arch_doc(
+                privapi=(
+                    "defmodule X.Internal.Helper do\n"
+                    "  def thing, do: :ok\n"
+                    "end\n"
+                    "defmodule X.Internal.Other do\n"
+                    "  def go, do: X.Internal.Helper.thing()\n"
+                    "end"
+                ),
+                pubapi=("defmodule X.Public do\n  def hello, do: :world\nend"),
+                subcomponents=_default_subcomponents(),
+                sub_dependencies=_DEFAULT_SUB_DEPS,
+            )
+        )
+        assert doc.privapi.startswith("defmodule X.Internal.Helper")
+
+    def test_no_private_modules_at_all_accepted(self):
+        """Private surface that doesn't declare any modules — only
+        type definitions or prose notes — is trivially leak-free."""
+        doc = _validate(
+            _arch_doc(
+                privapi="Internal note: rate limiter uses ETS counter table.",
+                pubapi=("defmodule X.Public do\n  def hello, do: :world\nend"),
+                subcomponents=_default_subcomponents(),
+                sub_dependencies=_DEFAULT_SUB_DEPS,
+            )
+        )
+        assert "rate limiter" in doc.privapi
+
+    def test_private_module_substring_match_does_not_false_positive(self):
+        """``X.Internal.Foo`` declared private must not match
+        ``X.Internal.FooPrime`` in public — word-boundary regex."""
+        doc = _validate(
+            _arch_doc(
+                privapi=("defmodule X.Internal.Foo do\n  def thing, do: :ok\nend"),
+                pubapi=("defmodule X.Internal.FooPrime do\n  def thing, do: :ok\nend"),
+                subcomponents=_default_subcomponents(),
+                sub_dependencies=_DEFAULT_SUB_DEPS,
+            )
+        )
+        assert "X.Internal.FooPrime" in doc.pubapi
+
+
 class TestSubcomponentStructure:
     def test_missing_alias_rejected(self):
         bad = (
@@ -837,6 +938,149 @@ class TestSubDependencies:
             match="Missing foundation dependency from: credential_gate",
         ):
             _validate(raw)
+
+    def test_undeclared_cross_sub_reference_inducing_cycle_rejected(self):
+        """The reviewer-flagged case: SubA's prose mentions SubB by
+        name AND SubB's prose mentions SubA by name, but no
+        ``<dep>`` edge is declared in either direction. The declared
+        graph alone is acyclic, but the implicit reference graph
+        forms a cycle, which will surface as a circular module
+        dep at impl time. Reject on parse so the retry loop fires
+        with a clear repair instruction."""
+        subs = (
+            _sub(
+                "shell_substrate",
+                "ShellSubstrate",
+                [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
+                responsibilities=(
+                    "Shared foundation that ShellChrome depends on for layout config."
+                ),
+            )
+            + _sub(
+                "shell_chrome",
+                "ShellChrome",
+                [("resp_cred0001", ["feat_login0001"])],
+                responsibilities=(
+                    "Renders the chrome surrounding ShellSubstrate's exposed regions."
+                ),
+            )
+            + _sub("foundation", "Foundation", [], foundation=True)
+        )
+        raw = _arch_doc(
+            subcomponents=subs,
+            sub_dependencies=(
+                '<dep from="shell_substrate" to="foundation"/>'
+                '<dep from="shell_chrome" to="foundation"/>'
+            ),
+        )
+        with pytest.raises(ValidationError, match="Undeclared sub-dependency cycle"):
+            _validate(raw)
+
+    def test_one_directional_undeclared_reference_with_declared_reverse_rejected(self):
+        """Mixed case: one direction is declared, the other is only
+        in prose. Together they form a cycle. The declared cycle
+        check (run first) sees only the declared edge and is
+        happy; the undeclared-cycle check must catch this."""
+        subs = (
+            _sub(
+                "reducer_gate",
+                "ReducerGate",
+                [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
+                responsibilities=(
+                    "Validates commands. Calls into WebhookDeliveryPipeline "
+                    "to schedule outbound deliveries on commit."
+                ),
+            )
+            + _sub(
+                "webhook_delivery_pipeline",
+                "WebhookDeliveryPipeline",
+                [("resp_cred0001", ["feat_login0001"])],
+                # No mention of ReducerGate — this direction is
+                # declared explicitly via <dep> below.
+            )
+            + _sub("foundation", "Foundation", [], foundation=True)
+        )
+        raw = _arch_doc(
+            subcomponents=subs,
+            sub_dependencies=(
+                # Declared: WebhookDeliveryPipeline → ReducerGate
+                '<dep from="webhook_delivery_pipeline" to="reducer_gate"/>'
+                '<dep from="reducer_gate" to="foundation"/>'
+                '<dep from="webhook_delivery_pipeline" to="foundation"/>'
+            ),
+        )
+        # Implicit (from prose): reducer_gate → webhook_delivery_pipeline.
+        # Union forms a cycle: reducer_gate → webhook_delivery_pipeline → reducer_gate.
+        with pytest.raises(ValidationError, match="Undeclared sub-dependency cycle"):
+            _validate(raw)
+
+    def test_undeclared_reference_without_cycle_accepted(self):
+        """A subcomponent's prose can mention another by name without
+        a declared ``<dep>`` as long as the implicit edge doesn't
+        form a cycle. We only fail on cycles — plain undeclared
+        references are too noisy to gate on without false positives."""
+        subs = (
+            _sub(
+                "session_store",
+                "SessionStore",
+                [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
+                responsibilities=("Persists sessions. References CredentialGate for login flows."),
+            )
+            + _sub(
+                "credential_gate",
+                "CredentialGate",
+                [("resp_cred0001", ["feat_login0001"])],
+                # No back-reference to SessionStore — implicit edge
+                # is one-way only.
+            )
+            + _sub("foundation", "Foundation", [], foundation=True)
+        )
+        # Validator should accept; implicit edge session_store →
+        # credential_gate alone is acyclic.
+        doc = _validate(
+            _arch_doc(
+                subcomponents=subs,
+                sub_dependencies=_DEFAULT_SUB_DEPS,
+            )
+        )
+        assert len(doc.subcomponents) == 3
+
+    def test_short_or_lowercase_name_does_not_trip_match(self):
+        """Names that aren't unambiguous PascalCase identifiers
+        (too short or no internal uppercase) shouldn't trigger
+        false-positive matches when those character sequences
+        appear coincidentally in prose. Guards against a sub
+        named ``Core`` or ``Hub`` matching every casual mention
+        of the word in another sub's responsibilities."""
+        # "Hub" is 3 chars — below the eligibility threshold.
+        # SessionStore mentions "hub" in casual prose; this should
+        # NOT be flagged as an implicit dep on a sub named "Hub".
+        subs = (
+            _sub(
+                "session_store",
+                "SessionStore",
+                [("resp_sess0001", ["feat_sessl0001", "feat_sessr0002"])],
+                responsibilities=("The session storage hub for the auth flow."),
+            )
+            + _sub(
+                "credential_gate",
+                "Hub",
+                [("resp_cred0001", ["feat_login0001"])],
+                responsibilities=("Validates credentials. References SessionStore on login."),
+            )
+            + _sub("foundation", "Foundation", [], foundation=True)
+        )
+        # Even though the word "hub" appears in session_store's prose
+        # AND credential_gate references session_store, the implicit
+        # graph has only credential_gate → session_store (one-way) —
+        # no cycle, no rejection.
+        doc = _validate(
+            _arch_doc(
+                subcomponents=subs,
+                sub_dependencies=_DEFAULT_SUB_DEPS,
+            )
+        )
+        assert len(doc.subcomponents) == 3
 
     def test_all_foundation_deps_present_accepted(self):
         doc = _validate(

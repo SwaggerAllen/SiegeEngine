@@ -594,9 +594,13 @@ def resume_tier(
             continue
         # Look up the most recent review job for this node, scanning
         # the recent tail. We treat "never ran" and "last was
-        # cancelled" as resume-eligible; "completed" and "failed"
-        # are left alone (completed has a result; failed has its
-        # own per-tier Retry button).
+        # cancelled" as resume-eligible. A "completed" review is
+        # also resume-eligible if its review_text was wiped to empty
+        # — that happens when a regen sweep clears the prior review
+        # on the pending draft and the follow-up gen job got
+        # deferred (so no new draft committed and no new review
+        # auto-fired). Failed reviews are always left alone — they
+        # have their own per-tier Retry button.
         recent_review_jobs = list(
             db.execute(
                 select(Job)
@@ -614,9 +618,26 @@ def resume_tier(
             ),
             None,
         )
-        if latest_for_node is not None and latest_for_node.status != "cancelled":
-            # completed or failed — leave alone (completed has a
-            # result; failed has its own per-tier Retry button).
+        # Where the current review_text actually lives — on the
+        # pending draft for draft-bearing tiers (the wipe-on-regen
+        # path leaves an empty string here), or on the node row for
+        # fanin (no draft lifecycle).
+        if pending is not None:
+            current_review_text = pending.review_text or ""
+        else:
+            current_review_text = getattr(node, "review_text", "") or ""
+        review_text_present = bool(current_review_text.strip())
+        if (
+            latest_for_node is not None
+            and latest_for_node.status != "cancelled"
+            and (latest_for_node.status == "failed" or review_text_present)
+        ):
+            # completed-with-content or failed — leave alone
+            # (failed has its own per-tier Retry button; completed
+            # with non-empty review_text means the result actually
+            # landed). completed-with-empty-text falls through to
+            # the re-enqueue below — that's the wiped-and-deferred
+            # case described above.
             skipped.append(
                 {
                     "scope_ids": list(scope_ids),

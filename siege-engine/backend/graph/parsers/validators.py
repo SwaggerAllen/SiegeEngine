@@ -1420,6 +1420,149 @@ def _detect_dep_cycles(deps: tuple[DepEdge, ...], alias_set: set[str]) -> None:
             _dfs(a)
 
 
+def _detect_undeclared_sub_dep_cycles(
+    subcomponents: tuple[Subcomponent, ...],
+    declared_deps: tuple[DepEdge, ...],
+) -> None:
+    """Detect cycles induced by *prose-level* cross-subcomponent references
+    that aren't declared in ``<sub-dependencies>``.
+
+    Reviewers have flagged comparch artifacts where the declared
+    sub-dep graph is clean, but each subcomponent's prose describes a
+    call relationship to another subcomponent without the matching
+    ``<dep>`` edge — and the union of declared + implicit edges forms
+    a cycle. The declared graph alone passes acyclicity checks, but
+    the actual call topology cycles, which surfaces as a circular
+    module dependency at impl time.
+
+    Approach: for each subcomponent, scan its prose (purpose,
+    responsibilities, owned-invariants, primary-operations) for
+    word-boundary mentions of other subcomponents' ``<name>``
+    fields. Mentions become implicit dep edges. Union those with
+    the declared graph and run :func:`_detect_dep_cycles` against
+    the union. Cycles that exist in the declared graph alone are
+    silently ignored here — that helper already raised on them.
+
+    Heuristics to keep false-positive risk low:
+
+    - Match by ``<name>`` (PascalCase identifier), never by alias
+      (aliases like ``session_store`` are too generic to match
+      reliably in prose).
+    - Require ``len(name) >= 4`` AND at least one internal
+      uppercase letter so a sub literally named "Core" in a
+      single-word phrase doesn't trip a match for a different
+      sub also named "Core".
+    - Word-boundary match (``\\bSubName\\b``) so "ShellChrome"
+      doesn't match inside "ShellChromePrime".
+    """
+    if not subcomponents:
+        return
+
+    eligible: dict[str, str] = {}
+    for sub in subcomponents:
+        name = sub.name
+        if len(name) < 4:
+            continue
+        # Require at least one internal uppercase letter — distinguishes
+        # PascalCase identifiers (SubA, ShellChrome) from short/common
+        # English words that may appear coincidentally.
+        if not any(c.isupper() for c in name[1:]):
+            continue
+        eligible[name] = sub.alias
+
+    if not eligible:
+        return
+
+    declared_set: set[tuple[str, str]] = {(d.from_alias, d.to_alias) for d in declared_deps}
+
+    implicit_deps: list[DepEdge] = []
+    for sub in subcomponents:
+        prose_chunks: list[str] = [sub.purpose or "", sub.responsibilities or ""]
+        prose_chunks.extend(sub.owned_invariants)
+        prose_chunks.extend(sub.primary_operations)
+        prose = " ".join(c for c in prose_chunks if c)
+        if not prose:
+            continue
+        for name, alias in eligible.items():
+            if alias == sub.alias:
+                continue
+            if not re.search(rf"\b{re.escape(name)}\b", prose):
+                continue
+            edge = (sub.alias, alias)
+            if edge in declared_set:
+                continue
+            implicit_deps.append(DepEdge(from_alias=sub.alias, to_alias=alias))
+
+    if not implicit_deps:
+        return
+
+    sub_alias_set = {s.alias for s in subcomponents}
+    combined = tuple(list(declared_deps) + implicit_deps)
+    try:
+        _detect_dep_cycles(combined, sub_alias_set)
+    except ValidationError as cycle_err:
+        implicit_str = ", ".join(f"{e.from_alias} → {e.to_alias}" for e in implicit_deps)
+        raise ValidationError(
+            "Undeclared sub-dependency cycle detected. The declared "
+            "<sub-dependencies> graph alone is acyclic, but at least "
+            "one subcomponent's prose references another subcomponent "
+            "by name without a matching <dep> entry, and the union of "
+            "declared + implicit edges forms a cycle. "
+            f"Implicit references inferred from prose: {implicit_str}. "
+            "Fix by either (a) adding the missing <dep> entries and "
+            "restructuring so the graph is a DAG, or (b) rephrasing "
+            "the prose to remove the cross-subcomponent reference if "
+            "the call relationship is wrong. "
+            f"Underlying cycle: {cycle_err}"
+        ) from cycle_err
+
+
+def _detect_private_module_leak_in_public_surface(privapi: str, pubapi: str) -> None:
+    """Reject when a module declared in ``<private-surface>`` is
+    referenced by name in ``<public-surface>``.
+
+    Modules declared in the private surface are component internals
+    — sibling components shouldn't need their names to use the
+    public API. Reviewers flagged this repeatedly in the latest
+    comparch round: a public function component documenting a
+    private ``Internal.Types`` module by name, a public moduledoc
+    referencing private PubSub topic-format helpers, etc. Each one
+    forces a sibling consumer to import a module the component
+    explicitly marked private.
+
+    Heuristic: extract every module declared in private surface via
+    ``defmodule X.Y.Z do``, then word-boundary scan public surface
+    for each one. Module names are dotted PascalCase identifiers
+    that don't appear naturally in prose, so false-positive risk
+    is minimal — the LLM either repeated the private module's name
+    in a public type/spec/moduledoc (the leak) or it didn't.
+
+    Fix path the LLM has to choose between: promote the leaked
+    module to the public surface, or rewrite the public reference
+    to use only types and modules already in the public surface.
+    """
+    private_modules = sorted(set(re.findall(r"defmodule\s+(\S+)\s+do\b", privapi)))
+    if not private_modules:
+        return
+
+    leaked: list[str] = []
+    for mod in private_modules:
+        if re.search(rf"\b{re.escape(mod)}\b", pubapi):
+            leaked.append(mod)
+
+    if leaked:
+        raise ValidationError(
+            f"Private module(s) leaked into public surface: {', '.join(leaked)}. "
+            "Modules declared in <private-surface> are component internals "
+            "and must not appear in <public-surface> signatures, types, or "
+            "moduledocs — siblings would have to import a private module to "
+            "use the public API. Either move the leaked module(s) to the "
+            "public surface (and document why siblings need them), or rewrite "
+            "the public references to use only types and modules already "
+            "declared in <public-surface>."
+        )
+
+
 def _enforce_foundation_dependency(
     components: tuple[Component, ...], deps: tuple[DepEdge, ...]
 ) -> None:
@@ -1908,6 +2051,8 @@ def validate_arch_doc(
     privapi = _validate_fragment_section(section_map["private-surface"], "private-surface")
     failure_surface = _validate_fragment_section(section_map["failure-surface"], "failure-surface")
 
+    _detect_private_module_leak_in_public_surface(privapi, pubapi)
+
     policies = _validate_arch_doc_policies(
         section_map["policies"], known_resp_ids=set(known_parent_resp_ids.keys())
     )
@@ -1931,6 +2076,7 @@ def validate_arch_doc(
     # also skipped (cycle detection still runs).
     if subcomponents:
         _detect_dep_cycles(sub_deps, sub_alias_set)
+        _detect_undeclared_sub_dep_cycles(subcomponents, sub_deps)
         if not target_is_foundation:
             _enforce_sub_foundation_dependency(subcomponents, sub_deps)
 
