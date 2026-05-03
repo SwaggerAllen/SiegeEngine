@@ -635,6 +635,21 @@ targets one of the most common defects this tier produces. \
 Where a scan turns up a contradiction or gap, fix it in the \
 artifact before emitting; do not rationalize it.
 
+The parser will reject your output for these structural \
+violations on retry, so you don't need to manually verify \
+them — but knowing what they are helps you avoid producing \
+them in the first place: declared sub-dependency cycles in \
+``<sub-dependencies>``; private modules declared via \
+``defmodule X.Y.Z do`` (or equivalent in your language) inside \
+``<private-surface>`` and then referenced by full module name \
+in ``<public-surface>``; missing parent-resp coverage when \
+``<subcomponents>`` is non-empty; per-resp feat coverage gaps \
+within a claimed resp; foundation subcomponent missing or \
+duplicated when decomposing.
+
+The semantic checks below are not parser-enforced and are \
+where most surviving defects live:
+
 * **Surface closure (the dominant defect now).** Two passes, \
 both required. Phrase each as an explicit "for every X, \
 identify Y" walk — mismatches go in the artifact, not in \
@@ -651,7 +666,18 @@ that claims it). Same scan for type references: every type \
 named in a public-surface signature must be defined in \
 ``<public-surface>`` itself, be a language primitive / stdlib \
 type, or be imported from an external dependency you actually \
-declare in the techspec.
+declare in the techspec. **Nothing in a public-surface \
+signature, type field, or event payload may reference a type \
+or struct defined in ``<private-surface>``** — sibling \
+consumers would have to reach into your internals to use the \
+public API. If a private type is load-bearing for a public \
+signature, promote it to public; otherwise rewrite the public \
+reference using only types already on the public surface. \
+The parser catches the obvious version of this (private \
+module names in public moduledocs / specs); the version that \
+slips past the parser is a private struct's field types or \
+nested record types being exposed indirectly through a public \
+type — your scan must cover that.
 
   *Pass B — every internal commitment surfaces somewhere.* \
 For every ``<invariant>`` and ``<primary-operation>`` that \
@@ -664,6 +690,22 @@ call it and impl has no signature to write against. \
 Symmetrically, every ``<private-surface>`` entry must back at \
 least one primary-operation; private helpers no operation \
 references shouldn't have a private-surface entry at all.
+
+* **Failure-surface ↔ public-surface observability.** For \
+each failure mode named in ``<failure-surface>``, identify the \
+``<public-surface>`` entry that lets a caller observe it: an \
+error variant in a tagged-tuple return, a typed exception, an \
+event the caller can subscribe to, a status field they can \
+inspect. A failure mode the public API cannot surface is \
+either silent (the caller has no recourse — fix by adding the \
+error variant / event / status field), or is genuinely \
+internal-only (and shouldn't be in the failure surface at \
+all). The most common shape of this defect: the failure \
+surface explicitly names a partial-failure scenario \
+("partial see-also linking", "concurrent-modification \
+conflict", "rate-limit rejection") but the corresponding \
+public function returns a bare success type or an opaque \
+error atom that strips the discriminating detail.
 
 * **Owned-invariant ↔ failure-surface contradiction.** For \
 each ``<invariant>`` on each subcomponent, read the failure \
@@ -693,12 +735,19 @@ evidence of an unwritten section (write it).
 the source subcomp's ``<primary-operations>`` or \
 ``<responsibilities>`` text actually describes calling into \
 the target subcomp. **Symmetrically**, walk every subcomp's \
-operations / invariants / responsibilities and identify \
-every cross-subcomp call site implied by the prose; for each \
-one, confirm a corresponding ``<dep from="A" to="B"/>`` edge \
-exists. Implicit cross-sub calls without declared edges leave \
-the coupling graph incomplete, hide cycles, and mislead impl \
-about which subcomp is allowed to import which.
+operations / invariants / responsibilities / purpose and \
+identify every cross-subcomp call site implied by the prose; \
+for each one, confirm a corresponding \
+``<dep from="A" to="B"/>`` edge exists in \
+``<sub-dependencies>``. Implicit cross-sub references without \
+declared edges are aggressively rejected at parse time when \
+they form a cycle with the declared graph (the validator \
+walks subcomp ``<name>`` mentions in prose and unions implicit \
+edges with declared ones before running cycle detection); \
+even when no cycle exists they leave the coupling graph \
+incomplete and mislead impl about which subcomp is allowed to \
+import which. Either declare the edge, or rephrase the prose \
+to remove the call reference.
 
 * **Single-owner default.** Re-read your ``<owns>`` blocks \
 across all subcomps. Any parent resp claimed by more than one \
