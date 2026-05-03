@@ -400,6 +400,7 @@ def bootstrap_feedback(
     *,
     auto_revisions_requested: int = 0,
     batch_id: str | None = None,
+    force: bool = False,
 ) -> dict[str, str]:
     """Generic POST feedback handler.
 
@@ -409,6 +410,14 @@ def bootstrap_feedback(
     that support the auto-revision loop read those fields and
     drive inline review passes from the handler. Tiers that don't
     yet react to the fields carry them harmlessly.
+
+    ``force`` (Phase 14) bypasses the ``has_been_approved`` 409 so
+    a tier-op (cohort regenerate, full-corpus, etc.) can push regen
+    through approved nodes without the per-node-button gate. The
+    regen still discards any pending draft, rides the prior
+    ``review_text`` forward, and enqueues a fresh generation; the
+    only difference is the gate. Default ``False`` — per-node UI
+    buttons stay gated.
     """
     require_project(db, project_id)
     node = config.get_node(db, project_id, *scope_ids)
@@ -417,8 +426,10 @@ def bootstrap_feedback(
             status_code=404,
             detail=f"{config.tier_name} node missing",
         )
-    if config.has_been_approved is not None and config.has_been_approved(
-        db, project_id, *scope_ids
+    if (
+        not force
+        and config.has_been_approved is not None
+        and config.has_been_approved(db, project_id, *scope_ids)
     ):
         raise HTTPException(status_code=409, detail=config.feedback_readonly_detail)
     if auto_revisions_requested < 0:

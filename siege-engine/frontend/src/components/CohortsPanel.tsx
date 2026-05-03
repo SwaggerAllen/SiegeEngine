@@ -1,6 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { listCohorts, patchCohort, type Cohort } from '../api/cohorts';
+import {
+  generateExplorationSample,
+  generateFullCorpus,
+  listCohorts,
+  patchCohort,
+  regenerateCohort,
+  type Cohort,
+} from '../api/cohorts';
 
 interface Props {
   projectId: string;
@@ -37,6 +44,7 @@ export function CohortsPanel({ projectId }: Props) {
           and use it to A/B prompt changes against a fixed baseline.
         </p>
       </header>
+      <SubcompCampaignActions projectId={projectId} cohorts={cohorts ?? []} />
       <div className="text-xs">
         <label className="inline-flex items-center gap-2">
           <input
@@ -69,6 +77,7 @@ export function CohortsPanel({ projectId }: Props) {
 
 function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort }) {
   const [expanded, setExpanded] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const archiveMutation = useMutation({
     mutationFn: () => patchCohort(projectId, cohort.id, { archived: !cohort.archived }),
@@ -76,6 +85,24 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
       queryClient.invalidateQueries({ queryKey: ['cohorts', projectId] });
     },
   });
+
+  const regenMutation = useMutation({
+    mutationFn: (mode: 'fresh' | 'review') => regenerateCohort(projectId, cohort.id, mode),
+    onSuccess: (result) => {
+      const skipText = result.scopes_skipped.length
+        ? ` (${result.scopes_skipped.length} skipped)`
+        : '';
+      setStatusMsg(
+        `Started ${result.mode} cycle: batch ${result.batch_id.slice(0, 14)}…, ` +
+          `${result.scopes_succeeded}/${result.scopes_total} scopes enqueued${skipText}.`,
+      );
+    },
+    onError: (err: unknown) => {
+      setStatusMsg(`Regenerate failed: ${err instanceof Error ? err.message : String(err)}`);
+    },
+  });
+
+  const isRegenerating = regenMutation.isPending;
 
   return (
     <li className="px-4 py-3 flex flex-col gap-2" data-testid={`cohort-row-${cohort.id}`}>
@@ -96,6 +123,30 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {!cohort.archived && cohort.comp_ids.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => regenMutation.mutate('review')}
+                disabled={isRegenerating}
+                title="Regenerate cohort subs with prior_review_text feeding forward (self-review iteration)"
+                className="px-2 py-1 text-xs rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-40"
+                data-testid={`cohort-row-${cohort.id}-regen-review`}
+              >
+                {isRegenerating ? 'Starting…' : 'New cycle (review)'}
+              </button>
+              <button
+                type="button"
+                onClick={() => regenMutation.mutate('fresh')}
+                disabled={isRegenerating}
+                title="Regenerate cohort subs from scratch (wipe + fresh gen, no prior context)"
+                className="px-2 py-1 text-xs rounded border border-amber-800 text-amber-200 hover:bg-amber-950 disabled:opacity-40"
+                data-testid={`cohort-row-${cohort.id}-regen-fresh`}
+              >
+                {isRegenerating ? 'Starting…' : 'New cycle (fresh)'}
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
@@ -113,6 +164,11 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
           </button>
         </div>
       </div>
+      {statusMsg && (
+        <div className="text-xs text-emerald-400" data-testid={`cohort-row-${cohort.id}-message`}>
+          {statusMsg}
+        </div>
+      )}
       {expanded && (
         <ul className="text-[11px] font-mono text-gray-400 ml-3 list-disc">
           {cohort.comp_ids.map((id) => (
@@ -121,5 +177,119 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
         </ul>
       )}
     </li>
+  );
+}
+
+function SubcompCampaignActions({
+  projectId,
+  cohorts,
+}: {
+  projectId: string;
+  cohorts: Cohort[];
+}) {
+  const [explorationCount, setExplorationCount] = useState(5);
+  const [fullCorpusConfirm, setFullCorpusConfirm] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+
+  const activeCohort = cohorts.find((c) => !c.archived && c.tier === 'comparch');
+  const explorationMutation = useMutation({
+    mutationFn: () =>
+      generateExplorationSample(projectId, {
+        count: explorationCount,
+        exclude_cohort_id: activeCohort?.id,
+      }),
+    onSuccess: (result) => {
+      setStatusMsg(
+        `Exploration sample: ${result.picked_comp_ids.length} new comps, ` +
+          `${result.scopes_succeeded}/${result.scopes_total} subs enqueued ` +
+          `(batch ${result.batch_id.slice(0, 14)}…).`,
+      );
+    },
+    onError: (err: unknown) => {
+      setStatusMsg(`Exploration sample failed: ${err instanceof Error ? err.message : String(err)}`);
+    },
+  });
+  const fullCorpusMutation = useMutation({
+    mutationFn: () => generateFullCorpus(projectId),
+    onSuccess: (result) => {
+      setFullCorpusConfirm(false);
+      setStatusMsg(
+        `Full corpus: ${result.scopes_succeeded}/${result.scopes_total} subs enqueued ` +
+          `(batch ${result.batch_id.slice(0, 14)}…).`,
+      );
+    },
+    onError: (err: unknown) => {
+      setStatusMsg(`Full corpus failed: ${err instanceof Error ? err.message : String(err)}`);
+    },
+  });
+
+  const isBusy = explorationMutation.isPending || fullCorpusMutation.isPending;
+
+  return (
+    <div className="rounded border border-gray-800 bg-gray-950/40 p-3 text-xs space-y-2">
+      <div className="font-medium text-gray-200">Subcomparch campaign</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label>
+          Exploration count:{' '}
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={explorationCount}
+            onChange={(e) => setExplorationCount(Math.max(1, Number(e.target.value) || 1))}
+            className="w-12 bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => explorationMutation.mutate()}
+          disabled={isBusy}
+          title="Pick N random comps not in the active cohort and not previously sampled, regenerate their subs under one batch"
+          className="px-2 py-1 rounded border border-blue-800 text-blue-200 hover:bg-blue-950 disabled:opacity-40"
+          data-testid="cohorts-exploration-sample"
+        >
+          {explorationMutation.isPending ? 'Sampling…' : 'Exploration sample'}
+        </button>
+        {fullCorpusConfirm ? (
+          <>
+            <button
+              type="button"
+              onClick={() => fullCorpusMutation.mutate()}
+              disabled={isBusy}
+              className="px-2 py-1 rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-40"
+              data-testid="cohorts-full-corpus-confirm"
+            >
+              {fullCorpusMutation.isPending
+                ? 'Regenerating all…'
+                : 'Confirm: regenerate every subcomp'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setFullCorpusConfirm(false)}
+              disabled={isBusy}
+              className="px-2 py-1 rounded border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setFullCorpusConfirm(true)}
+            disabled={isBusy}
+            title="Regenerate every existing subcomp from scratch — final-sweep escape hatch"
+            className="px-2 py-1 rounded border border-red-900 text-red-300 hover:bg-red-950 disabled:opacity-40"
+            data-testid="cohorts-full-corpus"
+          >
+            Full corpus
+          </button>
+        )}
+      </div>
+      {statusMsg && (
+        <div className="text-emerald-400" data-testid="cohorts-campaign-message">
+          {statusMsg}
+        </div>
+      )}
+    </div>
   );
 }

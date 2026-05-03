@@ -979,12 +979,14 @@ class TestScopeIteratorTopoOrder:
         scopes = _subcomp_scope(db, s["project_id"])
         # Foundation's subs (display_order ascending — no deps) before
         # app's subs (a_right before a_left because a_left depends on
-        # a_right).
+        # a_right). Scope tuples are 1-element ``(sub_id,)`` so the
+        # per-node helpers' ``get_node`` signature matches the
+        # ``_get_sub_node(db, project_id, sub_id)`` shape.
         assert scopes == [
-            (s["comp_foundation"], s["sub_f_first"]),
-            (s["comp_foundation"], s["sub_f_second"]),
-            (s["comp_app"], s["sub_a_right"]),
-            (s["comp_app"], s["sub_a_left"]),
+            (s["sub_f_first"],),
+            (s["sub_f_second"],),
+            (s["sub_a_right"],),
+            (s["sub_a_left"],),
         ]
 
     def test_impl_scope_walks_owners_in_combined_topo_order(self, db):

@@ -108,3 +108,69 @@ export async function putSamplerConfig(
   const r = await api.put(`/projects/${projectId}/sampler-configs/${tier}`, { axes });
   return SamplerConfigSchema.parse(r.data);
 }
+
+// ── Regenerate cohort + exploration / full-corpus ─────────────────
+
+const SkippedScopeSchema = z.object({
+  scope_ids: z.array(z.string()),
+  status: z.number(),
+  detail: z.unknown(),
+});
+
+export const RegenerateCohortResultSchema = z.object({
+  ok: z.boolean(),
+  batch_id: z.string(),
+  cohort_id: z.string(),
+  mode: z.enum(['fresh', 'review']),
+  target_tier: z.string(),
+  scopes_total: z.number().int(),
+  scopes_succeeded: z.number().int(),
+  scopes_skipped: z.array(SkippedScopeSchema),
+});
+export type RegenerateCohortResult = z.infer<typeof RegenerateCohortResultSchema>;
+
+export async function regenerateCohort(
+  projectId: string,
+  cohortId: string,
+  mode: 'fresh' | 'review',
+): Promise<RegenerateCohortResult> {
+  const r = await api.post(`/projects/${projectId}/cohorts/${cohortId}/regenerate`, { mode });
+  return RegenerateCohortResultSchema.parse(r.data);
+}
+
+export const ExplorationSampleResultSchema = z.object({
+  ok: z.boolean(),
+  batch_id: z.string(),
+  picked_comp_ids: z.array(z.string()),
+  scopes_total: z.number().int(),
+  scopes_succeeded: z.number().int(),
+  scopes_skipped: z.array(SkippedScopeSchema),
+});
+export type ExplorationSampleResult = z.infer<typeof ExplorationSampleResultSchema>;
+
+export async function generateExplorationSample(
+  projectId: string,
+  body: { count: number; exclude_cohort_id?: string },
+): Promise<ExplorationSampleResult> {
+  const r = await api.post(
+    `/projects/${projectId}/tiers/subcomparch/exploration-sample`,
+    body,
+  );
+  return ExplorationSampleResultSchema.parse(r.data);
+}
+
+export const FullCorpusResultSchema = z.object({
+  ok: z.boolean(),
+  batch_id: z.string(),
+  scopes_total: z.number().int(),
+  scopes_succeeded: z.number().int(),
+  scopes_skipped: z.array(SkippedScopeSchema),
+});
+export type FullCorpusResult = z.infer<typeof FullCorpusResultSchema>;
+
+export async function generateFullCorpus(
+  projectId: string,
+): Promise<FullCorpusResult> {
+  const r = await api.post(`/projects/${projectId}/tiers/subcomparch/full-corpus`);
+  return FullCorpusResultSchema.parse(r.data);
+}

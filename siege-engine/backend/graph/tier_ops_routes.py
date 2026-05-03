@@ -25,6 +25,7 @@ import logging
 from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -127,9 +128,12 @@ def _subcomps_by_parent(db: Session, project_id: str) -> dict[str, list[Node]]:
 def _subcomp_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
     """Subcomparch iterates every subcomponent under every top-level comp.
 
-    Scope tuple is ``(parent_comp_id, sub_id)`` so the per-node
-    reset / review-retry handler sees the URL-style scope. Subcomps
-    are ``tier="comp", parent_id=top_comp_id``.
+    Scope tuple is ``(sub_id,)`` — single element, matching
+    ``SUBCOMPARCH_CONFIG.get_node`` (``_get_sub_node(db, project_id,
+    sub_id)``) and the per-node-route convention. Subcomps are
+    ``tier="comp", parent_id=top_comp_id``; the parent isn't part
+    of the scope tuple because every per-node helper looks the
+    parent up via ``Node.parent_id`` when needed.
 
     Order: top-level parents in topo order, and within each parent
     the subcomps are topo-sorted by their ``dependency`` edges
@@ -146,7 +150,7 @@ def _subcomp_scope(db: Session, project_id: str) -> list[tuple[str, ...]]:
     for top in top_levels:
         children = subs_by_parent.get(top.id, [])
         for sub in topo_sort_comps(children, edges):
-            out.append((top.id, sub.id))
+            out.append((sub.id,))
     return out
 
 
@@ -315,6 +319,225 @@ def resume_batch(
         "requeued": len(requeued),
         "skipped": total_in_batch - len(requeued),
         "total_in_batch": total_in_batch,
+    }
+
+
+# ── Subcomparch campaign tier-ops ─────────────────────────────────
+
+
+def _all_subcomp_ids(db: Session, project_id: str) -> list[str]:
+    """Return ``sub_id`` values for every subcomp in the project."""
+    rows = list(
+        db.execute(
+            select(Node).where(
+                Node.project_id == project_id,
+                Node.tier == "comp",
+                Node.parent_id.is_not(None),
+            )
+        ).scalars()
+    )
+    return [n.id for n in rows]
+
+
+def _previously_sampled_comp_ids(db: Session, project_id: str) -> set[str]:
+    """Union of ``scope_keys.comp_ids`` across prior exploration batches."""
+    from backend.models.batch import Batch
+
+    rows = db.execute(
+        select(Batch).where(
+            Batch.project_id == project_id,
+            Batch.op_type == "generate_exploration_sample",
+        )
+    ).scalars()
+    out: set[str] = set()
+    for b in rows:
+        for cid in (b.scope_keys or {}).get("comp_ids") or []:
+            if isinstance(cid, str):
+                out.add(cid)
+    return out
+
+
+class ExplorationSampleRequest(BaseModel):
+    count: int = Field(ge=1, le=50)
+    exclude_cohort_id: str | None = None
+
+
+@router.post("/{project_id}/tiers/subcomparch/exploration-sample")
+def generate_exploration_sample(
+    project_id: str,
+    req: ExplorationSampleRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Pick N random parent comps not in the cohort and not previously sampled,
+    then enqueue subcomparch generation for each picked comp's subs.
+
+    Mints one Batch (``op_type="generate_exploration_sample"``,
+    ``scope_keys.comp_ids`` records the picks). Subsequent calls
+    walk this and prior batches to build the exclusion pool, so
+    each cycle's exploration sample lands on fresh ground.
+
+    ``exclude_cohort_id`` (optional) — comps in this cohort are
+    excluded from the candidate pool too. The standard flow passes
+    the active canonical cohort's id so exploration never collides
+    with the canonical sample.
+    """
+    from backend.graph.batches import mint_batch
+    from backend.graph.bootstrap_routes import bootstrap_reset
+    from backend.models.cohort import Cohort
+
+    _require_project(db, project_id)
+    config, _iter = _resolve("subcomparch")
+
+    # Build the exclusion pool: prior exploration batches + the
+    # canonical cohort.
+    exclude: set[str] = _previously_sampled_comp_ids(db, project_id)
+    if req.exclude_cohort_id is not None:
+        cohort = db.get(Cohort, req.exclude_cohort_id)
+        if cohort is not None and cohort.project_id == project_id:
+            for cid in cohort.comp_ids or []:
+                if isinstance(cid, str):
+                    exclude.add(cid)
+
+    # Candidate pool: all top-level comps minus exclusions.
+    top_comps = list_top_level_components(db, project_id)
+    candidates = [c for c in top_comps if c.id not in exclude]
+    if not candidates:
+        raise HTTPException(
+            status_code=409,
+            detail="No candidate comps left — exclusion pool covers every top-level comp",
+        )
+    # Random pick. Use system random for unpredictability across
+    # cycles; tie-break by id deterministic when count >= len(pool).
+    import random
+
+    rng = random.Random()
+    pool = list(candidates)
+    rng.shuffle(pool)
+    picked = pool[: req.count]
+    picked_ids = sorted(c.id for c in picked)
+
+    op_batch_id = mint_batch(
+        db,
+        project_id,
+        op_type="generate_exploration_sample",
+        tier="subcomparch",
+        scope_keys={"comp_ids": picked_ids},
+        params={"count": req.count, "exclude_cohort_id": req.exclude_cohort_id},
+    )
+    # For each picked comp, walk its subs and enqueue gen via
+    # bootstrap_reset(force=True) to start clean (exploration is
+    # fresh-mode by design — these comps' subs are typically empty).
+    succeeded = 0
+    skipped: list[dict[str, Any]] = []
+    for comp in picked:
+        subs = list(
+            db.execute(
+                select(Node).where(
+                    Node.project_id == project_id,
+                    Node.tier == "comp",
+                    Node.parent_id == comp.id,
+                )
+            ).scalars()
+        )
+        for sub in subs:
+            try:
+                bootstrap_reset(
+                    db,
+                    project_id,
+                    (sub.id,),
+                    config,
+                    _require_project,
+                    force=True,
+                    batch_id=op_batch_id,
+                )
+                succeeded += 1
+            except HTTPException as exc:
+                skipped.append(
+                    {
+                        "scope_ids": [sub.id],
+                        "status": exc.status_code,
+                        "detail": exc.detail,
+                    }
+                )
+    logger.info(
+        "tier_ops.exploration_sample project=%s picked=%d succeeded=%d skipped=%d",
+        project_id,
+        len(picked_ids),
+        succeeded,
+        len(skipped),
+    )
+    return {
+        "ok": True,
+        "batch_id": op_batch_id,
+        "picked_comp_ids": picked_ids,
+        "scopes_total": succeeded + len(skipped),
+        "scopes_succeeded": succeeded,
+        "scopes_skipped": skipped,
+    }
+
+
+@router.post("/{project_id}/tiers/subcomparch/full-corpus")
+def generate_full_corpus(
+    project_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Final-sweep escape hatch — regenerate every existing subcomp.
+
+    Mints one Batch (``op_type="generate_full_corpus"``) and walks
+    every subcomp under every top-level comp, calling
+    ``bootstrap_reset(force=True)`` per scope. The intended use is
+    after canonical-cohort cycles plateau and the user wants to
+    cover the long tail before declaring the campaign done.
+    """
+    from backend.graph.batches import mint_batch
+    from backend.graph.bootstrap_routes import bootstrap_reset
+
+    _require_project(db, project_id)
+    config, _iter = _resolve("subcomparch")
+    sub_ids = _all_subcomp_ids(db, project_id)
+    op_batch_id = mint_batch(
+        db,
+        project_id,
+        op_type="generate_full_corpus",
+        tier="subcomparch",
+        scope_keys={"scope_count": len(sub_ids)},
+    )
+    succeeded = 0
+    skipped: list[dict[str, Any]] = []
+    for sub_id in sub_ids:
+        try:
+            bootstrap_reset(
+                db,
+                project_id,
+                (sub_id,),
+                config,
+                _require_project,
+                force=True,
+                batch_id=op_batch_id,
+            )
+            succeeded += 1
+        except HTTPException as exc:
+            skipped.append(
+                {
+                    "scope_ids": [sub_id],
+                    "status": exc.status_code,
+                    "detail": exc.detail,
+                }
+            )
+    logger.info(
+        "tier_ops.full_corpus project=%s succeeded=%d skipped=%d",
+        project_id,
+        succeeded,
+        len(skipped),
+    )
+    return {
+        "ok": True,
+        "batch_id": op_batch_id,
+        "scopes_total": len(sub_ids),
+        "scopes_succeeded": succeeded,
+        "scopes_skipped": skipped,
     }
 
 

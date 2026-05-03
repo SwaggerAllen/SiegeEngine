@@ -3,13 +3,16 @@
 CRUD on saved cohorts; auto-suggest preview that runs the
 stratified sampler against the per-tier structure-summary; per-tier
 sampler-config read/write so axis weights can be tuned without a
-deploy.
+deploy. Cohort regenerate (Phase 3b) drives iteration cycles by
+walking the cohort's parent comps' children at the target tier
+under one batch.
 
-The campaign workflow (see plan):
+The campaign workflow:
 1. Browse the per-tier structure-summary.
 2. Hit auto-suggest or hand-pick comp IDs.
 3. POST a Cohort.
-4. (Phase 3b) POST regenerate to start an iteration cycle.
+4. POST regenerate to start an iteration cycle (mode=fresh wipes,
+   mode=review threads prior_review_text forward).
 
 Mounted under ``/api/projects`` from :mod:`backend.main`.
 """
@@ -26,6 +29,8 @@ from sqlalchemy.orm import Session
 
 from backend.auth.routes import get_current_user
 from backend.database import get_db
+from backend.graph.batches import mint_batch
+from backend.graph.bootstrap_routes import bootstrap_feedback, bootstrap_reset
 from backend.graph.cohort_sampler import suggest_cohort
 from backend.graph.tier_structure import gather_tier_structure_summary
 from backend.models import Project, User
@@ -35,6 +40,7 @@ from backend.models.cohort_sampler_config import (
     default_axes_for_tier,
     mint_cohort_sampler_config_id,
 )
+from backend.models.node import Node
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -273,9 +279,168 @@ def put_sampler_config(
     return _serialize_sampler_config(cfg)
 
 
-# ── Type marker ──────────────────────────────────────────────────
+# ── Regenerate cohort ─────────────────────────────────────────────
 
 
-# Use Literal for shared enum-ish values to keep route params typed
-# in OpenAPI but otherwise unused at this level.
+# fresh = wipe content + downstream cascade + fresh gen (bootstrap_reset)
+# review = discard pending + regen with prior_review_text feeding forward
+#          (bootstrap_feedback with force=True)
 RegenerateMode = Literal["fresh", "review"]
+
+
+class RegenerateCohortRequest(BaseModel):
+    mode: RegenerateMode
+
+
+# Maps cohort tier → target tier we generate at when regenerating.
+# A comparch cohort drives subcomparch generation; future cohort
+# tiers extend this mapping.
+TARGET_TIER_BY_COHORT_TIER: dict[str, str] = {
+    "comparch": "subcomparch",
+}
+
+
+def _target_subs_for_cohort(db: Session, project_id: str, cohort: Cohort) -> list[Node]:
+    """Return the comp child nodes the cohort regenerate operates on.
+
+    For a comparch cohort: subcomponents (tier="comp", parent_id in
+    cohort.comp_ids). Future cohort tiers add their own resolution.
+    """
+    if cohort.tier != "comparch":
+        return []
+    if not cohort.comp_ids:
+        return []
+    rows = list(
+        db.execute(
+            select(Node).where(
+                Node.project_id == project_id,
+                Node.tier == "comp",
+                Node.parent_id.in_(list(cohort.comp_ids)),
+            )
+        ).scalars()
+    )
+    return rows
+
+
+@router.post("/{project_id}/cohorts/{cohort_id}/regenerate")
+def regenerate_cohort(
+    project_id: str,
+    cohort_id: str,
+    req: RegenerateCohortRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Start a new iteration cycle for this cohort.
+
+    Mints one Batch (op_type="cohort_regenerate", params records the
+    mode + cohort_id) and walks each child of each cohort comp at
+    the target tier:
+
+    - ``mode="fresh"`` → ``bootstrap_reset(force=True, batch_id=...)``
+      per child. Wipes content + downstream cascade + enqueues fresh
+      gen. Tests "what does the prompt produce in isolation."
+    - ``mode="review"`` → ``bootstrap_feedback("", force=True,
+      batch_id=...)`` per child. Discards pending, keeps approved as
+      seed, enqueues regen with prior_review_text. Tests "what does
+      the prompt produce when iterating on its own prior critique."
+
+    Skipped scopes (per-child failures) are reported in the result so
+    the operator can spot a partial sweep.
+
+    Returns ``{batch_id, mode, target_tier, scopes_total,
+    scopes_succeeded, scopes_skipped[]}``.
+    """
+    _require_project(db, project_id)
+    cohort = _require_cohort(db, project_id, cohort_id)
+    target_tier = TARGET_TIER_BY_COHORT_TIER.get(cohort.tier)
+    if target_tier is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cohort tier {cohort.tier!r} has no regenerate target tier configured",
+        )
+    target_nodes = _target_subs_for_cohort(db, project_id, cohort)
+
+    op_batch_id = mint_batch(
+        db,
+        project_id,
+        op_type="cohort_regenerate",
+        tier=target_tier,
+        scope_keys={
+            "cohort_id": cohort.id,
+            "cohort_comp_ids": list(cohort.comp_ids or []),
+            "target_node_count": len(target_nodes),
+        },
+        params={"mode": req.mode},
+    )
+
+    # Resolve the BootstrapTierConfig for the target tier via the
+    # tier-ops registry so we reuse the existing per-node helpers.
+    from backend.graph.tier_ops_routes import _registry
+    from backend.graph.tier_ops_routes import _require_project as _rp
+
+    reg = _registry()
+    if target_tier not in reg:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal: target tier {target_tier!r} not in tier-ops registry",
+        )
+    config, _iter = reg[target_tier]
+
+    succeeded = 0
+    skipped: list[dict[str, Any]] = []
+    for node in target_nodes:
+        if node.parent_id is None:
+            continue
+        # Subcomparch's scope tuple is the single sub id; the parent
+        # is reachable via Node.parent_id when needed.
+        scope_ids = (node.id,)
+        try:
+            if req.mode == "fresh":
+                bootstrap_reset(
+                    db,
+                    project_id,
+                    scope_ids,
+                    config,
+                    _rp,
+                    force=True,
+                    batch_id=op_batch_id,
+                )
+            else:
+                bootstrap_feedback(
+                    db,
+                    project_id,
+                    scope_ids,
+                    feedback_text="",
+                    config=config,
+                    require_project=_rp,
+                    batch_id=op_batch_id,
+                    force=True,
+                )
+            succeeded += 1
+        except HTTPException as exc:
+            skipped.append(
+                {
+                    "scope_ids": list(scope_ids),
+                    "status": exc.status_code,
+                    "detail": exc.detail,
+                }
+            )
+    logger.info(
+        "cohort.regenerate project=%s cohort=%s mode=%s target_tier=%s succeeded=%d skipped=%d",
+        project_id,
+        cohort.id,
+        req.mode,
+        target_tier,
+        succeeded,
+        len(skipped),
+    )
+    return {
+        "ok": True,
+        "batch_id": op_batch_id,
+        "cohort_id": cohort.id,
+        "mode": req.mode,
+        "target_tier": target_tier,
+        "scopes_total": len(target_nodes),
+        "scopes_succeeded": succeeded,
+        "scopes_skipped": skipped,
+    }
