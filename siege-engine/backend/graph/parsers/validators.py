@@ -1517,6 +1517,52 @@ def _detect_undeclared_sub_dep_cycles(
         ) from cycle_err
 
 
+def _detect_private_module_leak_in_public_surface(privapi: str, pubapi: str) -> None:
+    """Reject when a module declared in ``<private-surface>`` is
+    referenced by name in ``<public-surface>``.
+
+    Modules declared in the private surface are component internals
+    — sibling components shouldn't need their names to use the
+    public API. Reviewers flagged this repeatedly in the latest
+    comparch round: a public function component documenting a
+    private ``Internal.Types`` module by name, a public moduledoc
+    referencing private PubSub topic-format helpers, etc. Each one
+    forces a sibling consumer to import a module the component
+    explicitly marked private.
+
+    Heuristic: extract every module declared in private surface via
+    ``defmodule X.Y.Z do``, then word-boundary scan public surface
+    for each one. Module names are dotted PascalCase identifiers
+    that don't appear naturally in prose, so false-positive risk
+    is minimal — the LLM either repeated the private module's name
+    in a public type/spec/moduledoc (the leak) or it didn't.
+
+    Fix path the LLM has to choose between: promote the leaked
+    module to the public surface, or rewrite the public reference
+    to use only types and modules already in the public surface.
+    """
+    private_modules = sorted(set(re.findall(r"defmodule\s+(\S+)\s+do\b", privapi)))
+    if not private_modules:
+        return
+
+    leaked: list[str] = []
+    for mod in private_modules:
+        if re.search(rf"\b{re.escape(mod)}\b", pubapi):
+            leaked.append(mod)
+
+    if leaked:
+        raise ValidationError(
+            f"Private module(s) leaked into public surface: {', '.join(leaked)}. "
+            "Modules declared in <private-surface> are component internals "
+            "and must not appear in <public-surface> signatures, types, or "
+            "moduledocs — siblings would have to import a private module to "
+            "use the public API. Either move the leaked module(s) to the "
+            "public surface (and document why siblings need them), or rewrite "
+            "the public references to use only types and modules already "
+            "declared in <public-surface>."
+        )
+
+
 def _enforce_foundation_dependency(
     components: tuple[Component, ...], deps: tuple[DepEdge, ...]
 ) -> None:
@@ -2004,6 +2050,8 @@ def validate_arch_doc(
     pubapi = _validate_fragment_section(section_map["public-surface"], "public-surface")
     privapi = _validate_fragment_section(section_map["private-surface"], "private-surface")
     failure_surface = _validate_fragment_section(section_map["failure-surface"], "failure-surface")
+
+    _detect_private_module_leak_in_public_surface(privapi, pubapi)
 
     policies = _validate_arch_doc_policies(
         section_map["policies"], known_resp_ids=set(known_parent_resp_ids.keys())

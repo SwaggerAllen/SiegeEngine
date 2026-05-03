@@ -481,6 +481,107 @@ class TestPolicies:
 _SOLO_RESP_MAP: dict[str, frozenset[str]] = {"resp_sess0001": frozenset({"feat_sessl0001"})}
 
 
+class TestPrivateModuleLeak:
+    """Reject when a module declared in <private-surface> is referenced
+    by name in <public-surface>. Reviewers flagged this repeatedly:
+    public types/specs/moduledocs naming a private Internal.Types
+    module force sibling consumers to import internals.
+    """
+
+    def test_private_module_referenced_in_public_surface_rejected(self):
+        """The AI Advisor / Foundation pattern: private Internal.Types
+        is named in a public type definition."""
+        raw = _arch_doc(
+            privapi=(
+                "defmodule Catapult.PrivateAdvisor.Internal.Types do\n"
+                "  @type citation_span :: %{...}\n"
+                "end"
+            ),
+            pubapi=(
+                "defmodule CitationRenderer do\n"
+                '  @doc """Renders citations defined in '
+                'Catapult.PrivateAdvisor.Internal.Types."""\n'
+                "  def render(spans), do: spans\n"
+                "end"
+            ),
+            subcomponents=_default_subcomponents(),
+            sub_dependencies=_DEFAULT_SUB_DEPS,
+        )
+        with pytest.raises(ValidationError, match="Private module.*leaked into public surface"):
+            _validate(raw)
+
+    def test_private_module_referenced_in_public_moduledoc_rejected(self):
+        """The In-App Notification Feed pattern: private Topics module's
+        name appears in a public moduledoc to document the topic
+        format. Still a leak — siblings parsing the moduledoc would
+        have to know the private module exists."""
+        raw = _arch_doc(
+            privapi=(
+                "defmodule CatapultWeb.NotificationFeed.Topics do\n"
+                '  def user_topic(user_id), do: "user:#{user_id}"\n'
+                "end"
+            ),
+            pubapi=(
+                "defmodule CatapultWeb.NotificationFeed.NotificationBellLive do\n"
+                '  @moduledoc """Subscribes to topics constructed '
+                'by CatapultWeb.NotificationFeed.Topics."""\n'
+                "  use Phoenix.LiveView\n"
+                "end"
+            ),
+            subcomponents=_default_subcomponents(),
+            sub_dependencies=_DEFAULT_SUB_DEPS,
+        )
+        with pytest.raises(ValidationError, match="Private module.*leaked into public surface"):
+            _validate(raw)
+
+    def test_private_module_only_referenced_internally_accepted(self):
+        """Private modules can reference each other freely without
+        appearing in the public surface — that's encapsulation
+        working correctly."""
+        doc = _validate(
+            _arch_doc(
+                privapi=(
+                    "defmodule X.Internal.Helper do\n"
+                    "  def thing, do: :ok\n"
+                    "end\n"
+                    "defmodule X.Internal.Other do\n"
+                    "  def go, do: X.Internal.Helper.thing()\n"
+                    "end"
+                ),
+                pubapi=("defmodule X.Public do\n  def hello, do: :world\nend"),
+                subcomponents=_default_subcomponents(),
+                sub_dependencies=_DEFAULT_SUB_DEPS,
+            )
+        )
+        assert doc.privapi.startswith("defmodule X.Internal.Helper")
+
+    def test_no_private_modules_at_all_accepted(self):
+        """Private surface that doesn't declare any modules — only
+        type definitions or prose notes — is trivially leak-free."""
+        doc = _validate(
+            _arch_doc(
+                privapi="Internal note: rate limiter uses ETS counter table.",
+                pubapi=("defmodule X.Public do\n  def hello, do: :world\nend"),
+                subcomponents=_default_subcomponents(),
+                sub_dependencies=_DEFAULT_SUB_DEPS,
+            )
+        )
+        assert "rate limiter" in doc.privapi
+
+    def test_private_module_substring_match_does_not_false_positive(self):
+        """``X.Internal.Foo`` declared private must not match
+        ``X.Internal.FooPrime`` in public — word-boundary regex."""
+        doc = _validate(
+            _arch_doc(
+                privapi=("defmodule X.Internal.Foo do\n  def thing, do: :ok\nend"),
+                pubapi=("defmodule X.Internal.FooPrime do\n  def thing, do: :ok\nend"),
+                subcomponents=_default_subcomponents(),
+                sub_dependencies=_DEFAULT_SUB_DEPS,
+            )
+        )
+        assert "X.Internal.FooPrime" in doc.pubapi
+
+
 class TestSubcomponentStructure:
     def test_missing_alias_rejected(self):
         bad = (
