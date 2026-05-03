@@ -216,6 +216,108 @@ def _resolve(tier: TierName) -> tuple[BootstrapTierConfig, _ScopeIter]:
     return reg[tier]
 
 
+# ── Batch routes ──────────────────────────────────────────────────
+
+
+@router.get("/{project_id}/batches")
+def list_batches(
+    project_id: str,
+    tier: str | None = None,
+    limit: int = 25,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """List recent batches for a project, optionally filtered by tier.
+
+    Used by the review-summary panel's batch dropdown so the user
+    can scope the displayed reviews to a specific operation. ``tier``
+    is the slug ("comparch", "subcomparch", etc); omit to see all
+    batches across the project. Newest first.
+    """
+    from backend.graph.batches import list_batches_for_tier
+
+    _require_project(db, project_id)
+    rows = list_batches_for_tier(db, project_id, tier, limit=limit)
+    return {
+        "batches": [
+            {
+                "id": b.id,
+                "op_type": b.op_type,
+                "tier": b.tier,
+                "scope_keys": b.scope_keys,
+                "params": b.params,
+                "started_at": b.started_at.isoformat() if b.started_at else None,
+                "status": b.status,
+            }
+            for b in rows
+        ]
+    }
+
+
+@router.post("/{project_id}/batches/{batch_id}/resume")
+def resume_batch(
+    project_id: str,
+    batch_id: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Re-enqueue jobs from this batch that haven't completed.
+
+    Resume-mode restart: walks the batch's jobs and re-enqueues only
+    the ones whose status is not ``completed`` (failed, cancelled,
+    or status==queued/running carried over from a worker that died
+    mid-flight before status flipped). Deliberately preserves
+    completed work — the principle here is "fill the gaps, don't
+    throw out partial data".
+
+    The new jobs are stamped with the same ``batch_id`` so a
+    subsequent resume sees them as part of the same batch.
+
+    Returns ``{requeued, skipped, total_in_batch}``.
+    """
+    from backend.graph.batches import gaps_in_batch, get_batch, jobs_in_batch
+
+    _require_project(db, project_id)
+    batch = get_batch(db, batch_id)
+    if batch is None or batch.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    gaps = gaps_in_batch(db, batch_id)
+    total_in_batch = len(jobs_in_batch(db, batch_id))
+    requeued: list[str] = []
+    for gap in gaps:
+        # Re-enqueue with the same payload + batch_id. Drop the
+        # parse-validate progress fields (``_current_attempt`` /
+        # ``_failed_raw_output``) so the new run starts clean —
+        # they live on the prior failed job row for diagnostics.
+        clean_payload = {k: v for k, v in (gap.payload or {}).items() if not k.startswith("_")}
+        # Keep batch_id in the payload (already there from the
+        # original enqueue). The resume's own enqueue passes it
+        # through too as the kwarg.
+        new_id = pipeline_queue.enqueue(
+            db,
+            job_type=gap.job_type,
+            payload=clean_payload,
+            priority=gap.priority,
+            max_retries=gap.max_retries,
+            batch_id=batch_id,
+        )
+        requeued.append(new_id)
+    logger.info(
+        "tier_ops.resume_batch project=%s batch=%s requeued=%d total=%d",
+        project_id,
+        batch_id,
+        len(requeued),
+        total_in_batch,
+    )
+    return {
+        "ok": True,
+        "batch_id": batch_id,
+        "requeued": len(requeued),
+        "skipped": total_in_batch - len(requeued),
+        "total_in_batch": total_in_batch,
+    }
+
+
 # ── Routes ─────────────────────────────────────────────────────────
 
 
@@ -326,6 +428,7 @@ def get_tier_info(
 def get_tier_review_summary(
     project_id: str,
     tier: TierName,
+    batch_id: str | None = None,
     db: Session = Depends(get_db),
     _user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -339,6 +442,11 @@ def get_tier_review_summary(
     list ordered worst-first, and a "missing" list naming the
     scopes whose review couldn't be summarised + why.
 
+    Pass ``?batch_id=<id>`` to scope the aggregation to drafts
+    produced as part of a specific operation (canonical-cohort
+    generation cycle, Reset All sweep, etc). Without it, the
+    summary spans every draft of the tier.
+
     The reviews list is what the user copy-pastes into a
     workshop conversation to iterate the tier's prompt: each
     entry has the scope label, score, and intro paragraph.
@@ -347,7 +455,7 @@ def get_tier_review_summary(
 
     _require_project(db, project_id)
     try:
-        summary = gather_tier_review_summary(db, project_id, tier)
+        summary = gather_tier_review_summary(db, project_id, tier, batch_id=batch_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown tier: {tier}") from exc
 
@@ -458,6 +566,16 @@ def reset_tier(
         )
 
     scopes = iter_scope_ids(db, project_id)
+    from backend.graph.batches import mint_batch
+
+    op_batch_id = mint_batch(
+        db,
+        project_id,
+        op_type="reset_tier",
+        tier=tier,
+        scope_keys={"scope_count": len(scopes)},
+        params={"force": True},
+    )
     succeeded = 0
     succeeded_scopes: list[tuple[str, ...]] = []
     skipped: list[dict[str, Any]] = []
@@ -473,6 +591,7 @@ def reset_tier(
                 config,
                 _require_project,
                 force=True,
+                batch_id=op_batch_id,
             )
         except HTTPException as exc:
             skipped.append(
@@ -509,6 +628,7 @@ def reset_tier(
                     scope_ids,
                     scope_payload_keys=config.scope_payload_keys,
                 ),
+                batch_id=op_batch_id,
             )
             jobs_enqueued += 1
     else:
@@ -572,6 +692,15 @@ def resume_tier(
     config, iter_scope_ids = _resolve(tier)
 
     scopes = iter_scope_ids(db, project_id)
+    from backend.graph.batches import mint_batch
+
+    op_batch_id = mint_batch(
+        db,
+        project_id,
+        op_type="resume_tier",
+        tier=tier,
+        scope_keys={"scope_count": len(scopes)},
+    )
     generations_enqueued: list[str] = []
     reviews_enqueued: list[str] = []
     skipped: list[dict[str, Any]] = []
@@ -611,6 +740,7 @@ def resume_tier(
                     scope_ids,
                     scope_payload_keys=config.scope_payload_keys,
                 ),
+                batch_id=op_batch_id,
             )
             generations_enqueued.append(job_id)
             continue
@@ -707,6 +837,7 @@ def resume_tier(
                 "draft_id": draft_id,
             },
             priority=pipeline_queue.REVIEW_JOB_PRIORITY,
+            batch_id=op_batch_id,
         )
         reviews_enqueued.append(review_job_id)
 
@@ -763,6 +894,15 @@ def review_sweep_tier(
         )
 
     scopes = iter_scope_ids(db, project_id)
+    from backend.graph.batches import mint_batch
+
+    op_batch_id = mint_batch(
+        db,
+        project_id,
+        op_type="review_sweep_tier",
+        tier=tier,
+        scope_keys={"scope_count": len(scopes)},
+    )
     enqueued: list[str] = []
     skipped: list[dict[str, Any]] = []
     for scope_ids in scopes:
@@ -774,6 +914,7 @@ def review_sweep_tier(
                 feedback_text="",
                 config=config,
                 require_project=_require_project,
+                batch_id=op_batch_id,
             )
         except HTTPException as exc:
             skipped.append(

@@ -62,16 +62,37 @@ def enqueue(
     payload: dict,
     priority: int = 10,
     max_retries: int = 0,
+    *,
+    batch_id: str | None = None,
 ) -> str:
     """Enqueue a job for background processing. Returns job ID.
 
-    Duplicate-safe: if a queued job with the same type and payload already
-    exists, the existing job ID is returned instead of creating a new one.
+    Duplicate-safe: if a queued job with the same type, payload, and
+    batch_id already exists, the existing job ID is returned instead
+    of creating a new one. ``batch_id`` participates in dedup so the
+    same logical job under two different batches doesn't collapse
+    into one.
+
+    When ``batch_id`` is set, the value is stamped onto both the
+    ``Job.batch_id`` column (for batch-scoped queries) and the job
+    payload (so handlers can read it without a Job lookup —
+    bootstrap-generation reads it to stamp ``Draft.batch_id`` so
+    multi-draft tier-ops share one batch on the resulting drafts).
     """
     import json
 
+    if batch_id is not None and "batch_id" not in payload:
+        # Mutate-in-place is fine — the caller is building a fresh
+        # dict for this enqueue call. Keeping the field in the
+        # payload makes it visible to handlers without a Job
+        # lookup, which matters because handlers may run in a
+        # different DB session.
+        payload = {**payload, "batch_id": batch_id}
+
     # Check for an existing queued job with the same type + payload to
     # avoid duplicate work (e.g. rapid UI clicks on force-restart).
+    # batch_id is part of the payload above so it participates in
+    # this comparison.
     payload_json = json.dumps(payload, sort_keys=True)
     existing = (
         db.query(Job)
@@ -95,10 +116,11 @@ def enqueue(
         payload=payload,
         priority=priority,
         max_retries=max_retries,
+        batch_id=batch_id,
     )
     db.add(job)
     db.commit()
-    logger.info(f"Enqueued job {job.id} type={job_type}")
+    logger.info(f"Enqueued job {job.id} type={job_type} batch_id={batch_id or '-'}")
     # Wake the worker loop — safe to call from sync code on the event loop
     _job_notify.set()
     return job.id

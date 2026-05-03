@@ -280,10 +280,15 @@ class TestFeedback:
             ).scalars()
         )
         assert len(jobs) == 1
-        assert jobs[0].payload == {
-            "project_id": project.id,
-            "feedback": "Add reporting",
-        }
+        # batch_id is also threaded into the payload by enqueue —
+        # assert the user-facing fields are present without
+        # constraining on the universal batch tag (it's stamped to
+        # match Job.batch_id, exercised in the batch tests).
+        payload = jobs[0].payload
+        assert payload["project_id"] == project.id
+        assert payload["feedback"] == "Add reporting"
+        assert isinstance(payload.get("batch_id"), str)
+        assert jobs[0].batch_id == payload["batch_id"]
 
     def test_empty_feedback_becomes_none(self, client, project, db):
         resp = client.post(
@@ -476,9 +481,13 @@ class TestDiscard:
         # discard endpoint.
         assert len(gen_jobs) == initial_count + 1
         # The newest job's payload carries the project id and
-        # null feedback (we're regenerating from scratch).
+        # null feedback (we're regenerating from scratch). batch_id
+        # rides along on every enqueue post-Phase-14; assert the
+        # user-facing fields without constraining on it.
         newest = sorted(gen_jobs, key=lambda j: j.created_at)[-1]
-        assert newest.payload == {"project_id": project.id, "feedback": None}
+        assert newest.payload["project_id"] == project.id
+        assert newest.payload["feedback"] is None
+        assert isinstance(newest.payload.get("batch_id"), str)
 
 
 class TestApproveEnqueuesMint:
@@ -509,4 +518,6 @@ class TestApproveEnqueuesMint:
             db.execute(select(Job).where(Job.job_type == MINT_FEATURES_JOB_TYPE)).scalars()
         )
         assert len(mint_jobs) == 1
-        assert mint_jobs[0].payload == {"project_id": project.id}
+        # batch_id rides along on every enqueue post-Phase-14.
+        assert mint_jobs[0].payload["project_id"] == project.id
+        assert isinstance(mint_jobs[0].payload.get("batch_id"), str)

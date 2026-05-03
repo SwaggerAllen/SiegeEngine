@@ -158,9 +158,58 @@ export type TierReviewSummary = z.infer<typeof TierReviewSummarySchema>;
 export async function getTierReviewSummary(
   projectId: string,
   tier: TierName,
+  batchId?: string,
 ): Promise<TierReviewSummary> {
-  const r = await api.get(`/projects/${projectId}/tiers/${tier}/review-summary`);
+  const r = await api.get(
+    `/projects/${projectId}/tiers/${tier}/review-summary`,
+    batchId ? { params: { batch_id: batchId } } : undefined,
+  );
   return TierReviewSummarySchema.parse(r.data);
+}
+
+// ── Batches ────────────────────────────────────────────────────────
+
+export const BatchSchema = z.object({
+  id: z.string(),
+  op_type: z.string(),
+  tier: z.string().nullable(),
+  scope_keys: z.record(z.string(), z.unknown()),
+  params: z.record(z.string(), z.unknown()),
+  started_at: z.string().nullable(),
+  status: z.string(),
+});
+export type Batch = z.infer<typeof BatchSchema>;
+
+const BatchListSchema = z.object({
+  batches: z.array(BatchSchema),
+});
+
+export async function listBatches(
+  projectId: string,
+  options: { tier?: string; limit?: number } = {},
+): Promise<Batch[]> {
+  const params: Record<string, string | number> = {};
+  if (options.tier) params.tier = options.tier;
+  if (options.limit) params.limit = options.limit;
+  const r = await api.get(`/projects/${projectId}/batches`, { params });
+  return BatchListSchema.parse(r.data).batches;
+}
+
+export const BatchResumeResultSchema = z.object({
+  ok: z.boolean(),
+  batch_id: z.string(),
+  requeued: z.number().int(),
+  skipped: z.number().int(),
+  total_in_batch: z.number().int(),
+});
+export type BatchResumeResult = z.infer<typeof BatchResumeResultSchema>;
+
+export async function resumeBatch(
+  projectId: string,
+  batchId: string,
+): Promise<BatchResumeResult> {
+  const r = await api.post(`/projects/${projectId}/batches/${batchId}/resume`);
+  return BatchResumeResultSchema.parse(r.data);
 }
 
 // ── Structure summary (read-only dashboard) ────────────────────────

@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -31,3 +31,14 @@ class Job(Base):
     # their blocking dep settles. Replaces a fragile "deferred:"
     # prefix on error_message that was load-bearing string discrimination.
     is_deferred: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Phase 14 — universal batch tagging. Set to the ``Batch.id`` of
+    # the operation that issued this job. ``None`` for legacy rows
+    # from before the column landed and for system-side enqueues
+    # (e.g. handler-internal cascade jobs that aren't user-issued
+    # operations). Indexed so resume / scope-by-batch queries are
+    # cheap.
+    batch_id: Mapped[str | None] = mapped_column(
+        ForeignKey("batches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
