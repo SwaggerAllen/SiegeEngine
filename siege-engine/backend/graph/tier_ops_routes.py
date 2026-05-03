@@ -61,6 +61,22 @@ TierName = Literal[
     "impl",
 ]
 
+# Structure-summary covers two extra read-only tiers
+# (``fanin``, ``references``) that don't have BootstrapTierConfig-
+# driven Reset / Review-sweep ops but benefit from the same
+# per-tier metadata view. The structure-summary endpoint accepts
+# this superset.
+StructureTierName = Literal[
+    "expansion",
+    "requirements",
+    "sysarch",
+    "comparch",
+    "subcomparch",
+    "impl",
+    "fanin",
+    "references",
+]
+
 
 def _require_project(db: Session, project_id: str) -> Project:
     project = db.get(Project, project_id)
@@ -380,6 +396,39 @@ def get_tier_review_summary(
             for m in summary.missing
         ],
     }
+
+
+@router.get("/{project_id}/tiers/{tier}/structure-summary")
+def get_tier_structure_summary(
+    project_id: str,
+    tier: StructureTierName,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Per-tier projection-state summary: per-node metrics + aggregates.
+
+    Read-only dashboard endpoint that surfaces what the tier *looks
+    like* — counts, distributions, kind/foundation ratios, multi-
+    owner prevalence, content-presence — without parsing review
+    text. Used to inform sample / cohort selection and to give each
+    tier a "what does this tier currently contain" pane on the
+    tier-ops dashboard.
+
+    Eight tiers exposed (the six BootstrapTierConfig tiers plus
+    ``fanin`` and ``references``); see
+    :mod:`backend.graph.tier_structure` for the per-tier extractors.
+    """
+    from backend.graph.tier_structure import (
+        gather_tier_structure_summary,
+        serialize_summary,
+    )
+
+    _require_project(db, project_id)
+    try:
+        summary = gather_tier_structure_summary(db, project_id, tier)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown tier: {tier}") from exc
+    return serialize_summary(summary)
 
 
 @router.post("/{project_id}/tiers/{tier}/reset-all")

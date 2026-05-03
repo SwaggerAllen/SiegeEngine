@@ -162,3 +162,50 @@ export async function getTierReviewSummary(
   const r = await api.get(`/projects/${projectId}/tiers/${tier}/review-summary`);
   return TierReviewSummarySchema.parse(r.data);
 }
+
+// ── Structure summary (read-only dashboard) ────────────────────────
+
+// Eight tiers: the six BootstrapTierConfig tiers plus fanin and
+// references. Both deliberately don't have Reset / Review-sweep ops
+// (see backend tier_ops_routes module docstring) but get the same
+// metadata visibility. Stays a separate constant from TIER_NAMES
+// so callers asking "which tiers can I reset" get a different
+// answer than "which tiers have a structure summary".
+export const STRUCTURE_TIER_NAMES = [
+  'expansion',
+  'requirements',
+  'sysarch',
+  'comparch',
+  'subcomparch',
+  'impl',
+  'fanin',
+  'references',
+] as const;
+export type StructureTierName = (typeof STRUCTURE_TIER_NAMES)[number];
+
+const StructureNodeRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  // Per-tier metric shape — open-ended dict. The frontend reads
+  // keys from the first row to derive the table's columns.
+  metrics: z.record(z.string(), z.unknown()),
+});
+export type StructureNodeRow = z.infer<typeof StructureNodeRowSchema>;
+
+export const TierStructureSummarySchema = z.object({
+  tier: z.string(),
+  tier_name: z.string(),
+  per_node: z.array(StructureNodeRowSchema),
+  // Aggregate values vary by tier — counts, ratios, distribution
+  // dicts. Render generically.
+  aggregate: z.record(z.string(), z.unknown()),
+});
+export type TierStructureSummary = z.infer<typeof TierStructureSummarySchema>;
+
+export async function getTierStructureSummary(
+  projectId: string,
+  tier: StructureTierName,
+): Promise<TierStructureSummary> {
+  const r = await api.get(`/projects/${projectId}/tiers/${tier}/structure-summary`);
+  return TierStructureSummarySchema.parse(r.data);
+}
