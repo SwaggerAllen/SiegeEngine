@@ -22,6 +22,7 @@ import { DebugPanel } from '../DebugPanel';
 import { GenerationQueuePanel } from '../GenerationQueuePanel';
 import { ImplPanel } from '../ImplPanel';
 import { QueuePanel } from '../QueuePanel';
+import { CohortsPanel } from '../CohortsPanel';
 import { TierOpsPanel } from '../TierOpsPanel';
 import { ReferencesList } from '../ReferencesList';
 import { RequirementsPanel } from '../RequirementsPanel';
@@ -109,6 +110,13 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
     return (
       <div className="h-full overflow-auto">
         <TierOpsPanel projectId={projectId} />
+      </div>
+    );
+  }
+  if (selectedId === SYNTHETIC_IDS.COHORTS) {
+    return (
+      <div className="h-full overflow-auto">
+        <CohortsPanel projectId={projectId} />
       </div>
     );
   }

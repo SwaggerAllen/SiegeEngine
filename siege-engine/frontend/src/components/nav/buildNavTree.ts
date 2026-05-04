@@ -84,6 +84,8 @@ export const SYNTHETIC_IDS = {
   GEN_QUEUE: ':gen-queue',
   // Tier ops — bulk reset / bulk AI-review per tier.
   TIER_OPS: ':tier-ops',
+  // Cohorts — saved samples for iteration campaigns.
+  COHORTS: ':cohorts',
   // Debug snapshot — copy project state + recent events/jobs.
   DEBUG: ':debug',
   // Phase 11 structured-edit UIs. Each synthetic id routes to a
@@ -258,6 +260,14 @@ export function buildNavTree(
   items.push({
     id: SYNTHETIC_IDS.TIER_OPS,
     label: 'Tier Ops',
+    node: null,
+    role: 'tier-ops',
+    children: [],
+    status: { ...EMPTY_STATUS },
+  });
+  items.push({
+    id: SYNTHETIC_IDS.COHORTS,
+    label: 'Cohorts',
     node: null,
     role: 'tier-ops',
     children: [],

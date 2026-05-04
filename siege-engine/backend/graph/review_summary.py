@@ -90,6 +90,8 @@ def gather_tier_review_summary(
     db: Session,
     project_id: str,
     tier: str,
+    *,
+    batch_id: str | None = None,
 ) -> ReviewSummary:
     """Aggregate review-summary stats for every scope in a tier.
 
@@ -97,6 +99,14 @@ def gather_tier_review_summary(
     "missing" scope here matches a "skipped" scope on the bulk
     review-sweep. Reviews are returned worst-score-first to match
     the workshop loop's iteration order.
+
+    When ``batch_id`` is provided, the per-scope draft lookup is
+    constrained to drafts whose ``Draft.batch_id`` matches — so the
+    summary only includes reviews of drafts produced as part of
+    that operation. A scope whose draft isn't in the batch is
+    reported as ``missing`` with a "not in batch" reason. Used to
+    scope the review summary to the most recent canonical-cohort
+    generation cycle.
 
     Raises ``KeyError`` when ``tier`` isn't in the registry — caller
     is expected to translate that into a 404.
@@ -124,23 +134,21 @@ def gather_tier_review_summary(
         # actively iterating on. Discarded drafts are noise; their
         # review_text references prior content that's been
         # superseded.
-        target_draft = (
-            db.execute(
-                select(Draft)
-                .where(
-                    Draft.project_id == project_id,
-                    Draft.target_id == node.id,
-                    Draft.status.in_(("pending", "approved")),
-                )
-                .order_by(Draft.created_at.desc())
+        draft_query = (
+            select(Draft)
+            .where(
+                Draft.project_id == project_id,
+                Draft.target_id == node.id,
+                Draft.status.in_(("pending", "approved")),
             )
-            .scalars()
-            .first()
+            .order_by(Draft.created_at.desc())
         )
+        if batch_id is not None:
+            draft_query = draft_query.where(Draft.batch_id == batch_id)
+        target_draft = db.execute(draft_query).scalars().first()
         if target_draft is None:
-            missing.append(
-                ReviewMissing(scope_id=scope_id, scope_label=scope_label, reason="no draft")
-            )
+            reason = "no draft in batch" if batch_id is not None else "no draft"
+            missing.append(ReviewMissing(scope_id=scope_id, scope_label=scope_label, reason=reason))
             continue
         if not (target_draft.review_text or "").strip():
             missing.append(

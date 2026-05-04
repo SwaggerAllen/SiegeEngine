@@ -351,6 +351,23 @@ event-sourced; all LLM calls logged; no direct DB access \
 outside the reducer), name them inside the relevant block. \
 ``<write-path>`` is the usual home for reducer / event-log \
 invariants.
+* **If the project commits to a typed error discipline, name \
+it explicitly.** Languages whose ecosystems use typed error \
+returns (Elixir tagged tuples, Rust ``Result``, TypeScript \
+discriminated unions, Go's typed errors) benefit from \
+project-wide commitment because the type system becomes the \
+cross-section consistency anchor at lower tiers. Comparch \
+will read this and produce public-surface return types whose \
+error variants line up with each component's failure-surface \
+entries; if the techspec doesn't name the discipline, comparch \
+falls back to ad-hoc choices and the consistency anchor is \
+lost. ``<runtime>`` or ``<write-path>`` is the usual home for \
+this commitment ("error handling uses tagged tuples \
+throughout — no exceptions cross component boundaries"). Skip \
+this bullet for languages without an idiomatic typed-error \
+discipline (vanilla Python, Ruby, JavaScript without \
+discriminated unions); ad-hoc exception handling is the \
+default there and that's fine.
 
 ## Components
 
@@ -608,6 +625,21 @@ issues session state downstream components can trust" is a \
 handle. Do not cram multiple concerns into the sentence; if \
 you need an ``and``, consider whether the component is \
 actually two.
+* **The purpose names a distinctive substance, not a bucket.** \
+After one read, a downstream reader should be able to repeat \
+back what this component *is* in their own words. "Guards \
+the platform-level ref tier — the universal escape hatch for \
+supplemental reference content that doesn't fit bundle-\
+declared tier hierarchy" reads as substance: there's a \
+specific piece of platform machinery it owns. "Owns reference \
+content management" reads as a bucket: a label that could \
+collect anything tangentially related. Components whose \
+purpose reads as a bucket produce subcomponents that feel \
+like buckets too — and at comparch the consequence is \
+contradictions, because the model has no crisp mental model \
+of what each section is *about*. The fix: name the specific \
+thing the component owns that nothing else in the system \
+owns.
 * ``<owned-invariants>`` lists **2-4 short noun phrases** \
 naming the durable state or guarantees this component owns. \
 Each invariant is a contract that downstream comparch and \
@@ -621,6 +653,25 @@ implementation and say yes/no. If you find yourself listing \
 more than four, some of them are actually sub-component \
 concerns — push them down to comparch. If you find yourself \
 listing fewer than two, the component's role is too thin.
+* **Phrase invariants as structural facts, not procedural \
+promises.** Structural phrasing names a property of the \
+state, the call graph, or the data shape — "X is the only \
+path to Y", "Y is a deterministic function of X", "Z is \
+committed before W is dispatched", "exactly one active X per \
+Y", "every X carries Z". Procedural phrasing names a verb \
+the system performs every time — "every X does Y", "X always \
+succeeds", "no X ever fails". Procedural phrasing invites \
+the comparch and impl tiers to write contradicting failure \
+surfaces (the failure surface inevitably says "X did not do \
+Y" or "X failed"); structural phrasing lets downstream tiers \
+describe coverage gaps and residual risks consistently \
+without contradicting the invariant. This rule propagates \
+downward — comparch will inherit your framing for its own \
+subcomponent invariants, and impl reads both. If you find \
+yourself starting an invariant with "every" or "always", \
+look for the structural rephrase: what fact about the \
+schema, the call graph, or the data does that statement \
+encode?
 * ``<primary-operations>`` lists **3-6 short verb phrases** \
 naming the operations callers invoke on this component. Each \
 is a one-line handle: "authenticate credentials into a \
@@ -685,6 +736,28 @@ components, with a dependency edge connecting them. The \
 foundation component is the exception: cross-cutting platform \
 infrastructure that genuinely every component reaches into \
 stays foundation, not its own external-boundary component.
+* **Resp-count is a strong split signal.** A single component \
+that ends up with more than ~12 top-level responsibilities is \
+almost always two components in disguise. The downstream \
+comparch pass has to keep all of that surface internally \
+consistent — invariants, primary-operations, public-surface, \
+failure-surface, subcomp ownership — and the consistency \
+budget runs out long before the resp count does. Concrete \
+patterns that legitimately carry 12+ resps: (a) a foundation \
+component owning shared substrate across many concerns; (b) \
+a single coherent lifecycle hub where every resp is a \
+transition or guard on the same aggregate (e.g. a draft \
+state machine); (c) an event-log core where every resp is a \
+projection or read-side query against the same append-only \
+spine. Outside those patterns, when you find yourself listing \
+13+ resps under one component, look for the seam: a clean \
+read-vs-write split, a protocol-vs-content split, an \
+external-boundary-vs-orchestration split, an \
+authoring-vs-curation split. Splitting at sysarch time costs \
+one extra component and a couple of dependency edges; \
+*not* splitting forces comparch to manage 15-20 resps' worth \
+of cross-section consistency under a single roof, which is \
+the most common cause of mid-band comparch quality.
 
 ## Foundation component
 

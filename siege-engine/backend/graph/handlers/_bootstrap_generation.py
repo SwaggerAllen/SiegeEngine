@@ -65,6 +65,36 @@ from backend.pipeline.queue import current_job_id_var
 logger = logging.getLogger(__name__)
 
 
+def _resolve_draft_batch_id() -> str:
+    """Return the batch_id this draft should carry.
+
+    Reads the running Job's payload from the contextvar-set Job row
+    and lifts ``payload["batch_id"]`` if present (placed there by
+    ``pipeline_queue.enqueue`` when the originating route minted a
+    batch). Falls back to a fresh per-draft mint when:
+
+    - the contextvar is unset (called outside a handler task — eg.
+      direct unit-test calls into ``persist_draft``);
+    - the running Job has no batch_id (legacy queued rows from
+      before the column landed, or system-side cascade jobs that
+      didn't mint a batch).
+    """
+    import secrets as _secrets
+
+    job_id = current_job_id_var.get()
+    if job_id is not None:
+        try:
+            with SessionLocal() as db:
+                job = db.get(Job, job_id)
+                if job is not None:
+                    payload_batch = (job.payload or {}).get("batch_id")
+                    if isinstance(payload_batch, str) and payload_batch:
+                        return payload_batch
+        except Exception:
+            logger.exception("Failed to read batch_id from running Job; falling back to fresh mint")
+    return f"batch_{_secrets.token_hex(8)}"
+
+
 def _record_attempt_progress(attempt_idx: int, max_attempts: int) -> None:
     """Stamp the running Job row with the current parse-validate attempt.
 
@@ -308,9 +338,16 @@ def persist_draft(
                 )
 
         new_draft_id = f"draft_{secrets.token_hex(8)}"
-        import uuid
-
-        new_batch_id = f"batch_{uuid.uuid4().hex[:16]}"
+        # Phase 14 — when this draft is being generated as part of a
+        # tier-op or per-node operation, the originating
+        # ``Job.batch_id`` rides on the job's payload (placed there
+        # by ``pipeline_queue.enqueue``). Read it from the running
+        # Job row so multi-draft tier-ops collapse onto one
+        # ``Draft.batch_id``. Fall back to a fresh per-draft mint
+        # only when no payload-batch is present (legacy queued jobs
+        # from before the column landed, or system-side cascade
+        # enqueues that didn't mint a batch).
+        new_batch_id = _resolve_draft_batch_id()
         # Phase 13 — lift the generator's ``<change-summary>`` body
         # into its own column and strip the tag from the stored draft
         # content so downstream readers (diff view, mint handler

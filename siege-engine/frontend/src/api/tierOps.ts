@@ -158,7 +158,105 @@ export type TierReviewSummary = z.infer<typeof TierReviewSummarySchema>;
 export async function getTierReviewSummary(
   projectId: string,
   tier: TierName,
+  batchId?: string,
 ): Promise<TierReviewSummary> {
-  const r = await api.get(`/projects/${projectId}/tiers/${tier}/review-summary`);
+  const r = await api.get(
+    `/projects/${projectId}/tiers/${tier}/review-summary`,
+    batchId ? { params: { batch_id: batchId } } : undefined,
+  );
   return TierReviewSummarySchema.parse(r.data);
+}
+
+// ── Batches ────────────────────────────────────────────────────────
+
+export const BatchSchema = z.object({
+  id: z.string(),
+  op_type: z.string(),
+  tier: z.string().nullable(),
+  scope_keys: z.record(z.string(), z.unknown()),
+  params: z.record(z.string(), z.unknown()),
+  started_at: z.string().nullable(),
+  status: z.string(),
+});
+export type Batch = z.infer<typeof BatchSchema>;
+
+const BatchListSchema = z.object({
+  batches: z.array(BatchSchema),
+});
+
+export async function listBatches(
+  projectId: string,
+  options: { tier?: string; cohort_id?: string; op_type?: string; limit?: number } = {},
+): Promise<Batch[]> {
+  const params: Record<string, string | number> = {};
+  if (options.tier) params.tier = options.tier;
+  if (options.cohort_id) params.cohort_id = options.cohort_id;
+  if (options.op_type) params.op_type = options.op_type;
+  if (options.limit) params.limit = options.limit;
+  const r = await api.get(`/projects/${projectId}/batches`, { params });
+  return BatchListSchema.parse(r.data).batches;
+}
+
+export const BatchResumeResultSchema = z.object({
+  ok: z.boolean(),
+  batch_id: z.string(),
+  requeued: z.number().int(),
+  skipped: z.number().int(),
+  total_in_batch: z.number().int(),
+});
+export type BatchResumeResult = z.infer<typeof BatchResumeResultSchema>;
+
+export async function resumeBatch(
+  projectId: string,
+  batchId: string,
+): Promise<BatchResumeResult> {
+  const r = await api.post(`/projects/${projectId}/batches/${batchId}/resume`);
+  return BatchResumeResultSchema.parse(r.data);
+}
+
+// ── Structure summary (read-only dashboard) ────────────────────────
+
+// Eight tiers: the six BootstrapTierConfig tiers plus fanin and
+// references. Both deliberately don't have Reset / Review-sweep ops
+// (see backend tier_ops_routes module docstring) but get the same
+// metadata visibility. Stays a separate constant from TIER_NAMES
+// so callers asking "which tiers can I reset" get a different
+// answer than "which tiers have a structure summary".
+export const STRUCTURE_TIER_NAMES = [
+  'expansion',
+  'requirements',
+  'sysarch',
+  'comparch',
+  'subcomparch',
+  'impl',
+  'fanin',
+  'references',
+] as const;
+export type StructureTierName = (typeof STRUCTURE_TIER_NAMES)[number];
+
+const StructureNodeRowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  // Per-tier metric shape — open-ended dict. The frontend reads
+  // keys from the first row to derive the table's columns.
+  metrics: z.record(z.string(), z.unknown()),
+});
+export type StructureNodeRow = z.infer<typeof StructureNodeRowSchema>;
+
+export const TierStructureSummarySchema = z.object({
+  tier: z.string(),
+  tier_name: z.string(),
+  per_node: z.array(StructureNodeRowSchema),
+  // Aggregate values vary by tier — counts, ratios, distribution
+  // dicts. Render generically.
+  aggregate: z.record(z.string(), z.unknown()),
+});
+export type TierStructureSummary = z.infer<typeof TierStructureSummarySchema>;
+
+export async function getTierStructureSummary(
+  projectId: string,
+  tier: StructureTierName,
+): Promise<TierStructureSummary> {
+  const r = await api.get(`/projects/${projectId}/tiers/${tier}/structure-summary`);
+  return TierStructureSummarySchema.parse(r.data);
 }

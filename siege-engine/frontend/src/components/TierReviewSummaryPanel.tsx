@@ -2,6 +2,8 @@ import { useCallback, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   getTierReviewSummary,
+  listBatches,
+  type Batch,
   type TierName,
   type TierReviewSummary,
 } from '../api/tierOps';
@@ -34,30 +36,75 @@ interface Props {
  * the slider just slices the prefix.
  */
 export function TierReviewSummaryPanel({ projectId, tier }: Props) {
+  // ``null`` = "all batches" (the default, full-tier aggregation).
+  // Selecting a specific batch from the dropdown scopes the
+  // aggregation to drafts produced by that operation.
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const { data: batches } = useQuery({
+    queryKey: ['tierBatches', projectId, tier],
+    queryFn: () => listBatches(projectId, { tier }),
+  });
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['tierReviewSummary', projectId, tier],
-    queryFn: () => getTierReviewSummary(projectId, tier),
+    queryKey: ['tierReviewSummary', projectId, tier, batchId],
+    queryFn: () => getTierReviewSummary(projectId, tier, batchId ?? undefined),
   });
 
-  if (isLoading) {
-    return (
-      <div className="text-xs text-gray-500 italic" data-testid={`tier-review-summary-${tier}`}>
-        Loading review summary…
-      </div>
-    );
+  return (
+    <>
+      <BatchDropdown batches={batches ?? []} value={batchId} onChange={setBatchId} tier={tier} />
+      {isLoading ? (
+        <div className="text-xs text-gray-500 italic" data-testid={`tier-review-summary-${tier}`}>
+          Loading review summary…
+        </div>
+      ) : isError || !data ? (
+        <div className="text-xs text-red-400" data-testid={`tier-review-summary-${tier}`}>
+          Failed to load review summary
+          {error instanceof Error ? `: ${error.message}` : ''}
+        </div>
+      ) : (
+        <SummaryBody summary={data} tier={tier} />
+      )}
+    </>
+  );
+}
+
+function BatchDropdown({
+  batches,
+  value,
+  onChange,
+  tier,
+}: {
+  batches: Batch[];
+  value: string | null;
+  onChange: (next: string | null) => void;
+  tier: TierName;
+}) {
+  if (batches.length === 0) {
+    // Don't take up space until at least one batch exists for
+    // this tier.
+    return null;
   }
-  if (isError || !data) {
-    return (
-      <div
-        className="text-xs text-red-400"
-        data-testid={`tier-review-summary-${tier}`}
+  return (
+    <div className="text-xs text-gray-300 mb-2 flex items-center gap-2">
+      <label htmlFor={`batch-filter-${tier}`} className="text-gray-500">
+        Scope to batch:
+      </label>
+      <select
+        id={`batch-filter-${tier}`}
+        className="bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}
+        data-testid={`tier-review-summary-${tier}-batch-filter`}
       >
-        Failed to load review summary
-        {error instanceof Error ? `: ${error.message}` : ''}
-      </div>
-    );
-  }
-  return <SummaryBody summary={data} tier={tier} />;
+        <option value="">All batches</option>
+        {batches.map((b) => (
+          <option key={b.id} value={b.id}>
+            {b.op_type} · {b.started_at?.slice(0, 16) ?? '—'}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
 }
 
 function SummaryBody({ summary, tier }: { summary: TierReviewSummary; tier: TierName }) {

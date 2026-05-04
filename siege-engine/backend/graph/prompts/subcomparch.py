@@ -175,16 +175,43 @@ paragraph in its own block.
 and the parent component's external dependents will see. Types, \
 function signatures, method signatures, events. Code-shaped \
 content lives in fenced code blocks; any language is fine. \
-Callers need: call shapes with signatures, return types, error \
-modes, and side-effect boundaries. A public surface that lists \
-method names without signatures forces every caller to guess \
-the contract. Internal helpers belong in ``<private-surface>``.
+Internal helpers belong in ``<private-surface>``.
+* **Signatures are non-negotiable.** This is the leaf tier — \
+impl writes its types, parameters, and return shapes directly \
+off these entries; listing method names without signatures \
+forces every caller to guess the contract, and each caller's \
+guess diverges. Every callable entry in ``<public-surface>`` \
+must show:
+  - parameter types (or schema-shape for events / payloads),
+  - return type, including the **error variant** when the call \
+    can fail (``Result[T, ErrKind]``, ``T | None``, typed \
+    exception list — pick whichever convention matches the \
+    parent's tech stack and stay consistent),
+  - whether the call is sync or async (must agree with the \
+    parent comparch's techspec — sync sub on an async parent \
+    is a defect),
+  - any side effect: events emitted, state mutated, durable \
+    writes, network calls, named explicitly rather than \
+    buried in prose.
+A pubapi entry that's just a method name with a one-line \
+comment is incomplete; rewrite it as a full signature even if \
+that means inventing a small named type to hold the shape.
 * ``<private-surface>`` is internal types and helpers visible \
 **only** to this subcomponent's own impl node, not to sibling \
 subs or the parent's dependents. This is the impl node's \
 private toolkit — the helpers, internal types, and data \
 structures it will implement but not expose. Same fenced-code-\
 block convention as the public surface.
+* **Name internal data structures, not just helpers.** Subcomparch \
+is impl's last source of truth for the named types it will \
+introduce. If your techspec mentions an entry that "carries a \
+monotonic version counter" or a queue that "buffers pending \
+events", ``<private-surface>`` should name the type \
+(``CacheEntry``, ``PendingEventBuffer``) and its shape — not \
+just helper functions that operate on it. Internal helpers \
+without the data structures they manipulate leave impl re-\
+deriving the shape, and any sibling reaching across via the \
+public surface ends up with a different mental model.
 * All three fragment sections must be non-empty. Do not put \
 nested XML tags inside them — only prose and fenced code blocks.
 
@@ -212,6 +239,75 @@ true leaf with no external surface interactions. Emit \
 * The validator rejects unknown IDs and any ``to`` attribute \
 that is not a ``comp_*`` prefix with an explicit allowlist error \
 on retry.
+
+## Reconciliation pass — do this before emitting
+
+Treat the four sections as one document and check them against \
+each other. The most common defect at this tier is internal \
+contradiction: techspec promises one thing, pubapi can't surface \
+it, privapi has no shape for what techspec describes. Run these \
+five scans before emitting.
+
+* **Surface closure (both directions).** *Pass A — every \
+techspec claim surfaces somewhere.* For every behavior, side \
+effect, persisted value, emitted event, or return shape your \
+``<technical-specification>`` describes, identify the \
+``<public-surface>`` entry (callable from outside) or \
+``<private-surface>`` entry (callable from this sub's impl) \
+that mounts it. A techspec sentence with no corresponding \
+surface entry is half-done — siblings have no way to call into \
+the behavior, impl has no signature to write against. *Pass B \
+— every surface entry is grounded.* For each pubapi/privapi \
+entry, the techspec or your owns-summary slice must describe \
+why it exists. Entries without a "this is here because…" \
+anchor are filler and inflate the contract impl has to honor.
+* **Failure-mode observability through pubapi.** Subcomparch \
+has no separate ``<failure-surface>`` section, so failure \
+modes thread through pubapi. For every failure or partial-\
+success scenario your techspec describes (and any failure \
+inherited from the parent comparch's failure-surface entries \
+that touch resps you own), confirm a ``<public-surface>`` \
+entry exposes it: an error variant in a tagged-tuple return, \
+a typed exception, an event a caller can subscribe to, a \
+status field they can inspect. The most common shape of this \
+defect: techspec mentions partial-failure or rate-limit \
+rejection, but the corresponding pubapi function returns a \
+bare success type or an opaque error atom that strips the \
+discriminating detail. Either expand the return shape, or \
+strike the failure mode from the techspec — silent failures \
+with no public observability are a worse outcome than \
+admitting the limitation.
+* **Dependency grounding.** For each ``<dep to="comp_..."/>``, \
+confirm the techspec or a pubapi/privapi entry describes how \
+this sub actually uses the target — what data flows, which \
+sibling/parent-sibling pubapi gets called, what event gets \
+subscribed to. Symmetrically, walk the techspec and pubapi \
+prose for any cross-comp call site implied by the text and \
+confirm a corresponding ``<dep>`` exists. An ungrounded \
+``<dep>`` is either spurious (delete it) or evidence of \
+unwritten prose (write it). An implicit cross-comp reference \
+without a declared dep mis-leads impl about what it can \
+import.
+* **Co-owner seam visibility.** Your owns-summary may show a \
+parent resp co-owned by a sibling sub (UI flow split or read/\
+write path split). When that's true, ``<public-surface>`` \
+must make your slice readable on its own — a caller looking \
+at your pubapi alone should be able to tell which side of the \
+seam (input vs validate, read-path vs write-path, etc.) they \
+are calling into. Method names + return shapes that could \
+plausibly belong to either co-owner are the defect; rename or \
+restructure until the seam is unambiguous from the surface \
+alone.
+* **Rationale, not inventory.** Re-read the techspec, the \
+pubapi prose between code blocks, and the privapi prose. \
+Anywhere the text reads as a list of contents or category-\
+speak ("handles X", "manages Y", "contains the helpers for \
+Z"), rewrite it to name what's distinctive about this sub's \
+slice — concrete actions, specific data shapes, specific \
+concurrency or persistence patterns. Inventory framing reads \
+as filler downstream and produces vague impl. The narrowing \
+prompt isn't "describe what this sub contains"; it's "name \
+what makes this sub's slice of the parent's stack distinct".
 
 ## Meta-rules
 

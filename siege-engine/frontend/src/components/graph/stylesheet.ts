@@ -237,6 +237,17 @@ export const fullDagStylesheet: StylesheetCSS[] = [
       width: 1,
     },
   },
+  // Feature → responsibility decomposition edges read as context,
+  // not active structure — render them in the same slate gray as
+  // feature node borders so they recede visually instead of
+  // competing with the green resp-and-below decomposition fabric.
+  {
+    selector: 'edge[edgeType = "decomposition"][source ^= "feat_"]',
+    css: {
+      'line-color': '#64748b',
+      'target-arrow-color': '#64748b',
+    },
+  },
   {
     selector: 'edge[edgeType = "dependency"]',
     css: {

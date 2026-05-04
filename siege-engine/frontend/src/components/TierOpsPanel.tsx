@@ -5,6 +5,7 @@ import {
   type ResetAllResult,
   type ResumeTierResult,
   type ReviewSweepResult,
+  type StructureTierName,
   type TierInfo,
   type TierName,
   getTierInfo,
@@ -13,6 +14,7 @@ import {
   reviewSweepTier,
 } from '../api/tierOps';
 import { TierReviewSummaryPanel } from './TierReviewSummaryPanel';
+import { TierStructureSummaryPanel } from './TierStructureSummaryPanel';
 
 /**
  * Tier-ops panel — bulk reset + bulk reject-and-regen per tier.
@@ -55,7 +57,73 @@ export function TierOpsPanel({ projectId }: { projectId: string }) {
           <TierRow key={tier} projectId={projectId} tier={tier} />
         ))}
       </ul>
+      <ReadOnlyTierSection projectId={projectId} />
     </div>
+  );
+}
+
+/**
+ * Fanin and references don't have BootstrapTierConfig-driven
+ * Reset / Review-sweep / Resume operations (their lifecycles
+ * differ — fanin writes content directly via FanInContentUpdated,
+ * references hang off a different mint path) but they have a
+ * structure-summary extractor on the backend, so surface them as
+ * a small read-only section below the main grid. Each row only
+ * exposes the Structure summary toggle.
+ */
+function ReadOnlyTierSection({ projectId }: { projectId: string }) {
+  return (
+    <details className="text-xs" open>
+      <summary className="cursor-pointer text-gray-400 hover:text-gray-200 mt-2">
+        Read-only tiers (fan-in, references)
+      </summary>
+      <ul className="divide-y divide-gray-800 border border-gray-800 rounded mt-1">
+        <ReadOnlyTierRow
+          projectId={projectId}
+          tier="fanin"
+          tierName="Fan-in"
+        />
+        <ReadOnlyTierRow
+          projectId={projectId}
+          tier="references"
+          tierName="References"
+        />
+      </ul>
+    </details>
+  );
+}
+
+function ReadOnlyTierRow({
+  projectId,
+  tier,
+  tierName,
+}: {
+  projectId: string;
+  tier: StructureTierName;
+  tierName: string;
+}) {
+  const [showSummary, setShowSummary] = useState(false);
+  return (
+    <li className="px-4 py-3 flex flex-col gap-2" data-testid={`tier-row-${tier}`}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium text-gray-100">{tierName}</div>
+          <div className="text-xs text-gray-500 mt-0.5">
+            Read-only — no Reset / Regen / Resume; structure summary only.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowSummary((v) => !v)}
+          className="px-3 py-1.5 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800"
+          aria-expanded={showSummary}
+          data-testid={`tier-row-${tier}-structure-summary-button`}
+        >
+          {showSummary ? 'Hide structure summary' : 'Structure summary'}
+        </button>
+      </div>
+      {showSummary && <TierStructureSummaryPanel projectId={projectId} tier={tier} />}
+    </li>
   );
 }
 
@@ -68,6 +136,7 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
   });
   const [confirming, setConfirming] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [showStructure, setShowStructure] = useState(false);
   const [lastResult, setLastResult] = useState<
     | {
         kind: 'reset';
@@ -175,6 +244,17 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
+          onClick={() => setShowStructure((v) => !v)}
+          disabled={isBusy || (data?.node_count ?? 0) === 0}
+          className="px-3 py-1.5 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
+          title="Per-node + aggregate metrics for this tier (counts, distributions, ratios)"
+          data-testid={`tier-row-${tier}-structure-summary-button`}
+          aria-expanded={showStructure}
+        >
+          {showStructure ? 'Hide structure summary' : 'Structure summary'}
+        </button>
+        <button
+          type="button"
           onClick={() => setShowSummary((v) => !v)}
           disabled={isBusy || (data?.reviewable_count ?? 0) === 0}
           className="px-3 py-1.5 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
@@ -243,6 +323,7 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
           ))}
       </div>
       </div>
+      {showStructure && <TierStructureSummaryPanel projectId={projectId} tier={tier} />}
       {showSummary && <TierReviewSummaryPanel projectId={projectId} tier={tier} />}
     </li>
   );

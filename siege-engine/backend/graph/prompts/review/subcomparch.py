@@ -10,47 +10,142 @@ from backend.graph.review_context.subcomparch import SubcomparchContext
 
 _HANDLES_INTRO = """\
 Subcomparch is the leaf articulation — no more tiers will \
-correct it. Impl reads its public / private surface split and \
-writes code that matches. Watch for techspec that just copies \
-the parent comparch verbatim (no actual narrowing), pubapi \
-that skimps on signatures or error shapes, and privapi that's \
-leaked API in disguise.
+correct it. Impl reads the public / private surface split \
+directly and writes code against those signatures. Vagueness \
+here doesn't get smoothed out by another compression pass: \
+every method-name-without-a-signature becomes a contract impl \
+has to invent, and every silent failure-mode-without-an-error-\
+variant becomes either a caller surprise or a fabricated \
+exception type.
+
+Two cross-cutting consistency checks are load-bearing here. \
+First: the four sections (techspec / pubapi / privapi / deps) \
+must agree internally — every techspec claim must surface in \
+pubapi or privapi, every surface entry must be grounded in \
+techspec or the parent's ``<owns>`` slice. Second: this sub's \
+techspec and pubapi must agree with the parent comparch's \
+techspec (tech-stack, sync/async, error style) and with the \
+parent's failure-surface entries that touch resps this sub \
+owns.
 """
 
 _HANDLES = """\
-- ``<technical-specification>`` narrows the parent comparch \
-techspec to this sub's slice — doesn't duplicate it verbatim. \
-Flag wholesale copying.
-- ``<public-surface>`` names types + signatures + error modes \
-for what sibling subs and the parent's external dependents \
-call. Flag method-names-without-signatures, bloated public \
-surface, or missing error shapes.
-- ``<private-surface>`` is this sub's internal toolkit only \
-— helpers and types the sub's impl uses. Flag re-exported \
-public API.
-- ``<dependencies>`` targets are valid: real comp_* IDs for \
-parent-sibling deps, local aliases for same-parent sibling \
-subs. Flag unknown IDs or invalid alias syntax.
-- Is the sub's scope (what its role says vs what it actually \
-builds via public + private surface) coherent?
+- ``<technical-specification>`` **narrows** the parent comparch \
+techspec to this sub's slice — names the specific tables, \
+async patterns, validation surfaces, or persistence \
+mechanisms this sub owns *within* the parent's stack. Flag \
+wholesale copying of the parent techspec; flag category-speak \
+("handles X", "manages Y", "contains the helpers for Z") \
+that doesn't name distinctive specifics.
+- ``<public-surface>`` shows full **signatures**, not method \
+names. For every callable: parameter types (or schema-shape \
+for events), return type including the error variant when the \
+call can fail, sync/async marker, and named side effects. \
+Flag method-names-without-signatures, opaque error atoms \
+where the techspec describes a discriminating failure mode, \
+and entries that re-export internals.
+- ``<private-surface>`` names internal types and data \
+structures impl will define, not just helper functions. If \
+the techspec mentions a buffer, queue, cache entry, or other \
+named structure, the privapi should declare its shape. Flag \
+helpers-only privapi when the techspec implies named types, \
+and flag privapi entries that are actually re-exported public \
+API.
+- ``<dependencies>`` targets are real ``comp_*`` IDs only — \
+either same-parent sibling subs or parent-sibling top-level \
+components. The validator allowlists by ID against the \
+context bundle and rejects any ``to`` attribute without a \
+``comp_`` prefix; trust those guarantees and don't spend \
+review budget there.
+- **Surface closure — both directions.** *Pass A:* for every \
+behavior, side effect, persisted value, emitted event, or \
+return shape the techspec describes, identify the pubapi \
+entry (callable from outside) or privapi entry (callable from \
+this sub's impl) that mounts it. A techspec sentence with no \
+matching surface entry is half-done. *Pass B:* for every \
+pubapi/privapi entry, the techspec or this sub's owns-slice \
+should describe why it exists. Filler entries without an \
+anchor inflate the contract impl has to honor.
+- **Failure-mode observability through pubapi.** Subcomparch \
+has no separate failure-surface section, so failure modes \
+thread through pubapi. For every failure or partial-success \
+scenario the techspec describes — and for every parent-\
+comparch failure-surface entry that touches a resp this sub \
+owns — confirm a pubapi entry exposes it: an error variant in \
+a tagged-tuple return, a typed exception, an event a caller \
+can subscribe to, a status field they can inspect. The most \
+common shape of this defect: techspec names partial-failure \
+or rate-limit rejection, but the corresponding pubapi \
+function returns a bare success type or an opaque error atom \
+that strips the discriminating detail. Either expand the \
+return shape or strike the failure-mode from the techspec; \
+silent failures with no public observability are worse than \
+admitting the limitation.
+- **Dependency grounding.** For each ``<dep to="comp_..."/>``, \
+confirm the techspec or a pubapi/privapi entry describes how \
+this sub actually uses the target — what data flows, which \
+sibling pubapi gets called, what event gets subscribed to. \
+Symmetrically, scan techspec/pubapi prose for any cross-comp \
+call site implied by the text and confirm a corresponding \
+``<dep>`` is declared. Ungrounded ``<dep>`` is spurious or \
+evidence of missing prose; implicit cross-comp references \
+without a declared dep mislead impl about allowed imports.
+- **Co-owner seam visibility.** When the parent comparch's \
+``<owns>`` shows this sub co-owning a resp with a sibling \
+(UI flow split or read/write path split), the pubapi must \
+make this sub's slice unambiguous on its own. Method names + \
+return shapes that could plausibly belong to either co-owner \
+are the defect; flag any pubapi where the seam isn't visible \
+without cross-referencing the sibling's pubapi.
+- **Cross-section consistency is the highest-yield check.** \
+Read the four sections as one document and flag direct \
+contradictions: a techspec claim ("never returns partial \
+results") versus a pubapi return type that includes a \
+``Partial`` variant; an async-only techspec versus sync \
+signatures (or vice versa); a privapi helper that operates on \
+a type the privapi never declares; a pubapi event the \
+techspec never describes emitting. Be specific about which \
+two sections disagree and what the artifact would need to do \
+to reconcile.
+
+Things you do **not** need to flag (the parser already \
+rejects them, so the artifact you're seeing has already \
+passed these checks): missing or out-of-order sections; \
+``<policies>``, ``<subcomponents>``, or ``<sub-dependencies>`` \
+sections (subcomparch can't have any of them); ``<dep>`` \
+targets that are not real ``comp_*`` IDs from the allowed \
+list; duplicate ``<dep>`` entries; self-deps. Spending review \
+budget on these is wasted effort.
 """
 
 _ARCHITECTURE_INTRO = """\
-Tech drift at the sub level shows up as the sub's pubapi \
-contradicting the parent comparch's techspec (sync vs. async, \
-mutable vs. immutable, error style). Also watch for sibling \
-dep fan-out cycles and bundles of unrelated scope inside one \
-sub.
+Tech-stack drift between this sub and its parent comparch is \
+the highest-impact architectural defect at the leaf tier — \
+it propagates straight into impl. Watch for sync/async \
+mismatch, error-style mismatch (Result vs. exceptions), \
+mutable/immutable data-shape mismatch, and persistence-\
+pattern drift. Also watch for over-bundled scope (one sub \
+trying to own concerns that should be split across siblings) \
+and pubapi bloat (entries that don't actually need to cross \
+the sibling boundary).
 """
 
 _ARCHITECTURE = """\
 - Is this sub's tech choice consistent with the parent \
-component's tech spec? Flag drift (e.g. parent says async, \
-sub's pubapi is sync-only).
-- Is the decomposition of subresps into this sub's pubapi the \
-right cut? Over-bundled or leaky?
-- Are the dependencies between sibling subs a DAG and \
-minimal?
+comparch's techspec? Flag drift (e.g. parent says async, \
+sub's pubapi is sync-only; parent says ``Result[T, ErrKind]``, \
+sub raises typed exceptions instead).
+- Is the cut of pubapi vs. privapi principled, or is the \
+public surface bloated with internals that no sibling \
+actually needs? Flag pubapi entries that could be private \
+without breaking sibling consumers.
+- Is the sub's scope (its role + what it actually builds via \
+pubapi + privapi) coherent? Flag bundles of unrelated \
+concerns inside one sub, and flag pubapi entries that don't \
+map to any responsibility this sub claims.
+- Are the declared ``<dependencies>`` minimal — only the \
+siblings or parent-siblings this sub actually calls — or is \
+this sub depending on more comps than its prose justifies?
 """
 
 

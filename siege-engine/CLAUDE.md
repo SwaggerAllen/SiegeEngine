@@ -303,6 +303,118 @@ The registry that drives all three is
 `backend.graph.tier_ops_routes._registry()` — adding a new tier
 to any of these dashboards is a one-line entry there.
 
+The dashboard also exposes a **Structure summary** panel per
+tier — per-node metrics + tier-level aggregates (counts,
+distributions, kind/foundation ratios, multi-owner prevalence,
+content-presence). Backed by `backend/graph/tier_structure.py`;
+GET endpoint at
+`/projects/:id/tiers/:tier/structure-summary`. Eight tiers
+covered (the six BootstrapTierConfig tiers plus `fanin` and
+`references` in a separate read-only section). The frontend
+panel renders generically off the `{per_node, aggregate}`
+shape — table columns derive from the first row's metric keys;
+no per-tier rendering code.
+
+## Batches (universal operation tagging)
+
+Every multi-job tier-op (Reset All, Regen From Reviews, Resume
+Tier) and every per-node operation (`bootstrap_reset`,
+`bootstrap_feedback`, `bootstrap_approve`, single review retry,
+lazy-bootstrap on first GET) mints a row in the **`batches`**
+table at the top of the route. The minted `batch_id` then
+threads through:
+
+- `Job.batch_id` — every job the operation enqueues.
+- `Job.payload["batch_id"]` — same id, for handlers that need
+  to read it without a Job lookup.
+- `Draft.batch_id` — the existing per-draft column, now sourced
+  from the running Job's payload-batch by
+  `_resolve_draft_batch_id` in `_bootstrap_generation.py`. So
+  multi-draft tier-ops collapse onto **one** Draft.batch_id
+  shared across every draft they produce, instead of one fresh
+  per-draft uuid. Falls back to a fresh mint only for
+  pre-Phase-14 queued jobs and for system-side cascade
+  enqueues that didn't carry a batch.
+
+What this unlocks:
+
+- **Resume by gap-fill.** The
+  `POST /projects/:id/batches/:batch_id/resume` endpoint walks
+  the batch's jobs and re-enqueues only the ones whose status
+  is not `completed`. Completed work stays put — the principle
+  is "fill the gaps, don't throw out partial data". Re-enqueued
+  jobs carry the same `batch_id` so the operation stays a
+  single logical unit even across restarts.
+- **Review-summary scoping by batch.** The review-summary
+  endpoint accepts `?batch_id=<id>` and filters per-scope draft
+  lookup to drafts whose `Draft.batch_id` matches. Lets the
+  user scope an iteration cycle's review aggregation to the
+  drafts that came out of one Reset All / cohort generation /
+  etc., not the full corpus.
+- **Per-node ops are batch-tagged too.** A single-node
+  `bootstrap_feedback` mints `op_type="single_node_feedback"`
+  with one entry in `scope_keys`; this eliminates the "is this
+  code path one of the ones with a batch_id?" check across
+  downstream consumers.
+
+The mint helper lives in `backend.graph.batches.mint_batch`;
+helper queries (`gaps_in_batch`, `jobs_in_batch`,
+`list_batches_for_tier`) are in the same module. Distinct from
+`ReviewBatch` in `backend/models/review.py` — that's the older
+human-curated review-session concept; the new `Batch` model
+records every issued operation, including single-node ones.
+
+## Cohorts (sampling campaigns)
+
+Saved selections of comp IDs that drive iteration campaigns at
+the next tier down. The intended workflow when iterating a
+prompt:
+
+1. Open the per-tier structure summary, hit "Select for cohort",
+   either auto-suggest (stratified greedy sampler against
+   per-tier axis weights) or hand-pick comps, save as a cohort.
+2. Each iteration cycle: kick off cohort regenerate from the
+   Cohorts page. Two modes:
+   - **review** (`bootstrap_feedback("", force=True)` per sub) —
+     keeps approved content, threads `prior_review_text` forward
+     so the model iterates on its own critique.
+   - **fresh** (`bootstrap_reset(force=True)` per sub) — wipes
+     content + downstream cascade, generates from scratch with
+     no prior context.
+3. Add an exploration sample each cycle (`/tiers/subcomparch/
+   exploration-sample`) — picks N comps not in the canonical
+   cohort and not in any prior exploration batch, regenerates
+   their subs. Surfaces pattern-level findings the canonical
+   sample can't see.
+4. After scores plateau, fire the full-corpus action
+   (`/tiers/subcomparch/full-corpus`) once to cover the long tail.
+5. Cycle history view (per-cohort, in `CohortsPanel`) lists
+   prior `cohort_regenerate` batches with mode badge, mean
+   score, and per-mode-pair score deltas (fresh vs prior fresh,
+   review vs prior review — cross-mode batches show stats but
+   no delta arrow because the baselines aren't comparable).
+
+Sampler axis weights live in the `cohort_sampler_configs` table
+— per `(project, tier)` JSON config editable via the
+`/sampler-configs/:tier` GET/PUT endpoint or the inline
+`SamplerConfigEditor` UI on the cohorts page. Defaults seeded on
+first read for the comparch tier (kind / foundation / sub_count
+/ dep_count / multi_owner_resp_count). Tuning weights doesn't
+require a deploy — important so axis edits don't interrupt
+in-flight generations.
+
+The cohort regenerate path uses `bootstrap_feedback`'s
+`force=True` parameter to bypass the `has_been_approved` 409 —
+per-node UI buttons stay gated by default, only campaign
+operations push regen through approved nodes.
+
+Subcomparch's tier-op scope tuples are 1-element `(sub_id,)`
+because `SUBCOMPARCH_CONFIG.get_node` is `_get_sub_node(db,
+project_id, sub_id)`. This was a pre-existing inconsistency
+(2-tuples in `_subcomp_scope` would have crashed Reset All on
+subcomparch); fixed during Phase 3b along with the new
+endpoints.
+
 ## Frontend patterns
 
 - **All Zustand stores use `createSafeStore`** (`frontend/src/store/createSafeStore.ts`)

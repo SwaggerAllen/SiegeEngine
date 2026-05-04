@@ -159,6 +159,35 @@ def build_job_payload(
     return payload
 
 
+def _resolve_batch_id(
+    db: Session,
+    project_id: str,
+    *,
+    batch_id: str | None,
+    op_type: str,
+    config: BootstrapTierConfig,
+    scope_ids: tuple[str, ...],
+) -> str:
+    """Return ``batch_id`` if provided; otherwise mint a fresh one.
+
+    Per-node route handlers don't pass ``batch_id`` — the helper
+    mints a single-node batch internally so every job it enqueues
+    is batch-tagged. Tier-ops pass their batch_id through so all
+    per-node calls in a sweep share one batch.
+    """
+    if batch_id is not None:
+        return batch_id
+    from backend.graph.batches import mint_batch
+
+    return mint_batch(
+        db,
+        project_id,
+        op_type=op_type,
+        tier=config.tier_name,
+        scope_keys={"scope_ids": list(scope_ids)},
+    )
+
+
 def bootstrap_get_state(
     db: Session,
     project_id: str,
@@ -178,6 +207,14 @@ def bootstrap_get_state(
             )
             config.bootstrap_node(db, project_id, *scope_ids)
             commit_and_publish(db, project_id)
+            lazy_batch_id = _resolve_batch_id(
+                db,
+                project_id,
+                batch_id=None,
+                op_type="single_node_lazy_bootstrap",
+                config=config,
+                scope_ids=scope_ids,
+            )
             pipeline_queue.enqueue(
                 db,
                 job_type=config.generate_job_type,
@@ -186,6 +223,7 @@ def bootstrap_get_state(
                     scope_ids,
                     scope_payload_keys=config.scope_payload_keys,
                 ),
+                batch_id=lazy_batch_id,
             )
             node = config.get_node(db, project_id, *scope_ids)
             assert node is not None
@@ -361,6 +399,8 @@ def bootstrap_feedback(
     require_project: Callable,
     *,
     auto_revisions_requested: int = 0,
+    batch_id: str | None = None,
+    force: bool = False,
 ) -> dict[str, str]:
     """Generic POST feedback handler.
 
@@ -370,6 +410,14 @@ def bootstrap_feedback(
     that support the auto-revision loop read those fields and
     drive inline review passes from the handler. Tiers that don't
     yet react to the fields carry them harmlessly.
+
+    ``force`` (Phase 14) bypasses the ``has_been_approved`` 409 so
+    a tier-op (cohort regenerate, full-corpus, etc.) can push regen
+    through approved nodes without the per-node-button gate. The
+    regen still discards any pending draft, rides the prior
+    ``review_text`` forward, and enqueues a fresh generation; the
+    only difference is the gate. Default ``False`` — per-node UI
+    buttons stay gated.
     """
     require_project(db, project_id)
     node = config.get_node(db, project_id, *scope_ids)
@@ -378,8 +426,10 @@ def bootstrap_feedback(
             status_code=404,
             detail=f"{config.tier_name} node missing",
         )
-    if config.has_been_approved is not None and config.has_been_approved(
-        db, project_id, *scope_ids
+    if (
+        not force
+        and config.has_been_approved is not None
+        and config.has_been_approved(db, project_id, *scope_ids)
     ):
         raise HTTPException(status_code=409, detail=config.feedback_readonly_detail)
     if auto_revisions_requested < 0:
@@ -443,10 +493,19 @@ def bootstrap_feedback(
         # others carry them harmlessly.
         payload["auto_revision_pass"] = 0
         payload["auto_revisions_remaining"] = auto_revisions_requested
+    resolved_batch_id = _resolve_batch_id(
+        db,
+        project_id,
+        batch_id=batch_id,
+        op_type="single_node_feedback",
+        config=config,
+        scope_ids=scope_ids,
+    )
     job_id = pipeline_queue.enqueue(
         db,
         job_type=config.generate_job_type,
         payload=payload,
+        batch_id=resolved_batch_id,
     )
     return {"job_id": job_id}
 
@@ -458,6 +517,8 @@ def bootstrap_approve(
     draft_id: str,
     config: BootstrapTierConfig,
     require_project: Callable,
+    *,
+    batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Generic POST approve handler."""
     require_project(db, project_id)
@@ -491,10 +552,19 @@ def bootstrap_approve(
         for idx, sid in enumerate(scope_ids):
             if idx < len(config.scope_payload_keys):
                 mint_payload[config.scope_payload_keys[idx]] = sid
+        resolved_batch_id = _resolve_batch_id(
+            db,
+            project_id,
+            batch_id=batch_id,
+            op_type="single_node_approve",
+            config=config,
+            scope_ids=scope_ids,
+        )
         pipeline_queue.enqueue(
             db,
             job_type=config.mint_job_type,
             payload=mint_payload,
+            batch_id=resolved_batch_id,
         )
     # Phase 7: post-approval hook for side-effects that shouldn't
     # roll back the approval if they fail. Currently used by the
@@ -519,6 +589,8 @@ def bootstrap_discard(
     draft_id: str,
     config: BootstrapTierConfig,
     require_project: Callable,
+    *,
+    batch_id: str | None = None,
 ) -> dict[str, bool]:
     """Generic POST discard handler."""
     require_project(db, project_id)
@@ -550,6 +622,14 @@ def bootstrap_discard(
         ev.DraftDiscarded(draft_id=draft_id, reason="user_regen"),
     )
     commit_and_publish(db, project_id)
+    resolved_batch_id = _resolve_batch_id(
+        db,
+        project_id,
+        batch_id=batch_id,
+        op_type="single_node_discard",
+        config=config,
+        scope_ids=scope_ids,
+    )
     pipeline_queue.enqueue(
         db,
         job_type=config.generate_job_type,
@@ -558,6 +638,7 @@ def bootstrap_discard(
             scope_ids,
             scope_payload_keys=config.scope_payload_keys,
         ),
+        batch_id=resolved_batch_id,
     )
     return {"ok": True}
 
@@ -592,6 +673,8 @@ def bootstrap_retry_review(
     scope_ids: tuple[str, ...],
     config: BootstrapTierConfig,
     require_project: Callable,
+    *,
+    batch_id: str | None = None,
 ) -> dict[str, str]:
     """Manually re-enqueue the AI self-review for this tier's node.
 
@@ -639,6 +722,14 @@ def bootstrap_retry_review(
         project_id=project_id,
         node_id=node.id,
     )
+    resolved_batch_id = _resolve_batch_id(
+        db,
+        project_id,
+        batch_id=batch_id,
+        op_type="single_node_retry_review",
+        config=config,
+        scope_ids=scope_ids,
+    )
     job_id = pipeline_queue.enqueue(
         db,
         job_type=config.review_job_type,
@@ -648,6 +739,7 @@ def bootstrap_retry_review(
             "draft_id": draft_id,
         },
         priority=pipeline_queue.REVIEW_JOB_PRIORITY,
+        batch_id=resolved_batch_id,
     )
     return {"job_id": job_id}
 
@@ -660,6 +752,7 @@ def bootstrap_reset(
     require_project: Callable,
     *,
     force: bool = False,
+    batch_id: str | None = None,
 ) -> dict[str, Any]:
     """Generic POST reset handler.
 
@@ -780,6 +873,14 @@ def bootstrap_reset(
     )
     commit_and_publish(db, project_id)
 
+    resolved_batch_id = _resolve_batch_id(
+        db,
+        project_id,
+        batch_id=batch_id,
+        op_type="single_node_reset",
+        config=config,
+        scope_ids=scope_ids,
+    )
     pipeline_queue.enqueue(
         db,
         job_type=config.generate_job_type,
@@ -788,6 +889,7 @@ def bootstrap_reset(
             scope_ids,
             scope_payload_keys=config.scope_payload_keys,
         ),
+        batch_id=resolved_batch_id,
     )
     return {
         "ok": True,
