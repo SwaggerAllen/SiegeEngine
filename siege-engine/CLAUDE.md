@@ -396,6 +396,36 @@ prompt:
    review vs prior review — cross-mode batches show stats but
    no delta arrow because the baselines aren't comparable).
 
+**Sticky-until-fresh exploration set.** When exploration-sample
+is called with `exclude_cohort_id`, the resulting batch tags
+`scope_keys.parent_cohort_id` linking it to that canonical cohort.
+Subsequent cohort regenerate calls (review *and* fresh) compute
+the effective working set as `cohort.comp_ids ∪ active-explored`,
+where active-explored = comp_ids from same-tier exploration_sample
+batches with the matching `parent_cohort_id` AND `started_at`
+later than the most-recent fresh-mode `cohort_regenerate` batch
+for that cohort. Effects:
+
+- Review-mode regen runs on canonical + every previously-sampled
+  comp; reviews carry forward across cycles. The working set is
+  stable across multiple review passes — that's the point, since
+  adding new exploration mid-review-cycle would muddy the data
+  the review pass is collecting.
+- Fresh-mode regen runs on the same effective set (wiping their
+  content), and the temporal cutoff buries every pre-fresh
+  exploration batch from future regen-time queries. Subsequent
+  regens see canonical only until new exploration samples land.
+- Post-fresh exploration samples join the new working set; the
+  exclusion pool (don't re-pick previously-sampled comps) carries
+  forward independent of the cutoff, so resamples never collide
+  with prior cycles' explorations.
+
+The exploration-sample backend doesn't currently block calls
+while a review-mode batch is in-flight — that's left to operator
+discipline. If a guard becomes useful, it'd live as a 409 in
+`generate_exploration_sample` checking for queued/running jobs
+under the active cohort_regenerate batches.
+
 **Same-tier scope walk.** Cohort regenerate, exploration-sample,
 and full-corpus all use the shared `scope_ids_from_comp` helper
 in `tier_ops_routes.py` to translate "top-level comp ID + target

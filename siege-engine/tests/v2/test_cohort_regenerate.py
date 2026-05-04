@@ -390,6 +390,152 @@ class TestExplorationSample:
         assert resp.status_code == 409
 
 
+# ── Active-explored working set ───────────────────────────────────
+
+
+class TestActiveExploredWorkingSet:
+    """Exploration sample's picks tag the cohort and ride along on
+    subsequent regenerate calls. Fresh-mode regen resets the working
+    set via temporal cutoff so the next regen sees only canonical."""
+
+    def test_review_after_exploration_covers_explored_comps(self, db, client):
+        project_id = _seed_project(db)
+        canonical = [
+            _seed_top_level_comp(db, project_id, name=f"K{i}", content="<comparch/>")
+            for i in range(2)
+        ]
+        explorable = [
+            _seed_top_level_comp(db, project_id, name=f"X{i}", content="<comparch/>")
+            for i in range(3)
+        ]
+        cohort_id = client.post(
+            f"/api/projects/{project_id}/cohorts",
+            json={"tier": "comparch", "name": "c", "comp_ids": canonical},
+        ).json()["id"]
+        db.commit()
+        # Exploration sample with parent_cohort link
+        exp_resp = client.post(
+            f"/api/projects/{project_id}/tiers/comparch/exploration-sample",
+            json={"count": len(explorable), "exclude_cohort_id": cohort_id},
+        )
+        assert exp_resp.status_code == 200, exp_resp.text
+        sampled = set(exp_resp.json()["picked_comp_ids"])
+        assert sampled == set(explorable)
+        # Subsequent review-mode regen covers canonical + sampled
+        resp = client.post(
+            f"/api/projects/{project_id}/cohorts/{cohort_id}/regenerate",
+            json={"mode": "review"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["scopes_total"] == 5
+        assert body["scopes_succeeded"] == 5
+        regen_jobs = list(
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.batch_id == body["batch_id"],
+                )
+            ).scalars()
+        )
+        comp_ids_on_jobs = {(j.payload or {}).get("component_id") for j in regen_jobs}
+        assert comp_ids_on_jobs == set(canonical) | set(explorable)
+
+    def test_fresh_resets_explored_so_next_regen_sees_canonical_only(self, db, client):
+        project_id = _seed_project(db)
+        canonical = _seed_top_level_comp(db, project_id, name="K", content="<comparch/>")
+        _seed_top_level_comp(db, project_id, name="X", content="<comparch/>")
+        cohort_id = client.post(
+            f"/api/projects/{project_id}/cohorts",
+            json={"tier": "comparch", "name": "c", "comp_ids": [canonical]},
+        ).json()["id"]
+        db.commit()
+        # Sample → adds X to working set
+        client.post(
+            f"/api/projects/{project_id}/tiers/comparch/exploration-sample",
+            json={"count": 1, "exclude_cohort_id": cohort_id},
+        )
+        # Fresh-mode regen — runs on canonical + explored, then the
+        # temporal cutoff buries the exploration batch.
+        fresh_resp = client.post(
+            f"/api/projects/{project_id}/cohorts/{cohort_id}/regenerate",
+            json={"mode": "fresh"},
+        )
+        assert fresh_resp.json()["scopes_total"] == 2
+        # Subsequent review-mode regen should NOT include the
+        # explored comp — fresh cleared the working set.
+        review_resp = client.post(
+            f"/api/projects/{project_id}/cohorts/{cohort_id}/regenerate",
+            json={"mode": "review"},
+        )
+        assert review_resp.status_code == 200, review_resp.text
+        body = review_resp.json()
+        assert body["scopes_total"] == 1
+        regen_jobs = list(
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.batch_id == body["batch_id"],
+                )
+            ).scalars()
+        )
+        comp_ids_on_jobs = {(j.payload or {}).get("component_id") for j in regen_jobs}
+        assert comp_ids_on_jobs == {canonical}
+
+    def test_post_fresh_exploration_rejoins_working_set(self, db, client):
+        """After a fresh reset, a NEW exploration sample's picks
+        should join the working set again — the cutoff only buries
+        pre-fresh exploration batches."""
+        project_id = _seed_project(db)
+        canonical = _seed_top_level_comp(db, project_id, name="K", content="<comparch/>")
+        # Two explorable comps so the random pick has alternatives
+        # across pre/post fresh.
+        for n in ("X1", "X2"):
+            _seed_top_level_comp(db, project_id, name=n, content="<comparch/>")
+        cohort_id = client.post(
+            f"/api/projects/{project_id}/cohorts",
+            json={"tier": "comparch", "name": "c", "comp_ids": [canonical]},
+        ).json()["id"]
+        db.commit()
+        # Pre-fresh exploration → first explorable joins (which one
+        # depends on rng; record it).
+        pre_resp = client.post(
+            f"/api/projects/{project_id}/tiers/comparch/exploration-sample",
+            json={"count": 1, "exclude_cohort_id": cohort_id},
+        )
+        pre_picked = set(pre_resp.json()["picked_comp_ids"])
+        # Fresh resets working set
+        client.post(
+            f"/api/projects/{project_id}/cohorts/{cohort_id}/regenerate",
+            json={"mode": "fresh"},
+        )
+        # Post-fresh exploration → the OTHER explorable joins (the
+        # exclusion pool excludes the pre-fresh pick).
+        post_resp = client.post(
+            f"/api/projects/{project_id}/tiers/comparch/exploration-sample",
+            json={"count": 1, "exclude_cohort_id": cohort_id},
+        )
+        post_picked = set(post_resp.json()["picked_comp_ids"])
+        assert post_picked.isdisjoint(pre_picked)
+        # Review covers canonical + post-fresh pick (pre-fresh pick
+        # was buried by the fresh cutoff).
+        review_resp = client.post(
+            f"/api/projects/{project_id}/cohorts/{cohort_id}/regenerate",
+            json={"mode": "review"},
+        )
+        body = review_resp.json()
+        regen_jobs = list(
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.batch_id == body["batch_id"],
+                )
+            ).scalars()
+        )
+        comp_ids_on_jobs = {(j.payload or {}).get("component_id") for j in regen_jobs}
+        assert comp_ids_on_jobs == {canonical} | post_picked
+
+
 # ── Full corpus ───────────────────────────────────────────────────
 
 
