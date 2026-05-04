@@ -329,17 +329,21 @@ function SubcompCampaignActions({
   const [fullCorpusConfirm, setFullCorpusConfirm] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
-  const activeCohort = cohorts.find((c) => !c.archived && c.tier === 'comparch');
+  // Active cohort drives the campaign tier — exploration-sample and
+  // full-corpus run at the active cohort's tier, walking from comp
+  // IDs to scopes per that tier on the backend.
+  const activeCohort = cohorts.find((c) => !c.archived);
+  const campaignTier = activeCohort?.tier ?? 'comparch';
   const explorationMutation = useMutation({
     mutationFn: () =>
-      generateExplorationSample(projectId, {
+      generateExplorationSample(projectId, campaignTier, {
         count: explorationCount,
         exclude_cohort_id: activeCohort?.id,
       }),
     onSuccess: (result) => {
       setStatusMsg(
-        `Exploration sample: ${result.picked_comp_ids.length} new comps, ` +
-          `${result.scopes_succeeded}/${result.scopes_total} subs enqueued ` +
+        `Exploration sample (${campaignTier}): ${result.picked_comp_ids.length} new comps, ` +
+          `${result.scopes_succeeded}/${result.scopes_total} scopes enqueued ` +
           `(batch ${result.batch_id.slice(0, 14)}…).`,
       );
     },
@@ -348,11 +352,11 @@ function SubcompCampaignActions({
     },
   });
   const fullCorpusMutation = useMutation({
-    mutationFn: () => generateFullCorpus(projectId),
+    mutationFn: () => generateFullCorpus(projectId, campaignTier),
     onSuccess: (result) => {
       setFullCorpusConfirm(false);
       setStatusMsg(
-        `Full corpus: ${result.scopes_succeeded}/${result.scopes_total} subs enqueued ` +
+        `Full corpus (${campaignTier}): ${result.scopes_succeeded}/${result.scopes_total} scopes enqueued ` +
           `(batch ${result.batch_id.slice(0, 14)}…).`,
       );
     },
@@ -365,7 +369,7 @@ function SubcompCampaignActions({
 
   return (
     <div className="rounded border border-gray-800 bg-gray-950/40 p-3 text-xs space-y-2">
-      <div className="font-medium text-gray-200">Subcomparch campaign</div>
+      <div className="font-medium text-gray-200">Campaign actions ({campaignTier})</div>
       <div className="flex flex-wrap items-center gap-2">
         <label>
           Exploration count:{' '}
@@ -382,7 +386,7 @@ function SubcompCampaignActions({
           type="button"
           onClick={() => explorationMutation.mutate()}
           disabled={isBusy}
-          title="Pick N random comps not in the active cohort and not previously sampled, regenerate their subs under one batch"
+          title="Pick N random comps not in the active cohort and not previously sampled, regenerate at the active cohort's tier under one batch"
           className="px-2 py-1 rounded border border-blue-800 text-blue-200 hover:bg-blue-950 disabled:opacity-40"
           data-testid="cohorts-exploration-sample"
         >
@@ -399,7 +403,7 @@ function SubcompCampaignActions({
             >
               {fullCorpusMutation.isPending
                 ? 'Regenerating all…'
-                : 'Confirm: regenerate every subcomp'}
+                : `Confirm: regenerate every ${campaignTier} scope`}
             </button>
             <button
               type="button"
@@ -415,7 +419,7 @@ function SubcompCampaignActions({
             type="button"
             onClick={() => setFullCorpusConfirm(true)}
             disabled={isBusy}
-            title="Regenerate every existing subcomp from scratch — final-sweep escape hatch"
+            title="Regenerate every scope at the active cohort's tier from scratch — final-sweep escape hatch"
             className="px-2 py-1 rounded border border-red-900 text-red-300 hover:bg-red-950 disabled:opacity-40"
             data-testid="cohorts-full-corpus"
           >

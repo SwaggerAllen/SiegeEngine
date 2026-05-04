@@ -139,19 +139,12 @@ def _seed_subcomp(
 
 
 class TestCohortRegenerate:
-    def test_review_mode_enqueues_subs_under_one_batch(self, db, client):
+    def test_comparch_cohort_review_mode_enqueues_comparch_jobs(self, db, client):
+        """Comparch cohort drives comparch generation directly — no
+        walk to subs. Each cohort comp becomes a (comp_id,) scope."""
         project_id = _seed_project(db)
-        # Two cohort comps, each with two subs (with content so the
-        # bootstrap_feedback path doesn't 409 on missing-pending-
-        # draft — we set up an approved scope).
-        comp_a = _seed_top_level_comp(db, project_id, name="A")
-        comp_b = _seed_top_level_comp(db, project_id, name="B")
-        for parent in (comp_a, comp_b):
-            for n in ("x", "y"):
-                _seed_subcomp(
-                    db, project_id, parent_id=parent, name=f"{n}", content="<subcomparch/>"
-                )
-        # Cohort over both top-level comps.
+        comp_a = _seed_top_level_comp(db, project_id, name="A", content="<comparch/>")
+        comp_b = _seed_top_level_comp(db, project_id, name="B", content="<comparch/>")
         cohort_resp = client.post(
             f"/api/projects/{project_id}/cohorts",
             json={"tier": "comparch", "name": "c", "comp_ids": [comp_a, comp_b]},
@@ -166,35 +159,30 @@ class TestCohortRegenerate:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["mode"] == "review"
-        assert body["target_tier"] == "subcomparch"
-        assert body["scopes_total"] == 4
-        # All 4 succeeded — bootstrap_feedback with force bypasses
-        # the approved-content gate (the subs have content).
-        assert body["scopes_succeeded"] == 4
+        assert body["target_tier"] == "comparch"
+        assert body["scopes_total"] == 2
+        assert body["scopes_succeeded"] == 2
         assert body["scopes_skipped"] == []
         batch_id = body["batch_id"]
-        # All 4 enqueued generate jobs share the batch_id.
+        # Both enqueued comparch jobs share the batch_id.
         gen_jobs = list(
             db.execute(
                 select(Job).where(
-                    Job.job_type == "v2.generate_subcomparch",
+                    Job.job_type == "v2.generate_comparch",
                     Job.batch_id == batch_id,
                 )
             ).scalars()
         )
-        assert len(gen_jobs) == 4
-        # Batch row records the mode.
+        assert len(gen_jobs) == 2
         batch = db.get(Batch, batch_id)
         assert batch is not None
         assert batch.params == {"mode": "review"}
         assert batch.op_type == "cohort_regenerate"
+        assert batch.tier == "comparch"
 
-    def test_fresh_mode_uses_reset_path(self, db, client):
+    def test_comparch_cohort_fresh_mode_uses_reset_path(self, db, client):
         project_id = _seed_project(db)
-        comp_a = _seed_top_level_comp(db, project_id, name="A")
-        sub_id = _seed_subcomp(
-            db, project_id, parent_id=comp_a, name="x", content="<subcomparch>old</subcomparch>"
-        )
+        comp_a = _seed_top_level_comp(db, project_id, name="A", content="<comparch>old</comparch>")
         cohort_resp = client.post(
             f"/api/projects/{project_id}/cohorts",
             json={"tier": "comparch", "name": "c", "comp_ids": [comp_a]},
@@ -208,18 +196,53 @@ class TestCohortRegenerate:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["mode"] == "fresh"
-        # The reset path wipes the sub's content via
+        # The reset path wipes the comp's content via
         # BootstrapNodeContentCleared.
-        db.refresh_all = lambda: None  # noqa: B023 — keep linter quiet
         from backend.models.node import Node as NodeModel
 
-        sub = db.get(NodeModel, sub_id)
-        db.refresh(sub)
-        assert (sub.content or "") == ""
-        # Batch records mode=fresh.
+        comp = db.get(NodeModel, comp_a)
+        db.refresh(comp)
+        assert (comp.content or "") == ""
         batch = db.get(Batch, body["batch_id"])
         assert batch is not None
         assert batch.params == {"mode": "fresh"}
+
+    def test_subcomparch_cohort_walks_to_subs(self, db, client):
+        """Subcomparch cohort walks from each cohort comp to its subs,
+        enqueueing one subcomparch job per sub."""
+        project_id = _seed_project(db)
+        comp_a = _seed_top_level_comp(db, project_id, name="A")
+        comp_b = _seed_top_level_comp(db, project_id, name="B")
+        for parent in (comp_a, comp_b):
+            for n in ("x", "y"):
+                _seed_subcomp(
+                    db, project_id, parent_id=parent, name=f"{n}", content="<subcomparch/>"
+                )
+        cohort_id = client.post(
+            f"/api/projects/{project_id}/cohorts",
+            json={"tier": "subcomparch", "name": "sc", "comp_ids": [comp_a, comp_b]},
+        ).json()["id"]
+        db.commit()
+
+        resp = client.post(
+            f"/api/projects/{project_id}/cohorts/{cohort_id}/regenerate",
+            json={"mode": "review"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["target_tier"] == "subcomparch"
+        # 2 cohort comps × 2 subs each = 4 subcomparch jobs.
+        assert body["scopes_total"] == 4
+        assert body["scopes_succeeded"] == 4
+        gen_jobs = list(
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_subcomparch",
+                    Job.batch_id == body["batch_id"],
+                )
+            ).scalars()
+        )
+        assert len(gen_jobs) == 4
 
     def test_unknown_cohort_404(self, db, client):
         project_id = _seed_project(db)
@@ -235,19 +258,20 @@ class TestCohortRegenerate:
 
 
 class TestExplorationSample:
-    def test_picks_random_comps_outside_cohort_and_excludes_prior(self, db, client):
+    def test_subcomparch_picks_random_comps_outside_cohort_and_excludes_prior(self, db, client):
         project_id = _seed_project(db)
-        # 5 top-level comps, each with a sub.
+        # 5 top-level comps, each with a sub (target=subcomparch
+        # walks to subs).
         comp_ids = []
         for i in range(5):
             cid = _seed_top_level_comp(db, project_id, name=f"C{i}")
             comp_ids.append(cid)
             _seed_subcomp(db, project_id, parent_id=cid, name=f"{i}sub")
-        # Save a cohort over the first 2.
+        # Save a subcomparch cohort over the first 2.
         cohort_id = client.post(
             f"/api/projects/{project_id}/cohorts",
             json={
-                "tier": "comparch",
+                "tier": "subcomparch",
                 "name": "c",
                 "comp_ids": comp_ids[:2],
             },
@@ -275,12 +299,45 @@ class TestExplorationSample:
         # Pre/post intersection is empty (no overlap with prior sample).
         assert second_picked.isdisjoint(first_picked)
 
+    def test_comparch_picks_top_comps_and_runs_comparch(self, db, client):
+        """Comparch tier exploration-sample picks top-level comps and
+        runs comparch generation directly — no walk to subs."""
+        project_id = _seed_project(db)
+        comp_ids = [
+            _seed_top_level_comp(db, project_id, name=f"C{i}", content="<comparch/>")
+            for i in range(3)
+        ]
+        cohort_id = client.post(
+            f"/api/projects/{project_id}/cohorts",
+            json={"tier": "comparch", "name": "c", "comp_ids": [comp_ids[0]]},
+        ).json()["id"]
+        db.commit()
+        resp = client.post(
+            f"/api/projects/{project_id}/tiers/comparch/exploration-sample",
+            json={"count": 2, "exclude_cohort_id": cohort_id},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["tier"] == "comparch"
+        # 2 comps picked, each becomes one comparch job.
+        assert len(body["picked_comp_ids"]) == 2
+        assert body["scopes_succeeded"] == 2
+        comparch_jobs = list(
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.batch_id == body["batch_id"],
+                )
+            ).scalars()
+        )
+        assert len(comparch_jobs) == 2
+
     def test_409_when_pool_exhausted(self, db, client):
         project_id = _seed_project(db)
         c1 = _seed_top_level_comp(db, project_id, name="C1")
         cohort_id = client.post(
             f"/api/projects/{project_id}/cohorts",
-            json={"tier": "comparch", "name": "c", "comp_ids": [c1]},
+            json={"tier": "subcomparch", "name": "c", "comp_ids": [c1]},
         ).json()["id"]
         db.commit()
         resp = client.post(
@@ -294,7 +351,7 @@ class TestExplorationSample:
 
 
 class TestFullCorpus:
-    def test_enqueues_every_subcomp(self, db, client):
+    def test_subcomparch_enqueues_every_subcomp(self, db, client):
         project_id = _seed_project(db)
         c1 = _seed_top_level_comp(db, project_id, name="C1")
         c2 = _seed_top_level_comp(db, project_id, name="C2")
@@ -305,9 +362,9 @@ class TestFullCorpus:
         resp = client.post(f"/api/projects/{project_id}/tiers/subcomparch/full-corpus")
         assert resp.status_code == 200, resp.text
         body = resp.json()
+        assert body["tier"] == "subcomparch"
         assert body["scopes_total"] == 4
         assert body["scopes_succeeded"] == 4
-        # All 4 jobs share the batch_id.
         jobs = list(
             db.execute(
                 select(Job).where(
@@ -318,24 +375,44 @@ class TestFullCorpus:
         )
         assert len(jobs) == 4
 
+    def test_comparch_enqueues_every_top_level_comp(self, db, client):
+        project_id = _seed_project(db)
+        for name in ("A", "B", "C"):
+            _seed_top_level_comp(db, project_id, name=name)
+        db.commit()
+        resp = client.post(f"/api/projects/{project_id}/tiers/comparch/full-corpus")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["tier"] == "comparch"
+        assert body["scopes_total"] == 3
+        assert body["scopes_succeeded"] == 3
+        jobs = list(
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.batch_id == body["batch_id"],
+                )
+            ).scalars()
+        )
+        assert len(jobs) == 3
+
 
 # ── force=True on bootstrap_feedback ──────────────────────────────
 
 
 class TestBootstrapFeedbackForce:
     def test_force_bypasses_approved_gate(self, db, client):
-        """The cohort regenerate path passes force=True so a sub
+        """The cohort regenerate path passes force=True so a comp
         with approved content can still receive a regen. Without
         force, bootstrap_feedback 409s on approved scopes."""
         project_id = _seed_project(db)
         c1 = _seed_top_level_comp(db, project_id, name="A", content="<comparch/>")
-        sub_id = _seed_subcomp(db, project_id, parent_id=c1, name="x", content="<subcomparch/>")
         cohort_id = client.post(
             f"/api/projects/{project_id}/cohorts",
             json={"tier": "comparch", "name": "c", "comp_ids": [c1]},
         ).json()["id"]
         db.commit()
-        # mode=review uses bootstrap_feedback(force=True). The sub
+        # mode=review uses bootstrap_feedback(force=True). The comp
         # has approved content; without force it would 409. With
         # force the regen succeeds + a job lands.
         resp = client.post(
@@ -344,16 +421,11 @@ class TestBootstrapFeedbackForce:
         )
         assert resp.status_code == 200
         assert resp.json()["scopes_succeeded"] == 1
-        # Verify the new gen job's payload references this sub. The
-        # subcomparch handler reads ``payload["component_id"]`` and
-        # treats it as the sub id (it does ``db.get(Node,
-        # component_id)`` and expects the row back) — confusing but
-        # consistent with the per-node-route convention.
         jobs = list(
             db.execute(
                 select(Job)
-                .where(Job.job_type == "v2.generate_subcomparch")
+                .where(Job.job_type == "v2.generate_comparch")
                 .order_by(Job.created_at.desc())
             ).scalars()
         )
-        assert any((j.payload or {}).get("component_id") == sub_id for j in jobs)
+        assert any((j.payload or {}).get("component_id") == c1 for j in jobs)
