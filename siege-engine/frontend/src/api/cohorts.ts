@@ -109,6 +109,14 @@ export async function putSamplerConfig(
   return SamplerConfigSchema.parse(r.data);
 }
 
+export async function resetSamplerConfig(
+  projectId: string,
+  tier: string,
+): Promise<SamplerConfig> {
+  const r = await api.post(`/projects/${projectId}/sampler-configs/${tier}/reset`);
+  return SamplerConfigSchema.parse(r.data);
+}
+
 // ── Regenerate cohort + exploration / full-corpus ─────────────────
 
 const SkippedScopeSchema = z.object({

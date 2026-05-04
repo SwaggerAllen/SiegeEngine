@@ -244,6 +244,27 @@ class TestSamplerConfig:
         # created so the user can populate via PUT.
         assert resp.json()["axes"] == {"axes": []}
 
+    def test_reset_overwrites_with_seeded_defaults(self, db, client):
+        project_id = _seed_project(db)
+        db.commit()
+        # Replace defaults with a custom single-axis shape
+        client.put(
+            f"/api/projects/{project_id}/sampler-configs/comparch",
+            json={"axes": {"axes": [{"key": "kind", "type": "categorical", "weight": 9.0}]}},
+        )
+        resp = client.post(f"/api/projects/{project_id}/sampler-configs/comparch/reset")
+        assert resp.status_code == 200
+        body = resp.json()
+        keys = [a["key"] for a in body["axes"]["axes"]]
+        # Seeded comparch defaults include resp_count as the dominant
+        # signal — that's the post-reset shape we expect to see back.
+        assert "resp_count" in keys
+        assert len(body["axes"]["axes"]) > 1
+        # Single row preserved (no orphan), id stable
+        cfgs = db.execute(select(CohortSamplerConfig)).scalars().all()
+        assert len(cfgs) == 1
+        assert cfgs[0].id == body["id"]
+
 
 # ── Auto-suggest preview ──────────────────────────────────────────
 

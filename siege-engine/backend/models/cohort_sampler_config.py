@@ -75,35 +75,40 @@ class CohortSamplerConfig(Base):
 
 
 # Default axis configurations seeded on first GET if no row exists
-# for a (project, tier). Tuned for the comparch tier as our
-# initial use case; other tiers will get their own defaults as
-# they grow campaign workflows.
+# for a (project, tier). Sampler axes for iterating tier T must be
+# computed from sources upstream of T — never from T's own outputs,
+# which collapse to a single bucket pre-iteration and kill the
+# coverage signal at exactly the moment the cohort is selected. For
+# comparch that means sysarch-derived metrics only (kind, foundation,
+# resp_count, dep_count, inbound_dep_count); ``sub_count`` and
+# ``multi_owner_resp_count`` belong on the subcomparch config since
+# they're comparch outputs.
 DEFAULT_AXES_BY_TIER: dict[str, dict[str, Any]] = {
     "comparch": {
         "axes": [
-            {"key": "kind", "label": "Kind", "weight": 1.0, "type": "categorical"},
+            {"key": "kind", "label": "Kind", "weight": 0.8, "type": "categorical"},
             {
                 "key": "is_foundation",
                 "label": "Foundation",
-                "weight": 0.7,
+                "weight": 0.4,
                 "type": "categorical",
             },
             {
-                "key": "sub_count",
-                "label": "Sub count",
-                "weight": 0.8,
+                "key": "resp_count",
+                "label": "Resp count",
+                "weight": 1.5,
                 "type": "numeric_buckets",
                 "buckets": [
-                    {"label": "0", "max": 0},
-                    {"label": "1-2", "min": 1, "max": 2},
-                    {"label": "3-5", "min": 3, "max": 5},
-                    {"label": "6+", "min": 6},
+                    {"label": "0-3", "max": 3},
+                    {"label": "4-7", "min": 4, "max": 7},
+                    {"label": "8-11", "min": 8, "max": 11},
+                    {"label": "12+", "min": 12},
                 ],
             },
             {
                 "key": "dep_count",
                 "label": "Dep count",
-                "weight": 0.6,
+                "weight": 1.0,
                 "type": "numeric_buckets",
                 "buckets": [
                     {"label": "0", "max": 0},
@@ -112,13 +117,14 @@ DEFAULT_AXES_BY_TIER: dict[str, dict[str, Any]] = {
                 ],
             },
             {
-                "key": "multi_owner_resp_count",
-                "label": "Multi-owner",
-                "weight": 0.5,
+                "key": "inbound_dep_count",
+                "label": "Inbound deps",
+                "weight": 0.8,
                 "type": "numeric_buckets",
                 "buckets": [
-                    {"label": "none", "max": 0},
-                    {"label": "any", "min": 1},
+                    {"label": "0-1", "max": 1},
+                    {"label": "2-4", "min": 2, "max": 4},
+                    {"label": "5+", "min": 5},
                 ],
             },
         ]

@@ -398,10 +398,23 @@ Sampler axis weights live in the `cohort_sampler_configs` table
 — per `(project, tier)` JSON config editable via the
 `/sampler-configs/:tier` GET/PUT endpoint or the inline
 `SamplerConfigEditor` UI on the cohorts page. Defaults seeded on
-first read for the comparch tier (kind / foundation / sub_count
-/ dep_count / multi_owner_resp_count). Tuning weights doesn't
-require a deploy — important so axis edits don't interrupt
-in-flight generations.
+first read for the comparch tier (kind / foundation / resp_count
+/ dep_count / inbound_dep_count, with `resp_count` weighted highest
+as the dominant complexity signal). Tuning weights doesn't require
+a deploy — important so axis edits don't interrupt in-flight
+generations.
+
+**Upstream-only axes rule.** Sampler axes for iterating tier T
+must be computed from sources upstream of T, never from T's own
+outputs. At cohort selection time the target tier hasn't run yet,
+so any axis derived from its outputs collapses to a single bucket
+across every candidate and the sampler degenerates to alphabetical
+fill. The original comparch defaults violated this on `sub_count`
+and `multi_owner_resp_count` (both are comparch outputs); they
+were dropped from comparch and belong on a future subcomparch
+default config where they're upstream signals. Apply the same test
+when adding axes for any new tier: would this metric exist on a
+candidate that has never been generated?
 
 The cohort regenerate path uses `bootstrap_feedback`'s
 `force=True` parameter to bypass the `has_been_approved` 409 —
