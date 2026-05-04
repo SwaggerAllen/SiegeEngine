@@ -307,22 +307,79 @@ class RegenerateCohortRequest(BaseModel):
     mode: RegenerateMode
 
 
+def _active_exploration_comp_ids(db: Session, project_id: str, cohort: Cohort) -> list[str]:
+    """Return comp_ids from exploration_sample batches active for this cohort.
+
+    "Active" = tagged with parent_cohort_id == cohort.id, at the
+    same tier, and started_at later than the most-recent
+    fresh-mode cohort_regenerate batch for this cohort. Fresh mode
+    is the explicit "reset the working set" affordance — every
+    exploration-sample batch older than the most-recent fresh
+    regen is buried by the temporal cutoff.
+    """
+    from backend.models.batch import Batch
+
+    fresh_cutoff_row = db.execute(
+        select(Batch)
+        .where(
+            Batch.project_id == project_id,
+            Batch.op_type == "cohort_regenerate",
+            Batch.tier == cohort.tier,
+        )
+        .order_by(Batch.started_at.desc())
+    ).scalars()
+    fresh_cutoff = None
+    for b in fresh_cutoff_row:
+        if (b.params or {}).get("mode") == "fresh" and (b.scope_keys or {}).get(
+            "cohort_id"
+        ) == cohort.id:
+            fresh_cutoff = b.started_at
+            break
+
+    expl_q = select(Batch).where(
+        Batch.project_id == project_id,
+        Batch.op_type == "generate_exploration_sample",
+        Batch.tier == cohort.tier,
+    )
+    if fresh_cutoff is not None:
+        expl_q = expl_q.where(Batch.started_at > fresh_cutoff)
+    out: list[str] = []
+    seen: set[str] = set()
+    for b in db.execute(expl_q).scalars():
+        keys = b.scope_keys or {}
+        if keys.get("parent_cohort_id") != cohort.id:
+            continue
+        for cid in keys.get("comp_ids") or []:
+            if isinstance(cid, str) and cid not in seen:
+                seen.add(cid)
+                out.append(cid)
+    return out
+
+
 def _scope_ids_for_cohort(db: Session, project_id: str, cohort: Cohort) -> list[tuple[str, ...]]:
     """Walk from cohort.comp_ids to scope tuples for the cohort's target tier.
 
-    Cohort.comp_ids always holds top-level comp IDs (the units). The
-    walk per target tier is shared with the exploration-sample and
-    full-corpus tier-ops endpoints — see
+    Effective comp set = ``cohort.comp_ids`` ∪ active-explored comps
+    (see :func:`_active_exploration_comp_ids`). The walk per target
+    tier is shared with the exploration-sample and full-corpus
+    tier-ops endpoints — see
     :func:`backend.graph.tier_ops_routes.scope_ids_from_comp`.
     """
     from backend.graph.tier_ops_routes import scope_ids_from_comp
 
-    if not cohort.comp_ids:
+    canonical = [cid for cid in (cohort.comp_ids or []) if isinstance(cid, str)]
+    explored = _active_exploration_comp_ids(db, project_id, cohort)
+    seen: set[str] = set()
+    effective: list[str] = []
+    for cid in [*canonical, *explored]:
+        if cid in seen:
+            continue
+        seen.add(cid)
+        effective.append(cid)
+    if not effective:
         return []
     out: list[tuple[str, ...]] = []
-    for cid in cohort.comp_ids:
-        if not isinstance(cid, str):
-            continue
+    for cid in effective:
         out.extend(scope_ids_from_comp(db, project_id, cohort.tier, cid))
     return out
 

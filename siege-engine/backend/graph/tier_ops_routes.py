@@ -461,12 +461,20 @@ def generate_exploration_sample(
     picked = pool[: req.count]
     picked_ids = sorted(c.id for c in picked)
 
+    # Stamp parent_cohort_id into scope_keys when called with
+    # exclude_cohort_id — that's the link that ties this exploration
+    # sample's comps into the cohort's effective working set so
+    # subsequent review-mode regens cover the explored comps too.
+    scope_keys: dict[str, Any] = {"comp_ids": picked_ids}
+    if req.exclude_cohort_id is not None:
+        scope_keys["parent_cohort_id"] = req.exclude_cohort_id
+
     op_batch_id = mint_batch(
         db,
         project_id,
         op_type="generate_exploration_sample",
         tier=tier,
-        scope_keys={"comp_ids": picked_ids},
+        scope_keys=scope_keys,
         params={"count": req.count, "exclude_cohort_id": req.exclude_cohort_id},
     )
     # For each picked comp, walk to scope tuples per the target tier

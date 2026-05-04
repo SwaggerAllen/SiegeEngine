@@ -164,12 +164,24 @@ def cancel_job(db: Session, job_id: str) -> bool:
     return False
 
 
-def cancel_jobs_by_type(db: Session, job_type: str, **payload_filters) -> int:
+def cancel_jobs_by_type(
+    db: Session,
+    job_type: str,
+    *,
+    exclude_batch_id: str | None = None,
+    **payload_filters: Any,
+) -> int:
     """Cancel all queued or running jobs of a given type matching payload filters.
 
     Returns the number of jobs cancelled. Running jobs are cancelled
     via the active-tasks registry (see :func:`cancel_job`); queued
     jobs are marked ``cancelled`` directly in the DB.
+
+    ``exclude_batch_id`` (optional) — jobs whose ``Job.batch_id``
+    matches this value are preserved. Used by multi-scope batch
+    operations (cohort regenerate, exploration-sample, full-corpus)
+    so each iteration's cancel sweep doesn't cannibalise sibling
+    jobs already queued under the same batch.
     """
     jobs = (
         db.query(Job).filter(Job.job_type == job_type, Job.status.in_(["queued", "running"])).all()
@@ -177,6 +189,8 @@ def cancel_jobs_by_type(db: Session, job_type: str, **payload_filters) -> int:
     cancelled = 0
     commit_needed = False
     for job in jobs:
+        if exclude_batch_id is not None and job.batch_id == exclude_batch_id:
+            continue
         if not all((job.payload or {}).get(k) == v for k, v in payload_filters.items()):
             continue
         if job.status == "queued":
