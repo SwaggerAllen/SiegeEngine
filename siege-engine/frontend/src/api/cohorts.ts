@@ -149,6 +149,7 @@ export async function regenerateCohort(
 export const ExplorationSampleResultSchema = z.object({
   ok: z.boolean(),
   batch_id: z.string(),
+  tier: z.string().optional(),
   picked_comp_ids: z.array(z.string()),
   scopes_total: z.number().int(),
   scopes_succeeded: z.number().int(),
@@ -158,10 +159,11 @@ export type ExplorationSampleResult = z.infer<typeof ExplorationSampleResultSche
 
 export async function generateExplorationSample(
   projectId: string,
+  tier: string,
   body: { count: number; exclude_cohort_id?: string },
 ): Promise<ExplorationSampleResult> {
   const r = await api.post(
-    `/projects/${projectId}/tiers/subcomparch/exploration-sample`,
+    `/projects/${projectId}/tiers/${tier}/exploration-sample`,
     body,
   );
   return ExplorationSampleResultSchema.parse(r.data);
@@ -170,6 +172,7 @@ export async function generateExplorationSample(
 export const FullCorpusResultSchema = z.object({
   ok: z.boolean(),
   batch_id: z.string(),
+  tier: z.string().optional(),
   scopes_total: z.number().int(),
   scopes_succeeded: z.number().int(),
   scopes_skipped: z.array(SkippedScopeSchema),
@@ -178,7 +181,8 @@ export type FullCorpusResult = z.infer<typeof FullCorpusResultSchema>;
 
 export async function generateFullCorpus(
   projectId: string,
+  tier: string,
 ): Promise<FullCorpusResult> {
-  const r = await api.post(`/projects/${projectId}/tiers/subcomparch/full-corpus`);
+  const r = await api.post(`/projects/${projectId}/tiers/${tier}/full-corpus`);
   return FullCorpusResultSchema.parse(r.data);
 }

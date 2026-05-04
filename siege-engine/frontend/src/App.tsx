@@ -168,6 +168,14 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/projects/:id/cohorts"
+          element={
+            <ProtectedRoute>
+              <RedirectToSynthetic target=":cohorts" />
+            </ProtectedRoute>
+          }
+        />
         <Route path="/" element={<Navigate to="/projects" replace />} />
       </Routes>
     </BrowserRouter>

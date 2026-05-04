@@ -40,7 +40,6 @@ from backend.models.cohort_sampler_config import (
     default_axes_for_tier,
     mint_cohort_sampler_config_id,
 )
-from backend.models.node import Node
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -308,34 +307,24 @@ class RegenerateCohortRequest(BaseModel):
     mode: RegenerateMode
 
 
-# Maps cohort tier → target tier we generate at when regenerating.
-# A comparch cohort drives subcomparch generation; future cohort
-# tiers extend this mapping.
-TARGET_TIER_BY_COHORT_TIER: dict[str, str] = {
-    "comparch": "subcomparch",
-}
+def _scope_ids_for_cohort(db: Session, project_id: str, cohort: Cohort) -> list[tuple[str, ...]]:
+    """Walk from cohort.comp_ids to scope tuples for the cohort's target tier.
 
-
-def _target_subs_for_cohort(db: Session, project_id: str, cohort: Cohort) -> list[Node]:
-    """Return the comp child nodes the cohort regenerate operates on.
-
-    For a comparch cohort: subcomponents (tier="comp", parent_id in
-    cohort.comp_ids). Future cohort tiers add their own resolution.
+    Cohort.comp_ids always holds top-level comp IDs (the units). The
+    walk per target tier is shared with the exploration-sample and
+    full-corpus tier-ops endpoints — see
+    :func:`backend.graph.tier_ops_routes.scope_ids_from_comp`.
     """
-    if cohort.tier != "comparch":
-        return []
+    from backend.graph.tier_ops_routes import scope_ids_from_comp
+
     if not cohort.comp_ids:
         return []
-    rows = list(
-        db.execute(
-            select(Node).where(
-                Node.project_id == project_id,
-                Node.tier == "comp",
-                Node.parent_id.in_(list(cohort.comp_ids)),
-            )
-        ).scalars()
-    )
-    return rows
+    out: list[tuple[str, ...]] = []
+    for cid in cohort.comp_ids:
+        if not isinstance(cid, str):
+            continue
+        out.extend(scope_ids_from_comp(db, project_id, cohort.tier, cid))
+    return out
 
 
 @router.post("/{project_id}/cohorts/{cohort_id}/regenerate")
@@ -349,18 +338,18 @@ def regenerate_cohort(
     """Start a new iteration cycle for this cohort.
 
     Mints one Batch (op_type="cohort_regenerate", params records the
-    mode + cohort_id) and walks each child of each cohort comp at
-    the target tier:
+    mode + cohort_id) and walks each cohort scope at the cohort's
+    target tier:
 
     - ``mode="fresh"`` → ``bootstrap_reset(force=True, batch_id=...)``
-      per child. Wipes content + downstream cascade + enqueues fresh
+      per scope. Wipes content + downstream cascade + enqueues fresh
       gen. Tests "what does the prompt produce in isolation."
     - ``mode="review"`` → ``bootstrap_feedback("", force=True,
-      batch_id=...)`` per child. Discards pending, keeps approved as
+      batch_id=...)`` per scope. Discards pending, keeps approved as
       seed, enqueues regen with prior_review_text. Tests "what does
       the prompt produce when iterating on its own prior critique."
 
-    Skipped scopes (per-child failures) are reported in the result so
+    Skipped scopes (per-scope failures) are reported in the result so
     the operator can spot a partial sweep.
 
     Returns ``{batch_id, mode, target_tier, scopes_total,
@@ -368,13 +357,8 @@ def regenerate_cohort(
     """
     _require_project(db, project_id)
     cohort = _require_cohort(db, project_id, cohort_id)
-    target_tier = TARGET_TIER_BY_COHORT_TIER.get(cohort.tier)
-    if target_tier is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Cohort tier {cohort.tier!r} has no regenerate target tier configured",
-        )
-    target_nodes = _target_subs_for_cohort(db, project_id, cohort)
+    target_tier = cohort.tier
+    scopes = _scope_ids_for_cohort(db, project_id, cohort)
 
     op_batch_id = mint_batch(
         db,
@@ -384,13 +368,13 @@ def regenerate_cohort(
         scope_keys={
             "cohort_id": cohort.id,
             "cohort_comp_ids": list(cohort.comp_ids or []),
-            "target_node_count": len(target_nodes),
+            "scope_count": len(scopes),
         },
         params={"mode": req.mode},
     )
 
     # Resolve the BootstrapTierConfig for the target tier via the
-    # tier-ops registry so we reuse the existing per-node helpers.
+    # tier-ops registry so we reuse the existing per-scope helpers.
     from backend.graph.tier_ops_routes import _registry
     from backend.graph.tier_ops_routes import _require_project as _rp
 
@@ -404,12 +388,7 @@ def regenerate_cohort(
 
     succeeded = 0
     skipped: list[dict[str, Any]] = []
-    for node in target_nodes:
-        if node.parent_id is None:
-            continue
-        # Subcomparch's scope tuple is the single sub id; the parent
-        # is reachable via Node.parent_id when needed.
-        scope_ids = (node.id,)
+    for scope_ids in scopes:
         try:
             if req.mode == "fresh":
                 bootstrap_reset(
@@ -456,7 +435,7 @@ def regenerate_cohort(
         "cohort_id": cohort.id,
         "mode": req.mode,
         "target_tier": target_tier,
-        "scopes_total": len(target_nodes),
+        "scopes_total": len(scopes),
         "scopes_succeeded": succeeded,
         "scopes_skipped": skipped,
     }

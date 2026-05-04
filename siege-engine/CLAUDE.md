@@ -370,29 +370,53 @@ Saved selections of comp IDs that drive iteration campaigns at
 the next tier down. The intended workflow when iterating a
 prompt:
 
-1. Open the per-tier structure summary, hit "Select for cohort",
+1. Open the comparch structure summary, hit "Select for cohort",
    either auto-suggest (stratified greedy sampler against
    per-tier axis weights) or hand-pick comps, save as a cohort.
+   `cohort.comp_ids` always holds top-level comp IDs (the units);
+   `cohort.tier` records which generator the cohort drives.
 2. Each iteration cycle: kick off cohort regenerate from the
    Cohorts page. Two modes:
-   - **review** (`bootstrap_feedback("", force=True)` per sub) —
+   - **review** (`bootstrap_feedback("", force=True)` per scope) —
      keeps approved content, threads `prior_review_text` forward
      so the model iterates on its own critique.
-   - **fresh** (`bootstrap_reset(force=True)` per sub) — wipes
+   - **fresh** (`bootstrap_reset(force=True)` per scope) — wipes
      content + downstream cascade, generates from scratch with
      no prior context.
-3. Add an exploration sample each cycle (`/tiers/subcomparch/
-   exploration-sample`) — picks N comps not in the canonical
-   cohort and not in any prior exploration batch, regenerates
-   their subs. Surfaces pattern-level findings the canonical
-   sample can't see.
+3. Add an exploration sample each cycle
+   (`/tiers/:tier/exploration-sample`) — picks N comps not in
+   the canonical cohort and not in any prior same-tier
+   exploration batch, regenerates at the chosen tier. Surfaces
+   pattern-level findings the canonical sample can't see.
 4. After scores plateau, fire the full-corpus action
-   (`/tiers/subcomparch/full-corpus`) once to cover the long tail.
+   (`/tiers/:tier/full-corpus`) once to cover the long tail.
 5. Cycle history view (per-cohort, in `CohortsPanel`) lists
    prior `cohort_regenerate` batches with mode badge, mean
    score, and per-mode-pair score deltas (fresh vs prior fresh,
    review vs prior review — cross-mode batches show stats but
    no delta arrow because the baselines aren't comparable).
+
+**Same-tier scope walk.** Cohort regenerate, exploration-sample,
+and full-corpus all use the shared `scope_ids_from_comp` helper
+in `tier_ops_routes.py` to translate "top-level comp ID + target
+tier" into scope tuples for the BootstrapTierConfig:
+
+- target=`comparch` → `[(comp_id,)]` (no walk, runs comparch on
+  the comp directly).
+- target=`subcomparch` → `[(sub_id,) per sub child]` (walks one
+  level into the comp's subs).
+- target=`impl` → not implemented yet (raises 501).
+
+The exploration-sample exclusion pool is tier-scoped: filtering
+by `Batch.tier == target_tier` so a comparch exploration sample
+doesn't pollute a later subcomparch sample's exclusion set.
+
+The frontend `CohortsPanel` reads the active cohort's tier and
+threads it through every campaign action call; only one
+"campaign tier" is active at a time, derived from the active
+cohort. `COHORT_SELECTABLE_TIERS` in `TierStructureSummaryPanel`
+gates which structure-summary tiers can save cohorts (today:
+comparch only).
 
 Sampler axis weights live in the `cohort_sampler_configs` table
 — per `(project, tier)` JSON config editable via the
