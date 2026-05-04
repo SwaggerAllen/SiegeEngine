@@ -276,6 +276,12 @@ def extract_comparch_structure(session: Session, project_id: str) -> StructureSu
     decomp = _edges_by_kind(edges, "decomposition")
     deps = _edges_by_kind(edges, "dependency")
 
+    top_comp_ids = {c.id for c in top_comps}
+    inbound_dep_counts: dict[str, int] = defaultdict(int)
+    for e in deps:
+        if e.source_id in top_comp_ids and e.target_id in top_comp_ids:
+            inbound_dep_counts[e.target_id] += 1
+
     per_node: list[NodeRow] = []
     for c in top_comps:
         subs = subs_by_parent.get(c.id, [])
@@ -312,6 +318,7 @@ def extract_comparch_structure(session: Session, project_id: str) -> StructureSu
                     "resp_count": len(resp_targets),
                     "feat_count": len(feat_targets),
                     "dep_count": len(out_deps),
+                    "inbound_dep_count": inbound_dep_counts.get(c.id, 0),
                     "sub_dep_count": len(sub_deps),
                     "multi_owner_resp_count": multi_owner_resps,
                     "empty_subcomponents": len(subs) == 0,
@@ -323,6 +330,7 @@ def extract_comparch_structure(session: Session, project_id: str) -> StructureSu
     resp_counts = [int(r.metrics["resp_count"]) for r in per_node]
     feat_counts = [int(r.metrics["feat_count"]) for r in per_node]
     dep_counts = [int(r.metrics["dep_count"]) for r in per_node]
+    inbound_dep_counts_list = [int(r.metrics["inbound_dep_count"]) for r in per_node]
     multi_owner_counts = [int(r.metrics["multi_owner_resp_count"]) for r in per_node]
 
     aggregate = {
@@ -337,6 +345,7 @@ def extract_comparch_structure(session: Session, project_id: str) -> StructureSu
         "resp_count_dist": distribution_stats(resp_counts),
         "feat_count_dist": distribution_stats(feat_counts),
         "dep_count_dist": distribution_stats(dep_counts),
+        "inbound_dep_count_dist": distribution_stats(inbound_dep_counts_list),
         "multi_owner_dist": distribution_stats(multi_owner_counts),
     }
     return StructureSummary(
