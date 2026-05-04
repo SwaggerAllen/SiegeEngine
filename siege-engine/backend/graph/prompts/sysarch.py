@@ -603,6 +603,48 @@ the foundation component — not marked ``<foundation/>`` \
 (there's only one of those), but serving an analogous role as \
 the shared-infrastructure dep target for the presentational \
 side of the tree.
+* **Admin, operator, and debugging surfaces are first-class \
+presentationals — generate one per distinct admin/operator \
+interaction.** A common failure mode is to generate \
+presentationals only for the primary user-facing flows \
+(reviewing artifacts, navigating the graph, triaging the \
+review queue) and skip the surfaces operators and admins \
+need. These are real presentationals even when their \
+interaction model is mostly *browse + filter + occasional \
+edit form*. For every domain component that exposes \
+admin-managed state (bundles, credentials, scoped roles, \
+audit log, scheduler health, token usage), there is an \
+admin-side presentational whose interaction is "operator \
+inspects and adjusts that state". For every domain that \
+emits audit-worthy events (event spine, permission resolver, \
+credential vault), there is a browser-side presentational \
+whose interaction is "operator scans the trail to answer \
+*what happened*". For every long-running background system \
+(scheduler, flow executor, generation pipeline), there is a \
+debugging-side presentational whose interaction is \
+"operator inspects current state to diagnose stuck or \
+unexpected behavior". Concrete examples this prompt has \
+seen omitted from clean-slate generation: a bundle library \
+curator (browse instance bundles + import/approve), an \
+ownership / role binding editor (browse the binding map + \
+delegate / transfer), a credential & token usage monitor \
+(scoped credential metadata + per-tier usage rollups), an \
+audit trail browser (filter the immutable log by actor / \
+action / time), a scheduler state viewer (per-node blocking \
+reason + queue concurrency utilization), a code diff \
+inspector (file-level diffs scoped to declared territory + \
+CI status), a team artifact discussion thread (threaded \
+team-side conversation distinct from private AI chat). Don't \
+skip these because their owned-invariants feel thinner than \
+the user-facing presentationals' — "displayed values reflect \
+projection state within one PubSub cycle", "filter results \
+reflect the append-only audit log without summarization", \
+"binding editor reflects updated assignments immediately \
+after submission" are real interface-side invariants that \
+admin/operator/debugging surfaces own. A sysarch with \
+domain-side admin/audit/debugging components but no \
+matching presentationals is under-specified — it gives \
+those domains nothing to surface to operators.
 * ``<name>`` is the human-readable display name — title case, \
 short identifier. Different from the alias: ``alias="billing"``, \
 ``<name>Billing Service</name>``. **Name components \
