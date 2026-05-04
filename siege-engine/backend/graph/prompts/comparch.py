@@ -274,6 +274,22 @@ Example (abbreviated):
 
 # Rules
 
+Cross-section consistency is the property that distinguishes a \
+usable comparch from one impl will fight. The most common defect \
+this tier produces is two sections that disagree — an \
+``<invariant>`` claiming "X never happens" alongside a \
+``<failure-surface>`` entry describing X happening, a techspec \
+promising atomicity alongside a failure mode that requires \
+non-atomicity, a public-surface return type that cannot express \
+a failure the failure surface explicitly names, a primary-\
+operation that no public or private surface entry mounts. Treat \
+the eight sections as a single document throughout generation, \
+not as eight independent sections you reconcile at the end. The \
+rules below are written so that following each section's rules \
+produces sections that already agree; the self-checks at the \
+end are a final scan, not the place where consistency gets \
+introduced.
+
 ## Structure
 
 * Emit **exactly one** ``<comparch>`` root block. Nothing before, \
@@ -323,20 +339,38 @@ regen, but **not** to sibling dependents. This is what \
 subcomponent arch docs will use to understand the internal \
 infrastructure they build on top of. Same fenced-code-block \
 convention as the public surface.
-* ``<failure-surface>`` names the **concrete failure modes** \
-this component can produce now that you have the full techspec + \
-pubapi + privapi in hand. This is the sharper, component-local \
-version of the sketchy sysarch-level failure rehearsal — at this \
-tier you know the persistence pattern, the exact call shapes, and \
-the invariants the subcomponents will enforce, so the failure \
-surface you write here is what downstream fanin and review passes \
-will use to pick invariants to check. Name the specific thing that \
-breaks, not the impact category. Good: "Credential-verifier \
-regression admits empty-hash matches and lets any attacker sign \
-in as any account; session-store writes bypassing the reducer \
-corrupt the audit trail." Bad: "service becomes unreliable", \
-"data issues", "users affected". Pack multiple distinct failure \
-modes into one paragraph separated by semicolons or sentences.
+* ``<failure-surface>`` names the **residual risks that survive \
+the component's invariants** — coverage gaps in checks the \
+invariants describe, race windows that bound otherwise-strong \
+guarantees, observable consequences of best-effort or eventually-\
+consistent behavior, and concrete wrong-output shapes the type \
+system cannot prevent. **Failure-surface entries are not \
+violations of invariants.** If you find yourself writing one \
+that contradicts an invariant or a techspec promise, fix one of \
+them first — either the invariant is overclaiming and needs \
+weakening, or the failure mode is fabricated. The two sections \
+must agree.
+* Each entry names three things: (a) the **mechanism** that \
+fails — what specific code path or interaction leaks the failure, \
+not "the system fails"; (b) the **observable shape** — what \
+return value, event, or state the caller sees that differs from \
+intended, in the same terms as the public surface; (c) the \
+**detection characteristic** — silent until runtime, surfaces \
+immediately as a typed error, eventually consistent within \
+window W, etc. Pack multiple distinct failure modes into one \
+paragraph separated by semicolons. Good shape: "YAML parser \
+silently coerces ambiguous values like bare on/off tokens, \
+producing {:ok, schema} with corrupted fields invisible until \
+downstream runtime behavior diverges." Bad: "service becomes \
+unreliable", "data issues", "users affected".
+* **When the techspec commits to a typed error discipline** \
+(Elixir tagged tuples, Rust ``Result``, TypeScript discriminated \
+unions, Go's typed errors), every entry in the failure surface \
+must have a corresponding variant in the public-surface return \
+type. The pubapi's error union becomes the consistency anchor: \
+failure modes the type cannot express are silent failures, not \
+residual risks. If you cannot find a matching variant, either \
+add one to pubapi or strike the failure mode from the surface.
 * All four fragment sections must be non-empty. Do not put \
 nested XML tags inside them — only prose and fenced code blocks.
 
@@ -420,12 +454,53 @@ credentials" is category-speak. If you need an ``and``, consider \
 whether the subcomponent is actually two.
 * ``<owned-invariants>`` lists **2-4 short noun phrases** naming \
 the durable state or guarantees this subcomponent owns. \
-Examples: "every row has a single active principal", "raw \
-credentials never leave this subcomponent", "hash comparison \
-uses constant-time equality". Concrete enough that a reviewer \
-can point at the impl and say yes/no. If you find yourself \
-listing more than four, push the extras to implementation \
-detail; if fewer than two, the subcomponent's role is too thin.
+Concrete enough that a reviewer can point at the impl and say \
+yes/no. If you find yourself listing more than four, push the \
+extras to implementation detail; if fewer than two, the \
+subcomponent's role is too thin.
+* **Phrase invariants as structural facts, not procedural \
+promises.** This is the single highest-leverage rule for this \
+section. Procedural phrasing ("every X does Y", "X always \
+succeeds", "no X ever happens") invites the failure surface to \
+contradict the invariant. Structural phrasing ("X is the only \
+path to Y", "Y is a deterministic function of X", "Z's content \
+commits before W is dispatched", "the schema declares exactly \
+title and body fields") lets the failure surface describe \
+coverage gaps and residual risks without contradiction. The \
+clearest tell: a structural invariant survives the question \
+"what if a future code path skips this check?" — that scenario \
+becomes a coverage gap in the structural commitment, not a \
+contradiction. A procedural invariant collapses on the same \
+question.
+
+  Worked example. *Procedural*: "every tool invocation checks \
+the instigation guard before dispatching." The failure surface \
+inevitably writes "a code path dispatches without calling the \
+guard" — direct contradiction. *Structural rewrite*: "the \
+instigation-guard module is the sole call path tool handlers \
+traverse to reach mutation dispatch." Now the same failure-\
+surface entry reads as a coverage gap in the call-graph design \
+— consistent with the invariant.
+
+  More examples of the rephrase:
+
+  - "every credential decryption emits an audit event" → "the \
+audit-emit primitive is on the only path through which \
+decryption returns to the caller; calls that bypass it are \
+rejected by the type system".
+  - "approving the same bootstrap content twice produces the \
+same event sequence" → "mint is a pure deterministic function \
+of approved content".
+  - "every LLM call records token telemetry" → "the gateway is \
+the sole entry to provider APIs and runs telemetry recording \
+inline before returning".
+
+  Good concrete invariants regardless of phrasing style: "raw \
+credentials never leave this subcomponent" (structural — the \
+boundary is a fact about the call graph), "hash comparison uses \
+constant-time equality" (structural — a property of the \
+implementation choice), "every row has a single active \
+principal" (structural — a uniqueness property of the data).
 * ``<primary-operations>`` lists **3-6 short verb phrases** \
 naming the operations callers (sibling subcomponents or outside \
 dependents) invoke on this subcomponent. Examples: "verify \
@@ -626,147 +701,104 @@ This is enforced by the validator and mirrors the analogous \
 rule for top-level components at the sysarch layer.
 
 
-## Self-checks before emitting
+## Final-scan checklist before emitting
 
-Before you write the closing ``</comparch>`` tag, walk the \
-artifact as a whole and reconcile the sections against each \
-other. These are not optional examples — each scan below \
-targets one of the most common defects this tier produces. \
-Where a scan turns up a contradiction or gap, fix it in the \
-artifact before emitting; do not rationalize it.
+The framing at the top of these rules and the section-specific \
+rules above are written so that following them produces an \
+artifact whose sections agree. Before you write the closing \
+``</comparch>`` tag, run this short final pass to catch any \
+remaining gaps. If a scan finds a contradiction, fix the \
+artifact — do not rationalize it.
 
-The parser will reject your output for these structural \
-violations on retry, so you don't need to manually verify \
-them — but knowing what they are helps you avoid producing \
-them in the first place: declared sub-dependency cycles in \
-``<sub-dependencies>``; private modules declared via \
-``defmodule X.Y.Z do`` (or equivalent in your language) inside \
-``<private-surface>`` and then referenced by full module name \
-in ``<public-surface>``; missing parent-resp coverage when \
-``<subcomponents>`` is non-empty; per-resp feat coverage gaps \
-within a claimed resp; foundation subcomponent missing or \
-duplicated when decomposing.
+Parser-enforced violations don't need manual verification (the \
+parser will reject and feed back on retry): declared sub-\
+dependency cycles, private modules referenced by full module \
+name in ``<public-surface>``, missing parent-resp coverage \
+when ``<subcomponents>`` is non-empty, per-resp feat-coverage \
+gaps, foundation subcomponent missing or duplicated.
 
-The semantic checks below are not parser-enforced and are \
-where most surviving defects live:
+The scans below are not parser-enforced — they are where the \
+most-cited defects in this tier live:
 
-* **Surface closure (the dominant defect now).** Two passes, \
-both required. Phrase each as an explicit "for every X, \
-identify Y" walk — mismatches go in the artifact, not in \
-your head.
+* **Cross-section consistency (highest-yield).** Re-read \
+``<failure-surface>`` against every ``<invariant>`` and every \
+techspec promise (atomicity, ordering, single-frame render, \
+no-truncation, single-event semantics). A failure mode that \
+contradicts an invariant or a techspec promise means one of \
+them is wrong — usually the invariant is procedurally phrased \
+("every X does Y") and needs the structural rephrase from the \
+invariant rules above; sometimes the failure mode is \
+fabricated. Same scan against public-surface return types: \
+every failure mode must have a matching variant in the typed \
+pubapi (when the techspec commits to a typed error \
+discipline). A failure mode the public API cannot express is \
+silent — fix by adding the variant or striking the entry.
 
-  *Pass A — every public-surface element traces to an owner.* \
-For every type, struct, event, function, and field declared \
-in ``<public-surface>``, identify the subcomponent's \
-``<primary-operation>`` that produces or invokes it. A field \
-or function on the public surface with no producer is either \
-dead (remove it) or missing operation coverage (add the \
-primary-operation, or split the responsibility into a subcomp \
-that claims it). Same scan for type references: every type \
-named in a public-surface signature must be defined in \
-``<public-surface>`` itself, be a language primitive / stdlib \
-type, or be imported from an external dependency you actually \
-declare in the techspec. **Nothing in a public-surface \
-signature, type field, or event payload may reference a type \
-or struct defined in ``<private-surface>``** — sibling \
-consumers would have to reach into your internals to use the \
-public API. If a private type is load-bearing for a public \
-signature, promote it to public; otherwise rewrite the public \
-reference using only types already on the public surface. \
-The parser catches the obvious version of this (private \
-module names in public moduledocs / specs); the version that \
-slips past the parser is a private struct's field types or \
-nested record types being exposed indirectly through a public \
-type — your scan must cover that.
+* **Surface closure — both directions.**
+
+  *Pass A — every public-surface element has an owner.* For \
+every type, struct, event, function, and field in \
+``<public-surface>``, identify the subcomp's primary-operation \
+that produces or invokes it. Pubapi entries with no producer \
+are dead or missing operation coverage. Every type named in a \
+public-surface signature must be defined in public-surface \
+itself, be a language primitive / stdlib type, or come from a \
+declared external dependency. **Nothing in a public-surface \
+signature may reference a type or struct from \
+``<private-surface>``** — siblings would have to reach into \
+your internals. Promote private types to public if load-\
+bearing, otherwise rewrite the public reference using only \
+already-public types. The parser catches the obvious version \
+(private module names in public specs); your scan covers the \
+indirect version (a public type whose field references a \
+private struct).
 
   *Pass B — every internal commitment surfaces somewhere.* \
-For every ``<invariant>`` and ``<primary-operation>`` that \
-names a side effect, response, event, or value (published, \
-returned, persisted, dispatched), identify the \
-``<public-surface>`` or ``<private-surface>`` entry that \
-actually invokes or returns it. An operation claimed but not \
-mounted on a surface is half-done — siblings have no way to \
-call it and impl has no signature to write against. \
-Symmetrically, every ``<private-surface>`` entry must back at \
-least one primary-operation; private helpers no operation \
-references shouldn't have a private-surface entry at all.
+For every invariant or primary-operation that names a side \
+effect, response, event, or value (published, returned, \
+persisted, dispatched), identify the public-surface or \
+private-surface entry that mounts it. An operation claimed \
+but not mounted on a surface is half-done. Symmetrically, \
+every private-surface entry must back at least one primary-\
+operation; private helpers with no operation reference \
+shouldn't have a private-surface entry at all.
 
-* **Failure-surface ↔ public-surface observability.** For \
-each failure mode named in ``<failure-surface>``, identify the \
-``<public-surface>`` entry that lets a caller observe it: an \
-error variant in a tagged-tuple return, a typed exception, an \
-event the caller can subscribe to, a status field they can \
-inspect. A failure mode the public API cannot surface is \
-either silent (the caller has no recourse — fix by adding the \
-error variant / event / status field), or is genuinely \
-internal-only (and shouldn't be in the failure surface at \
-all). The most common shape of this defect: the failure \
-surface explicitly names a partial-failure scenario \
-("partial see-also linking", "concurrent-modification \
-conflict", "rate-limit rejection") but the corresponding \
-public function returns a bare success type or an opaque \
-error atom that strips the discriminating detail.
-
-* **Owned-invariant ↔ failure-surface contradiction.** For \
-each ``<invariant>`` on each subcomponent, read the failure \
-surface and look for any scenario describing the invariant \
-being violated. The two must not coexist: either the \
-invariant is overclaiming (weaken it to what the design \
-actually guarantees) or the failure mode is fabricated \
-(rewrite it as a residual risk that survives the invariant, \
-or delete it). Same scan applies to techspec promises — \
-atomicity, ordering, single-frame render, no-truncation, \
-single-event semantics. If the failure surface describes \
-exactly the violation a techspec promise should prevent, one \
-of them is wrong.
-
-* **Dependency grounding — external AND internal.** Two \
-parallel scans: every declared edge must be grounded, and \
-every cross-edge implied by other sections must be declared.
+* **Dependency grounding — external AND internal.**
 
   *External:* For each ``<dep to="comp_..."/>``, confirm the \
 techspec or a primary-operation describes how this component \
 actually uses the sibling — what data flows, which sibling \
-pubapi gets called, what event gets subscribed to. An \
-ungrounded external dep is either spurious (delete it) or \
-evidence of an unwritten section (write it).
+pubapi gets called, what event gets subscribed to. Ungrounded \
+external deps are spurious (delete) or evidence of unwritten \
+prose (write).
 
   *Internal:* For each ``<sub-dependencies>`` edge, confirm \
-the source subcomp's ``<primary-operations>`` or \
-``<responsibilities>`` text actually describes calling into \
-the target subcomp. **Symmetrically**, walk every subcomp's \
-operations / invariants / responsibilities / purpose and \
-identify every cross-subcomp call site implied by the prose; \
-for each one, confirm a corresponding \
-``<dep from="A" to="B"/>`` edge exists in \
-``<sub-dependencies>``. Implicit cross-sub references without \
-declared edges are aggressively rejected at parse time when \
-they form a cycle with the declared graph (the validator \
-walks subcomp ``<name>`` mentions in prose and unions implicit \
-edges with declared ones before running cycle detection); \
-even when no cycle exists they leave the coupling graph \
-incomplete and mislead impl about which subcomp is allowed to \
-import which. Either declare the edge, or rephrase the prose \
-to remove the call reference.
+the source subcomp's primary-operations or responsibilities \
+text describes calling into the target subcomp. \
+**Symmetrically**, walk every subcomp's operations / \
+invariants / responsibilities / purpose for cross-subcomp \
+call sites implied by the prose; each one needs a declared \
+``<dep from="A" to="B"/>`` edge. Implicit cross-sub \
+references without declared edges are rejected at parse time \
+when they form a cycle (the validator unions implicit edges \
+from subcomp-name mentions with declared edges before cycle \
+detection); even cycle-free cases leave the coupling graph \
+incomplete. Either declare the edge or rephrase the prose to \
+remove the call reference.
 
-* **Single-owner default.** Re-read your ``<owns>`` blocks \
-across all subcomps. Any parent resp claimed by more than one \
-subcomp must fit either the UI flow split or the read/write \
-path split pattern named above; if it doesn't, refactor the \
-subcomp boundaries before emitting. Drive-by multi-owner is a \
-recurring defect in this tier.
+* **Single-owner default.** Re-read all ``<owns>`` blocks. \
+Any parent resp claimed by more than one subcomp must fit the \
+UI flow split or read/write path split pattern; otherwise \
+refactor the subcomp boundaries.
 
 * **Rationale, not inventory.** For each subcomp's \
 ``<purpose>``, each ``<invariant>``, each \
 ``<primary-operation>``, and the ``<responsibilities>`` prose, \
-ask: does this name a distinctive *why* or *what*, or is it a \
-list of contents and category-speak ("handles X", "manages Y", \
-"aggregates ...", "contains ...")? Inventory framing reads as \
-filler to downstream readers and produces vague impl. Rewrite \
-category-speak into concrete actions and distinctive \
-rationale. The same applies to the foundation subcomp — its \
-purpose should name the substrate role it plays, not list its \
-contents.
+ask whether it names a distinctive *why* or a list of \
+contents. Rewrite category-speak ("handles X", "manages Y", \
+"aggregates Z", "contains W") into concrete actions and \
+distinctive rationale. The foundation subcomp's purpose names \
+the substrate role it plays, not its contents.
 
 ## Meta-rules
 
