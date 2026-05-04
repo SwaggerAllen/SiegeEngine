@@ -279,6 +279,22 @@ def put_sampler_config(
     return _serialize_sampler_config(cfg)
 
 
+@router.post("/{project_id}/sampler-configs/{tier}/reset")
+def reset_sampler_config(
+    project_id: str,
+    tier: str,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Overwrite this (project, tier) row with the seeded defaults."""
+    _require_project(db, project_id)
+    cfg = _get_or_create_sampler_config(db, project_id, tier)
+    cfg.axes = default_axes_for_tier(tier)
+    db.commit()
+    db.refresh(cfg)
+    return _serialize_sampler_config(cfg)
+
+
 # ── Regenerate cohort ─────────────────────────────────────────────
 
 

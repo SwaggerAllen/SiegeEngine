@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getSamplerConfig, putSamplerConfig, type SamplerConfig } from '../api/cohorts';
+import {
+  getSamplerConfig,
+  putSamplerConfig,
+  resetSamplerConfig,
+  type SamplerConfig,
+} from '../api/cohorts';
 
 interface Props {
   projectId: string;
@@ -107,6 +112,29 @@ function SamplerConfigForm({
     },
   });
 
+  const resetMutation = useMutation({
+    mutationFn: () => resetSamplerConfig(projectId, tier),
+    onSuccess: () => {
+      setStatusMsg('Reset to defaults.');
+      setJsonError(null);
+      onSaved();
+    },
+    onError: (err: unknown) => {
+      setStatusMsg(`Reset failed: ${err instanceof Error ? err.message : String(err)}`);
+    },
+  });
+
+  function handleReset() {
+    if (
+      !window.confirm(
+        `Reset sampler config for ${tier} to seeded defaults? This overwrites your current axis edits.`,
+      )
+    ) {
+      return;
+    }
+    resetMutation.mutate();
+  }
+
   function handleSave() {
     if (jsonMode) {
       try {
@@ -199,10 +227,19 @@ function SamplerConfigForm({
         <button
           type="button"
           onClick={handleSave}
-          disabled={saveMutation.isPending}
+          disabled={saveMutation.isPending || resetMutation.isPending}
           className="px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-40"
         >
           {saveMutation.isPending ? 'Saving…' : 'Save sampler config'}
+        </button>
+        <button
+          type="button"
+          onClick={handleReset}
+          disabled={saveMutation.isPending || resetMutation.isPending}
+          className="px-2 py-1 rounded border border-gray-700 text-gray-300 hover:text-gray-100 hover:border-gray-500 disabled:opacity-40"
+          data-testid="sampler-config-reset"
+        >
+          {resetMutation.isPending ? 'Resetting…' : 'Reset to defaults'}
         </button>
         {statusMsg && <span className="text-gray-300">{statusMsg}</span>}
       </div>
