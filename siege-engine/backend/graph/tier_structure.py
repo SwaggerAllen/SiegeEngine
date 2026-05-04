@@ -376,6 +376,11 @@ def extract_subcomparch_structure(session: Session, project_id: str) -> Structur
 
     per_node: list[NodeRow] = []
     for s in subs:
+        # ``subs`` is filtered to nodes with non-None parent_id;
+        # narrow explicitly so mypy can use ``parent_id`` as a
+        # ``str`` in the dict lookups below.
+        parent_id = s.parent_id
+        assert parent_id is not None
         owns_resps = {
             e.source_id for e in decomp if e.target_id == s.id and e.source_id.startswith("resp_")
         }
@@ -391,7 +396,7 @@ def extract_subcomparch_structure(session: Session, project_id: str) -> Structur
             target = comps_by_id.get(e.target_id)
             if target is None:
                 continue
-            if target.parent_id == s.parent_id:
+            if target.parent_id == parent_id:
                 same_parent_dep_count += 1
             elif target.id in top_comp_ids:
                 parent_sibling_dep_count += 1
@@ -400,16 +405,16 @@ def extract_subcomparch_structure(session: Session, project_id: str) -> Structur
         co_owned = sum(
             1
             for r in owns_resps
-            if len(sub_owners_per_resp_per_parent.get((s.parent_id, r), set())) > 1
+            if len(sub_owners_per_resp_per_parent.get((parent_id, r), set())) > 1
         )
-        parent = comps_by_id.get(s.parent_id) if s.parent_id else None
+        parent = comps_by_id.get(parent_id)
         per_node.append(
             NodeRow(
                 id=s.id,
                 name=s.name or s.id,
                 metrics={
-                    "parent_id": s.parent_id,
-                    "parent_name": (parent.name if parent else None) or s.parent_id,
+                    "parent_id": parent_id,
+                    "parent_name": (parent.name if parent else None) or parent_id,
                     "parent_kind": parent.kind if parent else None,
                     "has_content": _has_content(s),
                     "owns_resp_count": len(owns_resps),
