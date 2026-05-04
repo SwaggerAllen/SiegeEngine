@@ -170,7 +170,7 @@ function CohortSelectionBar({
       queryClient.invalidateQueries({ queryKey: ['cohorts', projectId] });
       setStatusMsg(`Saved cohort "${cohort.name}" (${cohort.comp_ids.length} comps).`);
       clearSelection();
-      navigate(`/projects/${projectId}/cohorts`);
+      navigate(`/projects/${projectId}?node=:cohorts`);
     },
     onError: (err: unknown) => {
       setStatusMsg(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
