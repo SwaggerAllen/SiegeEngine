@@ -783,6 +783,7 @@ def bootstrap_reset(
         jobs_cancelled += pipeline_queue.cancel_jobs_by_type(
             db,
             jt,
+            exclude_batch_id=batch_id,
             project_id=project_id,
         )
 

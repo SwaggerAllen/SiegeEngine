@@ -207,6 +207,49 @@ class TestCohortRegenerate:
         assert batch is not None
         assert batch.params == {"mode": "fresh"}
 
+    def test_fresh_mode_preserves_sibling_jobs_in_same_batch(self, db, client):
+        """Regression: bootstrap_reset's job-cancellation sweep
+        cancels every queued job of the tier's downstream types,
+        which (for comparch) includes ``v2.generate_comparch``
+        itself. Without batch-aware exclusion, each cohort comp's
+        reset call cancels the previously-queued sibling jobs,
+        leaving only the last one. The fix passes the cohort
+        regen's batch_id as exclude_batch_id to the cancel sweep."""
+        project_id = _seed_project(db)
+        comps = [
+            _seed_top_level_comp(db, project_id, name=f"C{i}", content="<comparch/>")
+            for i in range(5)
+        ]
+        cohort_id = client.post(
+            f"/api/projects/{project_id}/cohorts",
+            json={"tier": "comparch", "name": "c", "comp_ids": comps},
+        ).json()["id"]
+        db.commit()
+
+        resp = client.post(
+            f"/api/projects/{project_id}/cohorts/{cohort_id}/regenerate",
+            json={"mode": "fresh"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["scopes_succeeded"] == 5
+
+        # All five comparch jobs must be queued under the same batch
+        # — a regression against this would leave only one (the last).
+        queued = list(
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.batch_id == body["batch_id"],
+                    Job.status == "queued",
+                )
+            ).scalars()
+        )
+        assert len(queued) == 5
+        # And each queued job should reference a distinct cohort comp.
+        comp_ids_on_jobs = {(j.payload or {}).get("component_id") for j in queued}
+        assert comp_ids_on_jobs == set(comps)
+
     def test_subcomparch_cohort_walks_to_subs(self, db, client):
         """Subcomparch cohort walks from each cohort comp to its subs,
         enqueueing one subcomparch job per sub."""
