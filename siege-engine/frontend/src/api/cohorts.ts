@@ -134,6 +134,18 @@ export const RegenerateCohortResultSchema = z.object({
   scopes_total: z.number().int(),
   scopes_succeeded: z.number().int(),
   scopes_skipped: z.array(SkippedScopeSchema),
+  exploration: z
+    .object({
+      ok: z.boolean(),
+      batch_id: z.string().optional(),
+      picked_comp_ids: z.array(z.string()).optional(),
+      scopes_total: z.number().int().optional(),
+      scopes_succeeded: z.number().int().optional(),
+      status: z.number().int().optional(),
+      detail: z.unknown().optional(),
+    })
+    .nullable()
+    .optional(),
 });
 export type RegenerateCohortResult = z.infer<typeof RegenerateCohortResultSchema>;
 
@@ -141,8 +153,12 @@ export async function regenerateCohort(
   projectId: string,
   cohortId: string,
   mode: 'fresh' | 'review',
+  explorationCount = 0,
 ): Promise<RegenerateCohortResult> {
-  const r = await api.post(`/projects/${projectId}/cohorts/${cohortId}/regenerate`, { mode });
+  const r = await api.post(`/projects/${projectId}/cohorts/${cohortId}/regenerate`, {
+    mode,
+    exploration_count: explorationCount,
+  });
   return RegenerateCohortResultSchema.parse(r.data);
 }
 

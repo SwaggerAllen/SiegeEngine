@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  generateExplorationSample,
   generateFullCorpus,
   listCohorts,
   patchCohort,
@@ -86,6 +85,10 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
   const [expanded, setExpanded] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  // Fresh-mode regen optionally rolls into a new exploration sample —
+  // user-controlled count, persisted across re-renders. 0 = canonical
+  // only, no exploration.
+  const [freshExplorationCount, setFreshExplorationCount] = useState(5);
   const queryClient = useQueryClient();
   const archiveMutation = useMutation({
     mutationFn: () => patchCohort(projectId, cohort.id, { archived: !cohort.archived }),
@@ -95,14 +98,26 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
   });
 
   const regenMutation = useMutation({
-    mutationFn: (mode: 'fresh' | 'review') => regenerateCohort(projectId, cohort.id, mode),
+    mutationFn: ({ mode, explorationCount }: { mode: 'fresh' | 'review'; explorationCount: number }) =>
+      regenerateCohort(projectId, cohort.id, mode, explorationCount),
     onSuccess: (result) => {
       const skipText = result.scopes_skipped.length
         ? ` (${result.scopes_skipped.length} skipped)`
         : '';
+      const expl = result.exploration;
+      let explText = '';
+      if (expl) {
+        if (expl.ok) {
+          explText =
+            ` + ${expl.picked_comp_ids?.length ?? 0} new exploration ` +
+            `(${expl.scopes_succeeded ?? 0}/${expl.scopes_total ?? 0} scopes)`;
+        } else {
+          explText = ` (exploration skipped: ${expl.detail ?? 'unknown'})`;
+        }
+      }
       setStatusMsg(
         `Started ${result.mode} cycle: batch ${result.batch_id.slice(0, 14)}…, ` +
-          `${result.scopes_succeeded}/${result.scopes_total} scopes enqueued${skipText}.`,
+          `${result.scopes_succeeded}/${result.scopes_total} scopes enqueued${skipText}${explText}.`,
       );
     },
     onError: (err: unknown) => {
@@ -135,19 +150,43 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
             <>
               <button
                 type="button"
-                onClick={() => regenMutation.mutate('review')}
+                onClick={() => regenMutation.mutate({ mode: 'review', explorationCount: 0 })}
                 disabled={isRegenerating}
-                title="Regenerate cohort subs with prior_review_text feeding forward (self-review iteration)"
+                title="Regenerate the cohort's working set (canonical + active-explored) with prior_review_text feeding forward"
                 className="px-2 py-1 text-xs rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-40"
                 data-testid={`cohort-row-${cohort.id}-regen-review`}
               >
                 {isRegenerating ? 'Starting…' : 'New cycle (review)'}
               </button>
+              <label
+                className="text-xs text-gray-400 flex items-center gap-1"
+                title="Number of new exploration comps to baseline alongside the canonical fresh regen. 0 = canonical only."
+              >
+                +
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={freshExplorationCount}
+                  onChange={(e) =>
+                    setFreshExplorationCount(Math.max(0, Number(e.target.value) || 0))
+                  }
+                  disabled={isRegenerating}
+                  className="w-12 bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
+                  data-testid={`cohort-row-${cohort.id}-fresh-exploration-count`}
+                />
+                expl
+              </label>
               <button
                 type="button"
-                onClick={() => regenMutation.mutate('fresh')}
+                onClick={() =>
+                  regenMutation.mutate({
+                    mode: 'fresh',
+                    explorationCount: freshExplorationCount,
+                  })
+                }
                 disabled={isRegenerating}
-                title="Regenerate cohort subs from scratch (wipe + fresh gen, no prior context)"
+                title="Wipe canonical content + fresh-regen, then baseline N new exploration comps tagged to this cohort. Buries the prior cycle's exploration set."
                 className="px-2 py-1 text-xs rounded border border-amber-800 text-amber-200 hover:bg-amber-950 disabled:opacity-40"
                 data-testid={`cohort-row-${cohort.id}-regen-fresh`}
               >
@@ -325,32 +364,13 @@ function SubcompCampaignActions({
   projectId: string;
   cohorts: Cohort[];
 }) {
-  const [explorationCount, setExplorationCount] = useState(5);
   const [fullCorpusConfirm, setFullCorpusConfirm] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
-  // Active cohort drives the campaign tier — exploration-sample and
-  // full-corpus run at the active cohort's tier, walking from comp
-  // IDs to scopes per that tier on the backend.
+  // Active cohort drives the campaign tier — full-corpus runs at
+  // the active cohort's tier on the backend.
   const activeCohort = cohorts.find((c) => !c.archived);
   const campaignTier = activeCohort?.tier ?? 'comparch';
-  const explorationMutation = useMutation({
-    mutationFn: () =>
-      generateExplorationSample(projectId, campaignTier, {
-        count: explorationCount,
-        exclude_cohort_id: activeCohort?.id,
-      }),
-    onSuccess: (result) => {
-      setStatusMsg(
-        `Exploration sample (${campaignTier}): ${result.picked_comp_ids.length} new comps, ` +
-          `${result.scopes_succeeded}/${result.scopes_total} scopes enqueued ` +
-          `(batch ${result.batch_id.slice(0, 14)}…).`,
-      );
-    },
-    onError: (err: unknown) => {
-      setStatusMsg(`Exploration sample failed: ${err instanceof Error ? err.message : String(err)}`);
-    },
-  });
   const fullCorpusMutation = useMutation({
     mutationFn: () => generateFullCorpus(projectId, campaignTier),
     onSuccess: (result) => {
@@ -365,33 +385,17 @@ function SubcompCampaignActions({
     },
   });
 
-  const isBusy = explorationMutation.isPending || fullCorpusMutation.isPending;
+  const isBusy = fullCorpusMutation.isPending;
 
   return (
     <div className="rounded border border-gray-800 bg-gray-950/40 p-3 text-xs space-y-2">
       <div className="font-medium text-gray-200">Campaign actions ({campaignTier})</div>
+      <div className="text-gray-500">
+        Exploration sampling now happens inline with each fresh cycle —
+        set the <code className="text-gray-300">+expl</code> count next to the
+        Fresh button on the cohort row.
+      </div>
       <div className="flex flex-wrap items-center gap-2">
-        <label>
-          Exploration count:{' '}
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={explorationCount}
-            onChange={(e) => setExplorationCount(Math.max(1, Number(e.target.value) || 1))}
-            className="w-12 bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
-          />
-        </label>
-        <button
-          type="button"
-          onClick={() => explorationMutation.mutate()}
-          disabled={isBusy}
-          title="Pick N random comps not in the active cohort and not previously sampled, regenerate at the active cohort's tier under one batch"
-          className="px-2 py-1 rounded border border-blue-800 text-blue-200 hover:bg-blue-950 disabled:opacity-40"
-          data-testid="cohorts-exploration-sample"
-        >
-          {explorationMutation.isPending ? 'Sampling…' : 'Exploration sample'}
-        </button>
         {fullCorpusConfirm ? (
           <>
             <button

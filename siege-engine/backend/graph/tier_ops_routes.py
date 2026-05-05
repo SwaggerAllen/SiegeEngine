@@ -213,7 +213,7 @@ def _registry() -> dict[str, tuple[BootstrapTierConfig, _ScopeIter]]:
     }
 
 
-def _resolve(tier: TierName) -> tuple[BootstrapTierConfig, _ScopeIter]:
+def _resolve(tier: str) -> tuple[BootstrapTierConfig, _ScopeIter]:
     reg = _registry()
     if tier not in reg:
         raise HTTPException(status_code=404, detail=f"Unknown tier: {tier}")
@@ -403,41 +403,39 @@ class ExplorationSampleRequest(BaseModel):
     exclude_cohort_id: str | None = None
 
 
-@router.post("/{project_id}/tiers/{tier}/exploration-sample")
-def generate_exploration_sample(
+def run_exploration_sample(
+    db: Session,
     project_id: str,
-    tier: CampaignTier,
-    req: ExplorationSampleRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    tier: str,
+    *,
+    count: int,
+    exclude_cohort_id: str | None,
 ) -> dict[str, Any]:
-    """Pick N random top-level comps not in the cohort and not previously
-    sampled, then enqueue ``tier``-tier generation walking from each
-    picked comp.
+    """Pick N random top-level comps and run ``tier``-tier gen on each.
+
+    Shared by the standalone ``/tiers/:tier/exploration-sample``
+    endpoint and the fresh-mode cohort regenerate path that runs an
+    exploration sample alongside the canonical wipe-and-regen.
 
     Mints one Batch (``op_type="generate_exploration_sample"``,
     ``Batch.tier`` records the target tier, ``scope_keys.comp_ids``
-    records the picks). Subsequent calls walk this and prior
-    same-tier batches to build the exclusion pool, so each cycle's
-    exploration sample lands on fresh ground for that tier.
-
-    ``exclude_cohort_id`` (optional) — comps in this cohort are
-    excluded from the candidate pool too. The standard flow passes
-    the active canonical cohort's id so exploration never collides
-    with the canonical sample.
+    records the picks, ``scope_keys.parent_cohort_id`` links to the
+    cohort when ``exclude_cohort_id`` is supplied). Returns a
+    response dict identical to the route's response payload.
     """
     from backend.graph.batches import mint_batch
     from backend.graph.bootstrap_routes import bootstrap_reset
     from backend.models.cohort import Cohort
 
-    _require_project(db, project_id)
+    if count < 1:
+        raise HTTPException(status_code=400, detail="exploration count must be >= 1")
     config, _iter = _resolve(tier)
 
     # Build the exclusion pool: prior same-tier exploration batches +
     # the canonical cohort.
     exclude: set[str] = _previously_sampled_comp_ids(db, project_id, tier)
-    if req.exclude_cohort_id is not None:
-        cohort = db.get(Cohort, req.exclude_cohort_id)
+    if exclude_cohort_id is not None:
+        cohort = db.get(Cohort, exclude_cohort_id)
         if cohort is not None and cohort.project_id == project_id:
             for cid in cohort.comp_ids or []:
                 if isinstance(cid, str):
@@ -458,7 +456,7 @@ def generate_exploration_sample(
     rng = random.Random()
     pool = list(candidates)
     rng.shuffle(pool)
-    picked = pool[: req.count]
+    picked = pool[:count]
     picked_ids = sorted(c.id for c in picked)
 
     # Stamp parent_cohort_id into scope_keys when called with
@@ -466,8 +464,8 @@ def generate_exploration_sample(
     # sample's comps into the cohort's effective working set so
     # subsequent review-mode regens cover the explored comps too.
     scope_keys: dict[str, Any] = {"comp_ids": picked_ids}
-    if req.exclude_cohort_id is not None:
-        scope_keys["parent_cohort_id"] = req.exclude_cohort_id
+    if exclude_cohort_id is not None:
+        scope_keys["parent_cohort_id"] = exclude_cohort_id
 
     op_batch_id = mint_batch(
         db,
@@ -475,7 +473,7 @@ def generate_exploration_sample(
         op_type="generate_exploration_sample",
         tier=tier,
         scope_keys=scope_keys,
-        params={"count": req.count, "exclude_cohort_id": req.exclude_cohort_id},
+        params={"count": count, "exclude_cohort_id": exclude_cohort_id},
     )
     # For each picked comp, walk to scope tuples per the target tier
     # and enqueue gen via bootstrap_reset(force=True) — exploration is
@@ -520,6 +518,38 @@ def generate_exploration_sample(
         "scopes_succeeded": succeeded,
         "scopes_skipped": skipped,
     }
+
+
+@router.post("/{project_id}/tiers/{tier}/exploration-sample")
+def generate_exploration_sample(
+    project_id: str,
+    tier: CampaignTier,
+    req: ExplorationSampleRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Pick N random top-level comps not in the cohort and not previously
+    sampled, then enqueue ``tier``-tier generation walking from each
+    picked comp.
+
+    Thin route wrapper around :func:`run_exploration_sample` —
+    fresh-mode cohort regenerate calls the helper directly so the
+    same picking + batch-minting + bootstrap_reset machinery runs
+    inline alongside the canonical wipe-and-regen.
+
+    ``exclude_cohort_id`` (optional) — comps in this cohort are
+    excluded from the candidate pool too. The standard flow passes
+    the active canonical cohort's id so exploration never collides
+    with the canonical sample.
+    """
+    _require_project(db, project_id)
+    return run_exploration_sample(
+        db,
+        project_id,
+        tier,
+        count=req.count,
+        exclude_cohort_id=req.exclude_cohort_id,
+    )
 
 
 @router.post("/{project_id}/tiers/{tier}/full-corpus")

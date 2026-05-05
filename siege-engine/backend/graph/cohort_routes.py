@@ -305,6 +305,12 @@ RegenerateMode = Literal["fresh", "review"]
 
 class RegenerateCohortRequest(BaseModel):
     mode: RegenerateMode
+    # Fresh-mode only: pick this many new exploration comps after the
+    # canonical wipe-and-regen and run them in the same call. Tagged
+    # with parent_cohort_id so they join the cohort's working set for
+    # the next review-mode regen. Ignored for review mode (the working
+    # set should stay stable across multiple review passes).
+    exploration_count: int = Field(default=0, ge=0, le=50)
 
 
 def _active_exploration_comp_ids(db: Session, project_id: str, cohort: Cohort) -> list[str]:
@@ -356,19 +362,37 @@ def _active_exploration_comp_ids(db: Session, project_id: str, cohort: Cohort) -
     return out
 
 
-def _scope_ids_for_cohort(db: Session, project_id: str, cohort: Cohort) -> list[tuple[str, ...]]:
+def _scope_ids_for_cohort(
+    db: Session,
+    project_id: str,
+    cohort: Cohort,
+    *,
+    include_explored: bool,
+) -> list[tuple[str, ...]]:
     """Walk from cohort.comp_ids to scope tuples for the cohort's target tier.
 
-    Effective comp set = ``cohort.comp_ids`` ∪ active-explored comps
-    (see :func:`_active_exploration_comp_ids`). The walk per target
-    tier is shared with the exploration-sample and full-corpus
-    tier-ops endpoints — see
+    ``include_explored=True`` (review mode) — effective comp set =
+    ``cohort.comp_ids`` ∪ active-explored comps so reviews carry
+    forward across cycles.
+
+    ``include_explored=False`` (fresh mode) — canonical only. Fresh
+    is the explicit working-set reset; prior-cycle exploration comps
+    stay in the DB but are buried by the temporal cutoff and don't
+    get regenerated. The fresh-mode flow then mints a new exploration
+    sample (if ``exploration_count > 0``) so the next review picks up
+    the new picks.
+
+    The walk per target tier is shared with the exploration-sample
+    and full-corpus tier-ops endpoints — see
     :func:`backend.graph.tier_ops_routes.scope_ids_from_comp`.
     """
     from backend.graph.tier_ops_routes import scope_ids_from_comp
 
     canonical = [cid for cid in (cohort.comp_ids or []) if isinstance(cid, str)]
-    explored = _active_exploration_comp_ids(db, project_id, cohort)
+    if include_explored:
+        explored = _active_exploration_comp_ids(db, project_id, cohort)
+    else:
+        explored = []
     seen: set[str] = set()
     effective: list[str] = []
     for cid in [*canonical, *explored]:
@@ -415,7 +439,15 @@ def regenerate_cohort(
     _require_project(db, project_id)
     cohort = _require_cohort(db, project_id, cohort_id)
     target_tier = cohort.tier
-    scopes = _scope_ids_for_cohort(db, project_id, cohort)
+    # Fresh resets the working set: only the canonical comps get
+    # wiped + regenerated. Review carries the working set forward:
+    # canonical + active-explored so reviews thread through.
+    scopes = _scope_ids_for_cohort(
+        db,
+        project_id,
+        cohort,
+        include_explored=(req.mode == "review"),
+    )
 
     op_batch_id = mint_batch(
         db,
@@ -427,7 +459,7 @@ def regenerate_cohort(
             "cohort_comp_ids": list(cohort.comp_ids or []),
             "scope_count": len(scopes),
         },
-        params={"mode": req.mode},
+        params={"mode": req.mode, "exploration_count": req.exploration_count},
     )
 
     # Resolve the BootstrapTierConfig for the target tier via the
@@ -477,14 +509,42 @@ def regenerate_cohort(
                     "detail": exc.detail,
                 }
             )
+
+    # Fresh-mode optionally rolls into a new exploration sample —
+    # picks N new comps, tags them parent_cohort_id, and runs them
+    # in the same call. The exploration batch's started_at lands
+    # after this fresh batch's, so the temporal cutoff lets the
+    # picks ride along on subsequent review-mode regens.
+    exploration_result: dict[str, Any] | None = None
+    if req.mode == "fresh" and req.exploration_count > 0:
+        from backend.graph.tier_ops_routes import run_exploration_sample
+
+        try:
+            exploration_result = run_exploration_sample(
+                db,
+                project_id,
+                target_tier,
+                count=req.exploration_count,
+                exclude_cohort_id=cohort.id,
+            )
+        except HTTPException as exc:
+            # 409 (pool exhausted) is non-fatal — surface it in the
+            # response without failing the whole regen.
+            exploration_result = {
+                "ok": False,
+                "status": exc.status_code,
+                "detail": exc.detail,
+            }
     logger.info(
-        "cohort.regenerate project=%s cohort=%s mode=%s target_tier=%s succeeded=%d skipped=%d",
+        "cohort.regenerate project=%s cohort=%s mode=%s target_tier=%s "
+        "succeeded=%d skipped=%d exploration=%s",
         project_id,
         cohort.id,
         req.mode,
         target_tier,
         succeeded,
         len(skipped),
+        "yes" if exploration_result else "no",
     )
     return {
         "ok": True,
@@ -495,4 +555,5 @@ def regenerate_cohort(
         "scopes_total": len(scopes),
         "scopes_succeeded": succeeded,
         "scopes_skipped": skipped,
+        "exploration": exploration_result,
     }
