@@ -290,6 +290,25 @@ produces sections that already agree; the self-checks at the \
 end are a final scan, not the place where consistency gets \
 introduced.
 
+**Names create semantic obligations.** Every named identifier \
+this comparch emits — subcomp name, type name, sum-type variant, \
+field name, parameter name — advertises a contract the rest of \
+the document must honour. A sum type called \
+``blocking_reason :: :ready | :running | :throttled`` is a \
+contradiction; if ``:ready`` and ``:running`` aren't blocking \
+scenarios the type is mis-named, and either rename it \
+(``node_state``) or drop the non-blocking variants. A parameter \
+called ``highlight`` claims the public surface threads it \
+through to a rendering consumer; if the techspec and private \
+surface never resolve it to anything, the parameter is a dead \
+promise, and either wire it up or strike it. A subcomponent \
+called ``X Dispatcher`` claims X is what it dispatches; if it \
+orchestrates Y and dispatches Z, rename to match. Before \
+emitting any named identifier, read it back as a contract: what \
+does this name promise? Then verify the rest of the doc honours \
+that promise. Names that overstate are the second-most-common \
+contradiction shape after invariant overreach.
+
 ## Structure
 
 * Emit **exactly one** ``<comparch>`` root block. Nothing before, \
