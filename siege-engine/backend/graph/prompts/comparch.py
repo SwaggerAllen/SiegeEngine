@@ -290,6 +290,25 @@ produces sections that already agree; the self-checks at the \
 end are a final scan, not the place where consistency gets \
 introduced.
 
+**Names create semantic obligations.** Every named identifier \
+this comparch emits — subcomp name, type name, sum-type variant, \
+field name, parameter name — advertises a contract the rest of \
+the document must honour. A sum type called \
+``blocking_reason :: :ready | :running | :throttled`` is a \
+contradiction; if ``:ready`` and ``:running`` aren't blocking \
+scenarios the type is mis-named, and either rename it \
+(``node_state``) or drop the non-blocking variants. A parameter \
+called ``highlight`` claims the public surface threads it \
+through to a rendering consumer; if the techspec and private \
+surface never resolve it to anything, the parameter is a dead \
+promise, and either wire it up or strike it. A subcomponent \
+called ``X Dispatcher`` claims X is what it dispatches; if it \
+orchestrates Y and dispatches Z, rename to match. Before \
+emitting any named identifier, read it back as a contract: what \
+does this name promise? Then verify the rest of the doc honours \
+that promise. Names that overstate are the second-most-common \
+contradiction shape after invariant overreach.
+
 ## Structure
 
 * Emit **exactly one** ``<comparch>`` root block. Nothing before, \
@@ -501,6 +520,24 @@ boundary is a fact about the call graph), "hash comparison uses \
 constant-time equality" (structural — a property of the \
 implementation choice), "every row has a single active \
 principal" (structural — a uniqueness property of the data).
+* **Code-level guarantees, not user-level promises.** Even with \
+structural phrasing, an invariant overreaches when it states an \
+outcome the implementation cannot actually enforce. "Every \
+notification is always delivered" is an aspirational outcome — \
+if dispatch goes through PubSub, which can drop messages, the \
+code does not guarantee delivery. "Telemetry is complete for \
+every call" is aspirational if the failure surface admits \
+silently-dropped recordings. "Foundation is the sole query path \
+to any data" is aspirational if a sibling subcomponent reads \
+projection state directly. The right invariant names what the \
+code enforces — the dispatch envelope, the typed primitive, the \
+boundary check — and lets the user-level outcome live in \
+``<primary-operations>`` or the techspec where best-effort \
+phrasing is appropriate. The diagnostic: every scenario the \
+``<failure-surface>`` lists must be expressible without \
+contradicting any invariant. If a failure-mode contradicts an \
+invariant, the invariant is overreaching — weaken it to \
+describe the enforcement, not the outcome.
 * ``<primary-operations>`` lists **3-6 short verb phrases** \
 naming the operations callers (sibling subcomponents or outside \
 dependents) invoke on this subcomponent. Examples: "verify \
