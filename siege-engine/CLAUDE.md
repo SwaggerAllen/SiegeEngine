@@ -373,67 +373,65 @@ prompt:
 1. Open the comparch structure summary, hit "Select for cohort",
    either auto-suggest (stratified greedy sampler against
    per-tier axis weights) or hand-pick comps, save as a cohort.
-   `cohort.comp_ids` always holds top-level comp IDs (the units);
-   `cohort.tier` records which generator the cohort drives.
+   `cohort.comp_ids` always holds top-level comp IDs (the
+   canonical set); `cohort.tier` records which generator the
+   cohort drives.
 2. Each iteration cycle: kick off cohort regenerate from the
    Cohorts page. Two modes:
-   - **review** (`bootstrap_feedback("", force=True)` per scope) —
-     keeps approved content, threads `prior_review_text` forward
-     so the model iterates on its own critique.
-   - **fresh** (`bootstrap_reset(force=True)` per scope) — wipes
-     content + downstream cascade, generates from scratch with
-     no prior context.
-3. Add an exploration sample each cycle
-   (`/tiers/:tier/exploration-sample`) — picks N comps not in
-   the canonical cohort and not in any prior same-tier
-   exploration batch, regenerates at the chosen tier. Surfaces
-   pattern-level findings the canonical sample can't see.
-4. After scores plateau, fire the full-corpus action
+   - **review** runs `bootstrap_feedback("", force=True)` per
+     scope across `cohort.comp_ids ∪ cohort.experimental_comp_ids`
+     — the working set is stable across multiple reviews, with
+     `prior_review_text` threading forward.
+   - **fresh** picks `exploration_count` new experimental comps
+     (replaces `cohort.experimental_comp_ids` outright), wipes
+     content for **every** comp at the cohort's tier project-wide
+     (drafts discarded, downstream nodes deleted, in-flight jobs
+     cancelled — full `wipe_node` semantics), then enqueues regen
+     jobs only for the working set.
+3. After scores plateau, fire the full-corpus action
    (`/tiers/:tier/full-corpus`) once to cover the long tail.
-5. Cycle history view (per-cohort, in `CohortsPanel`) lists
+4. Cycle history view (per-cohort, in `CohortsPanel`) lists
    prior `cohort_regenerate` batches with mode badge, mean
    score, and per-mode-pair score deltas (fresh vs prior fresh,
    review vs prior review — cross-mode batches show stats but
    no delta arrow because the baselines aren't comparable).
 
-**Working set + sticky-until-fresh exploration.** Cohort regen
-draws from a working set that grows on fresh and stays stable
-across reviews. Composition:
+**Two slots, sticky between fresh swaps.** Cohort owns two
+slots; both stable across review passes:
 
-- Canonical: `cohort.comp_ids` — what the user explicitly picked.
-- Active-explored: comp_ids from same-tier exploration_sample
-  batches tagged with `scope_keys.parent_cohort_id == cohort.id`
-  AND `started_at > most-recent-fresh-mode-cohort_regenerate.started_at`
-  for this cohort.
+- Canonical: `cohort.comp_ids` — set by the structure-summary
+  "Save as cohort" flow, edited by PATCH. The user's explicit
+  picks.
+- Experimental: `cohort.experimental_comp_ids` — set/replaced
+  on each fresh-mode regenerate. Random sample of `count` comps
+  drawn from the project's tier-level pool, excluded against
+  cohort.comp_ids ∪ previously-sampled-anywhere. Empty when
+  `exploration_count == 0`.
 
-Per-mode behaviour:
+A fresh cycle is destructive at the tier level by design —
+project-wide content wipe is what makes "what does the new
+prompt produce on a fresh slate" meaningful. Off-campaign
+content (other cohorts, manually-iterated comps) is collateral
+damage; the user picks fresh knowing this. Run Full Corpus
+afterwards to repopulate off-campaign comps if the campaign
+isn't the only thing happening at the tier.
 
-- **review** runs on `canonical ∪ active-explored`. Reviews
-  carry forward across cycles. The working set is stable across
-  multiple review passes — that's the point, since adding new
-  exploration mid-review-cycle would muddy the data the review
-  pass is collecting.
-- **fresh** runs on canonical *only*. Prior-cycle exploration
-  comps are left untouched in the DB but buried by the temporal
-  cutoff so subsequent reviews don't see them. If the request
-  carries `exploration_count > 0`, fresh-mode then mints a new
-  exploration batch tagged `parent_cohort_id == cohort.id` and
-  picks N comps from outside the exclusion pool. Their batch's
-  `started_at` lands after the fresh batch's, so the next review
-  picks them up.
+**Wipe-only path.** `wipe_node` (in `bootstrap_routes.py`) is
+the shared body that `bootstrap_reset` adds an enqueue on top
+of. Cohort fresh-mode calls `wipe_node` directly for every comp
+at the tier (no per-comp regen), then enqueues regen jobs for
+the working set in a single sweep. Both paths receive the
+fresh batch_id so the in-flight cancel sweep excludes sibling
+jobs from the same operation.
 
-Exploration sampling rolls into the fresh-mode regenerate call —
-the standalone `/tiers/:tier/exploration-sample` endpoint stays
-accessible (and `run_exploration_sample` is the shared helper
-both paths call) but the cohort UI exposes only the unified
-"+expl N → New cycle (fresh)" affordance. If you want to add
-exploration without wiping canonical content, hit the endpoint
-directly; that's deliberate friction since adding exploration
-mid-review-cycle would muddy what reviews are measuring.
-
-The exclusion pool (don't re-pick previously-sampled comps)
-carries forward independent of the temporal cutoff, so resamples
-never collide with prior cycles' explorations.
+**Standalone exploration-sample endpoint** (`/tiers/:tier/
+exploration-sample`) stays accessible for testing / explicit
+overrides; not surfaced in the cohort UI. Calling it does not
+update `cohort.experimental_comp_ids` — only fresh-mode regen
+does. The exclusion pool (don't re-pick previously-sampled
+comps) reads from every `generate_exploration_sample` batch's
+`scope_keys.comp_ids` regardless of source, so explicit
+overrides still feed forward into fresh's pool exclusion.
 
 **Same-tier scope walk.** Cohort regenerate, exploration-sample,
 and full-corpus all use the shared `scope_ids_from_comp` helper

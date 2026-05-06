@@ -53,6 +53,13 @@ class Cohort(Base):
     tier: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="canonical")
     comp_ids: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    # Experimental supplementary comps managed by Fresh cycles. Set
+    # (replaced) on each fresh-mode cohort_regenerate; iterated by
+    # subsequent review-mode regens until the next fresh swaps in a
+    # new random sample. Distinct from ``comp_ids`` (the canonical
+    # set) so the structure-summary "Save as cohort" flow doesn't
+    # collide with campaign-loop exploration management.
+    experimental_comp_ids: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
