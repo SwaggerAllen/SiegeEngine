@@ -744,39 +744,33 @@ def bootstrap_retry_review(
     return {"job_id": job_id}
 
 
-def bootstrap_reset(
+def wipe_node(
     db: Session,
     project_id: str,
     scope_ids: tuple[str, ...],
     config: BootstrapTierConfig,
-    require_project: Callable,
     *,
-    force: bool = False,
     batch_id: str | None = None,
 ) -> dict[str, Any]:
-    """Generic POST reset handler.
+    """Wipe a node's content + cascade — no regen enqueue.
 
-    ``force=True`` skips the ``has_been_approved`` gate. The per-
-    tier per-node Reset & Regenerate buttons run with the default
-    ``force=False`` because their UI only mounts in the approved
-    state, so the gate doubles as a defence-in-depth check. The
-    bulk tier-ops sweep passes ``force=True`` because the operator
-    intent is "wipe everything in this tier and regenerate" — a
-    pending-draft-only node should still be discardable + regen-
-    able, not 409 the whole sweep.
+    Shared body of :func:`bootstrap_reset` (which adds an enqueue
+    on top) and the cohort fresh-mode path (which wipes every comp
+    at the tier project-wide and only enqueues regen for the
+    cohort + experimental working set, not every wiped node).
+
+    Discards pending drafts (own + downstream + tier-additional),
+    deletes downstream nodes, clears the node's own content, marks
+    a feedback-history cutoff, cancels in-flight downstream jobs,
+    and commits + publishes. Returns ``None`` if the node is
+    missing (so the cohort fresh-mode wipe-all-loop can skip nodes
+    that no longer exist without raising).
     """
     if config.collect_downstream_nodes is None:
         raise HTTPException(status_code=501, detail="Reset not supported for this tier")
-    require_project(db, project_id)
     node = config.get_node(db, project_id, *scope_ids)
     if node is None:
-        raise HTTPException(status_code=404, detail=f"{config.tier_name} node missing")
-    if not force and config.has_been_approved is not None:
-        if not config.has_been_approved(db, project_id, *scope_ids):
-            raise HTTPException(
-                status_code=409,
-                detail=f"{config.tier_name} is not in approved state",
-            )
+        return {"nodes_deleted": 0, "drafts_discarded": 0, "jobs_cancelled": 0, "skipped": True}
 
     jobs_cancelled = 0
     for jt in config.downstream_job_types:
@@ -874,6 +868,50 @@ def bootstrap_reset(
     )
     commit_and_publish(db, project_id)
 
+    return {
+        "nodes_deleted": len(downstream_nodes),
+        "drafts_discarded": drafts_discarded,
+        "jobs_cancelled": jobs_cancelled,
+    }
+
+
+def bootstrap_reset(
+    db: Session,
+    project_id: str,
+    scope_ids: tuple[str, ...],
+    config: BootstrapTierConfig,
+    require_project: Callable,
+    *,
+    force: bool = False,
+    batch_id: str | None = None,
+) -> dict[str, Any]:
+    """Generic POST reset handler.
+
+    ``force=True`` skips the ``has_been_approved`` gate. The per-
+    tier per-node Reset & Regenerate buttons run with the default
+    ``force=False`` because their UI only mounts in the approved
+    state, so the gate doubles as a defence-in-depth check. The
+    bulk tier-ops sweep passes ``force=True`` because the operator
+    intent is "wipe everything in this tier and regenerate" — a
+    pending-draft-only node should still be discardable + regen-
+    able, not 409 the whole sweep.
+    """
+    if config.collect_downstream_nodes is None:
+        raise HTTPException(status_code=501, detail="Reset not supported for this tier")
+    require_project(db, project_id)
+    node = config.get_node(db, project_id, *scope_ids)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"{config.tier_name} node missing")
+    if not force and config.has_been_approved is not None:
+        if not config.has_been_approved(db, project_id, *scope_ids):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{config.tier_name} is not in approved state",
+            )
+
+    wipe_summary = wipe_node(db, project_id, scope_ids, config, batch_id=batch_id)
+    wipe_summary.pop("skipped", None)
+
     resolved_batch_id = _resolve_batch_id(
         db,
         project_id,
@@ -894,9 +932,7 @@ def bootstrap_reset(
     )
     return {
         "ok": True,
-        "nodes_deleted": len(downstream_nodes),
-        "drafts_discarded": drafts_discarded,
-        "jobs_cancelled": jobs_cancelled,
+        **wipe_summary,
     }
 
 

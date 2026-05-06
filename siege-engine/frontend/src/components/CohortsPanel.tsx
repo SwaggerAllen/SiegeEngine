@@ -101,23 +101,26 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
     mutationFn: ({ mode, explorationCount }: { mode: 'fresh' | 'review'; explorationCount: number }) =>
       regenerateCohort(projectId, cohort.id, mode, explorationCount),
     onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['cohorts', projectId] });
       const skipText = result.scopes_skipped.length
         ? ` (${result.scopes_skipped.length} skipped)`
         : '';
-      const expl = result.exploration;
+      const wipedText =
+        result.mode === 'fresh' && (result.nodes_wiped ?? 0) > 0
+          ? `, wiped ${result.nodes_wiped} tier nodes`
+          : '';
+      const expl = result.experimental;
       let explText = '';
-      if (expl) {
-        if (expl.ok) {
-          explText =
-            ` + ${expl.picked_comp_ids?.length ?? 0} new exploration ` +
-            `(${expl.scopes_succeeded ?? 0}/${expl.scopes_total ?? 0} scopes)`;
-        } else {
-          explText = ` (exploration skipped: ${expl.detail ?? 'unknown'})`;
+      if (result.mode === 'fresh') {
+        if (expl?.ok && (expl.picked_comp_ids?.length ?? 0) > 0) {
+          explText = ` · experimental swapped to ${result.experimental_comp_ids.length} comp(s)`;
+        } else if (expl && !expl.ok) {
+          explText = ` (experimental skipped: ${expl.detail ?? 'unknown'})`;
         }
       }
       setStatusMsg(
         `Started ${result.mode} cycle: batch ${result.batch_id.slice(0, 14)}…, ` +
-          `${result.scopes_succeeded}/${result.scopes_total} scopes enqueued${skipText}${explText}.`,
+          `${result.scopes_succeeded}/${result.scopes_total} scopes enqueued${skipText}${wipedText}${explText}.`,
       );
     },
     onError: (err: unknown) => {
@@ -139,7 +142,10 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
             </span>
           </div>
           <div className="text-xs text-gray-500 mt-0.5">
-            {cohort.comp_ids.length} comp{cohort.comp_ids.length === 1 ? '' : 's'}
+            {cohort.comp_ids.length} canonical
+            {cohort.experimental_comp_ids.length > 0 && (
+              <> · {cohort.experimental_comp_ids.length} experimental</>
+            )}
             {cohort.created_at && (
               <> · created {cohort.created_at.slice(0, 10)}</>
             )}
@@ -186,7 +192,7 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
                   })
                 }
                 disabled={isRegenerating}
-                title="Wipe canonical content + fresh-regen, then baseline N new exploration comps tagged to this cohort. Buries the prior cycle's exploration set."
+                title="Wipe content for every comp at this tier project-wide; pick N new experimental comps (replaces the prior set on the cohort); regen canonical + new experimental."
                 className="px-2 py-1 text-xs rounded border border-amber-800 text-amber-200 hover:bg-amber-950 disabled:opacity-40"
                 data-testid={`cohort-row-${cohort.id}-regen-fresh`}
               >
@@ -391,9 +397,11 @@ function SubcompCampaignActions({
     <div className="rounded border border-gray-800 bg-gray-950/40 p-3 text-xs space-y-2">
       <div className="font-medium text-gray-200">Campaign actions ({campaignTier})</div>
       <div className="text-gray-500">
-        Exploration sampling now happens inline with each fresh cycle —
-        set the <code className="text-gray-300">+expl</code> count next to the
-        Fresh button on the cohort row.
+        Experimental set is managed by the Fresh button on each cohort
+        row — set <code className="text-gray-300">+expl N</code> there
+        to swap in N new random comps (and wipe content for every
+        comp at the tier first). Review iterates the working set
+        (canonical + experimental) without touching either.
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {fullCorpusConfirm ? (

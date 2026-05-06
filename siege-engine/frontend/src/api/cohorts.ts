@@ -16,6 +16,7 @@ export const CohortSchema = z.object({
   tier: z.string(),
   name: z.string(),
   comp_ids: z.array(z.string()),
+  experimental_comp_ids: z.array(z.string()).default([]),
   version: z.number().int(),
   archived: z.boolean(),
   created_at: z.string().nullable(),
@@ -134,13 +135,13 @@ export const RegenerateCohortResultSchema = z.object({
   scopes_total: z.number().int(),
   scopes_succeeded: z.number().int(),
   scopes_skipped: z.array(SkippedScopeSchema),
-  exploration: z
+  nodes_wiped: z.number().int().optional(),
+  experimental_comp_ids: z.array(z.string()).default([]),
+  experimental: z
     .object({
       ok: z.boolean(),
       batch_id: z.string().optional(),
       picked_comp_ids: z.array(z.string()).optional(),
-      scopes_total: z.number().int().optional(),
-      scopes_succeeded: z.number().int().optional(),
       status: z.number().int().optional(),
       detail: z.unknown().optional(),
     })
