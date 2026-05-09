@@ -52,10 +52,14 @@ def test_structured_review_has_regenerate_button_hook():
     assert "Handles & structure review" in sys
 
 
-def test_bootstrap_feedback_clears_stale_review(db, project):
+def test_bootstrap_feedback_preserves_prior_review_for_clean_rerun(db, project):
     """Posting feedback on a tier with a pending draft that carries
-    an AI review should blank that draft's review_text so the UI
-    doesn't show critique of content that's about to be replaced."""
+    an AI review must NOT delete the review_text on the prior draft
+    — the prior critique must remain visible so the user can do a
+    clean rerun if the regen fails. The captured ``prior_review_text``
+    rides forward on the regen job payload (see
+    ``test_bootstrap_feedback_threads_prior_review_into_regen_payload``)
+    so the next prompt still sees it."""
     from backend.graph import events as ev
     from backend.graph.bootstrap_routes import bootstrap_feedback
     from backend.graph.expansion import (
@@ -108,10 +112,10 @@ def test_bootstrap_feedback_clears_stale_review(db, project):
     db.expire_all()
     pending_after = pending_expansion_draft(db, project.id)
     assert pending_after is not None
-    assert pending_after.review_text == "", (
-        "Posting feedback must clear the stale review on the old "
-        "pending draft; otherwise the UI shows critique of content "
-        "that's about to be replaced."
+    assert pending_after.review_text.strip() != "", (
+        "Posting feedback must NOT clear the stale review on the "
+        "prior pending draft — the user needs the prior critique "
+        "visible for a clean rerun if the regen fails."
     )
 
 

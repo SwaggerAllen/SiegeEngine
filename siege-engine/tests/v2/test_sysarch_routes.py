@@ -632,9 +632,10 @@ class TestReset:
         assert comparch_jobs
         assert all(j.status == "cancelled" for j in comparch_jobs)
 
-        # ``FeedbackCleared`` marks the cutoff that hides pre-reset
-        # prose feedback + AI review text in the Feedback History
-        # panel. One must land pointing at the sysarch node id.
+        # Reset paths no longer emit ``FeedbackCleared`` — keeping
+        # prior prose feedback and AI review text visible across
+        # regens means the user can do a clean rerun on failure
+        # instead of being stranded with a wiped history panel.
         feedback_cleared_rows = (
             db.execute(
                 select(GraphEvent).where(
@@ -645,9 +646,7 @@ class TestReset:
             .scalars()
             .all()
         )
-        assert [(r.payload or {}).get("node_id") for r in feedback_cleared_rows] == [
-            sysarch_node_after.id
-        ]
+        assert feedback_cleared_rows == []
 
     def test_reset_on_missing_sysarch_returns_404(self, client, project_no_sysarch):
         resp = client.post(f"/api/projects/{project_no_sysarch.id}/sysarch/reset")

@@ -465,8 +465,9 @@ class TestReviewSweep:
         # node content so the approval gate opens, then add a
         # pending draft with a non-empty review_text. The sweep
         # should enqueue a regen for that scope with the review
-        # riding on the payload, clear the draft's review_text,
-        # and report the still-approved comp as skipped.
+        # riding on the payload, preserve the prior review on the
+        # discarded draft (so the user can do a clean rerun on
+        # failure), and report the still-approved comp as skipped.
         from backend.models.node import Draft
 
         target_id = seeded["comp_ids"][0]
@@ -510,11 +511,11 @@ class TestReviewSweep:
         assert gen_jobs[0].payload.get("component_id") == target_id
         assert gen_jobs[0].payload.get("prior_review_text") == original_review_text
 
-        # Sweep cleared the now-stale review_text on the pending
-        # draft so it doesn't render alongside the about-to-land
-        # successor.
+        # Prior review_text stays on the discarded draft so the user
+        # has the previous critique available for a clean rerun if
+        # the regen fails.
         db.refresh(draft)
-        assert (draft.review_text or "") == ""
+        assert (draft.review_text or "") == original_review_text
 
         # No review job enqueued by the sweep — the next review
         # fires from the post-commit hook on the new draft.
