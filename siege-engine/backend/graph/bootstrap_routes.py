@@ -449,33 +449,24 @@ def bootstrap_feedback(
         (current_pending.review_text or "").strip() if current_pending is not None else ""
     )
 
-    # Clear the currently-pending draft's review_text and cancel
-    # any in-flight review job for it. The old review is about to
-    # become a review of content no longer on the pending slot, so
-    # surfacing it during the regen window is confusing — the user
-    # sees critique that doesn't apply to the draft that will
-    # actually land. ``persist_draft`` already cancels the stale
-    # review job when it discards the prior pending draft; doing
-    # it here too keeps the UI honest during the enqueue→commit
-    # window. The captured ``prior_review_text`` above rides on
-    # the regen payload, so clearing the row here doesn't lose it.
-    if current_pending is not None and prior_review_text:
-        append_event(
+    # Cancel any in-flight review job on the currently-pending
+    # draft. The draft is about to be discarded by the regen, so a
+    # review job that completes mid-window would write into a row
+    # the user no longer sees. ``prior_review_text`` is captured
+    # above and rides forward on the new gen payload, so the
+    # critique is preserved across the regen.
+    #
+    # We do NOT clear ``Draft.review_text`` here — keeping the
+    # prior review on the discarded draft means a regen that fails
+    # leaves the prior critique visible for inspection / clean
+    # rerun, instead of stranding the user with a wiped slot.
+    if current_pending is not None and config.review_job_type:
+        pipeline_queue.cancel_jobs_by_type(
             db,
-            project_id,
-            ev.DraftReviewUpdated(
-                draft_id=current_pending.id,
-                node_id=node.id,
-                review_text="",
-            ),
+            config.review_job_type,
+            project_id=project_id,
+            draft_id=current_pending.id,
         )
-        if config.review_job_type:
-            pipeline_queue.cancel_jobs_by_type(
-                db,
-                config.review_job_type,
-                project_id=project_id,
-                draft_id=current_pending.id,
-            )
         commit_and_publish(db, project_id)
 
     feedback = (feedback_text or "").strip() or None
@@ -857,15 +848,13 @@ def wipe_node(
         project_id,
         ev.BootstrapNodeContentCleared(node_id=node.id),
     )
-    # Mark a cutoff so the Feedback History panel stops showing prose
-    # feedback and AI review text from before this reset. The prior
-    # entries remain in the immutable event log + Job/Draft rows, but
-    # the read path filters them out past this timestamp.
-    append_event(
-        db,
-        project_id,
-        ev.FeedbackCleared(node_id=node.id),
-    )
+    # Note: prior FeedbackCleared events emitted by older code paths
+    # are still respected by the Feedback History reader (it filters
+    # entries before the most-recent cutoff). New wipes intentionally
+    # do not emit FeedbackCleared — keeping prior prose feedback and
+    # AI review text visible across regens means the user can do a
+    # clean rerun on failure instead of being stranded with a wiped
+    # history panel.
     commit_and_publish(db, project_id)
 
     return {

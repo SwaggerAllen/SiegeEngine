@@ -309,6 +309,38 @@ does this name promise? Then verify the rest of the doc honours \
 that promise. Names that overstate are the second-most-common \
 contradiction shape after invariant overreach.
 
+**Type-shape parity across sections.** The dominant remaining \
+contradiction shape after the invariant and naming rules is a \
+section referencing a type whose actual definition in the \
+public or private surface doesn't carry the fields or variants \
+that section needs. Recurring examples:
+
+* The failure surface names "schema-version drift" as a failure \
+  mode but the ``Validated`` struct in the public surface has no \
+  ``schema_version`` field — there is no shape to detect what \
+  the failure surface promises.
+* A primary-operation says it returns a ``Document`` while the \
+  public surface returns an untyped map — the type referenced by \
+  the operation doesn't exist.
+* The private surface mentions a ``:transient`` error variant \
+  that the public-surface error union omits — the variant has no \
+  outbound path to callers.
+* A subcomponent's ``<owned-invariants>`` references a sequence \
+  number the projection schema in the public surface doesn't \
+  store — the invariant rests on a field that isn't there.
+* A failure-surface entry says the public API returns a typed \
+  error reason that the public surface's error union doesn't \
+  include — there is no way for a caller to discriminate it.
+
+Before writing the techspec, failure surface, or subcomponent \
+operations, draft the public and private surfaces' types in \
+your head — every record/struct's fields, every sum type's \
+variants, every function's arity, every error union's members. \
+Every later section's named reference must hit a type / field / \
+variant from that draft. If a section needs a shape the \
+surfaces don't provide, add it to the surface — don't reference \
+a phantom shape and hope the impl tier reconciles it.
+
 ## Structure
 
 * Emit **exactly one** ``<comparch>`` root block. Nothing before, \
