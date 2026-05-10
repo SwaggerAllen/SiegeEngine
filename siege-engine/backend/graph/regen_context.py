@@ -193,14 +193,18 @@ class RegenContext:
     # empty.
     domain_parent_fanins: dict[str, str] = field(default_factory=dict)
 
-    # Project-wide tech baseline — the sysarch tier's TECHSPEC
-    # fragment content. Threaded into both the comparch generator
-    # and the comparch reviewer so they ground against the same
-    # project-stack assertion (without it, the reviewer falls back
-    # to a tech-stack prior and hallucinates drift findings on
-    # comparches that correctly inherited the sysarch's stack).
-    # Empty string before sysarch is minted.
+    # Project-wide sysarch sections — the parts of the sysarch
+    # output that are NOT tied to a single component (techspec,
+    # top-level policies, the inter-component dependency graph,
+    # the presentational→domain mapping). All four come from the
+    # shared :func:`_load_project_sysarch_sections` helper so the
+    # comparch generator and reviewer ground against identical
+    # project-wide context. Empty strings before the underlying
+    # sysarch state lands.
     project_techspec: str = ""
+    project_policies: str = ""
+    project_dependencies: str = ""
+    project_domain_parents: str = ""
 
     # Referenced content — Phase 6.6. Every regen also sees the
     # rendered content of nodes this regen target has outgoing
@@ -421,7 +425,7 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         session, project_id, comp_id
     )
 
-    project_techspec = _load_project_sysarch_techspec(session, project_id)
+    project_sysarch = _load_project_sysarch_sections(session, project_id)
 
     return RegenContext(
         component=component,
@@ -448,7 +452,10 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         domain_parent_techspecs=domain_parent_techspec_map,
         domain_parent_pubapis=domain_parent_pubapi_map,
         domain_parent_fanins=domain_parent_fanin_map,
-        project_techspec=project_techspec,
+        project_techspec=project_sysarch["techspec"],
+        project_policies=project_sysarch["policies"],
+        project_dependencies=project_sysarch["dependencies"],
+        project_domain_parents=project_sysarch["domain_parents"],
         referenced_content=referenced_content_map,
     )
 
@@ -618,29 +625,103 @@ def _layered_fragment(session: Session, owner_node: Node, sysarch_kind: Fragment
     return best_layered_fragment_content(session, owner_node, sysarch_kind)
 
 
-def _load_project_sysarch_techspec(session: Session, project_id: str) -> str:
-    """Return the project's sysarch-tier TECHSPEC fragment content.
+def _load_project_sysarch_sections(session: Session, project_id: str) -> dict[str, str]:
+    """Return every project-wide sysarch section as formatted strings.
 
-    Threaded into every comparch / subcomparch / impl regen so the
-    generator + reviewer ground against the same project-stack
-    assertion (instead of falling back to a tech-stack prior when
-    the per-comp techspec doesn't restate it). Empty string before
-    sysarch is minted.
+    Single source of truth for "the project-wide sysarch context" —
+    threaded into every comparch regen via
+    :func:`format_regen_context` so generator and reviewer ground
+    against identical input. Sections returned:
+
+    - ``techspec`` — the sysarch node's TECHSPEC fragment content
+      (runtime, persistence, write-path, concurrency, testing,
+      deploy, technologies).
+    - ``policies`` — every top-level policy (``tier="policy"``
+      Node), formatted with name + trigger + rationale + optional
+      required-resp.
+    - ``dependencies`` — every ``dependency`` edge between
+      top-level comps, formatted as ``from-name → to-name``.
+    - ``domain_parents`` — every ``domain_parent`` edge between
+      top-level comps, formatted as ``presentational → domain``.
+
+    All four are empty strings when their underlying data hasn't
+    been minted yet, so a regen running before sysarch approval
+    still gets a well-shaped (mostly-empty) bundle.
+
+    Component-specific sysarch info (per-comp techspec / pubapi /
+    resp assignments) is NOT included here — that lives on
+    individual comp Nodes and gets per-comp formatting via
+    ``component_summary`` and the resp / dep summaries.
     """
+    from backend.models.node import Edge
+    from backend.models.node import Fragment as _Fragment
+
     sysarch_node = session.execute(
         select(Node).where(
             Node.project_id == project_id,
             Node.tier == "sysarch",
         )
     ).scalar_one_or_none()
-    if sysarch_node is None:
-        return ""
-    from backend.models.node import Fragment as _Fragment
 
-    frag = session.get(_Fragment, fragment_id(sysarch_node.id, FragmentKind.TECHSPEC))
-    if frag is None:
-        return ""
-    return (frag.content or "").strip()
+    techspec = ""
+    if sysarch_node is not None:
+        frag = session.get(_Fragment, fragment_id(sysarch_node.id, FragmentKind.TECHSPEC))
+        if frag is not None:
+            techspec = (frag.content or "").strip()
+
+    # Policies — top-level nodes minted by sysarch_mint.
+    policy_nodes = list(
+        session.execute(
+            select(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.tier == "policy",
+                Node.parent_id.is_(None),
+            )
+            .order_by(Node.display_order, Node.id)
+        ).scalars()
+    )
+    policies = "\n".join(
+        f"- **{(p.name or '(unnamed)').strip()}**\n  {(p.content or '').strip()}"
+        for p in policy_nodes
+    ).strip()
+
+    # Comp name lookup so dep / domain-parent edges render as names.
+    top_comps = list(
+        session.execute(
+            select(Node).where(
+                Node.project_id == project_id,
+                Node.tier == "comp",
+                Node.parent_id.is_(None),
+            )
+        ).scalars()
+    )
+    comp_name_by_id = {c.id: (c.name or c.id) for c in top_comps}
+    top_comp_ids = set(comp_name_by_id)
+
+    def _format_edges(edge_type: str) -> str:
+        edges = list(
+            session.execute(
+                select(Edge)
+                .where(Edge.project_id == project_id, Edge.edge_type == edge_type)
+                .order_by(Edge.id)
+            ).scalars()
+        )
+        lines = []
+        for e in edges:
+            if e.source_id not in top_comp_ids or e.target_id not in top_comp_ids:
+                continue
+            src = comp_name_by_id[e.source_id]
+            dst = comp_name_by_id[e.target_id]
+            lines.append(f"- {src} → {dst}")
+        return "\n".join(lines).strip()
+
+    return {
+        "techspec": techspec,
+        "policies": policies,
+        "dependencies": _format_edges("dependency"),
+        "domain_parents": _format_edges("domain_parent"),
+    }
 
 
 def _collect_related_features(
@@ -724,6 +805,9 @@ def format_regen_context(ctx: RegenContext) -> dict[str, str]:
     """
     return {
         "project_techspec": ctx.project_techspec,
+        "project_policies": ctx.project_policies,
+        "project_dependencies": ctx.project_dependencies,
+        "project_domain_parents": ctx.project_domain_parents,
         "component_summary": _format_component_summary(ctx),
         "parent_resps_summary": _format_parent_resps_with_feats(ctx),
         "sibling_comps_summary": _format_sibling_comps_summary(ctx.sibling_comps),

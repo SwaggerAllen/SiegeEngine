@@ -481,6 +481,9 @@ class TestFormatRegenContext:
         formatted = format_regen_context(ctx)
         expected_keys = {
             "project_techspec",
+            "project_policies",
+            "project_dependencies",
+            "project_domain_parents",
             "component_summary",
             "parent_resps_summary",
             "sibling_comps_summary",
