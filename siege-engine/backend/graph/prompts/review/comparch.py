@@ -100,19 +100,55 @@ sharper than the sysarch one because comparch has the full \
 techspec + pubapi in hand; if it reads the same as a sysarch \
 sketch, it's under-specified.
 - **Cross-section consistency is the highest-yield check.** \
-Scan the artifact as a whole and flag direct contradictions: \
-a techspec claim ("no partial writes", "all events are \
-atomic") versus a failure-surface scenario describing exactly \
-that failure mode; an owned-invariant versus a failure-surface \
-scenario asserting the opposite; a public API return type \
-that cannot express a failure the failure surface explicitly \
-names; a primary-operation that has no public-surface \
-entry-point and no private-surface helper to dispatch \
-through; a public type that documents one shape while another \
-section's prose documents a different one. These are the \
-most common load-bearing findings — be specific about which \
-two sections disagree and what the artifact would need to do \
-to reconcile.
+Scan the artifact as a whole and flag direct contradictions \
+across these three families:
+
+  *Phrasing contradictions* — a techspec claim ("no partial \
+  writes", "all events are atomic") versus a failure-surface \
+  scenario describing exactly that failure mode; an owned-\
+  invariant versus a failure-surface scenario asserting the \
+  opposite; a public type's name implying a contract ("blocking \
+  reasons") that its variants violate ("``:ready``").
+
+  *Type-shape parity* — a type referenced by name in the \
+  techspec, failure surface, or sub operations whose actual \
+  definition in the public or private surface doesn't carry \
+  the field / variant / arity that reference needs. Examples: \
+  the failure surface names "schema-version drift" but the \
+  ``Validated`` struct has no ``schema_version`` field; the \
+  private surface has a ``:transient`` error variant that the \
+  public-surface error union omits; a primary-operation \
+  returns a ``Document`` while the public surface returns an \
+  untyped map; a public read API documented as serving \
+  "drafts and flow-run state" but the actual function set \
+  omits both.
+
+  *Substance coverage* — the parser catches *structural* feat \
+  coverage (every parent feat claimed by ≥1 subcomp). Check \
+  *substantive* coverage: does the subcomp that claims a feat \
+  have an operation, invariant, or responsibilities sentence \
+  that actually addresses the feat's content? An ``<owns>`` \
+  block claiming feat_X is a load-bearing claim — if the \
+  subcomp's other sections never mention X's behavior, the \
+  feat is unimplemented in handle-space and impl will skip \
+  it. Same check applies to claimed dependencies on sibling \
+  ops the sibling doesn't actually publish — if the techspec \
+  says "this comp calls Permission Resolver's grant-binding \
+  op" and that op isn't in the resolver's pubapi, flag it.
+
+  *Data-flow ambiguity* — three or more sections describe the \
+  same behavior with shapes that don't quite reconcile. \
+  Example: techspec says the lobby pre-computes scope for \
+  every queued proposal, the ScopeWalker spec says it computes \
+  on demand for the selected one, and the scope_view's \
+  invariant asserts freshness against neither stance. Nothing \
+  is outright wrong but an implementer would have to pick a \
+  story. Flag when you can name 3+ sections that don't agree.
+
+  Be specific about which sections disagree and what the \
+  artifact would need to do to reconcile. These cross-section \
+  findings are the most common load-bearing handles findings \
+  this tier produces.
 
 Things you do **not** need to flag (the parser already \
 rejects them, so the artifact you're seeing has already \
@@ -120,8 +156,13 @@ passed these checks): declared sub-dependency cycles in \
 ``<sub-dependencies>``; private modules declared in \
 ``<private-surface>`` and referenced by full module name in \
 ``<public-surface>``; missing parent-resp coverage when \
-``<subcomponents>`` is non-empty; per-resp feat coverage \
-gaps. Spending review budget on these is wasted effort.
+``<subcomponents>`` is non-empty; *structural* feat-coverage \
+gaps where a feat isn't claimed by any subcomp's ``<owns>`` \
+block. (The *substantive* check — claimed feats whose \
+behavior never surfaces in the owning subcomp's operations / \
+invariants / responsibilities prose — IS in scope; that's \
+the substance-coverage bullet above.) Spending review budget \
+on the parser-handled checks is wasted effort.
 """
 
 _ARCHITECTURE_INTRO = """\
