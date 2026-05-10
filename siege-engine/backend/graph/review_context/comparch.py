@@ -1,7 +1,10 @@
 """Review-side context for the comparch tier.
 
 Reuses the generator's ``build_regen_context`` / ``format_regen_context``
-pipeline directly — zero drift.
+pipeline directly — zero drift. The shared formatter now includes
+``project_techspec`` (the sysarch-tier tech-stack baseline) so the
+generator and reviewer ground against the same project-stack
+assertion.
 """
 
 from __future__ import annotations

@@ -195,6 +195,15 @@ def render_user_prompt(
     parse_error: str | None = None,
     vocab_summary: str = "",
     referenced_content_summary: str = "",
+    project_techspec: str = "",
+    project_policies: str = "",
+    project_dependencies: str = "",
+    project_domain_parents: str = "",
+    parent_policies: str = "",
+    parent_failure_surface: str = "",
+    component_policies: str = "",
+    component_failure_surface: str = "",
+    related_features_summary: str = "",
 ) -> str:
     """Build the user prompt for the impl generator.
 
@@ -214,6 +223,36 @@ def render_user_prompt(
       cross-cutting context shared with other tiers.
     """
     parts: list[str] = []
+    project_sysarch_blocks: list[tuple[str, str]] = []
+    if project_techspec and project_techspec.strip():
+        project_sysarch_blocks.append(("Techspec (project-wide tech baseline)", project_techspec))
+    if project_policies and project_policies.strip():
+        project_sysarch_blocks.append(("Top-level policies", project_policies))
+    if project_dependencies and project_dependencies.strip():
+        project_sysarch_blocks.append(("Dependency graph", project_dependencies))
+    if project_domain_parents and project_domain_parents.strip():
+        project_sysarch_blocks.append(
+            ("Domain-parent edges (presentational → domain)", project_domain_parents)
+        )
+    if project_sysarch_blocks:
+        parts.append("# Project sysarch (non-component-specific context)")
+        parts.append("")
+        parts.append(
+            "These are the project-wide sysarch sections that apply "
+            "to every implementation — the tech stack, top-level "
+            "policies, the inter-component dependency graph, and the "
+            "presentational→domain mapping. Your implementation must "
+            "respect all of these: choose libraries from the declared "
+            "stack, honor policies whose triggers your code-paths "
+            "match, route through declared dependencies rather than "
+            "inventing new ones."
+        )
+        parts.append("")
+        for heading, body in project_sysarch_blocks:
+            parts.append(f"## {heading}")
+            parts.append("")
+            parts.append(body.strip())
+            parts.append("")
     if vocab_summary and vocab_summary.strip():
         parts.append(vocab_summary.strip())
         parts.append("")
@@ -229,16 +268,82 @@ def render_user_prompt(
     parts.append(owner_summary.strip() or "(leaf details missing)")
     parts.append("")
 
+    # Foundation impls (the leaf IS the top-level comp): the
+    # component_* fields carry the leaf's own comparch-tier
+    # policies + failure-surface. Empty for sub impls.
+    if component_policies and component_policies.strip():
+        parts.append("## Component-local policies (this leaf)")
+        parts.append("")
+        parts.append(
+            "Cross-cutting policies declared at this comp's "
+            "comparch tier. Your impl is a candidate enforcement "
+            "site — match the trigger and honor the rationale."
+        )
+        parts.append("")
+        parts.append(component_policies.strip())
+        parts.append("")
+    if component_failure_surface and component_failure_surface.strip():
+        parts.append("## Component failure surface (this leaf)")
+        parts.append("")
+        parts.append(
+            "Residual risks the comparch documented for this "
+            "component. Your impl should make these failures "
+            "observable as the comparch promised — typed errors, "
+            "logged conditions, etc."
+        )
+        parts.append("")
+        parts.append(component_failure_surface.strip())
+        parts.append("")
+
     if parent_summary and parent_summary.strip():
         parts.append("# Owning parent component")
         parts.append("")
         parts.append(parent_summary.strip())
         parts.append("")
 
+    # Sub impls: the parent_* fields carry the parent comp's
+    # comparch-tier policies + failure-surface. Empty for foundation
+    # impls (component_* above carries that content instead).
+    if parent_policies and parent_policies.strip():
+        parts.append("## Parent component-local policies")
+        parts.append("")
+        parts.append(
+            "Cross-cutting policies from the parent comparch. Your "
+            "subcomp impl is bound by these via inheritance — when "
+            "your code-paths match a trigger, honor the policy."
+        )
+        parts.append("")
+        parts.append(parent_policies.strip())
+        parts.append("")
+    if parent_failure_surface and parent_failure_surface.strip():
+        parts.append("## Parent component failure surface")
+        parts.append("")
+        parts.append(
+            "Residual risks the parent comparch named. Your impl's "
+            "error paths should be coherent with these — your owned "
+            "slice is one site where these failure modes can land."
+        )
+        parts.append("")
+        parts.append(parent_failure_surface.strip())
+        parts.append("")
+
     if dep_pubapi_summary and dep_pubapi_summary.strip():
         parts.append("# Dependencies' public surfaces")
         parts.append("")
         parts.append(dep_pubapi_summary.strip())
+        parts.append("")
+
+    if related_features_summary and related_features_summary.strip():
+        parts.append("# Related features (deep context)")
+        parts.append("")
+        parts.append(
+            "Features reachable via the decomposition walk from this "
+            "leaf's owned resps. Grounding for what user-visible work "
+            "this implementation ultimately serves — you do not "
+            "reference feature IDs directly."
+        )
+        parts.append("")
+        parts.append(related_features_summary.strip())
         parts.append("")
 
     if prior_approved:

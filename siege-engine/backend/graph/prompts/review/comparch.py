@@ -181,8 +181,23 @@ workflow) for this component's work?
 a thousand tiny ones?
 - Are cross-cutting concerns bundled into a single sub (fine) \
 or duplicated across siblings (not fine)?
-- Does the component's tech stack choice match the project's \
-broader architecture? Flag drift from the project techspec.
+- Does the component's choices align with the project-wide \
+sysarch sections (``project_techspec`` / ``project_policies`` / \
+``project_dependencies`` / ``project_domain_parents``) dumped \
+in the user prompt above? Those are the canonical sysarch-tier \
+project context, not your prior about what "projects like \
+this" usually use. Tech-stack drift (Python claims on an \
+Elixir project, or vice versa) is the most common failure mode \
+— flag specific modules / behaviours / libraries that don't \
+belong. Also check that the comparch's own ``<dependencies>`` \
+match the project's dependency graph, that any policy this \
+component is a candidate for is acknowledged in its \
+``<policies>`` block or has a clear "doesn't apply because…" \
+rationale, and that presentational comparches lean on the \
+domain comps the domain-parent map names rather than \
+re-deriving their state. If a project_* section is missing \
+from the user prompt, do not flag drift against it — you have \
+no baseline to ground it against.
 - Is the split between public and private surface principled \
 — or is the public surface bloated with internal details?
 - If the component is a foundation, is its decomposition \

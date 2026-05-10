@@ -978,6 +978,10 @@ def render_user_prompt(
     vocab_summary: str = "",
     domain_parent_surface: str = "",
     referenced_content_summary: str = "",
+    project_techspec: str = "",
+    project_policies: str = "",
+    project_dependencies: str = "",
+    project_domain_parents: str = "",
 ) -> str:
     """Build the user prompt for the comparch generator.
 
@@ -1017,6 +1021,37 @@ def render_user_prompt(
       without a sub-foundation catch-all.
     """
     parts: list[str] = []
+    project_sysarch_blocks: list[tuple[str, str]] = []
+    if project_techspec and project_techspec.strip():
+        project_sysarch_blocks.append(("Techspec (project-wide tech baseline)", project_techspec))
+    if project_policies and project_policies.strip():
+        project_sysarch_blocks.append(("Top-level policies", project_policies))
+    if project_dependencies and project_dependencies.strip():
+        project_sysarch_blocks.append(("Dependency graph", project_dependencies))
+    if project_domain_parents and project_domain_parents.strip():
+        project_sysarch_blocks.append(
+            ("Domain-parent edges (presentational → domain)", project_domain_parents)
+        )
+    if project_sysarch_blocks:
+        parts.append("# Project sysarch (non-component-specific context)")
+        parts.append("")
+        parts.append(
+            "These are the project-wide sysarch sections that apply "
+            "to every comparch — the tech stack, top-level policies, "
+            "the inter-component dependency graph, and the "
+            "presentational→domain mapping. Your comparch's choices "
+            "must be consistent with all of these: same stack, "
+            "policies you're a candidate for honoured, dependency "
+            "directions matching the graph below, presentational "
+            "components leaning on the domain components they "
+            "present rather than re-deriving their state."
+        )
+        parts.append("")
+        for heading, body in project_sysarch_blocks:
+            parts.append(f"## {heading}")
+            parts.append("")
+            parts.append(body.strip())
+            parts.append("")
     if target_is_foundation:
         parts.append("# Foundation component (special case)")
         parts.append("")
