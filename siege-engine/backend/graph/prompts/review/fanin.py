@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from backend.graph.prompts.fanin import _render_impl_block, _render_sub_pubapi_block
 from backend.graph.prompts.review._shared import (
     render_review_system_prompt,
     review_task_footer,
@@ -65,17 +66,39 @@ def render_user_prompt(context: FanInContext, generated_output: str) -> str:
     parts: list[str] = []
     parts.append(f"# Domain component: {context.owner_comp_name}")
     parts.append("")
-    # Dump whatever prose fields the synthesis context exposes.
-    for attr_name in dir(context.synthesis_ctx):
-        if attr_name.startswith("_"):
-            continue
-        value = getattr(context.synthesis_ctx, attr_name, None)
-        if not isinstance(value, str) or not value.strip():
-            continue
-        parts.append(f"# {attr_name}")
-        parts.append("")
-        parts.append(value.strip())
-        parts.append("")
+    # ``synthesis_ctx`` is the dict returned by
+    # ``build_fanin_synthesis_context`` — the same bundle the
+    # generator's ``render_user_prompt`` consumes via named kwargs.
+    # Iterate its keys explicitly so we surface every field; render
+    # list-of-dict fields (sub pubapis, impl contents) via the same
+    # helpers the generator uses, and dump string fields under
+    # their own headers. Prior code walked ``dir()`` over the dict
+    # which returned dict methods, not keys — every field was
+    # silently dropped from the reviewer's context.
+    ctx_dict = context.synthesis_ctx if isinstance(context.synthesis_ctx, dict) else {}
+    for key in ("owner_summary", "vocab_summary", "referenced_content_summary"):
+        value = ctx_dict.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(f"# {key}")
+            parts.append("")
+            parts.append(value.strip())
+            parts.append("")
+    sub_pubapis = ctx_dict.get("sub_pubapi_fragments")
+    if isinstance(sub_pubapis, list) and sub_pubapis:
+        rendered = _render_sub_pubapi_block(sub_pubapis)
+        if rendered.strip():
+            parts.append("# Subcomponent public surfaces")
+            parts.append("")
+            parts.append(rendered)
+            parts.append("")
+    impl_contents = ctx_dict.get("impl_contents")
+    if isinstance(impl_contents, list) and impl_contents:
+        rendered = _render_impl_block(impl_contents)
+        if rendered.strip():
+            parts.append("# Implementations")
+            parts.append("")
+            parts.append(rendered)
+            parts.append("")
     parts.append("# Generated fan-in (the artifact to review)")
     parts.append("")
     parts.append(generated_output.strip())
