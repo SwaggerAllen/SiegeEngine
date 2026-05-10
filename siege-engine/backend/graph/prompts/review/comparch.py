@@ -181,8 +181,17 @@ workflow) for this component's work?
 a thousand tiny ones?
 - Are cross-cutting concerns bundled into a single sub (fine) \
 or duplicated across siblings (not fine)?
-- Does the component's tech stack choice match the project's \
-broader architecture? Flag drift from the project techspec.
+- Does the component's tech stack match the project's tech \
+stack as documented in the ``# project_techspec`` section of \
+the user prompt above? That section is the project's \
+canonical sysarch-tier techspec, not your prior about what \
+"projects like this" usually use. If it says Elixir / OTP / \
+Phoenix / Ecto, a comparch claiming Python / FastAPI / \
+SQLAlchemy is drift; the inverse is also drift. Flag specific \
+modules / behaviours / libraries that don't belong. If the \
+``project_techspec`` section is missing from the user prompt, \
+do not flag tech-stack drift — you have no baseline to ground \
+it against.
 - Is the split between public and private surface principled \
 — or is the public surface bloated with internal details?
 - If the component is a foundation, is its decomposition \
