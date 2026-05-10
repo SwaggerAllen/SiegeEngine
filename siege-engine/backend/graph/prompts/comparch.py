@@ -978,6 +978,7 @@ def render_user_prompt(
     vocab_summary: str = "",
     domain_parent_surface: str = "",
     referenced_content_summary: str = "",
+    project_techspec: str = "",
 ) -> str:
     """Build the user prompt for the comparch generator.
 
@@ -1017,6 +1018,21 @@ def render_user_prompt(
       without a sub-foundation catch-all.
     """
     parts: list[str] = []
+    if project_techspec and project_techspec.strip():
+        parts.append("# Project techspec (sysarch-tier baseline)")
+        parts.append("")
+        parts.append(
+            "This is the project-wide tech-stack and architecture "
+            "decision-set established at the sysarch tier. Your "
+            "comparch's ``<technical-specification>`` must be "
+            "consistent with these choices: same runtime, same "
+            "persistence layer, same concurrency model, same testing "
+            "stack. If you find yourself reaching for a different "
+            "stack, you've drifted — re-anchor."
+        )
+        parts.append("")
+        parts.append(project_techspec.strip())
+        parts.append("")
     if target_is_foundation:
         parts.append("# Foundation component (special case)")
         parts.append("")

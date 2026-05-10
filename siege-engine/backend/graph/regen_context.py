@@ -193,6 +193,15 @@ class RegenContext:
     # empty.
     domain_parent_fanins: dict[str, str] = field(default_factory=dict)
 
+    # Project-wide tech baseline — the sysarch tier's TECHSPEC
+    # fragment content. Threaded into both the comparch generator
+    # and the comparch reviewer so they ground against the same
+    # project-stack assertion (without it, the reviewer falls back
+    # to a tech-stack prior and hallucinates drift findings on
+    # comparches that correctly inherited the sysarch's stack).
+    # Empty string before sysarch is minted.
+    project_techspec: str = ""
+
     # Referenced content — Phase 6.6. Every regen also sees the
     # rendered content of nodes this regen target has outgoing
     # ``reference`` edges to. The walker
@@ -412,6 +421,8 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         session, project_id, comp_id
     )
 
+    project_techspec = _load_project_sysarch_techspec(session, project_id)
+
     return RegenContext(
         component=component,
         component_techspec=cc.techspec,
@@ -437,6 +448,7 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         domain_parent_techspecs=domain_parent_techspec_map,
         domain_parent_pubapis=domain_parent_pubapi_map,
         domain_parent_fanins=domain_parent_fanin_map,
+        project_techspec=project_techspec,
         referenced_content=referenced_content_map,
     )
 
@@ -606,6 +618,31 @@ def _layered_fragment(session: Session, owner_node: Node, sysarch_kind: Fragment
     return best_layered_fragment_content(session, owner_node, sysarch_kind)
 
 
+def _load_project_sysarch_techspec(session: Session, project_id: str) -> str:
+    """Return the project's sysarch-tier TECHSPEC fragment content.
+
+    Threaded into every comparch / subcomparch / impl regen so the
+    generator + reviewer ground against the same project-stack
+    assertion (instead of falling back to a tech-stack prior when
+    the per-comp techspec doesn't restate it). Empty string before
+    sysarch is minted.
+    """
+    sysarch_node = session.execute(
+        select(Node).where(
+            Node.project_id == project_id,
+            Node.tier == "sysarch",
+        )
+    ).scalar_one_or_none()
+    if sysarch_node is None:
+        return ""
+    from backend.models.node import Fragment as _Fragment
+
+    frag = session.get(_Fragment, fragment_id(sysarch_node.id, FragmentKind.TECHSPEC))
+    if frag is None:
+        return ""
+    return (frag.content or "").strip()
+
+
 def _collect_related_features(
     session: Session, project_id: str, parent_resps: tuple[Node, ...]
 ) -> tuple[Node, ...]:
@@ -686,6 +723,7 @@ def format_regen_context(ctx: RegenContext) -> dict[str, str]:
     body.
     """
     return {
+        "project_techspec": ctx.project_techspec,
         "component_summary": _format_component_summary(ctx),
         "parent_resps_summary": _format_parent_resps_with_feats(ctx),
         "sibling_comps_summary": _format_sibling_comps_summary(ctx.sibling_comps),

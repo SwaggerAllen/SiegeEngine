@@ -480,6 +480,7 @@ class TestFormatRegenContext:
         ctx = build_regen_context(db, seeded["comp_billing"])
         formatted = format_regen_context(ctx)
         expected_keys = {
+            "project_techspec",
             "component_summary",
             "parent_resps_summary",
             "sibling_comps_summary",
