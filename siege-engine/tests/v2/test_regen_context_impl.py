@@ -91,9 +91,18 @@ class TestFormatForTopLevelOwner:
         kwargs = format_regen_context_for_impl(ctx)
 
         expected_keys = {
+            "project_techspec",
+            "project_policies",
+            "project_dependencies",
+            "project_domain_parents",
             "owner_summary",
             "parent_summary",
+            "parent_policies",
+            "parent_failure_surface",
+            "component_policies",
+            "component_failure_surface",
             "dep_pubapi_summary",
+            "related_features_summary",
             "vocab_summary",
             "referenced_content_summary",
         }

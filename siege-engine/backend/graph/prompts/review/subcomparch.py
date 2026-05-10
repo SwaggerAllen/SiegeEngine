@@ -131,10 +131,27 @@ the sibling boundary).
 """
 
 _ARCHITECTURE = """\
-- Is this sub's tech choice consistent with the parent \
-comparch's techspec? Flag drift (e.g. parent says async, \
-sub's pubapi is sync-only; parent says ``Result[T, ErrKind]``, \
-sub raises typed exceptions instead).
+- Does this sub's tech choice match the project-wide stack \
+declared in ``project_techspec`` (the sysarch-tier baseline \
+dumped above) AND the parent comparch's techspec? Flag drift \
+in either direction — claiming Python on an Elixir project, \
+claiming async where the parent says sync, claiming a \
+typed-error union where the parent uses tagged tuples. The \
+project_techspec is the canonical ground truth, not your prior \
+about what "subs like this" usually use. If the \
+``project_techspec`` section is missing from the user prompt, \
+do not flag tech-stack drift — you have no baseline to ground \
+it against.
+- Are the parent comparch's policies (``parent_policies``) \
+honoured by this sub's surfaces? When this sub's code is a \
+candidate site for a parent policy's trigger, the sub's prose \
+should explicitly acknowledge the policy or name why it \
+doesn't apply.
+- Are this sub's surfaces coherent with the parent's failure \
+modes (``parent_failure_surface``)? The parent named residual \
+risks at the comparch tier; the sub's owned slice contributes \
+to or guards them — surfaces that would silently mask a \
+parent-named failure mode are drift.
 - Is the cut of pubapi vs. privapi principled, or is the \
 public surface bloated with internals that no sibling \
 actually needs? Flag pubapi entries that could be private \
@@ -144,8 +161,9 @@ pubapi + privapi) coherent? Flag bundles of unrelated \
 concerns inside one sub, and flag pubapi entries that don't \
 map to any responsibility this sub claims.
 - Are the declared ``<dependencies>`` minimal — only the \
-siblings or parent-siblings this sub actually calls — or is \
-this sub depending on more comps than its prose justifies?
+siblings or parent-siblings this sub actually calls — and \
+consistent with the project-wide ``project_dependencies`` \
+graph? Flag deps that aren't grounded in either justification.
 """
 
 

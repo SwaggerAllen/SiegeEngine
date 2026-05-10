@@ -153,6 +153,44 @@ See `docs/architecture/v2-rearchitecture.md` §The system as a
 meaning engine and `seed-docs/catapult-spec-v2.md` §A.3.1a for
 the full treatment.
 
+## Per-tier context bundles
+
+Every tier's generator + reviewer pair consumes the **same**
+`format_regen_context*` dict — the per-tier triad invariant. The
+shared dict carries:
+
+- **Project-wide sysarch sections** (4 keys: `project_techspec`,
+  `project_policies`, `project_dependencies`,
+  `project_domain_parents`). Loaded by
+  `_load_project_sysarch_sections` in `regen_context.py`. Threaded
+  into comparch, subcomparch, and impl. Fanin is excluded by
+  design — fanin is bottom-up synthesis grounded in built reality
+  (sub pubapis + raw impl content), not project design intent.
+- **Related features** (`related_features_summary`). Walked from
+  the comp's / sub's / impl-owner's owned `parent_resps` via
+  decomposition edges. Comparch gets the comp's full feat reach;
+  subcomparch and impl get the slice scoped to what their
+  `<owns>` block claims. Fanin excluded.
+- **Parent comparch non-subcomponent fragments**
+  (`parent_techspec` / `parent_pubapi` / `parent_privapi` /
+  `parent_policies` / `parent_failure_surface`). Threaded into
+  subcomparch and sub-impls. The parent comp at comparch tier
+  writes COMPARCH_POLICIES + COMPARCH_FAILURE_SURFACE; subs don't
+  produce those (no SUBCOMPARCH_POLICIES /
+  SUBCOMPARCH_FAILURE_SURFACE FragmentKinds exist by design).
+- **Component-level non-surface fragments** (`component_policies`
+  / `component_failure_surface`). Foundation-impl mirror of the
+  parent_* set — when the impl's owner IS the top-level comp,
+  these carry the comp's own COMPARCH_POLICIES /
+  COMPARCH_FAILURE_SURFACE. Empty for sub impls.
+
+The reviewer-side criteria in
+`prompts/review/<tier>.py:_ARCHITECTURE` reference these sections
+by name when checking drift. If a section is missing from the
+prompt (e.g. before sysarch is minted), reviewers are
+instructed not to flag drift against it — no baseline, no
+finding.
+
 ## Scheduling invariants
 
 - **Presentational comparch gate**: a presentational comp's

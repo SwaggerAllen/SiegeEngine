@@ -367,6 +367,13 @@ def render_user_prompt(
     vocab_summary: str = "",
     domain_parent_surface: str = "",
     referenced_content_summary: str = "",
+    project_techspec: str = "",
+    project_policies: str = "",
+    project_dependencies: str = "",
+    project_domain_parents: str = "",
+    parent_policies: str = "",
+    parent_failure_surface: str = "",
+    related_features_summary: str = "",
 ) -> str:
     """Build the user prompt for the subcomparch generator.
 
@@ -402,6 +409,35 @@ def render_user_prompt(
       every other bootstrap prompt.
     """
     parts: list[str] = []
+    project_sysarch_blocks: list[tuple[str, str]] = []
+    if project_techspec and project_techspec.strip():
+        project_sysarch_blocks.append(("Techspec (project-wide tech baseline)", project_techspec))
+    if project_policies and project_policies.strip():
+        project_sysarch_blocks.append(("Top-level policies", project_policies))
+    if project_dependencies and project_dependencies.strip():
+        project_sysarch_blocks.append(("Dependency graph", project_dependencies))
+    if project_domain_parents and project_domain_parents.strip():
+        project_sysarch_blocks.append(
+            ("Domain-parent edges (presentational → domain)", project_domain_parents)
+        )
+    if project_sysarch_blocks:
+        parts.append("# Project sysarch (non-component-specific context)")
+        parts.append("")
+        parts.append(
+            "These are the project-wide sysarch sections that apply "
+            "to every subcomp — the tech stack, top-level policies, "
+            "the inter-component dependency graph, and the "
+            "presentational→domain mapping. Your subcomp's choices "
+            "must be consistent with all of these: same stack, "
+            "policies you're a candidate for honoured, dependencies "
+            "matching the graph below."
+        )
+        parts.append("")
+        for heading, body in project_sysarch_blocks:
+            parts.append(f"## {heading}")
+            parts.append("")
+            parts.append(body.strip())
+            parts.append("")
     if vocab_summary and vocab_summary.strip():
         parts.append(vocab_summary.strip())
         parts.append("")
@@ -420,6 +456,31 @@ def render_user_prompt(
     parts.append("")
     parts.append(parent_component_summary.strip() or "(parent details missing)")
     parts.append("")
+    if parent_policies and parent_policies.strip():
+        parts.append("## Parent component-local policies")
+        parts.append("")
+        parts.append(
+            "Cross-cutting policies the parent comparch declared. "
+            "Your subcomp inherits these — when your subcomp's code "
+            "would be a candidate site for one, honor it; if a "
+            "policy doesn't apply, name why explicitly so the "
+            "reviewer can confirm."
+        )
+        parts.append("")
+        parts.append(parent_policies.strip())
+        parts.append("")
+    if parent_failure_surface and parent_failure_surface.strip():
+        parts.append("## Parent component failure surface")
+        parts.append("")
+        parts.append(
+            "Residual risks the parent comparch documented. Your "
+            "subcomp's surfaces and invariants should be coherent "
+            "with these — your owned slice contributes to (or "
+            "guards) failure modes the parent already named."
+        )
+        parts.append("")
+        parts.append(parent_failure_surface.strip())
+        parts.append("")
     parts.append("# Parent responsibilities + feat slices this subcomponent claims")
     parts.append("")
     parts.append(
@@ -485,6 +546,20 @@ def render_user_prompt(
         )
         parts.append("")
         parts.append(dep_pubapi_summary.strip())
+        parts.append("")
+
+    if related_features_summary and related_features_summary.strip():
+        parts.append("# Related features (deep context)")
+        parts.append("")
+        parts.append(
+            "Features reachable via the decomposition walk from the "
+            "parent resps this subcomponent claims via its ``<owns>`` "
+            "slice. You do not reference feature IDs directly — this "
+            "is grounding for what user-visible work this sub "
+            "ultimately serves."
+        )
+        parts.append("")
+        parts.append(related_features_summary.strip())
         parts.append("")
 
     prior = prior_pending or prior_approved

@@ -148,9 +148,30 @@ class RegenContext:
     parent_techspec: str = ""
     parent_pubapi: str = ""
     parent_privapi: str = ""
+    # Parent comparch's non-subcomponent fragments threaded into
+    # subcomparch + sub-impl context so each tier sees the full
+    # design intent of the level above it (not just the three
+    # surfaces). Empty strings when the parent hasn't written
+    # comparch-tier policies / failure-surface yet (skeletal
+    # sysarch state).
+    parent_policies: str = ""
+    parent_failure_surface: str = ""
     sibling_subcomp_ids: tuple[str, ...] = ()
     sibling_subcomps: tuple[Node, ...] = ()
     sibling_subcomp_pubapi_fragments: dict[str, str] = field(default_factory=dict)
+
+    # Component-level non-surface fragments — mirror of
+    # ``parent_policies`` / ``parent_failure_surface`` for the
+    # component's own comparch fragments. Used by the impl tier
+    # for foundation impls (where the owner IS the top-level
+    # comp at comparch tier) so the impl prompt sees the comp's
+    # cross-cutting policies + failure modes alongside its
+    # surfaces. For subcomp impls the owner is a sub which
+    # doesn't write COMPARCH_POLICIES / COMPARCH_FAILURE_SURFACE,
+    # so these stay empty there and the parent_* fields above
+    # carry the relevant context.
+    component_policies: str = ""
+    component_failure_surface: str = ""
 
     # Project vocabulary — Phase 5.5. Every regen at every tier
     # sees the full project-level vocab plus the feature-local
@@ -263,9 +284,27 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
     parent_techspec = ""
     parent_pubapi = ""
     parent_privapi = ""
+    parent_policies = ""
+    parent_failure_surface = ""
     sibling_subcomp_ids: tuple[str, ...] = ()
     sibling_subcomps: tuple[Node, ...] = ()
     sibling_subcomp_pubapi_fragments: dict[str, str] = {}
+
+    # Component's own COMPARCH-tier non-surface fragments. Loaded
+    # for every target so foundation impls (whose owner is the
+    # top-level comp) can see the comp's policies + failure-surface
+    # alongside its three surfaces. For subcomps these slots stay
+    # empty (subcomps don't write COMPARCH_POLICIES /
+    # COMPARCH_FAILURE_SURFACE — the layered fallback resolves to
+    # the legacy slot which is also empty pre-comparch).
+    if not is_subcomponent:
+        component_policies = _layered_fragment(session, component, FragmentKind.POLICIES)
+        component_failure_surface = _layered_fragment(
+            session, component, FragmentKind.FAILURE_SURFACE
+        )
+    else:
+        component_policies = ""
+        component_failure_surface = ""
 
     if is_subcomponent:
         # Fetch the parent comp and verify the depth cap (defensive:
@@ -289,13 +328,18 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         parent_component = parent_node
 
         # Parent fragments: a subcomponent is allowed to read all
-        # three of its parent's fragment sections (including
-        # private-surface). Layered read so we see the parent's
+        # three of its parent's surface fragments (including
+        # private-surface) plus the parent's comparch-tier policies
+        # and failure-surface. Layered read so we see the parent's
         # rich comparch content (``comparch*``) when populated and
         # fall back to the sysarch skeletal seed otherwise.
         parent_techspec = _layered_fragment(session, parent_node, FragmentKind.TECHSPEC)
         parent_pubapi = _layered_fragment(session, parent_node, FragmentKind.PUBAPI)
         parent_privapi = _layered_fragment(session, parent_node, FragmentKind.PRIVAPI)
+        parent_policies = _layered_fragment(session, parent_node, FragmentKind.POLICIES)
+        parent_failure_surface = _layered_fragment(
+            session, parent_node, FragmentKind.FAILURE_SURFACE
+        )
 
         # Same-parent siblings (excluding self)
         all_subcomps = list_subcomponents_of(session, parent_node.id)
@@ -443,6 +487,10 @@ def build_regen_context(session: Session, comp_id: str) -> RegenContext:
         parent_techspec=parent_techspec,
         parent_pubapi=parent_pubapi,
         parent_privapi=parent_privapi,
+        parent_policies=parent_policies,
+        parent_failure_surface=parent_failure_surface,
+        component_policies=component_policies,
+        component_failure_surface=component_failure_surface,
         sibling_subcomp_ids=sibling_subcomp_ids,
         sibling_subcomps=sibling_subcomps,
         sibling_subcomp_pubapi_fragments=sibling_subcomp_pubapi_fragments,
@@ -882,8 +930,14 @@ def format_regen_context_for_sub(ctx: RegenContext) -> dict[str, str]:
             "component context; use format_regen_context instead."
         )
     return {
+        "project_techspec": ctx.project_techspec,
+        "project_policies": ctx.project_policies,
+        "project_dependencies": ctx.project_dependencies,
+        "project_domain_parents": ctx.project_domain_parents,
         "subcomponent_summary": _format_subcomponent_summary(ctx),
         "parent_component_summary": _format_parent_component_summary(ctx),
+        "parent_policies": ctx.parent_policies,
+        "parent_failure_surface": ctx.parent_failure_surface,
         # For a subcomp, what we want is the parent resps + feat
         # slices the parent comparch's <owns> block claimed for this
         # sub. Walked from incoming decomposition edges in
@@ -896,6 +950,10 @@ def format_regen_context_for_sub(ctx: RegenContext) -> dict[str, str]:
         "parent_sibling_comps_summary": _format_sibling_comps_summary(ctx.sibling_comps),
         "dep_pubapi_summary": _format_dep_pubapi_summary(
             ctx.sibling_comps, ctx.dep_pubapi_fragments
+        ),
+        "related_features_summary": _format_node_bullet_list(
+            ctx.related_features,
+            empty_fallback="",
         ),
         "vocab_summary": _render_vocab_summary_from_ctx(ctx),
         "domain_parent_surface": _render_domain_parent_surface_for_sub(ctx),
@@ -929,10 +987,30 @@ def format_regen_context_for_impl(ctx: RegenContext) -> dict[str, str]:
     not surfaced here.
     """
     return {
+        "project_techspec": ctx.project_techspec,
+        "project_policies": ctx.project_policies,
+        "project_dependencies": ctx.project_dependencies,
+        "project_domain_parents": ctx.project_domain_parents,
         "owner_summary": _format_impl_owner_summary(ctx),
+        # For sub impls these carry the parent top-level comp's
+        # comparch-tier policies / failure-surface; for foundation
+        # impls these stay empty (the owner IS the top-level comp,
+        # so component_policies / component_failure_surface below
+        # carry that content).
         "parent_summary": _format_impl_parent_summary(ctx),
+        "parent_policies": ctx.parent_policies,
+        "parent_failure_surface": ctx.parent_failure_surface,
+        # Foundation-impl mirror of parent_policies / parent_failure_surface.
+        # Empty for sub impls (subs don't write COMPARCH_POLICIES /
+        # COMPARCH_FAILURE_SURFACE fragments by design).
+        "component_policies": ctx.component_policies,
+        "component_failure_surface": ctx.component_failure_surface,
         "dep_pubapi_summary": _format_dep_pubapi_summary(
             ctx.sibling_comps, ctx.dep_pubapi_fragments
+        ),
+        "related_features_summary": _format_node_bullet_list(
+            ctx.related_features,
+            empty_fallback="",
         ),
         "vocab_summary": _render_vocab_summary_from_ctx(ctx),
         "referenced_content_summary": _render_referenced_content_from_ctx(ctx),

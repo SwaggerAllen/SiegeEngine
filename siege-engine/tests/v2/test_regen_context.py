@@ -745,12 +745,19 @@ class TestFormatRegenContextForSub:
         ctx = build_regen_context(db, seeded_with_sub["sub_store"])
         formatted = format_regen_context_for_sub(ctx)
         expected = {
+            "project_techspec",
+            "project_policies",
+            "project_dependencies",
+            "project_domain_parents",
             "subcomponent_summary",
             "parent_component_summary",
+            "parent_policies",
+            "parent_failure_surface",
             "owns_summary",
             "sibling_subcomps_summary",
             "parent_sibling_comps_summary",
             "dep_pubapi_summary",
+            "related_features_summary",
             "vocab_summary",
             "domain_parent_surface",
             "referenced_content_summary",
