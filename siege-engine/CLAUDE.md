@@ -404,6 +404,29 @@ records every issued operation, including single-node ones.
 
 ## Cohorts (sampling campaigns)
 
+**Scoring baseline shift, round 7 onward.** After the per-tier
+context standardization (commits `fe117d6` + `84f27b7`), reviewer
+scores dropped ~4 points on aggregate (~76 → ~72 mean). The drop
+isn't regression — the reviewer is now catching defect classes
+it was previously blind to (project-dependency drift, domain-API
+drift, cross-component policy / failure-surface alignment),
+which the standardization made visible. Pre-standardization
+scores are not directly comparable to post-standardization
+scores; treat round 7 as the new baseline. Findings are more
+grounded, score numbers are lower.
+
+One known false-positive class under cohort sampling: when a
+dependent comp is regenerated but its declared dependencies'
+comparches haven't been articulated yet, the reviewer sees the
+deps' skeletal sysarch-seed pubapi (terse role-level bullets,
+no typed signatures) and flags drift against APIs the dep
+"doesn't expose" — when really the dep just hasn't articulated
+yet. The readiness gate normally serializes this, but cohort
+campaigns explicitly bypass it via `force=True` to enable
+sampling-based prompt iteration. A full-tier regen (Reset All
+or `/tiers/:tier/full-corpus`) restores topological cascade and
+should eliminate this FP class.
+
 Saved selections of comp IDs that drive iteration campaigns at
 the next tier down. The intended workflow when iterating a
 prompt:
