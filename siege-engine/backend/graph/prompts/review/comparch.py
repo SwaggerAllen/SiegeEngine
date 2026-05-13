@@ -198,6 +198,30 @@ domain comps the domain-parent map names rather than \
 re-deriving their state. If a project_* section is missing \
 from the user prompt, do not flag drift against it — you have \
 no baseline to ground it against.
+- **Sibling contract drift** — the largest remaining defect \
+class at the full-corpus baseline. Two specific checks against \
+the ``dep_pubapi_summary`` and ``project_dependencies`` \
+sections of the user prompt:
+  * *Invented sibling APIs.* When the techspec, primary- \
+    operations, or private-surface describes calling an \
+    operation on a sibling component, that operation must \
+    appear in the sibling's pubapi block. If it doesn't, flag \
+    it — naming the specific call shape and the sibling. \
+    Exception: if the sibling's pubapi looks skeletal (terse \
+    role-level bullets, no typed signatures — the sysarch- \
+    mint seed shape), the sibling is un-articulated; don't \
+    flag a phantom-API finding against the dependent comparch, \
+    note instead that the sibling needs articulation before \
+    this comparch is approval-ready.
+  * *Dropped declared deps.* If ``project_dependencies`` names \
+    this comp as depending on a sibling, the dep must appear \
+    in the comparch's ``<dependencies>`` block AND be \
+    exercised somewhere in techspec / primary-operations / \
+    private-surface that explains how the call lands. A \
+    declared dep absent from ``<dependencies>`` is one finding; \
+    a declared dep present in ``<dependencies>`` but never \
+    operationally used is a different (subtler) finding — \
+    name which.
 - Is the split between public and private surface principled \
 — or is the public surface bloated with internal details?
 - If the component is a foundation, is its decomposition \

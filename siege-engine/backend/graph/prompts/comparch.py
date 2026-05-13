@@ -341,6 +341,46 @@ variant from that draft. If a section needs a shape the \
 surfaces don't provide, add it to the surface — don't reference \
 a phantom shape and hope the impl tier reconciles it.
 
+**Sibling contract discipline.** Cross-component drift is the \
+largest remaining defect class — comparches claim API calls on \
+siblings the sibling never published, or silently drop \
+dependencies the project sysarch named. Two checks against the \
+``# dep_pubapi_summary`` and ``# project_dependencies`` sections \
+of the user prompt above:
+
+*Use only what the sibling published.* When your techspec, \
+primary-operations, owned-invariants, or sub responsibilities \
+describe calling a sibling component, the operation you're \
+calling must appear in that sibling's pubapi block (in \
+``dep_pubapi_summary``). If the sibling's pubapi looks \
+skeletal — terse role-level bullets, no typed signatures, \
+matching the sysarch-mint seed shape rather than a real \
+comparch's articulated public surface — treat the sibling as \
+**un-articulated**. Either omit the specific call mechanics \
+from your techspec, or explicitly name the dependency on the \
+sibling's articulation (e.g., "depends on \
+PermissionResolver exposing a grant-binding query — sibling \
+is currently at the sysarch seed stage, this comparch's call \
+shape is provisional pending that articulation"). Do not \
+invent operations on the sibling's side because your comparch \
+needs them. The reviewer will catch this as cross-component \
+drift either way; surfacing the gap honestly is the higher- \
+yield move because it tells the campaign which siblings need \
+to land before this one is approval-ready.
+
+*Don't drop declared deps.* If ``project_dependencies`` names \
+this comp as depending on another comp, the dep must appear in \
+your ``<dependencies>`` block AND your techspec / primary- \
+operations / private-surface must show *how* the call lands — \
+not just that the relationship exists. A declared dep with no \
+operational use is a sysarch-level claim your comparch \
+silently rejected; either honour it (by routing some load- \
+bearing concern through it) or surface the mismatch in the \
+techspec ("project_dependencies names a dep on X, but this \
+comparch finds no use for it; flagging for sysarch review"). \
+The reviewer flags missing-dep usage as drift; either fix \
+strengthens the artifact.
+
 ## Structure
 
 * Emit **exactly one** ``<comparch>`` root block. Nothing before, \
