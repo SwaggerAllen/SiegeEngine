@@ -189,10 +189,11 @@ class TestGatherTierReviewSummary:
         assert summary.reviewed_count == 0
         assert summary.missing_count == 0
         assert summary.score_stats is None
-        assert summary.score_buckets.band_0_30 == 0
-        assert summary.score_buckets.band_31_60 == 0
-        assert summary.score_buckets.band_61_85 == 0
-        assert summary.score_buckets.band_86_100 == 0
+        assert summary.score_buckets.band_0_50 == 0
+        assert summary.score_buckets.band_51_70 == 0
+        assert summary.score_buckets.band_71_80 == 0
+        assert summary.score_buckets.band_81_90 == 0
+        assert summary.score_buckets.band_91_100 == 0
         assert summary.handles_count_mean is None
         assert summary.arch_count_mean is None
         assert summary.reviews == ()
@@ -235,11 +236,12 @@ class TestGatherTierReviewSummary:
         # mean = (72 + 45 + 92) / 3 ≈ 69.66...
         assert round(summary.score_stats.mean, 2) == 69.67
 
-        # Buckets: 45 → 31-60, 72 → 61-85, 92 → 86-100. None in 0-30.
-        assert summary.score_buckets.band_0_30 == 0
-        assert summary.score_buckets.band_31_60 == 1
-        assert summary.score_buckets.band_61_85 == 1
-        assert summary.score_buckets.band_86_100 == 1
+        # Buckets: 45 → 0-50, 72 → 71-80, 92 → 91-100. Nothing in 51-70 or 81-90.
+        assert summary.score_buckets.band_0_50 == 1
+        assert summary.score_buckets.band_51_70 == 0
+        assert summary.score_buckets.band_71_80 == 1
+        assert summary.score_buckets.band_81_90 == 0
+        assert summary.score_buckets.band_91_100 == 1
 
         # Handles + arch count means: (2+4+0)/3 = 2.0; (1+2+0)/3 ≈ 1.0
         assert summary.handles_count_mean is not None
@@ -458,8 +460,9 @@ class TestReviewSummaryEndpoint:
         assert body["missing_count"] == 0
         assert body["score_stats"]["min"] == 45
         assert body["score_stats"]["max"] == 72
-        assert body["score_buckets"]["band_31_60"] == 1
-        assert body["score_buckets"]["band_61_85"] == 1
+        # 45 → 0-50, 72 → 71-80
+        assert body["score_buckets"]["band_0_50"] == 1
+        assert body["score_buckets"]["band_71_80"] == 1
         assert [r["scope_label"] for r in body["reviews"]] == ["Auth", "Billing"]
         assert body["reviews"][0]["intro"] == "Auth intro"
         assert body["reviews"][0]["handles_count"] == 4

@@ -63,10 +63,11 @@ class ScoreStats:
 
 @dataclass(frozen=True)
 class ScoreBuckets:
-    band_0_30: int
-    band_31_60: int
-    band_61_85: int
-    band_86_100: int
+    band_0_50: int
+    band_51_70: int
+    band_71_80: int
+    band_81_90: int
+    band_91_100: int
 
 
 @dataclass(frozen=True)
@@ -206,10 +207,11 @@ def _build_summary(
         arch_mean = None
 
     buckets = ScoreBuckets(
-        band_0_30=sum(1 for r in reviews if 0 <= r.score <= 30),
-        band_31_60=sum(1 for r in reviews if 31 <= r.score <= 60),
-        band_61_85=sum(1 for r in reviews if 61 <= r.score <= 85),
-        band_86_100=sum(1 for r in reviews if 86 <= r.score <= 100),
+        band_0_50=sum(1 for r in reviews if 0 <= r.score <= 50),
+        band_51_70=sum(1 for r in reviews if 51 <= r.score <= 70),
+        band_71_80=sum(1 for r in reviews if 71 <= r.score <= 80),
+        band_81_90=sum(1 for r in reviews if 81 <= r.score <= 90),
+        band_91_100=sum(1 for r in reviews if 91 <= r.score <= 100),
     )
     return ReviewSummary(
         tier=tier,

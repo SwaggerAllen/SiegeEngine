@@ -535,6 +535,106 @@ class TestReviewSweep:
 # ── /tiers/{tier}/resume ───────────────────────────────────────────
 
 
+class TestRegenBelowThreshold:
+    """``POST /tiers/{tier}/regen-below-threshold`` — targeted regen
+    of scopes whose latest AI review scored below a threshold. The
+    seeded fixture lands two approved comparch comps; we attach
+    parseable review_text to each (one low, one high) and assert
+    only the low one regenerates."""
+
+    def _attach_review(self, db, project_id, comp_id, score, intro="Auto"):
+        """Attach an approved draft + parseable review to a comp."""
+        from backend.models.node import Draft
+
+        draft = Draft(
+            id=f"draft_{uuid.uuid4().hex[:8]}",
+            project_id=project_id,
+            target_type="node",
+            target_id=comp_id,
+            content=f"<comparch>{comp_id}</comparch>",
+            status="approved",
+            batch_id=f"batch_{uuid.uuid4().hex[:8]}",
+            review_text=(
+                f"<review><intro>{intro}</intro><score>{score}</score>"
+                "<handles-structure></handles-structure>"
+                "<architectural-decisions></architectural-decisions>"
+                "</review>"
+            ),
+        )
+        db.add(draft)
+        db.commit()
+
+    def test_filters_to_scopes_below_threshold(self, client, db, seeded):
+        comp_low, comp_high = seeded["comp_ids"]
+        self._attach_review(db, seeded["project_id"], comp_low, score=40)
+        self._attach_review(db, seeded["project_id"], comp_high, score=82)
+
+        r = client.post(
+            f"/api/projects/{seeded['project_id']}/tiers/comparch/regen-below-threshold",
+            json={"threshold": 70, "mode": "review"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["scopes_total"] == 1
+        assert body["scopes_succeeded"] == 1
+        # Only one gen job for the low-scoring comp under this batch
+        gen_jobs = list(
+            db.execute(
+                select(Job).where(
+                    Job.job_type == "v2.generate_comparch",
+                    Job.batch_id == body["batch_id"],
+                )
+            ).scalars()
+        )
+        assert len(gen_jobs) == 1
+        assert gen_jobs[0].payload.get("component_id") == comp_low
+
+    def test_no_scopes_below_threshold_returns_empty(self, client, db, seeded):
+        comp_a, comp_b = seeded["comp_ids"]
+        self._attach_review(db, seeded["project_id"], comp_a, score=85)
+        self._attach_review(db, seeded["project_id"], comp_b, score=90)
+
+        r = client.post(
+            f"/api/projects/{seeded['project_id']}/tiers/comparch/regen-below-threshold",
+            json={"threshold": 80, "mode": "review"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["scopes_total"] == 0
+        assert body["batch_id"] is None
+        assert body["detail"] == "no scopes below threshold"
+
+    def test_scopes_without_reviews_are_listed_as_skipped(self, client, db, seeded):
+        # One review attached, one not.
+        comp_reviewed, comp_no_review = seeded["comp_ids"]
+        self._attach_review(db, seeded["project_id"], comp_reviewed, score=30)
+
+        r = client.post(
+            f"/api/projects/{seeded['project_id']}/tiers/comparch/regen-below-threshold",
+            json={"threshold": 50, "mode": "review"},
+        )
+        body = r.json()
+        assert body["scopes_total"] == 1
+        no_review_ids = {tuple(entry["scope_ids"]) for entry in body["skipped_no_review"]}
+        assert (comp_no_review,) in no_review_ids
+
+    def test_fresh_mode_clears_content(self, client, db, seeded):
+        comp_low, _ = seeded["comp_ids"]
+        self._attach_review(db, seeded["project_id"], comp_low, score=20)
+
+        r = client.post(
+            f"/api/projects/{seeded['project_id']}/tiers/comparch/regen-below-threshold",
+            json={"threshold": 50, "mode": "fresh"},
+        )
+        assert r.status_code == 200
+        from backend.models.node import Node as NodeModel
+
+        db.expire_all()
+        node = db.get(NodeModel, comp_low)
+        # Fresh-mode wipes content
+        assert (node.content or "") == ""
+
+
 class TestResumeTier:
     def test_seeded_approved_fires_missing_reviews(self, client, db, seeded):
         """The seed leaves both comps approved with no review_text and

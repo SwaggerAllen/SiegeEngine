@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
   TIER_NAMES,
+  type RegenBelowThresholdResult,
   type ResetAllResult,
   type ResumeTierResult,
   type ReviewSweepResult,
@@ -9,6 +10,7 @@ import {
   type TierInfo,
   type TierName,
   getTierInfo,
+  regenBelowThreshold,
   resetTier,
   resumeTier,
   reviewSweepTier,
@@ -150,9 +152,15 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
         kind: 'resume';
         result: ResumeTierResult;
       }
+    | {
+        kind: 'threshold';
+        result: RegenBelowThresholdResult;
+      }
     | { kind: 'error'; text: string }
     | null
   >(null);
+  const [thresholdValue, setThresholdValue] = useState(70);
+  const [thresholdMode, setThresholdMode] = useState<'fresh' | 'review'>('review');
 
   const resetMutation = useMutation({
     mutationFn: () => resetTier(projectId, tier),
@@ -200,8 +208,30 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
     },
   });
 
+  const thresholdMutation = useMutation({
+    mutationFn: () =>
+      regenBelowThreshold(projectId, tier, {
+        threshold: thresholdValue,
+        mode: thresholdMode,
+      }),
+    onSuccess: (result) => {
+      setLastResult({ kind: 'threshold', result });
+      queryClient.invalidateQueries({ queryKey });
+      queryClient.invalidateQueries({ queryKey: ['structure', projectId] });
+    },
+    onError: (err: unknown) => {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        (err instanceof Error ? err.message : String(err));
+      setLastResult({ kind: 'error', text: `Regen below threshold failed: ${detail}` });
+    },
+  });
+
   const isBusy =
-    resetMutation.isPending || reviewMutation.isPending || resumeMutation.isPending;
+    resetMutation.isPending ||
+    reviewMutation.isPending ||
+    resumeMutation.isPending ||
+    thresholdMutation.isPending;
 
   return (
     <li className="px-4 py-3 flex flex-col gap-3" data-testid={`tier-row-${tier}`}>
@@ -322,6 +352,46 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
             </button>
           ))}
       </div>
+      {data?.supports_review && (
+        <div
+          className="flex flex-wrap items-center gap-2 text-xs text-gray-400"
+          data-testid={`tier-row-${tier}-threshold-row`}
+        >
+          <span>Regen scopes with score &lt;</span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            value={thresholdValue}
+            onChange={(e) =>
+              setThresholdValue(Math.max(0, Math.min(100, Number(e.target.value) || 0)))
+            }
+            disabled={isBusy}
+            className="w-14 bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
+            data-testid={`tier-row-${tier}-threshold-input`}
+          />
+          <select
+            value={thresholdMode}
+            onChange={(e) => setThresholdMode(e.target.value as 'fresh' | 'review')}
+            disabled={isBusy}
+            className="bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
+            data-testid={`tier-row-${tier}-threshold-mode`}
+          >
+            <option value="review">review</option>
+            <option value="fresh">fresh</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => thresholdMutation.mutate()}
+            disabled={isBusy || (data?.reviewable_count ?? 0) === 0}
+            className="px-2 py-0.5 rounded border border-blue-800 text-blue-200 hover:bg-blue-950 disabled:opacity-40"
+            title="Regen every scope whose last AI-review score is below the threshold. Scopes with no parseable review are skipped — use Resume Tier for those. Useful after a full regen + review to target the bottom of the score distribution."
+            data-testid={`tier-row-${tier}-threshold-button`}
+          >
+            {thresholdMutation.isPending ? 'Targeting…' : 'Regen below threshold'}
+          </button>
+        </div>
+      )}
       </div>
       {showStructure && <TierStructureSummaryPanel projectId={projectId} tier={tier} />}
       {showSummary && <TierReviewSummaryPanel projectId={projectId} tier={tier} />}
@@ -337,6 +407,7 @@ function ResultLine({
     | { kind: 'reset'; result: ResetAllResult }
     | { kind: 'review'; result: ReviewSweepResult }
     | { kind: 'resume'; result: ResumeTierResult }
+    | { kind: 'threshold'; result: RegenBelowThresholdResult }
     | { kind: 'error'; text: string };
   tier: string;
 }) {
@@ -367,6 +438,18 @@ function ResultLine({
     summary = skipped.length
       ? `Resume: ${enqueuedText} (${skipped.length} skipped).`
       : `Resume: ${enqueuedText}.`;
+  } else if (result.kind === 'threshold') {
+    const tr = result.result;
+    if (tr.scopes_total === 0) {
+      summary = `No scopes below score ${tr.threshold}.`;
+    } else {
+      const noReviewText = tr.skipped_no_review.length
+        ? ` · ${tr.skipped_no_review.length} no-review skipped`
+        : '';
+      summary = skipped.length
+        ? `Regen <${tr.threshold} (${tr.mode}): ${tr.scopes_succeeded}/${tr.scopes_total} succeeded (${skipped.length} skipped)${noReviewText}.`
+        : `Regen <${tr.threshold} (${tr.mode}): ${tr.scopes_succeeded}/${tr.scopes_total} scope${tr.scopes_total === 1 ? '' : 's'} enqueued${noReviewText}.`;
+    }
   } else {
     const n = result.result.jobs_enqueued;
     summary = skipped.length

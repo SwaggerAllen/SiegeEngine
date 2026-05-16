@@ -24,7 +24,7 @@ function makeSummary(overrides: Partial<TierReviewSummary> = {}): TierReviewSumm
     reviewed_count: 3,
     missing_count: 0,
     score_stats: { min: 45, max: 92, mean: 69.67, median: 72 },
-    score_buckets: { band_0_30: 0, band_31_60: 1, band_61_85: 1, band_86_100: 1 },
+    score_buckets: { band_0_50: 1, band_51_70: 0, band_71_80: 1, band_81_90: 0, band_91_100: 1 },
     handles_count_mean: 2.0,
     arch_count_mean: 1.0,
     reviews: [
@@ -184,7 +184,7 @@ describe('TierReviewSummaryPanel', () => {
         reviewed_count: 0,
         missing_count: 0,
         score_stats: null,
-        score_buckets: { band_0_30: 0, band_31_60: 0, band_61_85: 0, band_86_100: 0 },
+        score_buckets: { band_0_50: 0, band_51_70: 0, band_71_80: 0, band_81_90: 0, band_91_100: 0 },
         handles_count_mean: null,
         arch_count_mean: null,
         reviews: [],
