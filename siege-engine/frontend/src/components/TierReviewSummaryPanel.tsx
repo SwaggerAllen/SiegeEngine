@@ -180,10 +180,11 @@ function Header({ summary }: { summary: TierReviewSummary }) {
 
 function Histogram({ summary }: { summary: TierReviewSummary }) {
   const buckets: Array<{ label: string; count: number; tone: string }> = [
-    { label: '0–30', count: summary.score_buckets.band_0_30, tone: 'bg-red-700' },
-    { label: '31–60', count: summary.score_buckets.band_31_60, tone: 'bg-amber-700' },
-    { label: '61–85', count: summary.score_buckets.band_61_85, tone: 'bg-green-700' },
-    { label: '86–100', count: summary.score_buckets.band_86_100, tone: 'bg-green-500' },
+    { label: '0–50', count: summary.score_buckets.band_0_50, tone: 'bg-red-700' },
+    { label: '51–70', count: summary.score_buckets.band_51_70, tone: 'bg-amber-700' },
+    { label: '71–80', count: summary.score_buckets.band_71_80, tone: 'bg-amber-500' },
+    { label: '81–90', count: summary.score_buckets.band_81_90, tone: 'bg-green-700' },
+    { label: '91–100', count: summary.score_buckets.band_91_100, tone: 'bg-green-500' },
   ];
   const max = Math.max(...buckets.map((b) => b.count), 1);
   return (

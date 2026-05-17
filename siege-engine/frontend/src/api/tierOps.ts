@@ -78,6 +78,22 @@ export const ResumeTierResultSchema = z.object({
 });
 export type ResumeTierResult = z.infer<typeof ResumeTierResultSchema>;
 
+export const RegenBelowThresholdResultSchema = z.object({
+  ok: z.boolean(),
+  tier: z.string(),
+  batch_id: z.string().nullable(),
+  threshold: z.number().int(),
+  mode: z.enum(['fresh', 'review']),
+  scopes_total: z.number(),
+  scopes_succeeded: z.number(),
+  scopes_skipped: z.array(SkipSchema),
+  skipped_no_review: z.array(
+    z.object({ scope_ids: z.array(z.string()), reason: z.string() }),
+  ),
+  detail: z.string().optional(),
+});
+export type RegenBelowThresholdResult = z.infer<typeof RegenBelowThresholdResultSchema>;
+
 export async function getTierInfo(projectId: string, tier: TierName): Promise<TierInfo> {
   const r = await api.get(`/projects/${projectId}/tiers/${tier}/info`);
   return TierInfoSchema.parse(r.data);
@@ -102,6 +118,18 @@ export async function resumeTier(
 ): Promise<ResumeTierResult> {
   const r = await api.post(`/projects/${projectId}/tiers/${tier}/resume`);
   return ResumeTierResultSchema.parse(r.data);
+}
+
+export async function regenBelowThreshold(
+  projectId: string,
+  tier: TierName,
+  body: { threshold: number; mode: 'fresh' | 'review' },
+): Promise<RegenBelowThresholdResult> {
+  const r = await api.post(
+    `/projects/${projectId}/tiers/${tier}/regen-below-threshold`,
+    body,
+  );
+  return RegenBelowThresholdResultSchema.parse(r.data);
 }
 
 // ── Review summary (read-only dashboard) ───────────────────────────
@@ -133,10 +161,11 @@ const ScoreStatsSchema = z.object({
 export type ScoreStats = z.infer<typeof ScoreStatsSchema>;
 
 const ScoreBucketsSchema = z.object({
-  band_0_30: z.number().int(),
-  band_31_60: z.number().int(),
-  band_61_85: z.number().int(),
-  band_86_100: z.number().int(),
+  band_0_50: z.number().int(),
+  band_51_70: z.number().int(),
+  band_71_80: z.number().int(),
+  band_81_90: z.number().int(),
+  band_91_100: z.number().int(),
 });
 export type ScoreBuckets = z.infer<typeof ScoreBucketsSchema>;
 

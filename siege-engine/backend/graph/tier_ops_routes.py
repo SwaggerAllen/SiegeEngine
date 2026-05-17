@@ -782,10 +782,11 @@ def get_tier_review_summary(
             }
         ),
         "score_buckets": {
-            "band_0_30": summary.score_buckets.band_0_30,
-            "band_31_60": summary.score_buckets.band_31_60,
-            "band_61_85": summary.score_buckets.band_61_85,
-            "band_86_100": summary.score_buckets.band_86_100,
+            "band_0_50": summary.score_buckets.band_0_50,
+            "band_51_70": summary.score_buckets.band_51_70,
+            "band_71_80": summary.score_buckets.band_71_80,
+            "band_81_90": summary.score_buckets.band_81_90,
+            "band_91_100": summary.score_buckets.band_91_100,
         },
         "handles_count_mean": summary.handles_count_mean,
         "arch_count_mean": summary.arch_count_mean,
@@ -843,6 +844,154 @@ def get_tier_structure_summary(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Unknown tier: {tier}") from exc
     return serialize_summary(summary)
+
+
+class RegenBelowThresholdRequest(BaseModel):
+    threshold: int = Field(ge=0, le=100)
+    mode: Literal["fresh", "review"] = "review"
+
+
+@router.post("/{project_id}/tiers/{tier}/regen-below-threshold")
+def regen_below_threshold(
+    project_id: str,
+    tier: TierName,
+    req: RegenBelowThresholdRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Regen every scope in this tier whose last AI-review score is
+    below ``threshold``. Scopes with no parseable review (missing /
+    unparsed) are skipped — use Resume Tier or per-node Retry for
+    those. The most useful workflow when iterating a prompt is to
+    do one full-tier regen + review pass, then target the bottom
+    of the score distribution with this endpoint rather than
+    burning LLM cost regenerating the whole tier again.
+
+    ``mode``:
+
+    - ``"review"`` (default) — ``bootstrap_feedback("", force=True)``
+      per scope. Discards pending, threads ``prior_review_text``
+      forward. Use after a full regen + review to iterate the
+      bottom of the distribution with the prior critique riding
+      forward.
+    - ``"fresh"`` — ``bootstrap_reset(force=True)`` per scope.
+      Wipes content + downstream cascade. Use when the prior
+      output is too far gone to iterate on and you'd rather start
+      from scratch.
+
+    Mints one batch (``op_type="regen_below_threshold"``,
+    ``params={threshold, mode}``) so the resulting drafts share
+    one batch_id and the next review summary can scope to it via
+    ``?batch_id=``.
+    """
+    from backend.graph.batches import mint_batch
+    from backend.graph.review_summary import gather_tier_review_summary
+
+    _require_project(db, project_id)
+    config, iter_scope_ids = _resolve(tier)
+
+    summary = gather_tier_review_summary(db, project_id, tier)
+    score_by_scope_id = {r.scope_id: r.score for r in summary.reviews}
+
+    all_scopes = iter_scope_ids(db, project_id)
+    # scope_ids[-1] matches the review-entry's scope_id (see
+    # review_summary._scope_id_for, same convention). For singleton
+    # tiers scope_ids is empty and the node id falls back; threshold
+    # filtering on a singleton tier doesn't apply, so we just skip.
+    target_scopes: list[tuple[str, ...]] = []
+    skipped_no_review: list[dict[str, Any]] = []
+    for scope_ids in all_scopes:
+        if not scope_ids:
+            continue
+        sid = scope_ids[-1]
+        if sid not in score_by_scope_id:
+            skipped_no_review.append(
+                {"scope_ids": list(scope_ids), "reason": "no parseable review"}
+            )
+            continue
+        if score_by_scope_id[sid] < req.threshold:
+            target_scopes.append(scope_ids)
+
+    if not target_scopes:
+        return {
+            "ok": True,
+            "tier": tier,
+            "threshold": req.threshold,
+            "mode": req.mode,
+            "scopes_total": 0,
+            "scopes_succeeded": 0,
+            "scopes_skipped": [],
+            "skipped_no_review": skipped_no_review,
+            "batch_id": None,
+            "detail": "no scopes below threshold",
+        }
+
+    op_batch_id = mint_batch(
+        db,
+        project_id,
+        op_type="regen_below_threshold",
+        tier=tier,
+        scope_keys={"scope_count": len(target_scopes)},
+        params={"threshold": req.threshold, "mode": req.mode},
+    )
+
+    succeeded = 0
+    skipped: list[dict[str, Any]] = []
+    for scope_ids in target_scopes:
+        try:
+            if req.mode == "fresh":
+                bootstrap_reset(
+                    db,
+                    project_id,
+                    scope_ids,
+                    config,
+                    _require_project,
+                    force=True,
+                    batch_id=op_batch_id,
+                )
+            else:
+                bootstrap_feedback(
+                    db,
+                    project_id,
+                    scope_ids,
+                    feedback_text="",
+                    config=config,
+                    require_project=_require_project,
+                    batch_id=op_batch_id,
+                    force=True,
+                )
+            succeeded += 1
+        except HTTPException as exc:
+            skipped.append(
+                {
+                    "scope_ids": list(scope_ids),
+                    "status": exc.status_code,
+                    "detail": exc.detail,
+                }
+            )
+    logger.info(
+        "tier_ops.regen_below_threshold project=%s tier=%s threshold=%d mode=%s "
+        "targets=%d succeeded=%d skipped=%d no_review=%d",
+        project_id,
+        tier,
+        req.threshold,
+        req.mode,
+        len(target_scopes),
+        succeeded,
+        len(skipped),
+        len(skipped_no_review),
+    )
+    return {
+        "ok": True,
+        "tier": tier,
+        "batch_id": op_batch_id,
+        "threshold": req.threshold,
+        "mode": req.mode,
+        "scopes_total": len(target_scopes),
+        "scopes_succeeded": succeeded,
+        "scopes_skipped": skipped,
+        "skipped_no_review": skipped_no_review,
+    }
 
 
 @router.post("/{project_id}/tiers/{tier}/reset-all")
