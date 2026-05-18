@@ -1,42 +1,26 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Markdown from 'react-markdown';
 import DevTokenPanel from '../components/DevTokenPanel';
+// Vite's `?raw` import bundles the markdown source as a string at
+// build time. The file lives under frontend/src/content/ so it's
+// inside the frontend tree (no cross-package path tricks); edits ship
+// in the same commit as any other frontend change, and the served
+// page is whatever the build pinned. No runtime fetch, no server
+// endpoint, no JSON envelope.
+import cheatsheetMarkdown from '../content/cheatsheet.md?raw';
 
 /**
  * Renders the SiegeEngine workflow + slash command cheat sheet.
  *
- * The markdown source lives in the repo at `docs/cheatsheet.md` and
- * is served by `siege_mcp.server` at `/siege_mcp/api/cheatsheet`.
- * Edit the markdown file when commands or skills change — the page
- * picks up the next response on its next render.
+ * Source: `frontend/src/content/cheatsheet.md`. Edit there when
+ * commands or skills change — CLAUDE.md flags the file as
+ * load-bearing.
  *
- * Deliberately UNAUTHENTICATED. The cheat sheet is documentation,
- * not user data; gating it would force a login flow before someone
- * can read how to use the system.
+ * Deliberately UNAUTHENTICATED at the route level. The DevTokenPanel
+ * is auth-aware on its own: shows the JWT export when logged in,
+ * shows a "log in" prompt when not.
  */
 export default function CheatsheetPage() {
-  const [markdown, setMarkdown] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/siege_mcp/api/cheatsheet')
-      .then((r) => {
-        if (!r.ok) throw new Error(`fetch failed: ${r.status}`);
-        return r.json();
-      })
-      .then((data: { markdown: string }) => {
-        if (!cancelled) setMarkdown(data.markdown);
-      })
-      .catch((e: Error) => {
-        if (!cancelled) setError(e.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
       <header className="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
@@ -50,19 +34,9 @@ export default function CheatsheetPage() {
       </header>
       <main className="max-w-4xl mx-auto px-6 py-8">
         <DevTokenPanel />
-        {error && (
-          <div className="rounded border border-red-800 bg-red-950/40 p-4 text-sm">
-            Failed to load: {error}
-          </div>
-        )}
-        {!error && markdown === null && (
-          <div className="text-sm text-gray-400">Loading…</div>
-        )}
-        {markdown && (
-          <article className="prose prose-invert prose-sm max-w-none">
-            <Markdown>{markdown}</Markdown>
-          </article>
-        )}
+        <article className="prose prose-invert prose-sm max-w-none">
+          <Markdown>{cheatsheetMarkdown}</Markdown>
+        </article>
       </main>
     </div>
   );

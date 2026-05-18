@@ -37,9 +37,6 @@ COPY siege_mcp/ ./siege_mcp/
 # .mcp.json + .claude/ for mobile CC (which doesn't support /plugin install).
 COPY scripts/ ./scripts/
 
-# Docs the MCP server reads at runtime (cheat sheet endpoint).
-COPY docs/ ./docs/
-
 # Copy Alembic migration files
 COPY alembic.ini ./
 COPY alembic/ ./alembic/

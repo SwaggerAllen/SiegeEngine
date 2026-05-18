@@ -1,179 +1,222 @@
 # SiegeEngine
 
-AI-powered project scaffolding pipeline. Generates system architectures, component designs, implementation plans, and code through a multi-stage pipeline with human review gates. Uses the Claude CLI for all generation with web research capabilities, and includes an interactive chat interface for project-level conversations.
+SiegeEngine drafts, reviews, and approves a project's architecture
+in compressed tiers. It runs as a Claude Code plugin: skills do the
+LLM work, an MCP server provides typed reads of project state, and
+git holds the artifacts and per-scope state JSON together.
 
-## Prerequisites
+The tier chain is a meaning engine — each pass produces compressed
+handles (names, roles, API intents, public surfaces) the next pass
+reasons from directly. The chain alternates extraction, rotation,
+and compression:
+
+- **feature_expansion** — extraction from the project input doc.
+- **requirements** — rotation onto a system-level axis.
+- **sysarch** — compression: project-wide architecture sections
+  decomposing approved requirements into top-level components.
+- **comparch** — last compression before implementation: carves a
+  comp into subcomps and per-subcomp `<owns>` claims on parent
+  resps + feat slices.
+- **subcomparch** — leaf articulation; rich `<public-surface>` etc.
+- **impl** — implementation-level detail per leaf.
+- **fanin** — bottom-up synthesis from impl + sub pubapis.
+
+Every state transition is exactly one git commit (artifact body +
+state JSON together). The MCP server reads from git; skills commit
+and push. There is no separate database for project state.
+
+## Components
+
+- **`siege_mcp/`** — read-only MCP server. Per-tier context readers,
+  body section + review XML parsers, score histogram aggregation,
+  validation gate, writer CLI invoked by skills. Mounted at
+  `/siege_mcp` on the main FastAPI app.
+- **`.claude-plugin/`** — the Claude Code plugin manifest, 25 skills
+  (per-tier draft + review + regen-with-feedback × 7, plus shared
+  mark-* and repair-state-drift), 7 per-tier generator subagents
+  for fan-out, and 5 slash commands.
+- **`backend/`** — the existing FastAPI dashboard (project CRUD,
+  auth, GitHub OAuth, git_manager). The pre-migration
+  SQLAlchemy + job-queue stack lives here too and is slated for
+  deletion in Phase 4 — see `docs/migration/deletion-inventory.md`.
+- **`frontend/`** — React + Vite dashboard. Reads project state
+  from the MCP server, renders structure + reviews + scores.
+  Branch selector at the top switches the ref every read is taken
+  against.
+
+## Slash commands
+
+Once the plugin is installed (or the `.claude/` content seeded into
+the project repo via the bootstrap script):
+
+- `/scaffold` — bootstrap the upstream chain (features →
+  requirements → sysarch).
+- `/run_tier <tier>` — draft + review every absent/drafted scope
+  at a tier, topologically.
+- `/regen_below <tier> <threshold>` — regenerate scopes below a
+  review score, threading the prior review as feedback.
+- `/continue <batch_id>` — resume an interrupted batch (fills
+  gaps; doesn't redo completed work).
+- `/status` — per-tier snapshot: counts, score histogram, worst-N.
+
+Full reference (workflows, skill catalog, dashboard pages, gotchas)
+lives at `frontend/src/content/cheatsheet.md` and is served
+in-browser at `https://siege.strutco.io/cheatsheet`.
+
+## Setup (development)
+
+### Prerequisites
 
 - Python 3.11+
 - Node.js 20+
-- [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
-- An [Anthropic API key](https://console.anthropic.com/)
+- An [Anthropic API key](https://console.anthropic.com/) (the
+  dashboard backend still uses it for the legacy generation paths
+  during the migration; new work runs through Claude Code, which
+  uses its own login).
 
-## Setup
-
-### 1. Environment
+### Local dev
 
 ```bash
 cp .env.example .env
-```
+# set SIEGE_ANTHROPIC_API_KEY + SIEGE_JWT_SECRET_KEY
+# (e.g. `openssl rand -hex 32` for the JWT secret)
 
-Edit `.env` and set:
-- `SIEGE_ANTHROPIC_API_KEY` — your Anthropic API key
-- `SIEGE_JWT_SECRET_KEY` — a random string for JWT signing (e.g. `openssl rand -hex 32`)
-
-### 2. Backend
-
-```bash
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-
-# Install dependencies
+python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Start the server
 uvicorn backend.main:app --reload --port 8000
 ```
-
-The database (SQLite) is created automatically on first run at `data/siege_engine.db`.
-
-### 3. Frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev    # localhost:5173, proxies to :8000
 ```
 
-The frontend runs at `http://localhost:5173` and proxies API calls to the backend.
+First user to register is the admin. Subsequent users need an
+invite link from the admin dashboard.
 
-### 4. First User
+### Plugin install
 
-Open `http://localhost:5173` and register. The first user is automatically an admin. Subsequent users require an invite link (generated from the admin's dashboard).
+**Desktop Claude Code**:
 
-## Pipeline Stages
-
-The pipeline runs 10 stages, each with optional AI review and human review gates:
-
-1. **System Requirements** — gather and document project requirements
-2. **System Architecture** — design the overall system architecture
-3. **Component Extraction** — extract components via 3-way consensus voting
-4. **Component Architectures** — per-component architecture (fan-out)
-5. **Sub-Component Extraction** — extract sub-components per component (fan-out)
-6. **Component Plans** — per leaf component implementation plans (fan-out)
-7. **Sub-Component Architectures** — per sub-component architecture (fan-out)
-8. **Sub-Component Plans** — per sub-component implementation plans (fan-out)
-9. **Code Generation** — generate code with full tool access (fan-out per leaf)
-10. **Code Review & Fix** — automated code review and fixes (fan-out per leaf)
-
-Document stages (1-8) use the Claude CLI with web research tools. Code stages (9-10) run in the project's git repo with full tool access (bash, file editing, etc.).
-
-## Architecture: Event Sourcing
-
-All pipeline state changes flow through an event-sourced system:
-- **Events** (`pipeline/events.py`) — immutable records of state changes (e.g., `STAGE_STARTED`, `HUMAN_APPROVED`)
-- **Reducer** (`pipeline/reducer.py`) — pure function that applies events to produce a snapshot
-- **Snapshot** (`PipelineSnapshot`) — materialized view that is the **single source of truth** for pipeline state
-- DB model status fields (`Artifact.status`, `StageExecution.status`) are projections — written for query convenience but never read for state decisions
-
-## Features
-
-- **Interactive Chat** — project-level chat tab powered by Claude CLI with access to the project's git repo
-- **Prompt Editor** — customize system messages, context templates, and model settings per stage
-- **AI Review** — configurable AI review generates detailed feedback documents
-- **Human Review Gates** — approve, reject with feedback, or edit & approve at each stage
-- **DAG Visualization** — interactive pipeline graph with real-time status updates
-- **Mobile Responsive** — full touch-friendly mobile layout
-- **GitHub Integration** — push branches and open PRs from the UI
-- **Fly.io Deployment** — production-ready with Dockerfile and deployment guide
-
-## GitHub Integration (Optional)
-
-To enable pushing branches and opening PRs from the UI:
-
-1. [Create a GitHub OAuth App](https://github.com/settings/developers)
-   - Homepage URL: `http://localhost:5173`
-   - Callback URL: `http://localhost:5173/github/callback`
-2. Set in `.env`:
-   ```
-   SIEGE_GITHUB_CLIENT_ID=your-client-id
-   SIEGE_GITHUB_CLIENT_SECRET=your-client-secret
-   ```
-3. In the project dashboard, go to **Settings** > **Connect GitHub**
-
-## Project Structure
-
-```
-backend/
-  auth/          # JWT auth, registration, invite links
-  chat/          # Chat WebSocket endpoint + session management
-  cli/           # Claude CLI manager + structured data extractor
-  config.py      # All settings (env vars with SIEGE_ prefix)
-  database.py    # SQLAlchemy + SQLite setup
-  dag/           # DAG traversal, staleness propagation
-  git_manager/   # Git operations (commit, diff, push)
-  github/        # GitHub OAuth + API (PRs, status)
-  main.py        # FastAPI app entry point
-  models.py      # SQLAlchemy ORM models
-  pipeline/      # Pipeline engine, stage execution
-    engine.py    # Orchestrator (fan-out, review gates)
-    events.py    # Event type constants
-    reducer.py   # Pure reducer: events → snapshot state
-    event_store.py # Append events, update materialized snapshot
-    nodes/       # Generate, AI review, component extraction
-    prompts/     # Prompt templates (editable via UI)
-    routes.py    # Pipeline API endpoints
-  projects/      # Project CRUD
-  websocket/     # Real-time pipeline progress
-
-frontend/
-  src/
-    api/         # Axios client
-    components/  # React components (DAG, editor, chat, panels)
-    hooks/       # WebSocket hook
-    pages/       # Login, project list, dashboard
-    store/       # Zustand stores
-    types/       # TypeScript interfaces
+```text
+/plugin install swaggerallen/siegeengine
 ```
 
-## Configuration Reference
+Persists to your CC user config — install once per device.
 
-All settings use the `SIEGE_` env prefix. See `backend/config.py` for defaults.
+**Mobile Claude Code** (`/plugin install` is unsupported there):
+from inside the project repo you want to drive,
+
+```bash
+curl -fsSL https://siege.strutco.io/bootstrap.sh | bash
+```
+
+Writes `.mcp.json` + mirrors `.claude/commands/`, `.claude/skills/`,
+`.claude/agents/` into the repo. Commit + push the result; mobile
+CC auto-discovers the contents on the next open. Then:
+
+```bash
+export SIEGE_TOKEN=<your JWT from siege.strutco.io/cheatsheet>
+```
+
+The `.mcp.json` references `${SIEGE_TOKEN}` so the MCP client
+substitutes it at request time.
+
+## Verification
+
+Run from `siege-engine/` before declaring a change complete:
+
+```bash
+# Backend
+.venv/bin/python -m pytest tests/v2/ siege_mcp/tests/ -q
+ruff check backend/ siege_mcp/ tests/
+ruff format --check backend/ siege_mcp/ tests/
+rm -rf .mypy_cache && mypy backend/ siege_mcp/
+
+# Frontend (from siege-engine/frontend/)
+npx tsc -b --noEmit --force
+npx vitest run
+npm run lint
+npx vite build
+```
+
+Always nuke `.mypy_cache` first — stale cache has masked real type
+errors more than once.
+
+## Project layout
+
+```
+.claude-plugin/        # Plugin manifest, skills, commands, agents
+LICENSE                # AGPL-3.0-or-later (canonical text)
+siege-engine/
+  backend/             # FastAPI dashboard (auth, projects, git_manager)
+  siege_mcp/           # Read-only MCP server
+    cli.py             # Writer CLI invoked by skills
+    git_view.py        # Per-(project, ref, sha) snapshot substrate
+    server.py          # FastAPI app with /api/* + /mcp transports
+    tiers/             # Per-tier generation + review context readers
+    prompts/           # Per-tier instruction text (extracted from old backend)
+    parsers/           # body sections + review XML
+  frontend/            # React + Vite dashboard
+    src/content/cheatsheet.md   # User-facing reference (load-bearing)
+  scripts/
+    siege-bootstrap.sh # Mobile-CC on-ramp: seeds .claude/ + .mcp.json
+  docs/migration/      # Schema + MCP surface + deletion inventory + status
+  Dockerfile           # Single image; CD scps + builds on the DO droplet
+  DEPLOYMENT.md        # Full deployment guide
+```
+
+## Configuration reference
+
+All env vars use the `SIEGE_` prefix. See `backend/config.py` for
+the full list and defaults.
 
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `SIEGE_ANTHROPIC_API_KEY` | *(required)* | Anthropic API key |
-| `SIEGE_JWT_SECRET_KEY` | *(required)* | JWT signing secret |
-| `SIEGE_DEFAULT_MODEL` | `claude-sonnet-4-20250514` | Default LLM model |
-| `SIEGE_DEFAULT_TEMPERATURE` | `0.3` | Default LLM temperature |
-| `SIEGE_MAX_CONCURRENT_LLM_CALLS` | `5` | Max parallel CLI invocations |
-| `SIEGE_CLI_TIMEOUT_DOCUMENT` | `300` | Timeout (seconds) for document generation |
-| `SIEGE_CLI_TIMEOUT_CODE` | `900` | Timeout (seconds) for code generation/review |
-| `SIEGE_CLI_MAX_BUDGET_CODE` | `5.0` | Max USD per code gen/review invocation |
-| `SIEGE_DATABASE_URL` | `sqlite:///data/siege_engine.db` | Database connection string |
-| `SIEGE_JWT_EXPIRY_HOURS` | `24` | Token lifetime |
-| `SIEGE_GITHUB_CLIENT_ID` | *(empty)* | GitHub OAuth client ID |
-| `SIEGE_GITHUB_CLIENT_SECRET` | *(empty)* | GitHub OAuth client secret |
+|---|---|---|
+| `SIEGE_ANTHROPIC_API_KEY` | *(required)* | Anthropic API key for legacy backend |
+| `SIEGE_JWT_SECRET_KEY` | *(required, change me)* | JWT signing secret |
+| `SIEGE_JWT_EXPIRY_HOURS` | `720` (30 days) | Token lifetime |
+| `SIEGE_DATABASE_URL` | `sqlite:///data/siege_engine.db` | DB connection (legacy backend) |
+| `SIEGE_GIT_REPOS_BASE_PATH` | `data/repos` | Per-project clone cache root |
+| `SIEGE_DEFAULT_MODEL` | `claude-opus-4-6` | LLM model (legacy backend only) |
+| `SIEGE_CLI_TIMEOUT` | `1800` | Per-CLI-invocation timeout (legacy) |
+| `SIEGE_MAX_CONCURRENT_LLM_CALLS` | `1` | Max parallel CLI invocations |
 | `SIEGE_CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed CORS origins |
+| `SIEGE_GITHUB_CLIENT_ID` | *(empty)* | GitHub OAuth client ID |
+| `SIEGE_GITHUB_CLIENT_SECRET` | *(empty)* | GitHub OAuth secret |
 
 ## Deployment
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for Fly.io deployment instructions.
+DigitalOcean droplet, single docker container, deploy via ssh +
+docker on push to `main`. See [DEPLOYMENT.md](DEPLOYMENT.md) for
+the full guide (droplet provisioning, secrets, TLS, volumes).
 
-## Development
+## License
 
-```bash
-# Run backend with auto-reload
-uvicorn backend.main:app --reload --port 8000
+SiegeEngine is licensed under the [GNU Affero General Public
+License v3.0 or later](../LICENSE) (AGPL-3.0-or-later).
 
-# Run frontend dev server
-cd frontend && npm run dev
+If you run a modified version on a server that interacts with users
+over a network, you must make the source code of your version
+available to those users (AGPL §13). The hosted instance at
+`siege.strutco.io` complies via the "Source" link in the dashboard
+footer pointing back at this repository.
 
-# Run tests
-pytest
+## Documentation index
 
-# Build frontend for production
-cd frontend && npm run build
-```
-
-When the frontend is built (`frontend/dist/`), the backend serves it as static files automatically.
+- [docs/migration/status.md](docs/migration/status.md) — current
+  migration phase, what's landed, what's pending.
+- [docs/migration/state-schema.md](docs/migration/state-schema.md) —
+  state JSON schema v1, path layout, batches, idempotency.
+- [docs/migration/mcp-surface.md](docs/migration/mcp-surface.md) —
+  MCP tool surface (list_refs, get_state, list_tier,
+  get_generation_context, …).
+- [docs/migration/deletion-inventory.md](docs/migration/deletion-inventory.md)
+  — Phase 4 deletion punch list (~30K LOC slated to go).
+- [DEPLOYMENT.md](DEPLOYMENT.md) — DigitalOcean deploy guide.
+- [frontend/src/content/cheatsheet.md](frontend/src/content/cheatsheet.md)
+  — user-facing workflow + slash command reference.
+- [CLAUDE.md](CLAUDE.md) — Claude Code session notes (verification
+  commands, working patterns, load-bearing invariants).

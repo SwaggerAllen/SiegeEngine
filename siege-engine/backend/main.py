@@ -207,8 +207,20 @@ app.include_router(github_router, prefix="/api/github", tags=["github"])
 # Eventually the writes go away (Phase 4 deletion) and this is the
 # whole surface that remains.
 from siege_mcp.server import app as siege_mcp_app  # noqa: E402
+from siege_mcp.server import bootstrap_script_response  # noqa: E402
 
 app.mount("/siege_mcp", siege_mcp_app)
+
+
+# Top-level convenience: `curl https://siege.strutco.io/bootstrap.sh | bash`
+# is the documented mobile-CC on-ramp. Registered here (BEFORE the SPA
+# catch-all below) so the .sh URL doesn't fall through to index.html.
+# The same handler is also reachable at /siege_mcp/bootstrap.sh via the
+# mount above; the top-level path is what's documented.
+@app.get("/bootstrap.sh")
+def serve_bootstrap_script():
+    return bootstrap_script_response()
+
 
 # Serve SPA static files (production build)
 spa_path = Path("frontend/dist")

@@ -18,5 +18,16 @@ if [ ! -f "$CLAUDE_CONFIG" ] && [ -d "$CLAUDE_BACKUP_DIR" ]; then
     fi
 fi
 
-# Drop privileges and exec uvicorn as the claude user
-exec gosu claude uvicorn backend.main:app --host 0.0.0.0 --port 8000 "$@"
+# Drop privileges and exec uvicorn as the claude user.
+#
+# --proxy-headers + --forwarded-allow-ips='*' make uvicorn trust
+# X-Forwarded-Proto from the upstream HTTPS terminator (Cloudflare /
+# nginx / Caddy / whatever sits in front of the droplet). Without it,
+# any redirect uvicorn emits scheme-downgrades to http:// — which
+# silently strips Authorization headers on the client retry, breaking
+# the MCP transport. The droplet is single-tenant behind one TLS
+# terminator, so trusting any proxy is fine here.
+exec gosu claude uvicorn backend.main:app \
+    --host 0.0.0.0 --port 8000 \
+    --proxy-headers --forwarded-allow-ips='*' \
+    "$@"

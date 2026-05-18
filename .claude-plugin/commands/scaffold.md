@@ -10,14 +10,40 @@ Bootstrap a project's upstream chain.
 ## Inputs
 
 - `ref` — git ref (default: current branch)
+- `input_doc` — path to the project's input document (default:
+  discovery, see below)
 - (optional) `auto_approve` — if true, mark each scope `approved`
   after review. Default: false (user reviews each tier's scopes
   manually between phases).
 
+The input doc is the only source extraction tiers read from. It's
+project-specific prose (problem statement, target users, system
+qualities, primary workflows). One or two pages of focused prose
+beats ten pages of category-speak — extraction tiers compress hard,
+so vague input produces vague handles all the way down.
+
+### How to supply the input doc
+
+In order of precedence:
+
+1. **Explicit `input_doc` argument**: `/scaffold input_doc=docs/my-spec.md`.
+   Use this when the file is in the project repo but not in
+   `seed-docs/`.
+2. **Attached file**: `/scaffold @docs/my-spec.md` — CC attaches the
+   file content to the prompt directly.
+3. **Pasted prose**: paste the input text into chat alongside
+   `/scaffold`. Useful for one-shot scaffolds where you don't want
+   to commit the input to the repo.
+4. **`seed-docs/` discovery**: with no explicit input, look for
+   `seed-docs/*.md` in the project repo. If exactly one file is
+   present, use it; if multiple, ask the user to pick.
+
+If none of those produce content, stop and ask. Don't proceed with a
+guess — the input doc shapes everything downstream.
+
 ## Steps
 
-1. **Confirm the input doc.** Check `seed-docs/` for the project's
-   input document. If missing, ask the user where to find it.
+1. **Resolve the input doc** per the precedence rules above.
 2. **Run feature_expansion tier:**
    a. Enumerate features from the input doc.
    b. For each feature, call `draft-feature-expansion`.

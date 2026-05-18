@@ -47,16 +47,6 @@ def test_healthz_open():
     assert r.json() == {"status": "ok"}
 
 
-def test_cheatsheet_open():
-    r = _client().get("/api/cheatsheet")
-    assert r.status_code == 200
-    body = r.json()
-    assert "markdown" in body
-    # Sanity-check the rendered content has the canonical headings.
-    assert "SiegeEngine cheat sheet" in body["markdown"]
-    assert "/scaffold" in body["markdown"]
-
-
 def test_bootstrap_script_open():
     r = _client().get("/bootstrap.sh")
     assert r.status_code == 200
@@ -113,33 +103,113 @@ def test_validate_artifact_fails_on_empty():
     assert "empty" in body["errors"][0]
 
 
-def test_mcp_rpc_dispatch():
+def test_mcp_initialize():
+    """`initialize` must return server info + capabilities for the
+    client's handshake to succeed."""
+    r = _client().post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "initialize", "params": {}, "id": 1},
+        headers=_auth_headers(),
+    )
+    assert r.status_code == 200
+    payload = r.json()
+    assert payload["jsonrpc"] == "2.0"
+    assert "result" in payload
+    assert payload["result"]["serverInfo"]["name"] == "siegeengine"
+    assert "protocolVersion" in payload["result"]
+    assert "capabilities" in payload["result"]
+
+
+def test_mcp_tools_list():
+    """`tools/list` must return the canonical tool catalog with
+    JSON Schemas. Real MCP clients call this first to learn what
+    they can do."""
+    r = _client().post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
+        headers=_auth_headers(),
+    )
+    assert r.status_code == 200
+    payload = r.json()
+    assert "result" in payload
+    tools_list = payload["result"]["tools"]
+    names = {t["name"] for t in tools_list}
+    # Every tool that dispatches must appear in the catalog or the
+    # client can't discover it.
+    assert names == {
+        "list_refs",
+        "get_state",
+        "list_tier",
+        "get_generation_context",
+        "get_review_context",
+        "get_review_summary",
+        "get_structure_summary",
+        "list_batches",
+        "validate_artifact",
+    }
+    # Every entry must have a schema.
+    for t in tools_list:
+        assert "inputSchema" in t
+        assert t["inputSchema"]["type"] == "object"
+
+
+def test_mcp_tools_call_validate_artifact():
+    """`tools/call` is the dispatcher real MCP clients use."""
     r = _client().post(
         "/mcp",
         json={
             "jsonrpc": "2.0",
-            "method": "validate_artifact",
+            "id": 3,
+            "method": "tools/call",
             "params": {
-                "project_id": "x",
-                "ref": "main",
-                "tier": "comparch",
-                "body": "## comparch:techspec\nfoo\n\n## comparch:pubapi\nbar\n",
+                "name": "validate_artifact",
+                "arguments": {
+                    "project_id": "x",
+                    "ref": "main",
+                    "tier": "comparch",
+                    "body": "## comparch:techspec\nfoo\n\n## comparch:pubapi\nbar\n",
+                },
             },
-            "id": 42,
         },
         headers=_auth_headers(),
     )
     assert r.status_code == 200
     payload = r.json()
-    assert payload["id"] == 42
-    assert payload["jsonrpc"] == "2.0"
-    assert payload["result"]["ok"] is True
+    result = payload["result"]
+    # The tool returns a content block + structuredContent.
+    assert result["isError"] is False
+    assert result["structuredContent"]["ok"] is True
+    # The text content carries the JSON serialization for clients
+    # that ignore structuredContent.
+    text = result["content"][0]["text"]
+    assert '"ok": true' in text
 
 
-def test_mcp_unknown_method():
+def test_mcp_tools_call_unknown_tool_returns_error_block():
+    """An unknown tool name must come back as an isError result, not
+    as a JSON-RPC error envelope. (`tools/call` itself succeeds —
+    the call dispatched, the tool was just wrong.)"""
     r = _client().post(
         "/mcp",
-        json={"jsonrpc": "2.0", "method": "no_such_tool", "params": {}, "id": 1},
+        json={
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {"name": "no_such_tool", "arguments": {}},
+        },
+        headers=_auth_headers(),
+    )
+    assert r.status_code == 200
+    payload = r.json()
+    assert "result" in payload
+    assert payload["result"]["isError"] is True
+    assert "no_such_tool" in payload["result"]["content"][0]["text"]
+
+
+def test_mcp_unknown_jsonrpc_method():
+    r = _client().post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "definitely/not/a/method", "params": {}, "id": 5},
         headers=_auth_headers(),
     )
     assert r.status_code == 200
@@ -148,14 +218,30 @@ def test_mcp_unknown_method():
     assert payload["error"]["code"] == -32601
 
 
-def test_mcp_invalid_params():
+def test_mcp_notifications_ack_empty():
+    """`notifications/*` are fire-and-forget per spec; we still send
+    a 200 with empty result to keep HTTP semantics clean."""
     r = _client().post(
         "/mcp",
-        json={"jsonrpc": "2.0", "method": "validate_artifact", "params": {}, "id": 1},
+        json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
         headers=_auth_headers(),
     )
     assert r.status_code == 200
+
+
+def test_mcp_trailing_slash_works_directly():
+    """Some MCP clients canonicalize URLs with a trailing slash. If
+    `/mcp/` redirected to `/mcp`, a TLS-terminated reverse-proxy
+    deployment without X-Forwarded-Proto would scheme-downgrade the
+    Location header to http://, which strips Authorization on retry.
+    Both `/mcp` and `/mcp/` are routed to the same handler so neither
+    needs a redirect."""
+    r = _client().post(
+        "/mcp/",
+        json={"jsonrpc": "2.0", "method": "initialize", "params": {}, "id": 1},
+        headers=_auth_headers(),
+        follow_redirects=False,
+    )
+    assert r.status_code == 200
     payload = r.json()
-    # Missing required project_id triggers TypeError → -32602
-    assert "error" in payload
-    assert payload["error"]["code"] == -32602
+    assert payload["result"]["serverInfo"]["name"] == "siegeengine"
