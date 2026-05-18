@@ -97,6 +97,33 @@ GitHub repo. The deploy workflow reads them.
 | `DROPLET_SSH_KEY` | Private key for the `deploy` user (full PEM, including BEGIN/END lines) |
 | `SIEGE_ANTHROPIC_API_KEY` | Anthropic API key. The server keeps it set for completeness, but the Claude CLI uses its own login state. |
 | `SIEGE_JWT_SECRET_KEY` | JWT signing secret. Generate with `openssl rand -hex 32`. Rotating this invalidates all existing sessions. |
+| `SIEGE_GITHUB_CLIENT_ID` | GitHub OAuth App client ID. See "GitHub OAuth setup" below — without this set, the "Connect GitHub" button on project settings 400s with "GitHub OAuth not configured". |
+| `SIEGE_GITHUB_CLIENT_SECRET` | Paired secret for the OAuth App. |
+
+### GitHub OAuth setup (one-time)
+
+The dashboard uses per-user GitHub OAuth to push branches + open PRs
+on the user's behalf. To enable:
+
+1. Create a GitHub OAuth App at
+   <https://github.com/settings/developers> →
+   **OAuth Apps** → **New OAuth App**.
+2. Fill in:
+   - **Homepage URL**: `https://siege.strutco.io`
+   - **Authorization callback URL**:
+     `https://siege.strutco.io/github/callback`
+3. Copy the client ID + a new client secret into the GitHub repo
+   secrets as `SIEGE_GITHUB_CLIENT_ID` + `SIEGE_GITHUB_CLIENT_SECRET`.
+4. The deploy workflow also sets
+   `SIEGE_GITHUB_REDIRECT_URI=https://siege.strutco.io/github/callback`
+   so the redirect URI in the OAuth dance matches the registered
+   callback exactly (the default fallback uses `cors_origins[0]`,
+   which would be the droplet IP — wrong shape for this OAuth app).
+5. Re-deploy.
+
+Then any logged-in user can hit **Project Settings → GitHub
+connection → Connect GitHub** on the dashboard and complete the
+authorize flow. The stored credential is per-user, not per-project.
 
 ## Runtime configuration
 
