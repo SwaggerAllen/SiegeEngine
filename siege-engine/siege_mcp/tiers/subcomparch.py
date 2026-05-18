@@ -52,6 +52,7 @@ def build_generation_context(view: GitView, scope: Scope) -> dict[str, Any]:
 
     bundle: dict[str, Any] = {
         **_base.ref_metadata(view),
+        "instructions": _base.generation_prompt("subcomparch"),
         "scope": {
             "tier": "subcomparch",
             "comp_id": None,
@@ -88,6 +89,7 @@ def build_review_context(view: GitView, scope: Scope, draft_sha: str) -> dict[st
     gen_ctx = build_generation_context(view, scope)
     return {
         **gen_ctx,
+        "review_instructions": _base.review_prompt("subcomparch"),
         "draft_body": body,
         "draft_sha": draft_sha,
     }

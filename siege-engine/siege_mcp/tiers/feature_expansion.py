@@ -36,6 +36,7 @@ def build_generation_context(view: GitView, scope: Scope) -> dict[str, Any]:
     ]
     bundle = {
         **_base.ref_metadata(view),
+        "instructions": _base.generation_prompt("feature_expansion"),
         "scope": {
             "tier": "feature_expansion",
             "comp_id": scope.comp_id,

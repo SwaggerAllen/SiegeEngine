@@ -46,6 +46,7 @@ def build_generation_context(view: GitView, scope: Scope) -> dict[str, Any]:
     ]
     return {
         **_base.ref_metadata(view),
+        "instructions": _base.generation_prompt("requirements"),
         "scope": {
             "tier": "requirements",
             "comp_id": scope.comp_id,
@@ -77,6 +78,7 @@ def build_review_context(view: GitView, scope: Scope, draft_sha: str) -> dict[st
     gen_ctx = build_generation_context(view, scope)
     return {
         **gen_ctx,
+        "review_instructions": _base.review_prompt("requirements"),
         "draft_body": body,
         "draft_sha": draft_sha,
     }

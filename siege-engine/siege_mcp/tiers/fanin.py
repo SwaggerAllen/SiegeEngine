@@ -60,6 +60,7 @@ def build_generation_context(view: GitView, scope: Scope) -> dict[str, Any]:
     comparch_state = view.get_state(Scope(tier="comparch", comp_id=comp_id)) if comp_id else None
     bundle: dict[str, Any] = {
         **_base.ref_metadata(view),
+        "instructions": _base.generation_prompt("fanin"),
         "scope": {
             "tier": "fanin",
             "comp_id": scope.comp_id,
@@ -87,6 +88,7 @@ def build_review_context(view: GitView, scope: Scope, draft_sha: str) -> dict[st
     gen_ctx = build_generation_context(view, scope)
     return {
         **gen_ctx,
+        "review_instructions": _base.review_prompt("fanin"),
         "draft_body": body,
         "draft_sha": draft_sha,
     }

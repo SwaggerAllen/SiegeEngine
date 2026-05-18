@@ -39,6 +39,7 @@ from siege_mcp.fragments import (
     section_for_kind,
 )
 from siege_mcp.git_view import GitView
+from siege_mcp.prompts import load_generation_prompt, load_review_prompt
 from siege_mcp.state import Scope, State, Tier
 
 
@@ -230,6 +231,16 @@ def component_non_surface_fragments(view: GitView, scope: Scope) -> dict[str, st
 def ref_metadata(view: GitView) -> dict[str, Any]:
     """Common ref metadata threaded into every context bundle."""
     return {"ref": view.ref, "ref_head_sha": view.head_sha}
+
+
+def generation_prompt(tier: Tier) -> str:
+    """The static generator instruction text for a tier."""
+    return load_generation_prompt(tier)
+
+
+def review_prompt(tier: Tier) -> str:
+    """The static reviewer instruction text for a tier."""
+    return load_review_prompt(tier)
 
 
 def require_draft(state: State | None, scope: Scope, draft_sha: str) -> None:
