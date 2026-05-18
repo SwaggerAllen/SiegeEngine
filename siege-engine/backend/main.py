@@ -201,6 +201,15 @@ app.include_router(jobs_router, prefix="/api/projects", tags=["jobs"])
 app.include_router(debug_router, prefix="/api/projects", tags=["debug"])
 app.include_router(github_router, prefix="/api/github", tags=["github"])
 
+# Mount the new MCP server's read-only surface. The migration plan
+# moves project state into git + serves reads via siege_mcp; the routes
+# coexist with the old FastAPI write surface during the transition.
+# Eventually the writes go away (Phase 4 deletion) and this is the
+# whole surface that remains.
+from siege_mcp.server import app as siege_mcp_app  # noqa: E402
+
+app.mount("/siege_mcp", siege_mcp_app)
+
 # Serve SPA static files (production build)
 spa_path = Path("frontend/dist")
 if spa_path.exists():
