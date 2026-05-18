@@ -16,10 +16,6 @@ vi.mock('../api/expansion', () => ({
 import * as expansionApi from '../api/expansion';
 
 const mockedGet = expansionApi.getExpansion as unknown as ReturnType<typeof vi.fn>;
-const mockedPostFeedback = expansionApi.postFeedback as unknown as ReturnType<
-  typeof vi.fn
->;
-const mockedApprove = expansionApi.approveDraft as unknown as ReturnType<typeof vi.fn>;
 const mockedRetryReview = expansionApi.retryReview as unknown as ReturnType<
   typeof vi.fn
 >;
@@ -77,7 +73,14 @@ describe('FeatureExpansionPanel', () => {
     );
   });
 
-  it('renders the pending draft with approve and reject-regenerate actions', async () => {
+  // TODO Phase 3 reinstate test once dashboard is read-only:
+  //   - renders the pending draft with approve and reject-regenerate actions
+  //   - invokes approveDraft when Approve is clicked
+  //   - invokes feedback (empty) when Reject & Regenerate is clicked without feedback
+  //   - sends typed feedback when Reject & Regenerate is clicked with feedback text
+  // Approve / Reject / textarea were cut along with the action surface;
+  // the equivalent CC skills don't have a frontend trigger to assert on.
+  it('renders the pending draft with the Open-in-CC fallback', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -88,83 +91,14 @@ describe('FeatureExpansionPanel', () => {
       })
     );
     renderPanel();
-
     await waitFor(() => expect(screen.getByText(/Hello/)).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Approve/i })).toBeNull();
     expect(
-      screen.getByRole('button', { name: 'Reject & Regenerate' })
-    ).toBeInTheDocument();
-  });
-
-  it('invokes approveDraft when Approve is clicked', async () => {
-    mockedGet.mockResolvedValue(
-      makeResponse({
-        pending_draft: {
-          id: 'draft_1',
-          content: 'content',
-          created_at: '2026-04-12T00:00:00',
-        },
-      })
-    );
-    mockedApprove.mockResolvedValue({
-      id: 'expn_1',
-      name: 'Feature Expansion',
-      content: 'content',
-      updated_at: '2026-04-12T00:00:00',
-    });
-
-    renderPanel();
-    const btn = await screen.findByRole('button', { name: /Approve/i });
-    fireEvent.click(btn);
-
-    await waitFor(() =>
-      expect(mockedApprove).toHaveBeenCalledWith('proj_1', 'draft_1')
-    );
-  });
-
-  it('invokes feedback (empty) when Reject & Regenerate is clicked without feedback', async () => {
-    mockedGet.mockResolvedValue(
-      makeResponse({
-        pending_draft: {
-          id: 'draft_1',
-          content: 'content',
-          created_at: '2026-04-12T00:00:00',
-        },
-      })
-    );
-    mockedPostFeedback.mockResolvedValue({ job_id: 'job_1' });
-
-    renderPanel();
-    const btn = await screen.findByRole('button', {
-      name: 'Reject & Regenerate',
-    });
-    fireEvent.click(btn);
-
-    await waitFor(() =>
-      expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', '')
-    );
-  });
-
-  it('sends typed feedback when Reject & Regenerate is clicked with feedback text', async () => {
-    mockedGet.mockResolvedValue(
-      makeResponse({
-        pending_draft: {
-          id: 'draft_1',
-          content: 'content',
-          created_at: '2026-04-12T00:00:00',
-        },
-      })
-    );
-    mockedPostFeedback.mockResolvedValue({ job_id: 'job_1' });
-
-    renderPanel();
-    const textarea = await screen.findByPlaceholderText(/Add reporting/i);
-    fireEvent.change(textarea, { target: { value: 'Add reporting' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject & Regenerate' }));
-
-    await waitFor(() =>
-      expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', 'Add reporting')
-    );
+      screen.queryByRole('button', { name: 'Reject & Regenerate' })
+    ).toBeNull();
+    expect(
+      screen.getAllByRole('button', { name: /Open in Claude Code/i }).length,
+    ).toBeGreaterThan(0);
   });
 
   it('renders the telemetry line when latest_telemetry is present', async () => {
@@ -234,25 +168,25 @@ describe('FeatureExpansionPanel', () => {
     ).toBeNull();
   });
 
-  it('shows an error banner with Retry when generation failed and no content', async () => {
+  it('shows an error banner with Open-in-CC when generation failed and no content', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         generation_status: 'failed',
         last_error: 'timeout after 180s',
       })
     );
-    mockedPostFeedback.mockResolvedValue({ job_id: 'job_retry' });
     renderPanel();
-
     await waitFor(() =>
       expect(screen.getByText(/Generation failed/i)).toBeInTheDocument()
     );
     expect(screen.getByText(/timeout after 180s/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /Retry/i }));
-    await waitFor(() =>
-      expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', '')
-    );
+    // TODO Phase 3 reinstate test once dashboard is read-only:
+    // Retry → backend action no longer exists; the fallback is an
+    // Open-in-Claude-Code disabled button.
+    expect(screen.queryByRole('button', { name: /^Retry$/i })).toBeNull();
+    expect(
+      screen.getAllByRole('button', { name: /Open in Claude Code/i }).length,
+    ).toBeGreaterThan(0);
   });
 
   // Phase 8 — AI self-review block render states.
@@ -350,72 +284,11 @@ describe('FeatureExpansionPanel', () => {
       expect(legacy).toHaveTextContent(/AI Review/);
     });
 
-    it('Reject & Regenerate folds only checked findings into the feedback payload', async () => {
-      mockedGet.mockResolvedValue(
-        makeResponse({
-          pending_draft: {
-            id: 'draft_1',
-            content: 'content',
-            created_at: '2026-04-12T00:00:00',
-          },
-          review_text: STRUCTURED_REVIEW,
-        })
-      );
-      mockedPostFeedback.mockResolvedValue({ job_id: 'job_apply' });
-      renderPanel();
-
-      await openReviewTab();
-
-      // Uncheck h2 — we expect only h1 + a1 to feed forward.
-      const h2 = await screen.findByTestId('review-finding-h2');
-      fireEvent.click(h2);
-      expect(h2).not.toBeChecked();
-
-      fireEvent.click(
-        screen.getByRole('button', { name: 'Reject & Regenerate' })
-      );
-      await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalled());
-      const [, feedback] = mockedPostFeedback.mock.calls[0];
-      expect(feedback).toContain('Feature names overlap');
-      expect(feedback).toContain('Decomposition axis split');
-      expect(feedback).not.toContain('restated name');
-    });
-
-    it('Reject & Regenerate still runs when nothing is checked (empty AI part)', async () => {
-      mockedGet.mockResolvedValue(
-        makeResponse({
-          pending_draft: {
-            id: 'draft_1',
-            content: 'content',
-            created_at: '2026-04-12T00:00:00',
-          },
-          review_text: STRUCTURED_REVIEW,
-        })
-      );
-      mockedPostFeedback.mockResolvedValue({ job_id: 'job_empty' });
-      renderPanel();
-
-      await openReviewTab();
-
-      // Uncheck every finding via the toggle-all button.
-      fireEvent.click(screen.getByTestId('review-toggle-all-button'));
-      // All three finding checkboxes should now be unchecked.
-      expect(screen.getByTestId('review-finding-h1')).not.toBeChecked();
-      expect(screen.getByTestId('review-finding-h2')).not.toBeChecked();
-      expect(screen.getByTestId('review-finding-a1')).not.toBeChecked();
-
-      // The bottom-bar button is still enabled — "no findings
-      // selected" is a valid regen state (equivalent to the
-      // pre-Phase-11 empty Reject & Regenerate).
-      const regen = screen.getByRole('button', { name: 'Reject & Regenerate' });
-      expect(regen).not.toBeDisabled();
-
-      fireEvent.click(regen);
-      await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalled());
-      const [, feedback] = mockedPostFeedback.mock.calls[0];
-      // With no findings + no textarea, the payload is empty.
-      expect(feedback).toBe('');
-    });
+    // TODO Phase 3 reinstate test once dashboard is read-only:
+    //   - Reject & Regenerate folds only checked findings into the feedback payload
+    //   - Reject & Regenerate still runs when nothing is checked (empty AI part)
+    // The Reject button is gone; the equivalent CC skill takes the
+    // selected findings as a CLI arg, not a click handler.
 
     it('toggle-all flips every checkbox in one click', async () => {
       mockedGet.mockResolvedValue(
@@ -444,38 +317,10 @@ describe('FeatureExpansionPanel', () => {
       expect(screen.getByTestId('review-finding-a1')).toBeChecked();
     });
 
-    it('combines textarea feedback with checked findings under a "Selected AI-review findings:" divider', async () => {
-      mockedGet.mockResolvedValue(
-        makeResponse({
-          pending_draft: {
-            id: 'draft_1',
-            content: 'content',
-            created_at: '2026-04-12T00:00:00',
-          },
-          review_text: STRUCTURED_REVIEW,
-        })
-      );
-      mockedPostFeedback.mockResolvedValue({ job_id: 'job_combined' });
-      renderPanel();
-
-      // Visit the Review tab so the default-all-checked selection
-      // state pushes up to the panel, then return to the bottom.
-      await openReviewTab();
-      await screen.findByTestId('review-finding-h1');
-
-      // Type some user feedback.
-      const textarea = screen.getAllByRole('textbox')[0] as HTMLTextAreaElement;
-      fireEvent.change(textarea, { target: { value: 'Also tighten auth' } });
-
-      fireEvent.click(
-        screen.getByRole('button', { name: 'Reject & Regenerate' })
-      );
-      await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalled());
-      const [, feedback] = mockedPostFeedback.mock.calls[0];
-      expect(feedback).toContain('Also tighten auth');
-      expect(feedback).toContain('Selected AI-review findings:');
-      expect(feedback).toContain('Feature names overlap');
-    });
+    // TODO Phase 3 reinstate test once dashboard is read-only:
+    //   - combines textarea feedback with checked findings under a "Selected AI-review findings:" divider
+    // Feedback textarea is gone; the combined-payload behavior moves
+    // into the CC skill that takes both prose and finding ids.
 
     it('flags running review via a spinner on the tab and inside the panel', async () => {
       mockedGet.mockResolvedValue(
@@ -543,8 +388,11 @@ describe('FeatureExpansionPanel', () => {
       mockedRetryReview.mockResolvedValue({ job_id: 'job_review_new' });
       renderPanel();
 
+      // The Approve button is gone — wait on the Open-in-CC fallback instead.
       await waitFor(() =>
-        expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument()
+        expect(
+          screen.getAllByRole('button', { name: /Open in Claude Code/i }).length,
+        ).toBeGreaterThan(0),
       );
       // No running / failed indicator on the Review tab.
       expect(screen.queryByTestId('review-tab-running')).toBeNull();

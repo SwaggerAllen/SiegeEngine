@@ -28,6 +28,11 @@ RUN pip install --no-cache-dir .
 # Copy backend code
 COPY backend/ ./backend/
 
+# Copy the new MCP server library (read-only state surface + writer CLI).
+# Mounted by backend.main at /siege_mcp; also runnable standalone via
+# `python -m siege_mcp.server`.
+COPY siege_mcp/ ./siege_mcp/
+
 # Copy Alembic migration files
 COPY alembic.ini ./
 COPY alembic/ ./alembic/

@@ -1,3 +1,6 @@
+// FUTURE: MCP server endpoint
+// /api/projects/:id/refs/:ref/comparch/:comp_id/subs/:sub_id ;
+// see docs/migration/mcp-surface.md
 import { z } from 'zod';
 import { subcomparchApi } from './bootstrapApi';
 import { GenerationStatusSchema, TelemetrySummarySchema } from './expansion';

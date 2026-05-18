@@ -1,3 +1,5 @@
+// FUTURE: MCP server endpoint /api/projects/:id/refs/:ref/fanin/:comp_id ;
+// see docs/migration/mcp-surface.md
 import { z } from 'zod';
 import api from './client';
 import { GenerationStatusSchema, TelemetrySummarySchema } from './expansion';

@@ -8,8 +8,6 @@ vi.mock('../api/tierOps', async (importOriginal) => {
   return {
     ...actual,
     getTierInfo: vi.fn(),
-    resetTier: vi.fn(),
-    reviewSweepTier: vi.fn(),
     getTierReviewSummary: vi.fn(),
   };
 });
@@ -17,8 +15,6 @@ vi.mock('../api/tierOps', async (importOriginal) => {
 import * as tierOpsApi from '../api/tierOps';
 
 const mockedGetInfo = tierOpsApi.getTierInfo as unknown as ReturnType<typeof vi.fn>;
-const mockedReset = tierOpsApi.resetTier as unknown as ReturnType<typeof vi.fn>;
-const mockedReview = tierOpsApi.reviewSweepTier as unknown as ReturnType<typeof vi.fn>;
 
 function makeInfo(overrides: Partial<tierOpsApi.TierInfo> = {}): tierOpsApi.TierInfo {
   // Default ``reviewable_count`` mirrors ``nodes_with_content`` so
@@ -121,82 +117,41 @@ describe('TierOpsPanel', () => {
     expect(comparchRow).not.toHaveTextContent(/avg gen/);
   });
 
-  it('Reset All requires a confirm tap before firing', async () => {
+  // TODO Phase 3 reinstate test once dashboard is read-only:
+  //   - Reset All requires a confirm tap before firing
+  //   - Regen From Reviews fires immediately and reports skipped scopes
+  // Both confirm/fire flows moved to CC skills; the dashboard buttons
+  // are now disabled Open-in-CC fallbacks. Assert presence + disabled.
+  it('Reset All renders as an Open-in-CC disabled button', async () => {
     mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
       makeInfo({ tier, node_count: 2, nodes_with_content: 2 }),
     );
-    mockedReset.mockResolvedValue({
-      ok: true,
-      tier: 'comparch',
-      scopes_total: 2,
-      scopes_succeeded: 2,
-      scopes_skipped: [],
-      jobs_cancelled: 4,
-      jobs_enqueued: 2,
-      drafts_discarded: 0,
-      nodes_deleted: 0,
-    });
     renderPanel();
     const button = await screen.findByTestId('tier-row-comparch-reset-button');
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent(/Open in Claude Code/i);
     fireEvent.click(button);
-    // The reset endpoint must NOT have fired yet — confirm step.
-    expect(mockedReset).not.toHaveBeenCalled();
-    const confirmButton = await screen.findByTestId(
-      'tier-row-comparch-confirm-reset-button',
-    );
-    fireEvent.click(confirmButton);
-    await waitFor(() => expect(mockedReset).toHaveBeenCalledWith('proj_1', 'comparch'));
-    // Success message reflects scopes_succeeded.
-    await waitFor(() =>
-      expect(screen.getByTestId('tier-row-comparch-message')).toHaveTextContent(
-        /Reset 2 scopes · 2 generations queued/,
-      ),
-    );
+    // Confirm flow + reset endpoint are gone.
+    expect(
+      screen.queryByTestId('tier-row-comparch-confirm-reset-button'),
+    ).toBeNull();
   });
 
-  it('Regen From Reviews fires immediately and reports skipped scopes', async () => {
+  it('Regen From Reviews renders as an Open-in-CC disabled button', async () => {
     mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
       makeInfo({ tier, node_count: 2, nodes_with_content: 1 }),
     );
-    mockedReview.mockResolvedValue({
-      ok: true,
-      tier: 'comparch',
-      scopes_total: 2,
-      jobs_enqueued: 1,
-      scopes_skipped: [
-        { scope_ids: ['comp_2'], status: 409, detail: 'already approved' },
-      ],
-    });
-    renderPanel();
-    const button = await screen.findByTestId('tier-row-comparch-review-button');
-    fireEvent.click(button);
-    await waitFor(() =>
-      expect(mockedReview).toHaveBeenCalledWith('proj_1', 'comparch'),
-    );
-    await waitFor(() =>
-      expect(screen.getByTestId('tier-row-comparch-message')).toHaveTextContent(
-        /Regenerated 1 scope \(1 skipped\)/,
-      ),
-    );
-  });
-
-  it('disables Reset All when the tier has zero nodes', async () => {
-    mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
-      makeInfo({ tier, node_count: 0, nodes_with_content: 0 }),
-    );
-    renderPanel();
-    const button = await screen.findByTestId('tier-row-comparch-reset-button');
-    expect(button).toBeDisabled();
-  });
-
-  it('disables Review All when no nodes have content', async () => {
-    mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
-      makeInfo({ tier, node_count: 2, nodes_with_content: 0 }),
-    );
     renderPanel();
     const button = await screen.findByTestId('tier-row-comparch-review-button');
     expect(button).toBeDisabled();
+    expect(button).toHaveTextContent(/Open in Claude Code/i);
   });
+
+  // TODO Phase 3 reinstate test once dashboard is read-only:
+  //   - disables Reset All when the tier has zero nodes
+  //   - disables Review All when no nodes have content
+  // Both buttons are now permanently disabled (Open-in-CC fallback);
+  // the zero-node / zero-content gating moves into the CC skills.
 
   it('Review summary toggle flips aria-expanded state', async () => {
     mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
@@ -225,10 +180,11 @@ describe('TierOpsPanel', () => {
     expect(toggle).toBeDisabled();
   });
 
-  it('Review All + Review summary enable on pending drafts (no approved content yet)', async () => {
+  it('Review summary enables on pending drafts (no approved content yet)', async () => {
     // The actual user-bug case: 40 comparch comps with pending
     // drafts but no approvals. nodes_with_content = 0 but
-    // reviewable_count = 40 — the buttons should fire.
+    // reviewable_count = 40 — the summary toggle should fire even
+    // though the Review-All action is now an Open-in-CC fallback.
     mockedGetInfo.mockImplementation(async (_pid: string, tier: string) =>
       makeInfo({
         tier,
@@ -238,10 +194,8 @@ describe('TierOpsPanel', () => {
       }),
     );
     renderPanel();
-    const reviewAll = await screen.findByTestId('tier-row-comparch-review-button');
     const summary = await screen.findByTestId('tier-row-comparch-review-summary-button');
     await waitFor(() => {
-      expect(reviewAll).not.toBeDisabled();
       expect(summary).not.toBeDisabled();
     });
   });

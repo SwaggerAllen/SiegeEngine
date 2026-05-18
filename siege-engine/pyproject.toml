@@ -34,7 +34,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["backend*"]
+include = ["backend*", "siege_mcp*"]
 
 [tool.ruff]
 target-version = "py311"
@@ -57,7 +57,7 @@ known-third-party = ["alembic"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "siege_mcp/tests"]
 
 [tool.mypy]
 python_version = "3.11"

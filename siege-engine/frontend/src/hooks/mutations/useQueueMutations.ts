@@ -9,16 +9,22 @@ import {
   type Instruction,
 } from '../../api/queue';
 import { announceInstruction } from '../../lib/queueAnnounce';
-import { queueKeys } from '../queries/useQueueQueries';
 
 /**
  * Phase 11 — queue mutations. Each wraps its backend fetcher,
  * invalidates ``queueKeys.project(projectId)`` on success, and
- * returns the raw backend response. The SSE stream also
- * invalidates the queue list on the corresponding queue event,
- * so these optimistic-ish invalidations are belt-and-braces —
- * the panel refetches quickly even if SSE is momentarily down.
+ * returns the raw backend response.
+ *
+ * Phase 3 migration: SSE and the queue-list query hook are gone.
+ * The local ``queueKeys`` factory is inlined here so editor panels
+ * keep compiling; the write surfaces these mutations back are
+ * doomed in the broader CC-skills migration. Treat this module as
+ * a soon-to-be-deleted compatibility shim.
  */
+const queueKeys = {
+  all: ['queue'] as const,
+  project: (projectId: string) => ['queue', projectId] as const,
+};
 
 export function useEnqueueInstructionMutation(projectId: string) {
   const qc = useQueryClient();

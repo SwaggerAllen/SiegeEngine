@@ -1,0 +1,7 @@
+- Are the tech choices (libraries, patterns, concurrency model) consistent with ``project_techspec`` (the sysarch-tier project-wide stack dumped above)? Flag drift — a Python library claim on an Elixir project, a Postgres-specific pattern when the project techspec names a different store, etc. The project_techspec is canonical; do not fall back to priors about what "impls like this" usually use. If the ``project_techspec`` section is missing from the user prompt, do not flag tech-stack drift — no baseline.
+- Does the plan match the owner's techspec, or does it silently drift (e.g. techspec says "pure functions", impl introduces stateful singletons)?
+- Are the comparch-tier policies (``component_policies`` for foundation impls, ``parent_policies`` for sub impls) honoured where the impl's code-paths match a trigger? Flag cross- cutting concerns the comparch named that the impl silently skips.
+- Are the comparch-tier failure modes (``component_failure_surface`` / ``parent_failure_surface``) made observable as the comparch promised? An impl that masks a named residual risk (silent default instead of typed error, swallowed exception instead of logged escalation) is drift from the design intent.
+- Are cross-cutting concerns (logging, metrics, auth checks) referenced where relevant, or silently omitted?
+- Is the plan grounded in the dependencies' pubapi shapes, or does it assume APIs that don't exist?
+- Are the leaf's dependencies consistent with the project- wide ``project_dependencies`` graph? Flag deps that aren't in the graph (or its sub-deps).

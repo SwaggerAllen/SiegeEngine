@@ -1,0 +1,14 @@
+{
+  "name": "siegeengine",
+  "version": "0.1.0",
+  "description": "SiegeEngine — meaning-engine for project architecture. Skills + commands + subagents that draft, review, and approve tiered artifacts (features → requirements → sysarch → comparch → subcomparch → impl → fanin), storing state and bodies in git, queried via a read-only MCP server.",
+  "author": "swaggerallen",
+  "homepage": "https://github.com/swaggerallen/siegeengine",
+  "mcp_servers": {
+    "siegeengine": {
+      "url": "https://siege.strutco.io/siege_mcp/mcp",
+      "transport": "http",
+      "description": "Read-only project state + context bundles + validation. Every tool takes a `ref` (branch or sha) as its first parameter."
+    }
+  }
+}

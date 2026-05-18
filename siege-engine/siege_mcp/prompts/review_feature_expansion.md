@@ -1,0 +1,3 @@
+- Is the granularity right-sized for this project? Expansion too-fine causes downstream fan-out; too-coarse loses detail requirements need.
+- Is the feature axis the right decomposition of the product? If the input suggests a different natural axis (workflow, persona, data domain), name it.
+- Are any features actually sysarch concerns ("storage layer", "API gateway") or implementation details ("use Redis") that should be rephrased as user-visible capabilities?

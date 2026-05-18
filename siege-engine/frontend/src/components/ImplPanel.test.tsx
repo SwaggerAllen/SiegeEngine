@@ -1,5 +1,4 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ImplResponse } from '../api/impl';
 import { TestQueryWrapper } from '../test/queryWrapper';
@@ -29,8 +28,6 @@ import * as implApi from '../api/impl';
 
 const mockedGetTopLevel = implApi.getImplTopLevel as unknown as ReturnType<typeof vi.fn>;
 const mockedGetSub = implApi.getImplSub as unknown as ReturnType<typeof vi.fn>;
-const mockedApproveTopLevel =
-  implApi.approveImplTopLevelDraft as unknown as ReturnType<typeof vi.fn>;
 
 function response(overrides: Partial<ImplResponse> = {}): ImplResponse {
   return {
@@ -68,7 +65,10 @@ beforeEach(() => {
 });
 
 describe('ImplPanel top-level', () => {
-  it('renders the pending draft with approve + regenerate actions', async () => {
+  // TODO Phase 3 reinstate test once dashboard is read-only:
+  //   - renders the pending draft with approve + regenerate actions
+  //   - approves a draft via the top-level approve mutation
+  it('renders the pending draft with the Open-in-CC fallback', async () => {
     mockedGetTopLevel.mockResolvedValue(
       response({
         pending_draft: {
@@ -92,44 +92,11 @@ describe('ImplPanel top-level', () => {
       </TestQueryWrapper>,
     );
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument(),
+      expect(
+        screen.getAllByRole('button', { name: /Open in Claude Code/i }).length,
+      ).toBeGreaterThan(0),
     );
-  });
-
-  it('approves a draft via the top-level approve mutation', async () => {
-    mockedGetTopLevel.mockResolvedValue(
-      response({
-        pending_draft: {
-          id: 'draft_x',
-          content:
-            '<implementation><behavior>B</behavior>' +
-            '<invariants>I</invariants><sequencing>S</sequencing>' +
-            '<edge-cases>E</edge-cases></implementation>',
-          created_at: '2026-04-17T00:00:00',
-        },
-      }),
-    );
-    mockedApproveTopLevel.mockResolvedValue(undefined);
-
-    render(
-      <TestQueryWrapper>
-        <ImplPanel
-          kind="top-level"
-          projectId="proj_1"
-          compId="comp_BBBBBBBB"
-          ownerName="TopComp"
-        />
-      </TestQueryWrapper>,
-    );
-    const btn = await screen.findByRole('button', { name: /Approve/i });
-    await userEvent.click(btn);
-    await waitFor(() =>
-      expect(mockedApproveTopLevel).toHaveBeenCalledWith(
-        'proj_1',
-        'comp_BBBBBBBB',
-        'draft_x',
-      ),
-    );
+    expect(screen.queryByRole('button', { name: /Approve/i })).toBeNull();
   });
 });
 

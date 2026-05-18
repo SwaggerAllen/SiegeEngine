@@ -1,3 +1,12 @@
+// FUTURE: this module is doomed in the Phase 4 deletion sweep —
+// the pending-change queue is a backend write surface and goes
+// away with the rest of the FastAPI write routes. Kept on Phase 3
+// only so the editor panels (RespCompEditor, DecompositionEditor,
+// FeatRespEditor, DependencyEditor, DomainParentEditor, etc.) keep
+// typechecking until they're cut. The Instruction type + the
+// mintClientId / renderInstruction / affectedNodeIds helpers move
+// to a CC skill that emits commit-and-push patches directly.
+// see docs/migration/mcp-surface.md
 import { z } from 'zod';
 import api from './client';
 

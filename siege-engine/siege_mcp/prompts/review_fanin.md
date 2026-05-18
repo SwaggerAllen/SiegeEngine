@@ -1,0 +1,3 @@
+- Does the synthesis reveal drift between the top-down design intent (comparch / subcomparch pubapis) and the bottom-up reality (impls)? If so, call out the mismatch.
+- Are emergent patterns across subs worth surfacing — shared abstractions, repeated idioms, coherent data flow?
+- Does the synthesis suggest refactoring opportunities the top-down design missed?

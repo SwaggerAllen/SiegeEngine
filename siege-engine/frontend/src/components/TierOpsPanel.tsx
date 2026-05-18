@@ -1,19 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
   TIER_NAMES,
-  type RegenBelowThresholdResult,
-  type ResetAllResult,
-  type ResumeTierResult,
-  type ReviewSweepResult,
   type StructureTierName,
   type TierInfo,
   type TierName,
   getTierInfo,
-  regenBelowThreshold,
-  resetTier,
-  resumeTier,
-  reviewSweepTier,
 } from '../api/tierOps';
 import { TierReviewSummaryPanel } from './TierReviewSummaryPanel';
 import { TierStructureSummaryPanel } from './TierStructureSummaryPanel';
@@ -131,107 +123,23 @@ function ReadOnlyTierRow({
 
 function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
   const queryKey = ['tierOps', 'info', projectId, tier];
-  const queryClient = useQueryClient();
   const { data, isLoading, isError } = useQuery<TierInfo>({
     queryKey,
     queryFn: () => getTierInfo(projectId, tier),
   });
-  const [confirming, setConfirming] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [showStructure, setShowStructure] = useState(false);
-  const [lastResult, setLastResult] = useState<
-    | {
-        kind: 'reset';
-        result: ResetAllResult;
-      }
-    | {
-        kind: 'review';
-        result: ReviewSweepResult;
-      }
-    | {
-        kind: 'resume';
-        result: ResumeTierResult;
-      }
-    | {
-        kind: 'threshold';
-        result: RegenBelowThresholdResult;
-      }
-    | { kind: 'error'; text: string }
-    | null
-  >(null);
-  const [thresholdValue, setThresholdValue] = useState(70);
-  const [thresholdMode, setThresholdMode] = useState<'fresh' | 'review'>('review');
 
-  const resetMutation = useMutation({
-    mutationFn: () => resetTier(projectId, tier),
-    onSuccess: (result) => {
-      setConfirming(false);
-      setLastResult({ kind: 'reset', result });
-      queryClient.invalidateQueries({ queryKey });
-      // Other panels' caches may be stale — invalidate broadly.
-      queryClient.invalidateQueries({ queryKey: ['structure', projectId] });
-    },
-    onError: (err: unknown) => {
-      const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        (err instanceof Error ? err.message : String(err));
-      setLastResult({ kind: 'error', text: `Reset failed: ${detail}` });
-    },
-  });
-
-  const reviewMutation = useMutation({
-    mutationFn: () => reviewSweepTier(projectId, tier),
-    onSuccess: (result) => {
-      setLastResult({ kind: 'review', result });
-      queryClient.invalidateQueries({ queryKey });
-    },
-    onError: (err: unknown) => {
-      const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        (err instanceof Error ? err.message : String(err));
-      setLastResult({ kind: 'error', text: `Regen sweep failed: ${detail}` });
-    },
-  });
-
-  const resumeMutation = useMutation({
-    mutationFn: () => resumeTier(projectId, tier),
-    onSuccess: (result) => {
-      setLastResult({ kind: 'resume', result });
-      queryClient.invalidateQueries({ queryKey });
-      queryClient.invalidateQueries({ queryKey: ['structure', projectId] });
-    },
-    onError: (err: unknown) => {
-      const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        (err instanceof Error ? err.message : String(err));
-      setLastResult({ kind: 'error', text: `Resume failed: ${detail}` });
-    },
-  });
-
-  const thresholdMutation = useMutation({
-    mutationFn: () =>
-      regenBelowThreshold(projectId, tier, {
-        threshold: thresholdValue,
-        mode: thresholdMode,
-      }),
-    onSuccess: (result) => {
-      setLastResult({ kind: 'threshold', result });
-      queryClient.invalidateQueries({ queryKey });
-      queryClient.invalidateQueries({ queryKey: ['structure', projectId] });
-    },
-    onError: (err: unknown) => {
-      const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        (err instanceof Error ? err.message : String(err));
-      setLastResult({ kind: 'error', text: `Regen below threshold failed: ${detail}` });
-    },
-  });
-
-  const isBusy =
-    resetMutation.isPending ||
-    reviewMutation.isPending ||
-    resumeMutation.isPending ||
-    thresholdMutation.isPending;
+  // Phase 3 migration: Reset All / Regen From Reviews / Resume Tier /
+  // Regen below threshold all moved to Claude Code skills. The
+  // dashboard keeps the per-tier counts + structure / review summary
+  // toggles; bulk actions render as Open-in-CC disabled buttons.
+  // TODO Phase 3: deep-link each disabled button to its CC skill:
+  //   - Reset All           → /reset-tier <tier>
+  //   - Regen From Reviews  → /regen-tier-from-reviews <tier>
+  //   - Resume Tier         → /resume-tier <tier>
+  //   - Regen below thr.    → /regen-below <tier> <threshold> <mode>
+  const isBusy = false;
 
   return (
     <li className="px-4 py-3 flex flex-col gap-3" data-testid={`tier-row-${tier}`}>
@@ -267,9 +175,6 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
             </>
           ) : null}
         </div>
-        {lastResult && (
-          <ResultLine result={lastResult} tier={tier} />
-        )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <button
@@ -296,194 +201,52 @@ function TierRow({ projectId, tier }: { projectId: string; tier: TierName }) {
         </button>
         <button
           type="button"
-          onClick={() => resumeMutation.mutate()}
-          disabled={isBusy || (data?.node_count ?? 0) === 0}
-          className="px-3 py-1.5 text-xs rounded border border-emerald-800 text-emerald-300 hover:bg-emerald-950 disabled:opacity-40"
-          title="Re-enqueue generation for every scope in this tier whose last attempt was cancelled (skips approved + pending-draft scopes)"
+          disabled
+          className="px-3 py-1.5 text-xs rounded border border-emerald-800 text-emerald-300/60 cursor-not-allowed"
+          title="Resume Tier moved to Claude Code — invoke /resume-tier <tier> there"
           data-testid={`tier-row-${tier}-resume-button`}
         >
-          {resumeMutation.isPending ? 'Resuming…' : 'Resume Tier'}
+          Open in Claude Code · Resume
         </button>
         {data?.supports_review && (
           <button
             type="button"
-            onClick={() => reviewMutation.mutate()}
-            disabled={isBusy || data.reviewable_count === 0}
-            className="px-3 py-1.5 text-xs rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
-            title="Reject & regenerate every pending-draft scope in this tier; each scope's AI review rides forward as feedback. Approved-only scopes are skipped — use Reset All for those."
+            disabled
+            className="px-3 py-1.5 text-xs rounded border border-blue-800 text-blue-200/60 cursor-not-allowed"
+            title="Regen From Reviews moved to Claude Code — invoke /regen-tier-from-reviews <tier> there"
             data-testid={`tier-row-${tier}-review-button`}
           >
-            {reviewMutation.isPending ? 'Regenerating…' : 'Regen From Reviews'}
+            Open in Claude Code · Regen From Reviews
           </button>
         )}
-        {data?.supports_reset &&
-          (confirming ? (
-            <>
-              <button
-                type="button"
-                onClick={() => resetMutation.mutate()}
-                disabled={isBusy}
-                className="px-3 py-1.5 text-xs rounded bg-red-700 hover:bg-red-600 disabled:opacity-40"
-                data-testid={`tier-row-${tier}-confirm-reset-button`}
-              >
-                {resetMutation.isPending
-                  ? 'Resetting…'
-                  : `Confirm reset · nukes downstream`}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirming(false)}
-                disabled={isBusy}
-                className="px-3 py-1.5 text-xs rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
-              >
-                Cancel
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirming(true)}
-              disabled={isBusy || (data?.node_count ?? 0) === 0}
-              className="px-3 py-1.5 text-xs rounded border border-red-900 text-red-300 hover:bg-red-950 disabled:opacity-40"
-              title="Destructively reset every node in this tier and re-enqueue generation"
-              data-testid={`tier-row-${tier}-reset-button`}
-            >
-              Reset All
-            </button>
-          ))}
+        {data?.supports_reset && (
+          <button
+            type="button"
+            disabled
+            className="px-3 py-1.5 text-xs rounded border border-red-900 text-red-300/60 cursor-not-allowed"
+            title="Reset All moved to Claude Code — invoke /reset-tier <tier> there"
+            data-testid={`tier-row-${tier}-reset-button`}
+          >
+            Open in Claude Code · Reset All
+          </button>
+        )}
       </div>
       {data?.supports_review && (
         <div
           className="flex flex-wrap items-center gap-2 text-xs text-gray-400"
           data-testid={`tier-row-${tier}-threshold-row`}
         >
-          <span>Regen scopes with score &lt;</span>
-          <input
-            type="number"
-            min={0}
-            max={100}
-            value={thresholdValue}
-            onChange={(e) =>
-              setThresholdValue(Math.max(0, Math.min(100, Number(e.target.value) || 0)))
-            }
-            disabled={isBusy}
-            className="w-14 bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
-            data-testid={`tier-row-${tier}-threshold-input`}
-          />
-          <select
-            value={thresholdMode}
-            onChange={(e) => setThresholdMode(e.target.value as 'fresh' | 'review')}
-            disabled={isBusy}
-            className="bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
-            data-testid={`tier-row-${tier}-threshold-mode`}
-          >
-            <option value="review">review</option>
-            <option value="fresh">fresh</option>
-          </select>
-          <button
-            type="button"
-            onClick={() => thresholdMutation.mutate()}
-            disabled={isBusy || (data?.reviewable_count ?? 0) === 0}
-            className="px-2 py-0.5 rounded border border-blue-800 text-blue-200 hover:bg-blue-950 disabled:opacity-40"
-            title="Regen every scope whose last AI-review score is below the threshold. Scopes with no parseable review are skipped — use Resume Tier for those. Useful after a full regen + review to target the bottom of the score distribution."
-            data-testid={`tier-row-${tier}-threshold-button`}
-          >
-            {thresholdMutation.isPending ? 'Targeting…' : 'Regen below threshold'}
-          </button>
+          <span>
+            Regen below threshold: invoke{' '}
+            <code className="bg-gray-900 px-1">/regen-below {tier} &lt;threshold&gt; &lt;mode&gt;</code>{' '}
+            in Claude Code.
+          </span>
         </div>
       )}
       </div>
       {showStructure && <TierStructureSummaryPanel projectId={projectId} tier={tier} />}
       {showSummary && <TierReviewSummaryPanel projectId={projectId} tier={tier} />}
     </li>
-  );
-}
-
-function ResultLine({
-  result,
-  tier,
-}: {
-  result:
-    | { kind: 'reset'; result: ResetAllResult }
-    | { kind: 'review'; result: ReviewSweepResult }
-    | { kind: 'resume'; result: ResumeTierResult }
-    | { kind: 'threshold'; result: RegenBelowThresholdResult }
-    | { kind: 'error'; text: string };
-  tier: string;
-}) {
-  if (result.kind === 'error') {
-    return (
-      <div
-        className="text-xs mt-1 text-red-400"
-        data-testid={`tier-row-${tier}-message`}
-      >
-        {result.text}
-      </div>
-    );
-  }
-  const skipped = result.result.scopes_skipped;
-  const tone = skipped.length > 0 ? 'warn' : 'ok';
-  let summary: string;
-  if (result.kind === 'reset') {
-    summary = skipped.length
-      ? `Reset ${result.result.scopes_succeeded} scope${result.result.scopes_succeeded === 1 ? '' : 's'} (${skipped.length} skipped) · ${result.result.jobs_enqueued} generation${result.result.jobs_enqueued === 1 ? '' : 's'} queued.`
-      : `Reset ${result.result.scopes_succeeded} scope${result.result.scopes_succeeded === 1 ? '' : 's'} · ${result.result.jobs_enqueued} generation${result.result.jobs_enqueued === 1 ? '' : 's'} queued.`;
-  } else if (result.kind === 'resume') {
-    const gens = result.result.generations_enqueued;
-    const reviews = result.result.reviews_enqueued;
-    const parts: string[] = [];
-    if (gens > 0) parts.push(`${gens} generation${gens === 1 ? '' : 's'}`);
-    if (reviews > 0) parts.push(`${reviews} review${reviews === 1 ? '' : 's'}`);
-    const enqueuedText = parts.length === 0 ? 'nothing to resume' : `enqueued ${parts.join(' + ')}`;
-    summary = skipped.length
-      ? `Resume: ${enqueuedText} (${skipped.length} skipped).`
-      : `Resume: ${enqueuedText}.`;
-  } else if (result.kind === 'threshold') {
-    const tr = result.result;
-    if (tr.scopes_total === 0) {
-      summary = `No scopes below score ${tr.threshold}.`;
-    } else {
-      const noReviewText = tr.skipped_no_review.length
-        ? ` · ${tr.skipped_no_review.length} no-review skipped`
-        : '';
-      summary = skipped.length
-        ? `Regen <${tr.threshold} (${tr.mode}): ${tr.scopes_succeeded}/${tr.scopes_total} succeeded (${skipped.length} skipped)${noReviewText}.`
-        : `Regen <${tr.threshold} (${tr.mode}): ${tr.scopes_succeeded}/${tr.scopes_total} scope${tr.scopes_total === 1 ? '' : 's'} enqueued${noReviewText}.`;
-    }
-  } else {
-    const n = result.result.jobs_enqueued;
-    summary = skipped.length
-      ? `Regenerated ${n} scope${n === 1 ? '' : 's'} (${skipped.length} skipped).`
-      : `Regenerated ${n} scope${n === 1 ? '' : 's'}.`;
-  }
-  return (
-    <div className="mt-1 space-y-1" data-testid={`tier-row-${tier}-message`}>
-      <div
-        className={`text-xs ${
-          tone === 'ok' ? 'text-emerald-400' : 'text-amber-400'
-        }`}
-      >
-        {summary}
-      </div>
-      {skipped.length > 0 && (
-        <details className="text-[10px] text-amber-300/80">
-          <summary className="cursor-pointer hover:text-amber-200">
-            Show skip reasons
-          </summary>
-          <ul className="mt-1 ml-3 space-y-0.5 font-mono">
-            {skipped.map((s, idx) => (
-              <li key={idx}>
-                <span className="text-gray-500">[{s.status}]</span>{' '}
-                <span className="text-gray-400">{s.scope_ids.join('/') || '(singleton)'}</span>{' '}
-                <span className="text-amber-200">
-                  {typeof s.detail === 'string' ? s.detail : JSON.stringify(s.detail)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-    </div>
   );
 }
 

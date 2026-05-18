@@ -1,0 +1,7 @@
+- Is the component decomposition axis the right one (task / domain / workflow)? Flag forced / unnatural groupings.
+- Do components have coherent responsibilities (one axis of work) or do they bundle unrelated concerns?
+- Are the labeled techspec blocks (``<runtime>``, ``<persistence>``, ``<write-path>``, ``<concurrency>``, ``<testing>``, ``<deploy>``) each specific enough that a downstream tier can act on them? Flag thin or filler blocks.
+- Does ``<technologies>`` faithfully record the concrete framework / library / service choices named in the input? Flag invented technologies or missing ones.
+- Are cross-cutting concerns handled as policies / foundation components rather than duplicated?
+- Is the foundation component (if any) genuinely foundational, or a dumping ground?
+- Is the domain/presentational split meaningful for this project, or would it be cleaner as pure domain?

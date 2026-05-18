@@ -1,3 +1,5 @@
+// FUTURE: MCP server endpoint /api/projects/:id/refs/:ref/structure ;
+// see docs/migration/mcp-surface.md
 import { z } from 'zod';
 import api from './client';
 

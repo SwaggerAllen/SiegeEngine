@@ -19,9 +19,7 @@ const ComponentDecompositionPanel = lazy(() =>
   })),
 );
 import { DebugPanel } from '../DebugPanel';
-import { GenerationQueuePanel } from '../GenerationQueuePanel';
 import { ImplPanel } from '../ImplPanel';
-import { QueuePanel } from '../QueuePanel';
 import { CohortsPanel } from '../CohortsPanel';
 import { TierOpsPanel } from '../TierOpsPanel';
 import { ReferencesList } from '../ReferencesList';
@@ -92,19 +90,17 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
       </div>
     );
   }
-  if (selectedId === SYNTHETIC_IDS.QUEUE) {
-    return (
-      <div className="h-full overflow-auto">
-        <QueuePanel projectId={projectId} />
-      </div>
-    );
-  }
-  if (selectedId === SYNTHETIC_IDS.GEN_QUEUE) {
-    return (
-      <div className="h-full overflow-auto">
-        <GenerationQueuePanel projectId={projectId} />
-      </div>
-    );
+  if (
+    selectedId === SYNTHETIC_IDS.QUEUE ||
+    selectedId === SYNTHETIC_IDS.GEN_QUEUE
+  ) {
+    // Phase 3 migration: the pending-change queue and the
+    // generation-job queue were dashboard surfaces over the old
+    // backend's write pipeline. With writes moving to Claude Code
+    // skills, neither queue exists in the new architecture. Sidebar
+    // entries kept for now as no-op landing pages; the synthetic
+    // IDs themselves will fall out in Phase 4.
+    return <QueueRetired />;
   }
   if (selectedId === SYNTHETIC_IDS.TIER_OPS) {
     return (
@@ -337,6 +333,21 @@ function UnknownTier({ tier }: { tier: string }) {
       <p className="text-sm text-gray-500">
         No detail view for tier <code>{tier}</code> yet.
       </p>
+    </div>
+  );
+}
+
+function QueueRetired() {
+  return (
+    <div className="h-full flex items-center justify-center p-8 text-center max-w-md mx-auto">
+      <div>
+        <h2 className="text-sm font-semibold text-gray-300 mb-2">Queue retired</h2>
+        <p className="text-sm text-gray-400">
+          The pending-change queue and generation-job queue were part of the old
+          write pipeline. Work now happens via Claude Code skills; there is no
+          server-side queue to inspect from the dashboard.
+        </p>
+      </div>
     </div>
   );
 }

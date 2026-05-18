@@ -1,3 +1,7 @@
+// FUTURE: MCP server endpoint
+// /api/projects/:id/refs/:ref/review-batches/:batch_id (read paths only —
+// open / advance / approve / regen are doomed and replaced by CC skills);
+// see docs/migration/mcp-surface.md
 import { z } from 'zod';
 import api from './client';
 
