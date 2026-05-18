@@ -713,11 +713,20 @@ edit there, not in the old backend.
 
 ## Cheat sheet (load-bearing docs)
 
-`docs/cheatsheet.md` is the workflow + slash command reference
-users hit at `siege.strutco.io/cheatsheet`. The frontend page
-is `frontend/src/pages/CheatsheetPage.tsx`; it fetches the
-markdown from `/siege_mcp/api/cheatsheet` (open endpoint, no
-auth — see `siege_mcp/server.py`).
+`frontend/src/content/cheatsheet.md` is the workflow + slash
+command reference users hit at `siege.strutco.io/cheatsheet`.
+It's a frontend asset — imported by
+`frontend/src/pages/CheatsheetPage.tsx` via Vite's `?raw`
+suffix, bundled at build time, rendered by `react-markdown`.
+No server endpoint, no runtime fetch. The TypeScript
+declaration for `*.md?raw` lives in `frontend/src/vite-env.d.ts`.
+
+Why in `frontend/src/content/` and not `docs/`: the cheat
+sheet is a user-facing UI artifact. Keeping it inside the
+frontend tree means edits ship in the same commit as any
+other frontend change and the served page always matches
+what the build pinned. The `docs/` directory is for
+developer / migration documentation.
 
 The bootstrap script (`scripts/siege-bootstrap.sh`, served at
 `/bootstrap.sh`) is the mobile-CC on-ramp: it mirrors the
@@ -727,6 +736,13 @@ and `.claude-plugin/agents/` into a target project repo as
 plus a `.mcp.json`. Mobile CC auto-discovers these without a
 plugin install. Update the script (and the cheat sheet's
 install section) if the on-ramp shape changes.
+
+**The dev token panel** (`frontend/src/components/DevTokenPanel.tsx`)
+mounts at the top of the cheat sheet page. When the user is
+logged in it shows their JWT in a copy-paste-ready
+`export SIEGE_TOKEN=...` form, with expiry + relative time.
+This is the on-ramp's "where do I get a token" answer — keep
+it on the cheat sheet page, not buried in a settings menu.
 
 **Keep it current.** When you add a slash command, ship a new
 skill, rename one, or change a workflow, update

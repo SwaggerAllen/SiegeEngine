@@ -121,24 +121,6 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-# ---------------- Cheat sheet (open, no auth) ----------------
-#
-# Served as the source for the dashboard's /cheatsheet page. Kept open
-# (no JWT required) because it's static documentation — the frontend
-# fetches it on every render. The markdown body lives in the repo at
-# docs/cheatsheet.md; CLAUDE.md flags this file as load-bearing so it
-# stays in sync as commands + skills evolve.
-
-_CHEATSHEET_PATH = Path(__file__).resolve().parent.parent / "docs" / "cheatsheet.md"
-
-
-@app.get("/api/cheatsheet")
-def cheatsheet() -> dict[str, str]:
-    if not _CHEATSHEET_PATH.exists():
-        return {"markdown": "# Cheat sheet missing\n\nExpected at docs/cheatsheet.md."}
-    return {"markdown": _CHEATSHEET_PATH.read_text(encoding="utf-8")}
-
-
 # ---------------- Bootstrap script (open, no auth) ----------------
 #
 # Mobile Claude Code doesn't support `/plugin install`, so users on

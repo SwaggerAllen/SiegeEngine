@@ -47,16 +47,6 @@ def test_healthz_open():
     assert r.json() == {"status": "ok"}
 
 
-def test_cheatsheet_open():
-    r = _client().get("/api/cheatsheet")
-    assert r.status_code == 200
-    body = r.json()
-    assert "markdown" in body
-    # Sanity-check the rendered content has the canonical headings.
-    assert "SiegeEngine cheat sheet" in body["markdown"]
-    assert "/scaffold" in body["markdown"]
-
-
 def test_bootstrap_script_open():
     r = _client().get("/bootstrap.sh")
     assert r.status_code == 200
