@@ -14,12 +14,23 @@ mounted assembly, not of `siege_mcp.server` alone.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+import pytest
 
 os.environ.setdefault("SIEGE_ANTHROPIC_API_KEY", "test")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
 from backend.main import app  # noqa: E402
+
+# The SPA catch-all in backend.main is only registered when
+# frontend/dist/ exists (production build present). Local devs who run
+# `npx vite build` get the route; CI's backend-tests job doesn't build
+# the frontend, so the catch-all isn't registered and any test relying
+# on it would 404. Skip those tests in that case — they're verifying a
+# behavior that only manifests under the production layout.
+_SPA_BUILT = Path("frontend/dist/index.html").exists()
 
 
 def test_bootstrap_sh_top_level_returns_shell_script():
@@ -44,9 +55,16 @@ def test_bootstrap_sh_via_mcp_mount_also_works():
     assert r.text.startswith("#!/usr/bin/env bash")
 
 
+@pytest.mark.skipif(
+    not _SPA_BUILT,
+    reason="frontend/dist/ not built — SPA catch-all isn't registered in this env",
+)
 def test_spa_catchall_still_serves_html():
     """Other unmatched paths must still fall through to the SPA so
-    the dashboard routes (`/cheatsheet`, `/projects`, etc.) work."""
+    the dashboard routes (`/cheatsheet`, `/projects`, etc.) work.
+
+    Requires a production frontend build (frontend/dist/index.html);
+    skipped in environments where the build hasn't run."""
     c = TestClient(app)
     r = c.get("/cheatsheet")
     assert r.status_code == 200
