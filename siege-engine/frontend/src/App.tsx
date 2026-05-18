@@ -18,6 +18,7 @@ import {
   RedirectToSynthetic,
 } from './pages/LegacyRedirects';
 import { GitHubCallbackPage } from './pages/GitHubCallbackPage';
+import CheatsheetPage from './pages/CheatsheetPage';
 
 function NavigationLogger() {
   const location = useLocation();
@@ -59,6 +60,10 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/github/callback" element={<GitHubCallbackPage />} />
+        {/* Cheat sheet is intentionally unauthenticated — it's docs,
+            not user data. Keep `docs/cheatsheet.md` in sync when
+            commands or skills change. */}
+        <Route path="/cheatsheet" element={<CheatsheetPage />} />
         <Route
           path="/projects"
           element={
