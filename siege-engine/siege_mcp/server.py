@@ -152,13 +152,21 @@ def _resolve_bootstrap_path() -> Path | None:
     return None
 
 
-@app.get("/bootstrap.sh")
-def bootstrap_script() -> PlainTextResponse:
+def bootstrap_script_response() -> PlainTextResponse:
+    """Return the bootstrap script as a plain-text HTTP response.
+
+    Shared between the MCP-mounted route (`/siege_mcp/bootstrap.sh`)
+    and the top-level route registered in `backend.main` at
+    `/bootstrap.sh`. The top-level route is what users actually hit
+    via `curl https://siege.strutco.io/bootstrap.sh | bash`; the
+    MCP-mounted one is a side effect of using `@app.get` here.
+    """
     path = _resolve_bootstrap_path()
     if path is None:
         return PlainTextResponse(
             "# siege-bootstrap.sh not found on server — see\n"
-            "# https://github.com/swaggerallen/siegeengine/blob/main/scripts/siege-bootstrap.sh\n",
+            "# https://github.com/swaggerallen/siegeengine/blob/main/"
+            "siege-engine/scripts/siege-bootstrap.sh\n",
             status_code=500,
             media_type="text/x-shellscript",
         )
@@ -166,6 +174,11 @@ def bootstrap_script() -> PlainTextResponse:
         path.read_text(encoding="utf-8"),
         media_type="text/x-shellscript",
     )
+
+
+@app.get("/bootstrap.sh")
+def bootstrap_script() -> PlainTextResponse:
+    return bootstrap_script_response()
 
 
 @app.post("/api/list-refs")
