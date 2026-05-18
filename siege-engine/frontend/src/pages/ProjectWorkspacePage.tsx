@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { BranchSelector, RefProvider } from '../components/BranchSelector';
 import { DashboardMenu } from '../components/DashboardMenu';
 import { NavDetail } from '../components/nav/NavDetail';
 import { NavTree } from '../components/nav/NavTree';
@@ -30,7 +31,11 @@ import { describeApiError } from '../lib/describeApiError';
 export function ProjectWorkspacePage() {
   const { id: projectId } = useParams<{ id: string }>();
   if (!projectId) return null;
-  return <WorkspaceShell projectId={projectId} />;
+  return (
+    <RefProvider projectId={projectId}>
+      <WorkspaceShell projectId={projectId} />
+    </RefProvider>
+  );
 }
 
 const SIDEBAR_OPEN_STORAGE_KEY = 'siege.workspace.sidebarOpen';
@@ -165,6 +170,7 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
             )}
           </h1>
         </div>
+        <BranchSelector projectId={projectId} />
         <button
           type="button"
           onClick={() => {
