@@ -92,22 +92,52 @@ handles any tier).
 Per-tier skills reference the writer CLI inline so the steps the
 skill takes are concrete (not abstract pseudocode).
 
-## Phase 3 — Frontend retarget 🟡 IN PROGRESS
+## Phase 3 — Frontend retarget ✅ LANDED
 
-The frontend retarget agent is still running at the time of this
-writeup. Confirmed landed (from `git log`):
+Five commits across the migration branch. Confirmed landed:
 
-- Deleted: `api/jobs.ts`, queue panels, `useProjectEventStream`,
-  `useQueueQueries`, etc.
-- Stripped SSE mount from `ProjectWorkspacePage`.
-- Added `BranchSelector` + `RefProvider` + `useSelectedRef`.
-- Added `useRefs(projectId)` hook stub-pointed at the future MCP
-  endpoint.
-- Annotated read API modules with future MCP endpoint targets.
+- **Deleted**: `api/jobs.ts`, `GenerationQueuePanel`,
+  `QueueAnnounce`, `QueuePanel`, `useProjectEventStream`,
+  `useQueueQueries`, plus their tests.
+- **SSE mount** stripped from `ProjectWorkspacePage`.
+  `runningRefetchInterval` neutered to a no-op.
+- **Branch selector**: new `BranchSelector` + `RefProvider` +
+  `useSelectedRef` context wired into the workspace header;
+  persists per-project to localStorage.
+- **Action-surface cuts**: Approve / Reject / Reset / Retry / Stop
+  flows removed from `BootstrapDraftPanel`, `TierOpsPanel`,
+  `CohortsPanel`, `FanInPanel`. Replaced with disabled "Open in
+  CC" buttons + TODO comments naming the equivalent skill.
+- **API annotations**: `FUTURE:` headers on read API modules
+  pointing at future MCP endpoints.
+- **Cheat sheet page** at `/cheatsheet` (unauthenticated, markdown
+  bundled into the build via Vite `?raw`).
+- **Dev token panel** at the top of the cheat sheet — shows the
+  logged-in user's JWT in copy-paste-ready `export SIEGE_TOKEN=…`
+  form with expiry + relative time.
 
-Mid-edit when this writeup was taken: `BootstrapDraftPanel.tsx`
-(cutting action-triggering buttons). The agent's final report will
-list any blockers it hit.
+Carry-overs (`api/queue.ts` + `useQueueMutations`) kept as
+Phase 4 doomed shims because editor panels still pull `Instruction`
+types and `mintClientId` from them. Annotated in-source.
+
+Verification: tsc clean, 421/421 vitest pass, 0 lint errors, vite
+build succeeds.
+## Deploy + on-ramp (extra, landed after Phase 3)
+
+- **Dockerfile** picks up `siege_mcp/` + `scripts/` so the mounted
+  app + bootstrap script reach the runtime container.
+- **CI workflow** lints + typechecks `siege_mcp/` alongside `backend/`.
+- **Plugin manifest** points at the real droplet hostname
+  (`https://siege.strutco.io/siege_mcp/mcp`).
+- **Bootstrap script** at `scripts/siege-bootstrap.sh` served at
+  `https://siege.strutco.io/bootstrap.sh` (top-level route in
+  `backend/main.py` registered before the SPA catch-all — fixed
+  a 200/blank-html bug where the SPA was swallowing the request).
+  Pinned by `tests/v2/test_bootstrap_routing.py`. Mirrors plugin
+  contents into target project repos for mobile CC compatibility.
+- **CLAUDE.md** updated: Deployment section rewritten (was stale
+  Fly.io copy); new "MCP server + git-backed state" and "Cheat
+  sheet (load-bearing docs)" sections.
 
 ## Phase 4 — Deletion sweep ⏸ NOT EXECUTED
 
