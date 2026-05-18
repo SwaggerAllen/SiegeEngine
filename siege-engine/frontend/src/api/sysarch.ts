@@ -1,3 +1,5 @@
+// FUTURE: MCP server endpoint /api/projects/:id/refs/:ref/sysarch ;
+// see docs/migration/mcp-surface.md
 import { sysarchApi } from './bootstrapApi';
 import { GenerationStatusSchema, TelemetrySummarySchema } from './expansion';
 

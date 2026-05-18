@@ -1,3 +1,5 @@
+// FUTURE: MCP server endpoint /api/projects/:id/refs/:ref/comparch/:comp_id ;
+// see docs/migration/mcp-surface.md
 import { comparchApi } from './bootstrapApi';
 import { GenerationStatusSchema, TelemetrySummarySchema } from './expansion';
 

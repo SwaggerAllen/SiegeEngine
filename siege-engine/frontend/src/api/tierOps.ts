@@ -1,3 +1,10 @@
+// FUTURE: MCP server endpoints
+//   /api/projects/:id/refs/:ref/tiers/:tier/info
+//   /api/projects/:id/refs/:ref/tiers/:tier/structure-summary
+//   /api/projects/:id/refs/:ref/tiers/:tier/review-summary
+// (read paths only — reset-all / review-sweep / resume / regen-below
+//  / full-corpus action endpoints are doomed and replaced by CC skills);
+// see docs/migration/mcp-surface.md
 import { z } from 'zod';
 import api from './client';
 
