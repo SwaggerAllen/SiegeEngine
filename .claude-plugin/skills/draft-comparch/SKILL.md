@@ -1,12 +1,12 @@
 ---
-name: draft-feature-expansion
-description: Draft a feature expansion artifact. Reads `get_generation_context` for the scope, drafts the body, validates it, then commits state + body in one commit and pushes. Triggers when the user says "draft feature_expansion <id>", "/draft_feature_expansion <id>", or after `/scaffold` or `/run_tier feature_expansion` enumerates pending scopes.
+name: draft-comparch
+description: Draft a comparch artifact. Reads `get_generation_context` for the scope, drafts the body, validates it, then commits state + body in one commit and pushes. Triggers when the user says "draft comparch <id>", "/draft_comparch <id>", or after `/scaffold` or `/run_tier comparch` enumerates pending scopes.
 thinking_effort: max
 ---
 
-# Draft a feature expansion
+# Draft a comparch
 
-You are drafting one feature expansion artifact end-to-end on the git-backed
+You are drafting one comparch artifact end-to-end on the git-backed
 substrate. The MCP server gives you the bundle of context the prompt
 needs; you compose the draft, validate it, and commit + push exactly
 one commit (artifact body + state JSON together).
@@ -20,17 +20,17 @@ one commit (artifact body + state JSON together).
 ## Steps
 
 1. **Fetch generation context.** Call
-   `mcp__siegeengine__get_generation_context(ref=$ref, tier="feature_expansion", scope={"comp_id": $comp_id, "tier": "feature_expansion"})`.
+   `mcp__siegeengine__get_generation_context(ref=$ref, tier="comparch", scope={"comp_id": $comp_id, "tier": "comparch"})`.
 2. **Compose the draft.** Use the bundle's instruction text and per-key
    inputs to produce the artifact body. Section headers must use the
    `## <prefix>:<name>` convention so the body section parser can pick
    them up downstream (see `docs/migration/state-schema.md` and
    `siege_mcp/fragments.py:section_for_kind`). This is a top-of-chain tier — use the deepest thinking budget you can.
-3. **Validate.** Call `mcp__siegeengine__validate_artifact(ref=$ref, tier="feature_expansion", scope=..., body=<draft>)`.
+3. **Validate.** Call `mcp__siegeengine__validate_artifact(ref=$ref, tier="comparch", scope=..., body=<draft>)`.
    If `ok` is false, treat the errors as feedback and re-run step 2
    (loop up to 3 times). If still failing, stop and surface the errors.
-4. **Write the body file** to `feature_expansion/$comp_id/body.md`.
-5. **Update or create the state JSON** at `state/feature_expansion/$comp_id.json`:
+4. **Write the body file** to `comparch/$comp_id/body.md`.
+5. **Update or create the state JSON** at `state/comparch/$comp_id.json`:
    - Set `status` to `"drafted"`
    - Set `draft.body_path`, `draft.body_sha256` (sha256 of the body bytes),
      `draft.generated_at` (UTC ISO-8601), `draft.generator_metadata`
@@ -40,7 +40,7 @@ one commit (artifact body + state JSON together).
    - Carry forward `edges` + `meta` if present, otherwise emit empty
      blocks
 6. **Stage both files**, commit with message:
-   `draft(feature_expansion/$id): <one-line summary>`
+   `draft(comparch/$id): <one-line summary>`
 7. **Push** with `git push -u origin $ref` (retry on network failure
    up to 4 times with 2s / 4s / 8s / 16s backoff).
 

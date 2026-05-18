@@ -1,0 +1,186 @@
+"""MCP tool implementations.
+
+Each function is one MCP tool. They all share a common shape:
+
+    def tool_xxx(project_id: str, ref: str, ...) -> dict
+
+The transport layer (``server.py``) registers these via the MCP
+protocol and the HTTP transport. The functions themselves don't know
+which transport called them.
+
+Every tool takes ``project_id`` + ``ref`` first. The view cache in
+``git_view.cache`` handles the fetch + sha resolution; tools just
+ask for a view and read from it.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from siege_mcp.git_view import cache as view_cache
+from siege_mcp.review_summary import build_review_summary
+from siege_mcp.state import Scope, Tier, dump_state
+from siege_mcp.structure import build_structure_summary
+from siege_mcp.tiers import GENERATION_BUILDERS, REVIEW_BUILDERS
+from siege_mcp.validate import validate_artifact as _validate
+
+
+def list_refs(project_id: str, remote_url: str | None = None) -> dict[str, Any]:
+    refs = view_cache.list_refs(project_id, remote_url=remote_url)
+    return {
+        "refs": [
+            {"name": r.name, "head_sha": r.head_sha, "head_subject": r.head_subject} for r in refs
+        ]
+    }
+
+
+def get_state(
+    project_id: str,
+    ref: str,
+    tier: Tier,
+    comp_id: str | None = None,
+    parent_id: str | None = None,
+    sub_id: str | None = None,
+) -> dict[str, Any]:
+    view = view_cache.get_view(project_id, ref)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
+    state = view.get_state(scope)
+    if state is None:
+        return {
+            "ref": view.ref,
+            "ref_head_sha": view.head_sha,
+            "scope": dict(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id),
+            "found": False,
+        }
+    drift = view.drift_for(state)
+    payload: dict[str, Any] = {
+        "ref": view.ref,
+        "ref_head_sha": view.head_sha,
+        "found": True,
+        **dump_state(state),
+    }
+    if drift:
+        payload["drift"] = drift
+    return payload
+
+
+def list_tier(
+    project_id: str,
+    ref: str,
+    tier: Tier,
+    status: str | None = None,
+    min_score: int | None = None,
+    max_score: int | None = None,
+    is_foundation: bool | None = None,
+    approved: bool | None = None,
+    has_review: bool | None = None,
+) -> dict[str, Any]:
+    view = view_cache.get_view(project_id, ref)
+    states = view.list_tier(tier)
+
+    def _keep(s) -> bool:  # type: ignore[no-untyped-def]
+        if status is not None and s.status != status:
+            return False
+        if approved is True and s.status != "approved":
+            return False
+        if approved is False and s.status == "approved":
+            return False
+        if is_foundation is not None and s.is_foundation != is_foundation:
+            return False
+        if has_review is True and not s.review:
+            return False
+        if has_review is False and s.review:
+            return False
+        score = s.review.score if s.review else None
+        if min_score is not None and (score is None or score < min_score):
+            return False
+        if max_score is not None and (score is None or score > max_score):
+            return False
+        return True
+
+    filtered = [s for s in states if _keep(s)]
+    return {
+        "ref": view.ref,
+        "ref_head_sha": view.head_sha,
+        "tier": tier,
+        "scopes": [dump_state(s) for s in filtered],
+    }
+
+
+def get_generation_context(
+    project_id: str,
+    ref: str,
+    tier: Tier,
+    comp_id: str | None = None,
+    parent_id: str | None = None,
+    sub_id: str | None = None,
+) -> dict[str, Any]:
+    view = view_cache.get_view(project_id, ref)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
+    builder = GENERATION_BUILDERS.get(tier)
+    if builder is None:
+        raise ValueError(f"No generation builder for tier {tier!r}")
+    return builder(view, scope)
+
+
+def get_review_context(
+    project_id: str,
+    ref: str,
+    tier: Tier,
+    draft_sha: str,
+    comp_id: str | None = None,
+    parent_id: str | None = None,
+    sub_id: str | None = None,
+) -> dict[str, Any]:
+    view = view_cache.get_view(project_id, ref)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
+    builder = REVIEW_BUILDERS.get(tier)
+    if builder is None:
+        raise ValueError(f"No review builder for tier {tier!r}")
+    return builder(view, scope, draft_sha)
+
+
+def get_review_summary(project_id: str, ref: str, tier: Tier) -> dict[str, Any]:
+    view = view_cache.get_view(project_id, ref)
+    return build_review_summary(view, tier)
+
+
+def get_structure_summary(project_id: str, ref: str, tier: Tier) -> dict[str, Any]:
+    view = view_cache.get_view(project_id, ref)
+    return build_structure_summary(view, tier)
+
+
+def list_batches(project_id: str, ref: str, status: str | None = None) -> dict[str, Any]:
+    """List batch state files, optionally filtered by status."""
+    view = view_cache.get_view(project_id, ref)
+    batches: list[dict[str, Any]] = []
+    # Batches live at state/batches/<id>.json — load them via direct tree read
+    # since they're not tier-shaped.
+    for path in view.clone.ls_tree(view.head_sha, "state/batches/"):
+        if not path.endswith(".json"):
+            continue
+        try:
+            raw = view.clone.show_blob(view.head_sha, path).decode("utf-8")
+            import json
+
+            data = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            continue
+        if status and data.get("status") != status:
+            continue
+        batches.append(data)
+    return {
+        "ref": view.ref,
+        "ref_head_sha": view.head_sha,
+        "batches": batches,
+    }
+
+
+def validate_artifact(
+    project_id: str,
+    ref: str,
+    tier: Tier,
+    body: str,
+) -> dict[str, Any]:
+    """Validation gate. Doesn't need a view — pure-text check."""
+    return _validate(tier=tier, body=body)
