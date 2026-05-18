@@ -33,16 +33,34 @@ it raw; the frontend at `/cheatsheet` renders it as markdown.
 
 ```text
 1. Open the project's repo in Claude Code on your laptop or mobile.
-2. /scaffold
-   → drafts + reviews features, requirements, sysarch in order.
-   → pauses for user inspection between tiers unless auto_approve.
-3. Review each tier's drafts (open the dashboard at siege.strutco.io
-   → branch selector → eyeball worst-scored scopes).
-4. /run_tier comparch
-   → fan-out across foundation comps first, then non-foundation.
-5. Repeat /run_tier subcomparch, /run_tier impl.
-6. /run_tier fanin once the bottom is settled.
+
+2. Get the input doc in front of /scaffold. Four equivalent paths
+   (in precedence order):
+   a. /scaffold input_doc=docs/my-spec.md
+   b. /scaffold @docs/my-spec.md          ← CC's @-file attach
+   c. paste the spec text into chat, then /scaffold
+   d. drop the spec at seed-docs/<name>.md and run /scaffold with
+      no args — auto-discovered from seed-docs/
+
+3. /scaffold drafts + reviews features, requirements, sysarch in
+   order. Pauses between tiers for user inspection unless
+   auto_approve=true.
+
+4. Review each tier's drafts (open the dashboard at
+   siege.strutco.io → branch selector → eyeball worst-scored scopes).
+
+5. /run_tier comparch  → fan-out across foundation comps first,
+                         then non-foundation.
+
+6. Repeat /run_tier subcomparch, /run_tier impl.
+7. /run_tier fanin once the bottom is settled.
 ```
+
+The input doc shapes everything downstream. One or two pages of
+focused prose (problem statement, target users, system qualities,
+primary workflows) beats ten pages of category-speak — extraction
+tiers compress hard, so vague input produces vague handles all the
+way down.
 
 ### Iteration cycle on one tier
 
