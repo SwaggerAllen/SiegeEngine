@@ -51,6 +51,25 @@ pass, ruff clean, ruff format clean.
   validate gate, CLI write paths (draft → review → approval),
   drift repair, batch mint, sub-tier paths.
 
+### Prompt port (extra, landed after substrate)
+
+The static instruction text from every old `backend/graph/prompts/*.py`
+module is extracted verbatim into `siege_mcp/prompts/<tier>.md` (and
+the reviewer-architecture critique block into `review_<tier>.md`). Per-
+tier readers attach the appropriate prompt under `instructions` /
+`review_instructions` keys on the bundle so skills don't have to know
+where the prompt lives. 14 prompt files total, sizes range from 365B
+(review_fanin) to 45KB (sysarch).
+
+### Deployment mount (landed after substrate)
+
+`backend/main.py` mounts `siege_mcp.server.app` at `/siege_mcp`. The
+new read-only surface ships alongside the old write surface during
+the migration. After Phase 4 deletion the mount moves to `/` and
+`backend/main.py` shrinks to project CRUD + auth login. `pyproject.toml`
+now includes `siege_mcp*` in the package glob and the substrate's
+tests in the pytest testpaths.
+
 ## Phase 2 — Downstream tiers ✅ LANDED (same caveat)
 
 The substrate already covers all 7 tiers — Phase 1 and Phase 2 share
