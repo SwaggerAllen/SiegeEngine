@@ -6,7 +6,6 @@ import { NavTree } from '../components/nav/NavTree';
 import { TabStrip } from '../components/nav/TabStrip';
 import { tabScope, type Tab } from '../components/nav/tabScope';
 import { useProject } from '../hooks/queries/useProjectQueries';
-import { useProjectEventStream } from '../hooks/queries/useProjectEventStream';
 import { useProjectStructure } from '../hooks/queries/useProjectStructure';
 import { useOpenReviewBatchMutation } from '../hooks/queries/useReviewBatch';
 import { describeApiError } from '../lib/describeApiError';
@@ -46,11 +45,11 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
   const { data: structure, error: navError } = useProjectStructure(projectId);
   const openReviewMutation = useOpenReviewBatchMutation(projectId);
 
-  // One EventSource per mounted project page. Drives all cache
-  // invalidations for this project; per-tier query hooks drop
-  // their ``refetchInterval`` polling because the stream is
-  // now the refetch trigger.
-  useProjectEventStream(projectId);
+  // Phase 3 migration: SSE event stream removed. Dashboard now
+  // reads on demand — user-initiated browser refresh or explicit
+  // refetch actions are the only ways state updates here. Live
+  // writes happen via Claude Code skills running on the user's
+  // device, not in the browser.
 
   // Desktop sidebar collapsed/expanded state. On mobile this also
   // controls the drawer; we reset it to closed on mount so mobile

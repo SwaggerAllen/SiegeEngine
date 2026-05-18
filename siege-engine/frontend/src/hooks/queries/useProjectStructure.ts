@@ -5,8 +5,15 @@ import * as structureApi from '../../api/structure';
  * Single source of truth for "what nodes/edges exist in this
  * project and what's their status." Replaces nav-tree,
  * decomposition-graph, responsibility-coverage, and every list
- * endpoint. Stays fresh via SSE-driven invalidation from
- * :func:`useProjectEventStream` — no polling.
+ * endpoint.
+ *
+ * Phase 3 migration: SSE invalidation is gone. The dashboard is a
+ * single-shot reader against the future MCP HTTP transport; user-
+ * initiated refresh (or another query firing a manual invalidation)
+ * is the only refetch trigger.
+ *
+ * FUTURE: MCP server endpoint /api/projects/:id/refs/:ref/structure;
+ * see docs/migration/mcp-surface.md
  */
 export const structureKeys = {
   all: ['structure'] as const,

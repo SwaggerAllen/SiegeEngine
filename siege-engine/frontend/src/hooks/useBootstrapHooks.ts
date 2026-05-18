@@ -4,17 +4,21 @@ import type { BootstrapResponse } from '../api/bootstrapApi';
 /**
  * Conditional refetch interval for per-tier detail queries.
  *
- * SSE drives refetches for committed events (draft / content /
- * offset advances), but attempt-counter progress is stashed on
- * the live Job row's payload and never produces an event. While
- * a tier is actively generating, poll every 2s so the
- * ``current_attempt`` / ``max_attempts`` fields stay fresh for
- * the generation spinner. Idle tiers stay push-only.
+ * Phase 3 migration: the SSE-driven dashboard is gone, and there
+ * is no live attempt counter to poll for either — generation runs
+ * inside Claude Code on the user's device, not on the server. This
+ * helper is now a no-op that always returns ``false`` so consumers
+ * keep typechecking while polling stays off. Will be removed
+ * outright when the per-tier query hooks are repointed at the new
+ * MCP HTTP endpoints in a follow-up patch.
  */
 export function runningRefetchInterval<
   T extends { generation_status?: string } | undefined,
->(query: Query<T, Error, T, readonly unknown[]>): number | false {
-  return query.state.data?.generation_status === 'running' ? 2000 : false;
+>(_query: Query<T, Error, T, readonly unknown[]>): number | false {
+  // Reference the parameter so eslint doesn't flag it; the
+  // generic signature has to stay for downstream typings.
+  void _query;
+  return false;
 }
 
 export interface BootstrapKeyFactory {
