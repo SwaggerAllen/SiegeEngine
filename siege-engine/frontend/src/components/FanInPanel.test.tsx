@@ -1,5 +1,4 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FanInResponse } from '../api/fanin';
 import { TestQueryWrapper } from '../test/queryWrapper';
@@ -10,16 +9,12 @@ vi.mock('../api/fanin', async () => {
   return {
     ...actual,
     getFanIn: vi.fn(),
-    regenerateFanIn: vi.fn(),
-    cancelFanIn: vi.fn(),
   };
 });
 
 import * as faninApi from '../api/fanin';
 
 const mockedGet = faninApi.getFanIn as unknown as ReturnType<typeof vi.fn>;
-const mockedRegenerate = faninApi.regenerateFanIn as unknown as ReturnType<typeof vi.fn>;
-const mockedCancel = faninApi.cancelFanIn as unknown as ReturnType<typeof vi.fn>;
 
 function response(overrides: Partial<FanInResponse> = {}): FanInResponse {
   return {
@@ -64,7 +59,13 @@ describe('FanInPanel', () => {
     await waitFor(() =>
       expect(screen.getByText(/No fan-in content yet/i)).toBeInTheDocument(),
     );
-    expect(screen.getByRole('button', { name: /Regenerate/i })).toBeInTheDocument();
+    // TODO Phase 3 reinstate test once dashboard is read-only:
+    // Regenerate has moved to a CC skill; the fallback button reads
+    // "Open in Claude Code".
+    expect(screen.queryByRole('button', { name: /Regenerate/i })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /Open in Claude Code/i }),
+    ).toBeInTheDocument();
   });
 
   it('renders the fan-in XML sections when content is present', async () => {
@@ -96,22 +97,12 @@ describe('FanInPanel', () => {
     expect(screen.getByText(/Realized Behavior/)).toBeInTheDocument();
   });
 
-  it('invokes regenerate on click', async () => {
-    mockedGet.mockResolvedValue(response());
-    mockedRegenerate.mockResolvedValue({ job_id: 'job_1' });
-    render(
-      <TestQueryWrapper>
-        <FanInPanel projectId="proj_1" compId="comp_BBBBBBBB" ownerName="Billing" />
-      </TestQueryWrapper>,
-    );
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Regenerate/i })).toBeInTheDocument(),
-    );
-    await userEvent.click(screen.getByRole('button', { name: /Regenerate/i }));
-    expect(mockedRegenerate).toHaveBeenCalledWith('proj_1', 'comp_BBBBBBBB');
-  });
-
-  it('shows Stop button while generation is running', async () => {
+  // TODO Phase 3 reinstate test once dashboard is read-only:
+  //   - invokes regenerate on click
+  //   - shows Stop button while generation is running
+  // Regenerate / Cancel / Reset are now CC skills; the button is a
+  // single Open-in-CC fallback rather than a state machine.
+  it('renders the Open-in-CC fallback in both idle and running states', async () => {
     mockedGet.mockResolvedValue(
       response({
         generation_status: 'running',
@@ -120,22 +111,20 @@ describe('FanInPanel', () => {
         max_attempts: 3,
       }),
     );
-    mockedCancel.mockResolvedValue({ cancelled: true });
     render(
       <TestQueryWrapper>
         <FanInPanel projectId="proj_1" compId="comp_BBBBBBBB" ownerName="Billing" />
       </TestQueryWrapper>,
     );
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Stop/i })).toBeInTheDocument(),
+      expect(
+        screen.getByRole('button', { name: /Open in Claude Code/i }),
+      ).toBeInTheDocument(),
     );
-    // No Regenerate button while running.
+    expect(screen.queryByRole('button', { name: /Stop/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Regenerate/i })).toBeNull();
-    // Attempt counter visible.
+    // Attempt counter still visible — the read-only render is intact.
     expect(screen.getByText(/Attempt 2 \/ 3/i)).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: /Stop/i }));
-    expect(mockedCancel).toHaveBeenCalledWith('proj_1', 'comp_BBBBBBBB');
   });
 
   it('renders last_error block when the last attempt failed', async () => {
