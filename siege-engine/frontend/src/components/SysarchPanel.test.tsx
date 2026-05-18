@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TestQueryWrapper } from '../test/queryWrapper';
 import { SysarchPanel } from './SysarchPanel';
@@ -22,9 +22,6 @@ vi.mock('../api/sysarch', async (importOriginal) => {
 import * as sysarchApi from '../api/sysarch';
 
 const mockedGet = sysarchApi.getSysarch as unknown as ReturnType<typeof vi.fn>;
-const mockedPostFeedback = sysarchApi.postFeedback as unknown as ReturnType<typeof vi.fn>;
-const mockedApprove = sysarchApi.approveDraft as unknown as ReturnType<typeof vi.fn>;
-const mockedReset = sysarchApi.resetSysarch as unknown as ReturnType<typeof vi.fn>;
 
 function renderPanel() {
   return render(
@@ -123,7 +120,14 @@ describe('SysarchPanel', () => {
     );
   });
 
-  it('renders pending draft with approve and reject-regenerate buttons', async () => {
+  // TODO Phase 3 reinstate test once dashboard is read-only:
+  //   - invokes approveDraft when Approve is clicked
+  //   - invokes feedback (empty) when Reject & Regenerate is clicked without feedback text
+  //   - sends typed feedback when Reject & Regenerate is clicked with feedback text
+  //   - reset button requires two-click confirm
+  // The merged Approve/Reject/Reset action surface is gone; equivalents
+  // are CC skills, not click handlers.
+  it('renders pending draft body with the Open-in-CC fallback', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -137,84 +141,17 @@ describe('SysarchPanel', () => {
 
     await waitFor(() => expect(screen.getByText('Authentication')).toBeInTheDocument());
     expect(screen.getByText('Foundation')).toBeInTheDocument();
-    // Foundation badge — identified by its title attribute
     expect(
       screen.getByTitle(/owns the root folder territory/i)
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Reject & Regenerate' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Approve/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reject & Regenerate' })).toBeNull();
+    expect(
+      screen.getAllByRole('button', { name: /Open in Claude Code/i }).length,
+    ).toBeGreaterThan(0);
   });
 
-  it('invokes approveDraft when Approve is clicked', async () => {
-    mockedGet.mockResolvedValue(
-      makeResponse({
-        pending_draft: {
-          id: 'draft_1',
-          content: SAMPLE_DRAFT,
-          created_at: '2026-04-13T00:00:00',
-        },
-      })
-    );
-    mockedApprove.mockResolvedValue({
-      id: 'sysarch_1',
-      name: 'System Architecture',
-      content: 'approved',
-      updated_at: '2026-04-13T00:00:00',
-    });
-
-    renderPanel();
-    const btn = await screen.findByRole('button', { name: /Approve/i });
-    fireEvent.click(btn);
-
-    await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith('proj_1', 'draft_1'));
-  });
-
-  it('invokes feedback (empty) when Reject & Regenerate is clicked without feedback text', async () => {
-    mockedGet.mockResolvedValue(
-      makeResponse({
-        pending_draft: {
-          id: 'draft_1',
-          content: SAMPLE_DRAFT,
-          created_at: '2026-04-13T00:00:00',
-        },
-      })
-    );
-    mockedPostFeedback.mockResolvedValue({ job_id: 'job_1' });
-
-    renderPanel();
-    const btn = await screen.findByRole('button', { name: 'Reject & Regenerate' });
-    fireEvent.click(btn);
-
-    // The merged button calls onFeedback with empty string when no
-    // feedback text is typed — the handler always uses the prior
-    // draft as starting point, and empty feedback just means
-    // "do-over without guidance."
-    await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', ''));
-  });
-
-  it('sends typed feedback when Reject & Regenerate is clicked with feedback text', async () => {
-    mockedGet.mockResolvedValue(
-      makeResponse({
-        pending_draft: {
-          id: 'draft_1',
-          content: SAMPLE_DRAFT,
-          created_at: '2026-04-13T00:00:00',
-        },
-      })
-    );
-    mockedPostFeedback.mockResolvedValue({ job_id: 'job_1' });
-
-    renderPanel();
-    const textarea = await screen.findByPlaceholderText(/Split Billing/i);
-    fireEvent.change(textarea, { target: { value: 'Split Billing into two' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject & Regenerate' }));
-
-    await waitFor(() =>
-      expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', 'Split Billing into two')
-    );
-  });
-
-  it('renders approved content as read-only with reset button', async () => {
+  it('renders approved content as read-only with Open-in-CC reset', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         node: {
@@ -229,56 +166,29 @@ describe('SysarchPanel', () => {
 
     await waitFor(() => expect(screen.getByText('Authentication')).toBeInTheDocument());
     expect(screen.getByText(/Approved · read-only/i)).toBeInTheDocument();
-    // The sysarch panel wires onReset, so the reset button should be visible.
-    expect(screen.getByRole('button', { name: /Reset & Regenerate/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reset & Regenerate/i })).toBeNull();
+    // The reset affordance remains as an Open-in-CC fallback.
+    expect(
+      screen.getAllByRole('button', { name: /Open in Claude Code/i }).length,
+    ).toBeGreaterThan(0);
   });
 
-  it('reset button requires two-click confirm', async () => {
-    mockedGet.mockResolvedValue(
-      makeResponse({
-        node: {
-          id: 'sysarch_1',
-          name: 'System Architecture',
-          content: SAMPLE_DRAFT,
-          updated_at: '2026-04-13T00:00:00',
-        },
-      })
-    );
-    mockedReset.mockResolvedValue({
-      ok: true,
-      nodes_deleted: 5,
-      drafts_discarded: 1,
-      jobs_cancelled: 2,
-    });
-
-    renderPanel();
-    // First click: the button text changes to the confirm prompt.
-    const resetBtn = await screen.findByRole('button', { name: /Reset & Regenerate/i });
-    fireEvent.click(resetBtn);
-    expect(screen.getByRole('button', { name: /Confirm reset/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument();
-
-    // Second click: actually fires the reset.
-    fireEvent.click(screen.getByRole('button', { name: /Confirm reset/i }));
-    await waitFor(() => expect(mockedReset).toHaveBeenCalledWith('proj_1'));
-  });
-
-  it('shows an error banner with Retry when generation failed and no content', async () => {
+  it('shows an error banner with Open-in-CC when generation failed and no content', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         generation_status: 'failed',
         last_error: 'parse error',
       })
     );
-    mockedPostFeedback.mockResolvedValue({ job_id: 'job_retry' });
     renderPanel();
 
     await waitFor(() =>
       expect(screen.getByText(/Generation failed/i)).toBeInTheDocument()
     );
     expect(screen.getByText(/parse error/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /Retry/i }));
-    await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', ''));
+    expect(screen.queryByRole('button', { name: /^Retry$/i })).toBeNull();
+    expect(
+      screen.getAllByRole('button', { name: /Open in Claude Code/i }).length,
+    ).toBeGreaterThan(0);
   });
 });

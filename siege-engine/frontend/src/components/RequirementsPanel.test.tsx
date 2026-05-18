@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TestQueryWrapper } from '../test/queryWrapper';
 import { RequirementsPanel } from './RequirementsPanel';
@@ -16,8 +16,6 @@ vi.mock('../api/requirements', () => ({
 import * as reqsApi from '../api/requirements';
 
 const mockedGet = reqsApi.getRequirements as unknown as ReturnType<typeof vi.fn>;
-const mockedPostFeedback = reqsApi.postFeedback as unknown as ReturnType<typeof vi.fn>;
-const mockedApprove = reqsApi.approveDraft as unknown as ReturnType<typeof vi.fn>;
 
 function renderPanel() {
   return render(
@@ -72,7 +70,12 @@ describe('RequirementsPanel', () => {
     );
   });
 
-  it('renders pending draft with approve/discard/regenerate actions', async () => {
+  // TODO Phase 3 reinstate test once dashboard is read-only:
+  //   - renders pending draft with approve/discard/regenerate actions
+  //   - invokes approveDraft when Approve is clicked
+  //   - invokes feedback (empty) when Reject & Regenerate is clicked without feedback
+  //   - sends feedback to postFeedback when Reject & Regenerate is clicked with feedback
+  it('renders the pending draft body with the Open-in-CC fallback', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         pending_draft: {
@@ -84,78 +87,12 @@ describe('RequirementsPanel', () => {
       })
     );
     renderPanel();
-
     await waitFor(() => expect(screen.getByText('identify users')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /Approve/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Reject & Regenerate' })).toBeInTheDocument();
-  });
-
-  it('invokes approveDraft when Approve is clicked', async () => {
-    mockedGet.mockResolvedValue(
-      makeResponse({
-        pending_draft: {
-          id: 'draft_1',
-          content:
-            '<requirements><responsibility><name>ok scope</name><feats/></responsibility></requirements>',
-          created_at: '2026-04-13T00:00:00',
-        },
-      })
-    );
-    mockedApprove.mockResolvedValue({
-      id: 'reqs_1',
-      name: 'Requirements',
-      content: 'approved',
-      updated_at: '2026-04-13T00:00:00',
-    });
-
-    renderPanel();
-    const btn = await screen.findByRole('button', { name: /Approve/i });
-    fireEvent.click(btn);
-
-    await waitFor(() => expect(mockedApprove).toHaveBeenCalledWith('proj_1', 'draft_1'));
-  });
-
-  it('invokes feedback (empty) when Reject & Regenerate is clicked without feedback', async () => {
-    mockedGet.mockResolvedValue(
-      makeResponse({
-        pending_draft: {
-          id: 'draft_1',
-          content:
-            '<requirements><responsibility><name>ok scope</name><feats/></responsibility></requirements>',
-          created_at: '2026-04-13T00:00:00',
-        },
-      })
-    );
-    mockedPostFeedback.mockResolvedValue({ job_id: 'job_1' });
-
-    renderPanel();
-    const btn = await screen.findByRole('button', { name: 'Reject & Regenerate' });
-    fireEvent.click(btn);
-
-    await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', ''));
-  });
-
-  it('sends feedback to postFeedback when Reject & Regenerate is clicked with feedback', async () => {
-    mockedGet.mockResolvedValue(
-      makeResponse({
-        pending_draft: {
-          id: 'draft_1',
-          content:
-            '<requirements><responsibility><name>ok scope</name><feats/></responsibility></requirements>',
-          created_at: '2026-04-13T00:00:00',
-        },
-      })
-    );
-    mockedPostFeedback.mockResolvedValue({ job_id: 'job_1' });
-
-    renderPanel();
-    const textarea = await screen.findByPlaceholderText(/Add rate limiting/i);
-    fireEvent.change(textarea, { target: { value: 'Add rate limiting' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Reject & Regenerate' }));
-
-    await waitFor(() =>
-      expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', 'Add rate limiting')
-    );
+    expect(screen.queryByRole('button', { name: /Approve/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reject & Regenerate' })).toBeNull();
+    expect(
+      screen.getAllByRole('button', { name: /Open in Claude Code/i }).length,
+    ).toBeGreaterThan(0);
   });
 
   it('renders approved content as read-only', async () => {
@@ -176,22 +113,24 @@ describe('RequirementsPanel', () => {
     expect(screen.getByText(/Approved · read-only/i)).toBeInTheDocument();
   });
 
-  it('shows an error banner with Retry when generation failed and no content', async () => {
+  it('shows an error banner with Open-in-CC when generation failed and no content', async () => {
     mockedGet.mockResolvedValue(
       makeResponse({
         generation_status: 'failed',
         last_error: 'timeout after 900s',
       })
     );
-    mockedPostFeedback.mockResolvedValue({ job_id: 'job_retry' });
     renderPanel();
 
     await waitFor(() =>
       expect(screen.getByText(/Generation failed/i)).toBeInTheDocument()
     );
     expect(screen.getByText(/timeout after 900s/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /Retry/i }));
-    await waitFor(() => expect(mockedPostFeedback).toHaveBeenCalledWith('proj_1', ''));
+    // TODO Phase 3 reinstate test once dashboard is read-only:
+    // Retry is gone, the fallback is the Open-in-Claude-Code button.
+    expect(screen.queryByRole('button', { name: /^Retry$/i })).toBeNull();
+    expect(
+      screen.getAllByRole('button', { name: /Open in Claude Code/i }).length,
+    ).toBeGreaterThan(0);
   });
 });

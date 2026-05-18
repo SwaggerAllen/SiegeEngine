@@ -294,57 +294,29 @@ function TelemetryLine({ telemetry }: { telemetry: BootstrapPanelTelemetry | nul
  * reset — nukes downstream state" in red background) is enough
  * to make the destructive nature obvious.
  */
-function ResetApprovedStateControl({
-  onReset,
-  isBusy,
-}: {
+function ResetApprovedStateControl(_props: {
   onReset: () => void;
   isBusy: boolean;
 }) {
-  const [confirming, setConfirming] = useState(false);
+  // TODO Phase 3: replace with deep-link to the per-tier reset
+  // skill in CC (e.g. /reset-<tier> <node_id>). Backend write
+  // surface is going away; this is a placeholder so the layout
+  // still shows the "destructive reset lives here" affordance.
+  void _props;
   return (
     <div className="pt-4 border-t border-gray-800 flex items-center gap-3 flex-wrap">
-      {confirming ? (
-        <>
-          <button
-            type="button"
-            onClick={() => {
-              onReset();
-              setConfirming(false);
-            }}
-            disabled={isBusy}
-            className="px-4 py-2 text-sm rounded bg-red-700 hover:bg-red-600 disabled:opacity-40"
-          >
-            Confirm reset — this will delete all downstream state
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirming(false)}
-            disabled={isBusy}
-            className="px-4 py-2 text-sm rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40"
-          >
-            Cancel
-          </button>
-        </>
-      ) : (
-        <>
-          <button
-            type="button"
-            onClick={() => setConfirming(true)}
-            disabled={isBusy}
-            className="px-4 py-2 text-sm rounded border border-red-900 text-red-300 hover:bg-red-950 disabled:opacity-40"
-            title="Destructively reset this approved doc and all state minted from its approval"
-          >
-            Reset &amp; Regenerate
-          </button>
-          <span className="text-xs text-gray-500">
-            Deletes every downstream component, policy, and pending
-            draft this approval minted, then regenerates
-            against the current prompt. Upstream state (features,
-            top-level responsibilities) is untouched.
-          </span>
-        </>
-      )}
+      <button
+        type="button"
+        disabled
+        className="px-4 py-2 text-sm rounded border border-red-900 text-red-300/60 cursor-not-allowed"
+        title="Open the reset flow in Claude Code"
+      >
+        Open in Claude Code
+      </button>
+      <span className="text-xs text-gray-500">
+        Destructive reset moved to Claude Code skills — invoke the per-tier
+        reset skill there. The dashboard is read-only.
+      </span>
     </div>
   );
 }
@@ -536,20 +508,11 @@ export function BootstrapDraftPanel({
   docKind,
   extraTabs,
 }: Props) {
-  const [feedback, setFeedback] = useState('');
-  // Phase 12 auto-revision count for this regen run. 0 = default
-  // behavior (one generate, user reviews). > 0 opts into
-  // AI-driven revision passes on the backend generate job.
-  // Ephemeral by design: resets on mount and on every submit so
-  // the user sets it per-run rather than discovering a sticky
-  // multiplier they forgot about.
-  const [autoRevisionsRequested, setAutoRevisionsRequested] = useState(0);
-  const MAX_AUTO_REVISIONS_UI = 5;
-  // Formatted prose pushed up from the AI-review checkbox UI.
-  // Empty string means "no findings selected (or no parsed
-  // review yet)". Rebuilds on every checkbox toggle so the
-  // Reject & Regenerate click always sees the latest set.
-  const [reviewSelection, setReviewSelection] = useState('');
+  // Phase 3 migration: feedback textarea + auto-revision counter
+  // dropped along with their button. ``setReviewSelection`` is
+  // kept as a no-op sink so the DocumentReviewTabs API contract
+  // stays satisfied; the captured selection isn't consumed.
+  const [, setReviewSelection] = useState('');
 
   if (isLoading) {
     return <div className="p-6 text-gray-400 text-sm">{labels.loadingMessage}</div>;
@@ -610,29 +573,6 @@ export function BootstrapDraftPanel({
     isBusy: callbacks.isBusy,
   };
 
-  const submitFeedback = () => {
-    // Combines the two feedback sources into one regen payload:
-    // the user's textarea prose at the top (if any) followed by
-    // the formatted checked findings from the AI review (if
-    // any). Either source can be empty — an empty payload still
-    // gives the LLM a do-over with the pending draft visible as
-    // ``prior_pending``. This folds the former "Apply selected
-    // as feedback" button (review-only regen) into the Reject &
-    // Regenerate affordance so both sources always land in the
-    // same regeneration context.
-    const userPart = feedback.trim();
-    const reviewPart = reviewSelection.trim();
-    let combined: string;
-    if (userPart && reviewPart) {
-      combined = `${userPart}\n\nSelected AI-review findings:\n\n${reviewPart}`;
-    } else {
-      combined = userPart || reviewPart;
-    }
-    callbacks.onFeedback(combined, autoRevisionsRequested);
-    setFeedback('');
-    setAutoRevisionsRequested(0);
-  };
-
   // State 1: generating, no pending draft yet.
   if (generation_status === 'running' && !pending_draft) {
     return (
@@ -648,15 +588,16 @@ export function BootstrapDraftPanel({
             maxAttempts={max_attempts}
             variant="block"
           />
+          {/* TODO Phase 3: replace with deep-link to /cancel-<tier>
+              in CC. Backend cancel route is going away. */}
           <button
             type="button"
-            onClick={callbacks.onCancel}
-            disabled={callbacks.isBusy}
-            className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
-            title="Stop this generation and return to the previous state"
+            disabled
+            className="px-4 py-2 text-sm rounded border border-red-900 text-red-300/60 cursor-not-allowed"
+            title="Open in Claude Code to manage the generation"
             data-testid="generation-stop-button"
           >
-            Stop
+            Open in Claude Code
           </button>
         </div>
       </div>
@@ -679,15 +620,16 @@ export function BootstrapDraftPanel({
                   currentAttempt={current_attempt}
                   maxAttempts={max_attempts}
                 />
+                {/* TODO Phase 3: replace with deep-link to
+                    /cancel-<tier> in CC. */}
                 <button
                   type="button"
-                  onClick={callbacks.onCancel}
-                  disabled={callbacks.isBusy}
-                  className="px-3 py-1 text-xs rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
-                  title="Stop this regeneration and return to the previous draft"
+                  disabled
+                  className="px-3 py-1 text-xs rounded border border-red-900 text-red-300/60 cursor-not-allowed"
+                  title="Open in Claude Code to manage the regeneration"
                   data-testid="generation-stop-button"
                 >
-                  Stop
+                  Open in Claude Code
                 </button>
               </div>
             )}
@@ -718,99 +660,26 @@ export function BootstrapDraftPanel({
           <TelemetryLine telemetry={latest_telemetry} />
         </div>
         <div className="sticky bottom-0 bg-gray-950 border-t border-gray-800 p-4 space-y-3">
-          <label className="block text-xs text-gray-400">
-            Feedback for regeneration (optional)
-          </label>
-          <textarea
-            className="w-full h-20 bg-gray-900 border border-gray-700 rounded p-2 text-sm"
-            placeholder={labels.feedbackPlaceholder}
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-            disabled={callbacks.isBusy || isRegenerating}
-          />
+          {/* TODO Phase 3: Approve / Reject & Regenerate / AI-revisions
+              all migrated to Claude Code skills. The equivalent CC
+              entry points are /approve-<tier> <node_id> and
+              /regen-<tier>-with-feedback <node_id>. The pending draft
+              + AI review render above as read-only. */}
           <div className="flex gap-2 flex-wrap items-center">
             <button
               type="button"
-              onClick={() => callbacks.onApprove(pending_draft.id)}
-              disabled={callbacks.isBusy || isRegenerating}
-              className="px-4 py-2 text-sm rounded bg-green-700 hover:bg-green-600 disabled:opacity-40"
+              disabled
+              className="px-4 py-2 text-sm rounded border border-gray-700 text-gray-400 cursor-not-allowed"
+              title="Approve and regenerate flows have moved to Claude Code skills"
             >
-              Approve
+              Open in Claude Code
             </button>
-            <button
-              type="button"
-              onClick={submitFeedback}
-              disabled={callbacks.isBusy || isRegenerating}
-              className="px-4 py-2 text-sm rounded bg-red-900 hover:bg-red-800 disabled:opacity-40"
-              title={
-                'Regenerate this draft. The LLM sees the current draft as ' +
-                'its starting point, plus any textarea feedback above and ' +
-                'the findings checked on the Review tab.'
-              }
-            >
-              Reject &amp; Regenerate
-            </button>
-            <label
-              className="text-xs text-gray-400 flex items-center gap-1"
-              title={
-                'Number of AI-driven revision passes to run after the ' +
-                'initial generation. Each pass runs the review and feeds ' +
-                'its findings back as feedback. 0 = one draft, you review.'
-              }
-            >
-              AI revisions:
-              <div className="inline-flex items-stretch">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAutoRevisionsRequested((v) => Math.max(0, v - 1))
-                  }
-                  disabled={
-                    callbacks.isBusy ||
-                    isRegenerating ||
-                    autoRevisionsRequested <= 0
-                  }
-                  aria-label="Decrease auto-revision passes"
-                  className="px-1.5 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-900 disabled:text-gray-600 border border-gray-700 rounded-l text-xs text-gray-200"
-                >
-                  −
-                </button>
-                <input
-                  type="number"
-                  min={0}
-                  max={MAX_AUTO_REVISIONS_UI}
-                  value={autoRevisionsRequested}
-                  onChange={(e) => {
-                    const raw = Number(e.target.value);
-                    const clamped = Math.max(
-                      0,
-                      Math.min(MAX_AUTO_REVISIONS_UI, Number.isFinite(raw) ? raw : 0),
-                    );
-                    setAutoRevisionsRequested(clamped);
-                  }}
-                  disabled={callbacks.isBusy || isRegenerating}
-                  aria-label="Auto-revision passes"
-                  className="w-10 bg-gray-900 border-y border-gray-700 px-1 py-1 text-xs text-gray-200 text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                />
-                <button
-                  type="button"
-                  onClick={() =>
-                    setAutoRevisionsRequested((v) =>
-                      Math.min(MAX_AUTO_REVISIONS_UI, v + 1),
-                    )
-                  }
-                  disabled={
-                    callbacks.isBusy ||
-                    isRegenerating ||
-                    autoRevisionsRequested >= MAX_AUTO_REVISIONS_UI
-                  }
-                  aria-label="Increase auto-revision passes"
-                  className="px-1.5 bg-gray-800 hover:bg-gray-700 disabled:bg-gray-900 disabled:text-gray-600 border border-gray-700 rounded-r text-xs text-gray-200"
-                >
-                  +
-                </button>
-              </div>
-            </label>
+            <span className="text-xs text-gray-500">
+              Approve / Reject & Regenerate / AI revisions moved to CC
+              skills — invoke /approve-{labels.draftHeading.toLowerCase()}{' '}
+              or /regen-{labels.draftHeading.toLowerCase()}-with-feedback
+              there.
+            </span>
             <CopyButton content={pending_draft.content} />
           </div>
         </div>
@@ -828,13 +697,15 @@ export function BootstrapDraftPanel({
           {last_error && <div className="text-red-400/80">{last_error}</div>}
         </div>
         <div className="flex gap-2 items-center flex-wrap">
+          {/* TODO Phase 3: replace with deep-link to /draft-<tier>
+              <node_id> in CC. */}
           <button
             type="button"
-            onClick={callbacks.onRetry}
-            disabled={callbacks.isBusy}
-            className="px-4 py-2 text-sm rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
+            disabled
+            className="px-4 py-2 text-sm rounded border border-blue-900 text-blue-300/60 cursor-not-allowed"
+            title="Retry generation in Claude Code"
           >
-            Retry
+            Open in Claude Code
           </button>
           {failed_raw_output && (
             <CopyButton
@@ -888,21 +759,24 @@ export function BootstrapDraftPanel({
   }
 
   // State 3b: node exists but has no content and no pending draft —
-  // pre-bootstrap empty state. Also the state the user lands in
-  // after stopping an initial generation that had no prior draft,
-  // so we include a "Generate" button to kick a fresh run.
+  // pre-bootstrap empty state. Generation kicks off from CC skills
+  // in the new architecture; the dashboard surfaces the empty state
+  // and tells the user where to go.
   return (
     <div className="p-6 space-y-4 max-w-4xl mx-auto">
       <h2 className="text-lg font-semibold">{node.name}</h2>
       {docMeta}
       <div className="text-sm text-gray-400 italic">No approved content yet.</div>
+      {/* TODO Phase 3: replace with deep-link to /draft-<tier>
+          <node_id> in CC. The Generate button used to enqueue a
+          backend job; that route is going away. */}
       <button
         type="button"
-        onClick={callbacks.onRetry}
-        disabled={callbacks.isBusy}
-        className="px-4 py-2 text-sm rounded bg-blue-700 hover:bg-blue-600 disabled:opacity-40"
+        disabled
+        className="px-4 py-2 text-sm rounded border border-blue-900 text-blue-300/60 cursor-not-allowed"
+        title="Generation happens in Claude Code now — invoke the draft skill there"
       >
-        Generate
+        Open in Claude Code
       </button>
     </div>
   );

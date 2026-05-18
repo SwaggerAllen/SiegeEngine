@@ -1,12 +1,6 @@
 import { useMemo, useState } from 'react';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  generateFullCorpus,
-  listCohorts,
-  patchCohort,
-  regenerateCohort,
-  type Cohort,
-} from '../api/cohorts';
+import { useQueries, useQuery } from '@tanstack/react-query';
+import { listCohorts, type Cohort } from '../api/cohorts';
 import {
   getTierReviewSummary,
   listBatches,
@@ -84,52 +78,15 @@ export function CohortsPanel({ projectId }: Props) {
 function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort }) {
   const [expanded, setExpanded] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [statusMsg, setStatusMsg] = useState<string | null>(null);
-  // Fresh-mode regen optionally rolls into a new exploration sample —
-  // user-controlled count, persisted across re-renders. 0 = canonical
-  // only, no exploration.
-  const [freshExplorationCount, setFreshExplorationCount] = useState(5);
-  const queryClient = useQueryClient();
-  const archiveMutation = useMutation({
-    mutationFn: () => patchCohort(projectId, cohort.id, { archived: !cohort.archived }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cohorts', projectId] });
-    },
-  });
 
-  const regenMutation = useMutation({
-    mutationFn: ({ mode, explorationCount }: { mode: 'fresh' | 'review'; explorationCount: number }) =>
-      regenerateCohort(projectId, cohort.id, mode, explorationCount),
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['cohorts', projectId] });
-      const skipText = result.scopes_skipped.length
-        ? ` (${result.scopes_skipped.length} skipped)`
-        : '';
-      const wipedText =
-        result.mode === 'fresh' && (result.nodes_wiped ?? 0) > 0
-          ? `, wiped ${result.nodes_wiped} tier nodes`
-          : '';
-      const expl = result.experimental;
-      let explText = '';
-      if (result.mode === 'fresh') {
-        if (expl?.ok && (expl.picked_comp_ids?.length ?? 0) > 0) {
-          explText = ` · experimental swapped to ${result.experimental_comp_ids.length} comp(s)`;
-        } else if (expl && !expl.ok) {
-          explText = ` (experimental skipped: ${expl.detail ?? 'unknown'})`;
-        }
-      }
-      setStatusMsg(
-        `Started ${result.mode} cycle: batch ${result.batch_id.slice(0, 14)}…, ` +
-          `${result.scopes_succeeded}/${result.scopes_total} scopes enqueued${skipText}${wipedText}${explText}.`,
-      );
-    },
-    onError: (err: unknown) => {
-      setStatusMsg(`Regenerate failed: ${err instanceof Error ? err.message : String(err)}`);
-    },
-  });
-
-  const isRegenerating = regenMutation.isPending;
-
+  // Phase 3 migration: cohort archive + cycle (review/fresh) regen
+  // moved to Claude Code skills. The dashboard renders the saved
+  // cohort metadata + cycle history; mutations no longer fire from
+  // the browser.
+  // TODO Phase 3: deep-link each disabled button to its CC skill:
+  //   - Archive             → /archive-cohort <cohort_id>
+  //   - New cycle (review)  → /cohort-cycle-review <cohort_id>
+  //   - New cycle (fresh)   → /cohort-cycle-fresh <cohort_id> <expl_count>
   return (
     <li className="px-4 py-3 flex flex-col gap-2" data-testid={`cohort-row-${cohort.id}`}>
       <div className="flex flex-wrap items-center gap-3">
@@ -153,52 +110,15 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
         </div>
         <div className="flex items-center gap-2">
           {!cohort.archived && cohort.comp_ids.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={() => regenMutation.mutate({ mode: 'review', explorationCount: 0 })}
-                disabled={isRegenerating}
-                title="Regenerate the cohort's working set (canonical + active-explored) with prior_review_text feeding forward"
-                className="px-2 py-1 text-xs rounded bg-blue-700 hover:bg-blue-600 text-white disabled:opacity-40"
-                data-testid={`cohort-row-${cohort.id}-regen-review`}
-              >
-                {isRegenerating ? 'Starting…' : 'New cycle (review)'}
-              </button>
-              <label
-                className="text-xs text-gray-400 flex items-center gap-1"
-                title="Number of new exploration comps to baseline alongside the canonical fresh regen. 0 = canonical only."
-              >
-                +
-                <input
-                  type="number"
-                  min={0}
-                  max={50}
-                  value={freshExplorationCount}
-                  onChange={(e) =>
-                    setFreshExplorationCount(Math.max(0, Number(e.target.value) || 0))
-                  }
-                  disabled={isRegenerating}
-                  className="w-12 bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-200"
-                  data-testid={`cohort-row-${cohort.id}-fresh-exploration-count`}
-                />
-                expl
-              </label>
-              <button
-                type="button"
-                onClick={() =>
-                  regenMutation.mutate({
-                    mode: 'fresh',
-                    explorationCount: freshExplorationCount,
-                  })
-                }
-                disabled={isRegenerating}
-                title="Wipe content for every comp at this tier project-wide; pick N new experimental comps (replaces the prior set on the cohort); regen canonical + new experimental."
-                className="px-2 py-1 text-xs rounded border border-amber-800 text-amber-200 hover:bg-amber-950 disabled:opacity-40"
-                data-testid={`cohort-row-${cohort.id}-regen-fresh`}
-              >
-                {isRegenerating ? 'Starting…' : 'New cycle (fresh)'}
-              </button>
-            </>
+            <button
+              type="button"
+              disabled
+              className="px-2 py-1 text-xs rounded border border-blue-800 text-blue-200/60 cursor-not-allowed"
+              title="New cycle moved to Claude Code — invoke /cohort-cycle-review or /cohort-cycle-fresh there"
+              data-testid={`cohort-row-${cohort.id}-regen-cycle`}
+            >
+              Open in Claude Code · New cycle
+            </button>
           )}
           <button
             type="button"
@@ -216,19 +136,15 @@ function CohortRow({ projectId, cohort }: { projectId: string; cohort: Cohort })
           </button>
           <button
             type="button"
-            onClick={() => archiveMutation.mutate()}
-            disabled={archiveMutation.isPending}
-            className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
+            disabled
+            className="px-2 py-1 text-xs rounded border border-gray-700 text-gray-400 cursor-not-allowed"
+            title="Archive moved to Claude Code — invoke /archive-cohort there"
+            data-testid={`cohort-row-${cohort.id}-archive`}
           >
-            {cohort.archived ? 'Unarchive' : 'Archive'}
+            {cohort.archived ? 'Unarchive · CC' : 'Archive · CC'}
           </button>
         </div>
       </div>
-      {statusMsg && (
-        <div className="text-xs text-emerald-400" data-testid={`cohort-row-${cohort.id}-message`}>
-          {statusMsg}
-        </div>
-      )}
       {expanded && (
         <ul className="text-[11px] font-mono text-gray-400 ml-3 list-disc">
           {cohort.comp_ids.map((id) => (
@@ -364,86 +280,36 @@ function DeltaCell({ value }: { value: number | null }) {
 }
 
 function SubcompCampaignActions({
-  projectId,
   cohorts,
 }: {
   projectId: string;
   cohorts: Cohort[];
 }) {
-  const [fullCorpusConfirm, setFullCorpusConfirm] = useState(false);
-  const [statusMsg, setStatusMsg] = useState<string | null>(null);
-
   // Active cohort drives the campaign tier — full-corpus runs at
   // the active cohort's tier on the backend.
   const activeCohort = cohorts.find((c) => !c.archived);
   const campaignTier = activeCohort?.tier ?? 'comparch';
-  const fullCorpusMutation = useMutation({
-    mutationFn: () => generateFullCorpus(projectId, campaignTier),
-    onSuccess: (result) => {
-      setFullCorpusConfirm(false);
-      setStatusMsg(
-        `Full corpus (${campaignTier}): ${result.scopes_succeeded}/${result.scopes_total} scopes enqueued ` +
-          `(batch ${result.batch_id.slice(0, 14)}…).`,
-      );
-    },
-    onError: (err: unknown) => {
-      setStatusMsg(`Full corpus failed: ${err instanceof Error ? err.message : String(err)}`);
-    },
-  });
 
-  const isBusy = fullCorpusMutation.isPending;
-
+  // TODO Phase 3: deep-link Full corpus to /full-corpus <tier> in CC.
   return (
     <div className="rounded border border-gray-800 bg-gray-950/40 p-3 text-xs space-y-2">
       <div className="font-medium text-gray-200">Campaign actions ({campaignTier})</div>
       <div className="text-gray-500">
-        Experimental set is managed by the Fresh button on each cohort
-        row — set <code className="text-gray-300">+expl N</code> there
-        to swap in N new random comps (and wipe content for every
-        comp at the tier first). Review iterates the working set
-        (canonical + experimental) without touching either.
+        Experimental set is managed by the cohort's New cycle skill in
+        Claude Code — see the per-row Open-in-CC fallback. Review iterates
+        the working set without touching either.
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {fullCorpusConfirm ? (
-          <>
-            <button
-              type="button"
-              onClick={() => fullCorpusMutation.mutate()}
-              disabled={isBusy}
-              className="px-2 py-1 rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-40"
-              data-testid="cohorts-full-corpus-confirm"
-            >
-              {fullCorpusMutation.isPending
-                ? 'Regenerating all…'
-                : `Confirm: regenerate every ${campaignTier} scope`}
-            </button>
-            <button
-              type="button"
-              onClick={() => setFullCorpusConfirm(false)}
-              disabled={isBusy}
-              className="px-2 py-1 rounded border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-40"
-            >
-              Cancel
-            </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setFullCorpusConfirm(true)}
-            disabled={isBusy}
-            title="Regenerate every scope at the active cohort's tier from scratch — final-sweep escape hatch"
-            className="px-2 py-1 rounded border border-red-900 text-red-300 hover:bg-red-950 disabled:opacity-40"
-            data-testid="cohorts-full-corpus"
-          >
-            Full corpus
-          </button>
-        )}
+        <button
+          type="button"
+          disabled
+          className="px-2 py-1 rounded border border-red-900 text-red-300/60 cursor-not-allowed"
+          title={`Full corpus moved to Claude Code — invoke /full-corpus ${campaignTier} there`}
+          data-testid="cohorts-full-corpus"
+        >
+          Open in Claude Code · Full corpus
+        </button>
       </div>
-      {statusMsg && (
-        <div className="text-emerald-400" data-testid="cohorts-campaign-message">
-          {statusMsg}
-        </div>
-      )}
     </div>
   );
 }
