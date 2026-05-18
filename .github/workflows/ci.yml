@@ -116,4 +116,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: pytest
+      # -ra prints a per-test summary at the end (failures, skipped,
+      # xfails) so we can read what went wrong from the GitHub job
+      # output without needing log access.
+      - run: pytest -ra --tb=short

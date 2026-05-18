@@ -69,8 +69,15 @@ describe('ProjectSettingsPage', () => {
   it('loads the current timeout converted to minutes', async () => {
     mockedGet.mockResolvedValue(defaultSettings());
     renderPage();
-    const input = (await screen.findByLabelText(/Generation timeout/i)) as HTMLInputElement;
-    expect(input.value).toBe('15');
+    // findByLabelText resolves when the element is in the DOM, but
+    // the input's value comes from an async settings fetch hydrating
+    // a controlled input — locally fast, in CI the value is still
+    // empty by the time findByLabelText returns. waitFor pins to the
+    // actual condition we care about.
+    await waitFor(() => {
+      const input = screen.getByLabelText(/Generation timeout/i) as HTMLInputElement;
+      expect(input.value).toBe('15');
+    });
   });
 
   it('converts minutes back to seconds when saving', async () => {
