@@ -49,6 +49,9 @@ jobs:
               -e SIEGE_CORS_ORIGINS='["https://${{ secrets.DROPLET_IP }}","https://siege.strutco.io"]' \
               -e SIEGE_DATABASE_URL=sqlite:////data/siege_engine.db \
               -e SIEGE_GIT_REPOS_BASE_PATH=/data/repos \
+              -e SIEGE_GITHUB_CLIENT_ID=${{ secrets.SIEGE_GITHUB_CLIENT_ID }} \
+              -e SIEGE_GITHUB_CLIENT_SECRET=${{ secrets.SIEGE_GITHUB_CLIENT_SECRET }} \
+              -e SIEGE_GITHUB_REDIRECT_URI=https://siege.strutco.io/github/callback \
               siege-engine:latest
             docker image prune -f
             rm -rf /tmp/siege-deploy

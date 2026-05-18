@@ -41,9 +41,12 @@ def github_authorize(user: User = Depends(get_current_user)):
     state = secrets.token_urlsafe(32)
     _oauth_states[user.id] = {"state": state, "created_at": time.time()}
 
-    # Build redirect URI from configured CORS origin (the frontend URL)
-    redirect_uri = ""
-    if settings.cors_origins:
+    # Build redirect URI. Explicit override wins; otherwise fall back
+    # to the first CORS origin. Production deploys with multiple CORS
+    # origins (droplet IP + hostname) should set SIEGE_GITHUB_REDIRECT_URI
+    # to match the GitHub OAuth app's registered callback.
+    redirect_uri = settings.github_redirect_uri
+    if not redirect_uri and settings.cors_origins:
         redirect_uri = f"{settings.cors_origins[0].rstrip('/')}/github/callback"
 
     url = f"{GITHUB_AUTHORIZE_URL}?client_id={settings.github_client_id}&scope=repo&state={state}"

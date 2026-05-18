@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # GitHub OAuth
     github_client_id: str = ""
     github_client_secret: str = ""
+    # Optional explicit OAuth redirect URI. Defaults to
+    # `cors_origins[0] + "/github/callback"` when unset, which is the
+    # right shape for a single-origin deploy. Set explicitly when CORS
+    # carries multiple origins (e.g. a droplet IP + a friendly
+    # hostname) and the OAuth app is registered against the friendly
+    # one.
+    github_redirect_uri: str = ""
 
     # Server
     cors_origins: list[str] = ["http://localhost:5173"]
