@@ -710,3 +710,20 @@ the meaning-engine logic moved into `siege_mcp/tiers/`. The
 prompt text lives at `siege_mcp/prompts/<tier>.md` (extracted
 verbatim from the old `backend/graph/prompts/*.py` modules);
 edit there, not in the old backend.
+
+## Cheat sheet (load-bearing docs)
+
+`docs/cheatsheet.md` is the workflow + slash command reference
+users hit at `siege.strutco.io/cheatsheet`. The frontend page
+is `frontend/src/pages/CheatsheetPage.tsx`; it fetches the
+markdown from `/siege_mcp/api/cheatsheet` (open endpoint, no
+auth — see `siege_mcp/server.py`).
+
+**Keep it current.** When you add a slash command, ship a new
+skill, rename one, or change a workflow, update
+`docs/cheatsheet.md` in the same commit. The cheat sheet is
+the only place where users learn the system without reading
+source — drift here is worse than missing tests because users
+silently get a wrong mental model. If you find yourself
+explaining a workflow in chat or in a PR description, that
+explanation belongs in the cheat sheet first.
