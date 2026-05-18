@@ -31,6 +31,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from siege_mcp import tools
@@ -136,6 +137,53 @@ def cheatsheet() -> dict[str, str]:
     if not _CHEATSHEET_PATH.exists():
         return {"markdown": "# Cheat sheet missing\n\nExpected at docs/cheatsheet.md."}
     return {"markdown": _CHEATSHEET_PATH.read_text(encoding="utf-8")}
+
+
+# ---------------- Bootstrap script (open, no auth) ----------------
+#
+# Mobile Claude Code doesn't support `/plugin install`, so users on
+# mobile need a per-project-repo seed of .mcp.json + .claude/commands/
+# + .claude/skills/. This endpoint serves the bootstrap script that
+# does that seeding; users (or Claude on their behalf) run:
+#
+#     curl -fsSL https://siege.strutco.io/bootstrap.sh | bash
+#
+# from inside their project repo. The script clones SiegeEngine
+# shallowly and mirrors the plugin contents into the project. Auth-
+# free intentionally — discoverable + scriptable.
+
+# The script lives one directory up from siege-engine/, alongside the
+# project root (`/home/user/SiegeEngine/scripts/`). In the deployed
+# container the layout collapses; we resolve relative to the package
+# and fall back to a few known candidate paths so dev + prod both
+# work without hard-coding.
+_BOOTSTRAP_CANDIDATES = (
+    Path(__file__).resolve().parent.parent / "scripts" / "siege-bootstrap.sh",
+    Path("/app/scripts/siege-bootstrap.sh"),
+)
+
+
+def _resolve_bootstrap_path() -> Path | None:
+    for candidate in _BOOTSTRAP_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+@app.get("/bootstrap.sh")
+def bootstrap_script() -> PlainTextResponse:
+    path = _resolve_bootstrap_path()
+    if path is None:
+        return PlainTextResponse(
+            "# siege-bootstrap.sh not found on server — see\n"
+            "# https://github.com/swaggerallen/siegeengine/blob/main/scripts/siege-bootstrap.sh\n",
+            status_code=500,
+            media_type="text/x-shellscript",
+        )
+    return PlainTextResponse(
+        path.read_text(encoding="utf-8"),
+        media_type="text/x-shellscript",
+    )
 
 
 @app.post("/api/list-refs")

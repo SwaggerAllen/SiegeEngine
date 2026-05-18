@@ -12,9 +12,10 @@ it raw; the frontend at `/cheatsheet` renders it as markdown.
 
 ## TL;DR
 
-1. **Setup once**: `/plugin install swaggerallen/siegeengine` from
-   Claude Code. Plugin install persists to your CC config — you do
-   not have to re-run this per chat.
+1. **Setup once**: on desktop CC, `/plugin install swaggerallen/siegeengine`.
+   On mobile CC (no `/plugin` support), run
+   `curl -fsSL https://siege.strutco.io/bootstrap.sh | bash` inside
+   the project repo and commit the changes.
 2. **Bootstrap a fresh project**: `/scaffold` from inside a CC
    session opened on the project repo. Walks features → requirements
    → sysarch end-to-end.
@@ -144,19 +145,46 @@ at `<tier>/<id>/body.md` next to its `review.md`. State JSON carries
 
 Full schema: `docs/migration/state-schema.md`.
 
-## Plugin install (one-time)
+## Install (one-time)
+
+### Desktop Claude Code (laptop / CLI)
 
 ```text
 /plugin install swaggerallen/siegeengine
 ```
 
-The MCP server endpoint is configured in the plugin manifest:
-`https://siege.strutco.io/siege_mcp/mcp`. The plugin also bundles
-all the slash commands + skills + per-tier generator subagents.
+Installs persist across CC sessions on the same device.
 
-Plugin installs persist across CC sessions on the same device. If
-you're switching laptops or browser profiles, run install again
-there.
+### Mobile Claude Code (no `/plugin` support yet)
+
+From inside the project repo you want to drive (in a CC session
+that has shell access, or by asking Claude to run it for you):
+
+```bash
+curl -fsSL https://siege.strutco.io/bootstrap.sh | bash
+```
+
+The bootstrap:
+
+- Writes `.mcp.json` pointing at `https://siege.strutco.io/siege_mcp/mcp`
+- Mirrors `.claude/commands/`, `.claude/skills/`, and `.claude/agents/`
+  from the SiegeEngine repo (5 slash commands, 25 skills, 7 per-tier
+  generator subagents)
+- Adds a "Working with SiegeEngine" section to `CLAUDE.md`
+
+Then commit + push the new files. Mobile CC will pick them up the
+next time it opens the repo — no plugin install required.
+
+**Auth**: this page (when you're logged in) shows your JWT at the
+top in a copy-paste-ready `export SIEGE_TOKEN=…` form. Paste it into
+your shell; add it to `~/.bashrc` / `~/.zshrc` to persist across
+sessions. The `.mcp.json` the bootstrap writes references
+`${SIEGE_TOKEN}` so CC's MCP client substitutes it at request time.
+Tokens last 30 days — come back here when one expires.
+
+Re-run the bootstrap any time to pull the latest commands + skills
+into the project repo. The script is idempotent and only touches the
+SiegeEngine-managed files.
 
 ## Common gotchas
 

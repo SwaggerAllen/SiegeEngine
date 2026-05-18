@@ -33,6 +33,13 @@ COPY backend/ ./backend/
 # `python -m siege_mcp.server`.
 COPY siege_mcp/ ./siege_mcp/
 
+# Bootstrap script served at /bootstrap.sh — lets project repos seed
+# .mcp.json + .claude/ for mobile CC (which doesn't support /plugin install).
+COPY scripts/ ./scripts/
+
+# Docs the MCP server reads at runtime (cheat sheet endpoint).
+COPY docs/ ./docs/
+
 # Copy Alembic migration files
 COPY alembic.ini ./
 COPY alembic/ ./alembic/

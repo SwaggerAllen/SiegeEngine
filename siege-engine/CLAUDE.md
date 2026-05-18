@@ -719,6 +719,15 @@ is `frontend/src/pages/CheatsheetPage.tsx`; it fetches the
 markdown from `/siege_mcp/api/cheatsheet` (open endpoint, no
 auth — see `siege_mcp/server.py`).
 
+The bootstrap script (`scripts/siege-bootstrap.sh`, served at
+`/bootstrap.sh`) is the mobile-CC on-ramp: it mirrors the
+plugin's `.claude-plugin/commands/`, `.claude-plugin/skills/`,
+and `.claude-plugin/agents/` into a target project repo as
+`.claude/commands/`, `.claude/skills/`, `.claude/agents/`,
+plus a `.mcp.json`. Mobile CC auto-discovers these without a
+plugin install. Update the script (and the cheat sheet's
+install section) if the on-ramp shape changes.
+
 **Keep it current.** When you add a slash command, ship a new
 skill, rename one, or change a workflow, update
 `docs/cheatsheet.md` in the same commit. The cheat sheet is

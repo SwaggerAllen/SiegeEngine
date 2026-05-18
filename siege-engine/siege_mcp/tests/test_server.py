@@ -47,6 +47,26 @@ def test_healthz_open():
     assert r.json() == {"status": "ok"}
 
 
+def test_cheatsheet_open():
+    r = _client().get("/api/cheatsheet")
+    assert r.status_code == 200
+    body = r.json()
+    assert "markdown" in body
+    # Sanity-check the rendered content has the canonical headings.
+    assert "SiegeEngine cheat sheet" in body["markdown"]
+    assert "/scaffold" in body["markdown"]
+
+
+def test_bootstrap_script_open():
+    r = _client().get("/bootstrap.sh")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/x-shellscript")
+    assert r.text.startswith("#!/usr/bin/env bash")
+    # Sanity-check: must reference the MCP URL placeholder + the marker.
+    assert "MCP_URL" in r.text
+    assert "siege-bootstrap: BEGIN" in r.text
+
+
 def test_missing_auth_401():
     r = _client().post(
         "/api/validate-artifact",
