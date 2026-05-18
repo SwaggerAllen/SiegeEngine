@@ -8,25 +8,29 @@ JSON-RPC error envelope.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta
 
-# Configure auth BEFORE importing the server so settings pick up the secret.
-os.environ.setdefault("SIEGE_JWT_SECRET_KEY", "test-secret")
+from fastapi.testclient import TestClient
+from jose import jwt
 
-from fastapi.testclient import TestClient  # noqa: E402
-from jose import jwt  # noqa: E402
-
-from siege_mcp.server import app  # noqa: E402
+from siege_mcp.config import settings
+from siege_mcp.server import app
 
 
-def _token(secret: str = "test-secret") -> str:
+def _token() -> str:
+    """Sign with whatever secret the loaded settings already hold.
+
+    The settings singleton is materialized at import time, so a tests-only
+    os.environ tweak can't change it once other tests have caused
+    ``siege_mcp.config`` to load. Reading ``settings.jwt_secret_key`` here
+    keeps the test robust to import order across the full pytest run.
+    """
     payload = {
         "sub": "u1",
         "username": "u",
         "exp": datetime.utcnow() + timedelta(hours=1),
     }
-    return jwt.encode(payload, secret, algorithm="HS256")
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
 def _client() -> TestClient:

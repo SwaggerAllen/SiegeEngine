@@ -25,6 +25,7 @@ For local dev:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -222,8 +223,8 @@ def http_validate_artifact(
     return tools.validate_artifact(
         req.project_id,
         req.ref,
-        req.tier,
-        req.body,  # type: ignore[arg-type]
+        req.tier,  # type: ignore[arg-type]
+        req.body,
     )
 
 
@@ -244,7 +245,7 @@ class MCPCall(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
-_MCP_DISPATCH = {
+_MCP_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "list_refs": tools.list_refs,
     "get_state": tools.get_state,
     "list_tier": tools.list_tier,
