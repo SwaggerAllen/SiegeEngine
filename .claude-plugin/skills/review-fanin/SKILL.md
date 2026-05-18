@@ -36,11 +36,18 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 4. **Validate inline.** Run `parse_review` mentally — if any section
    is missing or empty, fix and re-emit.
 5. **Write the review** to `fanin/$comp_id/review.md`.
-6. **Update state JSON** at `state/fanin/$comp_id.json`:
-   - Set `status` to `"reviewed"`
-   - Set `review.body_path`, `review.body_sha256`, `review.reviewed_at`,
-     `review.score` (extract from `<score>`), `review.reviewer_metadata`
-   - Bump `nonce`
+6. **Materialize state JSON** via the CLI (re-parses the review to
+   pull score + intro; refuses if the file isn't valid):
+
+   ```bash
+   python -m siege_mcp.cli write-review \
+     --repo . \
+     --tier fanin \
+     --comp-id "$comp_id" \
+     --review-path fanin/$comp_id/review.md
+   ```
+
+   Stdout is `{state_path, score, intro_first_sentence}` JSON.
 7. **Stage both files**, commit:
    `review(fanin/$id): score=<N> — <intro first sentence>`
 8. **Push.**

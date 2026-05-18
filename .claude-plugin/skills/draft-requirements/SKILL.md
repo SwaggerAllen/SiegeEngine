@@ -30,15 +30,21 @@ one commit (artifact body + state JSON together).
    If `ok` is false, treat the errors as feedback and re-run step 2
    (loop up to 3 times). If still failing, stop and surface the errors.
 4. **Write the body file** to `requirements/$comp_id/body.md`.
-5. **Update or create the state JSON** at `state/requirements/$comp_id.json`:
-   - Set `status` to `"drafted"`
-   - Set `draft.body_path`, `draft.body_sha256` (sha256 of the body bytes),
-     `draft.generated_at` (UTC ISO-8601), `draft.generator_metadata`
-     (carry `thinking_effort` + `batch_id` if running under one),
-     `draft.prior_review_text` (if any)
-   - Mint a fresh ULID-shaped `nonce`
-   - Carry forward `edges` + `meta` if present, otherwise emit empty
-     blocks
+5. **Materialize state JSON** via the CLI (handles sha256, nonce, prior-
+   review carry-forward, edges/meta preservation):
+
+   ```bash
+   python -m siege_mcp.cli write-draft \
+     --repo . \
+     --tier requirements \
+     --comp-id "$comp_id" \
+     --body-path requirements/$comp_id/body.md \
+     --thinking-effort max \
+     --batch-id "$batch_id"
+   ```
+
+   The CLI runs validate_artifact again as a safety net and refuses to
+   write state if it fails. Stdout is `{state_path, body_sha256}` JSON.
 6. **Stage both files**, commit with message:
    `draft(requirements/$id): <one-line summary>`
 7. **Push** with `git push -u origin $ref` (retry on network failure
