@@ -175,10 +175,12 @@ The bootstrap:
 Then commit + push the new files. Mobile CC will pick them up the
 next time it opens the repo — no plugin install required.
 
-**Auth**: export `SIEGE_TOKEN` (your JWT from `siege.strutco.io`) in
-the shell environment so `.mcp.json`'s `Authorization: Bearer
-${SIEGE_TOKEN}` header is populated. Add it to `~/.bashrc` /
-`~/.zshrc` to persist.
+**Auth**: this page (when you're logged in) shows your JWT at the
+top in a copy-paste-ready `export SIEGE_TOKEN=…` form. Paste it into
+your shell; add it to `~/.bashrc` / `~/.zshrc` to persist across
+sessions. The `.mcp.json` the bootstrap writes references
+`${SIEGE_TOKEN}` so CC's MCP client substitutes it at request time.
+Tokens last 30 days — come back here when one expires.
 
 Re-run the bootstrap any time to pull the latest commands + skills
 into the project repo. The script is idempotent and only touches the

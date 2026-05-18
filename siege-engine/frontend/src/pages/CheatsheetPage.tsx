@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Markdown from 'react-markdown';
+import DevTokenPanel from '../components/DevTokenPanel';
 
 /**
  * Renders the SiegeEngine workflow + slash command cheat sheet.
@@ -48,6 +49,7 @@ export default function CheatsheetPage() {
         </Link>
       </header>
       <main className="max-w-4xl mx-auto px-6 py-8">
+        <DevTokenPanel />
         {error && (
           <div className="rounded border border-red-800 bg-red-950/40 p-4 text-sm">
             Failed to load: {error}
