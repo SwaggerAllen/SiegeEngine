@@ -6,7 +6,7 @@
   "homepage": "https://github.com/swaggerallen/siegeengine",
   "mcp_servers": {
     "siegeengine": {
-      "url": "https://siegeengine.dev/mcp",
+      "url": "https://siege.strutco.io/siege_mcp/mcp",
       "transport": "http",
       "description": "Read-only project state + context bundles + validation. Every tool takes a `ref` (branch or sha) as its first parameter."
     }

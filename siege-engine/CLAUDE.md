@@ -653,10 +653,60 @@ delegating. Not a code change.
 
 ## Deployment
 
-- **Fly.io**: deploys from `siege-engine/fly.toml`, region `iad`.
-- **CD**: `.github/workflows/deploy.yml` — deploys on push to
-  `main` via `flyctl deploy --remote-only`.
+- **DigitalOcean droplet** via ssh + docker. Public hostname
+  `siege.strutco.io`. One container (`siege-engine:latest`)
+  runs `uvicorn backend.main:app` on port 8000, mapped to droplet
+  :80. Two named volumes: `siege_data:/data` (SQLite + git repo
+  cache) and `claude_config:/home/claude/.claude` (CLI auth
+  state). Env vars threaded via the deploy workflow:
+  `SIEGE_ANTHROPIC_API_KEY`, `SIEGE_JWT_SECRET_KEY`,
+  `SIEGE_CORS_ORIGINS`, `SIEGE_DATABASE_URL`,
+  `SIEGE_GIT_REPOS_BASE_PATH`.
+- **CD**: `.github/workflows/deploy.yml` — on push to `main`:
+  scp `siege-engine/` to the droplet, ssh in, `docker build`,
+  `docker stop && docker rm && docker run`. `docker image prune`
+  at the end. Build arg `COMMIT_HASH` threads the short sha
+  through to the running container.
 - **CI**: `.github/workflows/ci.yml` runs on PRs only (frontend
-  typecheck/test/build, backend lint/typecheck/test). CI and
-  deploy are decoupled — merging to main triggers deploy
-  regardless of CI.
+  typecheck/test/build/lint, backend lint/typecheck/test). CI
+  and deploy are decoupled — merging to main triggers deploy
+  regardless of CI status. Backend lint + typecheck cover both
+  `backend/` and `siege_mcp/`; pytest picks up
+  `siege_mcp/tests/` via the `testpaths` entry in
+  `pyproject.toml`.
+
+## MCP server + git-backed state (in-flight migration)
+
+A separate package `siege_mcp/` is shipping under the same
+deploy as the old backend, mounted at `/siege_mcp` on the
+FastAPI app (see `backend/main.py`). It serves a read-only
+view of project state stored in git (per-scope `state/<tier>/
+<id>.json` + `<tier>/<id>/body.md`), with HTTP routes under
+`/siege_mcp/api/*` and a JSON-RPC MCP transport at
+`/siege_mcp/mcp`. The Claude Code plugin manifest at the repo
+root's `.claude-plugin/plugin.json` points there.
+
+Writes happen via Claude Code skills (in `.claude-plugin/
+skills/`) that compose the artifact with the LLM, shell out
+to `python -m siege_mcp.cli write-draft` (and its siblings:
+`write-review`, `write-approval`, `repair-drift`,
+`mint-batch`) to materialize the state JSON, then commit +
+push. No write endpoints on the server.
+
+The migration is staged: Phase 0 (schema + plugin scaffold),
+Phase 1+2 (substrate + 7 tiers' worth of skills + slash
+commands + per-tier generator subagents), Phase 3 (frontend
+retarget — queue/SSE deletion + branch selector + action-
+surface cuts) have landed. Phase 4 (deletion of the old
+SQLAlchemy + job-queue + LLM-subprocess stack, ~30K LOC) is
+documented at `docs/migration/deletion-inventory.md` but
+NOT executed — gated on end-to-end CC validation against
+the deployed `/siege_mcp` surface. The full per-phase status
+is at `docs/migration/status.md`; the original plan is at
+`/root/.claude/plans/pure-crafting-marshmallow.md`.
+
+Don't add new code to `backend/graph/` for new features —
+the meaning-engine logic moved into `siege_mcp/tiers/`. The
+prompt text lives at `siege_mcp/prompts/<tier>.md` (extracted
+verbatim from the old `backend/graph/prompts/*.py` modules);
+edit there, not in the old backend.
