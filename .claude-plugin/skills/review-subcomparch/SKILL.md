@@ -36,18 +36,48 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 4. **Validate inline.** Run `parse_review` mentally — if any section
    is missing or empty, fix and re-emit.
 5. **Write the review** to `subcomparch/$parent_id/subs/$sub_id/review.md`.
-6. **Materialize state JSON** via the CLI (re-parses the review to
-   pull score + intro; refuses if the file isn't valid):
+6. **Materialize state JSON inline** (pure `python3` stdlib). Extracts
+   `<score>` and `<intro>` from the review with a regex, computes
+   sha256, updates state JSON's `review` block, bumps nonce. Refuses
+   to write if `<score>` is missing or out of range, or if state
+   isn't in `drafted`:
 
    ```bash
-   python -m siege_mcp.cli write-review \
-     --repo . \
-     --tier subcomparch \
-     --parent-id "$parent_id" --sub-id "$sub_id" \
-     --review-path subcomparch/$parent_id/subs/$sub_id/review.md
+   REVIEW_PATH=subcomparch/$parent_id/subs/$sub_id/review.md
+   STATE_PATH=state/subcomparch/$parent_id/$sub_id.json
+   python3 - "$REVIEW_PATH" "$STATE_PATH" <<'PY'
+import hashlib, json, re, secrets, sys, time
+review_path, state_path = sys.argv[1:3]
+review = open(review_path).read()
+m = re.search(r"<score>\s*(\d+)\s*</score>", review)
+if not m:
+    sys.exit("error: <score> missing or unparseable in review")
+score = int(m.group(1))
+if not 0 <= score <= 100:
+    sys.exit(f"error: <score> out of range 0..100: {score}")
+intro_m = re.search(r"<intro>(.*?)</intro>", review, re.DOTALL)
+intro = (intro_m.group(1) if intro_m else "").strip()
+if not intro:
+    sys.exit("error: <intro> missing or empty")
+state = json.loads(open(state_path).read())
+if state.get("status") != "drafted":
+    sys.exit(f"error: cannot review a scope with status={state.get('status')!r}")
+sha = hashlib.sha256(review.encode()).hexdigest()
+nonce_bits = secrets.randbits(128)
+alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
+state["nonce"] = "".join(reversed([alphabet[(nonce_bits >> (5*i)) & 0x1F] for i in range(26)]))
+state["status"] = "reviewed"
+state["review"] = {
+    "body_path": review_path,
+    "body_sha256": sha,
+    "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    "score": score,
+    "reviewer_metadata": {},
+}
+open(state_path, "w").write(json.dumps(state, indent=2, sort_keys=True) + "\n")
+print(json.dumps({"state_path": state_path, "score": score, "intro_first_sentence": intro.split(".", 1)[0]}))
+PY
    ```
-
-   Stdout is `{state_path, score, intro_first_sentence}` JSON.
 7. **Stage both files**, commit:
    `review(subcomparch/$id): score=<N> — <intro first sentence>`
 8. **Push.**
