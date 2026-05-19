@@ -204,6 +204,27 @@ Re-run the bootstrap any time to pull the latest commands + skills
 into the project repo. The script is idempotent and only touches the
 SiegeEngine-managed files.
 
+## Troubleshooting
+
+When MCP calls from CC fail with a clone error like "Clone of
+`<repo>` requires authentication", the three things to check are
+already on this page when you're logged in — see the **Auth
+diagnostic** panel near the top:
+
+- **JWT sub** — the user id the MCP server sees on every request.
+- **Dashboard user (`/auth/me`)** — confirms the same JWT resolves
+  to a real user server-side. A mismatch with `sub` means you have
+  two accounts; log out, log back in as the right user, copy the
+  new `SIEGE_TOKEN` from the **Your dev token** panel.
+- **GitHub connected** — confirms a `GitHubCredential` row exists
+  for this user. Without one, private-repo clones from the MCP
+  server fail. Connect via **Project Settings → GitHub
+  connection** on any project.
+
+The "refresh" button on the diagnostic panel re-runs the checks
+without reloading the page, so you can verify a fresh re-authorize
+landed.
+
 ## Common gotchas
 
 - **Don't push to a branch you don't own.** Skills target whatever
