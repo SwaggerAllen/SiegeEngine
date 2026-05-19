@@ -145,6 +145,42 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/debug/mcp-auth")
+def debug_mcp_auth(
+    project_id: str | None = None,
+    _claims: dict[str, Any] = Depends(_require_token),
+) -> dict[str, Any]:
+    """Show what the MCP-side auth lookup sees for the current request.
+
+    Counterpart to `/api/github/status` — that one tells you what the
+    DASHBOARD's session sees, this one tells you what the MCP server's
+    request context sees through the exact code path a tool call
+    would take. If the dashboard says you're connected but this
+    endpoint reports `has_token: false`, the bug is in
+    siege_mcp.auth_lookup (or the context propagation), not in the
+    OAuth flow.
+
+    Never returns the raw token — only a prefix and length, enough
+    to distinguish "no token" from "wrong token" without leaking.
+    """
+    from siege_mcp.auth_context import current_user_id
+    from siege_mcp.auth_lookup import lookup_project_auth
+
+    user_id = current_user_id()
+    auth = lookup_project_auth(project_id or "__missing__", user_id)
+    token = auth.access_token
+    return {
+        "user_id_from_context": user_id,
+        "user_id_in_claims": _claims.get("sub"),
+        "context_matches_claims": user_id == _claims.get("sub"),
+        "project_id_queried": project_id,
+        "project_remote_url": auth.remote_url,
+        "has_token": bool(token),
+        "token_prefix": (token[:6] + "…") if token else None,
+        "token_length": len(token) if token else 0,
+    }
+
+
 # ---------------- Bootstrap script (open, no auth) ----------------
 #
 # Mobile Claude Code doesn't support `/plugin install`, so users on

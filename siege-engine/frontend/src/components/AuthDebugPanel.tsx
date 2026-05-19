@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import { fetchGitHubStatus, type GitHubStatus } from '../api/github';
 import { useAuthStore } from '../store/authStore';
+
+interface McpAuthDebug {
+  user_id_from_context: string | null;
+  user_id_in_claims: string | null;
+  context_matches_claims: boolean;
+  project_id_queried: string | null;
+  project_remote_url: string | null;
+  has_token: boolean;
+  token_prefix: string | null;
+  token_length: number;
+}
 
 /**
  * Live diagnostic panel for the auth wiring the MCP server depends on:
@@ -27,13 +39,23 @@ export default function AuthDebugPanel() {
   const [meError, setMeError] = useState<string | null>(null);
   const [gh, setGh] = useState<GitHubStatus | null>(null);
   const [ghError, setGhError] = useState<string | null>(null);
+  const [mcp, setMcp] = useState<McpAuthDebug | null>(null);
+  const [mcpError, setMcpError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Pick up the project_id from the URL if we're on a project-scoped
+  // route; cheatsheet has no project context so the MCP lookup runs
+  // with a dummy id (still validates the user lookup, just can't tell
+  // us the per-project remote_url).
+  const { id: projectIdFromRoute } = useParams<{ id?: string }>();
+  const projectId = projectIdFromRoute ?? null;
 
   const refresh = useCallback(async () => {
     if (!isAuthenticated) return;
     setBusy(true);
     setMeError(null);
     setGhError(null);
+    setMcpError(null);
     await Promise.all([
       (async () => {
         try {
@@ -60,9 +82,26 @@ export default function AuthDebugPanel() {
           );
         }
       })(),
+      (async () => {
+        try {
+          // The MCP server lives at /siege_mcp on the same origin;
+          // hit its debug endpoint directly (not via the /api axios
+          // base) and pass the same bearer token.
+          const url = projectId
+            ? `/siege_mcp/api/debug/mcp-auth?project_id=${encodeURIComponent(projectId)}`
+            : '/siege_mcp/api/debug/mcp-auth';
+          const r = await fetch(url, {
+            headers: { Authorization: `Bearer ${token ?? ''}` },
+          });
+          if (!r.ok) throw new Error(`${r.status}`);
+          setMcp((await r.json()) as McpAuthDebug);
+        } catch (err: unknown) {
+          setMcpError(err instanceof Error ? err.message : 'unknown');
+        }
+      })(),
     ]);
     setBusy(false);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, projectId, token]);
 
   useEffect(() => {
     void refresh();
@@ -139,6 +178,40 @@ export default function AuthDebugPanel() {
             No <code>GitHubCredential</code> row for this user. Private-repo clones from MCP will
             fail with "Clone of … requires authentication" until you complete the OAuth flow on a
             project's Settings page.
+          </div>
+        )}
+
+        <Row
+          label={`MCP token lookup${projectId ? ` (project: ${projectId})` : ''}`}
+          value={
+            mcpError
+              ? `error: ${mcpError}`
+              : mcp
+              ? mcp.has_token
+                ? `${mcp.token_prefix} (${mcp.token_length} chars)` +
+                  (mcp.project_remote_url ? ` · remote: ${mcp.project_remote_url}` : '')
+                : 'NO TOKEN — MCP server sees user but no GitHubCredential row'
+              : 'loading…'
+          }
+          tone={mcpError ? 'err' : mcp ? (mcp.has_token ? 'ok' : 'warn') : 'idle'}
+        />
+
+        {mcp && !mcp.has_token && gh?.connected && (
+          <div className="rounded border border-red-800 bg-red-950/40 p-2 text-xs text-red-200">
+            <strong>Inconsistency:</strong> the dashboard says you're connected to GitHub, but the
+            MCP server's lookup can't find a token for the same user. Either the request context
+            isn't propagating the user id correctly, or the dashboard's view is stale (a deploy
+            mid-flight, two server instances disagreeing, etc.). Try the refresh button; if it
+            persists, file an issue with this panel's contents.
+          </div>
+        )}
+
+        {mcp && mcp.context_matches_claims === false && (
+          <div className="rounded border border-red-800 bg-red-950/40 p-2 text-xs text-red-200">
+            <strong>Context propagation bug:</strong> the JWT claims say{' '}
+            <code>{mcp.user_id_in_claims}</code> but the ContextVar inside the tool handler holds{' '}
+            <code>{mcp.user_id_from_context ?? '(none)'}</code>. siege_mcp's user_id_context
+            handling is broken.
           </div>
         )}
       </div>
