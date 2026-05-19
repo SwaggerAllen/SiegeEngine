@@ -75,15 +75,39 @@ class _ProjectClone:
                 self._fetch_debounce[ref] = d
             return d
 
-    def ensure_cloned(self, remote_url: str | None) -> None:
+    def ensure_cloned(self, remote_url: str | None, access_token: str | None = None) -> None:
         if (self.path / ".git").exists():
             return
         if not remote_url:
             raise GitViewError(
                 f"Project {self.project_id} clone missing and no remote_url provided"
             )
+        # For HTTPS GitHub URLs, inject the OAuth token into the URL
+        # so the clone authenticates against private repos. Git stores
+        # the credentialed URL in `.git/config` so subsequent `git
+        # fetch origin` calls reuse the same auth — no separate
+        # credential helper needed. The token sits on the container's
+        # filesystem at /data/repos/<project>/.git/config; that's
+        # acceptable for v0 (single-tenant droplet, claude-user
+        # ownership).
+        clone_url = _maybe_inject_token(remote_url, access_token)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        run_git(["clone", remote_url, str(self.path)], cwd=None)
+        try:
+            run_git(["clone", clone_url, str(self.path)], cwd=None)
+        except GitViewError as exc:
+            # Sanitize the error in case the credentialed URL leaked
+            # into the stderr message — git usually scrubs it, but be
+            # defensive.
+            scrubbed = (
+                str(exc).replace(clone_url, remote_url) if clone_url != remote_url else str(exc)
+            )
+            if access_token is None and "could not read Username" in scrubbed:
+                raise GitViewError(
+                    f"Clone of {remote_url} requires authentication. "
+                    "Connect your GitHub account on Project Settings → GitHub connection "
+                    "and retry, or make the repository public."
+                ) from exc
+            raise GitViewError(scrubbed) from exc
 
     def fetch_ref(self, ref: str) -> None:
         debounce = self._debounce_for(ref)
@@ -159,6 +183,23 @@ class _ProjectClone:
                 return []
             raise GitViewError(f"git ls-tree failed: {stderr.strip()}")
         return [line for line in result.stdout.decode("utf-8").splitlines() if line]
+
+
+def _maybe_inject_token(remote_url: str, access_token: str | None) -> str:
+    """For an https://github.com/... URL, inject the OAuth token as basic auth.
+
+    Returns the URL unchanged when the token is empty, the URL isn't
+    https, or the URL already has credentials in it.
+    """
+    if not access_token:
+        return remote_url
+    if not remote_url.startswith("https://"):
+        return remote_url
+    # Don't double-inject if the URL already has @ credentials.
+    after_scheme = remote_url[len("https://") :]
+    if "@" in after_scheme.split("/", 1)[0]:
+        return remote_url
+    return f"https://x-access-token:{access_token}@" + after_scheme
 
 
 def run_git(args: list[str], cwd: Path | None) -> str:
@@ -288,8 +329,9 @@ class GitViewCache:
         project_id: str,
         ref: str,
         remote_url: str | None = None,
+        access_token: str | None = None,
     ) -> GitView:
-        clone = self._get_or_make_clone(project_id, remote_url)
+        clone = self._get_or_make_clone(project_id, remote_url, access_token)
         clone.fetch_ref(ref)
         head_sha = clone.resolve_ref(ref)
         key = (project_id, ref, head_sha)
@@ -302,18 +344,28 @@ class GitViewCache:
             self._evict_idle_locked()
         return view
 
-    def list_refs(self, project_id: str, remote_url: str | None = None) -> list[RefInfo]:
-        clone = self._get_or_make_clone(project_id, remote_url)
+    def list_refs(
+        self,
+        project_id: str,
+        remote_url: str | None = None,
+        access_token: str | None = None,
+    ) -> list[RefInfo]:
+        clone = self._get_or_make_clone(project_id, remote_url, access_token)
         return clone.list_refs()
 
-    def _get_or_make_clone(self, project_id: str, remote_url: str | None) -> _ProjectClone:
+    def _get_or_make_clone(
+        self,
+        project_id: str,
+        remote_url: str | None,
+        access_token: str | None = None,
+    ) -> _ProjectClone:
         with self._lock:
             clone = self._clones.get(project_id)
             if clone is None:
                 base = Path(settings.git_repos_base_path)
                 clone = _ProjectClone(project_id, base)
                 self._clones[project_id] = clone
-        clone.ensure_cloned(remote_url)
+        clone.ensure_cloned(remote_url, access_token=access_token)
         return clone
 
     def _evict_idle_locked(self) -> None:

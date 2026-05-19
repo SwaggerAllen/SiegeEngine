@@ -25,7 +25,7 @@ For local dev:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from siege_mcp import tools
 from siege_mcp.auth import AuthError, verify_request_token
+from siege_mcp.auth_context import user_id_context
 from siege_mcp.config import settings
 
 logger = logging.getLogger(__name__)
@@ -44,11 +45,25 @@ logger = logging.getLogger(__name__)
 # ---------------- Auth dependency ----------------
 
 
-def _require_token(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def _require_token(
+    authorization: str | None = Header(default=None),
+) -> Iterator[dict[str, Any]]:
+    """Verify the JWT and bind the user id to the request context.
+
+    Generator dependency so the contextvar set in the pre-yield block
+    is reset cleanly after the route runs. FastAPI's
+    ``run_in_threadpool`` copies the active context into the worker
+    thread, so ``current_user_id()`` works inside the tool functions
+    even though they run off the event loop.
+    """
     try:
-        return verify_request_token(authorization)
+        claims = verify_request_token(authorization)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    sub = claims.get("sub")
+    user_id = str(sub) if sub else None
+    with user_id_context(user_id):
+        yield claims
 
 
 # ---------------- Request models ----------------

@@ -17,6 +17,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from siege_mcp.auth_context import current_user_id
+from siege_mcp.auth_lookup import lookup_project_auth
+from siege_mcp.git_view import GitView
 from siege_mcp.git_view import cache as view_cache
 from siege_mcp.review_summary import build_review_summary
 from siege_mcp.state import Scope, Tier, dump_state
@@ -25,8 +28,33 @@ from siege_mcp.tiers import GENERATION_BUILDERS, REVIEW_BUILDERS
 from siege_mcp.validate import validate_artifact as _validate
 
 
+def _open_view(project_id: str, ref: str, remote_url: str | None = None) -> GitView:
+    """Open a GitView with auth resolved from the current request context.
+
+    Looks up the project's stored remote_url (caller can override via
+    the `remote_url` arg, useful for list_refs's optional override) and
+    the current user's GitHub OAuth token. Both are passed through to
+    the view cache; missing values degrade to "no auth" (public repos
+    keep working, private repos surface a clear error).
+    """
+    user_id = current_user_id()
+    db_auth = lookup_project_auth(project_id, user_id)
+    return view_cache.get_view(
+        project_id,
+        ref,
+        remote_url=remote_url or db_auth.remote_url,
+        access_token=db_auth.access_token,
+    )
+
+
 def list_refs(project_id: str, remote_url: str | None = None) -> dict[str, Any]:
-    refs = view_cache.list_refs(project_id, remote_url=remote_url)
+    user_id = current_user_id()
+    db_auth = lookup_project_auth(project_id, user_id)
+    refs = view_cache.list_refs(
+        project_id,
+        remote_url=remote_url or db_auth.remote_url,
+        access_token=db_auth.access_token,
+    )
     return {
         "refs": [
             {"name": r.name, "head_sha": r.head_sha, "head_subject": r.head_subject} for r in refs
@@ -42,7 +70,7 @@ def get_state(
     parent_id: str | None = None,
     sub_id: str | None = None,
 ) -> dict[str, Any]:
-    view = view_cache.get_view(project_id, ref)
+    view = _open_view(project_id, ref)
     scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
     state = view.get_state(scope)
     if state is None:
@@ -75,7 +103,7 @@ def list_tier(
     approved: bool | None = None,
     has_review: bool | None = None,
 ) -> dict[str, Any]:
-    view = view_cache.get_view(project_id, ref)
+    view = _open_view(project_id, ref)
     states = view.list_tier(tier)
 
     def _keep(s) -> bool:  # type: ignore[no-untyped-def]
@@ -115,7 +143,7 @@ def get_generation_context(
     parent_id: str | None = None,
     sub_id: str | None = None,
 ) -> dict[str, Any]:
-    view = view_cache.get_view(project_id, ref)
+    view = _open_view(project_id, ref)
     scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
     builder = GENERATION_BUILDERS.get(tier)
     if builder is None:
@@ -132,7 +160,7 @@ def get_review_context(
     parent_id: str | None = None,
     sub_id: str | None = None,
 ) -> dict[str, Any]:
-    view = view_cache.get_view(project_id, ref)
+    view = _open_view(project_id, ref)
     scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
     builder = REVIEW_BUILDERS.get(tier)
     if builder is None:
@@ -141,18 +169,18 @@ def get_review_context(
 
 
 def get_review_summary(project_id: str, ref: str, tier: Tier) -> dict[str, Any]:
-    view = view_cache.get_view(project_id, ref)
+    view = _open_view(project_id, ref)
     return build_review_summary(view, tier)
 
 
 def get_structure_summary(project_id: str, ref: str, tier: Tier) -> dict[str, Any]:
-    view = view_cache.get_view(project_id, ref)
+    view = _open_view(project_id, ref)
     return build_structure_summary(view, tier)
 
 
 def list_batches(project_id: str, ref: str, status: str | None = None) -> dict[str, Any]:
     """List batch state files, optionally filtered by status."""
-    view = view_cache.get_view(project_id, ref)
+    view = _open_view(project_id, ref)
     batches: list[dict[str, Any]] = []
     # Batches live at state/batches/<id>.json — load them via direct tree read
     # since they're not tier-shaped.
