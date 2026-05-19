@@ -245,3 +245,46 @@ def test_mcp_trailing_slash_works_directly():
     assert r.status_code == 200
     payload = r.json()
     assert payload["result"]["serverInfo"]["name"] == "siegeengine"
+
+
+def test_user_id_context_propagates_through_middleware_to_route(monkeypatch):
+    """Regression test for the threadpool-context-fork bug: a
+    ContextVar set inside a FastAPI sync dependency runs in a
+    threadpool worker that diverges from the route handler's
+    threadpool worker, so the route doesn't see the value. The fix
+    is to bind in middleware (which runs on the request task itself).
+
+    Stub `lookup_project_auth` to short-circuit the DB lookup, then
+    hit the debug endpoint and check the response reflects the JWT's
+    sub claim. If this test fails with `user_id_from_context: null`
+    while `user_id_in_claims` is set, the middleware regressed and
+    every tool call's auth lookup is broken in production."""
+    from siege_mcp import auth_lookup
+
+    captured: dict[str, str | None] = {}
+
+    def fake_lookup(project_id: str, user_id: str | None):
+        # Capture what auth_lookup actually sees from the context.
+        captured["user_id"] = user_id
+        return auth_lookup.ProjectAuth(remote_url=None, access_token=None)
+
+    monkeypatch.setattr("siege_mcp.server.lookup_project_auth", fake_lookup, raising=False)
+    # Also patch the import path tools.py uses if it ever calls in.
+    monkeypatch.setattr(auth_lookup, "lookup_project_auth", fake_lookup)
+
+    r = _client().get(
+        "/api/debug/mcp-auth?project_id=test_proj",
+        headers=_auth_headers(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # The middleware must propagate the JWT sub into the request task
+    # context such that the route handler sees it.
+    assert body["user_id_from_context"] == "u1", (
+        f"ContextVar inside the route did NOT pick up the JWT sub. "
+        f"Got user_id_from_context={body['user_id_from_context']!r} "
+        f"while claims['sub']={body['user_id_in_claims']!r}. "
+        f"Auth middleware regressed."
+    )
+    assert body["user_id_in_claims"] == "u1"
+    assert body["context_matches_claims"] is True

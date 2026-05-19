@@ -25,7 +25,7 @@ For local dev:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -47,23 +47,22 @@ logger = logging.getLogger(__name__)
 
 def _require_token(
     authorization: str | None = Header(default=None),
-) -> Iterator[dict[str, Any]]:
-    """Verify the JWT and bind the user id to the request context.
+) -> dict[str, Any]:
+    """Verify the JWT and return the claims.
 
-    Generator dependency so the contextvar set in the pre-yield block
-    is reset cleanly after the route runs. FastAPI's
-    ``run_in_threadpool`` copies the active context into the worker
-    thread, so ``current_user_id()`` works inside the tool functions
-    even though they run off the event loop.
+    The user_id is bound to the request context by the middleware
+    below (`_bind_user_context_middleware`), not here — sync FastAPI
+    deps run in a threadpool worker, and a ContextVar set there
+    doesn't propagate to the route handler's threadpool worker
+    because the two workers each copy the request task's context
+    independently. Setting it in middleware (which runs on the
+    request task itself) makes the binding visible everywhere
+    downstream.
     """
     try:
-        claims = verify_request_token(authorization)
+        return verify_request_token(authorization)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
-    sub = claims.get("sub")
-    user_id = str(sub) if sub else None
-    with user_id_context(user_id):
-        yield claims
 
 
 # ---------------- Request models ----------------
@@ -138,6 +137,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _bind_user_context_middleware(request, call_next):
+    """Decode the bearer token and bind the user id to the request context.
+
+    This is the only place that sets ``siege_mcp.auth_context``.
+    Middleware runs in the request task's context, so the ContextVar
+    binding propagates to every subsequent threadpool worker the
+    request spawns (the route handler, its sync dependencies, the
+    tool functions called inside them) via the
+    ``contextvars.copy_context()`` semantics anyio uses for
+    ``run_in_threadpool``.
+
+    Doing this in a FastAPI dependency instead would silently fail:
+    sync deps run in their own threadpool worker, and a ContextVar
+    set there doesn't reach the route handler's threadpool worker —
+    each worker forks the request task's context independently.
+
+    The middleware is lenient: a missing or invalid token leaves the
+    binding as None; the route's auth dep is what actually rejects
+    bad tokens with 401.
+    """
+    user_id: str | None = None
+    auth = request.headers.get("Authorization")
+    if auth:
+        try:
+            claims = verify_request_token(auth)
+            sub = claims.get("sub")
+            user_id = str(sub) if sub else None
+        except AuthError:
+            user_id = None
+
+    with user_id_context(user_id):
+        return await call_next(request)
 
 
 @app.get("/api/healthz")
