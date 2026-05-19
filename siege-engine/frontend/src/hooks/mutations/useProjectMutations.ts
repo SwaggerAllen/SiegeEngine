@@ -6,8 +6,20 @@ export function useCreateProject() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: ['projects', 'create'],
-    mutationFn: (params: { name: string; description: string | null; content: string }) =>
-      projectApi.createProject(params.name, params.description, params.content),
+    mutationFn: (params: {
+      name: string;
+      description: string | null;
+      content: string;
+      remoteUrl?: string | null;
+      githubRepoSlug?: string | null;
+    }) =>
+      projectApi.createProject(
+        params.name,
+        params.description,
+        params.content,
+        params.remoteUrl,
+        params.githubRepoSlug,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
     },

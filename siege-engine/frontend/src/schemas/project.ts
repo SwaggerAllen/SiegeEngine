@@ -7,6 +7,10 @@ export const ProjectSchema = z.object({
   git_repo_path: z.string(),
   remote_url: z.string().nullable().optional(),
   github_repo_slug: z.string().nullable().optional(),
+  // Backend returns this on every project response (default false).
+  // `.optional()` keeps backward-compat with the small number of test
+  // fixtures that don't bother setting it.
+  auto_push_enabled: z.boolean().optional(),
   created_at: z.string(),
   updated_at: z.string(),
 });

@@ -1,4 +1,5 @@
 import logging
+import re
 import shutil
 from pathlib import Path
 
@@ -16,16 +17,71 @@ from backend.pipeline import queue as pipeline_queue
 logger = logging.getLogger(__name__)
 
 
+# Recognize GitHub clone URLs in their common shapes and pull the
+# owner/repo slug out. Handles:
+#   https://github.com/owner/repo
+#   https://github.com/owner/repo.git
+#   git@github.com:owner/repo.git
+#   ssh://git@github.com/owner/repo.git
+# Returns None for anything else (e.g. self-hosted git, gitea, etc.);
+# the caller can pass an explicit slug in that case.
+_GH_SLUG_PATTERN = re.compile(
+    r"github\.com[:/]+([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)/([A-Za-z0-9._-]+?)(?:\.git)?/?$"
+)
+
+
+def derive_github_slug(remote_url: str | None) -> str | None:
+    if not remote_url:
+        return None
+    m = _GH_SLUG_PATTERN.search(remote_url.strip())
+    if not m:
+        return None
+    return f"{m.group(1)}/{m.group(2)}"
+
+
 def create_project(
-    db: Session, name: str, description: str | None, project_doc_content: str
+    db: Session,
+    name: str,
+    description: str | None,
+    project_doc_content: str,
+    remote_url: str | None = None,
+    github_repo_slug: str | None = None,
 ) -> Project:
-    project = Project(name=name, description=description, git_repo_path="")
+    # When the caller supplies a GitHub URL but not a slug, auto-derive
+    # so the PR routes work without a second round-trip. An explicit
+    # slug arg wins — useful for non-github hosts or odd URL shapes
+    # where the regex can't help.
+    if remote_url and not github_repo_slug:
+        github_repo_slug = derive_github_slug(remote_url)
+
+    project = Project(
+        name=name,
+        description=description,
+        git_repo_path="",
+        remote_url=remote_url,
+        github_repo_slug=github_repo_slug,
+    )
     db.add(project)
     db.flush()
 
-    # Init git repo
+    # Init local git repo
     repo_path = git_manager.init_repo(project.id)
     project.git_repo_path = repo_path
+
+    # Wire the remote up immediately if one was provided; the first
+    # body commit's push won't have to wait on a separate settings
+    # flow. Failure here is non-fatal — the project still exists and
+    # the user can fix the remote later via the project settings page.
+    if remote_url:
+        try:
+            git_manager.add_remote(project.id, remote_url)
+        except Exception as exc:  # noqa: BLE001 — log + continue
+            logger.warning(
+                "Failed to add remote %s to project %s: %s",
+                remote_url,
+                project.id,
+                exc,
+            )
 
     # Store the initial project doc as an InputDocument for the v2 build phase
     # to pick up. v1's artifact-based project_doc has been removed.

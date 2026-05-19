@@ -53,7 +53,14 @@ def create_project(
     db: Session = Depends(get_db),
     _user: User = Depends(_require_writer),
 ):
-    project = service.create_project(db, req.name, req.description, req.project_doc_content)
+    project = service.create_project(
+        db,
+        req.name,
+        req.description,
+        req.project_doc_content,
+        remote_url=req.remote_url,
+        github_repo_slug=req.github_repo_slug,
+    )
     return _project_to_dict(project)
 
 

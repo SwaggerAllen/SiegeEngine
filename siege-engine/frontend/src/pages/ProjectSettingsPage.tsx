@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import GitHubConnectPanel from '../components/GitHubConnectPanel';
+import ProjectRemotePanel from '../components/ProjectRemotePanel';
 import {
   useProjectSettings,
   useUpdateProjectSettings,
@@ -126,11 +127,13 @@ function SettingsShell({ projectId }: { projectId: string }) {
       </header>
 
       <main className="max-w-2xl mx-auto px-6 py-8 space-y-6">
-        {/* GitHub connection lives on the project settings page because
-            it's per-user, not per-project — but settings is where users
-            already go to wire up project plumbing, and the existing
-            OAuth flow (popup → callback → connect) needs a stable
-            opener. */}
+        {/* GitHub connection (per-user OAuth credential) and the
+            per-project remote both live on this page. The remote is
+            the project's wire to its GitHub repo; the OAuth credential
+            is the user's authorization for the dashboard to act
+            against GitHub on their behalf. They're independent — you
+            can set a remote without OAuth, and vice versa. */}
+        <ProjectRemotePanel projectId={projectId} />
         <GitHubConnectPanel />
 
         <div>

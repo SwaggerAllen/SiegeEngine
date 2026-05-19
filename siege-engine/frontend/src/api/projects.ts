@@ -16,12 +16,19 @@ export async function getProject(id: string): Promise<ProjectDetail> {
 export async function createProject(
   name: string,
   description: string | null,
-  projectDocContent: string
+  projectDocContent: string,
+  remoteUrl?: string | null,
+  githubRepoSlug?: string | null,
 ): Promise<Project> {
   const { data } = await api.post('/projects/', {
     name,
     description,
     project_doc_content: projectDocContent,
+    // null-vs-undefined matters at the wire — the backend treats
+    // omitted fields as "leave unset". Send undefined when blank so
+    // the JSON envelope drops the key entirely.
+    remote_url: remoteUrl || undefined,
+    github_repo_slug: githubRepoSlug || undefined,
   });
   return ProjectSchema.parse(data);
 }
