@@ -80,7 +80,10 @@ def client(monkeypatch):
 def test_unhandled_exception_returns_json_detail(client, monkeypatch):
     """A raw RuntimeError in a route handler becomes a JSON 500."""
 
-    def broken(db, name, description, project_doc_content):
+    # **kwargs absorbs whatever optional fields the route currently
+    # passes (remote_url, github_repo_slug, …) so this test stays
+    # decoupled from the project-creation signature.
+    def broken(db, name, description, project_doc_content, **kwargs):
         raise RuntimeError("simulated git init failure")
 
     monkeypatch.setattr(projects_service, "create_project", broken)
@@ -103,7 +106,7 @@ def test_unhandled_exception_with_empty_message_still_has_class_name(client, mon
     class CustomError(RuntimeError):
         pass
 
-    def broken(db, name, description, project_doc_content):
+    def broken(db, name, description, project_doc_content, **kwargs):
         raise CustomError()  # no message
 
     monkeypatch.setattr(projects_service, "create_project", broken)

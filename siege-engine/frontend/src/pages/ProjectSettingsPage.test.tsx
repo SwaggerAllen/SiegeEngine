@@ -86,7 +86,7 @@ describe('ProjectSettingsPage', () => {
     renderPage();
     const input = (await screen.findByLabelText(/Generation timeout/i)) as HTMLInputElement;
     fireEvent.change(input, { target: { value: '20' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
     await waitFor(() =>
       expect(mockedUpdate).toHaveBeenCalledWith(
         'proj_1',
@@ -101,7 +101,7 @@ describe('ProjectSettingsPage', () => {
     renderPage();
     const input = (await screen.findByLabelText(/Generation timeout/i)) as HTMLInputElement;
     fireEvent.change(input, { target: { value: '0' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
     await waitFor(() =>
       expect(screen.getByText(/must be a positive number/i)).toBeInTheDocument()
     );
@@ -113,7 +113,7 @@ describe('ProjectSettingsPage', () => {
     renderPage();
     const input = (await screen.findByLabelText(/Generation timeout/i)) as HTMLInputElement;
     fireEvent.change(input, { target: { value: '500' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save$/i }));
     await waitFor(() =>
       expect(screen.getByText(/^Timeout must be between 1 and 240 minutes/)).toBeInTheDocument()
     );
