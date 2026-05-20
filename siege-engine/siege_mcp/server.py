@@ -104,6 +104,11 @@ class TierRefRequest(BaseModel):
     tier: str
 
 
+class ProjectRefRequest(BaseModel):
+    project_id: str
+    ref: str
+
+
 class ListBatchesRequest(BaseModel):
     project_id: str
     ref: str
@@ -363,6 +368,14 @@ def http_get_structure_summary(
     return tools.get_structure_summary(req.project_id, req.ref, req.tier)  # type: ignore[arg-type]
 
 
+@app.post("/api/compute-plan")
+def http_compute_plan(
+    req: ProjectRefRequest,
+    _claims: dict[str, Any] = Depends(_require_token),
+) -> dict[str, Any]:
+    return tools.compute_plan(req.project_id, req.ref)
+
+
 @app.post("/api/list-batches")
 def http_list_batches(
     req: ListBatchesRequest,
@@ -548,6 +561,24 @@ _TOOL_DEFS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "compute_plan",
+        "description": (
+            "Compute the impl-tier phasing plan: per-phase impl nodes + topological "
+            "build order, derived from the phase registry (state/phases/) and the "
+            "comparch/subcomparch tiers. Reports auto-rearrangements (components pulled "
+            "earlier by a dependency) and hard errors (unassigned features). Read-only "
+            "projection — the mint-plan skill materializes the result."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "ref": {"type": "string"},
+            },
+            "required": ["project_id", "ref"],
+        },
+    },
+    {
         "name": "list_batches",
         "description": "List batch state files on a ref, optionally filtered by status.",
         "inputSchema": {
@@ -588,6 +619,7 @@ _TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "get_review_context": tools.get_review_context,
     "get_review_summary": tools.get_review_summary,
     "get_structure_summary": tools.get_structure_summary,
+    "compute_plan": tools.compute_plan,
     "list_batches": tools.list_batches,
     "validate_artifact": tools.validate_artifact,
 }

@@ -21,6 +21,7 @@ from siege_mcp.auth_context import current_user_id
 from siege_mcp.auth_lookup import lookup_project_auth
 from siege_mcp.git_view import GitView
 from siege_mcp.git_view import cache as view_cache
+from siege_mcp.plan import compute_plan as _compute_plan
 from siege_mcp.review_summary import build_review_summary
 from siege_mcp.state import Scope, Tier, dump_state
 from siege_mcp.structure import build_structure_summary
@@ -176,6 +177,18 @@ def get_review_summary(project_id: str, ref: str, tier: Tier) -> dict[str, Any]:
 def get_structure_summary(project_id: str, ref: str, tier: Tier) -> dict[str, Any]:
     view = _open_view(project_id, ref)
     return build_structure_summary(view, tier)
+
+
+def compute_plan(project_id: str, ref: str) -> dict[str, Any]:
+    """Compute the phasing plan — impl nodes per phase + build order.
+
+    Pure read-only projection (mirrors get_review_summary). Reads the
+    phase registry + comparch/subcomparch/requirements tiers; never
+    writes. The mint-plan skill consumes this to materialize
+    state/plan.json + the per-node impl state files.
+    """
+    view = _open_view(project_id, ref)
+    return _compute_plan(view)
 
 
 def list_batches(project_id: str, ref: str, status: str | None = None) -> dict[str, Any]:
