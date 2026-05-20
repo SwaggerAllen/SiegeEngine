@@ -52,3 +52,13 @@ Emit exactly one ``<implementation>`` block with these four children in this ord
 * You are describing one leaf. Don't describe sibling leaves or the parent component's other slices. If you need to reference them, name the dependency's public surface and leave the internals to them.
 * If the leaf's behavior spans multiple entry points, cover all of them in ``<behavior>`` — don't treat one as primary and the others as footnotes.
 * Keep it proportionate to the leaf's complexity. A simple cache wrapper doesn't need 2000 words; a session-management engine does. Pad isn't helpful; underspecifying is worse.
+
+## Phasing
+
+This leaf may be implemented across multiple **phases**. If the bundle carries a non-null ``scope.phase``, you are authoring **one phase's pass** over the leaf, not the whole leaf at once.
+
+* The bundle's ``related_features_summary`` is already scoped to **this phase's responsibility closure** — the cumulative set of responsibilities (every responsibility reachable from a phase-≤N feature) this pass is accountable for. Implement that closure. Do not implement responsibilities outside it.
+* When ``prior_phase_impl_body`` is non-empty, it is **this same leaf's implementation document from the previous phase**. Author this pass **delta-style**: do not re-describe what the prior phase already covered. State plainly what carries over ("phase N-1 established the session table and ``authenticate``"), then spend your words on what *this* pass adds or changes ("this pass adds token rotation and the background reaper"). The reader composes the phases; you write the increment.
+* When ``prior_phase_impl_body`` is empty, this is the leaf's **first** phase — author it as a normal standalone implementation document scoped to the phase-N closure.
+* ``dep_fanin_summaries`` carries the **prior-phase fan-in synthesis** of this leaf's dependency components — the compressed view of what each dependency looked like by the time this phase started. Reason against those handles for cross-component behavior; don't reach for a dependency's raw impl detail.
+* **Stub the rest of the surface.** The subcomponent's *design* (its subcomparch) is whole — it describes the leaf's full public surface across all phases. But this pass implements only the phase-≤N closure. For surface that the subcomparch declares but this phase's closure does not yet reach, say so explicitly in ``<edge-cases>``: name the unimplemented entry point and state that it is a stub for a later phase (e.g. "``export_report`` is declared on the surface but belongs to a later phase; this pass leaves it a stub that raises ``NotImplementedError``"). An unimplemented surface that goes unmentioned reads as an omission to the plan prompt.
