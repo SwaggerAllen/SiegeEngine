@@ -182,6 +182,8 @@ export SIEGE_TOKEN=<your token from siege.strutco.io>
 
 - `/scaffold` — bootstrap features → requirements → sysarch
 - `/run_tier <tier>` — draft + review every absent scope at a tier
+- `/mint_plan` — materialize the impl-tier phasing plan
+- `/run_phase <n>` — build one phase's impl + fan-in slice
 - `/regen_below <tier> <threshold>` — regen scopes below a score
 - `/continue <batch_id>` — resume an interrupted batch
 - `/status` — per-tier snapshot

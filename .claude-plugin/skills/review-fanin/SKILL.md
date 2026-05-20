@@ -15,16 +15,20 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 
 - `ref` — git ref
 - `comp_id` — stable id of the scope
+- (optional) `phase` — phase index for a phased fan-in node; omit for
+  an unphased (legacy) fan-in. Must match the `phase` the node was
+  drafted at, or `get_state` / the paths below address the wrong node.
 
 ## Steps
 
-1. **Read the draft state.** Call `mcp__siegeengine__get_state` to
-   confirm the scope is in `drafted` status with a valid draft block.
-   If it's already `reviewed` or `approved`, ask the user whether to
-   re-review (most of the time this is a mistake).
+1. **Read the draft state.** Call
+   `mcp__siegeengine__get_state(ref=$ref, tier="fanin", comp_id=$comp_id, phase=$phase)`
+   (omit `phase` for an unphased fan-in) to confirm the scope is in
+   `drafted` status with a valid draft block. If it's already
+   `reviewed` or `approved`, ask the user whether to re-review (most
+   of the time this is a mistake).
 2. **Fetch review context.** Call
-   `mcp__siegeengine__get_review_context(ref=$ref, tier="fanin",
-   scope={"comp_id": $comp_id, "tier": "fanin"}, draft_sha=<draft.body_sha256 from state>)`.
+   `mcp__siegeengine__get_review_context(ref=$ref, tier="fanin", comp_id=$comp_id, phase=$phase, draft_sha=<draft.body_sha256 from state>)`.
 3. **Compose the review.** Produce one `<review>...</review>` block
    following the schema:
    - `<intro>` — 3-6 sentence "how close to finished" read (display only)
@@ -35,16 +39,24 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
      decisions (expansion / requirements / fanin)
 4. **Validate inline.** Run `parse_review` mentally — if any section
    is missing or empty, fix and re-emit.
-5. **Write the review** to `fanin/$comp_id/review.md`.
+5. **Write the review.** Phased node (`phase` set) →
+   `fanin/$comp_id/p$phase/review.md`; unphased → `fanin/$comp_id/review.md`.
 6. **Materialize state JSON inline** (pure `python3` stdlib). Extracts
    `<score>` and `<intro>` from the review with a regex, computes
    sha256, updates state JSON's `review` block, bumps nonce. Refuses
    to write if `<score>` is missing or out of range, or if state
-   isn't in `drafted`:
+   isn't in `drafted`. The bash computes the phased vs unphased paths
+   from `$phase`:
 
    ```bash
-   REVIEW_PATH=fanin/$comp_id/review.md
-   STATE_PATH=state/fanin/$comp_id.json
+   PHASE="${phase:-}"
+   if [ -n "$PHASE" ]; then
+     REVIEW_PATH=fanin/$comp_id/p$PHASE/review.md
+     STATE_PATH=state/fanin/$comp_id/p$PHASE.json
+   else
+     REVIEW_PATH=fanin/$comp_id/review.md
+     STATE_PATH=state/fanin/$comp_id.json
+   fi
    python3 - "$REVIEW_PATH" "$STATE_PATH" <<'PY'
 import hashlib, json, re, secrets, sys, time
 review_path, state_path = sys.argv[1:3]

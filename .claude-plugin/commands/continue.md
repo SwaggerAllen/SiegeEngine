@@ -27,6 +27,14 @@ already drafted only re-fires the remaining 3.
      appropriate `regen-*-with-feedback` skill.
    - `op_type=reset_all` → end state is `absent`. Re-fire `mark-drafted`
      into absent, or run the `repair-state-drift`-shaped reset.
+
+   **Phased impl/fanin scopes carry `phase`.** A scope_key for a
+   phased impl/fanin node includes a `phase` field — pass it through
+   to `get_state` *and* to the re-fired skill. Dropping it makes
+   `get_state` query the phase-less scope, which is always `absent`,
+   so the gap never closes and `/continue` re-fires that node forever.
+   If a batch's impl/fanin scope_keys lack `phase` entirely, the batch
+   predates phasing — treat those scopes as unphased (legacy).
 3. **Update batch status.** Mark `partial` while in progress, `complete`
    when all gaps filled, `failed` if 3 consecutive scopes fail.
 4. **Report.**

@@ -14,14 +14,16 @@ just to do the work.
 
 - `ref` — git ref
 - `scope` — the full scope dict
-  ({`tier`: `"fanin"`, `comp_id`/`parent_id`/`sub_id` per shape})
+  ({`tier`: `"fanin"`, `comp_id`, and — for a phased node — `phase`}).
+  When `phase` is present, thread it through `draft-fanin` and
+  `review-fanin` unchanged; it selects the phased `p<N>` node.
 - `batch_id` — the orchestrator's batch id (carry it on the draft's
   generator_metadata so the batch view aggregates correctly)
 
 ## Steps
 
-1. Run `draft-fanin` with the given scope and ref. Carry `batch_id`
-   into `generator_metadata`.
+1. Run `draft-fanin` with the given scope and ref (passing `phase`
+   when the scope carries one). Carry `batch_id` into `generator_metadata`.
 2. If the draft committed cleanly, run `review-fanin` on the same
    scope + ref.
 3. Surface any failures up to the orchestrator via the agent's

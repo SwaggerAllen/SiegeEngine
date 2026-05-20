@@ -15,12 +15,19 @@ one commit (artifact body + state JSON together).
 
 - `ref` — git ref to read from and commit on (default: current branch)
 - `comp_id` — stable id of the scope
+- (optional) `phase` — phase index for a phased fan-in node. Set it
+  when the project is phased (`/run_phase` drives fan-in per phase);
+  omit it for an unphased (legacy) fan-in. A phased node lands at the
+  `p<N>` path layout and carries schema v2.
 - (optional) `prior_review_text` — non-empty when this is a regen pass
 
 ## Steps
 
 1. **Fetch generation context.** Call
-   `mcp__siegeengine__get_generation_context(ref=$ref, tier="fanin", scope={"comp_id": $comp_id, "tier": "fanin"})`.
+   `mcp__siegeengine__get_generation_context(ref=$ref, tier="fanin", comp_id=$comp_id, phase=$phase)`
+   (omit `phase` entirely for an unphased fan-in). When `phase` is
+   set, the bundle's `impl_bodies` is the cumulative phase-≤N slice —
+   every impl node at phase ≤ N, deduped per subcomponent.
 2. **Compose the draft.** Use the bundle's instruction text and per-key
    inputs to produce the artifact body. Section headers must use the
    `## <prefix>:<name>` convention so the body section parser can pick
@@ -29,26 +36,35 @@ one commit (artifact body + state JSON together).
 3. **Validate.** Call `mcp__siegeengine__validate_artifact(ref=$ref, tier="fanin", scope=..., body=<draft>)`.
    If `ok` is false, treat the errors as feedback and re-run step 2
    (loop up to 3 times). If still failing, stop and surface the errors.
-4. **Write the body file** to `fanin/$comp_id/body.md`.
+4. **Write the body file.** Phased node (`phase` set) →
+   `fanin/$comp_id/p$phase/body.md`; unphased → `fanin/$comp_id/body.md`.
 5. **Materialize state JSON inline** (no external Python package
    needed — pure `python3` from stdlib, which any environment CC
-   runs in has). Pass the scope keys as positional args; the rest
-   comes from env vars:
+   runs in has). The bash computes the phased vs unphased paths from
+   `$phase`; the python stamps schema v2 + `scope.phase` for a phased
+   node, v1 + `phase: null` otherwise:
 
    ```bash
    COMP_ID="$comp_id"
-   BODY_PATH=fanin/$comp_id/body.md
-   STATE_PATH=state/fanin/$comp_id.json
+   PHASE="${phase:-}"
+   if [ -n "$PHASE" ]; then
+     BODY_PATH=fanin/$COMP_ID/p$PHASE/body.md
+     STATE_PATH=state/fanin/$COMP_ID/p$PHASE.json
+   else
+     BODY_PATH=fanin/$COMP_ID/body.md
+     STATE_PATH=state/fanin/$COMP_ID.json
+   fi
    THINKING=default
    PRIOR_REVIEW_TEXT="${prior_review_text:-}"
    BATCH_ID="${batch_id:-}"
    mkdir -p "$(dirname "$STATE_PATH")"
-   python3 - "$BODY_PATH" "$STATE_PATH" "$THINKING" "$PRIOR_REVIEW_TEXT" "$BATCH_ID" "$COMP_ID" <<'PY'
+   python3 - "$BODY_PATH" "$STATE_PATH" "$THINKING" "$PRIOR_REVIEW_TEXT" "$BATCH_ID" "$COMP_ID" "$PHASE" <<'PY'
 import hashlib, json, os, secrets, sys, time
 
 body_path, state_path, thinking, prior_review, batch_id = sys.argv[1:6]
-comp_id = sys.argv[6]
-scope = {"tier": "fanin", "comp_id": comp_id, "parent_id": None, "sub_id": None}
+comp_id, phase_raw = sys.argv[6:8]
+phase = int(phase_raw) if phase_raw else None
+scope = {"tier": "fanin", "comp_id": comp_id, "parent_id": None, "sub_id": None, "phase": phase}
 
 body = open(body_path, "rb").read()
 sha = hashlib.sha256(body).hexdigest()
@@ -60,7 +76,7 @@ prior = {}
 if os.path.exists(state_path):
     prior = json.loads(open(state_path).read())
 state = {
-    "schema_version": 1,
+    "schema_version": 2 if phase is not None else 1,
     "scope": scope,
     "status": "drafted",
     "nonce": nonce,
