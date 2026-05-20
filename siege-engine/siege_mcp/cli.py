@@ -35,6 +35,7 @@ from typing import Any
 from siege_mcp.parsers.review_xml import parse_review
 from siege_mcp.state import (
     ALL_TIERS,
+    PHASED_TIERS,
     ApprovalBlock,
     DraftBlock,
     ReviewBlock,
@@ -67,7 +68,20 @@ def _scope_from_args(args: argparse.Namespace) -> Scope:
         comp_id=args.comp_id,
         parent_id=args.parent_id,
         sub_id=args.sub_id,
+        phase=args.phase,
     )
+
+
+def _schema_version_for(scope: Scope) -> int:
+    """Schema version a freshly-minted state file should carry.
+
+    v2 only for a phased impl/fanin scope (one that actually uses the
+    ``phase`` dimension); v1 for everything else, so the version
+    tracks the artifact's scope shape rather than a global epoch.
+    """
+    if scope.tier in PHASED_TIERS and scope.phase is not None:
+        return 2
+    return 1
 
 
 def _existing_state(repo_root: Path, scope: Scope) -> State | None:
@@ -102,7 +116,7 @@ def cmd_write_draft(args: argparse.Namespace) -> int:
     meta = dict(prior.meta) if prior else {}
 
     state = State(
-        schema_version=1,
+        schema_version=_schema_version_for(scope),
         scope=scope,
         status="drafted",
         nonce=mint_nonce(),
@@ -147,7 +161,7 @@ def cmd_write_review(args: argparse.Namespace) -> int:
         return 2
 
     state = State(
-        schema_version=1,
+        schema_version=prior.schema_version,
         scope=scope,
         status="reviewed",
         nonce=mint_nonce(),
@@ -190,7 +204,7 @@ def cmd_write_approval(args: argparse.Namespace) -> int:
         return 2
 
     state = State(
-        schema_version=1,
+        schema_version=prior.schema_version,
         scope=scope,
         status="approved",
         nonce=mint_nonce(),
@@ -250,7 +264,7 @@ def cmd_repair_drift(args: argparse.Namespace) -> int:
         return 0
 
     state = State(
-        schema_version=1,
+        schema_version=prior.schema_version,
         scope=scope,
         status=prior.status,
         nonce=mint_nonce(),
@@ -299,6 +313,12 @@ def _add_scope_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--comp-id", dest="comp_id", default=None)
     parser.add_argument("--parent-id", dest="parent_id", default=None)
     parser.add_argument("--sub-id", dest="sub_id", default=None)
+    parser.add_argument(
+        "--phase",
+        type=int,
+        default=None,
+        help="phase index for a phased impl/fanin scope (omit for arch tiers)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
