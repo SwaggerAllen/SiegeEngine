@@ -80,6 +80,7 @@ class ScopeRef(BaseModel):
     comp_id: str | None = None
     parent_id: str | None = None
     sub_id: str | None = None
+    phase: int | None = None
 
 
 class GetReviewContextRequest(ScopeRef):
@@ -300,6 +301,7 @@ def http_get_state(
         comp_id=req.comp_id,
         parent_id=req.parent_id,
         sub_id=req.sub_id,
+        phase=req.phase,
     )
 
 
@@ -333,6 +335,7 @@ def http_get_generation_context(
         comp_id=req.comp_id,
         parent_id=req.parent_id,
         sub_id=req.sub_id,
+        phase=req.phase,
     )
 
 
@@ -349,6 +352,7 @@ def http_get_review_context(
         comp_id=req.comp_id,
         parent_id=req.parent_id,
         sub_id=req.sub_id,
+        phase=req.phase,
     )
 
 
@@ -453,6 +457,10 @@ def _scope_schema(*, required: list[str] | None = None) -> dict[str, Any]:
             "comp_id": {"type": "string"},
             "parent_id": {"type": "string"},
             "sub_id": {"type": "string"},
+            "phase": {
+                "type": "integer",
+                "description": "phase index for a phased impl/fanin scope; omit for arch tiers",
+            },
         },
         "required": required or ["project_id", "ref", "tier"],
     }

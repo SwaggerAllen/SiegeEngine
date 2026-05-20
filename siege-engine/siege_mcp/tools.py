@@ -70,15 +70,18 @@ def get_state(
     comp_id: str | None = None,
     parent_id: str | None = None,
     sub_id: str | None = None,
+    phase: int | None = None,
 ) -> dict[str, Any]:
     view = _open_view(project_id, ref)
-    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase)
     state = view.get_state(scope)
     if state is None:
         return {
             "ref": view.ref,
             "ref_head_sha": view.head_sha,
-            "scope": dict(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id),
+            "scope": dict(
+                tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase
+            ),
             "found": False,
         }
     drift = view.drift_for(state)
@@ -143,9 +146,10 @@ def get_generation_context(
     comp_id: str | None = None,
     parent_id: str | None = None,
     sub_id: str | None = None,
+    phase: int | None = None,
 ) -> dict[str, Any]:
     view = _open_view(project_id, ref)
-    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase)
     builder = GENERATION_BUILDERS.get(tier)
     if builder is None:
         raise ValueError(f"No generation builder for tier {tier!r}")
@@ -160,9 +164,10 @@ def get_review_context(
     comp_id: str | None = None,
     parent_id: str | None = None,
     sub_id: str | None = None,
+    phase: int | None = None,
 ) -> dict[str, Any]:
     view = _open_view(project_id, ref)
-    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase)
     builder = REVIEW_BUILDERS.get(tier)
     if builder is None:
         raise ValueError(f"No review builder for tier {tier!r}")
