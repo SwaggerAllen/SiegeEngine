@@ -17,17 +17,20 @@
 #
 # What it does:
 #   1. Verifies we're in a git repo.
-#   2. Writes `.mcp.json` with the MCP server URL + a $SIEGE_TOKEN
+#   2. pip-installs the `siege` core CLI from the SiegeEngine repo so
+#      skills can run `python -m siege.cli` for writes. The core is
+#      pure stdlib — this pulls no dependencies.
+#   3. Writes `.mcp.json` with the MCP server URL + a $SIEGE_TOKEN
 #      placeholder Claude Code will substitute from the env at request
 #      time.
-#   3. Fetches `.claude-plugin/commands/` and `.claude-plugin/skills/`
+#   4. Fetches `.claude-plugin/commands/` and `.claude-plugin/skills/`
 #      from the SiegeEngine repo and copies them into this repo as
 #      `.claude/commands/` and `.claude/skills/` (the on-disk paths
 #      mobile CC auto-discovers).
-#   4. Appends a "Working with SiegeEngine" snippet to CLAUDE.md
+#   5. Appends a "Working with SiegeEngine" snippet to CLAUDE.md
 #      (creates the file if absent) so the model sees the available
 #      commands without /help.
-#   5. Stages the changes for commit; does NOT commit or push (so you
+#   6. Stages the changes for commit; does NOT commit or push (so you
 #      review the diff first).
 #
 # Idempotent: safe to re-run. Overwrites the SiegeEngine-managed files
@@ -101,6 +104,38 @@ CMD_COUNT="$(find "$SRC_PLUGIN/commands" -maxdepth 1 -name '*.md' | wc -l | tr -
 SKILL_COUNT="$(find "$SRC_PLUGIN/skills"  -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 log "source has $CMD_COUNT commands + $SKILL_COUNT skills"
 
+# ---------------- install the siege core CLI ----------------
+# The skills shell out to `python -m siege.cli` for every write (state
+# JSON, node manifests, sha/nonce). Install the core from the repo we
+# just cloned — it is pure stdlib, so this pulls no dependencies.
+
+SIEGE_PKG_DIR="$TMP_DIR/siegeengine/siege-engine"
+GIT_INSTALL_HINT="pip install \"siege-engine @ git+${SIEGE_REPO_URL}.git@${SIEGE_REPO_REF}#subdirectory=siege-engine\""
+
+install_siege_core() {
+  # Try, in order: `python3 -m pip`, `pip3`, `pip`; each plain first,
+  # then with --user (covers PEP-668 externally-managed system pythons).
+  local runner
+  for runner in "python3 -m pip" "pip3" "pip"; do
+    command -v "${runner%% *}" >/dev/null 2>&1 || continue
+    if $runner install --quiet "$SIEGE_PKG_DIR" >/dev/null 2>&1 \
+       || $runner install --quiet --user "$SIEGE_PKG_DIR" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if (( DRY_RUN )); then
+  log "would pip-install the siege core CLI from $SIEGE_REPO_REF"
+elif install_siege_core; then
+  log "installed the siege core CLI — \`python -m siege.cli\` is ready"
+else
+  warn "could not install the siege core CLI (no working pip found)."
+  warn "the skills' write steps need it — install it by hand:"
+  warn "  $GIT_INSTALL_HINT"
+fi
+
 # ---------------- write .mcp.json ----------------
 
 MCP_JSON='{
@@ -169,7 +204,11 @@ SNIPPET=$(cat <<'MD_EOF'
 This repo has SiegeEngine wired up. The `.mcp.json` connects to the
 hosted MCP server; `.claude/commands/` and `.claude/skills/` ship the
 slash commands and skills locally so mobile Claude Code can use them
-without `/plugin install`.
+without `/plugin install`. The bootstrap also `pip install`ed the
+**siege core CLI** — skills shell out to `python -m siege.cli` for
+every write. If a skill reports `No module named siege`, re-run
+`scripts/siege-bootstrap.sh` or install the core by hand (see the
+cheat sheet).
 
 **One-time setup**: export a SiegeEngine JWT in your shell env so the
 MCP server accepts your requests:

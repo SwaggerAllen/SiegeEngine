@@ -239,11 +239,21 @@ curl -fsSL https://siege.strutco.io/bootstrap.sh | bash
 
 The bootstrap:
 
+- `pip install`s the **siege core CLI** from the SiegeEngine repo —
+  the skills shell out to `python -m siege.cli` for every write
+  (state files, node manifests). The core is pure stdlib, so this
+  pulls no dependencies.
 - Writes `.mcp.json` pointing at `https://siege.strutco.io/siege_mcp/mcp`
 - Mirrors `.claude/commands/`, `.claude/skills/`, and `.claude/agents/`
   from the SiegeEngine repo (6 slash commands, 26 skills, 7 per-tier
   generator subagents)
 - Adds a "Working with SiegeEngine" section to `CLAUDE.md`
+
+If the bootstrap can't find `pip`, install the core by hand:
+
+```bash
+pip install "siege-engine @ git+https://github.com/swaggerallen/siegeengine.git@main#subdirectory=siege-engine"
+```
 
 Then commit + push the new files. Mobile CC will pick them up the
 next time it opens the repo — no plugin install required.

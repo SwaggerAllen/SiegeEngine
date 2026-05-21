@@ -736,7 +736,9 @@ what the build pinned. The `docs/` directory is for
 developer / migration documentation.
 
 The bootstrap script (`scripts/siege-bootstrap.sh`, served at
-`/bootstrap.sh`) is the mobile-CC on-ramp: it mirrors the
+`/bootstrap.sh`) is the mobile-CC on-ramp: it `pip install`s the
+`siege` core CLI from the repo (pure stdlib — no deps; the skills
+shell out to `python -m siege.cli` for writes), mirrors the
 plugin's `.claude-plugin/commands/`, `.claude-plugin/skills/`,
 and `.claude-plugin/agents/` into a target project repo as
 `.claude/commands/`, `.claude/skills/`, `.claude/agents/`,
