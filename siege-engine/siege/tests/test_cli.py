@@ -412,3 +412,112 @@ def test_sub_tier_paths(tmp_path):
     state = parse_state(json.loads(state_file.read_text()))
     assert state.scope.parent_id == "comp_p"
     assert state.scope.sub_id == "sub_x"
+
+
+def test_write_draft_feature_expansion_derives_manifest(tmp_path):
+    """write-draft for feature_expansion materializes a node manifest
+    beside the state JSON — one node per <feature> block."""
+    body = (
+        "<introduction>Intro.</introduction>\n"
+        "<features>\n"
+        "  <feature><name>Login</name><intent>Users sign in.</intent></feature>\n"
+        "  <feature><name>Admin Console</name><intent>Operators manage it.</intent>"
+        "<implicit/></feature>\n"
+        "</features>\n"
+    )
+    body_path = tmp_path / "feature_expansion" / "proj" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text(body)
+    rc = main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "feature_expansion",
+            "--comp-id",
+            "proj",
+            "--body-path",
+            "feature_expansion/proj/body.md",
+        ]
+    )
+    assert rc == 0
+    manifest_path = tmp_path / "manifest" / "feature_expansion" / "proj.json"
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["schema_version"] == 1
+    assert manifest["substrate"] == {
+        "tier": "feature_expansion",
+        "comp_id": "proj",
+        "parent_id": None,
+        "sub_id": None,
+    }
+    nodes = manifest["nodes"]
+    assert [n["name"] for n in nodes] == ["Login", "Admin Console"]
+    assert nodes[0]["intent"] == "Users sign in."
+    assert nodes[0]["implicit"] is False
+    assert nodes[1]["implicit"] is True
+    assert all(n["id"].startswith("feat_") for n in nodes)
+
+
+def test_write_draft_requirements_derives_manifest(tmp_path):
+    """write-draft for requirements materializes resp_* nodes, each
+    carrying the feat_* ids its <feats> block references."""
+    body = (
+        "<requirements>\n"
+        "  <responsibility><name>session lifecycle</name>"
+        '<feats><feat id="feat_aaa"/></feats></responsibility>\n'
+        "  <responsibility><name>event log</name><feats/></responsibility>\n"
+        "</requirements>\n"
+    )
+    body_path = tmp_path / "requirements" / "proj" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text(body)
+    rc = main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "requirements",
+            "--comp-id",
+            "proj",
+            "--body-path",
+            "requirements/proj/body.md",
+        ]
+    )
+    assert rc == 0
+    manifest = json.loads((tmp_path / "manifest" / "requirements" / "proj.json").read_text())
+    nodes = manifest["nodes"]
+    assert [n["name"] for n in nodes] == ["session lifecycle", "event log"]
+    assert nodes[0]["feats"] == ["feat_aaa"]
+    assert nodes[1]["feats"] == []
+    assert all(n["id"].startswith("resp_") for n in nodes)
+
+
+def test_manifest_node_ids_carry_forward(tmp_path):
+    """Re-drafting (regen) keeps each node's id stable by name-match."""
+    body = "<features>\n  <feature><name>Login</name><intent>v1.</intent></feature>\n</features>\n"
+    body_path = tmp_path / "feature_expansion" / "proj" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text(body)
+    argv = [
+        "write-draft",
+        "--repo",
+        str(tmp_path),
+        "--tier",
+        "feature_expansion",
+        "--comp-id",
+        "proj",
+        "--body-path",
+        "feature_expansion/proj/body.md",
+    ]
+    main(argv)
+    manifest_path = tmp_path / "manifest" / "feature_expansion" / "proj.json"
+    first_id = json.loads(manifest_path.read_text())["nodes"][0]["id"]
+    # Regen: same feature name, reworded intent.
+    body_path.write_text(body.replace("v1.", "v2 — reworded."))
+    main(argv)
+    second = json.loads(manifest_path.read_text())["nodes"][0]
+    assert second["id"] == first_id
+    assert second["intent"] == "v2 — reworded."

@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from siege.manifest import DECOMPOSING_TIERS, derive_manifest, load_manifest, write_manifest
 from siege.state import (
     ALL_TIERS,
     PHASED_TIERS,
@@ -136,7 +137,18 @@ def cmd_write_draft(args: argparse.Namespace) -> int:
     )
     state_path = repo_root / scope.state_path()
     write_state(state, state_path)
-    print(json.dumps({"state_path": str(state_path), "body_sha256": body_sha}))
+
+    out: dict[str, Any] = {"state_path": str(state_path), "body_sha256": body_sha}
+    # Decomposing tiers also materialize a node manifest derived from
+    # the body — feature_expansion / requirements only (self-skips).
+    if scope.tier in DECOMPOSING_TIERS:
+        manifest_path = repo_root / scope.manifest_path()
+        prior_manifest = load_manifest(manifest_path) if manifest_path.exists() else None
+        manifest = derive_manifest(scope, body_bytes.decode("utf-8"), body_sha, prior_manifest)
+        write_manifest(manifest_path, manifest)
+        out["manifest_path"] = str(manifest_path)
+        out["node_count"] = len(manifest.nodes)
+    print(json.dumps(out))
     return 0
 
 
@@ -282,8 +294,27 @@ def cmd_repair_drift(args: argparse.Namespace) -> int:
                     reviewer_metadata=prior.review.reviewer_metadata,
                 )
 
+    # Re-derive the node manifest for the decomposing tiers — it is
+    # derived from the body, so a drifted body (or a manifest that
+    # predates the format) leaves it stale. Idempotent: an unchanged
+    # manifest rewrites byte-identically.
+    manifest_rebuilt = False
+    if scope.tier in DECOMPOSING_TIERS and new_draft is not None:
+        body_abs = repo_root / new_draft.body_path
+        if body_abs.exists():
+            manifest_path = repo_root / scope.manifest_path()
+            prior_manifest = load_manifest(manifest_path) if manifest_path.exists() else None
+            manifest = derive_manifest(
+                scope,
+                body_abs.read_text(encoding="utf-8"),
+                new_draft.body_sha256,
+                prior_manifest,
+            )
+            write_manifest(manifest_path, manifest)
+            manifest_rebuilt = True
+
     if not changes:
-        print(json.dumps({"changed": False}))
+        print(json.dumps({"changed": False, "manifest_rebuilt": manifest_rebuilt}))
         return 0
 
     state = State(
@@ -300,7 +331,7 @@ def cmd_repair_drift(args: argparse.Namespace) -> int:
     )
     state_path = repo_root / scope.state_path()
     write_state(state, state_path)
-    print(json.dumps({"changed": True, "deltas": changes}))
+    print(json.dumps({"changed": True, "deltas": changes, "manifest_rebuilt": manifest_rebuilt}))
     return 0
 
 
