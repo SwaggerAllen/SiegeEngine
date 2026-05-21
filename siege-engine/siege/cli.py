@@ -7,10 +7,12 @@ to hand-write valid JSON.
 
 Subcommands:
 
-    write-draft    — write state JSON + body for a `drafted` transition
+    write-draft    — write state JSON (+ manifest) for a `drafted` transition
     write-review   — write state JSON + review.md for a `reviewed` transition
     write-approval — flip `reviewed` to `approved`
+    mark-drafted   — re-sync state to a hand-edited body (back to `drafted`)
     repair-drift   — recompute body_sha256 fields, bump nonce
+    mint-plan      — materialize phased impl stubs from state/plan.json
     mint-batch     — write a state/batches/<id>.json
     mint-nonce     — emit a fresh ULID-shaped nonce on stdout (utility)
 
@@ -361,6 +363,118 @@ def cmd_mint_nonce(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mark_drafted(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    scope = _scope_from_args(args)
+    prior = _existing_state(repo_root, scope)
+    if prior is None or prior.draft is None:
+        print("error: mark-drafted needs an existing scope with a draft", file=sys.stderr)
+        return 2
+    body_abs = repo_root / prior.draft.body_path
+    if not body_abs.exists():
+        print(f"error: body file does not exist: {body_abs}", file=sys.stderr)
+        return 2
+    body_bytes = body_abs.read_bytes()
+    body_sha = hashlib.sha256(body_bytes).hexdigest()
+
+    # Re-sync to the hand-edited body: new sha + generated_at, fresh
+    # nonce, status back to drafted, review/approval cleared.
+    state = State(
+        schema_version=prior.schema_version,
+        scope=scope,
+        status="drafted",
+        nonce=mint_nonce(),
+        draft=DraftBlock(
+            body_path=prior.draft.body_path,
+            body_sha256=body_sha,
+            generated_at=now_iso(),
+            generator_metadata=prior.draft.generator_metadata,
+            prior_review_text=prior.draft.prior_review_text,
+        ),
+        is_foundation=prior.is_foundation,
+        edges=prior.edges,
+        meta=prior.meta,
+    )
+    state_path = repo_root / scope.state_path()
+    write_state(state, state_path)
+
+    out: dict[str, Any] = {"state_path": str(state_path), "body_sha256": body_sha}
+    if scope.tier in DECOMPOSING_TIERS:
+        manifest_path = repo_root / scope.manifest_path()
+        prior_manifest = load_manifest(manifest_path) if manifest_path.exists() else None
+        manifest = derive_manifest(scope, body_bytes.decode("utf-8"), body_sha, prior_manifest)
+        write_manifest(manifest_path, manifest)
+        out["manifest_path"] = str(manifest_path)
+        out["node_count"] = len(manifest.nodes)
+    print(json.dumps(out))
+    return 0
+
+
+def cmd_mint_plan(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    plan_path = repo_root / "state" / "plan.json"
+    if not plan_path.exists():
+        print(f"error: no plan at {plan_path}", file=sys.stderr)
+        return 2
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+    minted: list[str] = []
+    reseeded: list[str] = []
+    skipped: list[str] = []
+    planned: set[str] = set()
+    for phase in plan.get("phases", []):
+        for node in phase.get("impl_nodes", []):
+            scope = Scope(
+                tier="impl",
+                parent_id=node["parent_id"],
+                sub_id=node["sub_id"],
+                phase=node["phase"],
+            )
+            rel = scope.state_path()
+            planned.add(rel)
+            prior = _existing_state(repo_root, scope)
+            # Idempotent + additive: never disturb an already-built node.
+            if prior is not None and prior.status in ("drafted", "reviewed", "approved"):
+                skipped.append(rel)
+                continue
+            meta = dict(prior.meta) if prior else {}
+            meta["parent_resps"] = node["closure_resp_ids"]
+            stub = State(
+                schema_version=2,
+                scope=scope,
+                status="absent",
+                nonce=mint_nonce(),
+                is_foundation=prior.is_foundation if prior else False,
+                edges=dict(prior.edges) if prior else {},
+                meta=meta,
+            )
+            write_state(stub, repo_root / rel)
+            (reseeded if prior else minted).append(rel)
+
+    # Surface — never delete — phased impl nodes the new plan dropped.
+    dropped: list[str] = []
+    impl_root = repo_root / "state" / "impl"
+    if impl_root.exists():
+        for p in sorted(impl_root.rglob("*.json")):
+            seg = p.parent.name
+            if seg.startswith("p") and seg[1:].isdigit():
+                rel = str(p.relative_to(repo_root))
+                if rel not in planned:
+                    dropped.append(rel)
+    print(
+        json.dumps(
+            {
+                "minted": minted,
+                "reseeded": reseeded,
+                "skipped_built": skipped,
+                "dropped_by_plan": dropped,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def _add_scope_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repo", default=".", help="repo root (default: cwd)")
     parser.add_argument("--tier", required=True, choices=ALL_TIERS)
@@ -413,6 +527,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_nonce = subs.add_parser("mint-nonce", help="emit a fresh nonce")
     p_nonce.set_defaults(func=cmd_mint_nonce)
+
+    p_md = subs.add_parser("mark-drafted", help="re-sync state to a hand-edited body")
+    _add_scope_args(p_md)
+    p_md.set_defaults(func=cmd_mark_drafted)
+
+    p_plan = subs.add_parser("mint-plan", help="materialize phased impl stubs from state/plan.json")
+    p_plan.add_argument("--repo", default=".")
+    p_plan.set_defaults(func=cmd_mint_plan)
 
     return p
 

@@ -7,6 +7,7 @@ and round-trips through ``parse_state``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 from siege.cli import main, mint_nonce
@@ -293,8 +294,6 @@ def test_repair_drift(tmp_path):
     assert rc == 0
     state = parse_state(json.loads((tmp_path / "state" / "comparch" / "comp_e.json").read_text()))
     # New sha matches the new body bytes
-    import hashlib
-
     expected = hashlib.sha256(body_path.read_bytes()).hexdigest()
     assert state.draft is not None
     assert state.draft.body_sha256 == expected
@@ -521,3 +520,83 @@ def test_manifest_node_ids_carry_forward(tmp_path):
     second = json.loads(manifest_path.read_text())["nodes"][0]
     assert second["id"] == first_id
     assert second["intent"] == "v2 — reworded."
+
+
+def test_mark_drafted_resyncs_body_and_clears_review(tmp_path):
+    """mark-drafted recomputes the sha for a hand-edited body, drops
+    review/approval, returns the scope to `drafted`, and rebuilds the
+    node manifest from the edited body."""
+    body = "<features>\n  <feature><name>Login</name><intent>v1.</intent></feature>\n</features>\n"
+    body_path = tmp_path / "feature_expansion" / "proj" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text(body)
+    scope_args = ["--tier", "feature_expansion", "--comp-id", "proj"]
+    main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            *scope_args,
+            "--body-path",
+            "feature_expansion/proj/body.md",
+        ]
+    )
+    review_path = tmp_path / "feature_expansion" / "proj" / "review.md"
+    review_path.write_text("<review><intro>Fine.</intro><score>80</score></review>")
+    main(
+        [
+            "write-review",
+            "--repo",
+            str(tmp_path),
+            *scope_args,
+            "--review-path",
+            "feature_expansion/proj/review.md",
+        ]
+    )
+    state_path = tmp_path / "state" / "feature_expansion" / "proj.json"
+    assert parse_state(json.loads(state_path.read_text())).status == "reviewed"
+
+    body_path.write_text(body.replace("v1.", "hand-edited."))
+    rc = main(["mark-drafted", "--repo", str(tmp_path), *scope_args])
+    assert rc == 0
+    state = parse_state(json.loads(state_path.read_text()))
+    assert state.status == "drafted"
+    assert state.review is None
+    assert state.draft is not None
+    assert state.draft.body_sha256 == hashlib.sha256(body_path.read_bytes()).hexdigest()
+    manifest = json.loads((tmp_path / "manifest" / "feature_expansion" / "proj.json").read_text())
+    assert manifest["nodes"][0]["intent"] == "hand-edited."
+
+
+def test_mint_plan_materializes_impl_stubs(tmp_path):
+    """mint-plan reads state/plan.json and writes one absent-status
+    impl stub per planned node, seeded with the resp closure. A second
+    run is idempotent."""
+    plan = {
+        "schema_version": 2,
+        "phases": [
+            {
+                "order": 1,
+                "impl_nodes": [
+                    {
+                        "parent_id": "comp_x",
+                        "sub_id": "sub_a",
+                        "phase": 1,
+                        "closure_resp_ids": ["resp_1"],
+                    }
+                ],
+            }
+        ],
+    }
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "plan.json").write_text(json.dumps(plan))
+    rc = main(["mint-plan", "--repo", str(tmp_path)])
+    assert rc == 0
+    stub_path = tmp_path / "state" / "impl" / "comp_x" / "p1" / "sub_a.json"
+    assert stub_path.exists()
+    stub = parse_state(json.loads(stub_path.read_text()))
+    assert stub.status == "absent"
+    assert stub.scope.phase == 1
+    assert stub.meta["parent_resps"] == ["resp_1"]
+    # second run re-seeds the absent stub without error
+    assert main(["mint-plan", "--repo", str(tmp_path)]) == 0
