@@ -350,9 +350,14 @@ From the current code to v3, in order:
    per-tier context builders + `structure` / `review_summary` /
    `plan`); `cli.py` kept as the write half. Behavior-preserving —
    the test suite passed unchanged.
-2. **Move write logic out of skill markdown.** Skills call `siege`
-   CLI subcommands instead of carrying inline `python3` heredocs. The
-   bootstrap script installs the `siege` core, version-pinned.
+2. **Move write logic out of skill markdown — done.** Every
+   write-side skill calls `siege` CLI subcommands instead of carrying
+   an inline `python3` heredoc; the CLI is the behavior-identical
+   superset (state JSON, node manifests, sha/nonce, lenient review
+   parse). The package is `pip install`-able with the runtime deps
+   split into an `[app]` extra so the core install is dependency-free,
+   and the bootstrap script installs the `siege` core, version-pinned.
+   Behavior-preserving — byte-diffed against the retired heredocs.
 3. **Identity ledger.** The merged node-manifest work is the first
    data step — slim it to identity-only (drop the projectable fields
    `intent`, `feats`, …), rename `manifest/` → `ids/`, extend to
