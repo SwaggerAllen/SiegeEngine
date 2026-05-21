@@ -22,7 +22,10 @@ model that actually exists now:
   worker, no LLM subprocess.
 - **Git is the store.** Commits are the history; `git diff` is the
   diff; branches are parallel design exploration.
-- **The MCP server is a read-only projection.** It never writes.
+- **The `siege` core is a library, not a service.** Its read
+  (projection) and write logic run locally via a CLI that Claude Code
+  calls; a thin HTTP server exposes the read half to the dashboard.
+  No job queue, no MCP transport.
 
 Roughly 40% of v2 — the propagation engine, the reducer, the event log,
 the job model — is obsolete by execution model alone. v3 is designed
@@ -57,9 +60,13 @@ The truth. Hand-reviewed in the GitHub diff, written by CC skills.
 - **`state/phases/<id>.json`, `state/cohorts/<id>.json`** — user
   planning intent (release phasing, iteration campaigns).
 
-### 2. Projection layer — the MCP server
+### 2. Core layer — the `siege` library
 
-Pure, stateless, read-only. Given a `(project, ref, sha)` it computes:
+One library holds every deterministic operation over a project's git
+tree — both the **projection** (read) and the **write** logic. Pure
+functions; no long-lived state of its own.
+
+Projection — given a git tree it computes:
 
 - **the node / edge graph** — parse every approved body, resolve IDs
   against the identity ledgers, emit typed nodes and edges;
@@ -67,27 +74,47 @@ Pure, stateless, read-only. Given a `(project, ref, sha)` it computes:
 - **staleness** — which artifacts were generated against a now-stale
   upstream sha;
 - **structure / review summaries** — the dashboard aggregations;
-- **the graph-viz feed** — the `{nodes, edges}` shape the frontend DAG
-  views consume.
+- **the graph-viz feed** — the `{nodes, edges}` shape the DAG views
+  consume.
 
-It already does exactly this for *fragments* (`parse_body_sections`).
-v3 generalizes that one good pattern: **everything derived is parsed
-on read, never stored as truth.**
+Write — given a freshly composed body it materializes the artifact:
+compute the body sha, derive the identity ledger (assign / carry
+forward IDs), write `state.json`, prepare the commit. The
+deterministic half of every skill lives here, not in skill markdown.
 
-Computed lazily and cached per `(project, ref, sha)` — a new commit is
-a new sha is a new projection, always consistent with the bodies. If
-read latency ever bites, the escape hatch is to materialize the
-projection as `projection/graph.json` on commit (a skill step or a CI
-job); the projection stays a pure function either way. Not built
-initially.
+It already does the projection half for *fragments*
+(`parse_body_sections`). v3 generalizes that one good pattern:
+**everything derived is parsed on read, never stored as truth.**
 
-### 3. Orchestration layer — Claude Code
+The library has two entry points — a local CLI (orchestration, §3)
+and an HTTP server (the dashboard, below). Both are thin; all logic
+is the library.
 
-- **Skills** — the write operations: draft / review / approve / regen,
-  and identity-ledger assignment. Each is exactly one git commit.
+### 3. Orchestration layer — Claude Code + the core CLI
+
+- **Skills** — one git commit each. A skill calls the core CLI for
+  its context bundle, composes the artifact with the LLM (the only
+  irreducibly-LLM step), calls the core CLI to materialize
+  `body.md` + `state.json` + the identity ledger, then commits and
+  pushes.
 - **Commands** — the multi-step flows: `/scaffold`, `/run_tier`,
   `/regen_below`, `/status`.
-- CC is the LLM and the executor. There is no backend orchestrator.
+- The core CLI runs **locally** in the Claude Code environment, so
+  skills are network-independent — no server round-trip, works
+  offline. There is **no MCP transport**.
+- Precondition: the `siege` core is installed in the CC environment —
+  pulled from GitHub, version-pinned to the project's state schema
+  (see *On-ramp*). No dependency on the deployed host.
+
+### The dashboard server
+
+A thin, read-only HTTP wrapper over the core's projection, serving the
+dashboard's views (graph, structure, review summaries). It is the only
+long-lived process and the only network service; it caches the
+projection per `(project, ref, sha)`. It is **not part of the
+generation loop** — purely a viewer. If projection latency ever bites,
+the escape hatch is to materialize `projection/graph.json` on commit;
+the projection stays a pure function either way. Not built initially.
 
 ## Data model
 
@@ -157,12 +184,12 @@ as a meaning engine.
 Each substrate moves `absent → drafted → reviewed → approved`, one git
 commit per transition, via the per-tier skills. Within a draft:
 
-1. The skill reads the projection's context bundle for the scope.
-2. The LLM composes the body; the skill validates it.
-3. The skill writes `body.md` + `state.json`, and — for a decomposing
-   tier — the identity ledger: parse the body's declared elements,
-   carry IDs forward from the prior ledger by name, mint fresh IDs for
-   new names.
+1. The skill calls the core CLI for the scope's context bundle.
+2. The LLM composes the body; the CLI validates it.
+3. The skill calls the core CLI to materialize `body.md` +
+   `state.json`, and — for a decomposing tier — the identity ledger:
+   parse the body's declared elements, carry IDs forward from the
+   prior ledger by name, mint fresh IDs for new names.
 4. One commit; push.
 
 **There are no mint handlers and no fanout handlers.** A node exists
@@ -207,10 +234,15 @@ authoring form, the ID is the identity form, the ledger bridges them.
 
 ## Orchestration surface
 
-**Skills** (write, one commit each): `draft-*`, `review-*`,
+**Core CLI** — the deterministic operations a skill needs: read a
+context bundle, validate a candidate body, materialize `body.md` +
+`state.json` + identity ledger. Replaces the inline `python3` heredocs
+skill markdown carries today.
+
+**Skills** (one commit each): `draft-*`, `review-*`,
 `regen-*-with-feedback`, `mark-{drafted,reviewed,approved}`,
-`repair-state-drift`. Identity-ledger derivation folds into the
-decomposing-tier draft skills.
+`repair-state-drift`. Each is thin orchestration — call the CLI,
+compose with the LLM, call the CLI, commit.
 
 **Commands** (flows): `/scaffold`, `/run_tier`, `/regen_below`,
 `/status`, `/continue`.
@@ -226,6 +258,21 @@ a new substrate concept:
 - bundle configuration, phase-zero machinery — additional planning
   artifacts alongside phases / cohorts.
 
+## On-ramp
+
+The generate loop has **no dependency on the deployed host.**
+Everything it needs is pulled from the GitHub repo:
+
+- **the `siege` core** — `pip install` from the repo, with a tag or
+  sha pinning the version against the project's state schema;
+- **skills + commands** — Claude Code's native plugin install from
+  the same repo, or a repo-resident setup script for environments
+  without plugin install.
+
+The deployed droplet serves only the dashboard. There is no
+`bootstrap.sh` endpoint — onboarding a project is a GitHub pull, so
+the loop keeps working whether or not the dashboard host is up.
+
 ## What v3 drops from v2 (and why)
 
 - **Event-sourced reducer + event log** — git history is the log.
@@ -236,6 +283,9 @@ a new substrate concept:
 - **Autonomous propagation engine** — replaced by the propagation
   record + manual drain (auto-drain loop later).
 - **`state.edges`** — the per-file edge dict; edges are projected.
+- **The MCP / JSON-RPC transport** — skills call the core CLI
+  locally; the dashboard uses plain HTTP. `siege_mcp` is renamed
+  `siege`; the "MCP" was never load-bearing.
 
 ## What v3 keeps from v2
 
@@ -255,22 +305,31 @@ Re-examined and still correct — referenced, not restated:
 
 From the current code to v3, in order:
 
-1. **Identity ledger.** The merged node-manifest work is step one.
-   Slim it to identity-only (drop the projectable fields — `intent`,
-   `feats`, etc.), rename `manifest/` → `ids/`, extend to sysarch +
-   comparch.
-2. **ID assignment at the decomposing tiers.** Fold ledger derivation
-   into `draft-sysarch` and `draft-comparch`. The sysarch→comparch and
-   comparch→subcomparch "fanout gaps" are exactly this, and nothing
-   more.
-3. **The projection layer.** A projection module the context builders
-   and the graph-viz feed both read; retire direct ledger reads from
-   the per-tier builders.
-4. **Repoint the graph viz** from the legacy backend's `/structure`
-   endpoint to an MCP projection endpoint.
-5. **Propagation records.** `/regen_below` writes one; `/status`
+1. **Consolidate the core.** `siege_mcp/` already holds the projection
+   (per-tier context readers, structure / review summaries) and the
+   write logic (`cli.py`). Fold the per-tier readers into one
+   projection module, keep `cli.py` as the write half behind one CLI,
+   and rename the package `siege_mcp` → `siege`.
+2. **Move write logic out of skill markdown.** Skills call `siege`
+   CLI subcommands instead of carrying inline `python3` heredocs. The
+   bootstrap script installs the `siege` core, version-pinned.
+3. **Identity ledger.** The merged node-manifest work is the first
+   data step — slim it to identity-only (drop the projectable fields
+   `intent`, `feats`, …), rename `manifest/` → `ids/`, extend to
+   sysarch + comparch.
+4. **ID assignment at the decomposing tiers** — folded into the
+   `draft-sysarch` / `draft-comparch` CLI write path. The
+   sysarch→comparch and comparch→subcomparch "fanout gaps" are
+   exactly this.
+5. **Skills read context from the CLI**, not an MCP tool. Drop the
+   MCP / JSON-RPC transport, the plugin's `.mcp.json`, and the
+   deployed `bootstrap.sh` endpoint; the on-ramp becomes a GitHub
+   pull (see *On-ramp*).
+6. **Repoint the graph viz** from the legacy backend's `/structure`
+   endpoint to the dashboard server's projection endpoint.
+7. **Propagation records.** `/regen_below` writes one; `/status`
    reads it.
-6. **Cleanup.** Delete `state.edges` and the vestigial multi-node
+8. **Cleanup.** Delete `state.edges` and the vestigial multi-node
    readers; then the deferred legacy-backend deletion can run.
 
 ## Open questions
