@@ -2,7 +2,7 @@
 
 This document is the punch list for the eventual deletion sweep that
 removes the old SQLAlchemy + job-queue + LLM-client stack now that
-`siege_mcp/` carries the read path and Claude Code skills carry the
+`siege/` carries the read path and Claude Code skills carry the
 write path.
 
 **Don't delete yet.** Phases 1-3 are not yet validated in production.
@@ -10,7 +10,7 @@ The new MCP server hasn't been deployed; the dashboard hasn't been
 repointed; the skills haven't been exercised end-to-end against a
 real project repo. The deletion is gated on:
 
-1. `siege_mcp` deployed at the target host and accepting reads from
+1. `siege` deployed at the target host and accepting reads from
    the dashboard.
 2. The plugin installed on mobile CC and at least one full
    draft → review → approve cycle completed on a real project.
@@ -68,11 +68,11 @@ one or a few commits.
   on the old node graph; not relevant when state lives in git.
 - `backend/graph/fanout.py` — fanout dispatcher tied to the reducer.
 - `backend/graph/references.py` — reference projection.
-- `backend/graph/tier_structure.py` — replaced by `siege_mcp/structure.py`.
+- `backend/graph/tier_structure.py` — replaced by `siege/structure.py`.
 - `backend/graph/review.py` + `review_summary.py` — replaced by
-  `siege_mcp/review_summary.py`.
+  `siege/review_summary.py`.
 - `backend/graph/regen_context.py` — replaced by per-tier readers
-  in `siege_mcp/tiers/`.
+  in `siege/projection/`.
 - `backend/graph/queries.py` — readiness gates inline in slash
   commands now; the structure summary handles enumeration.
 - `backend/graph/instructions.py`, `pending_instruction.py`, etc.
@@ -85,7 +85,7 @@ one or a few commits.
 - `backend/projects/service.py`, `schemas.py`, `settings.py` — keep
   the read paths the dashboard uses; prune writes.
 - `backend/auth/routes.py`, `service.py`, `schemas.py` — `service.py`
-  was ported simplified to `siege_mcp/auth.py`. If login + token
+  was ported simplified to `siege/auth.py`. If login + token
   issuance stays in the dashboard, keep the routes + password
   helpers; otherwise prune.
 
@@ -99,7 +99,7 @@ modules:
 - `tests/v2/test_handlers_*.py`
 - `tests/v2/test_reducer_*.py`
 - `tests/v2/test_bootstrap_chain.py` (the full chain integration
-  test — re-targeted in `siege_mcp/tests/` at the MCP-shaped chain)
+  test — re-targeted in `siege/tests/` at the MCP-shaped chain)
 - `tests/v2/test_review_*.py`, `test_regen_*.py`, etc.
 
 ### Frontend (already done in Phase 3 except for these stragglers)
@@ -123,13 +123,13 @@ Phase 3 deleted the queue / SSE surfaces. Phase 4 cleans up:
 
 Post-deletion, `backend/` shrinks to:
 
-- `backend/main.py` — slim FastAPI app that mounts `siege_mcp.server.app`
+- `backend/main.py` — slim FastAPI app that mounts `siege.server.app`
   and any remaining dashboard-only routes (projects CRUD, auth login).
 - `backend/projects/` — project CRUD (read + the small set of writes
   the dashboard needs: create, delete, update name).
 - `backend/auth/` — login / token issuance (the verification-only half
-  lives in `siege_mcp/auth.py`).
-- `backend/git_manager/` — clone + commit helpers. `siege_mcp.git_view`
+  lives in `siege/auth.py`).
+- `backend/git_manager/` — clone + commit helpers. `siege.git_view`
   uses these for the clone-on-first-read path.
 - `backend/github/` — GitHub OAuth + repo provisioning.
 - `backend/config.py` — shared env loading.
@@ -139,7 +139,7 @@ That's roughly ~3K LOC remaining, down from ~30K.
 ## Cumulative LOC delta (estimate)
 
 - Lines deleted: ~30K
-- Lines added (siege_mcp + plugin contents): ~3.5K
+- Lines added (siege + plugin contents): ~3.5K
 - Net: ~26.5K LOC removed.
 
 The migration trades a process-heavy backend with persistence, a job
@@ -160,7 +160,7 @@ the test suite stays runnable between commits:
 3. `phase 4c: drop write routes + handlers`
 4. `phase 4d: drop models + database + migrations`
 
-Tests for deleted modules disappear with each commit. The siege_mcp
+Tests for deleted modules disappear with each commit. The siege
 test suite stays green throughout.
 
 ## Rollback

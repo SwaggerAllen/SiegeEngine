@@ -673,26 +673,26 @@ delegating. Not a code change.
   typecheck/test/build/lint, backend lint/typecheck/test). CI
   and deploy are decoupled — merging to main triggers deploy
   regardless of CI status. Backend lint + typecheck cover both
-  `backend/` and `siege_mcp/`; pytest picks up
-  `siege_mcp/tests/` via the `testpaths` entry in
+  `backend/` and `siege/`; pytest picks up
+  `siege/tests/` via the `testpaths` entry in
   `pyproject.toml`.
 
 ## Architecture: v3 (substrate + execution)
 
 The target architecture is `docs/architecture/v3-spec.md` —
 read it before touching the substrate, the skills, or
-`siege_mcp/`.
+`siege/`.
 
 v3 in one line: **artifacts (git files) are the source of
 truth; the node/edge graph is a pure projection of them; the
 only persisted non-artifacts are identity ledgers and
 propagation records.**
 
-- **`siege_mcp/`** (slated to be renamed `siege/`) is the
-  **core library** — the projection (parse bodies → graph +
-  per-tier context bundles + staleness + summaries) and the
-  deterministic write logic (`cli.py` — materialize state
-  JSON, identity ledgers, sha, nonce).
+- **`siege/`** is the **core library** — its **`projection/`**
+  subpackage holds the read side (parse bodies → graph +
+  per-tier context builders + staleness + summaries); `cli.py`
+  is the deterministic write logic (materialize state JSON,
+  identity ledgers, sha, nonce).
 - **Two drivers**: a local **CLI** that Claude Code skills
   call for reads and writes, and a thin **HTTP server**
   serving the dashboard's read-only views. The **MCP /
@@ -716,7 +716,7 @@ propagation records.**
 Don't add new MCP tools, new inline-python to skills, or new
 `backend/graph/` code — all three are slated to go. New
 deterministic logic goes in the core library; the prompt text
-lives at `siege_mcp/prompts/<tier>.md`.
+lives at `siege/prompts/<tier>.md`.
 
 ## Cheat sheet (load-bearing docs)
 

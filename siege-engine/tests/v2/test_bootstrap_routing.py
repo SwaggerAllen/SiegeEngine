@@ -6,9 +6,9 @@ at `/{full_path:path}` would happily swallow the request if the
 explicit route weren't registered first — this test pins that
 invariant so we don't regress.
 
-Lives in `tests/v2/` (not `siege_mcp/tests/`) because the contract
+Lives in `tests/v2/` (not `siege/tests/`) because the contract
 under test is `backend.main:app`'s route order: a property of the
-mounted assembly, not of `siege_mcp.server` alone.
+mounted assembly, not of `siege.server` alone.
 """
 
 from __future__ import annotations

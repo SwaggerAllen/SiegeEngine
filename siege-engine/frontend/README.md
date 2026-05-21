@@ -2,7 +2,7 @@
 
 React + Vite + TypeScript + Zustand + Tailwind dashboard for the
 SiegeEngine project. Reads project state from the MCP server
-(`siege_mcp/` in the parent directory) and renders structure,
+(`siege/` in the parent directory) and renders structure,
 review summaries, and per-tier scores.
 
 For project-level docs, install instructions, and the full

@@ -22,7 +22,7 @@ verified on mobile CC. That's a real-world test, not a unit test.
 
 ## Phase 1 — Bootstrap vertical substrate ✅ LANDED (code, not validated)
 
-`siege-engine/siege_mcp/` — full Python package, 16/16 smoke tests
+`siege-engine/siege/` — full Python package, 16/16 smoke tests
 pass, ruff clean, ruff format clean.
 
 - `state.py` — typed state JSON with load / dump / sha256 / nonce
@@ -54,7 +54,7 @@ pass, ruff clean, ruff format clean.
 ### Prompt port (extra, landed after substrate)
 
 The static instruction text from every old `backend/graph/prompts/*.py`
-module is extracted verbatim into `siege_mcp/prompts/<tier>.md` (and
+module is extracted verbatim into `siege/prompts/<tier>.md` (and
 the reviewer-architecture critique block into `review_<tier>.md`). Per-
 tier readers attach the appropriate prompt under `instructions` /
 `review_instructions` keys on the bundle so skills don't have to know
@@ -63,17 +63,17 @@ where the prompt lives. 14 prompt files total, sizes range from 365B
 
 ### Deployment mount (landed after substrate)
 
-`backend/main.py` mounts `siege_mcp.server.app` at `/siege_mcp`. The
+`backend/main.py` mounts `siege.server.app` at `/siege_mcp`. The
 new read-only surface ships alongside the old write surface during
 the migration. After Phase 4 deletion the mount moves to `/` and
 `backend/main.py` shrinks to project CRUD + auth login. `pyproject.toml`
-now includes `siege_mcp*` in the package glob and the substrate's
+now includes `siege*` in the package glob and the substrate's
 tests in the pytest testpaths.
 
 ## Phase 2 — Downstream tiers ✅ LANDED (same caveat)
 
 The substrate already covers all 7 tiers — Phase 1 and Phase 2 share
-the same `siege_mcp/tiers/` directory because the per-tier reader
+the same `siege/projection/` directory because the per-tier reader
 pattern was uniform enough that splitting them into separate phases
 of work was artificial. The bootstrap-vs-downstream distinction lives
 in the slash commands (`/scaffold` is upstream-only, `/run_tier`
@@ -124,9 +124,9 @@ Verification: tsc clean, 421/421 vitest pass, 0 lint errors, vite
 build succeeds.
 ## Deploy + on-ramp (extra, landed after Phase 3)
 
-- **Dockerfile** picks up `siege_mcp/` + `scripts/` so the mounted
+- **Dockerfile** picks up `siege/` + `scripts/` so the mounted
   app + bootstrap script reach the runtime container.
-- **CI workflow** lints + typechecks `siege_mcp/` alongside `backend/`.
+- **CI workflow** lints + typechecks `siege/` alongside `backend/`.
 - **Plugin manifest** points at the real droplet hostname
   (`https://siege.strutco.io/siege_mcp/mcp`).
 - **Bootstrap script** at `scripts/siege-bootstrap.sh` served at
@@ -167,8 +167,8 @@ Deferred per plan:
 ```
 # Backend smoke
 cd siege-engine
-.venv/bin/python -m pytest siege_mcp/tests/ -q
-ruff check siege_mcp && ruff format --check siege_mcp
+.venv/bin/python -m pytest siege/tests/ -q
+ruff check siege && ruff format --check siege
 
 # Frontend (separate)
 cd frontend
@@ -180,7 +180,7 @@ npx vite build
 
 ## Next gates (in order)
 
-1. Deploy `siege_mcp.server:app` to the production host alongside
+1. Deploy `siege.server:app` to the production host alongside
    the existing FastAPI app.
 2. Verify `/plugin install swaggerallen/siegeengine` works on mobile
    CC; load the stub skill, list available MCP tools.

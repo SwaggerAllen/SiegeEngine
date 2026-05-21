@@ -345,11 +345,11 @@ Re-examined and still correct — referenced, not restated:
 
 From the current code to v3, in order:
 
-1. **Consolidate the core.** `siege_mcp/` already holds the projection
-   (per-tier context readers, structure / review summaries) and the
-   write logic (`cli.py`). Fold the per-tier readers into one
-   projection module, keep `cli.py` as the write half behind one CLI,
-   and rename the package `siege_mcp` → `siege`.
+1. **Consolidate the core — done.** `siege_mcp` renamed to `siege`;
+   the read side gathered under a `siege/projection/` subpackage (the
+   per-tier context builders + `structure` / `review_summary` /
+   `plan`); `cli.py` kept as the write half. Behavior-preserving —
+   the test suite passed unchanged.
 2. **Move write logic out of skill markdown.** Skills call `siege`
    CLI subcommands instead of carrying inline `python3` heredocs. The
    bootstrap script installs the `siege` core, version-pinned.

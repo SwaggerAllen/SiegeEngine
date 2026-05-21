@@ -110,7 +110,7 @@ unassigned feature is a hard error that blocks `/run_phase`.
 3. Wait for the batch to complete (check /status or watch the
    dashboard).
 4. Inspect the new scores. If still too low: edit the prompt at
-   siege_mcp/prompts/<tier>.md, commit, re-run /regen_below.
+   siege/prompts/<tier>.md, commit, re-run /regen_below.
 5. Once scores plateau, /run_tier <tier> with auto_approve=true
    to cover the full-corpus tail.
 ```
@@ -197,7 +197,7 @@ Reviews emit an integer 0-100. The bands:
 - **86-100**: ready to approve
 
 Per-tier score baselines shift after prompt or context changes —
-don't compare scores from before/after a `siege_mcp/prompts/<tier>.md`
+don't compare scores from before/after a `siege/prompts/<tier>.md`
 edit as if they were on the same scale.
 
 ## State + git conventions
