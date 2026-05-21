@@ -34,9 +34,10 @@ tiers change.
    each `line` — these are components a dependency pulled earlier than
    their assigned phase. The registry was NOT mutated; this is the
    report the user asked for. Not an error, just visibility.
-5. **Mint the impl nodes.** Run the inline `python3` below. For each
-   planned impl node it writes an `absent`-status impl state JSON at
-   the phased path with `meta.parent_resps` pre-seeded to the node's
+5. **Mint the impl nodes.** From the repo root, call the writer CLI's
+   `mint-plan` subcommand. It reads `state/plan.json` and, for each
+   planned impl node, writes an `absent`-status impl state JSON at the
+   phased path with `meta.parent_resps` pre-seeded to the node's
    cumulative `closure_resp_ids`. It is **idempotent and additive**:
    a node already at `drafted` / `reviewed` / `approved` is left
    untouched; an `absent` node is re-seeded (the closure may have
@@ -44,61 +45,11 @@ tiers change.
    disk that the new plan no longer includes.
 
    ```bash
-   python3 - <<'PY'
-import json, os, secrets, time
-
-alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
-def mint_nonce():
-    b = secrets.randbits(128)
-    return "".join(reversed([alphabet[(b >> (5 * i)) & 0x1F] for i in range(26)]))
-
-plan = json.loads(open("state/plan.json").read())
-minted, reseeded, skipped = [], [], []
-planned = set()
-for phase in plan.get("phases", []):
-    for node in phase.get("impl_nodes", []):
-        parent, sub, n = node["parent_id"], node["sub_id"], node["phase"]
-        state_path = f"state/impl/{parent}/p{n}/{sub}.json"
-        planned.add(state_path)
-        prior = {}
-        if os.path.exists(state_path):
-            prior = json.loads(open(state_path).read())
-            if prior.get("status") in ("drafted", "reviewed", "approved"):
-                skipped.append(state_path)
-                continue
-        meta = dict(prior.get("meta", {}))
-        meta["parent_resps"] = node["closure_resp_ids"]
-        state = {
-            "schema_version": 2,
-            "scope": {"tier": "impl", "comp_id": None,
-                      "parent_id": parent, "sub_id": sub, "phase": n},
-            "status": "absent",
-            "nonce": mint_nonce(),
-            "is_foundation": prior.get("is_foundation", False),
-            "edges": prior.get("edges", {}),
-            "meta": meta,
-        }
-        os.makedirs(os.path.dirname(state_path), exist_ok=True)
-        open(state_path, "w").write(json.dumps(state, indent=2, sort_keys=True) + "\n")
-        (reseeded if prior else minted).append(state_path)
-
-# Surface (do not delete) phased impl nodes the new plan dropped.
-dropped = []
-for root, _, files in os.walk("state/impl"):
-    seg = os.path.basename(root)
-    if not (seg.startswith("p") and seg[1:].isdigit()):
-        continue
-    for f in files:
-        if f.endswith(".json"):
-            p = os.path.join(root, f)
-            if p not in planned:
-                dropped.append(p)
-
-print(json.dumps({"minted": minted, "reseeded": reseeded,
-                   "skipped_built": skipped, "dropped_by_plan": dropped},
-                  indent=2))
-PY
+   python3 -m siege.cli mint-plan
    ```
+
+   It prints a JSON object with `minted`, `reseeded`, `skipped_built`,
+   and `dropped_by_plan` — each a list of impl state paths.
 
 6. **Stage + commit + push.** One commit with `state/plan.json` and
    every minted/re-seeded impl state JSON:
