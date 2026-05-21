@@ -1,5 +1,15 @@
 # SiegeEngine v2 Architecture
 
+> **Superseded for the substrate + execution model by [`v3-spec.md`](./v3-spec.md).**
+> v2 assumes a backend-orchestrated, event-sourced, job-queue execution
+> model that the git migration removed. v3 redesigns the substrate,
+> data model, and execution model around Claude Code + git + a
+> read-only projection server. This document remains the reference for
+> the **meaning-engine semantics** v3 carries over unchanged — tier
+> transformations, foundation components, policies, vocabulary,
+> references, fragments. Read it for those; read `v3-spec.md` for
+> anything substrate / storage / execution.
+
 Living design doc for the v2 rewrite. Captures the structured-model rearchitecture discussion. This is the target architecture, not the current state of the code — the current code will be gutted before v2 is built.
 
 ---
