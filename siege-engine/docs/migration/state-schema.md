@@ -1,4 +1,4 @@
-# State JSON schema (v1)
+# State JSON schema (v1 + v2)
 
 Per-scope state lives at `state/<tier>/<id>.json` (top-level) or
 `state/<tier>/<parent_id>/subs/<sub_id>.json` (sub-tier). Artifact bodies
@@ -9,16 +9,31 @@ Every state transition is exactly one git commit, containing the state
 JSON file plus any body files it references. The MCP server reads state
 JSON from git; skills write it.
 
+## Schema versions
+
+- **v1** — the original schema (no `scope.phase`).
+- **v2** — adds the `scope.phase` dimension for impl-tier phasing.
+  Only `impl` and `fanin` scopes carry a phase; the five arch tiers
+  never do.
+
+The server parses **both** (`SUPPORTED_SCHEMA_VERSIONS = {1, 2}`).
+There is no migration: a v1 file is a valid phase-`None` artifact and
+parses unchanged. A writer emits `schema_version: 2` only when it
+writes a *phased* (impl/fanin with a phase) scope; everything else
+keeps emitting `1`. The version tracks the artifact's scope shape,
+not a global epoch — re-dumping a v1 file keeps it v1.
+
 ## Schema
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "scope": {
     "tier": "feature_expansion | requirements | sysarch | comparch | subcomparch | impl | fanin",
     "comp_id": "comp_abc",
     "parent_id": "comp_parent",
-    "sub_id": "sub_xyz"
+    "sub_id": "sub_xyz",
+    "phase": 2
   },
   "status": "absent | drafted | reviewed | approved",
   "draft": {
@@ -60,6 +75,11 @@ JSON from git; skills write it.
   except `feature_expansion`, which keys by feature id placed in
   `comp_id`). `parent_id` + `sub_id` are present for sub-tier scopes
   (subcomparch under a parent comparch).
+- **`scope.phase`** — integer phase, present only on `impl` and `fanin`
+  scopes once impl-tier phasing is in play; `null`/absent everywhere
+  else. An impl scope is keyed by `(parent_id, sub_id, phase)` — one
+  subcomponent can have several impl nodes, one per phase. A `fanin`
+  scope is keyed by `(comp_id, phase)`. See "Impl-tier phasing" below.
 - **`status`** — coarse-grained gate. Transitions are:
   - `absent → drafted` via a `draft-*` skill
   - `drafted → reviewed` via a `review-*` skill
@@ -118,6 +138,39 @@ fanin/<comp_id>/review.md
 
 State files cluster under `state/` so the MCP server can load all state
 in a single tree-walk per ref, then lazy-load bodies on demand.
+
+## Impl-tier phasing (schema v2)
+
+When a project is built in phases, the `impl` and `fanin` tiers gain a
+`phase` dimension. The five arch tiers (feature_expansion …
+subcomparch) are **never** phased — the whole design builds first;
+phasing partitions only the implementation.
+
+Phased path layout (`phase = N`):
+
+```
+state/impl/<comp_id>/p<N>/<sub_id>.json
+impl/<comp_id>/subs/<sub_id>/p<N>/body.md
+impl/<comp_id>/subs/<sub_id>/p<N>/review.md
+
+state/fanin/<comp_id>/p<N>.json
+fanin/<comp_id>/p<N>/body.md
+fanin/<comp_id>/p<N>/review.md
+```
+
+A pre-phasing impl/fanin artifact (no `phase`) keeps the legacy
+unphased layout (`state/impl/<comp_id>/<sub_id>.json`, etc.) — the
+path methods are byte-identical when `phase` is `None`.
+
+The phase dimension is driven by:
+
+- **Phase registry** — `state/phases/<phase_id>.json`: an ordered
+  (`order: int`) phase with a list of assigned `feature_ids`. Holds
+  the user's release-planning intent.
+- **Plan** — `state/plan.json`: a computed projection that derives,
+  per phase, the impl nodes to build and their topological order.
+  Recomputed from the registry + the comparch/subcomparch tiers; see
+  the phasing plan for the `compute_plan` algorithm.
 
 ## Batches and cohorts
 

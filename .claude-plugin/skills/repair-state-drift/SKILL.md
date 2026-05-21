@@ -14,20 +14,35 @@ recompute the sha and write a new state JSON.
 ## Inputs
 
 - `ref`, `tier`, `comp_id` (or `parent_id` + `sub_id`)
+- (optional) `phase` — required to locate a phased `impl` / `fanin`
+  node's state JSON; see "Phased nodes" below. Omit for arch tiers.
 - (optional) `expected_status` — if set, the skill will refuse to
   repair if the state's status doesn't match. Defaults to no check.
 
 ## Steps
 
-1. Read the body file at `draft.body_path` and `review.body_path` (if
-   the review block is present).
-2. Recompute sha256 for each.
-3. Read the existing state JSON.
+1. Read the existing state JSON at the conventional state path (for a
+   phased impl/fanin node use the `p<N>` layout below).
+2. Read the body file at `draft.body_path` and `review.body_path` (if
+   the review block is present). These paths come from the state JSON
+   itself — they are already correct, phased or not; no reconstruction.
+3. Recompute sha256 for each.
 4. Update the `body_sha256` fields where they're stale. Don't touch
-   any other field except `nonce` (mint fresh).
+   any other field except `nonce` (mint fresh) — in particular leave
+   `schema_version` and `scope.phase` exactly as they are.
 5. Commit one commit:
    `repair(<tier>/$id): recompute body_sha256 (drift)`
 6. Push.
+
+## Phased nodes
+
+When `tier` is `impl` or `fanin` and the node is phased, supply the
+`phase` input — the state JSON lives at a `p<N>` path:
+
+| tier  | unphased state path | phased (`phase=N`) state path |
+|-------|---------------------|--------------------------------|
+| impl  | `state/impl/<parent>/<sub>.json` | `state/impl/<parent>/pN/<sub>.json` |
+| fanin | `state/fanin/<comp>.json` | `state/fanin/<comp>/pN.json` |
 
 ## Don't
 

@@ -257,6 +257,68 @@ def test_mint_batch(tmp_path):
     assert payload["scopes"] == [{"tier": "comparch", "comp_id": "comp_a"}]
 
 
+def test_phased_impl_draft_writes_v2_at_phase_path(tmp_path):
+    """write-draft --tier impl --phase 2 lands the state JSON at the
+    phased path and stamps schema_version 2."""
+    body_path = tmp_path / "impl" / "comp_p" / "subs" / "sub_x" / "p2" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text("## impl:approach\nphase-2 work\n")
+    rc = main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "impl",
+            "--parent-id",
+            "comp_p",
+            "--sub-id",
+            "sub_x",
+            "--phase",
+            "2",
+            "--body-path",
+            "impl/comp_p/subs/sub_x/p2/body.md",
+        ]
+    )
+    assert rc == 0
+    state_file = tmp_path / "state" / "impl" / "comp_p" / "p2" / "sub_x.json"
+    assert state_file.exists()
+    state = parse_state(json.loads(state_file.read_text()))
+    assert state.schema_version == 2
+    assert state.scope.phase == 2
+    assert state.scope.parent_id == "comp_p"
+    assert state.scope.sub_id == "sub_x"
+
+
+def test_unphased_impl_draft_keeps_v1_legacy_path(tmp_path):
+    """Omitting --phase yields the byte-identical legacy v1 shape:
+    state/impl/<parent>/<sub>.json, schema_version 1, phase None."""
+    body_path = tmp_path / "impl" / "comp_q" / "subs" / "sub_y" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text("## impl:approach\nunphased work\n")
+    rc = main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "impl",
+            "--parent-id",
+            "comp_q",
+            "--sub-id",
+            "sub_y",
+            "--body-path",
+            "impl/comp_q/subs/sub_y/body.md",
+        ]
+    )
+    assert rc == 0
+    state_file = tmp_path / "state" / "impl" / "comp_q" / "sub_y.json"
+    assert state_file.exists()
+    state = parse_state(json.loads(state_file.read_text()))
+    assert state.schema_version == 1
+    assert state.scope.phase is None
+
+
 def test_sub_tier_paths(tmp_path):
     body_path = tmp_path / "subcomparch" / "comp_p" / "subs" / "sub_x" / "body.md"
     body_path.parent.mkdir(parents=True)

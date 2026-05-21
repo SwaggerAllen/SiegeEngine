@@ -57,14 +57,51 @@ def _generic_per_node(state: State) -> dict[str, Any]:
     }
 
 
+def _impl_per_node(state: State) -> dict[str, Any]:
+    """Impl rows are phase-qualified — a subcomponent can have several
+    phased impl nodes, so a bare ``sub_id`` scope_id would collide two
+    rows into one and double-count the tier aggregates."""
+    sub_id = state.scope.sub_id
+    phase = state.scope.phase
+    return {
+        "scope_id": sub_id if phase is None else f"{sub_id}@p{phase}",
+        "sub_id": sub_id,
+        "parent_id": state.scope.parent_id,
+        "phase": phase,
+        "name": state.meta.get("name", ""),
+        "resp_count": len(state.meta.get("parent_resps", [])),
+        "dep_count": len(state.edges.get("dependencies", [])),
+        "has_body": bool(state.draft),
+        "status": state.status,
+        "score": state.review.score if state.review else None,
+    }
+
+
+def _fanin_per_node(state: State) -> dict[str, Any]:
+    """Fan-in rows are phase-qualified for the same reason as impl —
+    fan-in recomputes per phase, so one comp can carry several nodes."""
+    comp_id = state.scope.comp_id
+    phase = state.scope.phase
+    return {
+        "scope_id": comp_id if phase is None else f"{comp_id}@p{phase}",
+        "comp_id": comp_id,
+        "parent_id": state.scope.parent_id,
+        "phase": phase,
+        "name": state.meta.get("name", ""),
+        "has_body": bool(state.draft),
+        "status": state.status,
+        "score": state.review.score if state.review else None,
+    }
+
+
 _PER_NODE: dict[Tier, Any] = {
     "comparch": _comparch_per_node,
     "subcomparch": _subcomparch_per_node,
     "feature_expansion": _generic_per_node,
     "requirements": _generic_per_node,
     "sysarch": _generic_per_node,
-    "impl": _subcomparch_per_node,
-    "fanin": _generic_per_node,
+    "impl": _impl_per_node,
+    "fanin": _fanin_per_node,
 }
 
 

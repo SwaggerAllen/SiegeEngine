@@ -17,7 +17,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Versions this server can parse. v1 = pre-phasing (no `scope.phase`);
+# v2 adds the impl/fanin phase dimension. Parsing is version-tolerant;
+# a writer emits v2 only for a phased (impl/fanin) scope, v1 otherwise,
+# so the version tracks the artifact's scope shape, not a global epoch.
+SUPPORTED_SCHEMA_VERSIONS: frozenset[int] = frozenset({1, 2})
 
 Tier = Literal[
     "feature_expansion",
@@ -42,6 +48,12 @@ ALL_TIERS: tuple[Tier, ...] = (
 )
 
 
+# Tiers whose scopes carry a phase dimension. The five arch tiers
+# (feature_expansion … subcomparch) build whole, unphased; only impl
+# and fanin partition across phases.
+PHASED_TIERS: frozenset[str] = frozenset({"impl", "fanin"})
+
+
 @dataclass(frozen=True)
 class Scope:
     """Stable identifier for a tier artifact.
@@ -51,30 +63,64 @@ class Scope:
     and ``sub_id`` are None. For sub-tiers (subcomparch, impl), the
     ``parent_id`` points at the owning comparch and ``sub_id`` keys
     the sub.
+
+    ``phase`` is set only for impl + fanin scopes (see ``PHASED_TIERS``)
+    once impl-tier phasing is in play; it stays None for the five arch
+    tiers and for any pre-phasing (schema v1) impl/fanin artifact. An
+    impl scope is keyed by ``(parent_id, sub_id, phase)`` — one
+    subcomponent can have several impl nodes, one per phase.
     """
 
     tier: Tier
     comp_id: str | None = None
     parent_id: str | None = None
     sub_id: str | None = None
+    phase: int | None = None
 
     def key(self) -> tuple[str, ...]:
-        """Hashable tuple form for caching / dedup."""
-        return (self.tier, self.comp_id or "", self.parent_id or "", self.sub_id or "")
+        """Hashable tuple form for caching / dedup.
+
+        MUST include ``phase`` — ``GitView._states`` is keyed by this
+        tuple, so two phased impl nodes for the same subcomponent would
+        otherwise collide to one key and silently drop one.
+        """
+        return (
+            self.tier,
+            self.comp_id or "",
+            self.parent_id or "",
+            self.sub_id or "",
+            "" if self.phase is None else f"p{self.phase}",
+        )
+
+    def _phase_seg(self) -> str:
+        """``p<N>`` path segment for a phased scope, else empty."""
+        return f"p{self.phase}" if self.phase is not None else ""
 
     def state_path(self) -> str:
         """Relative path to the state JSON file for this scope."""
+        if self.tier == "impl" and self.phase is not None:
+            return f"state/impl/{self.parent_id}/{self._phase_seg()}/{self.sub_id}.json"
+        if self.tier == "fanin" and self.phase is not None:
+            return f"state/fanin/{self.comp_id}/{self._phase_seg()}.json"
         if self.parent_id and self.sub_id:
             return f"state/{self.tier}/{self.parent_id}/{self.sub_id}.json"
         return f"state/{self.tier}/{self.comp_id}.json"
 
     def body_path(self) -> str:
         """Conventional relative path to the body markdown."""
+        if self.tier == "impl" and self.phase is not None:
+            return f"impl/{self.parent_id}/subs/{self.sub_id}/{self._phase_seg()}/body.md"
+        if self.tier == "fanin" and self.phase is not None:
+            return f"fanin/{self.comp_id}/{self._phase_seg()}/body.md"
         if self.parent_id and self.sub_id:
             return f"{self.tier}/{self.parent_id}/subs/{self.sub_id}/body.md"
         return f"{self.tier}/{self.comp_id}/body.md"
 
     def review_path(self) -> str:
+        if self.tier == "impl" and self.phase is not None:
+            return f"impl/{self.parent_id}/subs/{self.sub_id}/{self._phase_seg()}/review.md"
+        if self.tier == "fanin" and self.phase is not None:
+            return f"fanin/{self.comp_id}/{self._phase_seg()}/review.md"
         if self.parent_id and self.sub_id:
             return f"{self.tier}/{self.parent_id}/subs/{self.sub_id}/review.md"
         return f"{self.tier}/{self.comp_id}/review.md"
@@ -152,10 +198,10 @@ def load_state(path: Path) -> State:
 def parse_state(raw: dict[str, Any]) -> State:
     """Convert a raw dict (e.g. from `json.loads` or a git blob) to State."""
     version = raw.get("schema_version", SCHEMA_VERSION)
-    if version != SCHEMA_VERSION:
+    if version not in SUPPORTED_SCHEMA_VERSIONS:
         raise ValueError(
-            "Unsupported state schema_version "
-            f"{version!r}; this server only reads v{SCHEMA_VERSION}"
+            f"Unsupported state schema_version {version!r}; this server reads "
+            f"{sorted(SUPPORTED_SCHEMA_VERSIONS)}"
         )
     scope_raw = raw["scope"]
     scope = Scope(
@@ -163,6 +209,8 @@ def parse_state(raw: dict[str, Any]) -> State:
         comp_id=scope_raw.get("comp_id"),
         parent_id=scope_raw.get("parent_id"),
         sub_id=scope_raw.get("sub_id"),
+        # Absent on v1 files → None → pre-phasing semantics.
+        phase=scope_raw.get("phase"),
     )
     draft_raw = raw.get("draft")
     draft = (
@@ -220,6 +268,7 @@ def dump_state(state: State) -> dict[str, Any]:
             "comp_id": state.scope.comp_id,
             "parent_id": state.scope.parent_id,
             "sub_id": state.scope.sub_id,
+            "phase": state.scope.phase,
         },
         "status": state.status,
         "nonce": state.nonce,

@@ -16,6 +16,29 @@ Process every scope at the given tier that isn't yet `reviewed` or
 - (optional) `auto_approve` — if true, approve each reviewed scope.
   Default: false.
 
+## Phased projects: impl + fanin defer to /run_phase
+
+The impl and fanin tiers are **phased** — a leaf subcomponent gets one
+impl node per phase it picks up work in, and fan-in recomputes per
+phase. If a phase registry exists (`compute_plan` returns a non-empty
+`phases` list), do **not** blind-fan `/run_tier impl` or
+`/run_tier fanin` across every node at once — that ignores phase
+ordering and the cross-phase delta context.
+
+Instead, for `tier` in (`impl`, `fanin`) when the project is phased:
+
+1. Call `mcp__siegeengine__compute_plan(ref=$ref)`. If it reports
+   `errors`, stop and surface them — the plan isn't safe to run.
+2. Run each phase in ascending `order`, exactly as `/run_phase <n>`
+   does (draft + review the phase's `build_order`, then its fan-in).
+   Equivalent to `/run_phase 1; /run_phase 2; …` for every phase in
+   the registry. Defer to `commands/run-phase.md` for the per-phase
+   procedure.
+
+For an **unphased** project (no registry — `compute_plan` returns an
+empty `phases` list, or every impl/fanin scope has `phase: null`),
+fall through to the generic per-tier flow below.
+
 ## Steps
 
 1. **Read structure.** Call `mcp__siegeengine__get_structure_summary(ref=$ref, tier=$tier)`.

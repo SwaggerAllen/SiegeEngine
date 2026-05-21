@@ -13,7 +13,7 @@ from typing import Any
 
 from siege_mcp.git_view import GitView
 from siege_mcp.parsers.review_xml import ReviewXMLError, parse_review
-from siege_mcp.state import Tier
+from siege_mcp.state import State, Tier
 
 HIST_BANDS = (
     (0, 30),
@@ -22,6 +22,19 @@ HIST_BANDS = (
     (86, 100),
 )
 BAND_LABELS = ("0-30", "31-60", "61-85", "86-100")
+
+
+def _scope_id(state: State) -> str:
+    """Display identifier for a scope.
+
+    Phase-qualified for a phased impl/fanin node so two phased nodes
+    for one subcomponent / comp don't collapse to one identifier in
+    the aggregation or the worst-first summary text.
+    """
+    base = state.scope.comp_id or state.scope.sub_id or ""
+    if state.scope.phase is not None:
+        return f"{base}@p{state.scope.phase}"
+    return base
 
 
 def _histogram(scores: list[int]) -> dict[str, int]:
@@ -45,8 +58,9 @@ def build_review_summary(view: GitView, tier: Tier) -> dict[str, Any]:
         if not review_block:
             scopes_payload.append(
                 {
-                    "scope_id": state.scope.comp_id or state.scope.sub_id,
+                    "scope_id": _scope_id(state),
                     "parent_id": state.scope.parent_id,
+                    "phase": state.scope.phase,
                     "score": None,
                     "status": state.status,
                     "intro": "",
@@ -59,8 +73,9 @@ def build_review_summary(view: GitView, tier: Tier) -> dict[str, Any]:
         except (ReviewXMLError, Exception):  # noqa: BLE001 — keep aggregation alive
             scopes_payload.append(
                 {
-                    "scope_id": state.scope.comp_id or state.scope.sub_id,
+                    "scope_id": _scope_id(state),
                     "parent_id": state.scope.parent_id,
+                    "phase": state.scope.phase,
                     "score": review_block.score,
                     "status": state.status,
                     "intro": "",
@@ -70,15 +85,16 @@ def build_review_summary(view: GitView, tier: Tier) -> dict[str, Any]:
             continue
         scopes_payload.append(
             {
-                "scope_id": state.scope.comp_id or state.scope.sub_id,
+                "scope_id": _scope_id(state),
                 "parent_id": state.scope.parent_id,
+                "phase": state.scope.phase,
                 "score": parsed.score,
                 "status": state.status,
                 "intro": parsed.intro,
             }
         )
         scores.append(parsed.score)
-        intros.append((parsed.score, state.scope.comp_id or state.scope.sub_id or "", parsed.intro))
+        intros.append((parsed.score, _scope_id(state), parsed.intro))
 
     intros.sort(key=lambda t: (t[0], t[1]))
     summary_text = "\n\n".join(

@@ -21,6 +21,7 @@ from siege_mcp.auth_context import current_user_id
 from siege_mcp.auth_lookup import lookup_project_auth
 from siege_mcp.git_view import GitView
 from siege_mcp.git_view import cache as view_cache
+from siege_mcp.plan import compute_plan as _compute_plan
 from siege_mcp.review_summary import build_review_summary
 from siege_mcp.state import Scope, Tier, dump_state
 from siege_mcp.structure import build_structure_summary
@@ -69,15 +70,18 @@ def get_state(
     comp_id: str | None = None,
     parent_id: str | None = None,
     sub_id: str | None = None,
+    phase: int | None = None,
 ) -> dict[str, Any]:
     view = _open_view(project_id, ref)
-    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase)
     state = view.get_state(scope)
     if state is None:
         return {
             "ref": view.ref,
             "ref_head_sha": view.head_sha,
-            "scope": dict(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id),
+            "scope": dict(
+                tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase
+            ),
             "found": False,
         }
     drift = view.drift_for(state)
@@ -142,9 +146,10 @@ def get_generation_context(
     comp_id: str | None = None,
     parent_id: str | None = None,
     sub_id: str | None = None,
+    phase: int | None = None,
 ) -> dict[str, Any]:
     view = _open_view(project_id, ref)
-    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase)
     builder = GENERATION_BUILDERS.get(tier)
     if builder is None:
         raise ValueError(f"No generation builder for tier {tier!r}")
@@ -159,9 +164,10 @@ def get_review_context(
     comp_id: str | None = None,
     parent_id: str | None = None,
     sub_id: str | None = None,
+    phase: int | None = None,
 ) -> dict[str, Any]:
     view = _open_view(project_id, ref)
-    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase)
     builder = REVIEW_BUILDERS.get(tier)
     if builder is None:
         raise ValueError(f"No review builder for tier {tier!r}")
@@ -176,6 +182,18 @@ def get_review_summary(project_id: str, ref: str, tier: Tier) -> dict[str, Any]:
 def get_structure_summary(project_id: str, ref: str, tier: Tier) -> dict[str, Any]:
     view = _open_view(project_id, ref)
     return build_structure_summary(view, tier)
+
+
+def compute_plan(project_id: str, ref: str) -> dict[str, Any]:
+    """Compute the phasing plan — impl nodes per phase + build order.
+
+    Pure read-only projection (mirrors get_review_summary). Reads the
+    phase registry + comparch/subcomparch/requirements tiers; never
+    writes. The mint-plan skill consumes this to materialize
+    state/plan.json + the per-node impl state files.
+    """
+    view = _open_view(project_id, ref)
+    return _compute_plan(view)
 
 
 def list_batches(project_id: str, ref: str, status: str | None = None) -> dict[str, Any]:

@@ -266,7 +266,14 @@ class GitView:
     def list_tier(self, tier: Tier) -> list[State]:
         return sorted(
             (s for s in self._states.values() if s.scope.tier == tier),
-            key=lambda s: (s.scope.parent_id or "", s.scope.sub_id or "", s.scope.comp_id or ""),
+            # Phase last so a subcomponent's phased impl nodes list in
+            # phase order; -1 default sorts unphased scopes first.
+            key=lambda s: (
+                s.scope.parent_id or "",
+                s.scope.sub_id or "",
+                s.scope.comp_id or "",
+                s.scope.phase if s.scope.phase is not None else -1,
+            ),
         )
 
     def all_states(self) -> Iterator[State]:

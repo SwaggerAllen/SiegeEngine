@@ -80,6 +80,7 @@ class ScopeRef(BaseModel):
     comp_id: str | None = None
     parent_id: str | None = None
     sub_id: str | None = None
+    phase: int | None = None
 
 
 class GetReviewContextRequest(ScopeRef):
@@ -102,6 +103,11 @@ class TierRefRequest(BaseModel):
     project_id: str
     ref: str
     tier: str
+
+
+class ProjectRefRequest(BaseModel):
+    project_id: str
+    ref: str
 
 
 class ListBatchesRequest(BaseModel):
@@ -295,6 +301,7 @@ def http_get_state(
         comp_id=req.comp_id,
         parent_id=req.parent_id,
         sub_id=req.sub_id,
+        phase=req.phase,
     )
 
 
@@ -328,6 +335,7 @@ def http_get_generation_context(
         comp_id=req.comp_id,
         parent_id=req.parent_id,
         sub_id=req.sub_id,
+        phase=req.phase,
     )
 
 
@@ -344,6 +352,7 @@ def http_get_review_context(
         comp_id=req.comp_id,
         parent_id=req.parent_id,
         sub_id=req.sub_id,
+        phase=req.phase,
     )
 
 
@@ -361,6 +370,14 @@ def http_get_structure_summary(
     _claims: dict[str, Any] = Depends(_require_token),
 ) -> dict[str, Any]:
     return tools.get_structure_summary(req.project_id, req.ref, req.tier)  # type: ignore[arg-type]
+
+
+@app.post("/api/compute-plan")
+def http_compute_plan(
+    req: ProjectRefRequest,
+    _claims: dict[str, Any] = Depends(_require_token),
+) -> dict[str, Any]:
+    return tools.compute_plan(req.project_id, req.ref)
 
 
 @app.post("/api/list-batches")
@@ -440,6 +457,10 @@ def _scope_schema(*, required: list[str] | None = None) -> dict[str, Any]:
             "comp_id": {"type": "string"},
             "parent_id": {"type": "string"},
             "sub_id": {"type": "string"},
+            "phase": {
+                "type": "integer",
+                "description": "phase index for a phased impl/fanin scope; omit for arch tiers",
+            },
         },
         "required": required or ["project_id", "ref", "tier"],
     }
@@ -548,6 +569,24 @@ _TOOL_DEFS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "compute_plan",
+        "description": (
+            "Compute the impl-tier phasing plan: per-phase impl nodes + topological "
+            "build order, derived from the phase registry (state/phases/) and the "
+            "comparch/subcomparch tiers. Reports auto-rearrangements (components pulled "
+            "earlier by a dependency) and hard errors (unassigned features). Read-only "
+            "projection — the mint-plan skill materializes the result."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "ref": {"type": "string"},
+            },
+            "required": ["project_id", "ref"],
+        },
+    },
+    {
         "name": "list_batches",
         "description": "List batch state files on a ref, optionally filtered by status.",
         "inputSchema": {
@@ -588,6 +627,7 @@ _TOOL_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
     "get_review_context": tools.get_review_context,
     "get_review_summary": tools.get_review_summary,
     "get_structure_summary": tools.get_structure_summary,
+    "compute_plan": tools.compute_plan,
     "list_batches": tools.list_batches,
     "validate_artifact": tools.validate_artifact,
 }

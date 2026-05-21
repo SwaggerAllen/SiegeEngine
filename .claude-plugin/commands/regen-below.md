@@ -22,10 +22,14 @@ less than the threshold gets regenerated.
    not None AND scope.score < threshold AND status is `reviewed`.
 2. **Mint a batch.** Write a `state/batches/batch_<id>.json` recording
    op_type=`regen_below_threshold`, tier=$tier, threshold=$threshold,
-   the scope list, status=`pending`.
+   the scope list, status=`pending`. For `impl` / `fanin` candidates,
+   each scope entry MUST include its `phase` field (the review summary
+   payload carries it) — `/continue` re-fires off these scope keys and
+   a phase-less impl/fanin key never resolves.
 3. **Per scope, in order:**
    a. Call `regen-<tier>-with-feedback`. It carries the review forward,
-      drafts a new body, fires a review, commits.
+      drafts a new body, fires a review, commits. For `impl` / `fanin`,
+      pass the candidate's `phase` through to the regen skill.
    b. Update the batch's status as you go (in-place commits to the
       batch JSON, one per scope completed — keeps progress visible
       if the orchestrator dies mid-batch).

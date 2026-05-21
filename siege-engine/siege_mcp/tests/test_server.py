@@ -144,6 +144,7 @@ def test_mcp_tools_list():
         "get_review_context",
         "get_review_summary",
         "get_structure_summary",
+        "compute_plan",
         "list_batches",
         "validate_artifact",
     }
