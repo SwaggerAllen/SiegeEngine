@@ -8,8 +8,9 @@ thinking_effort: default
 
 You are drafting one fan-in synthesis artifact end-to-end on the git-backed
 substrate. The MCP server gives you the bundle of context the prompt
-needs; you compose the draft, validate it, and commit + push exactly
-one commit (artifact body + state JSON together).
+needs; you compose the draft, validate it, materialize the state JSON
+with the `siege` writer CLI, and commit + push exactly one commit
+(artifact body and state JSON together).
 
 ## Inputs
 
@@ -32,73 +33,41 @@ one commit (artifact body + state JSON together).
    inputs to produce the artifact body. Section headers must use the
    `## <prefix>:<name>` convention so the body section parser can pick
    them up downstream (see `docs/migration/state-schema.md` and
-   `siege_mcp/fragments.py:section_for_kind`). Use default thinking budget; the handles upstream of you carry the load.
+   `siege/fragments.py:section_for_kind`). Use default thinking budget; the handles upstream of you carry the load.
 3. **Validate.** Call `mcp__siegeengine__validate_artifact(ref=$ref, tier="fanin", scope=..., body=<draft>)`.
    If `ok` is false, treat the errors as feedback and re-run step 2
    (loop up to 3 times). If still failing, stop and surface the errors.
 4. **Write the body file.** Phased node (`phase` set) →
    `fanin/$comp_id/p$phase/body.md`; unphased → `fanin/$comp_id/body.md`.
-5. **Materialize state JSON inline** (no external Python package
-   needed — pure `python3` from stdlib, which any environment CC
-   runs in has). The bash computes the phased vs unphased paths from
-   `$phase`; the python stamps schema v2 + `scope.phase` for a phased
-   node, v1 + `phase: null` otherwise:
+5. **Materialize state JSON.** From the repo root, call the writer
+   CLI. The bash computes the phased vs unphased body path from
+   `$phase` and passes `--phase` only when the node is phased; the
+   CLI stamps schema v2 + `scope.phase` for a phased node, v1
+   otherwise, and carries `edges` / `meta` / `is_foundation` forward
+   from any prior state:
 
    ```bash
-   COMP_ID="$comp_id"
    PHASE="${phase:-}"
    if [ -n "$PHASE" ]; then
-     BODY_PATH=fanin/$COMP_ID/p$PHASE/body.md
-     STATE_PATH=state/fanin/$COMP_ID/p$PHASE.json
+     BODY_PATH="fanin/$comp_id/p$PHASE/body.md"
+     PHASE_ARG=(--phase "$PHASE")
    else
-     BODY_PATH=fanin/$COMP_ID/body.md
-     STATE_PATH=state/fanin/$COMP_ID.json
+     BODY_PATH="fanin/$comp_id/body.md"
+     PHASE_ARG=()
    fi
-   THINKING=default
-   PRIOR_REVIEW_TEXT="${prior_review_text:-}"
-   BATCH_ID="${batch_id:-}"
-   mkdir -p "$(dirname "$STATE_PATH")"
-   python3 - "$BODY_PATH" "$STATE_PATH" "$THINKING" "$PRIOR_REVIEW_TEXT" "$BATCH_ID" "$COMP_ID" "$PHASE" <<'PY'
-import hashlib, json, os, secrets, sys, time
-
-body_path, state_path, thinking, prior_review, batch_id = sys.argv[1:6]
-comp_id, phase_raw = sys.argv[6:8]
-phase = int(phase_raw) if phase_raw else None
-scope = {"tier": "fanin", "comp_id": comp_id, "parent_id": None, "sub_id": None, "phase": phase}
-
-body = open(body_path, "rb").read()
-sha = hashlib.sha256(body).hexdigest()
-nonce_bits = secrets.randbits(128)
-alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
-nonce = "".join(reversed([alphabet[(nonce_bits >> (5*i)) & 0x1F] for i in range(26)]))
-
-prior = {}
-if os.path.exists(state_path):
-    prior = json.loads(open(state_path).read())
-state = {
-    "schema_version": 2 if phase is not None else 1,
-    "scope": scope,
-    "status": "drafted",
-    "nonce": nonce,
-    "is_foundation": prior.get("is_foundation", False),
-    "draft": {
-        "body_path": body_path,
-        "body_sha256": sha,
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "generator_metadata": {"thinking_effort": thinking, "batch_id": batch_id},
-        "prior_review_text": prior_review,
-    },
-    "edges": prior.get("edges", {}),
-    "meta": prior.get("meta", {}),
-}
-open(state_path, "w").write(json.dumps(state, indent=2, sort_keys=True) + "\n")
-print(json.dumps({"state_path": state_path, "body_sha256": sha}))
-PY
+   python3 -m siege.cli write-draft \
+     --tier fanin \
+     --comp-id "$comp_id" \
+     "${PHASE_ARG[@]}" \
+     --body-path "$BODY_PATH" \
+     --thinking-effort default \
+     --batch-id "${batch_id:-}" \
+     --prior-review-text "${prior_review_text:-}"
    ```
 
-   The sha is from the canonical body bytes; the nonce is a 26-char
-   base32-shaped ULID-ish string. Carries forward `edges` + `meta` +
-   `is_foundation` from the prior state if any.
+   It prints a JSON line with `state_path` and `body_sha256`. A
+   non-zero exit means the body failed validation — treat the stderr
+   as feedback and loop back to step 2.
 6. **Stage both files**, commit with message:
    `draft(fanin/$id): <one-line summary>`
 7. **Push** with `git push -u origin $ref` (retry on network failure

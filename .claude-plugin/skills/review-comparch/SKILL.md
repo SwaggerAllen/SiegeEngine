@@ -7,7 +7,7 @@ thinking_effort: max
 # Review a comparch
 
 You are reviewing one drafted comparch. The output is a single
-`<review>` XML block (see `siege_mcp/parsers/review_xml.py` for the
+`<review>` XML block (see `siege/parsers/review_xml.py` for the
 exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 (structural fixes), 61-85 (refinements), 86-100 (ready).
 
@@ -36,48 +36,24 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 4. **Validate inline.** Run `parse_review` mentally — if any section
    is missing or empty, fix and re-emit.
 5. **Write the review** to `comparch/$comp_id/review.md`.
-6. **Materialize state JSON inline** (pure `python3` stdlib). Extracts
-   `<score>` and `<intro>` from the review with a regex, computes
-   sha256, updates state JSON's `review` block, bumps nonce. Refuses
-   to write if `<score>` is missing or out of range, or if state
-   isn't in `drafted`:
+6. **Materialize state JSON.** From the repo root, call the writer
+   CLI. It extracts `<score>` and `<intro>` from the review with a
+   lenient regex, computes the review sha256, writes the `review`
+   block into `state/comparch/$comp_id.json`, flips status to
+   `reviewed`, and mints a fresh nonce:
 
    ```bash
-   REVIEW_PATH=comparch/$comp_id/review.md
-   STATE_PATH=state/comparch/$comp_id.json
-   python3 - "$REVIEW_PATH" "$STATE_PATH" <<'PY'
-import hashlib, json, re, secrets, sys, time
-review_path, state_path = sys.argv[1:3]
-review = open(review_path).read()
-m = re.search(r"<score>\s*(\d+)\s*</score>", review)
-if not m:
-    sys.exit("error: <score> missing or unparseable in review")
-score = int(m.group(1))
-if not 0 <= score <= 100:
-    sys.exit(f"error: <score> out of range 0..100: {score}")
-intro_m = re.search(r"<intro>(.*?)</intro>", review, re.DOTALL)
-intro = (intro_m.group(1) if intro_m else "").strip()
-if not intro:
-    sys.exit("error: <intro> missing or empty")
-state = json.loads(open(state_path).read())
-if state.get("status") != "drafted":
-    sys.exit(f"error: cannot review a scope with status={state.get('status')!r}")
-sha = hashlib.sha256(review.encode()).hexdigest()
-nonce_bits = secrets.randbits(128)
-alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
-state["nonce"] = "".join(reversed([alphabet[(nonce_bits >> (5*i)) & 0x1F] for i in range(26)]))
-state["status"] = "reviewed"
-state["review"] = {
-    "body_path": review_path,
-    "body_sha256": sha,
-    "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    "score": score,
-    "reviewer_metadata": {},
-}
-open(state_path, "w").write(json.dumps(state, indent=2, sort_keys=True) + "\n")
-print(json.dumps({"state_path": state_path, "score": score, "intro_first_sentence": intro.split(".", 1)[0]}))
-PY
+   python3 -m siege.cli write-review \
+     --tier comparch \
+     --comp-id "$comp_id" \
+     --review-path "comparch/$comp_id/review.md"
    ```
+
+   It prints a JSON line with `state_path`, `score`, and
+   `intro_first_sentence`. A non-zero exit means the review was
+   rejected — `<score>` missing or out of the 0-100 range, `<intro>`
+   missing or empty, or the scope not in `drafted` status. Fix the
+   review (or re-fetch the scope) and re-run.
 7. **Stage both files**, commit:
    `review(comparch/$id): score=<N> — <intro first sentence>`
 8. **Push.**
