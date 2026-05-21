@@ -32,7 +32,66 @@ should go through `draft-<tier>` which mints the state JSON for you.
    - Mint a fresh `nonce`
    - Clear `review` and `approval` blocks (they no longer apply)
    - Leave `schema_version` and `scope.phase` exactly as they are.
-5. Commit + push one commit:
+5. **Re-derive the node manifest** — `feature_expansion` and
+   `requirements` only; the step self-skips for every other tier. A
+   hand body edit can add, remove, or rename features /
+   responsibilities, so the manifest at
+   `manifest/<tier>/$comp_id.json` is stale and must be rebuilt from
+   the edited body. Node ids carry forward from the prior manifest by
+   name (stable across the edit); a new or renamed node mints a fresh
+   id. Pass `$tier`, `$comp_id`, and the `body_sha256` from step 2:
+
+   ```bash
+   BODY_PATH="$tier/$comp_id/body.md"
+   BODY_SHA="<body_sha256 from step 2>"
+   python3 - "$tier" "$comp_id" "$BODY_PATH" "$BODY_SHA" <<'PY'
+import json, os, re, secrets, sys
+
+tier, comp_id, body_path, body_sha = sys.argv[1:5]
+if tier not in ("feature_expansion", "requirements"):
+    print(json.dumps({"manifest": "not applicable for tier " + tier}))
+    raise SystemExit(0)
+
+text = open(body_path, encoding="utf-8").read()
+def tag(name, s):
+    m = re.search(r"<%s\b[^>]*>(.*?)</%s>" % (name, name), s, re.S)
+    return m.group(1).strip() if m else ""
+
+nodes = []
+if tier == "feature_expansion":
+    prefix = "feat_"
+    for i, blk in enumerate(re.findall(r"<feature\b[^>]*>(.*?)</feature>", text, re.S)):
+        nodes.append({"kind": "feature", "order": i, "name": tag("name", blk),
+                      "intent": tag("intent", blk), "implicit": "<implicit" in blk})
+else:
+    prefix = "resp_"
+    for i, blk in enumerate(re.findall(r"<responsibility\b[^>]*>(.*?)</responsibility>", text, re.S)):
+        nodes.append({"kind": "responsibility", "order": i, "name": tag("name", blk),
+                      "feats": re.findall(r'<feat\s+id="([^"]+)"', blk)})
+
+manifest_path = "manifest/%s/%s.json" % (tier, comp_id)
+prior_ids = {}
+if os.path.exists(manifest_path):
+    for n in json.loads(open(manifest_path).read()).get("nodes", []):
+        prior_ids.setdefault(n.get("name", "").strip().lower(), n.get("id"))
+used = set()
+for n in nodes:
+    nid = prior_ids.get(n["name"].strip().lower())
+    if not nid or nid in used:
+        nid = prefix + secrets.token_hex(4)
+    used.add(nid)
+    n["id"] = nid
+
+manifest = {"schema_version": 1,
+            "substrate": {"tier": tier, "comp_id": comp_id, "parent_id": None, "sub_id": None},
+            "derived_from_sha256": body_sha, "nodes": nodes}
+os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+open(manifest_path, "w").write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+print(json.dumps({"manifest_path": manifest_path, "node_count": len(nodes)}))
+PY
+   ```
+6. Commit + push one commit — stage the rebuilt manifest alongside
+   the state JSON when step 5 produced one:
    `mark-drafted(<tier>/$id): manual body edit`
 
 ## Phased nodes

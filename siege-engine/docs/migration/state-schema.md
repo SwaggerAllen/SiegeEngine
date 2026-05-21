@@ -71,10 +71,14 @@ not a global epoch — re-dumping a v1 file keeps it v1.
 - **`schema_version`** — bump on any breaking change. Server refuses to
   parse versions it doesn't know.
 - **`scope`** — fully identifies the artifact. `tier` is always present.
-  `comp_id` is present for tier scopes that key by component (everything
-  except `feature_expansion`, which keys by feature id placed in
-  `comp_id`). `parent_id` + `sub_id` are present for sub-tier scopes
-  (subcomparch under a parent comparch).
+  `comp_id` is the per-project scope id for top-level tiers
+  (`feature_expansion`, `requirements`, `sysarch`, `comparch`, `fanin`).
+  `parent_id` + `sub_id` are present for sub-tier scopes (subcomparch /
+  impl under a parent comparch). The single-node arch tiers
+  `feature_expansion` and `requirements` produce exactly one substrate
+  file per project — the features / responsibilities they expand into
+  are not separate files but *nodes*, indexed by a node manifest (see
+  "Node manifests" below).
 - **`scope.phase`** — integer phase, present only on `impl` and `fanin`
   scopes once impl-tier phasing is in play; `null`/absent everywhere
   else. An impl scope is keyed by `(parent_id, sub_id, phase)` — one
@@ -88,7 +92,7 @@ not a global epoch — re-dumping a v1 file keeps it v1.
   - `reviewed → approved` via `mark-approved`
 - **`draft.body_path`** — relative to repo root. Convention:
   `<tier>/<id>/body.md` for top-level, `<tier>/<parent_id>/subs/<sub_id>/body.md`
-  for subs. Feature expansion uses `feature_expansion/<feat_id>/body.md`.
+  for subs.
 - **`draft.body_sha256`** — sha256 of the body file's bytes. Drift detection:
   server recomputes on read; mismatch → repair skill.
 - **`draft.prior_review_text`** — only present after at least one
@@ -110,9 +114,9 @@ not a global epoch — re-dumping a v1 file keeps it v1.
 
 ```
 state/
-  feature_expansion/<feat_id>.json
-  requirements/<req_id>.json
-  sysarch/<sec_id>.json
+  feature_expansion/<comp_id>.json
+  requirements/<comp_id>.json
+  sysarch/<comp_id>.json
   comparch/<comp_id>.json
   subcomparch/<comp_id>/<sub_id>.json
   impl/<comp_id>/<sub_id>.json
@@ -120,12 +124,16 @@ state/
   batches/<batch_id>.json
   cohorts/<cohort_id>.json
 
-feature_expansion/<feat_id>/body.md
-feature_expansion/<feat_id>/review.md
-requirements/<req_id>/body.md
-requirements/<req_id>/review.md
-sysarch/<sec_id>/body.md
-sysarch/<sec_id>/review.md
+manifest/
+  feature_expansion/<comp_id>.json
+  requirements/<comp_id>.json
+
+feature_expansion/<comp_id>/body.md
+feature_expansion/<comp_id>/review.md
+requirements/<comp_id>/body.md
+requirements/<comp_id>/review.md
+sysarch/<comp_id>/body.md
+sysarch/<comp_id>/review.md
 comparch/<comp_id>/body.md
 comparch/<comp_id>/review.md
 comparch/<comp_id>/subs/<sub_id>/body.md
@@ -137,7 +145,57 @@ fanin/<comp_id>/review.md
 ```
 
 State files cluster under `state/` so the MCP server can load all state
-in a single tree-walk per ref, then lazy-load bodies on demand.
+in a single tree-walk per ref, then lazy-load bodies on demand. Node
+manifests cluster the same way under `manifest/`.
+
+## Node manifests
+
+A *substrate file* — `state/<tier>/<id>.json` plus its body — is the
+unit of generation, the draft → review → approve cycle, and one git
+commit. A *node* is a graph entity: a feature, a responsibility. The
+two are not the same thing.
+
+The single-node arch tiers `feature_expansion` and `requirements` each
+produce exactly one substrate file per project, whose body *declares
+many nodes* — every `<feature>` / `<responsibility>` inside it. The
+**node manifest** is the derived index of those nodes:
+
+```
+manifest/feature_expansion/<comp_id>.json
+manifest/requirements/<comp_id>.json
+```
+
+```json
+{
+  "schema_version": 1,
+  "substrate": {"tier": "feature_expansion", "comp_id": "civic_platform"},
+  "derived_from_sha256": "<sha256 of the body the manifest was derived from>",
+  "nodes": [
+    {"id": "feat_a1b2c3d4", "kind": "feature", "order": 0,
+     "name": "Login", "intent": "Users sign in.", "implicit": false}
+  ]
+}
+```
+
+- The manifest is **derived, not authored** — a `draft-*` skill
+  computes it by parsing the body it just composed and writes it in
+  the *same commit* as the body + state JSON. No LLM and no human
+  edits it directly.
+- **Node ids** (`feat_*` / `resp_*`) are minted on first derivation
+  and **carried forward by name** on every regen, so an id stays
+  stable across regenerations; a new or renamed node mints a fresh id.
+- **`derived_from_sha256`** ties the manifest to the exact body it was
+  computed from. A mismatch against the live body means the manifest
+  is stale — `mark-drafted` and `repair-state-drift` rebuild it.
+- Per-tier node shapes: a `feature` node carries `name` + `intent` +
+  `implicit`; a `responsibility` node carries `name` + `feats` (the
+  `feat_*` ids it derives from).
+
+Downstream context builders read manifests, never raw upstream bodies:
+`requirements` pulls the feature nodes, `sysarch` pulls feature +
+responsibility nodes, and `related_features_summary` + the phasing
+plan walk `parent_resps → resp node.feats → feat node`. Each reader
+pulls only the nodes a scope needs — not a whole body file.
 
 ## Impl-tier phasing (schema v2)
 
