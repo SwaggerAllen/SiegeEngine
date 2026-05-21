@@ -3,13 +3,20 @@
 compute_plan takes a GitView and returns the plan dict. These tests
 drive it with a lightweight fake view — a fixture git repo would be
 more faithful but the algorithm is pure graph work over tier state,
-so a fake that answers list_tier + the registry tree-read is enough.
+so a fake that answers list_tier + manifest_for_tier + the registry
+tree-read is enough.
+
+The resp → feat relationship comes from the requirements *manifest*
+(each responsibility node carries the ``feats`` it derives from), and
+the feature set from the feature_expansion manifest — both single-node
+arch tiers, so each contributes one manifest.
 """
 
 from __future__ import annotations
 
 import json
 
+from siege_mcp.manifest import Manifest
 from siege_mcp.plan import compute_plan
 from siege_mcp.state import Scope, State
 
@@ -35,22 +42,35 @@ def _sub(parent_id, sub_id, parent_resps):
     )
 
 
-def _req(resp_id, feature_id):
-    return State(
+def _feat_manifest(*feat_ids):
+    """The feature_expansion manifest — one node per feature id."""
+    return Manifest(
         schema_version=1,
-        scope=Scope(tier="requirements", comp_id=resp_id),
-        status="approved",
-        nonce="n",
-        meta={"feature_id": feature_id},
+        substrate=Scope(tier="feature_expansion", comp_id="proj"),
+        derived_from_sha256="x",
+        nodes=[
+            {"id": fid, "kind": "feature", "order": i, "name": fid, "intent": ""}
+            for i, fid in enumerate(feat_ids)
+        ],
     )
 
 
-def _feat(feat_id):
-    return State(
+def _req_manifest(*resp_specs):
+    """The requirements manifest. resp_specs: (resp_id, [feat_ids])."""
+    return Manifest(
         schema_version=1,
-        scope=Scope(tier="feature_expansion", comp_id=feat_id),
-        status="approved",
-        nonce="n",
+        substrate=Scope(tier="requirements", comp_id="proj"),
+        derived_from_sha256="x",
+        nodes=[
+            {
+                "id": rid,
+                "kind": "responsibility",
+                "order": i,
+                "name": rid,
+                "feats": list(feats),
+            }
+            for i, (rid, feats) in enumerate(resp_specs)
+        ],
     )
 
 
@@ -70,20 +90,24 @@ class _FakeClone:
 
 
 class _FakeView:
-    def __init__(self, registry_files, states_by_tier):
+    def __init__(self, registry_files, states_by_tier, manifests):
         self.ref = "main"
         self.head_sha = "deadbeef"
         self.clone = _FakeClone(registry_files)
         self._by_tier = states_by_tier
+        self._manifests = manifests
 
     def list_tier(self, tier):
         return self._by_tier.get(tier, [])
 
+    def manifest_for_tier(self, tier):
+        return self._manifests.get(tier)
+
 
 def _plan(view: "_FakeView") -> dict:
     """compute_plan only uses the duck-typed surface _FakeView provides
-    (ref, head_sha, clone.ls_tree/show_blob, list_tier). The ignore is
-    the single concession to that — kept in one place."""
+    (ref, head_sha, clone.ls_tree/show_blob, list_tier,
+    manifest_for_tier). The ignore is the single concession to that."""
     return compute_plan(view)  # type: ignore[arg-type]
 
 
@@ -120,13 +144,15 @@ def test_basic_three_phase_plan():
                 _sub("comp_y", "sub_y", ["resp_b"]),
                 _sub("comp_z", "sub_z", ["resp_c"]),
             ],
-            "requirements": [
-                _req("resp_a", "feat_a"),
-                _req("resp_b", "feat_b"),
-                _req("resp_c", "feat_c"),
-            ],
-            "feature_expansion": [_feat("feat_a"), _feat("feat_b"), _feat("feat_c")],
             "impl": [],
+        },
+        manifests={
+            "feature_expansion": _feat_manifest("feat_a", "feat_b", "feat_c"),
+            "requirements": _req_manifest(
+                ("resp_a", ["feat_a"]),
+                ("resp_b", ["feat_b"]),
+                ("resp_c", ["feat_c"]),
+            ),
         },
     )
     plan = _plan(view)
@@ -160,13 +186,15 @@ def test_dependency_pulls_a_component_earlier():
                 _sub("comp_y", "sub_y", ["resp_b"]),
                 _sub("comp_z", "sub_z", ["resp_c"]),
             ],
-            "requirements": [
-                _req("resp_a", "feat_a"),
-                _req("resp_b", "feat_b"),
-                _req("resp_c", "feat_c"),
-            ],
-            "feature_expansion": [_feat("feat_a"), _feat("feat_b"), _feat("feat_c")],
             "impl": [],
+        },
+        manifests={
+            "feature_expansion": _feat_manifest("feat_a", "feat_b", "feat_c"),
+            "requirements": _req_manifest(
+                ("resp_a", ["feat_a"]),
+                ("resp_b", ["feat_b"]),
+                ("resp_c", ["feat_c"]),
+            ),
         },
     )
     plan = _plan(view)
@@ -194,9 +222,14 @@ def test_subcomp_serving_two_phases_gets_two_impl_nodes():
         {
             "comparch": [_comp("comp_x", ["resp_a", "resp_c"])],
             "subcomparch": [_sub("comp_x", "sub_x", ["resp_a", "resp_c"])],
-            "requirements": [_req("resp_a", "feat_a"), _req("resp_c", "feat_c")],
-            "feature_expansion": [_feat("feat_a"), _feat("feat_c")],
             "impl": [],
+        },
+        manifests={
+            "feature_expansion": _feat_manifest("feat_a", "feat_c"),
+            "requirements": _req_manifest(
+                ("resp_a", ["feat_a"]),
+                ("resp_c", ["feat_c"]),
+            ),
         },
     )
     plan = _plan(view)
@@ -210,16 +243,44 @@ def test_subcomp_serving_two_phases_gets_two_impl_nodes():
     assert p3["closure_resp_ids"] == ["resp_a", "resp_c"]
 
 
+def test_resp_serving_two_features_takes_earliest_phase():
+    """A responsibility deriving from feat_a (phase 1) and feat_c
+    (phase 3) is first needed at phase 1 — the earliest of its
+    features — so its subcomp gets a single phase-1 impl node."""
+    view = _FakeView(
+        _registry(
+            (1, "p1", "Foundation", ["feat_a"]),
+            (3, "p3", "GA", ["feat_c"]),
+        ),
+        {
+            "comparch": [_comp("comp_x", ["resp_ac"])],
+            "subcomparch": [_sub("comp_x", "sub_x", ["resp_ac"])],
+            "impl": [],
+        },
+        manifests={
+            "feature_expansion": _feat_manifest("feat_a", "feat_c"),
+            "requirements": _req_manifest(("resp_ac", ["feat_a", "feat_c"])),
+        },
+    )
+    plan = _plan(view)
+    assert plan["errors"] == []
+    nodes = [n for ph in plan["phases"] for n in ph["impl_nodes"]]
+    assert len(nodes) == 1
+    assert nodes[0]["phase"] == 1
+
+
 def test_unassigned_feature_is_a_hard_error():
     view = _FakeView(
         _registry((1, "p1", "Foundation", ["feat_a"])),
         {
             "comparch": [_comp("comp_x", ["resp_a"])],
             "subcomparch": [_sub("comp_x", "sub_x", ["resp_a"])],
-            "requirements": [_req("resp_a", "feat_a")],
-            # feat_b exists but is in no phase registry file.
-            "feature_expansion": [_feat("feat_a"), _feat("feat_b")],
             "impl": [],
+        },
+        manifests={
+            # feat_b is declared but in no phase registry file.
+            "feature_expansion": _feat_manifest("feat_a", "feat_b"),
+            "requirements": _req_manifest(("resp_a", ["feat_a"])),
         },
     )
     plan = _plan(view)
@@ -240,9 +301,14 @@ def test_build_order_respects_dependency_topology():
                 _sub("comp_a", "sub_a", ["resp_a"]),
                 _sub("comp_b", "sub_b", ["resp_b"]),
             ],
-            "requirements": [_req("resp_a", "feat_a"), _req("resp_b", "feat_b")],
-            "feature_expansion": [_feat("feat_a"), _feat("feat_b")],
             "impl": [],
+        },
+        manifests={
+            "feature_expansion": _feat_manifest("feat_a", "feat_b"),
+            "requirements": _req_manifest(
+                ("resp_a", ["feat_a"]),
+                ("resp_b", ["feat_b"]),
+            ),
         },
     )
     plan = _plan(view)

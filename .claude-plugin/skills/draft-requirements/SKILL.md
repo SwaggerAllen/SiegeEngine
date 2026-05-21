@@ -30,24 +30,25 @@ one commit (artifact body + state JSON together).
    If `ok` is false, treat the errors as feedback and re-run step 2
    (loop up to 3 times). If still failing, stop and surface the errors.
 4. **Write the body file** to `requirements/$comp_id/body.md`.
-5. **Materialize state JSON inline** (no external Python package
-   needed — pure `python3` from stdlib, which any environment CC
-   runs in has). Pass the scope keys as positional args; the rest
-   comes from env vars:
+5. **Materialize state JSON + node manifest inline** (no external
+   Python package needed — pure `python3` from stdlib, which any
+   environment CC runs in has). Pass the scope keys as positional
+   args; the rest comes from env vars:
 
    ```bash
    COMP_ID="$comp_id"
    BODY_PATH=requirements/$comp_id/body.md
    STATE_PATH=state/requirements/$comp_id.json
+   MANIFEST_PATH=manifest/requirements/$comp_id.json
    THINKING=max
    PRIOR_REVIEW_TEXT="${prior_review_text:-}"
    BATCH_ID="${batch_id:-}"
-   mkdir -p "$(dirname "$STATE_PATH")"
-   python3 - "$BODY_PATH" "$STATE_PATH" "$THINKING" "$PRIOR_REVIEW_TEXT" "$BATCH_ID" "$COMP_ID" <<'PY'
-import hashlib, json, os, secrets, sys, time
+   mkdir -p "$(dirname "$STATE_PATH")" "$(dirname "$MANIFEST_PATH")"
+   python3 - "$BODY_PATH" "$STATE_PATH" "$MANIFEST_PATH" "$THINKING" "$PRIOR_REVIEW_TEXT" "$BATCH_ID" "$COMP_ID" <<'PY'
+import hashlib, json, os, re, secrets, sys, time
 
-body_path, state_path, thinking, prior_review, batch_id = sys.argv[1:6]
-comp_id = sys.argv[6]
+body_path, state_path, manifest_path, thinking, prior_review, batch_id = sys.argv[1:7]
+comp_id = sys.argv[7]
 scope = {"tier": "requirements", "comp_id": comp_id, "parent_id": None, "sub_id": None}
 
 body = open(body_path, "rb").read()
@@ -76,14 +77,49 @@ state = {
     "meta": prior.get("meta", {}),
 }
 open(state_path, "w").write(json.dumps(state, indent=2, sort_keys=True) + "\n")
-print(json.dumps({"state_path": state_path, "body_sha256": sha}))
+
+# Node manifest: the derived index of the responsibility nodes this
+# body declares. Regex-scan each <responsibility> block — the body
+# XML tolerates raw < / & in text, so a non-greedy block scan is
+# used, not a strict XML parser. Each node records the feat_* ids it
+# derives from (the <feat id=".."/> children). Node ids carry forward
+# from the prior manifest by name, so a regen keeps resp_* ids
+# stable; a new or renamed responsibility mints a fresh id.
+text = body.decode("utf-8")
+def tag(name, s):
+    m = re.search(r"<%s\b[^>]*>(.*?)</%s>" % (name, name), s, re.S)
+    return m.group(1).strip() if m else ""
+nodes = []
+for i, blk in enumerate(re.findall(r"<responsibility\b[^>]*>(.*?)</responsibility>", text, re.S)):
+    nodes.append({"kind": "responsibility", "order": i, "name": tag("name", blk),
+                  "feats": re.findall(r'<feat\s+id="([^"]+)"', blk)})
+prior_ids = {}
+if os.path.exists(manifest_path):
+    for n in json.loads(open(manifest_path).read()).get("nodes", []):
+        prior_ids.setdefault(n.get("name", "").strip().lower(), n.get("id"))
+used = set()
+for n in nodes:
+    nid = prior_ids.get(n["name"].strip().lower())
+    if not nid or nid in used:
+        nid = "resp_" + secrets.token_hex(4)
+    used.add(nid)
+    n["id"] = nid
+manifest = {"schema_version": 1, "substrate": scope,
+            "derived_from_sha256": sha, "nodes": nodes}
+open(manifest_path, "w").write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+print(json.dumps({"state_path": state_path, "manifest_path": manifest_path,
+                  "body_sha256": sha, "node_count": len(nodes)}))
 PY
    ```
 
    The sha is from the canonical body bytes; the nonce is a 26-char
-   base32-shaped ULID-ish string. Carries forward `edges` + `meta` +
-   `is_foundation` from the prior state if any.
-6. **Stage both files**, commit with message:
+   base32-shaped ULID-ish string. State carries forward `edges` +
+   `meta` + `is_foundation` from the prior state if any. The manifest
+   at `manifest/requirements/$comp_id.json` is the node index the
+   sysarch / phasing / related-features readers consume — see
+   `docs/migration/state-schema.md`.
+6. **Stage the body, state JSON, and manifest**, commit with message:
    `draft(requirements/$id): <one-line summary>`
 7. **Push** with `git push -u origin $ref` (retry on network failure
    up to 4 times with 2s / 4s / 8s / 16s backoff).

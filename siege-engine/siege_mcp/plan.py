@@ -106,16 +106,23 @@ def compute_plan(view: GitView) -> dict[str, Any]:
     # ---- 2. tier reads ----
     comps = {s.scope.comp_id: s for s in view.list_tier("comparch") if s.scope.comp_id}
     subcomps = view.list_tier("subcomparch")
-    # A requirement scope is keyed by comp_id == resp_id; meta.feature_id
-    # is the feature it derives from (the walk _base.related_features_summary uses).
-    resp_to_feat: dict[str, str] = {}
-    for s in view.list_tier("requirements"):
-        if s.scope.comp_id and s.meta.get("feature_id"):
-            resp_to_feat[s.scope.comp_id] = s.meta["feature_id"]
+    # resp → feat_* IDs. Each responsibility node in the requirements
+    # manifest carries the ``feats`` it derives from; a responsibility
+    # may serve several features (same walk related_features_summary uses).
+    resp_to_feats: dict[str, list[str]] = {}
+    req_manifest = view.manifest_for_tier("requirements")
+    if req_manifest:
+        for node in req_manifest.nodes:
+            rid = node.get("id")
+            if rid:
+                resp_to_feats[rid] = list(node.get("feats", []))
 
-    # Every feature must be assigned to a phase — hard error otherwise.
-    for s in view.list_tier("feature_expansion"):
-        fid = s.scope.comp_id
+    # Every feature the project declares must be assigned to a phase —
+    # hard error otherwise. The feature set is the feature_expansion
+    # manifest's node list.
+    feat_manifest = view.manifest_for_tier("feature_expansion")
+    for node in feat_manifest.nodes if feat_manifest else []:
+        fid = node.get("id")
         if fid and fid not in feature_phase:
             errors.append(f"feature {fid} is not assigned to any phase")
 
@@ -123,9 +130,7 @@ def compute_plan(view: GitView) -> dict[str, Any]:
     def comp_features(comp_state) -> set[str]:  # type: ignore[no-untyped-def]
         feats: set[str] = set()
         for resp in comp_state.meta.get("parent_resps", []):
-            f = resp_to_feat.get(resp)
-            if f:
-                feats.add(f)
+            feats.update(resp_to_feats.get(resp, []))
         return feats
 
     assigned: dict[str, int] = {}
@@ -192,9 +197,13 @@ def compute_plan(view: GitView) -> dict[str, Any]:
         # never do.
         resp_phase: dict[str, int] = {}
         for resp in sstate.meta.get("parent_resps", []):
-            f = resp_to_feat.get(resp)
-            fp = feature_phase.get(f) if f else None
-            natural = fp if fp is not None else assigned[pcid]
+            feat_phases = [
+                feature_phase[f] for f in resp_to_feats.get(resp, []) if f in feature_phase
+            ]
+            # A responsibility is first needed when the earliest of its
+            # features is needed; a resp tracing to no phased feature is
+            # owned work, scheduled at the comp's assigned phase.
+            natural = min(feat_phases) if feat_phases else assigned[pcid]
             resp_phase[resp] = min(natural, floor)
 
         # One impl node per distinct resp phase — that's where new work

@@ -1,17 +1,18 @@
 """Sysarch context reader.
 
-Sysarch compresses approved requirements into top-level components. The
-generator reads the full approved requirements set + the approved
-feature summaries and decomposes them into comp_* nodes.
+Sysarch compresses approved responsibilities into top-level components.
+It is a single-node tier: one ``sysarch`` substrate file per project,
+whose body holds the five project-level sections (techspec, components,
+policies, dependencies, domain-parent).
 
-State JSON ``meta`` for this tier:
-- ``name``: section name (e.g. ``project_techspec`` — sysarch sections
-  are the project-wide ones every comparch consumes via
-  ``project_sysarch_sections``)
+The generator reads two node lists, both from upstream manifests:
 
-State JSON ``edges``: ``requirements_consumed: [req_id, ...]`` —
-declarative record of which approved requirements this section
-incorporates.
+- ``approved_features`` — every feature node (``feat_*`` ID + name +
+  intent), from the ``feature_expansion`` manifest.
+- ``approved_requirements`` — every responsibility node (``resp_*`` ID
+  + name + the ``feats`` it owns), from the ``requirements`` manifest.
+
+It reads node records, never raw upstream body files.
 """
 
 from __future__ import annotations
@@ -23,37 +24,27 @@ from siege_mcp.state import Scope
 from siege_mcp.tiers import _base
 
 
-def _all_approved_requirements(view: GitView) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for s in view.list_tier("requirements"):
-        if s.status != "approved":
-            continue
-        body = _base.get_body_text(view, s)
-        out.append(
-            {
-                "req_id": s.scope.comp_id,
-                "name": s.meta.get("name", ""),
-                "role": s.meta.get("role", ""),
-                "feature_id": s.meta.get("feature_id", ""),
-                "body": body,
-            }
-        )
-    return out
+def _approved_features(view: GitView) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": n.get("id", ""),
+            "name": n.get("name", ""),
+            "intent": n.get("intent", ""),
+            "implicit": n.get("implicit", False),
+        }
+        for n in _base.feature_nodes(view)
+    ]
 
 
-def _all_approved_features(view: GitView) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for s in view.list_tier("feature_expansion"):
-        if s.status not in ("approved", "reviewed"):
-            continue
-        out.append(
-            {
-                "feature_id": s.scope.comp_id,
-                "name": s.meta.get("name", ""),
-                "summary": s.meta.get("summary", ""),
-            }
-        )
-    return out
+def _approved_responsibilities(view: GitView) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": n.get("id", ""),
+            "name": n.get("name", ""),
+            "feats": list(n.get("feats", [])),
+        }
+        for n in _base.responsibility_nodes(view)
+    ]
 
 
 def build_generation_context(view: GitView, scope: Scope) -> dict[str, Any]:
@@ -68,14 +59,8 @@ def build_generation_context(view: GitView, scope: Scope) -> dict[str, Any]:
             "sub_id": None,
         },
         "status": self_state.status if self_state else "absent",
-        "section_name": (self_state.meta.get("name") if self_state else "") or scope.comp_id,
-        "approved_requirements": _all_approved_requirements(view),
-        "approved_features": _all_approved_features(view),
-        "sibling_sections": [
-            {"id": s.scope.comp_id, "name": s.meta.get("name", "")}
-            for s in view.list_tier("sysarch")
-            if s.scope.comp_id != scope.comp_id
-        ],
+        "approved_features": _approved_features(view),
+        "approved_requirements": _approved_responsibilities(view),
         "prior_review_text": (
             self_state.draft.prior_review_text if self_state and self_state.draft else ""
         ),
