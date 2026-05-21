@@ -3,7 +3,17 @@ name = "siege-engine"
 version = "0.1.0"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
-dependencies = [
+# The `siege` core CLI is pure stdlib — installing the package with no
+# extras (what the bootstrap does, so a skill can run `python -m
+# siege.cli` in any project repo) pulls zero dependencies. The runtime
+# deps for the dashboard server + the legacy backend live in `[app]`.
+dependencies = []
+
+[project.optional-dependencies]
+# Everything needed to *run* the deployed app — the dashboard server
+# and the legacy backend, which still ship together until the
+# backend's deletion (migration step 8).
+app = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "sqlalchemy>=2.0",
@@ -23,12 +33,10 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "sse-starlette>=2.1",
 ]
-
-[project.optional-dependencies]
 dev = [
+    "siege-engine[app]",
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
-    "httpx>=0.27",
     "ruff>=0.8",
     "mypy>=1.11",
     "types-pyyaml>=6.0",

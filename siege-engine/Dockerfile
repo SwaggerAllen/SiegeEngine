@@ -21,9 +21,10 @@ RUN apt-get update && apt-get install -y curl git gosu && \
 # Install Claude CLI (separate layer for caching — only rebuilds when CLI version changes)
 RUN npm install -g @anthropic-ai/claude-code
 
-# Install Python dependencies
+# Install Python dependencies. `.[app]` = the runtime deps (server +
+# legacy backend); the bare package has none (the siege CLI is stdlib).
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[app]"
 
 # Copy backend code
 COPY backend/ ./backend/
