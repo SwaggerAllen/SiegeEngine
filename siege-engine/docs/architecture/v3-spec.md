@@ -1,0 +1,284 @@
+# SiegeEngine v3 architecture
+
+Target architecture for the **substrate, data model, and execution
+model**. v3 supersedes `v2-rearchitecture.md` for everything
+execution-model-dependent. It does **not** re-derive the meaning-engine
+design — the tier transformations, foundation components, policies,
+vocabulary, and references in `v2-rearchitecture.md` were re-examined
+and still hold; v3 references them rather than restating them. What
+changed is the ground underneath: how artifacts are stored, how the
+structured model exists, and what runs the chain.
+
+## Why v3 is not a v2 amendment
+
+`v2-rearchitecture.md` assumes an always-on backend that orchestrates
+LLM jobs through a queue, an event-sourced SQL database, a reducer that
+projects nodes / edges / fragments from an event log, and automatic
+change propagation. The git migration deleted all of it. The execution
+model that actually exists now:
+
+- **Claude Code is the execution engine.** Skills compose artifacts;
+  CC is the LLM; commands are the multi-step flows. No job queue, no
+  worker, no LLM subprocess.
+- **Git is the store.** Commits are the history; `git diff` is the
+  diff; branches are parallel design exploration.
+- **The MCP server is a read-only projection.** It never writes.
+
+Roughly 40% of v2 — the propagation engine, the reducer, the event log,
+the job model — is obsolete by execution model alone. v3 is designed
+around the model that exists, not patched onto the one that doesn't.
+
+## Core principle
+
+**Artifacts are the source of truth. The structured graph is a
+projection of them. The only persisted state that is not an artifact
+is the identity ledger and the propagation record.**
+
+v2 inverted "documents are truth" to "the model is truth." That was
+right in spirit and unbuildable on git — git holds files, not a node
+graph. v3 keeps the spirit with a mechanism git can hold: the
+LLM-authored documents are truth, and the node / edge graph is
+*derived* from them deterministically. A projection cannot drift from
+its source the way a denormalized cache can — and denormalized derived
+state going stale is the failure mode the v2→git migration produced
+everywhere it stored derived data.
+
+## The three layers
+
+### 1. Authored layer — git files
+
+The truth. Hand-reviewed in the GitHub diff, written by CC skills.
+
+- **`<tier>/<id>/body.md`** — the artifact: LLM-authored XML / prose.
+- **`<tier>/<id>/review.md`** — the AI review of a draft.
+- **`state/<tier>/<id>.json`** — lifecycle: status, draft / review /
+  approval blocks, body sha, nonce, the upstream shas the draft was
+  generated against.
+- **`state/phases/<id>.json`, `state/cohorts/<id>.json`** — user
+  planning intent (release phasing, iteration campaigns).
+
+### 2. Projection layer — the MCP server
+
+Pure, stateless, read-only. Given a `(project, ref, sha)` it computes:
+
+- **the node / edge graph** — parse every approved body, resolve IDs
+  against the identity ledgers, emit typed nodes and edges;
+- **per-tier context bundles** — what each draft / review skill reads;
+- **staleness** — which artifacts were generated against a now-stale
+  upstream sha;
+- **structure / review summaries** — the dashboard aggregations;
+- **the graph-viz feed** — the `{nodes, edges}` shape the frontend DAG
+  views consume.
+
+It already does exactly this for *fragments* (`parse_body_sections`).
+v3 generalizes that one good pattern: **everything derived is parsed
+on read, never stored as truth.**
+
+Computed lazily and cached per `(project, ref, sha)` — a new commit is
+a new sha is a new projection, always consistent with the bodies. If
+read latency ever bites, the escape hatch is to materialize the
+projection as `projection/graph.json` on commit (a skill step or a CI
+job); the projection stays a pure function either way. Not built
+initially.
+
+### 3. Orchestration layer — Claude Code
+
+- **Skills** — the write operations: draft / review / approve / regen,
+  and identity-ledger assignment. Each is exactly one git commit.
+- **Commands** — the multi-step flows: `/scaffold`, `/run_tier`,
+  `/regen_below`, `/status`.
+- CC is the LLM and the executor. There is no backend orchestrator.
+
+## Data model
+
+- **Substrate file** — one git artifact = one draft → review → approve
+  unit = one LLM generation pass = one `body.md`. Per-tier granularity
+  (one feature_expansion per project, one comparch per component, …)
+  tracks "what is co-generated" and is correct as-is.
+- **Node** — a graph entity (`feat_ / resp_ / comp_ / impl_ / policy_`
+  …). Persisted: **only its stable ID**. Everything else — name,
+  content, kind, order — is projected from the substrate body that
+  declares it.
+- **Edge** — a typed relation. The edge-type vocabulary
+  (`decomposition`, `dependency`, `domain_parent`, `policy_application`,
+  `reference`) is inherited from `v2-rearchitecture.md` §Edge type
+  vocabulary. Edges are **fully projected** from bodies; never stored.
+  How the comparch `<owns>` block projects (ownership edges vs. node
+  attribution) is settled in the projection-layer design.
+- **Identity ledger** — `ids/<tier>/<id>.json`, **one per substrate**.
+  A persisted derived artifact: `{node_id ↔ name / alias}` for every
+  node the substrate declares, plus the body sha it was derived
+  against. It exists so IDs survive regeneration — a renamed body
+  element keeps its ID by name-match against the ledger. It stores
+  **identity only**; node content stays projected.
+- **Propagation record** — `state/propagations/<id>.json`. A tracked
+  worklist (see *Propagation*).
+
+A substrate declares 1..N nodes. Some declared nodes are also the root
+of a substrate at the next tier (a `comp_*` node ↔ a comparch
+substrate). That mapping is a fixed per-tier fact, not data.
+
+## Storage layout
+
+```
+<tier>/<id>/body.md                  authored artifact
+<tier>/<id>/review.md                AI review
+state/<tier>/<id>.json               lifecycle
+ids/<tier>/<id>.json                 identity ledger (decomposing tiers only)
+state/propagations/<id>.json         tracked propagation
+state/phases/<id>.json               release phasing
+state/cohorts/<id>.json              iteration campaigns
+```
+
+Phased impl / fanin keep the `p<N>` path layout from the state schema.
+
+## The tier chain
+
+| tier | substrate granularity | transform | declares nodes | projects |
+|------|----------------------|-----------|----------------|----------|
+| feature_expansion | 1 / project | extraction | `feat_*` | — |
+| requirements | 1 / project | rotation | `resp_*` | `decomposition` feat→resp |
+| sysarch | 1 / project | compression | `comp_*` (top-level), `policy_*` | `dependency`, `domain_parent` |
+| comparch | 1 / component | compression | `comp_*` (subcomponent), `policy_*` | `dependency` (sub), `<owns>` resp/feat claims |
+| subcomparch | 1 / subcomponent | leaf articulation | — | — |
+| impl | 1 / leaf, phased | implementation | — | — |
+| fanin | 1 / domain comp w/ subs, phased | bottom-up synthesis | — | — |
+| plan | 1 / impl | code-change planning | — | — |
+
+The four **decomposing tiers** — feature_expansion, requirements,
+sysarch, comparch — declare child nodes and therefore carry identity
+ledgers. The leaf tiers do not. Tier transformation semantics (why
+each is compression / rotation / expansion, the handle-quality
+property) carry over unchanged from `v2-rearchitecture.md` §The system
+as a meaning engine.
+
+## Lifecycle
+
+Each substrate moves `absent → drafted → reviewed → approved`, one git
+commit per transition, via the per-tier skills. Within a draft:
+
+1. The skill reads the projection's context bundle for the scope.
+2. The LLM composes the body; the skill validates it.
+3. The skill writes `body.md` + `state.json`, and — for a decomposing
+   tier — the identity ledger: parse the body's declared elements,
+   carry IDs forward from the prior ledger by name, mint fresh IDs for
+   new names.
+4. One commit; push.
+
+**There are no mint handlers and no fanout handlers.** A node exists
+the moment a body declares it — there is nothing to mint into being.
+The only persisted act at a tier boundary is ID assignment (step 3).
+The next tier's substrates are created by their own draft skill; the
+orchestrator enumerates them from the projected graph. v2's "approve
+to mint" becomes "approve the body" — the draft → review → approve
+gate on the body *is* the review-the-decomposition gate.
+
+## Propagation
+
+**Staleness is a projection.** An artifact is stale when an upstream
+artifact it was generated against has a newer approved sha.
+`state.json` records the upstream shas a draft was generated against;
+the projection compares them to current.
+
+**A propagation is a tracked record.** When an approved change creates
+downstream staleness, a `propagation` record snapshots the stale set
+as a **worklist** — each entry a `(scope, status)` pair — written to
+`state/propagations/`. As each downstream node is regenerated, the
+regen / approve skill updates its worklist entry. The record is the
+memory of "what still needs regen," so the flow never depends on the
+user remembering which nodes are done and which are waiting.
+
+Today the worklist is **drained manually** — `/regen_below` opens a
+propagation, `/status` shows progress, the user works the list. A
+future `/propagation-loop` command (a CC `loop`) drains it
+automatically. The record is identical for both; only the driver
+changes. Propagation records build on the existing batch primitive
+(resume-by-gap-fill).
+
+## Identity and the alias scheme
+
+Decomposing-tier bodies refer to not-yet-identified children by
+**alias** (`<subcomponent alias="session_store">`) — generation-time
+handles, so the LLM never juggles opaque IDs. The **identity ledger**
+assigns the stable `<kind>_<suffix>` ID, post-draft, by name / alias
+match. Aliases stay in the body for local cross-references; the ledger
+holds alias→id. This is not debt — it is the design: alias is the
+authoring form, the ID is the identity form, the ledger bridges them.
+
+## Orchestration surface
+
+**Skills** (write, one commit each): `draft-*`, `review-*`,
+`regen-*-with-feedback`, `mark-{drafted,reviewed,approved}`,
+`repair-state-drift`. Identity-ledger derivation folds into the
+decomposing-tier draft skills.
+
+**Commands** (flows): `/scaffold`, `/run_tier`, `/regen_below`,
+`/status`, `/continue`.
+
+**Future commands** — designed for, not built initially. Each is
+expressible as orchestration commands + projection queries; none needs
+a new substrate concept:
+
+- `/feature-request`, `/refactor`, `/bug-fix` — the three
+  non-scaffolding change flows; each is an upstream edit + a
+  propagation.
+- `/propagation-loop` — auto-drains a propagation record.
+- bundle configuration, phase-zero machinery — additional planning
+  artifacts alongside phases / cohorts.
+
+## What v3 drops from v2 (and why)
+
+- **Event-sourced reducer + event log** — git history is the log.
+- **Node / Edge / Fragment SQL tables** — the graph is projected.
+- **Job queue + worker + LLM subprocess** — CC is the engine.
+- **Mint / fanout handlers** — nodes are projected, not minted.
+- **Stored staleness ledger** — staleness is a projection.
+- **Autonomous propagation engine** — replaced by the propagation
+  record + manual drain (auto-drain loop later).
+- **`state.edges`** — the per-file edge dict; edges are projected.
+
+## What v3 keeps from v2
+
+Re-examined and still correct — referenced, not restated:
+
+- the meaning-engine treatment (tier transformations, handle quality);
+- foundation components and the no-nesting rule;
+- the policy model (capability ownership vs. enforced usage);
+- vocabulary (`vocab_*`) and references (`ref_*`);
+- fragments as addressable transcluded sections — projected on read
+  in v3;
+- the file-territory manifest (`manifest_*`) for code generation —
+  unrelated to the identity ledger; the v3 ledger deliberately does
+  **not** reuse the word "manifest".
+
+## Migration path
+
+From the current code to v3, in order:
+
+1. **Identity ledger.** The merged node-manifest work is step one.
+   Slim it to identity-only (drop the projectable fields — `intent`,
+   `feats`, etc.), rename `manifest/` → `ids/`, extend to sysarch +
+   comparch.
+2. **ID assignment at the decomposing tiers.** Fold ledger derivation
+   into `draft-sysarch` and `draft-comparch`. The sysarch→comparch and
+   comparch→subcomparch "fanout gaps" are exactly this, and nothing
+   more.
+3. **The projection layer.** A projection module the context builders
+   and the graph-viz feed both read; retire direct ledger reads from
+   the per-tier builders.
+4. **Repoint the graph viz** from the legacy backend's `/structure`
+   endpoint to an MCP projection endpoint.
+5. **Propagation records.** `/regen_below` writes one; `/status`
+   reads it.
+6. **Cleanup.** Delete `state.edges` and the vestigial multi-node
+   readers; then the deferred legacy-backend deletion can run.
+
+## Open questions
+
+- The propagation worklist is snapshotted at creation — if upstream
+  changes again mid-drain, does the record extend or does a second
+  record open? (Lean: extend.)
+- Projection materialization trigger, if lazy per-sha caching proves
+  too slow.
+- Whether `subcomparch` should carry a lightweight identity ledger for
+  symmetry even though it declares no child nodes. (Lean: no.)
