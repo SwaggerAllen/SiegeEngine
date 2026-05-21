@@ -106,15 +106,15 @@ class Scope:
             return f"state/{self.tier}/{self.parent_id}/{self.sub_id}.json"
         return f"state/{self.tier}/{self.comp_id}.json"
 
-    def manifest_path(self) -> str:
-        """Relative path to this scope's node manifest, under ``manifest/``.
+    def ids_path(self) -> str:
+        """Relative path to this scope's identity ledger, under ``ids/``.
 
         Mirrors ``state_path`` one-for-one. Only the single-node arch
         tiers (``feature_expansion``, ``requirements``) actually write
-        a manifest today; the method is general so any tier that later
+        a ledger today; the method is general so any tier that later
         declares sub-nodes gets a consistent path for free.
         """
-        return "manifest/" + self.state_path()[len("state/") :]
+        return "ids/" + self.state_path()[len("state/") :]
 
     def body_path(self) -> str:
         """Conventional relative path to the body markdown."""

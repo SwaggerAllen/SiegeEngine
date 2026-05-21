@@ -358,11 +358,16 @@ From the current code to v3, in order:
    split into an `[app]` extra so the core install is dependency-free,
    and the bootstrap script installs the `siege` core, version-pinned.
    Behavior-preserving — byte-diffed against the retired heredocs.
-3. **Identity ledger.** The merged node-manifest work is the first
-   data step — slim it to identity-only (drop the projectable fields
-   `intent`, `feats`, …), rename `manifest/` → `ids/`, extend to
-   sysarch + comparch.
-4. **ID assignment at the decomposing tiers** — folded into the
+3. **Identity ledger — slim + rename done.** The node manifest is now
+   the slim identity ledger at `ids/<tier>/<id>.json`: each node
+   persists only its `id` + `name`; the projectable fields (`kind` /
+   `order` / `intent` / `implicit` / `feats`) are re-derived from the
+   body and rehydrated by the projection on read. The reader still
+   accepts the legacy v1 fat manifest, so a `manifest/` tree migrates
+   with a plain `git mv`. Extending the ledger to sysarch + comparch
+   folds into step 4.
+4. **ID assignment at the decomposing tiers** — extend the identity
+   ledger to `sysarch` + `comparch` and fold ID assignment into the
    `draft-sysarch` / `draft-comparch` CLI write path. The
    sysarch→comparch and comparch→subcomparch "fanout gaps" are
    exactly this.

@@ -10,7 +10,7 @@ You are drafting one feature expansion artifact end-to-end on the git-backed
 substrate. The MCP server gives you the bundle of context the prompt
 needs; you compose the draft, validate it, materialize the state files
 with the `siege` writer CLI, and commit + push exactly one commit
-(artifact body, state JSON, and node manifest together).
+(artifact body, state JSON, and identity ledger together).
 
 ## Inputs
 
@@ -31,13 +31,13 @@ with the `siege` writer CLI, and commit + push exactly one commit
    If `ok` is false, treat the errors as feedback and re-run step 2
    (loop up to 3 times). If still failing, stop and surface the errors.
 4. **Write the body file** to `feature_expansion/$comp_id/body.md`.
-5. **Materialize state JSON + node manifest.** From the repo root,
+5. **Materialize state JSON + identity ledger.** From the repo root,
    call the writer CLI. It computes the body sha256, mints a nonce,
    writes `state/feature_expansion/$comp_id.json`, and derives the
-   node manifest at `manifest/feature_expansion/$comp_id.json`
+   slim identity ledger at `ids/feature_expansion/$comp_id.json`
    (creating parent directories as needed). It carries `edges` /
    `meta` / `is_foundation` forward from any prior state, and carries
-   `feat_*` node ids forward by name from any prior manifest, so a
+   `feat_*` node ids forward by name from any prior ledger, so a
    regen keeps ids stable; a new or renamed feature mints a fresh id:
 
    ```bash
@@ -50,12 +50,13 @@ with the `siege` writer CLI, and commit + push exactly one commit
      --prior-review-text "${prior_review_text:-}"
    ```
 
-   It prints a JSON line with `state_path`, `manifest_path`,
+   It prints a JSON line with `state_path`, `ids_path`,
    `body_sha256`, and `node_count`. A non-zero exit means the body
    failed validation — treat the stderr as feedback and loop back to
-   step 2. The manifest is the node index the requirements / sysarch
-   / phasing readers consume — see `docs/migration/state-schema.md`.
-6. **Stage the body, state JSON, and manifest**, commit with message:
+   step 2. The ledger is the node identity index the requirements /
+   sysarch / phasing readers consume — see
+   `docs/migration/state-schema.md`.
+6. **Stage the body, state JSON, and ledger**, commit with message:
    `draft(feature_expansion/$id): <one-line summary>`
 7. **Push** with `git push -u origin $ref` (retry on network failure
    up to 4 times with 2s / 4s / 8s / 16s backoff).

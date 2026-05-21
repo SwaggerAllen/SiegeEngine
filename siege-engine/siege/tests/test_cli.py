@@ -414,8 +414,8 @@ def test_sub_tier_paths(tmp_path):
 
 
 def test_write_draft_feature_expansion_derives_manifest(tmp_path):
-    """write-draft for feature_expansion materializes a node manifest
-    beside the state JSON — one node per <feature> block."""
+    """write-draft for feature_expansion materializes a slim identity
+    ledger beside the state JSON — one node per <feature> block."""
     body = (
         "<introduction>Intro.</introduction>\n"
         "<features>\n"
@@ -441,10 +441,10 @@ def test_write_draft_feature_expansion_derives_manifest(tmp_path):
         ]
     )
     assert rc == 0
-    manifest_path = tmp_path / "manifest" / "feature_expansion" / "proj.json"
-    assert manifest_path.exists()
-    manifest = json.loads(manifest_path.read_text())
-    assert manifest["schema_version"] == 1
+    ledger_path = tmp_path / "ids" / "feature_expansion" / "proj.json"
+    assert ledger_path.exists()
+    manifest = json.loads(ledger_path.read_text())
+    assert manifest["schema_version"] == 2
     assert manifest["substrate"] == {
         "tier": "feature_expansion",
         "comp_id": "proj",
@@ -453,15 +453,14 @@ def test_write_draft_feature_expansion_derives_manifest(tmp_path):
     }
     nodes = manifest["nodes"]
     assert [n["name"] for n in nodes] == ["Login", "Admin Console"]
-    assert nodes[0]["intent"] == "Users sign in."
-    assert nodes[0]["implicit"] is False
-    assert nodes[1]["implicit"] is True
+    # The persisted ledger is slim — identity only, no projectable fields.
+    assert all(set(n) == {"id", "name"} for n in nodes)
     assert all(n["id"].startswith("feat_") for n in nodes)
 
 
 def test_write_draft_requirements_derives_manifest(tmp_path):
-    """write-draft for requirements materializes resp_* nodes, each
-    carrying the feat_* ids its <feats> block references."""
+    """write-draft for requirements materializes a slim resp_* ledger
+    (id + name); the <feats> edges are re-derived at projection time."""
     body = (
         "<requirements>\n"
         "  <responsibility><name>session lifecycle</name>"
@@ -486,11 +485,11 @@ def test_write_draft_requirements_derives_manifest(tmp_path):
         ]
     )
     assert rc == 0
-    manifest = json.loads((tmp_path / "manifest" / "requirements" / "proj.json").read_text())
+    manifest = json.loads((tmp_path / "ids" / "requirements" / "proj.json").read_text())
     nodes = manifest["nodes"]
     assert [n["name"] for n in nodes] == ["session lifecycle", "event log"]
-    assert nodes[0]["feats"] == ["feat_aaa"]
-    assert nodes[1]["feats"] == []
+    # Slim ledger — the resp->feat edges are re-derived from the body, not stored.
+    assert all(set(n) == {"id", "name"} for n in nodes)
     assert all(n["id"].startswith("resp_") for n in nodes)
 
 
@@ -512,20 +511,21 @@ def test_manifest_node_ids_carry_forward(tmp_path):
         "feature_expansion/proj/body.md",
     ]
     main(argv)
-    manifest_path = tmp_path / "manifest" / "feature_expansion" / "proj.json"
-    first_id = json.loads(manifest_path.read_text())["nodes"][0]["id"]
-    # Regen: same feature name, reworded intent.
+    ledger_path = tmp_path / "ids" / "feature_expansion" / "proj.json"
+    first_id = json.loads(ledger_path.read_text())["nodes"][0]["id"]
+    # Regen: same feature name, reworded intent. The id carries forward
+    # by name — derive loaded the prior id from the slim ledger.
     body_path.write_text(body.replace("v1.", "v2 — reworded."))
     main(argv)
-    second = json.loads(manifest_path.read_text())["nodes"][0]
+    second = json.loads(ledger_path.read_text())["nodes"][0]
     assert second["id"] == first_id
-    assert second["intent"] == "v2 — reworded."
+    assert second["name"] == "Login"
 
 
 def test_mark_drafted_resyncs_body_and_clears_review(tmp_path):
     """mark-drafted recomputes the sha for a hand-edited body, drops
     review/approval, returns the scope to `drafted`, and rebuilds the
-    node manifest from the edited body."""
+    identity ledger from the edited body."""
     body = "<features>\n  <feature><name>Login</name><intent>v1.</intent></feature>\n</features>\n"
     body_path = tmp_path / "feature_expansion" / "proj" / "body.md"
     body_path.parent.mkdir(parents=True)
@@ -556,7 +556,13 @@ def test_mark_drafted_resyncs_body_and_clears_review(tmp_path):
     state_path = tmp_path / "state" / "feature_expansion" / "proj.json"
     assert parse_state(json.loads(state_path.read_text())).status == "reviewed"
 
-    body_path.write_text(body.replace("v1.", "hand-edited."))
+    edited = (
+        "<features>\n"
+        "  <feature><name>Login</name><intent>v1.</intent></feature>\n"
+        "  <feature><name>Logout</name><intent>End session.</intent></feature>\n"
+        "</features>\n"
+    )
+    body_path.write_text(edited)
     rc = main(["mark-drafted", "--repo", str(tmp_path), *scope_args])
     assert rc == 0
     state = parse_state(json.loads(state_path.read_text()))
@@ -564,8 +570,10 @@ def test_mark_drafted_resyncs_body_and_clears_review(tmp_path):
     assert state.review is None
     assert state.draft is not None
     assert state.draft.body_sha256 == hashlib.sha256(body_path.read_bytes()).hexdigest()
-    manifest = json.loads((tmp_path / "manifest" / "feature_expansion" / "proj.json").read_text())
-    assert manifest["nodes"][0]["intent"] == "hand-edited."
+    # The ledger was rebuilt from the hand-edited body — the added
+    # feature shows up as a second slim node.
+    manifest = json.loads((tmp_path / "ids" / "feature_expansion" / "proj.json").read_text())
+    assert [n["name"] for n in manifest["nodes"]] == ["Login", "Logout"]
 
 
 def test_mint_plan_materializes_impl_stubs(tmp_path):

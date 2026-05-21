@@ -77,8 +77,8 @@ not a global epoch — re-dumping a v1 file keeps it v1.
   impl under a parent comparch). The single-node arch tiers
   `feature_expansion` and `requirements` produce exactly one substrate
   file per project — the features / responsibilities they expand into
-  are not separate files but *nodes*, indexed by a node manifest (see
-  "Node manifests" below).
+  are not separate files but *nodes*, indexed by an identity ledger
+  (see "Node identity ledger" below).
 - **`scope.phase`** — integer phase, present only on `impl` and `fanin`
   scopes once impl-tier phasing is in play; `null`/absent everywhere
   else. An impl scope is keyed by `(parent_id, sub_id, phase)` — one
@@ -124,7 +124,7 @@ state/
   batches/<batch_id>.json
   cohorts/<cohort_id>.json
 
-manifest/
+ids/
   feature_expansion/<comp_id>.json
   requirements/<comp_id>.json
 
@@ -145,10 +145,10 @@ fanin/<comp_id>/review.md
 ```
 
 State files cluster under `state/` so the MCP server can load all state
-in a single tree-walk per ref, then lazy-load bodies on demand. Node
-manifests cluster the same way under `manifest/`.
+in a single tree-walk per ref, then lazy-load bodies on demand. Identity
+ledgers cluster the same way under `ids/`.
 
-## Node manifests
+## Node identity ledger
 
 A *substrate file* — `state/<tier>/<id>.json` plus its body — is the
 unit of generation, the draft → review → approve cycle, and one git
@@ -158,44 +158,51 @@ two are not the same thing.
 The single-node arch tiers `feature_expansion` and `requirements` each
 produce exactly one substrate file per project, whose body *declares
 many nodes* — every `<feature>` / `<responsibility>` inside it. The
-**node manifest** is the derived index of those nodes:
+**identity ledger** is the persisted index of those nodes:
 
 ```
-manifest/feature_expansion/<comp_id>.json
-manifest/requirements/<comp_id>.json
+ids/feature_expansion/<comp_id>.json
+ids/requirements/<comp_id>.json
 ```
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "substrate": {"tier": "feature_expansion", "comp_id": "civic_platform"},
-  "derived_from_sha256": "<sha256 of the body the manifest was derived from>",
+  "derived_from_sha256": "<sha256 of the body the ledger was derived from>",
   "nodes": [
-    {"id": "feat_a1b2c3d4", "kind": "feature", "order": 0,
-     "name": "Login", "intent": "Users sign in.", "implicit": false}
+    {"id": "feat_a1b2c3d4", "name": "Login"}
   ]
 }
 ```
 
-- The manifest is **derived, not authored** — a `draft-*` skill
-  computes it by parsing the body it just composed and writes it in
-  the *same commit* as the body + state JSON. No LLM and no human
-  edits it directly.
+- The ledger is **slim — identity only**. Each node persists just its
+  `id` and `name`. The projectable fields (`kind`, `order`, `intent`,
+  `implicit`, `feats`) are *not* stored — they are re-derived from the
+  body at projection time. The ledger persists the one thing that
+  can't be re-derived: the random `id` and the `name` it is bound to.
+- The ledger is **derived, not authored** — a `draft-*` skill computes
+  it by parsing the body it just composed and writes it in the *same
+  commit* as the body + state JSON. No LLM and no human edits it.
 - **Node ids** (`feat_*` / `resp_*`) are minted on first derivation
   and **carried forward by name** on every regen, so an id stays
   stable across regenerations; a new or renamed node mints a fresh id.
-- **`derived_from_sha256`** ties the manifest to the exact body it was
-  computed from. A mismatch against the live body means the manifest
-  is stale — `mark-drafted` and `repair-state-drift` rebuild it.
-- Per-tier node shapes: a `feature` node carries `name` + `intent` +
-  `implicit`; a `responsibility` node carries `name` + `feats` (the
-  `feat_*` ids it derives from).
+- **`derived_from_sha256`** ties the ledger to the exact body it was
+  computed from. A mismatch against the live body means the ledger is
+  stale — `mark-drafted` and `repair-state-drift` rebuild it.
+- **Schema versions:** `2` is the slim ledger above. `1` is the legacy
+  fat manifest (it inlined `kind`/`order`/`intent`/`implicit`/`feats`);
+  readers still accept it, so a pre-slim `manifest/` tree migrates with
+  a plain `git mv manifest ids` and upgrades to v2 on the next write.
 
-Downstream context builders read manifests, never raw upstream bodies:
-`requirements` pulls the feature nodes, `sysarch` pulls feature +
-responsibility nodes, and `related_features_summary` + the phasing
-plan walk `parent_resps → resp node.feats → feat node`. Each reader
-pulls only the nodes a scope needs — not a whole body file.
+The projection **rehydrates** the ledger on read: it joins the
+persisted `id`↔`name` pairs to the node fields parsed fresh from the
+body, handing downstream context builders a full node index. Builders
+read that index, never raw upstream bodies: `requirements` pulls the
+feature nodes, `sysarch` pulls feature + responsibility nodes, and
+`related_features_summary` + the phasing plan walk `parent_resps →
+resp node.feats → feat node`. Each reader pulls only the nodes a
+scope needs — not a whole body file.
 
 ## Impl-tier phasing (schema v2)
 

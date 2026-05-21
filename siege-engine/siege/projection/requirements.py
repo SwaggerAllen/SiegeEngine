@@ -8,13 +8,15 @@ The generator needs the full approved feature set — each feature with
 its stable ``feat_*`` ID — so it can rotate features into
 responsibilities and tag each ``<responsibility>`` with the ``<feat>``
 IDs it derives from. Those features come from the ``feature_expansion``
-manifest (the node index), not the raw feature_expansion body: the
-generator reads feature *records*, never a whole XML body file.
+node index (the rehydrated identity ledger), not the raw
+feature_expansion body: the generator reads feature *records*, never a
+whole XML body file.
 
-On commit the draft skill derives this tier's own manifest at
-``manifest/requirements/<id>.json`` — every ``resp_*`` node and the
-``feats`` it owns. Sysarch and ``related_features_summary`` read that
-manifest downstream.
+On commit the draft skill derives this tier's own identity ledger at
+``ids/requirements/<id>.json`` — the ``id``↔``name`` binding per
+``resp_*`` node. Sysarch and ``related_features_summary`` read the
+rehydrated node index (which re-derives the ``feats`` edges from the
+body) downstream.
 """
 
 from __future__ import annotations

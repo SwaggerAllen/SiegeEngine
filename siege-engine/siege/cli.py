@@ -7,7 +7,7 @@ to hand-write valid JSON.
 
 Subcommands:
 
-    write-draft    — write state JSON (+ manifest) for a `drafted` transition
+    write-draft    — write state JSON (+ id ledger) for a `drafted` transition
     write-review   — write state JSON + review.md for a `reviewed` transition
     write-approval — flip `reviewed` to `approved`
     mark-drafted   — re-sync state to a hand-edited body (back to `drafted`)
@@ -141,14 +141,14 @@ def cmd_write_draft(args: argparse.Namespace) -> int:
     write_state(state, state_path)
 
     out: dict[str, Any] = {"state_path": str(state_path), "body_sha256": body_sha}
-    # Decomposing tiers also materialize a node manifest derived from
-    # the body — feature_expansion / requirements only (self-skips).
+    # Decomposing tiers also materialize a slim identity ledger derived
+    # from the body — feature_expansion / requirements only (self-skips).
     if scope.tier in DECOMPOSING_TIERS:
-        manifest_path = repo_root / scope.manifest_path()
-        prior_manifest = load_manifest(manifest_path) if manifest_path.exists() else None
+        ids_path = repo_root / scope.ids_path()
+        prior_manifest = load_manifest(ids_path) if ids_path.exists() else None
         manifest = derive_manifest(scope, body_bytes.decode("utf-8"), body_sha, prior_manifest)
-        write_manifest(manifest_path, manifest)
-        out["manifest_path"] = str(manifest_path)
+        write_manifest(ids_path, manifest)
+        out["ids_path"] = str(ids_path)
         out["node_count"] = len(manifest.nodes)
     print(json.dumps(out))
     return 0
@@ -296,27 +296,27 @@ def cmd_repair_drift(args: argparse.Namespace) -> int:
                     reviewer_metadata=prior.review.reviewer_metadata,
                 )
 
-    # Re-derive the node manifest for the decomposing tiers — it is
-    # derived from the body, so a drifted body (or a manifest that
+    # Re-derive the identity ledger for the decomposing tiers — it is
+    # derived from the body, so a drifted body (or a ledger that
     # predates the format) leaves it stale. Idempotent: an unchanged
-    # manifest rewrites byte-identically.
-    manifest_rebuilt = False
+    # ledger rewrites byte-identically.
+    ledger_rebuilt = False
     if scope.tier in DECOMPOSING_TIERS and new_draft is not None:
         body_abs = repo_root / new_draft.body_path
         if body_abs.exists():
-            manifest_path = repo_root / scope.manifest_path()
-            prior_manifest = load_manifest(manifest_path) if manifest_path.exists() else None
+            ids_path = repo_root / scope.ids_path()
+            prior_manifest = load_manifest(ids_path) if ids_path.exists() else None
             manifest = derive_manifest(
                 scope,
                 body_abs.read_text(encoding="utf-8"),
                 new_draft.body_sha256,
                 prior_manifest,
             )
-            write_manifest(manifest_path, manifest)
-            manifest_rebuilt = True
+            write_manifest(ids_path, manifest)
+            ledger_rebuilt = True
 
     if not changes:
-        print(json.dumps({"changed": False, "manifest_rebuilt": manifest_rebuilt}))
+        print(json.dumps({"changed": False, "ledger_rebuilt": ledger_rebuilt}))
         return 0
 
     state = State(
@@ -333,7 +333,7 @@ def cmd_repair_drift(args: argparse.Namespace) -> int:
     )
     state_path = repo_root / scope.state_path()
     write_state(state, state_path)
-    print(json.dumps({"changed": True, "deltas": changes, "manifest_rebuilt": manifest_rebuilt}))
+    print(json.dumps({"changed": True, "deltas": changes, "ledger_rebuilt": ledger_rebuilt}))
     return 0
 
 
@@ -400,11 +400,11 @@ def cmd_mark_drafted(args: argparse.Namespace) -> int:
 
     out: dict[str, Any] = {"state_path": str(state_path), "body_sha256": body_sha}
     if scope.tier in DECOMPOSING_TIERS:
-        manifest_path = repo_root / scope.manifest_path()
-        prior_manifest = load_manifest(manifest_path) if manifest_path.exists() else None
+        ids_path = repo_root / scope.ids_path()
+        prior_manifest = load_manifest(ids_path) if ids_path.exists() else None
         manifest = derive_manifest(scope, body_bytes.decode("utf-8"), body_sha, prior_manifest)
-        write_manifest(manifest_path, manifest)
-        out["manifest_path"] = str(manifest_path)
+        write_manifest(ids_path, manifest)
+        out["ids_path"] = str(ids_path)
         out["node_count"] = len(manifest.nodes)
     print(json.dumps(out))
     return 0

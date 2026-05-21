@@ -1,4 +1,4 @@
-"""Node manifests — the derived index of nodes a substrate file declares.
+"""Node manifests — the identity ledger of nodes a substrate file declares.
 
 A *substrate file* is the unit of generation, draft → review → approve,
 and one git commit: ``state/<tier>/<id>.json`` plus its body. A *node*
@@ -7,16 +7,20 @@ tiers (``feature_expansion``, ``requirements``) each produce one
 substrate file that *declares many nodes* (the features /
 responsibilities inside its body).
 
-The manifest bridges the two. It is a *derived* index — computed from
-the substrate body at draft time, written as its own file in the same
-commit, and carried forward (node IDs stay stable across regens by
-name match). Downstream context builders read the manifest's node
-records instead of re-parsing body XML, and pull only the nodes a
-scope actually needs.
+The manifest bridges the two. The *persisted* form — the **identity
+ledger** at ``ids/<tier>/<id>.json`` — is slim: only the id↔name
+binding per node, the one fact that can't be re-derived (ids are
+random and must stay stable across regens, carried forward by name
+match). The projectable node fields (``intent`` / ``feats`` /
+``implicit`` / ``order`` / ``kind``) are *not* stored — the
+projection re-derives them from the body and joins them onto the
+persisted ids. The in-memory ``Manifest`` this module hands back is
+the full (rehydrated) node index; downstream context builders read
+its node records and pull only the nodes a scope needs.
 
-Path: ``manifest/<tier>/<id>.json``, mirroring ``state/<tier>/<id>.json``
-(see ``Scope.manifest_path``). The schema lives at
-``docs/migration/state-schema.md``.
+Persisted at ``ids/<tier>/<id>.json``, mirroring
+``state/<tier>/<id>.json`` (see ``Scope.ids_path``). The schema
+lives at ``docs/migration/state-schema.md``.
 """
 
 from __future__ import annotations
@@ -30,16 +34,25 @@ from typing import Any
 
 from siege.state import Scope
 
-MANIFEST_SCHEMA_VERSION = 1
+#: Schema version freshly-written ledgers carry.
+MANIFEST_SCHEMA_VERSION = 2
+
+#: Versions ``parse_manifest`` accepts. ``1`` is the legacy fat
+#: manifest (pre-slim) — still read so a ``manifest/`` tree migrates
+#: to ``ids/`` with a plain ``git mv``; the next write upgrades it.
+SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2})
 
 
 @dataclass(frozen=True)
 class Manifest:
-    """The node index for one substrate file.
+    """The in-memory node index for one substrate file.
 
-    ``nodes`` are plain dicts: each carries at least ``id``, ``kind``,
-    ``name`` and ``order``; tier-specific keys ride alongside (features
-    add ``intent`` + ``implicit``, responsibilities add ``feats``).
+    ``nodes`` are plain dicts. As produced by ``derive_manifest`` (and
+    after the projection rehydrates a persisted ledger) each node is
+    *full*: ``id``, ``kind``, ``name``, ``order`` plus tier-specific
+    keys (features add ``intent`` + ``implicit``, responsibilities add
+    ``feats``). As read straight off disk by ``parse_manifest`` the
+    nodes are *slim* — only ``id`` + ``name``, the identity ledger.
     Readers extract the keys they care about.
     """
 
@@ -56,12 +69,19 @@ class Manifest:
 
 
 def parse_manifest(raw: dict[str, Any]) -> Manifest:
-    """Convert a raw dict (from ``json.loads`` or a git blob) to a Manifest."""
+    """Convert a raw dict (from ``json.loads`` or a git blob) to a Manifest.
+
+    Reads both schema versions: ``2`` is the slim identity ledger
+    (id+name); ``1`` is the legacy fat manifest, still accepted so a
+    pre-slim ``manifest/`` tree migrates with a plain ``git mv`` —
+    rehydration re-derives the full node fields from the body either
+    way, and the next write upgrades the file to v2.
+    """
     version = raw.get("schema_version", MANIFEST_SCHEMA_VERSION)
-    if version != MANIFEST_SCHEMA_VERSION:
+    if version not in SUPPORTED_SCHEMA_VERSIONS:
         raise ValueError(
             f"Unsupported manifest schema_version {version!r}; "
-            f"this server reads {MANIFEST_SCHEMA_VERSION}"
+            f"this server reads {sorted(SUPPORTED_SCHEMA_VERSIONS)}"
         )
     sub = raw["substrate"]
     substrate = Scope(
@@ -167,13 +187,17 @@ def derive_manifest(
 
 
 def dump_manifest(m: Manifest) -> dict[str, Any]:
-    """Serialize a Manifest to a JSON-ready dict. Stable key order.
+    """Serialize a Manifest to a JSON-ready dict — the slim identity ledger.
 
-    ``substrate`` is emitted with four keys (no ``phase`` — only the
-    unphased arch tiers carry manifests).
+    Only the id↔name binding per node is persisted; the projectable
+    fields (``kind`` / ``order`` / ``intent`` / ``implicit`` /
+    ``feats``) are dropped — the projection re-derives them from the
+    body. Always stamps the current ``MANIFEST_SCHEMA_VERSION`` so a
+    written file is consistently v2-slim. ``substrate`` is emitted with
+    four keys (no ``phase`` — only the unphased arch tiers carry ledgers).
     """
     return {
-        "schema_version": m.schema_version,
+        "schema_version": MANIFEST_SCHEMA_VERSION,
         "substrate": {
             "tier": m.substrate.tier,
             "comp_id": m.substrate.comp_id,
@@ -181,12 +205,12 @@ def dump_manifest(m: Manifest) -> dict[str, Any]:
             "sub_id": m.substrate.sub_id,
         },
         "derived_from_sha256": m.derived_from_sha256,
-        "nodes": m.nodes,
+        "nodes": [{"id": n["id"], "name": n["name"]} for n in m.nodes],
     }
 
 
 def write_manifest(path: Path, m: Manifest) -> None:
-    """Write a Manifest to disk as canonical JSON."""
+    """Write the slim identity ledger to disk as canonical JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(dump_manifest(m), indent=2, sort_keys=True) + "\n"
     path.write_text(payload, encoding="utf-8")

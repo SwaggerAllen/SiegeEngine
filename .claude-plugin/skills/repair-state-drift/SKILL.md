@@ -34,7 +34,7 @@ derived node manifest, which the same body edit left stale.
    `body_sha256` of the draft body (and the review body, if a review
    block is present) from the paths the state itself records, bumps
    the nonce when anything changed, and for `feature_expansion` /
-   `requirements` re-derives the node manifest from the trusted body
+   `requirements` re-derives the identity ledger from the trusted body
    (ids carry forward by name). It leaves `schema_version`,
    `scope.phase`, and every other field untouched.
 
@@ -48,11 +48,11 @@ derived node manifest, which the same body edit left stale.
    ```
 
    It prints a JSON line: `changed` (true/false), the per-file sha
-   `deltas` when it changed, and `manifest_rebuilt`.
+   `deltas` when it changed, and `ledger_rebuilt`.
 3. **Commit one commit.** Stage the state JSON and, for the
-   manifest-deriving tiers, the manifest. If `git status` then shows
-   no staged changes, nothing actually drifted — report that and stop
-   without committing. Otherwise commit:
+   ledger-deriving tiers, the identity ledger. If `git status` then
+   shows no staged changes, nothing actually drifted — report that and
+   stop without committing. Otherwise commit:
    `repair(<tier>/$id): recompute body_sha256 (drift)`
 4. **Push.**
 

@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from siege.manifest import Manifest, parse_manifest
+from siege.manifest import Manifest, derive_manifest, parse_manifest
 from siege.projection import _base, requirements, sysarch
 from siege.state import Scope, State
 
@@ -132,6 +132,51 @@ def test_parse_manifest_rejects_unknown_version():
                 "nodes": [],
             }
         )
+
+
+def test_parse_manifest_accepts_legacy_v1():
+    """v1 (the pre-slim fat manifest) is still read so a `manifest/`
+    tree migrates to `ids/` with a plain `git mv`."""
+    m = parse_manifest(
+        {
+            "schema_version": 1,
+            "substrate": {"tier": "feature_expansion", "comp_id": "proj"},
+            "derived_from_sha256": "abc",
+            "nodes": [{"id": "feat_x", "kind": "feature", "name": "X", "intent": "i"}],
+        }
+    )
+    assert m.node("feat_x") is not None
+
+
+def test_slim_ledger_rehydrates_to_full_nodes():
+    """The projection rehydration: a slim ledger (id + name) joined to
+    the body re-derives the full node fields, carrying persisted ids
+    forward by name. A body node absent from the ledger mints a fresh id.
+    """
+    substrate = Scope(tier="feature_expansion", comp_id="proj")
+    slim = Manifest(
+        schema_version=2,
+        substrate=substrate,
+        derived_from_sha256="old",
+        nodes=[{"id": "feat_kept", "name": "Login"}],
+    )
+    body = (
+        "<features>\n"
+        "  <feature><name>Login</name><intent>Users sign in.</intent></feature>\n"
+        "  <feature><name>Logout</name><intent>End session.</intent></feature>\n"
+        "</features>\n"
+    )
+    full = derive_manifest(substrate, body, "newsha", slim)
+
+    login = full.node("feat_kept")
+    assert login is not None
+    # id carried forward from the slim ledger; the fat fields re-derived.
+    assert login["name"] == "Login"
+    assert login["intent"] == "Users sign in."
+    assert login["kind"] == "feature"
+    # the new feature, absent from the ledger, mints a fresh id.
+    logout = next(n for n in full.nodes if n["name"] == "Logout")
+    assert logout["id"].startswith("feat_") and logout["id"] != "feat_kept"
 
 
 # ---------------- requirements generation context ----------------

@@ -21,6 +21,7 @@ in this module so the read + write code share the same path discipline.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import subprocess
 import threading
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from siege.config import settings
-from siege.manifest import Manifest, parse_manifest
+from siege.manifest import Manifest, derive_manifest, parse_manifest
 from siege.state import (
     ALL_TIERS,
     Scope,
@@ -230,10 +231,11 @@ class GitView:
         self.head_sha = head_sha
         self._states: dict[tuple[str, ...], State] = {}
         self._bodies: dict[str, bytes] = {}
-        # Node manifests: the derived index of nodes each substrate file
-        # declares. ``_manifests`` is keyed by substrate scope;
-        # ``_node_index`` is the flat node_id → node-dict lookup that
-        # spans every manifest (so a resp_* and a feat_* both resolve).
+        # Node manifests: the full node index each substrate file
+        # declares, rehydrated from the slim ``ids/`` ledger + the body.
+        # ``_manifests`` is keyed by substrate scope; ``_node_index`` is
+        # the flat node_id → node-dict lookup that spans every manifest
+        # (so a resp_* and a feat_* both resolve).
         self._manifests: dict[tuple[str, ...], Manifest] = {}
         self._node_index: dict[str, dict[str, Any]] = {}
         self._loaded_at = time.monotonic()
@@ -267,28 +269,54 @@ class GitView:
             return None
 
     def _load_all_manifests(self) -> None:
-        """Walk ``manifest/`` once and index every node manifest.
+        """Walk ``ids/`` once, rehydrate each identity ledger, and index it.
 
-        Malformed manifests are logged + skipped, same as state files —
-        a missing or broken manifest degrades to an empty node list for
+        The persisted ``ids/`` file is slim — only the id↔name binding,
+        the one fact that can't be re-derived. The projectable node
+        fields (``intent`` / ``feats`` / ``implicit`` / ``order`` /
+        ``kind``) are re-derived here from the substrate body and joined
+        to the persisted ids by name, so consumers see full nodes.
+
+        Malformed ledgers are logged + skipped, same as state files —
+        a missing or broken ledger degrades to an empty node list for
         the affected tier, never a hard read failure.
         """
         import json
 
-        for path in self.clone.ls_tree(self.head_sha, "manifest/"):
+        for path in self.clone.ls_tree(self.head_sha, "ids/"):
             if not path.endswith(".json"):
                 continue
             try:
                 raw = self.clone.show_blob(self.head_sha, path).decode("utf-8")
-                manifest = parse_manifest(json.loads(raw))
+                manifest = self._rehydrate_manifest(parse_manifest(json.loads(raw)))
             except Exception as exc:  # noqa: BLE001 — log + skip malformed
-                logger.warning("Skipping malformed manifest file %s: %s", path, exc)
+                logger.warning("Skipping malformed id ledger %s: %s", path, exc)
                 continue
             self._manifests[manifest.substrate.key()] = manifest
             for node in manifest.nodes:
                 node_id = node.get("id")
                 if node_id:
                     self._node_index[node_id] = node
+
+    def _rehydrate_manifest(self, slim: Manifest) -> Manifest:
+        """Re-derive a slim id ledger's full node records from the body.
+
+        The id↔name binding comes from the persisted ledger; every other
+        node field is parsed fresh from the substrate body, joined to the
+        persisted ids by name. Falls back to the slim ledger as-is when
+        the body can't be read (no draft yet, or a body that drifted
+        off disk) — a degraded read, never a hard failure.
+        """
+        state = self._states.get(slim.substrate.key())
+        if state is None or state.draft is None:
+            return slim
+        try:
+            body_bytes = self.clone.show_blob(self.head_sha, state.draft.body_path)
+        except Exception:  # noqa: BLE001 — body missing → degrade to slim
+            return slim
+        body_text = body_bytes.decode("utf-8")
+        body_sha = hashlib.sha256(body_bytes).hexdigest()
+        return derive_manifest(slim.substrate, body_text, body_sha, slim)
 
     # ------------ Read API ------------
 

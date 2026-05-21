@@ -26,8 +26,8 @@ should go through `draft-<tier>` which mints the state JSON for you.
    points at, sets a fresh `generated_at`, mints a new nonce, flips
    `status` back to `drafted`, and clears the `review` / `approval`
    blocks. For `feature_expansion` / `requirements` it also
-   re-derives the node manifest from the edited body (a hand edit can
-   add, remove, or rename nodes — ids carry forward by name). It
+   re-derives the identity ledger from the edited body (a hand edit
+   can add, remove, or rename nodes — ids carry forward by name). It
    leaves `schema_version` and `scope.phase` exactly as they were.
 
    Set the scope vars per the tier, then call the CLI — the args
@@ -43,11 +43,11 @@ should go through `draft-<tier>` which mints the state JSON for you.
    ```
 
    It prints a JSON line with `state_path`, `body_sha256`, and — for
-   the manifest-deriving tiers — `manifest_path` + `node_count`. A
-   non-zero exit means the scope has no existing state with a draft
-   block, or the body file it points at is missing.
+   the ledger-deriving tiers — `ids_path` + `node_count`. A non-zero
+   exit means the scope has no existing state with a draft block, or
+   the body file it points at is missing.
 2. **Commit + push one commit** — stage the state JSON and, when the
-   CLI rebuilt one, the manifest:
+   CLI rebuilt one, the identity ledger:
    `mark-drafted(<tier>/$id): manual body edit`
 
 ## Phased nodes
