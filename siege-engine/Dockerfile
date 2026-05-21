@@ -30,8 +30,8 @@ COPY backend/ ./backend/
 
 # Copy the new MCP server library (read-only state surface + writer CLI).
 # Mounted by backend.main at /siege_mcp; also runnable standalone via
-# `python -m siege_mcp.server`.
-COPY siege_mcp/ ./siege_mcp/
+# `python -m siege.server`.
+COPY siege/ ./siege/
 
 # Bootstrap script served at /bootstrap.sh — lets project repos seed
 # .mcp.json + .claude/ for mobile CC (which doesn't support /plugin install).
