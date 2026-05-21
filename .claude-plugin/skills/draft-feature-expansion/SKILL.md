@@ -8,8 +8,9 @@ thinking_effort: max
 
 You are drafting one feature expansion artifact end-to-end on the git-backed
 substrate. The MCP server gives you the bundle of context the prompt
-needs; you compose the draft, validate it, and commit + push exactly
-one commit (artifact body + state JSON together).
+needs; you compose the draft, validate it, materialize the state files
+with the `siege` writer CLI, and commit + push exactly one commit
+(artifact body, state JSON, and node manifest together).
 
 ## Inputs
 
@@ -25,99 +26,35 @@ one commit (artifact body + state JSON together).
    inputs to produce the artifact body. Section headers must use the
    `## <prefix>:<name>` convention so the body section parser can pick
    them up downstream (see `docs/migration/state-schema.md` and
-   `siege_mcp/fragments.py:section_for_kind`). This is a top-of-chain tier — use the deepest thinking budget you can.
+   `siege/fragments.py:section_for_kind`). This is a top-of-chain tier — use the deepest thinking budget you can.
 3. **Validate.** Call `mcp__siegeengine__validate_artifact(ref=$ref, tier="feature_expansion", scope=..., body=<draft>)`.
    If `ok` is false, treat the errors as feedback and re-run step 2
    (loop up to 3 times). If still failing, stop and surface the errors.
 4. **Write the body file** to `feature_expansion/$comp_id/body.md`.
-5. **Materialize state JSON + node manifest inline** (no external
-   Python package needed — pure `python3` from stdlib, which any
-   environment CC runs in has). Pass the scope keys as positional
-   args; the rest comes from env vars:
+5. **Materialize state JSON + node manifest.** From the repo root,
+   call the writer CLI. It computes the body sha256, mints a nonce,
+   writes `state/feature_expansion/$comp_id.json`, and derives the
+   node manifest at `manifest/feature_expansion/$comp_id.json`
+   (creating parent directories as needed). It carries `edges` /
+   `meta` / `is_foundation` forward from any prior state, and carries
+   `feat_*` node ids forward by name from any prior manifest, so a
+   regen keeps ids stable; a new or renamed feature mints a fresh id:
 
    ```bash
-   COMP_ID="$comp_id"
-   BODY_PATH=feature_expansion/$comp_id/body.md
-   STATE_PATH=state/feature_expansion/$comp_id.json
-   MANIFEST_PATH=manifest/feature_expansion/$comp_id.json
-   THINKING=max
-   PRIOR_REVIEW_TEXT="${prior_review_text:-}"
-   BATCH_ID="${batch_id:-}"
-   mkdir -p "$(dirname "$STATE_PATH")" "$(dirname "$MANIFEST_PATH")"
-   python3 - "$BODY_PATH" "$STATE_PATH" "$MANIFEST_PATH" "$THINKING" "$PRIOR_REVIEW_TEXT" "$BATCH_ID" "$COMP_ID" <<'PY'
-import hashlib, json, os, re, secrets, sys, time
-
-body_path, state_path, manifest_path, thinking, prior_review, batch_id = sys.argv[1:7]
-comp_id = sys.argv[7]
-scope = {"tier": "feature_expansion", "comp_id": comp_id, "parent_id": None, "sub_id": None}
-
-body = open(body_path, "rb").read()
-sha = hashlib.sha256(body).hexdigest()
-nonce_bits = secrets.randbits(128)
-alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
-nonce = "".join(reversed([alphabet[(nonce_bits >> (5*i)) & 0x1F] for i in range(26)]))
-
-prior = {}
-if os.path.exists(state_path):
-    prior = json.loads(open(state_path).read())
-state = {
-    "schema_version": 1,
-    "scope": scope,
-    "status": "drafted",
-    "nonce": nonce,
-    "is_foundation": prior.get("is_foundation", False),
-    "draft": {
-        "body_path": body_path,
-        "body_sha256": sha,
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "generator_metadata": {"thinking_effort": thinking, "batch_id": batch_id},
-        "prior_review_text": prior_review,
-    },
-    "edges": prior.get("edges", {}),
-    "meta": prior.get("meta", {}),
-}
-open(state_path, "w").write(json.dumps(state, indent=2, sort_keys=True) + "\n")
-
-# Node manifest: the derived index of the feature nodes this body
-# declares. Regex-scan each <feature> block — the body XML tolerates
-# raw < / & inside <intent>, so a non-greedy block scan is used, not
-# a strict XML parser. Node ids carry forward from the prior manifest
-# by name, so a regen keeps feat_* ids stable; a new or renamed
-# feature mints a fresh id.
-text = body.decode("utf-8")
-def tag(name, s):
-    m = re.search(r"<%s\b[^>]*>(.*?)</%s>" % (name, name), s, re.S)
-    return m.group(1).strip() if m else ""
-nodes = []
-for i, blk in enumerate(re.findall(r"<feature\b[^>]*>(.*?)</feature>", text, re.S)):
-    nodes.append({"kind": "feature", "order": i, "name": tag("name", blk),
-                  "intent": tag("intent", blk), "implicit": "<implicit" in blk})
-prior_ids = {}
-if os.path.exists(manifest_path):
-    for n in json.loads(open(manifest_path).read()).get("nodes", []):
-        prior_ids.setdefault(n.get("name", "").strip().lower(), n.get("id"))
-used = set()
-for n in nodes:
-    nid = prior_ids.get(n["name"].strip().lower())
-    if not nid or nid in used:
-        nid = "feat_" + secrets.token_hex(4)
-    used.add(nid)
-    n["id"] = nid
-manifest = {"schema_version": 1, "substrate": scope,
-            "derived_from_sha256": sha, "nodes": nodes}
-open(manifest_path, "w").write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-
-print(json.dumps({"state_path": state_path, "manifest_path": manifest_path,
-                  "body_sha256": sha, "node_count": len(nodes)}))
-PY
+   python3 -m siege.cli write-draft \
+     --tier feature_expansion \
+     --comp-id "$comp_id" \
+     --body-path "feature_expansion/$comp_id/body.md" \
+     --thinking-effort max \
+     --batch-id "${batch_id:-}" \
+     --prior-review-text "${prior_review_text:-}"
    ```
 
-   The sha is from the canonical body bytes; the nonce is a 26-char
-   base32-shaped ULID-ish string. State carries forward `edges` +
-   `meta` + `is_foundation` from the prior state if any. The manifest
-   at `manifest/feature_expansion/$comp_id.json` is the node index the
-   requirements / sysarch / phasing readers consume — see
-   `docs/migration/state-schema.md`.
+   It prints a JSON line with `state_path`, `manifest_path`,
+   `body_sha256`, and `node_count`. A non-zero exit means the body
+   failed validation — treat the stderr as feedback and loop back to
+   step 2. The manifest is the node index the requirements / sysarch
+   / phasing readers consume — see `docs/migration/state-schema.md`.
 6. **Stage the body, state JSON, and manifest**, commit with message:
    `draft(feature_expansion/$id): <one-line summary>`
 7. **Push** with `git push -u origin $ref` (retry on network failure
