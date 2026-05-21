@@ -170,7 +170,7 @@ Phased impl / fanin keep the `p<N>` path layout from the state schema.
 | subcomparch | 1 / subcomponent | leaf articulation | — | — |
 | impl | 1 / leaf, phased | implementation | — | — |
 | fanin | 1 / domain comp w/ subs, phased | bottom-up synthesis | — | — |
-| plan | 1 / impl | code-change planning | — | — |
+| plan *(future)* | 1 / impl | code-change planning | — | — |
 
 The four **decomposing tiers** — feature_expansion, requirements,
 sysarch, comparch — declare child nodes and therefore carry identity
@@ -178,6 +178,25 @@ ledgers. The leaf tiers do not. Tier transformation semantics (why
 each is compression / rotation / expansion, the handle-quality
 property) carry over unchanged from `v2-rearchitecture.md` §The system
 as a meaning engine.
+
+## Phasing and code generation
+
+**Phasing.** impl and fanin partition across release phases; the five
+arch tiers never do. The phase registry (`state/phases/`) is
+user-authored release intent. The per-phase build order is a
+**projection** — `compute_plan` derives it from the registry + the
+comparch / subcomparch tiers, computed on read, not stored as truth.
+Creating the per-phase impl scopes from that plan is the impl fanout —
+the same shape as comparch → subcomparch.
+
+**`plan` and `code` are designed, not implemented.** The per-impl
+`plan_*` node (translate an impl edit into a concrete code-change
+list — `v2-rearchitecture.md` §Plan nodes) and the final `code`
+generation pass are part of the designed chain — the tier table lists
+`plan` for completeness — but neither exists in the current code. v3
+carries them as future tiers; they slot below impl as leaf tiers, no
+new substrate concept. The `plan_*` node is unrelated to the phasing
+`compute_plan` above — they share only the word.
 
 ## Lifecycle
 
@@ -191,6 +210,20 @@ commit per transition, via the per-tier skills. Within a draft:
    parse the body's declared elements, carry IDs forward from the
    prior ledger by name, mint fresh IDs for new names.
 4. One commit; push.
+
+**Leaf tiers read a seed they never store.** subcomparch and impl
+declare no child nodes — so no identity ledger — but each *consumes*
+its slice of the parent comparch's `<owns>` block (its `parent_resps`
++ feat-slice). That seed is assembled into the context bundle by the
+projection in step 1, read from the parent comparch's ledger + body;
+it is never copied into the leaf's own state.
+
+**fanin is the one lifecycle exception.** A fan-in node is mechanical
+bottom-up synthesis — recomputed per phase, never hand-iterated: per
+v2 it is *not reviewed directly* because real corrections land at the
+subcomponent impls below it. Whether v3 keeps a review step for fanin
+at all is unresolved — the current skill set ships `review-fanin`;
+see *Open questions*.
 
 **There are no mint handlers and no fanout handlers.** A node exists
 the moment a body declares it — there is nothing to mint into being.
@@ -221,6 +254,13 @@ future `/propagation-loop` command (a CC `loop`) drains it
 automatically. The record is identical for both; only the driver
 changes. Propagation records build on the existing batch primitive
 (resume-by-gap-fill).
+
+**Cross-tree hops propagate too.** Most staleness runs down the tier
+chain, but two edges cross it: a fan-in node recomputes when any impl
+beneath it changes, and — because fan-in feeds a presentational
+component through its `domain_parent` edge — a fan-in update makes
+that presentational comparch stale. A propagation worklist includes
+those cross-tree targets like any other.
 
 ## Identity and the alias scheme
 
@@ -341,3 +381,5 @@ From the current code to v3, in order:
   too slow.
 - Whether `subcomparch` should carry a lightweight identity ledger for
   symmetry even though it declares no child nodes. (Lean: no.)
+- Whether `fanin` carries a review step at all — v2 says fan-in is not
+  reviewed directly, but the current skills ship `review-fanin`.
