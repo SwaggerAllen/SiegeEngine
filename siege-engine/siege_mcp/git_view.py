@@ -27,9 +27,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from siege_mcp.config import settings
+from siege_mcp.manifest import Manifest, parse_manifest
 from siege_mcp.state import (
     ALL_TIERS,
     Scope,
@@ -229,8 +230,15 @@ class GitView:
         self.head_sha = head_sha
         self._states: dict[tuple[str, ...], State] = {}
         self._bodies: dict[str, bytes] = {}
+        # Node manifests: the derived index of nodes each substrate file
+        # declares. ``_manifests`` is keyed by substrate scope;
+        # ``_node_index`` is the flat node_id → node-dict lookup that
+        # spans every manifest (so a resp_* and a feat_* both resolve).
+        self._manifests: dict[tuple[str, ...], Manifest] = {}
+        self._node_index: dict[str, dict[str, Any]] = {}
         self._loaded_at = time.monotonic()
         self._load_all_state()
+        self._load_all_manifests()
 
     def _load_all_state(self) -> None:
         """Walk state/ once and parse every JSON into the index."""
@@ -258,6 +266,30 @@ class GitView:
             logger.warning("State JSON failed validation: %s", exc)
             return None
 
+    def _load_all_manifests(self) -> None:
+        """Walk ``manifest/`` once and index every node manifest.
+
+        Malformed manifests are logged + skipped, same as state files —
+        a missing or broken manifest degrades to an empty node list for
+        the affected tier, never a hard read failure.
+        """
+        import json
+
+        for path in self.clone.ls_tree(self.head_sha, "manifest/"):
+            if not path.endswith(".json"):
+                continue
+            try:
+                raw = self.clone.show_blob(self.head_sha, path).decode("utf-8")
+                manifest = parse_manifest(json.loads(raw))
+            except Exception as exc:  # noqa: BLE001 — log + skip malformed
+                logger.warning("Skipping malformed manifest file %s: %s", path, exc)
+                continue
+            self._manifests[manifest.substrate.key()] = manifest
+            for node in manifest.nodes:
+                node_id = node.get("id")
+                if node_id:
+                    self._node_index[node_id] = node
+
     # ------------ Read API ------------
 
     def get_state(self, scope: Scope) -> State | None:
@@ -278,6 +310,26 @@ class GitView:
 
     def all_states(self) -> Iterator[State]:
         yield from self._states.values()
+
+    def get_manifest(self, scope: Scope) -> Manifest | None:
+        """The node manifest for a substrate scope, or None."""
+        return self._manifests.get(scope.key())
+
+    def manifest_for_tier(self, tier: Tier) -> Manifest | None:
+        """The node manifest for a single-node tier (``feature_expansion``
+        / ``requirements``), or None when the tier hasn't drafted yet.
+
+        These tiers produce exactly one substrate file per project, so
+        there is at most one manifest to return.
+        """
+        for manifest in self._manifests.values():
+            if manifest.substrate.tier == tier:
+                return manifest
+        return None
+
+    def get_node(self, node_id: str) -> dict[str, Any] | None:
+        """Resolve a node id (``feat_*`` / ``resp_*``) to its manifest record."""
+        return self._node_index.get(node_id)
 
     def read_body(self, path: str) -> bytes:
         """Read a body file lazily, caching the result."""

@@ -18,10 +18,15 @@ The helpers here factor out the genuinely cross-tier reads:
 - ``project_sysarch_sections`` — the 4-key project-wide sysarch sections
   (project_techspec / project_policies / project_dependencies /
   project_domain_parents) every comparch+ tier consumes.
+- ``feature_nodes`` / ``responsibility_nodes`` — the node records the
+  ``feature_expansion`` / ``requirements`` manifests declare. The
+  single-node arch tiers each write one substrate file + one manifest;
+  these helpers hand back the manifest's node list.
 - ``related_features_summary`` — features reachable from a comp's owned
-  responsibilities. The walk is `parent_resps → resp_* (in feat_*) →
-  feat_*`; the underlying data lives in ``meta.parent_resps`` (resp_*
-  IDs) and the feature scopes' own state JSON.
+  responsibilities. The walk is ``parent_resps → resp node.feats →
+  feat node``: ``meta.parent_resps`` (resp_* IDs) resolves through the
+  requirements manifest to feat_* IDs, which resolve through the
+  feature_expansion manifest to names + intents.
 
 The helpers return plain Python dicts / lists; the caller per-tier
 shapes them into the prompt's expected keys.
@@ -125,16 +130,37 @@ def project_sysarch_sections(view: GitView) -> dict[str, str]:
     return out
 
 
+def feature_nodes(view: GitView) -> list[dict[str, Any]]:
+    """Every feature node the project declares.
+
+    Read from the ``feature_expansion`` manifest. Empty list before
+    feature_expansion has drafted, or if its manifest is missing.
+    """
+    manifest = view.manifest_for_tier("feature_expansion")
+    return list(manifest.nodes) if manifest else []
+
+
+def responsibility_nodes(view: GitView) -> list[dict[str, Any]]:
+    """Every responsibility node the project declares.
+
+    Read from the ``requirements`` manifest. Empty list before
+    requirements has drafted, or if its manifest is missing.
+    """
+    manifest = view.manifest_for_tier("requirements")
+    return list(manifest.nodes) if manifest else []
+
+
 def related_features_summary(view: GitView, scope_state: State) -> str:
     """Build the related-features summary for a comp / sub / impl.
 
-    Walks the state's ``meta.parent_resps`` list (resp_* IDs) to the
-    requirements tier, then to the feature_expansion tier via the
-    ``meta.feature_id`` carried on each requirement.
+    Walks the scope's ``meta.parent_resps`` (resp_* IDs) → the
+    requirements manifest (each responsibility node carries the
+    ``feats`` it derives from) → the feature_expansion manifest (each
+    feature node carries ``name`` + ``intent``).
 
-    Result is a markdown bullet list of feature summaries, scoped to
-    what the scope's ``meta.parent_resps`` owns. Empty string when no
-    requirements are approved yet.
+    Result is a markdown bullet list scoped to exactly the features the
+    scope's responsibilities reach — never the whole feature set, never
+    a raw body file. Empty string when nothing is reachable.
     """
     parent_resps: list[str] = scope_state.meta.get("parent_resps", [])
     if not parent_resps:
@@ -142,21 +168,21 @@ def related_features_summary(view: GitView, scope_state: State) -> str:
 
     feat_ids: list[str] = []
     for resp_id in parent_resps:
-        # Requirements state files are keyed by resp_id (== requirement id).
-        req_state = view.get_state(Scope(tier="requirements", comp_id=resp_id))
-        if req_state:
-            feat_id = req_state.meta.get("feature_id")
-            if feat_id and feat_id not in feat_ids:
+        resp_node = view.get_node(resp_id)
+        if not resp_node:
+            continue
+        for feat_id in resp_node.get("feats", []):
+            if feat_id not in feat_ids:
                 feat_ids.append(feat_id)
 
     lines: list[str] = []
     for feat_id in feat_ids:
-        feat_state = view.get_state(Scope(tier="feature_expansion", comp_id=feat_id))
-        if not feat_state:
+        feat_node = view.get_node(feat_id)
+        if not feat_node:
             continue
-        name = feat_state.meta.get("name", feat_id)
-        summary = feat_state.meta.get("summary", "")
-        lines.append(f"- **{name}** ({feat_id}): {summary}")
+        name = feat_node.get("name", feat_id)
+        intent = feat_node.get("intent", "")
+        lines.append(f"- **{name}** ({feat_id}): {intent}")
     return "\n".join(lines)
 
 
