@@ -27,12 +27,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import secrets
 import sys
 from pathlib import Path
 from typing import Any
 
-from siege.parsers.review_xml import parse_review
 from siege.state import (
     ALL_TIERS,
     PHASED_TIERS,
@@ -127,7 +127,6 @@ def cmd_write_draft(args: argparse.Namespace) -> int:
             generator_metadata={
                 "thinking_effort": args.thinking_effort or "default",
                 "batch_id": args.batch_id or "",
-                "model": args.model or "",
             },
             prior_review_text=prior_review_text,
         ),
@@ -141,6 +140,28 @@ def cmd_write_draft(args: argparse.Namespace) -> int:
     return 0
 
 
+def _extract_review(review_text: str) -> tuple[int, str]:
+    """Lenient score + intro extraction from a ``<review>`` body.
+
+    Deliberately *not* the strict ``parsers.review_xml.parse_review``
+    (which the server projection uses): a real review may legitimately
+    omit a finding section, and the write path only needs the score +
+    intro. Mirrors the regex the retired ``review-*`` skill heredocs
+    used, so the materialized state JSON is unchanged.
+    """
+    m = re.search(r"<score>\s*(\d+)\s*</score>", review_text)
+    if not m:
+        raise ValueError("<score> missing or unparseable in review")
+    score = int(m.group(1))
+    if not 0 <= score <= 100:
+        raise ValueError(f"<score> out of range 0-100: {score}")
+    intro_m = re.search(r"<intro>(.*?)</intro>", review_text, re.DOTALL)
+    intro = (intro_m.group(1) if intro_m else "").strip()
+    if not intro:
+        raise ValueError("<intro> missing or empty in review")
+    return score, intro
+
+
 def cmd_write_review(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo).resolve()
     scope = _scope_from_args(args)
@@ -150,14 +171,16 @@ def cmd_write_review(args: argparse.Namespace) -> int:
         print(f"error: review file does not exist: {review_abs}", file=sys.stderr)
         return 2
     review_text = review_abs.read_text(encoding="utf-8")
-    parsed = parse_review(review_text)
+    try:
+        score, intro = _extract_review(review_text)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 3
 
     prior = _existing_state(repo_root, scope)
-    if prior is None or prior.draft is None:
-        print(
-            "error: cannot write a review for a scope that isn't drafted",
-            file=sys.stderr,
-        )
+    if prior is None or prior.status != "drafted":
+        found = prior.status if prior else "absent"
+        print(f"error: scope must be in 'drafted' status, found {found}", file=sys.stderr)
         return 2
 
     state = State(
@@ -170,8 +193,8 @@ def cmd_write_review(args: argparse.Namespace) -> int:
             body_path=str(review_path),
             body_sha256=sha256_text(review_text),
             reviewed_at=now_iso(),
-            score=parsed.score,
-            reviewer_metadata={"model": args.model or ""},
+            score=score,
+            reviewer_metadata={},
         ),
         is_foundation=prior.is_foundation,
         edges=prior.edges,
@@ -183,8 +206,8 @@ def cmd_write_review(args: argparse.Namespace) -> int:
         json.dumps(
             {
                 "state_path": str(state_path),
-                "score": parsed.score,
-                "intro_first_sentence": parsed.intro.split(".", 1)[0],
+                "score": score,
+                "intro_first_sentence": intro.split(".", 1)[0],
             }
         )
     )
@@ -330,7 +353,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_draft.add_argument("--body-path", dest="body_path", required=True)
     p_draft.add_argument("--thinking-effort", dest="thinking_effort", default=None)
     p_draft.add_argument("--batch-id", dest="batch_id", default=None)
-    p_draft.add_argument("--model", default=None)
     p_draft.add_argument("--prior-review-text", dest="prior_review_text", default=None)
     p_draft.add_argument("--is-foundation", dest="is_foundation", action="store_true")
     p_draft.set_defaults(func=cmd_write_draft)
@@ -338,7 +360,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_rev = subs.add_parser("write-review", help="materialize state JSON for a reviewed scope")
     _add_scope_args(p_rev)
     p_rev.add_argument("--review-path", dest="review_path", required=True)
-    p_rev.add_argument("--model", default=None)
     p_rev.set_defaults(func=cmd_write_review)
 
     p_app = subs.add_parser("write-approval", help="flip reviewed → approved")

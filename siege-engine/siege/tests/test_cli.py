@@ -131,6 +131,74 @@ def test_write_draft_then_review(tmp_path, monkeypatch):
     assert state.review.score == 78
 
 
+def test_write_draft_emits_edges_and_meta(tmp_path):
+    """A drafted state file always carries `edges` + `meta` keys, even
+    empty — the key set stays stable across writers (the retired skill
+    heredocs always wrote them)."""
+    body_path = tmp_path / "comparch" / "comp_em" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text("## comparch:techspec\na\n\n## comparch:pubapi\nb\n")
+    main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "comparch",
+            "--comp-id",
+            "comp_em",
+            "--body-path",
+            "comparch/comp_em/body.md",
+        ]
+    )
+    raw = json.loads((tmp_path / "state" / "comparch" / "comp_em.json").read_text())
+    assert raw["edges"] == {}
+    assert raw["meta"] == {}
+
+
+def test_write_review_lenient_missing_finding_sections(tmp_path):
+    """write-review accepts a review that omits the finding sections —
+    only <score> + <intro> are required. The strict parse_review the
+    server uses would reject this; the CLI's write path must not."""
+    body_path = tmp_path / "comparch" / "comp_lr" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text("## comparch:techspec\na\n\n## comparch:pubapi\nb\n")
+    main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "comparch",
+            "--comp-id",
+            "comp_lr",
+            "--body-path",
+            "comparch/comp_lr/body.md",
+        ]
+    )
+    review_path = tmp_path / "comparch" / "comp_lr" / "review.md"
+    review_path.write_text(
+        "<review>\n<intro>Terse review, no findings listed.</intro>\n<score>61</score>\n</review>"
+    )
+    rc = main(
+        [
+            "write-review",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "comparch",
+            "--comp-id",
+            "comp_lr",
+            "--review-path",
+            "comparch/comp_lr/review.md",
+        ]
+    )
+    assert rc == 0
+    state = parse_state(json.loads((tmp_path / "state" / "comparch" / "comp_lr.json").read_text()))
+    assert state.status == "reviewed"
+    assert state.review is not None and state.review.score == 61
+
+
 def test_approval_path(tmp_path):
     body_path = tmp_path / "comparch" / "comp_d" / "body.md"
     body_path.parent.mkdir(parents=True)

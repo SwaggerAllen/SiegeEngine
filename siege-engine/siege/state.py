@@ -290,10 +290,11 @@ def dump_state(state: State) -> dict[str, Any]:
         out["review"] = asdict(state.review)
     if state.approval:
         out["approval"] = asdict(state.approval)
-    if state.edges:
-        out["edges"] = state.edges
-    if state.meta:
-        out["meta"] = state.meta
+    # ``edges`` and ``meta`` are always emitted (even when empty) so a
+    # state file's key set is stable across writers — the skill
+    # heredocs being retired always wrote them.
+    out["edges"] = state.edges
+    out["meta"] = state.meta
     return out
 
 
