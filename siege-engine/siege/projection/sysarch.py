@@ -20,8 +20,8 @@ from __future__ import annotations
 from typing import Any
 
 from siege.git_view import GitView
+from siege.projection import _base
 from siege.state import Scope
-from siege.tiers import _base
 
 
 def _approved_features(view: GitView) -> list[dict[str, Any]]:

@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 
 from siege.manifest import Manifest
-from siege.plan import compute_plan
+from siege.projection.plan import compute_plan
 from siege.state import Scope, State
 
 

@@ -6,7 +6,7 @@ The text in this directory is extracted verbatim from the old backend's
 generator instruction, plus one ``review_<tier>.md`` per tier for the
 reviewer instruction.
 
-The per-tier readers in ``siege/tiers/`` attach the appropriate
+The per-tier readers in ``siege/projection/`` attach the appropriate
 prompt text under the ``instructions`` key of the context bundle they
 return; skills then use it verbatim as the LLM's user prompt without
 needing to know where it lives.

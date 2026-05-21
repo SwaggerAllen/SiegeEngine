@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from siege.projection.fanin import build_generation_context
 from siege.state import DraftBlock, Scope, State
-from siege.tiers.fanin import build_generation_context
 
 
 def _comp(comp_id: str) -> State:

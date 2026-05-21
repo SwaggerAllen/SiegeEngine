@@ -17,8 +17,8 @@ from typing import Any
 import pytest
 
 from siege.manifest import Manifest, parse_manifest
+from siege.projection import _base, requirements, sysarch
 from siege.state import Scope, State
-from siege.tiers import _base, requirements, sysarch
 
 
 def _feature_manifest() -> Manifest:

@@ -24,8 +24,8 @@ from typing import Any
 
 from siege.fragments import FragmentKind
 from siege.git_view import GitView
+from siege.projection import _base
 from siege.state import Scope
-from siege.tiers import _base
 
 
 def _impl_bodies_for_comp(view: GitView, comp_id: str, phase: int | None) -> list[dict[str, Any]]:

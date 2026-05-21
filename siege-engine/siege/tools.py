@@ -21,11 +21,11 @@ from siege.auth_context import current_user_id
 from siege.auth_lookup import lookup_project_auth
 from siege.git_view import GitView
 from siege.git_view import cache as view_cache
-from siege.plan import compute_plan as _compute_plan
-from siege.review_summary import build_review_summary
+from siege.projection import GENERATION_BUILDERS, REVIEW_BUILDERS
+from siege.projection.plan import compute_plan as _compute_plan
+from siege.projection.review_summary import build_review_summary
+from siege.projection.structure import build_structure_summary
 from siege.state import Scope, Tier, dump_state
-from siege.structure import build_structure_summary
-from siege.tiers import GENERATION_BUILDERS, REVIEW_BUILDERS
 from siege.validate import validate_artifact as _validate
 
 

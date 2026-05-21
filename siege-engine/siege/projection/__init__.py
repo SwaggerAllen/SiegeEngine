@@ -20,7 +20,7 @@ its downstream readers expect. The shape of those blocks is part of
 the per-tier contract, documented in each tier's module docstring.
 """
 
-from siege.tiers import (
+from siege.projection import (
     _base,
     comparch,
     fanin,

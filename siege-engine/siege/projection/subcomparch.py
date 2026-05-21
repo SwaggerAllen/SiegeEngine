@@ -22,8 +22,8 @@ from typing import Any
 
 from siege.fragments import FragmentKind
 from siege.git_view import GitView
+from siege.projection import _base
 from siege.state import Scope
-from siege.tiers import _base
 
 
 def _sibling_subs(view: GitView, scope: Scope) -> list[dict[str, Any]]:
