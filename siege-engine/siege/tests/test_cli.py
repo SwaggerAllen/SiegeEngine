@@ -9,9 +9,27 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 
 from siege.cli import main, mint_nonce
 from siege.state import parse_state
+
+
+def _git_repo(root):
+    """Init a scratch git repo (signing off — this is a test fixture)."""
+    for args in (
+        ["init", "-q"],
+        ["config", "user.email", "t@t"],
+        ["config", "user.name", "t"],
+        ["config", "commit.gpgsign", "false"],
+    ):
+        subprocess.run(["git", *args], cwd=root, check=True)
+    return root
+
+
+def _git_commit(root, msg):
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", msg], cwd=root, check=True)
 
 
 def _run(monkeypatch, argv):
@@ -805,3 +823,86 @@ def test_list_scopes_subcomparch(tmp_path, capsys):
     assert all(s["parent_id"] == "comp_p" for s in scopes)
     assert all(s["sub_id"].startswith("comp_") for s in scopes)
     assert all(s["status"] == "absent" for s in scopes)
+
+
+# ---------------- read subcommands (step 5) ----------------
+
+
+def test_get_state_reads_the_committed_tree(tmp_path, capsys):
+    """get-state projects the committed git tree at HEAD."""
+    repo = _git_repo(tmp_path)
+    body = tmp_path / "feature_expansion" / "proj" / "body.md"
+    body.parent.mkdir(parents=True)
+    body.write_text(
+        "## summary\n\nx\n\n<features>\n"
+        "  <feature><name>Login</name><intent>i</intent></feature>\n"
+        "</features>\n"
+    )
+    main(
+        [
+            "write-draft",
+            "--repo",
+            str(repo),
+            "--tier",
+            "feature_expansion",
+            "--comp-id",
+            "proj",
+            "--body-path",
+            "feature_expansion/proj/body.md",
+        ]
+    )
+    _git_commit(repo, "draft fe")
+    capsys.readouterr()
+    rc = main(
+        ["get-state", "--repo", str(repo), "--tier", "feature_expansion", "--comp-id", "proj"]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["found"] is True
+    assert out["status"] == "drafted"
+    assert out["ref_head_sha"]
+
+
+def test_get_state_absent_scope(tmp_path, capsys):
+    """get-state on a scope with no committed state reports found=False."""
+    repo = _git_repo(tmp_path)
+    (tmp_path / "README").write_text("x")
+    _git_commit(repo, "init")
+    capsys.readouterr()
+    rc = main(["get-state", "--repo", str(repo), "--tier", "sysarch", "--comp-id", "nope"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["found"] is False
+
+
+def test_get_context_rehydrates_the_ledger(tmp_path, capsys):
+    """get-context for requirements re-derives the feature nodes from the
+    committed feature_expansion ledger + body (the projection path)."""
+    repo = _git_repo(tmp_path)
+    body = tmp_path / "feature_expansion" / "proj" / "body.md"
+    body.parent.mkdir(parents=True)
+    body.write_text(
+        "## summary\n\nx\n\n<features>\n"
+        "  <feature><name>Login</name><intent>Auth.</intent></feature>\n"
+        "</features>\n"
+    )
+    main(
+        [
+            "write-draft",
+            "--repo",
+            str(repo),
+            "--tier",
+            "feature_expansion",
+            "--comp-id",
+            "proj",
+            "--body-path",
+            "feature_expansion/proj/body.md",
+        ]
+    )
+    _git_commit(repo, "draft fe")
+    capsys.readouterr()
+    rc = main(["get-context", "--repo", str(repo), "--tier", "requirements", "--comp-id", "proj"])
+    assert rc == 0
+    feats = json.loads(capsys.readouterr().out)["features"]
+    assert [f["name"] for f in feats] == ["Login"]
+    assert feats[0]["intent"] == "Auth."
+    assert feats[0]["id"].startswith("feat_")

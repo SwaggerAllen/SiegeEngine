@@ -60,7 +60,47 @@ class _FetchDebounce:
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
-class _ProjectClone:
+class _GitTree:
+    """Read primitives over a git repo at ``self.path`` — committed
+    blobs + tree listings at a sha. ``_ProjectClone`` (server-side,
+    network clones) and ``_LocalRepo`` (the CLI, the local working
+    repo) both build on it.
+    """
+
+    path: Path
+
+    def show_blob(self, sha: str, path: str) -> bytes:
+        """Read a path's bytes at a given commit sha. Raises if missing."""
+        result = subprocess.run(
+            ["git", "show", f"{sha}:{path}"],
+            cwd=self.path,
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise GitViewError(
+                f"git show {sha}:{path} failed: {result.stderr.decode('utf-8', 'replace').strip()}"
+            )
+        return result.stdout
+
+    def ls_tree(self, sha: str, prefix: str) -> list[str]:
+        """List files under prefix in the tree at sha. Paths are repo-relative."""
+        result = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", sha, prefix],
+            cwd=self.path,
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            # Empty tree (the prefix doesn't exist yet) is not an error.
+            stderr = result.stderr.decode("utf-8", "replace")
+            if "exists on disk, but not in" in stderr or "Not a valid object name" in stderr:
+                return []
+            raise GitViewError(f"git ls-tree failed: {stderr.strip()}")
+        return [line for line in result.stdout.decode("utf-8").splitlines() if line]
+
+
+class _ProjectClone(_GitTree):
     """One per project. Owns the on-disk bare-ish clone + per-ref fetch locks."""
 
     def __init__(self, project_id: str, base_path: Path) -> None:
@@ -156,36 +196,6 @@ class _ProjectClone:
             refs.append(RefInfo(name=local_name, head_sha=sha, head_subject=subject))
         return refs
 
-    def show_blob(self, sha: str, path: str) -> bytes:
-        """Read a path's bytes at a given commit sha. Raises if missing."""
-        result = subprocess.run(
-            ["git", "show", f"{sha}:{path}"],
-            cwd=self.path,
-            check=False,
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            raise GitViewError(
-                f"git show {sha}:{path} failed: {result.stderr.decode('utf-8', 'replace').strip()}"
-            )
-        return result.stdout
-
-    def ls_tree(self, sha: str, prefix: str) -> list[str]:
-        """List files under prefix in the tree at sha. Paths are repo-relative."""
-        result = subprocess.run(
-            ["git", "ls-tree", "-r", "--name-only", sha, prefix],
-            cwd=self.path,
-            check=False,
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            # Empty tree (the prefix doesn't exist yet) is not an error.
-            stderr = result.stderr.decode("utf-8", "replace")
-            if "exists on disk, but not in" in stderr or "Not a valid object name" in stderr:
-                return []
-            raise GitViewError(f"git ls-tree failed: {stderr.strip()}")
-        return [line for line in result.stdout.decode("utf-8").splitlines() if line]
-
 
 def _maybe_inject_token(remote_url: str, access_token: str | None) -> str:
     """For an https://github.com/... URL, inject the OAuth token as basic auth.
@@ -225,7 +235,7 @@ class GitView:
     Construction does the fetch + tree-walk. Bodies are lazy.
     """
 
-    def __init__(self, clone: _ProjectClone, ref: str, head_sha: str) -> None:
+    def __init__(self, clone: _GitTree, ref: str, head_sha: str) -> None:
         self.clone = clone
         self.ref = ref
         self.head_sha = head_sha
@@ -397,6 +407,40 @@ class GitView:
         for s in self._states.values():
             out[s.scope.tier].append(s)
         return out
+
+
+# ---------------- Local (CLI) view ----------------
+
+
+class _LocalRepo(_GitTree):
+    """A ``GitView`` source backed by the local working repo — no
+    network clone, no fetch, no cache. The CLI's read subcommands run
+    against the repo the calling skill is already inside.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.path = root
+
+    def resolve_ref(self, ref: str) -> str:
+        """Resolve a local ref (branch, tag, ``HEAD``, sha) to a commit sha."""
+        out = run_git(["rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=self.path).strip()
+        if not out:
+            raise GitViewError(f"could not resolve ref {ref!r} in {self.path}")
+        return out
+
+
+def local_view(repo_root: Path, ref: str = "HEAD") -> GitView:
+    """Build a ``GitView`` over a local working repo at ``ref``.
+
+    The CLI's read subcommands use this — one view per invocation, no
+    network and no cache (unlike the server's ``GitViewCache``). It
+    reads the *committed* tree at ``ref`` (default ``HEAD``);
+    uncommitted working-tree edits are not seen, matching the
+    projection's sha-keyed contract.
+    """
+    repo = _LocalRepo(repo_root)
+    head_sha = repo.resolve_ref(ref)
+    return GitView(repo, ref, head_sha)
 
 
 # ---------------- Multi-project cache ----------------

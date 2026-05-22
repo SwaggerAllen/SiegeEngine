@@ -3,13 +3,22 @@ name = "siege-engine"
 version = "0.1.0"
 requires-python = ">=3.11"
 license = "AGPL-3.0-or-later"
-# The `siege` core CLI is pure stdlib — installing the package with no
-# extras (what the bootstrap does, so a skill can run `python -m
-# siege.cli` in any project repo) pulls zero dependencies. The runtime
-# deps for the dashboard server + the legacy backend live in `[app]`.
+# The `siege` core is pure stdlib — installing the package with no
+# extras pulls zero dependencies, enough for the CLI's *write*
+# subcommands. The `[read]` extra adds the read-side projection's deps;
+# the bootstrap installs it so skills can run both halves of the CLI.
 dependencies = []
 
 [project.optional-dependencies]
+# The read-side projection (siege.projection / siege.git_view) — what
+# the CLI's read subcommands (get-context, compute-plan, …) need. The
+# write subcommands stay dependency-free; the bootstrap installs this
+# extra so a skill environment has the whole CLI.
+read = [
+    "beautifulsoup4>=4.12",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+]
 # Everything needed to *run* the deployed app — the dashboard server
 # and the legacy backend, which still ship together until the
 # backend's deletion (migration step 8).

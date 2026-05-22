@@ -5,7 +5,8 @@ CLI to materialize the state JSON file and (optionally) commit + push.
 Keeps the JSON-shape discipline inside Python so prompts don't have
 to hand-write valid JSON.
 
-Subcommands:
+Write subcommands (work on the local working tree; the calling skill
+does the `git add` / `commit` / `push`):
 
     write-draft    — write state JSON (+ id ledger) for a `drafted` transition
     write-review   — write state JSON + review.md for a `reviewed` transition
@@ -15,11 +16,22 @@ Subcommands:
     mint-plan      — materialize phased impl stubs from state/plan.json
     mint-batch     — write a state/batches/<id>.json
     mint-nonce     — emit a fresh ULID-shaped nonce on stdout (utility)
-    list-scopes    — enumerate a tier's scopes from the identity ledgers
 
-All subcommands work on the local working tree only — they DON'T do
-git operations. The calling skill is responsible for `git add`,
-`git commit`, `git push`.
+Read subcommands (project the committed git tree at ``--ref``, default
+``HEAD``; replace the retired MCP read tools):
+
+    get-state             — state JSON for a scope (+ drift)
+    get-context           — generation context bundle for a scope
+    get-review-context    — review context bundle for a scope
+    compute-plan          — the phasing plan projection
+    get-structure-summary — a tier's per-node + aggregate metrics
+    get-review-summary    — a tier's score histogram + worst-N intros
+    list-scopes           — enumerate a tier's scopes from the id ledgers
+    list-batches          — list state/batches/<id>.json files
+
+The write subcommands keep ``import siege.cli`` pure-stdlib; the read
+subcommands defer their ``siege.projection`` imports (which pull
+``pydantic`` / ``bs4``) so a core-only install still runs the writers.
 
 Run with ``python -m siege.cli <subcommand> --help`` for per-command
 flags.
@@ -34,7 +46,10 @@ import re
 import secrets
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from siege.git_view import GitView
 
 from siege.manifest import (
     DECOMPOSING_TIERS,
@@ -51,6 +66,7 @@ from siege.state import (
     ReviewBlock,
     Scope,
     State,
+    dump_state,
     now_iso,
     parse_state,
     sha256_text,
@@ -538,6 +554,120 @@ def cmd_list_scopes(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------- read subcommands (projection) ----------------
+#
+# These wrap the read-side projection (``siege.projection``) and so
+# pull its dependency closure (pydantic, bs4, …). The imports are
+# deferred into each function body so ``import siege.cli`` itself stays
+# pure-stdlib — a core-only install keeps running the write subcommands;
+# the read subcommands need the ``[read]`` extra.
+
+
+def _open_local_view(args: argparse.Namespace) -> GitView:
+    """Build a GitView over the local repo at ``--ref`` (default HEAD)."""
+    from siege.git_view import local_view
+
+    return local_view(Path(args.repo).resolve(), args.ref)
+
+
+def cmd_get_state(args: argparse.Namespace) -> int:
+    view = _open_local_view(args)
+    scope = _scope_from_args(args)
+    base = {"ref": view.ref, "ref_head_sha": view.head_sha}
+    state = view.get_state(scope)
+    if state is None:
+        print(
+            json.dumps(
+                {
+                    **base,
+                    "found": False,
+                    "scope": {
+                        "tier": scope.tier,
+                        "comp_id": scope.comp_id,
+                        "parent_id": scope.parent_id,
+                        "sub_id": scope.sub_id,
+                        "phase": scope.phase,
+                    },
+                },
+                indent=2,
+            )
+        )
+        return 0
+    payload: dict[str, Any] = {**base, "found": True, **dump_state(state)}
+    drift = view.drift_for(state)
+    if drift:
+        payload["drift"] = drift
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_get_context(args: argparse.Namespace) -> int:
+    from siege.projection import GENERATION_BUILDERS
+
+    view = _open_local_view(args)
+    builder = GENERATION_BUILDERS.get(args.tier)
+    if builder is None:
+        print(f"error: no generation context builder for tier {args.tier!r}", file=sys.stderr)
+        return 2
+    print(json.dumps(builder(view, _scope_from_args(args)), indent=2))
+    return 0
+
+
+def cmd_get_review_context(args: argparse.Namespace) -> int:
+    from siege.projection import REVIEW_BUILDERS
+
+    view = _open_local_view(args)
+    builder = REVIEW_BUILDERS.get(args.tier)
+    if builder is None:
+        print(f"error: no review context builder for tier {args.tier!r}", file=sys.stderr)
+        return 2
+    print(json.dumps(builder(view, _scope_from_args(args), args.draft_sha), indent=2))
+    return 0
+
+
+def cmd_compute_plan(args: argparse.Namespace) -> int:
+    from siege.projection.plan import compute_plan
+
+    view = _open_local_view(args)
+    print(json.dumps(compute_plan(view), indent=2))
+    return 0
+
+
+def cmd_get_structure_summary(args: argparse.Namespace) -> int:
+    from siege.projection.structure import build_structure_summary
+
+    view = _open_local_view(args)
+    print(json.dumps(build_structure_summary(view, args.tier), indent=2))
+    return 0
+
+
+def cmd_get_review_summary(args: argparse.Namespace) -> int:
+    from siege.projection.review_summary import build_review_summary
+
+    view = _open_local_view(args)
+    print(json.dumps(build_review_summary(view, args.tier), indent=2))
+    return 0
+
+
+def cmd_list_batches(args: argparse.Namespace) -> int:
+    view = _open_local_view(args)
+    batches: list[dict[str, Any]] = []
+    for path in view.clone.ls_tree(view.head_sha, "state/batches/"):
+        if not path.endswith(".json"):
+            continue
+        try:
+            data = json.loads(view.clone.show_blob(view.head_sha, path).decode("utf-8"))
+        except Exception:  # noqa: BLE001 — skip malformed
+            continue
+        if args.status and data.get("status") != args.status:
+            continue
+        batches.append(data)
+    print(
+        json.dumps({"ref": view.ref, "ref_head_sha": view.head_sha, "batches": batches}, indent=2)
+    )
+    return 0
+
+
 def _add_scope_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repo", default=".", help="repo root (default: cwd)")
     parser.add_argument("--tier", required=True, choices=ALL_TIERS)
@@ -550,6 +680,10 @@ def _add_scope_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="phase index for a phased impl/fanin scope (omit for arch tiers)",
     )
+
+
+def _add_ref_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--ref", default="HEAD", help="git ref to read (default: HEAD)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -605,6 +739,47 @@ def build_parser() -> argparse.ArgumentParser:
     p_ls.add_argument("--repo", default=".")
     p_ls.add_argument("--tier", required=True, choices=["comparch", "subcomparch"])
     p_ls.set_defaults(func=cmd_list_scopes)
+
+    # ---- read subcommands (projection) ----
+
+    p_gst = subs.add_parser("get-state", help="print the state JSON for a scope")
+    _add_scope_args(p_gst)
+    _add_ref_arg(p_gst)
+    p_gst.set_defaults(func=cmd_get_state)
+
+    p_gc = subs.add_parser("get-context", help="print the generation context bundle")
+    _add_scope_args(p_gc)
+    _add_ref_arg(p_gc)
+    p_gc.set_defaults(func=cmd_get_context)
+
+    p_grc = subs.add_parser("get-review-context", help="print the review context bundle")
+    _add_scope_args(p_grc)
+    _add_ref_arg(p_grc)
+    p_grc.add_argument("--draft-sha", dest="draft_sha", required=True)
+    p_grc.set_defaults(func=cmd_get_review_context)
+
+    p_cp = subs.add_parser("compute-plan", help="print the phasing plan projection")
+    p_cp.add_argument("--repo", default=".")
+    _add_ref_arg(p_cp)
+    p_cp.set_defaults(func=cmd_compute_plan)
+
+    p_gss = subs.add_parser("get-structure-summary", help="print a tier's structure summary")
+    p_gss.add_argument("--repo", default=".")
+    p_gss.add_argument("--tier", required=True, choices=ALL_TIERS)
+    _add_ref_arg(p_gss)
+    p_gss.set_defaults(func=cmd_get_structure_summary)
+
+    p_grs = subs.add_parser("get-review-summary", help="print a tier's review summary")
+    p_grs.add_argument("--repo", default=".")
+    p_grs.add_argument("--tier", required=True, choices=ALL_TIERS)
+    _add_ref_arg(p_grs)
+    p_grs.set_defaults(func=cmd_get_review_summary)
+
+    p_lb = subs.add_parser("list-batches", help="list state/batches/<id>.json files")
+    p_lb.add_argument("--repo", default=".")
+    _add_ref_arg(p_lb)
+    p_lb.add_argument("--status", default=None)
+    p_lb.set_defaults(func=cmd_list_batches)
 
     return p
 
