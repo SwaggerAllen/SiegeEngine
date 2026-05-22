@@ -264,9 +264,11 @@ SiegeEngine-managed files.
 
 ## Troubleshooting
 
-The generate loop runs entirely locally — the skills shell out to
+### The generate loop (local CLI)
+
+The loop runs entirely locally — the skills shell out to
 `python -m siege.cli`, read and write the project repo directly, and
-commit. Common snags:
+commit. No server, no token. Common snags:
 
 - **`No module named siege`** — the CLI isn't installed in this
   environment. Re-run `scripts/siege-bootstrap.sh`, or `pip install`
@@ -275,7 +277,28 @@ commit. Common snags:
   commits yet. Commit the initial repo state, then retry.
 - **`git push` rejected** — the loop pushes with your own git
   credentials; fix them the usual way (a credential helper or an SSH
-  key). SiegeEngine itself holds no token.
+  key). SiegeEngine itself holds no token here.
+
+### The dashboard
+
+The dashboard at `siege.strutco.io` reads your project's git state to
+render the graph + tier views. Two pieces of auth back it — the
+**Auth diagnostic** panel near the top of this page checks both when
+you're logged in:
+
+- **Signed in (JWT)** — the dashboard's read API requires a bearer
+  token. The **Your dev token** panel at the top of this page shows
+  yours in a copy-paste `export SIEGE_TOKEN=…` form if you want to
+  call the API directly; the browser dashboard uses your session.
+  Tokens last 30 days — come back here when one expires.
+- **GitHub connected** — the server clones your project repo to read
+  it. A **private** repo needs a `GitHubCredential` for your account
+  or the clone fails with "Clone of `<repo>` requires
+  authentication". Connect via **Project Settings → GitHub
+  connection** on any project.
+
+The "refresh" button on the diagnostic panel re-runs the checks
+without reloading.
 
 ## Common gotchas
 

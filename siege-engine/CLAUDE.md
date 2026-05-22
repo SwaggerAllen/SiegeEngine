@@ -750,6 +750,20 @@ URL) — there is no served `/bootstrap.sh` endpoint. Update the
 script (and the cheat sheet's install section) if the on-ramp
 shape changes.
 
+**Auth still matters for the dashboard.** The generate loop
+needs no token — the skills run the CLI on the local repo. But
+the dashboard read API (`siege/server.py`'s `/api/*`) still
+gates on the JWT (`_require_token`) and still resolves the
+caller's GitHub OAuth token (`tools._open_view` →
+`lookup_project_auth`) so the server can clone **private**
+project repos to project their git state. Removing the MCP
+transport did not remove that — `/mcp` merely shared the same
+auth. The **dev token panel**
+(`frontend/src/components/DevTokenPanel.tsx`) mounts at the top
+of the cheat sheet page and shows the logged-in user's JWT in a
+copy-paste `export SIEGE_TOKEN=...` form — keep it there as the
+"where do I get a token" answer for hitting `/api/*` directly.
+
 **Keep it current.** When you add a slash command, ship a new
 skill, rename one, or change a workflow, update
 `docs/cheatsheet.md` in the same commit. The cheat sheet is
