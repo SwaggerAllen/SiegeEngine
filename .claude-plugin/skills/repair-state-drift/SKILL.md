@@ -33,10 +33,11 @@ derived node manifest, which the same body edit left stale.
    `repair-drift` subcommand. It reads the state, recomputes the
    `body_sha256` of the draft body (and the review body, if a review
    block is present) from the paths the state itself records, bumps
-   the nonce when anything changed, and for `feature_expansion` /
-   `requirements` re-derives the identity ledger from the trusted body
-   (ids carry forward by name). It leaves `schema_version`,
-   `scope.phase`, and every other field untouched.
+   the nonce when anything changed, and for the decomposing tiers
+   (feature_expansion / requirements / sysarch / comparch) re-derives
+   the identity ledger from the trusted body (ids carry forward by
+   name or alias). It leaves `schema_version`, `scope.phase`, and
+   every other field untouched.
 
    ```bash
    ARGS=(--tier "$tier")

@@ -15,6 +15,7 @@ Subcommands:
     mint-plan      — materialize phased impl stubs from state/plan.json
     mint-batch     — write a state/batches/<id>.json
     mint-nonce     — emit a fresh ULID-shaped nonce on stdout (utility)
+    list-scopes    — enumerate a tier's scopes from the identity ledgers
 
 All subcommands work on the local working tree only — they DON'T do
 git operations. The calling skill is responsible for `git add`,
@@ -35,7 +36,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from siege.manifest import DECOMPOSING_TIERS, derive_manifest, load_manifest, write_manifest
+from siege.manifest import (
+    DECOMPOSING_TIERS,
+    Manifest,
+    derive_manifest,
+    load_manifest,
+    write_manifest,
+)
 from siege.state import (
     ALL_TIERS,
     PHASED_TIERS,
@@ -142,7 +149,8 @@ def cmd_write_draft(args: argparse.Namespace) -> int:
 
     out: dict[str, Any] = {"state_path": str(state_path), "body_sha256": body_sha}
     # Decomposing tiers also materialize a slim identity ledger derived
-    # from the body — feature_expansion / requirements only (self-skips).
+    # from the body — feature_expansion / requirements / sysarch /
+    # comparch (self-skips every other tier).
     if scope.tier in DECOMPOSING_TIERS:
         ids_path = repo_root / scope.ids_path()
         prior_manifest = load_manifest(ids_path) if ids_path.exists() else None
@@ -475,6 +483,61 @@ def cmd_mint_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rehydrate_ledger(repo_root: Path, ids_path: Path) -> Manifest:
+    """Load a slim identity ledger and re-derive its full node records
+    from the substrate body — the working-tree analogue of the
+    projection's rehydration. Falls back to the slim ledger when the
+    body can't be read.
+    """
+    slim = load_manifest(ids_path)
+    body_abs = repo_root / slim.substrate.body_path()
+    if not body_abs.exists():
+        return slim
+    body_bytes = body_abs.read_bytes()
+    body_sha = hashlib.sha256(body_bytes).hexdigest()
+    return derive_manifest(slim.substrate, body_bytes.decode("utf-8"), body_sha, slim)
+
+
+def cmd_list_scopes(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    tier = args.tier
+    # comparch scopes come from the sysarch ledger; subcomparch scopes
+    # from every comparch ledger.
+    source_dir = repo_root / "ids" / ("sysarch" if tier == "comparch" else "comparch")
+
+    scopes: list[dict[str, Any]] = []
+    if source_dir.exists():
+        for ids_path in sorted(source_dir.glob("*.json")):
+            manifest = _rehydrate_ledger(repo_root, ids_path)
+            for n in manifest.nodes:
+                if tier == "comparch":
+                    scope = Scope(tier="comparch", comp_id=n["id"])
+                    entry: dict[str, Any] = {"comp_id": n["id"]}
+                else:
+                    scope = Scope(
+                        tier="subcomparch",
+                        parent_id=manifest.substrate.comp_id,
+                        sub_id=n["id"],
+                    )
+                    entry = {"parent_id": manifest.substrate.comp_id, "sub_id": n["id"]}
+                prior = _existing_state(repo_root, scope)
+                entry.update(
+                    {
+                        "alias": n.get("alias", ""),
+                        "is_foundation": bool(n.get("is_foundation", False)),
+                        "order": n.get("order", 0),
+                        "status": prior.status if prior else "absent",
+                    }
+                )
+                scopes.append(entry)
+
+    # Foundation first, then declaration order — the topological order a
+    # `/run_tier` fan-out drafts in.
+    scopes.sort(key=lambda s: (not s["is_foundation"], s["order"]))
+    print(json.dumps({"tier": tier, "scopes": scopes}, indent=2))
+    return 0
+
+
 def _add_scope_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repo", default=".", help="repo root (default: cwd)")
     parser.add_argument("--tier", required=True, choices=ALL_TIERS)
@@ -535,6 +598,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan = subs.add_parser("mint-plan", help="materialize phased impl stubs from state/plan.json")
     p_plan.add_argument("--repo", default=".")
     p_plan.set_defaults(func=cmd_mint_plan)
+
+    p_ls = subs.add_parser(
+        "list-scopes", help="enumerate a tier's scopes from the identity ledgers"
+    )
+    p_ls.add_argument("--repo", default=".")
+    p_ls.add_argument("--tier", required=True, choices=["comparch", "subcomparch"])
+    p_ls.set_defaults(func=cmd_list_scopes)
 
     return p
 

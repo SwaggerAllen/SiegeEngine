@@ -608,3 +608,200 @@ def test_mint_plan_materializes_impl_stubs(tmp_path):
     assert stub.meta["parent_resps"] == ["resp_1"]
     # second run re-seeds the absent stub without error
     assert main(["mint-plan", "--repo", str(tmp_path)]) == 0
+
+
+# ---------------- sysarch / comparch identity ledger (step 4) ----------------
+
+_SYSARCH_BODY = (
+    "## project_techspec\n\nx\n\n"
+    "<components>\n"
+    '  <component alias="foundation"><name>Foundation</name><foundation/></component>\n'
+    '  <component alias="billing"><name>Billing Service</name></component>\n'
+    "</components>\n"
+)
+
+
+def test_write_draft_sysarch_derives_ledger(tmp_path):
+    """write-draft for sysarch materializes a slim identity ledger —
+    one comp_* node per <component>, keyed by alias."""
+    body_path = tmp_path / "sysarch" / "proj" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text(_SYSARCH_BODY)
+    rc = main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "sysarch",
+            "--comp-id",
+            "proj",
+            "--body-path",
+            "sysarch/proj/body.md",
+        ]
+    )
+    assert rc == 0
+    ledger = json.loads((tmp_path / "ids" / "sysarch" / "proj.json").read_text())
+    assert ledger["schema_version"] == 2
+    nodes = ledger["nodes"]
+    assert [n["alias"] for n in nodes] == ["foundation", "billing"]
+    # Slim ledger — id + alias only, no projectable fields.
+    assert all(set(n) == {"id", "alias"} for n in nodes)
+    assert all(n["id"].startswith("comp_") for n in nodes)
+
+
+def test_write_draft_comparch_derives_ledger(tmp_path):
+    """write-draft for comparch materializes a slim identity ledger —
+    one comp_* node per <subcomponent>, keyed by alias."""
+    body = (
+        "## comparch:techspec\n\nx\n\n## comparch:pubapi\n\ny\n\n"
+        "<subcomponents>\n"
+        '  <subcomponent alias="store"><name>SessionStore</name></subcomponent>\n'
+        '  <subcomponent alias="foundation"><name>AuthCore</name><foundation/></subcomponent>\n'
+        "</subcomponents>\n"
+    )
+    body_path = tmp_path / "comparch" / "comp_x" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text(body)
+    rc = main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "comparch",
+            "--comp-id",
+            "comp_x",
+            "--body-path",
+            "comparch/comp_x/body.md",
+        ]
+    )
+    assert rc == 0
+    ledger = json.loads((tmp_path / "ids" / "comparch" / "comp_x.json").read_text())
+    nodes = ledger["nodes"]
+    assert [n["alias"] for n in nodes] == ["store", "foundation"]
+    assert all(set(n) == {"id", "alias"} for n in nodes)
+    assert all(n["id"].startswith("comp_") for n in nodes)
+
+
+def test_ledger_alias_carry_forward(tmp_path):
+    """Regen keeps a node's id when its alias is unchanged (even if the
+    display <name> drifts), and mints a fresh id when the alias changes."""
+    body_path = tmp_path / "sysarch" / "proj" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text(_SYSARCH_BODY)
+    argv = [
+        "write-draft",
+        "--repo",
+        str(tmp_path),
+        "--tier",
+        "sysarch",
+        "--comp-id",
+        "proj",
+        "--body-path",
+        "sysarch/proj/body.md",
+    ]
+    main(argv)
+    ledger_path = tmp_path / "ids" / "sysarch" / "proj.json"
+    first = {n["alias"]: n["id"] for n in json.loads(ledger_path.read_text())["nodes"]}
+
+    # Rename the display <name> but keep alias="billing" → id is stable.
+    body_path.write_text(_SYSARCH_BODY.replace("Billing Service", "Payments"))
+    main(argv)
+    after_rename = {n["alias"]: n["id"] for n in json.loads(ledger_path.read_text())["nodes"]}
+    assert after_rename["billing"] == first["billing"]
+
+    # Change the alias → a fresh id; the old alias is gone.
+    body_path.write_text(_SYSARCH_BODY.replace('alias="billing"', 'alias="payments"'))
+    main(argv)
+    after_realias = {n["alias"]: n["id"] for n in json.loads(ledger_path.read_text())["nodes"]}
+    assert "billing" not in after_realias
+    assert after_realias["payments"] != first["billing"]
+    assert after_realias["foundation"] == first["foundation"]
+
+
+def test_list_scopes_comparch(tmp_path, capsys):
+    """list-scopes --tier comparch enumerates one scope per component
+    in the sysarch ledger, foundation-first, and reflects draft status."""
+    body_path = tmp_path / "sysarch" / "proj" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text(_SYSARCH_BODY)
+    main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "sysarch",
+            "--comp-id",
+            "proj",
+            "--body-path",
+            "sysarch/proj/body.md",
+        ]
+    )
+    capsys.readouterr()
+    assert main(["list-scopes", "--repo", str(tmp_path), "--tier", "comparch"]) == 0
+    scopes = json.loads(capsys.readouterr().out)["scopes"]
+    assert [s["alias"] for s in scopes] == ["foundation", "billing"]
+    assert scopes[0]["is_foundation"] is True
+    assert all(s["status"] == "absent" for s in scopes)
+    assert all(s["comp_id"].startswith("comp_") for s in scopes)
+
+    # Draft the billing comparch → its scope flips to 'drafted'.
+    billing_id = next(s["comp_id"] for s in scopes if s["alias"] == "billing")
+    cbody = tmp_path / "comparch" / billing_id / "body.md"
+    cbody.parent.mkdir(parents=True)
+    cbody.write_text("## comparch:techspec\n\nx\n\n## comparch:pubapi\n\ny\n")
+    main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "comparch",
+            "--comp-id",
+            billing_id,
+            "--body-path",
+            f"comparch/{billing_id}/body.md",
+        ]
+    )
+    capsys.readouterr()
+    main(["list-scopes", "--repo", str(tmp_path), "--tier", "comparch"])
+    by_alias = {s["alias"]: s["status"] for s in json.loads(capsys.readouterr().out)["scopes"]}
+    assert by_alias["billing"] == "drafted"
+    assert by_alias["foundation"] == "absent"
+
+
+def test_list_scopes_subcomparch(tmp_path, capsys):
+    """list-scopes --tier subcomparch enumerates (parent_id, sub_id)
+    pairs from every comparch ledger."""
+    body = (
+        "## comparch:techspec\n\nx\n\n## comparch:pubapi\n\ny\n\n"
+        "<subcomponents>\n"
+        '  <subcomponent alias="store"><name>Store</name></subcomponent>\n'
+        '  <subcomponent alias="foundation"><name>Core</name><foundation/></subcomponent>\n'
+        "</subcomponents>\n"
+    )
+    body_path = tmp_path / "comparch" / "comp_p" / "body.md"
+    body_path.parent.mkdir(parents=True)
+    body_path.write_text(body)
+    main(
+        [
+            "write-draft",
+            "--repo",
+            str(tmp_path),
+            "--tier",
+            "comparch",
+            "--comp-id",
+            "comp_p",
+            "--body-path",
+            "comparch/comp_p/body.md",
+        ]
+    )
+    capsys.readouterr()
+    assert main(["list-scopes", "--repo", str(tmp_path), "--tier", "subcomparch"]) == 0
+    scopes = json.loads(capsys.readouterr().out)["scopes"]
+    assert [s["alias"] for s in scopes] == ["foundation", "store"]
+    assert all(s["parent_id"] == "comp_p" for s in scopes)
+    assert all(s["sub_id"].startswith("comp_") for s in scopes)
+    assert all(s["status"] == "absent" for s in scopes)

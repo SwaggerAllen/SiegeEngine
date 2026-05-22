@@ -356,7 +356,7 @@ class GitView:
         return None
 
     def get_node(self, node_id: str) -> dict[str, Any] | None:
-        """Resolve a node id (``feat_*`` / ``resp_*``) to its manifest record."""
+        """Resolve a node id (``feat_*`` / ``resp_*`` / ``comp_*``) to its node record."""
         return self._node_index.get(node_id)
 
     def read_body(self, path: str) -> bytes:

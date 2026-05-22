@@ -8,9 +8,9 @@ thinking_effort: max
 
 You are drafting one sysarch section artifact end-to-end on the git-backed
 substrate. The MCP server gives you the bundle of context the prompt
-needs; you compose the draft, validate it, materialize the state JSON
+needs; you compose the draft, validate it, materialize the state files
 with the `siege` writer CLI, and commit + push exactly one commit
-(artifact body and state JSON together).
+(artifact body, state JSON, and identity ledger together).
 
 ## Inputs
 
@@ -31,11 +31,15 @@ with the `siege` writer CLI, and commit + push exactly one commit
    If `ok` is false, treat the errors as feedback and re-run step 2
    (loop up to 3 times). If still failing, stop and surface the errors.
 4. **Write the body file** to `sysarch/$comp_id/body.md`.
-5. **Materialize state JSON.** From the repo root, call the writer
-   CLI. It computes the body sha256, mints a nonce, and writes
-   `state/sysarch/$comp_id.json` (creating parent directories as
-   needed), carrying `edges` / `meta` / `is_foundation` forward from
-   any prior state:
+5. **Materialize state JSON + identity ledger.** From the repo root,
+   call the writer CLI. It computes the body sha256, mints a nonce,
+   writes `state/sysarch/$comp_id.json`, and derives the slim identity
+   ledger at `ids/sysarch/$comp_id.json` — one `comp_*` node per
+   `<component>` the body declares (creating parent directories as
+   needed). It carries `edges` / `meta` / `is_foundation` forward from
+   any prior state, and carries `comp_*` ids forward by each
+   component's `alias` from any prior ledger, so a regen keeps ids
+   stable; a new or re-aliased component mints a fresh id:
 
    ```bash
    python3 -m siege.cli write-draft \
@@ -47,10 +51,12 @@ with the `siege` writer CLI, and commit + push exactly one commit
      --prior-review-text "${prior_review_text:-}"
    ```
 
-   It prints a JSON line with `state_path` and `body_sha256`. A
-   non-zero exit means the body failed validation — treat the stderr
-   as feedback and loop back to step 2.
-6. **Stage both files**, commit with message:
+   It prints a JSON line with `state_path`, `ids_path`,
+   `body_sha256`, and `node_count`. A non-zero exit means the body
+   failed validation — treat the stderr as feedback and loop back to
+   step 2. The ledger is the canonical list of components: `/run_tier
+   comparch` enumerates the comparch scope set from it.
+6. **Stage the body, state JSON, and ledger**, commit with message:
    `draft(sysarch/$id): <one-line summary>`
 7. **Push** with `git push -u origin $ref` (retry on network failure
    up to 4 times with 2s / 4s / 8s / 16s backoff).

@@ -127,6 +127,8 @@ state/
 ids/
   feature_expansion/<comp_id>.json
   requirements/<comp_id>.json
+  sysarch/<comp_id>.json
+  comparch/<comp_id>.json
 
 feature_expansion/<comp_id>/body.md
 feature_expansion/<comp_id>/review.md
@@ -152,41 +154,50 @@ ledgers cluster the same way under `ids/`.
 
 A *substrate file* — `state/<tier>/<id>.json` plus its body — is the
 unit of generation, the draft → review → approve cycle, and one git
-commit. A *node* is a graph entity: a feature, a responsibility. The
-two are not the same thing.
+commit. A *node* is a graph entity: a feature, a responsibility, a
+component. The two are not the same thing.
 
-The single-node arch tiers `feature_expansion` and `requirements` each
-produce exactly one substrate file per project, whose body *declares
-many nodes* — every `<feature>` / `<responsibility>` inside it. The
-**identity ledger** is the persisted index of those nodes:
+The four **decomposing tiers** each produce a substrate file whose
+body *declares many nodes* — `feature_expansion` and `requirements`
+one substrate per project, `sysarch` one per project, `comparch` one
+per component. The **identity ledger** is the persisted index of the
+nodes a substrate declares:
 
 ```
-ids/feature_expansion/<comp_id>.json
-ids/requirements/<comp_id>.json
+ids/feature_expansion/<comp_id>.json   — <feature> nodes,        feat_*
+ids/requirements/<comp_id>.json        — <responsibility> nodes, resp_*
+ids/sysarch/<comp_id>.json             — <component> nodes,      comp_*
+ids/comparch/<comp_id>.json            — <subcomponent> nodes,   comp_*
 ```
 
 ```json
 {
   "schema_version": 2,
-  "substrate": {"tier": "feature_expansion", "comp_id": "civic_platform"},
+  "substrate": {"tier": "sysarch", "comp_id": "civic_platform"},
   "derived_from_sha256": "<sha256 of the body the ledger was derived from>",
   "nodes": [
-    {"id": "feat_a1b2c3d4", "name": "Login"}
+    {"id": "comp_a1b2c3d4", "alias": "billing"}
   ]
 }
 ```
 
-- The ledger is **slim — identity only**. Each node persists just its
-  `id` and `name`. The projectable fields (`kind`, `order`, `intent`,
-  `implicit`, `feats`) are *not* stored — they are re-derived from the
-  body at projection time. The ledger persists the one thing that
-  can't be re-derived: the random `id` and the `name` it is bound to.
+- The ledger is **slim — identity only**. Each node persists its `id`
+  and the handle it carries forward by: the `<name>` for feature /
+  requirements, the `alias` attribute for sysarch / comparch. Every
+  projectable field (`kind`, `order`, `name`, `intent`, `implicit`,
+  `feats`, `is_foundation`) is *not* stored — it is re-derived from
+  the body at projection time. The ledger persists the one thing that
+  can't be re-derived: the random `id` and the handle it is bound to.
 - The ledger is **derived, not authored** — a `draft-*` skill computes
   it by parsing the body it just composed and writes it in the *same
   commit* as the body + state JSON. No LLM and no human edits it.
-- **Node ids** (`feat_*` / `resp_*`) are minted on first derivation
-  and **carried forward by name** on every regen, so an id stays
-  stable across regenerations; a new or renamed node mints a fresh id.
+- **Node ids** (`feat_*` / `resp_*` / `comp_*`) are minted on first
+  derivation and **carried forward by the handle** on every regen, so
+  an id stays stable across regenerations; a new or re-handled node
+  mints a fresh id. sysarch / comparch bodies name their children by
+  an `alias` attribute (`<component alias="billing">`) precisely so
+  the stable handle is separate from the display `<name>`, which may
+  drift.
 - **`derived_from_sha256`** ties the ledger to the exact body it was
   computed from. A mismatch against the live body means the ledger is
   stale — `mark-drafted` and `repair-state-drift` rebuild it.
@@ -196,13 +207,13 @@ ids/requirements/<comp_id>.json
   a plain `git mv manifest ids` and upgrades to v2 on the next write.
 
 The projection **rehydrates** the ledger on read: it joins the
-persisted `id`↔`name` pairs to the node fields parsed fresh from the
+persisted `id`↔handle pairs to the node fields parsed fresh from the
 body, handing downstream context builders a full node index. Builders
 read that index, never raw upstream bodies: `requirements` pulls the
-feature nodes, `sysarch` pulls feature + responsibility nodes, and
-`related_features_summary` + the phasing plan walk `parent_resps →
-resp node.feats → feat node`. Each reader pulls only the nodes a
-scope needs — not a whole body file.
+feature nodes, `sysarch` pulls feature + responsibility nodes, and the
+orchestrator enumerates the comparch / subcomparch scope set from the
+sysarch / comparch ledgers (`siege.cli list-scopes`). Each reader
+pulls only the nodes a scope needs — not a whole body file.
 
 ## Impl-tier phasing (schema v2)
 

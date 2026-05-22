@@ -25,10 +25,11 @@ should go through `draft-<tier>` which mints the state JSON for you.
    recomputes `body_sha256` from the body file the state already
    points at, sets a fresh `generated_at`, mints a new nonce, flips
    `status` back to `drafted`, and clears the `review` / `approval`
-   blocks. For `feature_expansion` / `requirements` it also
-   re-derives the identity ledger from the edited body (a hand edit
-   can add, remove, or rename nodes — ids carry forward by name). It
-   leaves `schema_version` and `scope.phase` exactly as they were.
+   blocks. For the decomposing tiers (feature_expansion /
+   requirements / sysarch / comparch) it also re-derives the identity
+   ledger from the edited body (a hand edit can add, remove, or rename
+   nodes — ids carry forward by name or alias). It leaves
+   `schema_version` and `scope.phase` exactly as they were.
 
    Set the scope vars per the tier, then call the CLI — the args
    array picks up only the keys the tier uses:

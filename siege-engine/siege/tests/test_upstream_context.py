@@ -265,3 +265,40 @@ def test_related_features_summary_empty_without_parent_resps():
         meta={},
     )
     assert _base.related_features_summary(view, comp) == ""  # type: ignore[arg-type]
+
+
+# ---------------- sysarch / comparch ledger derivation (step 4) ----------------
+
+
+def test_derive_manifest_sysarch_components():
+    """derive_manifest on a sysarch body extracts components by the
+    alias attribute on the opening tag, with is_foundation from the
+    in-block marker and a comp_* id."""
+    substrate = Scope(tier="sysarch", comp_id="proj")
+    body = (
+        "<components>\n"
+        '  <component alias="foundation"><name>Foundation</name><foundation/></component>\n'
+        '  <component alias="billing"><name>Billing</name></component>\n'
+        "</components>\n"
+    )
+    m = derive_manifest(substrate, body, "sha", None)
+    assert [n["alias"] for n in m.nodes] == ["foundation", "billing"]
+    assert all(n["kind"] == "component" for n in m.nodes)
+    assert m.nodes[0]["is_foundation"] is True
+    assert m.nodes[1]["is_foundation"] is False
+    assert all(n["id"].startswith("comp_") for n in m.nodes)
+
+
+def test_derive_manifest_comparch_only_subcomponents():
+    """A comparch body yields exactly one node per <subcomponent> — the
+    <component> scan must not double-count the substring."""
+    substrate = Scope(tier="comparch", comp_id="comp_x")
+    body = (
+        "<subcomponents>\n"
+        '  <subcomponent alias="a"><name>A</name></subcomponent>\n'
+        '  <subcomponent alias="b"><name>B</name></subcomponent>\n'
+        "</subcomponents>\n"
+    )
+    m = derive_manifest(substrate, body, "sha", None)
+    assert [n["alias"] for n in m.nodes] == ["a", "b"]
+    assert all(n["kind"] == "subcomponent" for n in m.nodes)

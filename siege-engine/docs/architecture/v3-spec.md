@@ -366,11 +366,16 @@ From the current code to v3, in order:
    accepts the legacy v1 fat manifest, so a `manifest/` tree migrates
    with a plain `git mv`. Extending the ledger to sysarch + comparch
    folds into step 4.
-4. **ID assignment at the decomposing tiers** — extend the identity
-   ledger to `sysarch` + `comparch` and fold ID assignment into the
-   `draft-sysarch` / `draft-comparch` CLI write path. The
-   sysarch→comparch and comparch→subcomparch "fanout gaps" are
-   exactly this.
+4. **ID assignment at the decomposing tiers — done.** The identity
+   ledger now covers `sysarch` (declares `comp_*` components) and
+   `comparch` (declares `comp_*` subcomponents); `derive_manifest`
+   mints and carries those ids forward by the `alias` attribute,
+   folded into the `draft-sysarch` / `draft-comparch` CLI write path.
+   The `siege.cli list-scopes` subcommand enumerates the comparch /
+   subcomparch scope set from the ledgers and `/run_tier` fans out the
+   chain from it — closing the sysarch→comparch and
+   comparch→subcomparch fanout gaps. Edge resolution (`<dependencies>`
+   alias→id) stays projection work; `policy_*` nodes are deferred.
 5. **Skills read context from the CLI**, not an MCP tool. Drop the
    MCP / JSON-RPC transport, the plugin's `.mcp.json`, and the
    deployed `bootstrap.sh` endpoint; the on-ramp becomes a GitHub
