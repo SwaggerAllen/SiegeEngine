@@ -24,6 +24,7 @@ from siege.auth_lookup import lookup_project_auth
 from siege.git_view import GitView
 from siege.git_view import cache as view_cache
 from siege.projection import GENERATION_BUILDERS, REVIEW_BUILDERS
+from siege.projection.graph import build_project_graph as _build_project_graph
 from siege.projection.plan import compute_plan as _compute_plan
 from siege.projection.review_summary import build_review_summary
 from siege.projection.structure import build_structure_summary
@@ -196,6 +197,16 @@ def compute_plan(project_id: str, ref: str) -> dict[str, Any]:
     """
     view = _open_view(project_id, ref)
     return _compute_plan(view)
+
+
+def get_project_graph(project_id: str, ref: str) -> dict[str, Any]:
+    """The whole-project node + edge graph — the dashboard graph viz feed.
+
+    Pure read-only projection: walks the identity ledgers + bodies and
+    emits a cross-tier ``{nodes, edges}`` graph. Never writes.
+    """
+    view = _open_view(project_id, ref)
+    return _build_project_graph(view)
 
 
 def list_batches(project_id: str, ref: str, status: str | None = None) -> dict[str, Any]:

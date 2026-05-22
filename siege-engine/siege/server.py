@@ -312,6 +312,14 @@ def http_compute_plan(
     return tools.compute_plan(req.project_id, req.ref)
 
 
+@app.post("/api/get-project-graph")
+def http_get_project_graph(
+    req: ProjectRefRequest,
+    _claims: dict[str, Any] = Depends(_require_token),
+) -> dict[str, Any]:
+    return tools.get_project_graph(req.project_id, req.ref)
+
+
 @app.post("/api/list-batches")
 def http_list_batches(
     req: ListBatchesRequest,
