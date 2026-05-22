@@ -423,7 +423,13 @@ class _LocalRepo(_GitTree):
 
     def resolve_ref(self, ref: str) -> str:
         """Resolve a local ref (branch, tag, ``HEAD``, sha) to a commit sha."""
-        out = run_git(["rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=self.path).strip()
+        try:
+            out = run_git(["rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=self.path).strip()
+        except GitViewError as exc:
+            raise GitViewError(
+                f"could not resolve ref {ref!r} in {self.path} — is it a git "
+                f"repo with at least one commit at {ref}?"
+            ) from exc
         if not out:
             raise GitViewError(f"could not resolve ref {ref!r} in {self.path}")
         return out

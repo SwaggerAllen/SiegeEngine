@@ -1,6 +1,6 @@
 ---
 name: review-feature-expansion
-description: Review a feature expansion draft. Reads `get_review_context` for the scope, produces a `<review>` XML block per the parser contract, writes it as review.md, updates state JSON, commits, and pushes. Triggers automatically after a `draft-feature_expansion` or on manual `/review_feature_expansion <id>`.
+description: Review a feature expansion draft. Reads context via the `siege` CLI, produces a `<review>` XML block per the parser contract, writes it as review.md, updates state JSON, commits, and pushes. Triggers automatically after a `draft-feature-expansion` or on manual `/review_feature_expansion <id>`.
 thinking_effort: max
 ---
 
@@ -18,13 +18,17 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 
 ## Steps
 
-1. **Read the draft state.** Call `mcp__siegeengine__get_state` to
-   confirm the scope is in `drafted` status with a valid draft block.
-   If it's already `reviewed` or `approved`, ask the user whether to
-   re-review (most of the time this is a mistake).
-2. **Fetch review context.** Call
-   `mcp__siegeengine__get_review_context(ref=$ref, tier="feature_expansion",
-   scope={"comp_id": $comp_id, "tier": "feature_expansion"}, draft_sha=<draft.body_sha256 from state>)`.
+1. **Read the draft state.** From the repo root, run
+   `python3 -m siege.cli get-state --tier feature_expansion --comp-id "$comp_id"`.
+   Confirm `status` is `drafted` with a populated `draft` block; keep
+   the `draft.body_sha256` for step 2. If `status` is `reviewed` or
+   `approved`, ask the user whether to re-review (most of the time
+   this is a mistake).
+2. **Fetch review context.** Run `python3 -m siege.cli
+   get-review-context --tier feature_expansion --comp-id "$comp_id"
+   --draft-sha <draft.body_sha256 from step 1>`. The `--draft-sha`
+   guards against reviewing a stale draft. It prints the review
+   context bundle as JSON on stdout.
 3. **Compose the review.** Produce one `<review>...</review>` block
    following the schema:
    - `<intro>` — 3-6 sentence "how close to finished" read (display only)
@@ -62,7 +66,7 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 
 - Don't review a scope that isn't `drafted` (without confirmation).
 - Don't omit the `<intro>` or emit a non-integer `<score>`.
-- Don't reuse a stale `draft_sha` — re-fetch state if you've been
+- Don't reuse a stale `draft_sha` — re-run `get-state` if you've been
   idle and someone might have re-drafted.
 
 ## Output
