@@ -17,7 +17,7 @@ less than the threshold gets regenerated.
 
 ## Steps
 
-1. **Read review summary.** Call `mcp__siegeengine__get_review_summary(ref=$ref, tier=$tier)`.
+1. **Read review summary.** Run `python3 -m siege.cli get-review-summary --tier $tier`.
    Use the per-scope scores to identify candidates: scope.score is
    not None AND scope.score < threshold AND status is `reviewed`.
 2. **Mint a batch.** Write a `state/batches/batch_<id>.json` recording

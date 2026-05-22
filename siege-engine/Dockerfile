@@ -21,17 +21,18 @@ RUN apt-get update && apt-get install -y curl git gosu && \
 # Install Claude CLI (separate layer for caching — only rebuilds when CLI version changes)
 RUN npm install -g @anthropic-ai/claude-code
 
-# Install Python dependencies
+# Install Python dependencies. `.[app]` = the runtime deps (server +
+# legacy backend); the bare package has none (the siege CLI is stdlib).
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[app]"
 
 # Copy backend code
 COPY backend/ ./backend/
 
 # Copy the new MCP server library (read-only state surface + writer CLI).
 # Mounted by backend.main at /siege_mcp; also runnable standalone via
-# `python -m siege_mcp.server`.
-COPY siege_mcp/ ./siege_mcp/
+# `python -m siege.server`.
+COPY siege/ ./siege/
 
 # Bootstrap script served at /bootstrap.sh — lets project repos seed
 # .mcp.json + .claude/ for mobile CC (which doesn't support /plugin install).

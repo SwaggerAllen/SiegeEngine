@@ -2,28 +2,24 @@
 # siege-bootstrap.sh — set up SiegeEngine plugin content in the current project repo.
 #
 # Run from inside the project repo you want to drive with SiegeEngine
-# from mobile Claude Code (where `/plugin install` doesn't work).
+# in an environment where `/plugin install` isn't available.
 #
 # Usage:
-#   # via curl (recommended — Claude can run this for you):
-#   curl -fsSL https://siege.strutco.io/bootstrap.sh | bash
+#   # from a local checkout of siegeengine:
+#   /path/to/siegeengine/siege-engine/scripts/siege-bootstrap.sh
 #
-#   # or with options:
-#   curl -fsSL https://siege.strutco.io/bootstrap.sh | \
-#     bash -s -- --mcp-url https://siege.strutco.io/siege_mcp/mcp
-#
-#   # or from a local checkout of siegeengine:
-#   /path/to/siegeengine/scripts/siege-bootstrap.sh
+#   # or fetched straight from GitHub:
+#   curl -fsSL https://raw.githubusercontent.com/swaggerallen/siegeengine/main/siege-engine/scripts/siege-bootstrap.sh | bash
 #
 # What it does:
 #   1. Verifies we're in a git repo.
-#   2. Writes `.mcp.json` with the MCP server URL + a $SIEGE_TOKEN
-#      placeholder Claude Code will substitute from the env at request
-#      time.
-#   3. Fetches `.claude-plugin/commands/` and `.claude-plugin/skills/`
+#   2. pip-installs the `siege` CLI from the SiegeEngine repo (the
+#      `[read]` extra — the skills run `python -m siege.cli` for both
+#      reads and writes; there is no server in the generate loop).
+#   3. Fetches `.claude-plugin/commands/`, `skills/`, and `agents/`
 #      from the SiegeEngine repo and copies them into this repo as
-#      `.claude/commands/` and `.claude/skills/` (the on-disk paths
-#      mobile CC auto-discovers).
+#      `.claude/commands/`, `.claude/skills/`, `.claude/agents/` (the
+#      on-disk paths Claude Code auto-discovers).
 #   4. Appends a "Working with SiegeEngine" snippet to CLAUDE.md
 #      (creates the file if absent) so the model sees the available
 #      commands without /help.
@@ -40,7 +36,6 @@ set -euo pipefail
 
 SIEGE_REPO_URL="${SIEGE_REPO_URL:-https://github.com/swaggerallen/siegeengine}"
 SIEGE_REPO_REF="${SIEGE_REPO_REF:-main}"
-MCP_URL="${MCP_URL:-https://siege.strutco.io/siege_mcp/mcp}"
 DRY_RUN=0
 VERBOSE=0
 
@@ -48,8 +43,6 @@ VERBOSE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --mcp-url)
-      MCP_URL="$2"; shift 2 ;;
     --repo-url)
       SIEGE_REPO_URL="$2"; shift 2 ;;
     --repo-ref)
@@ -74,8 +67,7 @@ die() { printf '\033[1;31m[siege-bootstrap error]\033[0m %s\n' "$*" >&2; exit 1;
 # ---------------- preflight ----------------
 
 [[ -d .git ]] || die "Not a git repo. cd into your project repo first."
-command -v git  >/dev/null || die "git not found on PATH."
-command -v curl >/dev/null || die "curl not found on PATH."
+command -v git >/dev/null || die "git not found on PATH."
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
 cd "$PROJECT_ROOT"
@@ -101,32 +93,37 @@ CMD_COUNT="$(find "$SRC_PLUGIN/commands" -maxdepth 1 -name '*.md' | wc -l | tr -
 SKILL_COUNT="$(find "$SRC_PLUGIN/skills"  -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 log "source has $CMD_COUNT commands + $SKILL_COUNT skills"
 
-# ---------------- write .mcp.json ----------------
+# ---------------- install the siege CLI ----------------
+# The skills shell out to `python -m siege.cli` for every read (context
+# bundles, state) and write (state JSON, ledgers, sha/nonce). Install
+# from the repo we just cloned, with the `[read]` extra so the read
+# subcommands' deps (pydantic, beautifulsoup4) come along.
 
-MCP_JSON='{
-  "mcpServers": {
-    "siegeengine": {
-      "url": "'"$MCP_URL"'",
-      "transport": "http",
-      "headers": {
-        "Authorization": "Bearer ${SIEGE_TOKEN}"
-      }
-    }
-  }
+SIEGE_PKG_DIR="$TMP_DIR/siegeengine/siege-engine"
+GIT_INSTALL_HINT="pip install \"siege-engine[read] @ git+${SIEGE_REPO_URL}.git@${SIEGE_REPO_REF}#subdirectory=siege-engine\""
+
+install_siege() {
+  # Try, in order: `python3 -m pip`, `pip3`, `pip`; each plain first,
+  # then with --user (covers PEP-668 externally-managed system pythons).
+  local runner
+  for runner in "python3 -m pip" "pip3" "pip"; do
+    command -v "${runner%% *}" >/dev/null 2>&1 || continue
+    if $runner install --quiet "${SIEGE_PKG_DIR}[read]" >/dev/null 2>&1 \
+       || $runner install --quiet --user "${SIEGE_PKG_DIR}[read]" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
 }
-'
 
 if (( DRY_RUN )); then
-  log "would write .mcp.json (mcp_url=$MCP_URL, bearer=\$SIEGE_TOKEN)"
+  log "would pip-install the siege CLI ([read] extra) from $SIEGE_REPO_REF"
+elif install_siege; then
+  log "installed the siege CLI — \`python -m siege.cli\` is ready"
 else
-  if [[ -f .mcp.json ]] && ! grep -q '"siegeengine"' .mcp.json; then
-    warn ".mcp.json exists and doesn't have a siegeengine entry — leaving it alone."
-    warn "merge this snippet by hand:"
-    echo "$MCP_JSON" >&2
-  else
-    echo "$MCP_JSON" > .mcp.json
-    log "wrote .mcp.json (auth via \$SIEGE_TOKEN env var)"
-  fi
+  warn "could not install the siege CLI (no working pip found)."
+  warn "the skills need it — install it by hand:"
+  warn "  $GIT_INSTALL_HINT"
 fi
 
 # ---------------- copy commands + skills ----------------
@@ -166,22 +163,17 @@ SNIPPET=$(cat <<'MD_EOF'
 
 ## Working with SiegeEngine
 
-This repo has SiegeEngine wired up. The `.mcp.json` connects to the
-hosted MCP server; `.claude/commands/` and `.claude/skills/` ship the
-slash commands and skills locally so mobile Claude Code can use them
-without `/plugin install`.
-
-**One-time setup**: export a SiegeEngine JWT in your shell env so the
-MCP server accepts your requests:
-
-```bash
-export SIEGE_TOKEN=<your token from siege.strutco.io>
-```
+This repo has SiegeEngine wired up. The bootstrap `pip install`ed the
+**`siege` CLI** (read + write) and mirrored `.claude/commands/` +
+`.claude/skills/` so Claude Code can drive the build without
+`/plugin install`. The skills run the CLI locally — there is no server
+in the generate loop. If a skill reports `No module named siege`,
+re-run `scripts/siege-bootstrap.sh`.
 
 **Common commands**:
 
 - `/scaffold` — bootstrap features → requirements → sysarch
-- `/run_tier <tier>` — draft + review every absent scope at a tier
+- `/run_tier <tier>` — draft + review every pending scope at a tier
 - `/mint_plan` — materialize the impl-tier phasing plan
 - `/run_phase <n>` — build one phase's impl + fan-in slice
 - `/regen_below <tier> <threshold>` — regen scopes below a score
@@ -190,8 +182,7 @@ export SIEGE_TOKEN=<your token from siege.strutco.io>
 
 Full cheat sheet: `https://siege.strutco.io/cheatsheet`. Source of
 truth for the commands/skills lives at `swaggerallen/siegeengine`;
-re-run `scripts/siege-bootstrap.sh` (or `curl …/bootstrap.sh | bash`)
-to pull the latest.
+re-run `scripts/siege-bootstrap.sh` to pull the latest.
 
 MD_EOF
 )
@@ -240,20 +231,17 @@ cat <<EOM
 $(printf '\033[1;32m✓ SiegeEngine bootstrap complete\033[0m')
 
 Next steps:
-  1. Export your JWT (one-time per shell, or add to ~/.bashrc / ~/.zshrc):
-       export SIEGE_TOKEN=<get yours from siege.strutco.io>
-
-  2. Review the staged changes:
+  1. Review the staged changes:
        git status
        git diff
 
-  3. Commit + push when ready:
-       git add .mcp.json .claude/ CLAUDE.md
-       git commit -m "wire up SiegeEngine (mobile-CC friendly)"
+  2. Commit + push when ready:
+       git add .claude/ CLAUDE.md
+       git commit -m "wire up SiegeEngine"
        git push
 
-  4. Open this repo in mobile Claude Code. The MCP tools, slash
-     commands, and skills will be available without /plugin install.
+  3. Open this repo in Claude Code. The slash commands and skills are
+     available without /plugin install.
 
-  5. Cheat sheet: https://siege.strutco.io/cheatsheet
+  4. Cheat sheet: https://siege.strutco.io/cheatsheet
 EOM

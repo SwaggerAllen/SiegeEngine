@@ -7,15 +7,15 @@ cheatsheet` for the live in-app copy.
 This file is **load-bearing documentation** — it's what users see
 when they hit the dashboard's cheat sheet page. When you add a slash
 command, ship a new skill, or change a workflow, update this file in
-the same commit. The endpoint at `/siege_mcp/api/cheatsheet` serves
-it raw; the frontend at `/cheatsheet` renders it as markdown.
+the same commit. The frontend at `/cheatsheet` renders it as
+markdown, bundled into the build.
 
 ## TL;DR
 
 1. **Setup once**: on desktop CC, `/plugin install swaggerallen/siegeengine`.
-   On mobile CC (no `/plugin` support), run
-   `curl -fsSL https://siege.strutco.io/bootstrap.sh | bash` inside
-   the project repo and commit the changes.
+   Where `/plugin` isn't available, run `scripts/siege-bootstrap.sh`
+   from a clone of the SiegeEngine repo, inside the project repo, and
+   commit the changes (see Install below).
 2. **Bootstrap a fresh project**: `/scaffold` from inside a CC
    session opened on the project repo. Walks features → requirements
    → sysarch end-to-end.
@@ -110,7 +110,7 @@ unassigned feature is a hard error that blocks `/run_phase`.
 3. Wait for the batch to complete (check /status or watch the
    dashboard).
 4. Inspect the new scores. If still too low: edit the prompt at
-   siege_mcp/prompts/<tier>.md, commit, re-run /regen_below.
+   siege/prompts/<tier>.md, commit, re-run /regen_below.
 5. Once scores plateau, /run_tier <tier> with auto_approve=true
    to cover the full-corpus tail.
 ```
@@ -174,7 +174,7 @@ path layout and stamps schema v2; omit it for an unphased project.
   review.md.
 - `mark-approved` — Final gate: flip `reviewed` → `approved`.
   Downstream tiers see approved content as canonical.
-- `repair-state-drift` — Recompute `body_sha256` when the MCP server
+- `repair-state-drift` — Recompute `body_sha256` when `get-state`
   reports a drift between state JSON and the actual body bytes.
 
 ## Dashboard pages (siege.strutco.io)
@@ -197,7 +197,7 @@ Reviews emit an integer 0-100. The bands:
 - **86-100**: ready to approve
 
 Per-tier score baselines shift after prompt or context changes —
-don't compare scores from before/after a `siege_mcp/prompts/<tier>.md`
+don't compare scores from before/after a `siege/prompts/<tier>.md`
 edit as if they were on the same scale.
 
 ## State + git conventions
@@ -228,32 +228,35 @@ Full schema: `docs/migration/state-schema.md`.
 
 Installs persist across CC sessions on the same device.
 
-### Mobile Claude Code (no `/plugin` support yet)
+### Without `/plugin` (e.g. mobile Claude Code)
 
-From inside the project repo you want to drive (in a CC session
-that has shell access, or by asking Claude to run it for you):
+There is no server in the loop — the on-ramp is a GitHub pull. From
+inside the project repo you want to drive, run the bootstrap script
+from a checkout of the SiegeEngine repo:
 
 ```bash
-curl -fsSL https://siege.strutco.io/bootstrap.sh | bash
+git clone --depth 1 https://github.com/swaggerallen/siegeengine /tmp/siegeengine
+/tmp/siegeengine/siege-engine/scripts/siege-bootstrap.sh
 ```
 
 The bootstrap:
 
-- Writes `.mcp.json` pointing at `https://siege.strutco.io/siege_mcp/mcp`
+- `pip install`s the **`siege` CLI** from the SiegeEngine repo (the
+  `[read]` extra — the skills run `python -m siege.cli` for every
+  read and write).
 - Mirrors `.claude/commands/`, `.claude/skills/`, and `.claude/agents/`
   from the SiegeEngine repo (6 slash commands, 26 skills, 7 per-tier
-  generator subagents)
-- Adds a "Working with SiegeEngine" section to `CLAUDE.md`
+  generator subagents).
+- Adds a "Working with SiegeEngine" section to `CLAUDE.md`.
 
-Then commit + push the new files. Mobile CC will pick them up the
-next time it opens the repo — no plugin install required.
+If the bootstrap can't find `pip`, install the CLI by hand:
 
-**Auth**: this page (when you're logged in) shows your JWT at the
-top in a copy-paste-ready `export SIEGE_TOKEN=…` form. Paste it into
-your shell; add it to `~/.bashrc` / `~/.zshrc` to persist across
-sessions. The `.mcp.json` the bootstrap writes references
-`${SIEGE_TOKEN}` so CC's MCP client substitutes it at request time.
-Tokens last 30 days — come back here when one expires.
+```bash
+pip install "siege-engine[read] @ git+https://github.com/swaggerallen/siegeengine.git@main#subdirectory=siege-engine"
+```
+
+Then commit + push the new files. CC picks them up the next time it
+opens the repo — no plugin install required.
 
 Re-run the bootstrap any time to pull the latest commands + skills
 into the project repo. The script is idempotent and only touches the
@@ -261,24 +264,41 @@ SiegeEngine-managed files.
 
 ## Troubleshooting
 
-When MCP calls from CC fail with a clone error like "Clone of
-`<repo>` requires authentication", the three things to check are
-already on this page when you're logged in — see the **Auth
-diagnostic** panel near the top:
+### The generate loop (local CLI)
 
-- **JWT sub** — the user id the MCP server sees on every request.
-- **Dashboard user (`/auth/me`)** — confirms the same JWT resolves
-  to a real user server-side. A mismatch with `sub` means you have
-  two accounts; log out, log back in as the right user, copy the
-  new `SIEGE_TOKEN` from the **Your dev token** panel.
-- **GitHub connected** — confirms a `GitHubCredential` row exists
-  for this user. Without one, private-repo clones from the MCP
-  server fail. Connect via **Project Settings → GitHub
+The loop runs entirely locally — the skills shell out to
+`python -m siege.cli`, read and write the project repo directly, and
+commit. No server, no token. Common snags:
+
+- **`No module named siege`** — the CLI isn't installed in this
+  environment. Re-run `scripts/siege-bootstrap.sh`, or `pip install`
+  it by hand (see Install above).
+- **`could not resolve ref 'HEAD'`** — the project repo has no
+  commits yet. Commit the initial repo state, then retry.
+- **`git push` rejected** — the loop pushes with your own git
+  credentials; fix them the usual way (a credential helper or an SSH
+  key). SiegeEngine itself holds no token here.
+
+### The dashboard
+
+The dashboard at `siege.strutco.io` reads your project's git state to
+render the graph + tier views. Two pieces of auth back it — the
+**Auth diagnostic** panel near the top of this page checks both when
+you're logged in:
+
+- **Signed in (JWT)** — the dashboard's read API requires a bearer
+  token. The **Your dev token** panel at the top of this page shows
+  yours in a copy-paste `export SIEGE_TOKEN=…` form if you want to
+  call the API directly; the browser dashboard uses your session.
+  Tokens last 30 days — come back here when one expires.
+- **GitHub connected** — the server clones your project repo to read
+  it. A **private** repo needs a `GitHubCredential` for your account
+  or the clone fails with "Clone of `<repo>` requires
+  authentication". Connect via **Project Settings → GitHub
   connection** on any project.
 
 The "refresh" button on the diagnostic panel re-runs the checks
-without reloading the page, so you can verify a fresh re-authorize
-landed.
+without reloading.
 
 ## Common gotchas
 

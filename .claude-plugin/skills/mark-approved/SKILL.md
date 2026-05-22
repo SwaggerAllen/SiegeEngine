@@ -20,18 +20,28 @@ jumping straight to `approved` is a no.
 
 ## Steps
 
-1. Read the existing state JSON at the conventional state path (for a
-   phased impl/fanin node use the `p<N>` layout below). It must be in
-   `reviewed` status with a populated `review` block. If it's still
-   `drafted`, run the review skill first; if it's already `approved`,
-   this is a no-op.
-2. Update:
-   - `status` = `"approved"`
-   - `approval.approved_at` = now
-   - `approval.approved_by` = `$approver`
-   - Mint fresh nonce
-   - Leave `schema_version` and `scope.phase` exactly as they are.
-3. Commit + push one commit:
+1. **Flip the state to approved.** From the repo root, call the
+   writer CLI's `write-approval` subcommand. It requires the scope to
+   be in `reviewed` status with a populated `review` block, then sets
+   `status` to `approved`, stamps `approval.approved_at` +
+   `approval.approved_by`, and mints a fresh nonce. `schema_version`
+   and `scope.phase` are left untouched.
+
+   ```bash
+   APPROVER="${approver:-$(git config user.email)}"
+   ARGS=(--tier "$tier" --approver "$APPROVER")
+   [ -n "${comp_id:-}" ]   && ARGS+=(--comp-id "$comp_id")
+   [ -n "${parent_id:-}" ] && ARGS+=(--parent-id "$parent_id")
+   [ -n "${sub_id:-}" ]    && ARGS+=(--sub-id "$sub_id")
+   [ -n "${phase:-}" ]     && ARGS+=(--phase "$phase")
+   python3 -m siege.cli write-approval "${ARGS[@]}"
+   ```
+
+   It prints a JSON line with `state_path` and `approved_by`. A
+   non-zero exit means the scope isn't in `reviewed` status — if it's
+   still `drafted`, run the review skill first; if it's already
+   `approved`, there's nothing to do.
+2. **Commit + push one commit:**
    `approve(<tier>/$id): by <approver>`
 
 ## Phased nodes
@@ -46,7 +56,7 @@ at a `p<N>` path:
 | fanin | `state/fanin/<comp>.json` | `state/fanin/<comp>/pN.json` |
 
 A phased node's state JSON carries `schema_version: 2` and
-`scope.phase = N` — preserve both.
+`scope.phase = N`; the CLI preserves both.
 
 ## Output
 

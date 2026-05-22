@@ -85,8 +85,8 @@ jobs:
       # pyproject.toml's [project.optional-dependencies].dev — bump
       # this explicitly when you bump the dev constraint.
       - run: pip install 'ruff==0.15.*'
-      - run: ruff check backend/ siege_mcp/ tests/
-      - run: ruff format --check backend/ siege_mcp/ tests/
+      - run: ruff check backend/ siege/ tests/
+      - run: ruff format --check backend/ siege/ tests/
 
   backend-typecheck:
     name: Backend Typecheck
@@ -101,7 +101,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: mypy backend/ siege_mcp/
+      - run: mypy backend/ siege/
 
   backend-test:
     name: Backend Tests

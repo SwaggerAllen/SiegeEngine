@@ -1,13 +1,13 @@
 ---
 name: review-feature-expansion
-description: Review a feature expansion draft. Reads `get_review_context` for the scope, produces a `<review>` XML block per the parser contract, writes it as review.md, updates state JSON, commits, and pushes. Triggers automatically after a `draft-feature_expansion` or on manual `/review_feature_expansion <id>`.
+description: Review a feature expansion draft. Reads context via the `siege` CLI, produces a `<review>` XML block per the parser contract, writes it as review.md, updates state JSON, commits, and pushes. Triggers automatically after a `draft-feature-expansion` or on manual `/review_feature_expansion <id>`.
 thinking_effort: max
 ---
 
 # Review a feature expansion
 
 You are reviewing one drafted feature expansion. The output is a single
-`<review>` XML block (see `siege_mcp/parsers/review_xml.py` for the
+`<review>` XML block (see `siege/parsers/review_xml.py` for the
 exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 (structural fixes), 61-85 (refinements), 86-100 (ready).
 
@@ -18,13 +18,17 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 
 ## Steps
 
-1. **Read the draft state.** Call `mcp__siegeengine__get_state` to
-   confirm the scope is in `drafted` status with a valid draft block.
-   If it's already `reviewed` or `approved`, ask the user whether to
-   re-review (most of the time this is a mistake).
-2. **Fetch review context.** Call
-   `mcp__siegeengine__get_review_context(ref=$ref, tier="feature_expansion",
-   scope={"comp_id": $comp_id, "tier": "feature_expansion"}, draft_sha=<draft.body_sha256 from state>)`.
+1. **Read the draft state.** From the repo root, run
+   `python3 -m siege.cli get-state --tier feature_expansion --comp-id "$comp_id"`.
+   Confirm `status` is `drafted` with a populated `draft` block; keep
+   the `draft.body_sha256` for step 2. If `status` is `reviewed` or
+   `approved`, ask the user whether to re-review (most of the time
+   this is a mistake).
+2. **Fetch review context.** Run `python3 -m siege.cli
+   get-review-context --tier feature_expansion --comp-id "$comp_id"
+   --draft-sha <draft.body_sha256 from step 1>`. The `--draft-sha`
+   guards against reviewing a stale draft. It prints the review
+   context bundle as JSON on stdout.
 3. **Compose the review.** Produce one `<review>...</review>` block
    following the schema:
    - `<intro>` — 3-6 sentence "how close to finished" read (display only)
@@ -36,48 +40,24 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 4. **Validate inline.** Run `parse_review` mentally — if any section
    is missing or empty, fix and re-emit.
 5. **Write the review** to `feature_expansion/$comp_id/review.md`.
-6. **Materialize state JSON inline** (pure `python3` stdlib). Extracts
-   `<score>` and `<intro>` from the review with a regex, computes
-   sha256, updates state JSON's `review` block, bumps nonce. Refuses
-   to write if `<score>` is missing or out of range, or if state
-   isn't in `drafted`:
+6. **Materialize state JSON.** From the repo root, call the writer
+   CLI. It extracts `<score>` and `<intro>` from the review with a
+   lenient regex, computes the review sha256, writes the `review`
+   block into `state/feature_expansion/$comp_id.json`, flips status
+   to `reviewed`, and mints a fresh nonce:
 
    ```bash
-   REVIEW_PATH=feature_expansion/$comp_id/review.md
-   STATE_PATH=state/feature_expansion/$comp_id.json
-   python3 - "$REVIEW_PATH" "$STATE_PATH" <<'PY'
-import hashlib, json, re, secrets, sys, time
-review_path, state_path = sys.argv[1:3]
-review = open(review_path).read()
-m = re.search(r"<score>\s*(\d+)\s*</score>", review)
-if not m:
-    sys.exit("error: <score> missing or unparseable in review")
-score = int(m.group(1))
-if not 0 <= score <= 100:
-    sys.exit(f"error: <score> out of range 0..100: {score}")
-intro_m = re.search(r"<intro>(.*?)</intro>", review, re.DOTALL)
-intro = (intro_m.group(1) if intro_m else "").strip()
-if not intro:
-    sys.exit("error: <intro> missing or empty")
-state = json.loads(open(state_path).read())
-if state.get("status") != "drafted":
-    sys.exit(f"error: cannot review a scope with status={state.get('status')!r}")
-sha = hashlib.sha256(review.encode()).hexdigest()
-nonce_bits = secrets.randbits(128)
-alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
-state["nonce"] = "".join(reversed([alphabet[(nonce_bits >> (5*i)) & 0x1F] for i in range(26)]))
-state["status"] = "reviewed"
-state["review"] = {
-    "body_path": review_path,
-    "body_sha256": sha,
-    "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    "score": score,
-    "reviewer_metadata": {},
-}
-open(state_path, "w").write(json.dumps(state, indent=2, sort_keys=True) + "\n")
-print(json.dumps({"state_path": state_path, "score": score, "intro_first_sentence": intro.split(".", 1)[0]}))
-PY
+   python3 -m siege.cli write-review \
+     --tier feature_expansion \
+     --comp-id "$comp_id" \
+     --review-path "feature_expansion/$comp_id/review.md"
    ```
+
+   It prints a JSON line with `state_path`, `score`, and
+   `intro_first_sentence`. A non-zero exit means the review was
+   rejected — `<score>` missing or out of the 0-100 range, `<intro>`
+   missing or empty, or the scope not in `drafted` status. Fix the
+   review (or re-fetch the scope) and re-run.
 7. **Stage both files**, commit:
    `review(feature_expansion/$id): score=<N> — <intro first sentence>`
 8. **Push.**
@@ -86,7 +66,7 @@ PY
 
 - Don't review a scope that isn't `drafted` (without confirmation).
 - Don't omit the `<intro>` or emit a non-integer `<score>`.
-- Don't reuse a stale `draft_sha` — re-fetch state if you've been
+- Don't reuse a stale `draft_sha` — re-run `get-state` if you've been
   idle and someone might have re-drafted.
 
 ## Output

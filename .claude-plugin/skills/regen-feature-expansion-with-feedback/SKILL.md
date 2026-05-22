@@ -1,6 +1,6 @@
 ---
 name: regen-feature-expansion-with-feedback
-description: Regenerate a feature expansion draft using the prior review as feedback. Reads `get_state` to pull the prior review text, runs the same flow as `draft-feature_expansion` but threads the review in as `prior_review_text` so the LLM addresses the findings. Triggers when the user says "regen feature_expansion <id> from review", "/regen_feature_expansion <id>", or as part of `/regen_below`.
+description: Regenerate a feature expansion draft using the prior review as feedback. Reads state via the `siege` CLI to pull the prior review text, runs the same flow as `draft-feature_expansion` but threads the review in as `prior_review_text` so the LLM addresses the findings. Triggers when the user says "regen feature_expansion <id> from review", "/regen_feature_expansion <id>", or as part of `/regen_below`.
 thinking_effort: max
 ---
 
@@ -18,7 +18,7 @@ re-reviews can compare deltas.
 
 ## Steps
 
-1. **Read state.** Call `mcp__siegeengine__get_state`. The scope must
+1. **Read state.** Run `python3 -m siege.cli get-state --tier feature_expansion --comp-id "$comp_id"`. The scope must
    be in `reviewed` status with a populated `review` block (the review
    text lives at `review.body_path`). If `reviewed` but no review text,
    stop and surface the inconsistency for the user to repair.

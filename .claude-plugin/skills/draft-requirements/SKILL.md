@@ -1,15 +1,17 @@
 ---
 name: draft-requirements
-description: Draft a requirements artifact. Reads `get_generation_context` for the scope, drafts the body, validates it, then commits state + body in one commit and pushes. Triggers when the user says "draft requirements <id>", "/draft_requirements <id>", or after `/scaffold` or `/run_tier requirements` enumerates pending scopes.
+description: Draft a requirements artifact. Reads context via the `siege` CLI for the scope, drafts the body, validates it, then commits state + body in one commit and pushes. Triggers when the user says "draft requirements <id>", "/draft_requirements <id>", or after `/scaffold` or `/run_tier requirements` enumerates pending scopes.
 thinking_effort: max
 ---
 
 # Draft a requirements
 
 You are drafting one requirements artifact end-to-end on the git-backed
-substrate. The MCP server gives you the bundle of context the prompt
-needs; you compose the draft, validate it, and commit + push exactly
-one commit (artifact body + state JSON together).
+substrate. The `siege` CLI gives you the context bundle the prompt
+needs — a local projection of the committed tree, no server; you
+compose the draft, validate it, materialize the state files
+with the `siege` writer CLI, and commit + push exactly one commit
+(artifact body, state JSON, and identity ledger together).
 
 ## Inputs
 
@@ -19,116 +21,53 @@ one commit (artifact body + state JSON together).
 
 ## Steps
 
-1. **Fetch generation context.** Call
-   `mcp__siegeengine__get_generation_context(ref=$ref, tier="requirements", scope={"comp_id": $comp_id, "tier": "requirements"})`.
+1. **Fetch generation context.** From the repo root, run
+   `python3 -m siege.cli get-context --tier requirements --comp-id "$comp_id"`.
+   It projects the committed tree at `HEAD` and prints the context
+   bundle — instruction text + per-key inputs — as JSON on stdout.
 2. **Compose the draft.** Use the bundle's instruction text and per-key
    inputs to produce the artifact body. Section headers must use the
    `## <prefix>:<name>` convention so the body section parser can pick
    them up downstream (see `docs/migration/state-schema.md` and
-   `siege_mcp/fragments.py:section_for_kind`). This is a top-of-chain tier — use the deepest thinking budget you can.
-3. **Validate.** Call `mcp__siegeengine__validate_artifact(ref=$ref, tier="requirements", scope=..., body=<draft>)`.
-   If `ok` is false, treat the errors as feedback and re-run step 2
-   (loop up to 3 times). If still failing, stop and surface the errors.
-4. **Write the body file** to `requirements/$comp_id/body.md`.
-5. **Materialize state JSON + node manifest inline** (no external
-   Python package needed — pure `python3` from stdlib, which any
-   environment CC runs in has). Pass the scope keys as positional
-   args; the rest comes from env vars:
+   `siege/fragments.py:section_for_kind`). This is a top-of-chain tier — use the deepest thinking budget you can.
+3. **Write the body file** to `requirements/$comp_id/body.md`.
+4. **Materialize state JSON + identity ledger.** From the repo root,
+   call the writer CLI. It computes the body sha256, mints a nonce,
+   writes `state/requirements/$comp_id.json`, and derives the slim
+   identity ledger at `ids/requirements/$comp_id.json` (creating parent
+   directories as needed). It carries `edges` / `meta` /
+   `is_foundation` forward from any prior state, and carries `resp_*`
+   node ids forward by name from any prior ledger, so a regen keeps
+   ids stable; a new or renamed responsibility mints a fresh id:
 
    ```bash
-   COMP_ID="$comp_id"
-   BODY_PATH=requirements/$comp_id/body.md
-   STATE_PATH=state/requirements/$comp_id.json
-   MANIFEST_PATH=manifest/requirements/$comp_id.json
-   THINKING=max
-   PRIOR_REVIEW_TEXT="${prior_review_text:-}"
-   BATCH_ID="${batch_id:-}"
-   mkdir -p "$(dirname "$STATE_PATH")" "$(dirname "$MANIFEST_PATH")"
-   python3 - "$BODY_PATH" "$STATE_PATH" "$MANIFEST_PATH" "$THINKING" "$PRIOR_REVIEW_TEXT" "$BATCH_ID" "$COMP_ID" <<'PY'
-import hashlib, json, os, re, secrets, sys, time
-
-body_path, state_path, manifest_path, thinking, prior_review, batch_id = sys.argv[1:7]
-comp_id = sys.argv[7]
-scope = {"tier": "requirements", "comp_id": comp_id, "parent_id": None, "sub_id": None}
-
-body = open(body_path, "rb").read()
-sha = hashlib.sha256(body).hexdigest()
-nonce_bits = secrets.randbits(128)
-alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
-nonce = "".join(reversed([alphabet[(nonce_bits >> (5*i)) & 0x1F] for i in range(26)]))
-
-prior = {}
-if os.path.exists(state_path):
-    prior = json.loads(open(state_path).read())
-state = {
-    "schema_version": 1,
-    "scope": scope,
-    "status": "drafted",
-    "nonce": nonce,
-    "is_foundation": prior.get("is_foundation", False),
-    "draft": {
-        "body_path": body_path,
-        "body_sha256": sha,
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "generator_metadata": {"thinking_effort": thinking, "batch_id": batch_id},
-        "prior_review_text": prior_review,
-    },
-    "edges": prior.get("edges", {}),
-    "meta": prior.get("meta", {}),
-}
-open(state_path, "w").write(json.dumps(state, indent=2, sort_keys=True) + "\n")
-
-# Node manifest: the derived index of the responsibility nodes this
-# body declares. Regex-scan each <responsibility> block — the body
-# XML tolerates raw < / & in text, so a non-greedy block scan is
-# used, not a strict XML parser. Each node records the feat_* ids it
-# derives from (the <feat id=".."/> children). Node ids carry forward
-# from the prior manifest by name, so a regen keeps resp_* ids
-# stable; a new or renamed responsibility mints a fresh id.
-text = body.decode("utf-8")
-def tag(name, s):
-    m = re.search(r"<%s\b[^>]*>(.*?)</%s>" % (name, name), s, re.S)
-    return m.group(1).strip() if m else ""
-nodes = []
-for i, blk in enumerate(re.findall(r"<responsibility\b[^>]*>(.*?)</responsibility>", text, re.S)):
-    nodes.append({"kind": "responsibility", "order": i, "name": tag("name", blk),
-                  "feats": re.findall(r'<feat\s+id="([^"]+)"', blk)})
-prior_ids = {}
-if os.path.exists(manifest_path):
-    for n in json.loads(open(manifest_path).read()).get("nodes", []):
-        prior_ids.setdefault(n.get("name", "").strip().lower(), n.get("id"))
-used = set()
-for n in nodes:
-    nid = prior_ids.get(n["name"].strip().lower())
-    if not nid or nid in used:
-        nid = "resp_" + secrets.token_hex(4)
-    used.add(nid)
-    n["id"] = nid
-manifest = {"schema_version": 1, "substrate": scope,
-            "derived_from_sha256": sha, "nodes": nodes}
-open(manifest_path, "w").write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-
-print(json.dumps({"state_path": state_path, "manifest_path": manifest_path,
-                  "body_sha256": sha, "node_count": len(nodes)}))
-PY
+   python3 -m siege.cli write-draft \
+     --tier requirements \
+     --comp-id "$comp_id" \
+     --body-path "requirements/$comp_id/body.md" \
+     --thinking-effort max \
+     --batch-id "${batch_id:-}" \
+     --prior-review-text "${prior_review_text:-}"
    ```
 
-   The sha is from the canonical body bytes; the nonce is a 26-char
-   base32-shaped ULID-ish string. State carries forward `edges` +
-   `meta` + `is_foundation` from the prior state if any. The manifest
-   at `manifest/requirements/$comp_id.json` is the node index the
-   sysarch / phasing / related-features readers consume — see
+   It prints a JSON line with `state_path`, `ids_path`,
+   `body_sha256`, and `node_count`. A non-zero exit means the body
+   failed validation — treat the stderr as feedback, re-compose (step
+   2), and retry (up to 3 times); if it still fails, stop and surface
+   the errors. The ledger is the node identity index the sysarch /
+   phasing / related-features readers consume — see
    `docs/migration/state-schema.md`.
-6. **Stage the body, state JSON, and manifest**, commit with message:
+5. **Stage the body, state JSON, and ledger**, commit with message:
    `draft(requirements/$id): <one-line summary>`
-7. **Push** with `git push -u origin $ref` (retry on network failure
+6. **Push** with `git push -u origin $ref` (retry on network failure
    up to 4 times with 2s / 4s / 8s / 16s backoff).
 
 ## Don't
 
 - Don't overwrite an existing **approved** draft without explicit
   user confirmation. If `status` is `approved`, abort.
-- Don't commit a body that fails `validate_artifact`. Loop or stop.
+- Don't commit a body the CLI rejected — `write-draft` exits non-zero
+  on a validation failure.
 - Don't push to any branch other than `$ref`.
 - Don't create a PR.
 

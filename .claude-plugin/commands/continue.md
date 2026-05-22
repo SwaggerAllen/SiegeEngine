@@ -16,10 +16,14 @@ already drafted only re-fires the remaining 3.
 
 ## Steps
 
-1. **Read the batch.** Call `mcp__siegeengine__list_batches(ref=$ref)`
+1. **Read the batch.** Run `python3 -m siege.cli list-batches`
    and find the one with the matching id. If status is already
    `complete`, this is a no-op — surface and stop.
-2. **Walk scope_keys.** For each scope, call `mcp__siegeengine__get_state`
+2. **Walk scope_keys.** For each scope, run `python3 -m siege.cli get-state
+   --tier <tier> <scope flags>` (`--comp-id "$comp_id"` for
+   feature_expansion / requirements / sysarch / comparch / fanin;
+   `--parent-id "$parent_id" --sub-id "$sub_id"` for subcomparch / impl;
+   add `${phase:+--phase "$phase"}` for phased impl / fanin scopes)
    and compare actual state to the batch's intended end-state:
    - `op_type=regen_below_threshold` → end state is `drafted` (with a
      fresh review on top). If `status == drafted` AND the draft is
@@ -30,8 +34,8 @@ already drafted only re-fires the remaining 3.
 
    **Phased impl/fanin scopes carry `phase`.** A scope_key for a
    phased impl/fanin node includes a `phase` field — pass it through
-   to `get_state` *and* to the re-fired skill. Dropping it makes
-   `get_state` query the phase-less scope, which is always `absent`,
+   to `get-state` *and* to the re-fired skill. Dropping it makes
+   `get-state` query the phase-less scope, which is always `absent`,
    so the gap never closes and `/continue` re-fires that node forever.
    If a batch's impl/fanin scope_keys lack `phase` entirely, the batch
    predates phasing — treat those scopes as unphased (legacy).

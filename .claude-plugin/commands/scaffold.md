@@ -58,7 +58,10 @@ guess — the input doc shapes everything downstream.
       project_policies, project_dependencies, project_domain_parents).
    b. Draft + review + (optionally) approve each.
 5. **Report.** Summarize what was drafted, reviewed, approved. Surface
-   any scopes that hit validation errors and were skipped.
+   any scopes that hit validation errors and were skipped. Once
+   sysarch is drafted its identity ledger (`ids/sysarch/`) names every
+   top-level component — report the count and point the user at
+   `/run_tier comparch` to fan out into the component tier.
 
 ## Concurrency
 
@@ -74,4 +77,5 @@ A punch list:
 features: N drafted, N reviewed, N approved
 requirements: N drafted, N reviewed, N approved
 sysarch: 4 drafted, 4 reviewed, 4 approved
+components declared: N — next: /run_tier comparch
 ```

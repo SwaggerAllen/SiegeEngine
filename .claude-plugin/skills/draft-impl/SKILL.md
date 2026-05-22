@@ -1,15 +1,17 @@
 ---
 name: draft-impl
-description: Draft a impl artifact. Reads `get_generation_context` for the scope, drafts the body, validates it, then commits state + body in one commit and pushes. Triggers when the user says "draft impl <id>", "/draft_impl <id>", or after `/scaffold` or `/run_tier impl` enumerates pending scopes.
+description: Draft a impl artifact. Reads context via the `siege` CLI for the scope, drafts the body, validates it, then commits state + body in one commit and pushes. Triggers when the user says "draft impl <id>", "/draft_impl <id>", or after `/scaffold` or `/run_tier impl` enumerates pending scopes.
 thinking_effort: default
 ---
 
 # Draft a impl
 
 You are drafting one impl artifact end-to-end on the git-backed
-substrate. The MCP server gives you the bundle of context the prompt
-needs; you compose the draft, validate it, and commit + push exactly
-one commit (artifact body + state JSON together).
+substrate. The `siege` CLI gives you the context bundle the prompt
+needs — a local projection of the committed tree, no server; you
+compose the draft, validate it, materialize the state JSON
+with the `siege` writer CLI, and commit + push exactly one commit
+(artifact body and state JSON together).
 
 ## Inputs
 
@@ -23,97 +25,67 @@ one commit (artifact body + state JSON together).
 
 ## Steps
 
-1. **Fetch generation context.** Call
-   `mcp__siegeengine__get_generation_context(ref=$ref, tier="impl", parent_id=$parent_id, sub_id=$sub_id, phase=$phase)`
-   (omit `phase` entirely for an unphased impl). When `phase` is set,
-   the bundle carries `prior_phase_impl_body` (the same subcomponent's
-   impl from the nearest earlier phase) and `dep_fanin_summaries` —
-   author the body delta-style against those, per the instruction text.
+1. **Fetch generation context.** From the repo root, run
+   `python3 -m siege.cli get-context --tier impl --parent-id "$parent_id" --sub-id "$sub_id" ${phase:+--phase "$phase"}`
+   (the `${phase:+…}` expands to nothing for an unphased impl). It
+   projects the committed tree at `HEAD` and prints the context bundle
+   — instruction text + per-key inputs — as JSON on stdout. When
+   `phase` is set, the bundle carries `prior_phase_impl_body` (the same
+   subcomponent's impl from the nearest earlier phase) and
+   `dep_fanin_summaries` — author the body delta-style against those,
+   per the instruction text.
 2. **Compose the draft.** Use the bundle's instruction text and per-key
    inputs to produce the artifact body. Section headers must use the
    `## <prefix>:<name>` convention so the body section parser can pick
    them up downstream (see `docs/migration/state-schema.md` and
-   `siege_mcp/fragments.py:section_for_kind`). Use default thinking budget; the handles upstream of you carry the load.
-3. **Validate.** Call `mcp__siegeengine__validate_artifact(ref=$ref, tier="impl", scope=..., body=<draft>)`.
-   If `ok` is false, treat the errors as feedback and re-run step 2
-   (loop up to 3 times). If still failing, stop and surface the errors.
-4. **Write the body file.** Phased node (`phase` set) →
+   `siege/fragments.py:section_for_kind`). Use default thinking budget; the handles upstream of you carry the load.
+3. **Write the body file.** Phased node (`phase` set) →
    `impl/$parent_id/subs/$sub_id/p$phase/body.md`; unphased →
    `impl/$parent_id/subs/$sub_id/body.md`.
-5. **Materialize state JSON inline** (no external Python package
-   needed — pure `python3` from stdlib, which any environment CC
-   runs in has). The bash computes the phased vs unphased paths from
-   `$phase`; the python stamps schema v2 + `scope.phase` for a phased
-   node, v1 + `phase: null` otherwise:
+4. **Materialize state JSON.** From the repo root, call the writer
+   CLI. The bash computes the phased vs unphased body path from
+   `$phase` and passes `--phase` only when the node is phased; the
+   CLI stamps schema v2 + `scope.phase` for a phased node, v1
+   otherwise, and carries `edges` / `meta` / `is_foundation` forward
+   from any prior state:
 
    ```bash
-   PARENT_ID="$parent_id"
-   SUB_ID="$sub_id"
    PHASE="${phase:-}"
    if [ -n "$PHASE" ]; then
-     BODY_PATH=impl/$PARENT_ID/subs/$SUB_ID/p$PHASE/body.md
-     STATE_PATH=state/impl/$PARENT_ID/p$PHASE/$SUB_ID.json
+     BODY_PATH="impl/$parent_id/subs/$sub_id/p$PHASE/body.md"
+     PHASE_ARG=(--phase "$PHASE")
    else
-     BODY_PATH=impl/$PARENT_ID/subs/$SUB_ID/body.md
-     STATE_PATH=state/impl/$PARENT_ID/$SUB_ID.json
+     BODY_PATH="impl/$parent_id/subs/$sub_id/body.md"
+     PHASE_ARG=()
    fi
-   THINKING=default
-   PRIOR_REVIEW_TEXT="${prior_review_text:-}"
-   BATCH_ID="${batch_id:-}"
-   mkdir -p "$(dirname "$STATE_PATH")"
-   python3 - "$BODY_PATH" "$STATE_PATH" "$THINKING" "$PRIOR_REVIEW_TEXT" "$BATCH_ID" "$PARENT_ID" "$SUB_ID" "$PHASE" <<'PY'
-import hashlib, json, os, secrets, sys, time
-
-body_path, state_path, thinking, prior_review, batch_id = sys.argv[1:6]
-parent_id, sub_id, phase_raw = sys.argv[6:9]
-phase = int(phase_raw) if phase_raw else None
-scope = {"tier": "impl", "comp_id": None, "parent_id": parent_id, "sub_id": sub_id, "phase": phase}
-
-body = open(body_path, "rb").read()
-sha = hashlib.sha256(body).hexdigest()
-nonce_bits = secrets.randbits(128)
-alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
-nonce = "".join(reversed([alphabet[(nonce_bits >> (5*i)) & 0x1F] for i in range(26)]))
-
-prior = {}
-if os.path.exists(state_path):
-    prior = json.loads(open(state_path).read())
-state = {
-    "schema_version": 2 if phase is not None else 1,
-    "scope": scope,
-    "status": "drafted",
-    "nonce": nonce,
-    "is_foundation": prior.get("is_foundation", False),
-    "draft": {
-        "body_path": body_path,
-        "body_sha256": sha,
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "generator_metadata": {"thinking_effort": thinking, "batch_id": batch_id},
-        "prior_review_text": prior_review,
-    },
-    "edges": prior.get("edges", {}),
-    "meta": prior.get("meta", {}),
-}
-open(state_path, "w").write(json.dumps(state, indent=2, sort_keys=True) + "\n")
-print(json.dumps({"state_path": state_path, "body_sha256": sha}))
-PY
+   python3 -m siege.cli write-draft \
+     --tier impl \
+     --parent-id "$parent_id" \
+     --sub-id "$sub_id" \
+     "${PHASE_ARG[@]}" \
+     --body-path "$BODY_PATH" \
+     --thinking-effort default \
+     --batch-id "${batch_id:-}" \
+     --prior-review-text "${prior_review_text:-}"
    ```
 
-   The sha is from the canonical body bytes; the nonce is a 26-char
-   base32-shaped ULID-ish string. Carries forward `edges` + `meta` +
-   `is_foundation` from the prior state if any. For a phased node the
-   `meta.parent_resps` carried forward is the closure `mint-plan`
-   pre-seeded — keep it; do not overwrite it.
-6. **Stage both files**, commit with message:
+   It prints a JSON line with `state_path` and `body_sha256`. A
+   non-zero exit means the body failed validation — treat the stderr
+   as feedback, re-compose (step 2), and retry (up to 3 times); if it
+   still fails, stop and surface the errors. For a phased node the
+   `meta.parent_resps` closure that `mint-plan` pre-seeded carries
+   forward automatically — the CLI does not overwrite it.
+5. **Stage both files**, commit with message:
    `draft(impl/$id): <one-line summary>`
-7. **Push** with `git push -u origin $ref` (retry on network failure
+6. **Push** with `git push -u origin $ref` (retry on network failure
    up to 4 times with 2s / 4s / 8s / 16s backoff).
 
 ## Don't
 
 - Don't overwrite an existing **approved** draft without explicit
   user confirmation. If `status` is `approved`, abort.
-- Don't commit a body that fails `validate_artifact`. Loop or stop.
+- Don't commit a body the CLI rejected — `write-draft` exits non-zero
+  on a validation failure.
 - Don't push to any branch other than `$ref`.
 - Don't create a PR.
 

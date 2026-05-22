@@ -1,6 +1,6 @@
 ---
 name: regen-impl-with-feedback
-description: Regenerate a impl draft using the prior review as feedback. Reads `get_state` to pull the prior review text, runs the same flow as `draft-impl` but threads the review in as `prior_review_text` so the LLM addresses the findings. Triggers when the user says "regen impl <id> from review", "/regen_impl <id>", or as part of `/regen_below`.
+description: Regenerate a impl draft using the prior review as feedback. Reads state via the `siege` CLI to pull the prior review text, runs the same flow as `draft-impl` but threads the review in as `prior_review_text` so the LLM addresses the findings. Triggers when the user says "regen impl <id> from review", "/regen_impl <id>", or as part of `/regen_below`.
 thinking_effort: default
 ---
 
@@ -17,13 +17,13 @@ re-reviews can compare deltas.
 - `parent_id` — owning comparch id ; `sub_id` — sub id under the parent
 - (optional) `phase` — phase index for a phased impl node; omit for an
   unphased (legacy) impl. Thread the same value through every step —
-  `get_state`, the draft-impl call, and the paths.
+  `get-state`, the draft-impl call, and the paths.
 
 ## Steps
 
-1. **Read state.** Call
-   `mcp__siegeengine__get_state(ref=$ref, tier="impl", parent_id=$parent_id, sub_id=$sub_id, phase=$phase)`
-   (omit `phase` for an unphased impl). The scope must be in
+1. **Read state.** Run
+   `python3 -m siege.cli get-state --tier impl --parent-id "$parent_id" --sub-id "$sub_id" ${phase:+--phase "$phase"}`
+   (omit `--phase` for an unphased impl). The scope must be in
    `reviewed` status with a populated `review` block (the review text
    lives at `review.body_path`). If `reviewed` but no review text,
    stop and surface the inconsistency for the user to repair.

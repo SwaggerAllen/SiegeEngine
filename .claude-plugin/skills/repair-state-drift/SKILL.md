@@ -1,6 +1,6 @@
 ---
 name: repair-state-drift
-description: Recompute body_sha256 for a scope's state JSON when the MCP server reports drift. Use when `get_state` returns a `drift` block on a scope you trust the body of — this skill writes a new state JSON with the correct sha and bumps nonce.
+description: Recompute body_sha256 for a scope's state JSON when its body has drifted. Use when `get-state` returns a `drift` block on a scope you trust the body of — this skill writes a new state JSON with the correct sha and bumps nonce.
 ---
 
 # Repair state JSON drift
@@ -18,82 +18,44 @@ derived node manifest, which the same body edit left stale.
 - `ref`, `tier`, `comp_id` (or `parent_id` + `sub_id`)
 - (optional) `phase` — required to locate a phased `impl` / `fanin`
   node's state JSON; see "Phased nodes" below. Omit for arch tiers.
-- (optional) `expected_status` — if set, the skill will refuse to
-  repair if the state's status doesn't match. Defaults to no check.
+- (optional) `expected_status` — if set, the skill refuses to repair
+  when the state's status doesn't match. Defaults to no check.
 
 ## Steps
 
-1. Read the existing state JSON at the conventional state path (for a
-   phased impl/fanin node use the `p<N>` layout below).
-2. Read the body file at `draft.body_path` and `review.body_path` (if
-   the review block is present). These paths come from the state JSON
-   itself — they are already correct, phased or not; no reconstruction.
-3. Recompute sha256 for each.
-4. Update the `body_sha256` fields where they're stale. Don't touch
-   any other field except `nonce` (mint fresh) — in particular leave
-   `schema_version` and `scope.phase` exactly as they are.
-5. **Re-derive the node manifest** — `feature_expansion` and
-   `requirements` only; the step self-skips for every other tier.
-   The manifest at `manifest/<tier>/$comp_id.json` is derived from
-   the body, so a body that drifted left the manifest stale too — and
-   a scope that predates manifests has none at all, which this step
-   backfills. Rebuild it from the trusted body with
-   `derived_from_sha256` set to the recomputed body sha. Node ids
-   carry forward from the prior manifest by name; a new or renamed
-   node mints a fresh id. Pass `$tier`, `$comp_id`, the body path
-   from `draft.body_path`, and the recomputed body sha:
+1. **Status pre-check.** Read the state JSON at the conventional path
+   (for a phased impl/fanin node use the `p<N>` layout below). If
+   `expected_status` is set and `status` doesn't match, abort. If
+   `status` is `approved`, stop and ask the user to confirm before
+   continuing — drift on an approved artifact usually means something
+   more serious is wrong (see "Don't").
+2. **Repair.** From the repo root, call the writer CLI's
+   `repair-drift` subcommand. It reads the state, recomputes the
+   `body_sha256` of the draft body (and the review body, if a review
+   block is present) from the paths the state itself records, bumps
+   the nonce when anything changed, and for the decomposing tiers
+   (feature_expansion / requirements / sysarch / comparch) re-derives
+   the identity ledger from the trusted body (ids carry forward by
+   name or alias). It leaves `schema_version`, `scope.phase`, and
+   every other field untouched.
 
    ```bash
-   python3 - "$tier" "$comp_id" "$BODY_PATH" "$BODY_SHA" <<'PY'
-import json, os, re, secrets, sys
-
-tier, comp_id, body_path, body_sha = sys.argv[1:5]
-if tier not in ("feature_expansion", "requirements"):
-    print(json.dumps({"manifest": "not applicable for tier " + tier}))
-    raise SystemExit(0)
-
-text = open(body_path, encoding="utf-8").read()
-def tag(name, s):
-    m = re.search(r"<%s\b[^>]*>(.*?)</%s>" % (name, name), s, re.S)
-    return m.group(1).strip() if m else ""
-
-nodes = []
-if tier == "feature_expansion":
-    prefix = "feat_"
-    for i, blk in enumerate(re.findall(r"<feature\b[^>]*>(.*?)</feature>", text, re.S)):
-        nodes.append({"kind": "feature", "order": i, "name": tag("name", blk),
-                      "intent": tag("intent", blk), "implicit": "<implicit" in blk})
-else:
-    prefix = "resp_"
-    for i, blk in enumerate(re.findall(r"<responsibility\b[^>]*>(.*?)</responsibility>", text, re.S)):
-        nodes.append({"kind": "responsibility", "order": i, "name": tag("name", blk),
-                      "feats": re.findall(r'<feat\s+id="([^"]+)"', blk)})
-
-manifest_path = "manifest/%s/%s.json" % (tier, comp_id)
-prior_ids = {}
-if os.path.exists(manifest_path):
-    for n in json.loads(open(manifest_path).read()).get("nodes", []):
-        prior_ids.setdefault(n.get("name", "").strip().lower(), n.get("id"))
-used = set()
-for n in nodes:
-    nid = prior_ids.get(n["name"].strip().lower())
-    if not nid or nid in used:
-        nid = prefix + secrets.token_hex(4)
-    used.add(nid)
-    n["id"] = nid
-
-manifest = {"schema_version": 1,
-            "substrate": {"tier": tier, "comp_id": comp_id, "parent_id": None, "sub_id": None},
-            "derived_from_sha256": body_sha, "nodes": nodes}
-os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
-open(manifest_path, "w").write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-print(json.dumps({"manifest_path": manifest_path, "node_count": len(nodes)}))
-PY
+   ARGS=(--tier "$tier")
+   [ -n "${comp_id:-}" ]   && ARGS+=(--comp-id "$comp_id")
+   [ -n "${parent_id:-}" ] && ARGS+=(--parent-id "$parent_id")
+   [ -n "${sub_id:-}" ]    && ARGS+=(--sub-id "$sub_id")
+   [ -n "${phase:-}" ]     && ARGS+=(--phase "$phase")
+   python3 -m siege.cli repair-drift "${ARGS[@]}"
    ```
-6. Commit one commit — stage the rebuilt manifest alongside the
-   state JSON when step 5 produced one:
+
+   It prints a JSON line: `changed` (true/false), the per-file sha
+   `deltas` when it changed, and `ledger_rebuilt`.
+3. **Commit one commit.** Stage the state JSON and, for the
+   ledger-deriving tiers, the identity ledger. If `git status` then
+   shows no staged changes, nothing actually drifted — report that and
+   stop without committing. Otherwise commit:
    `repair(<tier>/$id): recompute body_sha256 (drift)`
-7. Push.
+4. **Push.**
 
 ## Phased nodes
 

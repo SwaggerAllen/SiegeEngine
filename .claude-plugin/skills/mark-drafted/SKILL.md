@@ -20,78 +20,35 @@ should go through `draft-<tier>` which mints the state JSON for you.
 
 ## Steps
 
-1. Locate the body at the conventional path
-   (`<tier>/$comp_id/body.md` or `<tier>/$parent_id/subs/$sub_id/body.md`;
-   for a phased impl/fanin node use the `p<N>` layout below).
-2. Compute `body_sha256` of the file contents.
-3. Read the existing state JSON at the conventional state path.
-4. Update:
-   - `status` = `"drafted"`
-   - `draft.body_sha256` = the new hash
-   - `draft.generated_at` = now (UTC ISO-8601)
-   - Mint a fresh `nonce`
-   - Clear `review` and `approval` blocks (they no longer apply)
-   - Leave `schema_version` and `scope.phase` exactly as they are.
-5. **Re-derive the node manifest** — `feature_expansion` and
-   `requirements` only; the step self-skips for every other tier. A
-   hand body edit can add, remove, or rename features /
-   responsibilities, so the manifest at
-   `manifest/<tier>/$comp_id.json` is stale and must be rebuilt from
-   the edited body. Node ids carry forward from the prior manifest by
-   name (stable across the edit); a new or renamed node mints a fresh
-   id. Pass `$tier`, `$comp_id`, and the `body_sha256` from step 2:
+1. **Re-sync the state JSON.** From the repo root, call the writer
+   CLI's `mark-drafted` subcommand. It reads the existing state,
+   recomputes `body_sha256` from the body file the state already
+   points at, sets a fresh `generated_at`, mints a new nonce, flips
+   `status` back to `drafted`, and clears the `review` / `approval`
+   blocks. For the decomposing tiers (feature_expansion /
+   requirements / sysarch / comparch) it also re-derives the identity
+   ledger from the edited body (a hand edit can add, remove, or rename
+   nodes — ids carry forward by name or alias). It leaves
+   `schema_version` and `scope.phase` exactly as they were.
+
+   Set the scope vars per the tier, then call the CLI — the args
+   array picks up only the keys the tier uses:
 
    ```bash
-   BODY_PATH="$tier/$comp_id/body.md"
-   BODY_SHA="<body_sha256 from step 2>"
-   python3 - "$tier" "$comp_id" "$BODY_PATH" "$BODY_SHA" <<'PY'
-import json, os, re, secrets, sys
-
-tier, comp_id, body_path, body_sha = sys.argv[1:5]
-if tier not in ("feature_expansion", "requirements"):
-    print(json.dumps({"manifest": "not applicable for tier " + tier}))
-    raise SystemExit(0)
-
-text = open(body_path, encoding="utf-8").read()
-def tag(name, s):
-    m = re.search(r"<%s\b[^>]*>(.*?)</%s>" % (name, name), s, re.S)
-    return m.group(1).strip() if m else ""
-
-nodes = []
-if tier == "feature_expansion":
-    prefix = "feat_"
-    for i, blk in enumerate(re.findall(r"<feature\b[^>]*>(.*?)</feature>", text, re.S)):
-        nodes.append({"kind": "feature", "order": i, "name": tag("name", blk),
-                      "intent": tag("intent", blk), "implicit": "<implicit" in blk})
-else:
-    prefix = "resp_"
-    for i, blk in enumerate(re.findall(r"<responsibility\b[^>]*>(.*?)</responsibility>", text, re.S)):
-        nodes.append({"kind": "responsibility", "order": i, "name": tag("name", blk),
-                      "feats": re.findall(r'<feat\s+id="([^"]+)"', blk)})
-
-manifest_path = "manifest/%s/%s.json" % (tier, comp_id)
-prior_ids = {}
-if os.path.exists(manifest_path):
-    for n in json.loads(open(manifest_path).read()).get("nodes", []):
-        prior_ids.setdefault(n.get("name", "").strip().lower(), n.get("id"))
-used = set()
-for n in nodes:
-    nid = prior_ids.get(n["name"].strip().lower())
-    if not nid or nid in used:
-        nid = prefix + secrets.token_hex(4)
-    used.add(nid)
-    n["id"] = nid
-
-manifest = {"schema_version": 1,
-            "substrate": {"tier": tier, "comp_id": comp_id, "parent_id": None, "sub_id": None},
-            "derived_from_sha256": body_sha, "nodes": nodes}
-os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
-open(manifest_path, "w").write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-print(json.dumps({"manifest_path": manifest_path, "node_count": len(nodes)}))
-PY
+   ARGS=(--tier "$tier")
+   [ -n "${comp_id:-}" ]   && ARGS+=(--comp-id "$comp_id")
+   [ -n "${parent_id:-}" ] && ARGS+=(--parent-id "$parent_id")
+   [ -n "${sub_id:-}" ]    && ARGS+=(--sub-id "$sub_id")
+   [ -n "${phase:-}" ]     && ARGS+=(--phase "$phase")
+   python3 -m siege.cli mark-drafted "${ARGS[@]}"
    ```
-6. Commit + push one commit — stage the rebuilt manifest alongside
-   the state JSON when step 5 produced one:
+
+   It prints a JSON line with `state_path`, `body_sha256`, and — for
+   the ledger-deriving tiers — `ids_path` + `node_count`. A non-zero
+   exit means the scope has no existing state with a draft block, or
+   the body file it points at is missing.
+2. **Commit + push one commit** — stage the state JSON and, when the
+   CLI rebuilt one, the identity ledger:
    `mark-drafted(<tier>/$id): manual body edit`
 
 ## Phased nodes
@@ -106,7 +63,7 @@ differs from the unphased (legacy) one:
 | fanin | `state/fanin/<comp>.json` · `fanin/<comp>/body.md` | `state/fanin/<comp>/pN.json` · `fanin/<comp>/pN/body.md` |
 
 `review.md` sits beside `body.md`. A phased node's state JSON carries
-`schema_version: 2` and `scope.phase = N` — preserve both.
+`schema_version: 2` and `scope.phase = N`; the CLI preserves both.
 
 ## Output
 

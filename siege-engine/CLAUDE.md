@@ -4,9 +4,11 @@ Working notes for Claude Code sessions on this repo. Read this first
 after resuming, then `git log --oneline -20` to catch up on recent
 commits.
 
-**Source of truth split.** The phase plan + per-phase status lives in
-`docs/architecture/v2-roadmap.md`; the data model + meaning-engine
-treatment lives in `docs/architecture/v2-rearchitecture.md`. This
+**Source of truth split.** The target architecture — substrate, data
+model, execution — lives in `docs/architecture/v3-spec.md`; the
+meaning-engine treatment v3 carries over lives in
+`docs/architecture/v2-rearchitecture.md` (superseded for everything
+else); the phase plan lives in `docs/architecture/v2-roadmap.md`. This
 file is operational only — verification commands, working patterns,
 load-bearing invariants, durable decisions. Anything that reads like
 "current progress" belongs in the roadmap, not here.
@@ -671,45 +673,52 @@ delegating. Not a code change.
   typecheck/test/build/lint, backend lint/typecheck/test). CI
   and deploy are decoupled — merging to main triggers deploy
   regardless of CI status. Backend lint + typecheck cover both
-  `backend/` and `siege_mcp/`; pytest picks up
-  `siege_mcp/tests/` via the `testpaths` entry in
+  `backend/` and `siege/`; pytest picks up
+  `siege/tests/` via the `testpaths` entry in
   `pyproject.toml`.
 
-## MCP server + git-backed state (in-flight migration)
+## Architecture: v3 (substrate + execution)
 
-A separate package `siege_mcp/` is shipping under the same
-deploy as the old backend, mounted at `/siege_mcp` on the
-FastAPI app (see `backend/main.py`). It serves a read-only
-view of project state stored in git (per-scope `state/<tier>/
-<id>.json` + `<tier>/<id>/body.md`), with HTTP routes under
-`/siege_mcp/api/*` and a JSON-RPC MCP transport at
-`/siege_mcp/mcp`. The Claude Code plugin manifest at the repo
-root's `.claude-plugin/plugin.json` points there.
+The target architecture is `docs/architecture/v3-spec.md` —
+read it before touching the substrate, the skills, or
+`siege/`.
 
-Writes happen via Claude Code skills (in `.claude-plugin/
-skills/`) that compose the artifact with the LLM, shell out
-to `python -m siege_mcp.cli write-draft` (and its siblings:
-`write-review`, `write-approval`, `repair-drift`,
-`mint-batch`) to materialize the state JSON, then commit +
-push. No write endpoints on the server.
+v3 in one line: **artifacts (git files) are the source of
+truth; the node/edge graph is a pure projection of them; the
+only persisted non-artifacts are identity ledgers and
+propagation records.**
 
-The migration is staged: Phase 0 (schema + plugin scaffold),
-Phase 1+2 (substrate + 7 tiers' worth of skills + slash
-commands + per-tier generator subagents), Phase 3 (frontend
-retarget — queue/SSE deletion + branch selector + action-
-surface cuts) have landed. Phase 4 (deletion of the old
-SQLAlchemy + job-queue + LLM-subprocess stack, ~30K LOC) is
-documented at `docs/migration/deletion-inventory.md` but
-NOT executed — gated on end-to-end CC validation against
-the deployed `/siege_mcp` surface. The full per-phase status
-is at `docs/migration/status.md`; the original plan is at
-`/root/.claude/plans/pure-crafting-marshmallow.md`.
+- **`siege/`** is the **core library** — its **`projection/`**
+  subpackage holds the read side (parse bodies → graph +
+  per-tier context builders + staleness + summaries); `cli.py`
+  is the deterministic write logic (materialize state JSON,
+  identity ledgers, sha, nonce).
+- **Two drivers**: a local **CLI** that Claude Code skills
+  call for reads and writes (`siege.cli` — `get-context` /
+  `get-state` / `write-draft` / …), and a thin **HTTP server**
+  (`siege/server.py`) serving the dashboard's read-only views.
+  The MCP / JSON-RPC transport was **dropped** in migration
+  step 5 — there is no server in the generate loop.
+- **Skills** (`.claude-plugin/skills/`) are thin: call the
+  CLI for context, compose the artifact with the LLM, call
+  the CLI to materialize, commit + push. Write logic belongs
+  in the core CLI, **not** in skill markdown (no new inline
+  `python3` heredocs).
+- **On-ramp is a GitHub pull** — the `siege` CLI via
+  `pip install` from the repo (the `[read]` extra; see the
+  bootstrap), skills/commands via plugin install or the
+  bootstrap script. No dependency on the deployed host; the
+  droplet serves only the dashboard.
+- The legacy SQLAlchemy + job-queue backend still exists,
+  still slated for deletion
+  (`docs/migration/deletion-inventory.md`); the graph viz
+  reads it until the dashboard server is repointed. Per-phase
+  migration status: `docs/migration/status.md`.
 
-Don't add new code to `backend/graph/` for new features —
-the meaning-engine logic moved into `siege_mcp/tiers/`. The
-prompt text lives at `siege_mcp/prompts/<tier>.md` (extracted
-verbatim from the old `backend/graph/prompts/*.py` modules);
-edit there, not in the old backend.
+Don't add MCP tools (the transport is gone), new inline-python
+to skills, or new `backend/graph/` code — all slated to go.
+New deterministic logic goes in the core library; the prompt
+text lives at `siege/prompts/<tier>.md`.
 
 ## Cheat sheet (load-bearing docs)
 
@@ -728,21 +737,32 @@ other frontend change and the served page always matches
 what the build pinned. The `docs/` directory is for
 developer / migration documentation.
 
-The bootstrap script (`scripts/siege-bootstrap.sh`, served at
-`/bootstrap.sh`) is the mobile-CC on-ramp: it mirrors the
-plugin's `.claude-plugin/commands/`, `.claude-plugin/skills/`,
-and `.claude-plugin/agents/` into a target project repo as
-`.claude/commands/`, `.claude/skills/`, `.claude/agents/`,
-plus a `.mcp.json`. Mobile CC auto-discovers these without a
-plugin install. Update the script (and the cheat sheet's
-install section) if the on-ramp shape changes.
+The bootstrap script (`scripts/siege-bootstrap.sh`) is the
+on-ramp for environments without `/plugin install`: it
+`pip install`s the `siege` CLI from the repo (the `[read]`
+extra — reads + writes) and mirrors the plugin's
+`.claude-plugin/commands/`, `.claude-plugin/skills/`, and
+`.claude-plugin/agents/` into a target project repo as
+`.claude/commands/`, `.claude/skills/`, `.claude/agents/`.
+Claude Code auto-discovers these without a plugin install. The
+script is fetched via a GitHub pull (clone, or the `raw`
+URL) — there is no served `/bootstrap.sh` endpoint. Update the
+script (and the cheat sheet's install section) if the on-ramp
+shape changes.
 
-**The dev token panel** (`frontend/src/components/DevTokenPanel.tsx`)
-mounts at the top of the cheat sheet page. When the user is
-logged in it shows their JWT in a copy-paste-ready
-`export SIEGE_TOKEN=...` form, with expiry + relative time.
-This is the on-ramp's "where do I get a token" answer — keep
-it on the cheat sheet page, not buried in a settings menu.
+**Auth still matters for the dashboard.** The generate loop
+needs no token — the skills run the CLI on the local repo. But
+the dashboard read API (`siege/server.py`'s `/api/*`) still
+gates on the JWT (`_require_token`) and still resolves the
+caller's GitHub OAuth token (`tools._open_view` →
+`lookup_project_auth`) so the server can clone **private**
+project repos to project their git state. Removing the MCP
+transport did not remove that — `/mcp` merely shared the same
+auth. The **dev token panel**
+(`frontend/src/components/DevTokenPanel.tsx`) mounts at the top
+of the cheat sheet page and shows the logged-in user's JWT in a
+copy-paste `export SIEGE_TOKEN=...` form — keep it there as the
+"where do I get a token" answer for hitting `/api/*` directly.
 
 **Keep it current.** When you add a slash command, ship a new
 skill, rename one, or change a workflow, update

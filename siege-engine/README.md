@@ -27,7 +27,7 @@ and push. There is no separate database for project state.
 
 ## Components
 
-- **`siege_mcp/`** — read-only MCP server. Per-tier context readers,
+- **`siege/`** — read-only MCP server. Per-tier context readers,
   body section + review XML parsers, score histogram aggregation,
   validation gate, writer CLI invoked by skills. Mounted at
   `/siege_mcp` on the main FastAPI app.
@@ -130,10 +130,10 @@ Run from `siege-engine/` before declaring a change complete:
 
 ```bash
 # Backend
-.venv/bin/python -m pytest tests/v2/ siege_mcp/tests/ -q
-ruff check backend/ siege_mcp/ tests/
-ruff format --check backend/ siege_mcp/ tests/
-rm -rf .mypy_cache && mypy backend/ siege_mcp/
+.venv/bin/python -m pytest tests/v2/ siege/tests/ -q
+ruff check backend/ siege/ tests/
+ruff format --check backend/ siege/ tests/
+rm -rf .mypy_cache && mypy backend/ siege/
 
 # Frontend (from siege-engine/frontend/)
 npx tsc -b --noEmit --force
@@ -152,7 +152,7 @@ errors more than once.
 LICENSE                # AGPL-3.0-or-later (canonical text)
 siege-engine/
   backend/             # FastAPI dashboard (auth, projects, git_manager)
-  siege_mcp/           # Read-only MCP server
+  siege/           # Read-only MCP server
     cli.py             # Writer CLI invoked by skills
     git_view.py        # Per-(project, ref, sha) snapshot substrate
     server.py          # FastAPI app with /api/* + /mcp transports

@@ -20,14 +20,14 @@ Process every scope at the given tier that isn't yet `reviewed` or
 
 The impl and fanin tiers are **phased** — a leaf subcomponent gets one
 impl node per phase it picks up work in, and fan-in recomputes per
-phase. If a phase registry exists (`compute_plan` returns a non-empty
+phase. If a phase registry exists (`compute-plan` returns a non-empty
 `phases` list), do **not** blind-fan `/run_tier impl` or
 `/run_tier fanin` across every node at once — that ignores phase
 ordering and the cross-phase delta context.
 
 Instead, for `tier` in (`impl`, `fanin`) when the project is phased:
 
-1. Call `mcp__siegeengine__compute_plan(ref=$ref)`. If it reports
+1. Run `python3 -m siege.cli compute-plan`. If it reports
    `errors`, stop and surface them — the plan isn't safe to run.
 2. Run each phase in ascending `order`, exactly as `/run_phase <n>`
    does (draft + review the phase's `build_order`, then its fan-in).
@@ -35,20 +35,28 @@ Instead, for `tier` in (`impl`, `fanin`) when the project is phased:
    the registry. Defer to `commands/run-phase.md` for the per-phase
    procedure.
 
-For an **unphased** project (no registry — `compute_plan` returns an
+For an **unphased** project (no registry — `compute-plan` returns an
 empty `phases` list, or every impl/fanin scope has `phase: null`),
 fall through to the generic per-tier flow below.
 
 ## Steps
 
-1. **Read structure.** Call `mcp__siegeengine__get_structure_summary(ref=$ref, tier=$tier)`.
-   Use it to enumerate the scope set + figure out topological order:
-   - **comparch**: foundation comps first (those with `is_foundation: true`),
-     then non-foundation comps that depend only on already-approved deps.
-   - **subcomparch / impl**: layer by layer, leaf-first.
-   - **fanin**: bottom-up; presentational comps gate on their domain_parent
-     fanins being populated (see `queries.all_domain_parents_have_populated_fanin`
-     in the old backend for the exact gate logic).
+1. **Enumerate the scope set.**
+   - **comparch / subcomparch** — run `python3 -m siege.cli list-scopes
+     --tier $tier` from the repo root. It reads the upstream identity
+     ledgers (`ids/sysarch/` for comparch, `ids/comparch/` for
+     subcomparch) and prints every scope the tier should have —
+     *including ones not yet drafted* — each with its `status`,
+     `alias`, and `is_foundation`. This is what closes the fanout
+     gap: a freshly-approved sysarch already names every comparch
+     scope. Process them in the order returned — foundation first,
+     then declaration order. Finer dependency-aware ordering (holding
+     a comp until its non-foundation deps approve) is a projection
+     refinement still to come; until then a `/run_tier` re-run fills
+     any gap left by a scope drafted before its deps settled.
+   - **impl / fanin** on an unphased project — run
+     `python3 -m siege.cli get-structure-summary --tier $tier`
+     and enumerate from it leaf-first (fanin bottom-up).
 2. **Per scope, in order:**
    a. Call `draft-<tier>` (skipping if status is already `drafted`/`reviewed`/`approved`).
    b. Call `review-<tier>` (skipping if already reviewed).
