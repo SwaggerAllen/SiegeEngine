@@ -376,10 +376,14 @@ From the current code to v3, in order:
    chain from it — closing the sysarch→comparch and
    comparch→subcomparch fanout gaps. Edge resolution (`<dependencies>`
    alias→id) stays projection work; `policy_*` nodes are deferred.
-5. **Skills read context from the CLI**, not an MCP tool. Drop the
-   MCP / JSON-RPC transport, the plugin's `.mcp.json`, and the
-   deployed `bootstrap.sh` endpoint; the on-ramp becomes a GitHub
-   pull (see *On-ramp*).
+5. **Skills read context from the CLI — done.** Every skill +
+   command reads via `siege.cli` subcommands (`get-context`,
+   `get-state`, `get-review-context`, `compute-plan`, …); the CLI's
+   read subcommands project the local repo at `HEAD` and the `[read]`
+   extra carries their deps. The MCP / JSON-RPC transport — the
+   `/mcp` route, the tool catalog/dispatch, the plugin's `.mcp.json`,
+   and the served `/bootstrap.sh` endpoint — are all removed. The
+   on-ramp is a GitHub pull.
 6. **Repoint the graph viz** from the legacy backend's `/structure`
    endpoint to the dashboard server's projection endpoint.
 7. **Propagation records.** `/regen_below` writes one; `/status`

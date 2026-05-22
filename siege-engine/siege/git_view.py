@@ -1,6 +1,7 @@
 """``GitView`` — per-(project, ref, head_sha) in-memory snapshot.
 
-Every MCP read goes through a ``GitView``. The view:
+Every read — the dashboard server's and the local CLI's — goes
+through a ``GitView``. The view:
 
 1. Resolves the project's local bare clone (cloning on first access).
 2. Calls ``git fetch`` for the requested ref, debounced per ref.

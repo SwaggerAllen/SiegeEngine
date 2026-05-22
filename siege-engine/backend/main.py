@@ -201,25 +201,13 @@ app.include_router(jobs_router, prefix="/api/projects", tags=["jobs"])
 app.include_router(debug_router, prefix="/api/projects", tags=["debug"])
 app.include_router(github_router, prefix="/api/github", tags=["github"])
 
-# Mount the new MCP server's read-only surface. The migration plan
-# moves project state into git + serves reads via siege; the routes
-# coexist with the old FastAPI write surface during the transition.
-# Eventually the writes go away (Phase 4 deletion) and this is the
-# whole surface that remains.
+# Mount the siege read API — the dashboard's read-only projection of
+# project git state. Dormant until the graph viz is repointed to it
+# (migration step 6); the legacy write surface above is deleted in
+# step 8.
 from siege.server import app as siege_app  # noqa: E402
-from siege.server import bootstrap_script_response  # noqa: E402
 
-app.mount("/siege_mcp", siege_app)
-
-
-# Top-level convenience: `curl https://siege.strutco.io/bootstrap.sh | bash`
-# is the documented mobile-CC on-ramp. Registered here (BEFORE the SPA
-# catch-all below) so the .sh URL doesn't fall through to index.html.
-# The same handler is also reachable at /siege_mcp/bootstrap.sh via the
-# mount above; the top-level path is what's documented.
-@app.get("/bootstrap.sh")
-def serve_bootstrap_script():
-    return bootstrap_script_response()
+app.mount("/siege", siege_app)
 
 
 # Serve SPA static files (production build)

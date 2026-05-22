@@ -1,16 +1,18 @@
-"""MCP tool implementations.
+"""Read-projection functions for the dashboard HTTP API.
 
-Each function is one MCP tool. They all share a common shape:
+Each function answers one read — state, a context bundle, a summary —
+sharing a common shape:
 
-    def tool_xxx(project_id: str, ref: str, ...) -> dict
+    def read_xxx(project_id: str, ref: str, ...) -> dict
 
-The transport layer (``server.py``) registers these via the MCP
-protocol and the HTTP transport. The functions themselves don't know
-which transport called them.
+``server.py`` wraps each behind an ``/api/*`` route. (The skills do
+*not* call these — they run the equivalent ``siege.cli`` subcommands
+locally; migration step 5 retired the MCP transport that once exposed
+this surface to them.)
 
-Every tool takes ``project_id`` + ``ref`` first. The view cache in
-``git_view.cache`` handles the fetch + sha resolution; tools just
-ask for a view and read from it.
+Every function takes ``project_id`` + ``ref`` first. The view cache in
+``git_view.cache`` handles the fetch + sha resolution; these just ask
+for a view and read from it.
 """
 
 from __future__ import annotations

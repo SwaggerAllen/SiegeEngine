@@ -694,29 +694,31 @@ propagation records.**
   is the deterministic write logic (materialize state JSON,
   identity ledgers, sha, nonce).
 - **Two drivers**: a local **CLI** that Claude Code skills
-  call for reads and writes, and a thin **HTTP server**
-  serving the dashboard's read-only views. The **MCP /
-  JSON-RPC transport is being dropped** — don't build against
-  it.
+  call for reads and writes (`siege.cli` — `get-context` /
+  `get-state` / `write-draft` / …), and a thin **HTTP server**
+  (`siege/server.py`) serving the dashboard's read-only views.
+  The MCP / JSON-RPC transport was **dropped** in migration
+  step 5 — there is no server in the generate loop.
 - **Skills** (`.claude-plugin/skills/`) are thin: call the
   CLI for context, compose the artifact with the LLM, call
   the CLI to materialize, commit + push. Write logic belongs
   in the core CLI, **not** in skill markdown (no new inline
   `python3` heredocs).
-- **On-ramp is a GitHub pull** — core via `pip install` from
-  the repo, skills/commands via plugin install. No dependency
-  on the deployed host; the droplet serves only the
-  dashboard. The `bootstrap.sh` endpoint is being retired.
+- **On-ramp is a GitHub pull** — the `siege` CLI via
+  `pip install` from the repo (the `[read]` extra; see the
+  bootstrap), skills/commands via plugin install or the
+  bootstrap script. No dependency on the deployed host; the
+  droplet serves only the dashboard.
 - The legacy SQLAlchemy + job-queue backend still exists,
   still slated for deletion
   (`docs/migration/deletion-inventory.md`); the graph viz
   reads it until the dashboard server is repointed. Per-phase
   migration status: `docs/migration/status.md`.
 
-Don't add new MCP tools, new inline-python to skills, or new
-`backend/graph/` code — all three are slated to go. New
-deterministic logic goes in the core library; the prompt text
-lives at `siege/prompts/<tier>.md`.
+Don't add MCP tools (the transport is gone), new inline-python
+to skills, or new `backend/graph/` code — all slated to go.
+New deterministic logic goes in the core library; the prompt
+text lives at `siege/prompts/<tier>.md`.
 
 ## Cheat sheet (load-bearing docs)
 
@@ -735,23 +737,18 @@ other frontend change and the served page always matches
 what the build pinned. The `docs/` directory is for
 developer / migration documentation.
 
-The bootstrap script (`scripts/siege-bootstrap.sh`, served at
-`/bootstrap.sh`) is the mobile-CC on-ramp: it `pip install`s the
-`siege` core CLI from the repo (pure stdlib — no deps; the skills
-shell out to `python -m siege.cli` for writes), mirrors the
-plugin's `.claude-plugin/commands/`, `.claude-plugin/skills/`,
-and `.claude-plugin/agents/` into a target project repo as
-`.claude/commands/`, `.claude/skills/`, `.claude/agents/`,
-plus a `.mcp.json`. Mobile CC auto-discovers these without a
-plugin install. Update the script (and the cheat sheet's
-install section) if the on-ramp shape changes.
-
-**The dev token panel** (`frontend/src/components/DevTokenPanel.tsx`)
-mounts at the top of the cheat sheet page. When the user is
-logged in it shows their JWT in a copy-paste-ready
-`export SIEGE_TOKEN=...` form, with expiry + relative time.
-This is the on-ramp's "where do I get a token" answer — keep
-it on the cheat sheet page, not buried in a settings menu.
+The bootstrap script (`scripts/siege-bootstrap.sh`) is the
+on-ramp for environments without `/plugin install`: it
+`pip install`s the `siege` CLI from the repo (the `[read]`
+extra — reads + writes) and mirrors the plugin's
+`.claude-plugin/commands/`, `.claude-plugin/skills/`, and
+`.claude-plugin/agents/` into a target project repo as
+`.claude/commands/`, `.claude/skills/`, `.claude/agents/`.
+Claude Code auto-discovers these without a plugin install. The
+script is fetched via a GitHub pull (clone, or the `raw`
+URL) — there is no served `/bootstrap.sh` endpoint. Update the
+script (and the cheat sheet's install section) if the on-ramp
+shape changes.
 
 **Keep it current.** When you add a slash command, ship a new
 skill, rename one, or change a workflow, update
