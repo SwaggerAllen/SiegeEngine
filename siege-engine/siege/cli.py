@@ -641,6 +641,14 @@ def cmd_get_structure_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_get_project_graph(args: argparse.Namespace) -> int:
+    from siege.projection.graph import build_project_graph
+
+    view = _open_local_view(args)
+    print(json.dumps(build_project_graph(view), indent=2))
+    return 0
+
+
 def cmd_get_review_summary(args: argparse.Namespace) -> int:
     from siege.projection.review_summary import build_review_summary
 
@@ -768,6 +776,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_gss.add_argument("--tier", required=True, choices=ALL_TIERS)
     _add_ref_arg(p_gss)
     p_gss.set_defaults(func=cmd_get_structure_summary)
+
+    p_gpg = subs.add_parser("get-project-graph", help="print the whole-project node + edge graph")
+    p_gpg.add_argument("--repo", default=".")
+    _add_ref_arg(p_gpg)
+    p_gpg.set_defaults(func=cmd_get_project_graph)
 
     p_grs = subs.add_parser("get-review-summary", help="print a tier's review summary")
     p_grs.add_argument("--repo", default=".")
