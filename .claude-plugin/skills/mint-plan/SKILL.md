@@ -1,13 +1,13 @@
 ---
 name: mint-plan
-description: Materialize the impl-tier phasing plan. Calls `compute_plan`, writes `state/plan.json`, and mints one `absent`-status impl state JSON per planned node (phase-scoped, with the responsibility closure pre-seeded). Idempotent and additive — never touches a node already drafted+. Triggers on "mint plan", "/mint_plan", or before the first `/run_phase`.
+description: Materialize the impl-tier phasing plan. Calls `compute-plan`, writes `state/plan.json`, and mints one `absent`-status impl state JSON per planned node (phase-scoped, with the responsibility closure pre-seeded). Idempotent and additive — never touches a node already drafted+. Triggers on "mint plan", "/mint_plan", or before the first `/run_phase`.
 ---
 
 # Mint the phasing plan
 
-`compute_plan` is a pure projection — it *describes* the per-phase
+`compute-plan` is a pure projection — it *describes* the per-phase
 impl nodes but writes nothing. This skill is the writer: it runs
-`compute_plan`, persists the plan, and pre-creates the impl state
+`compute-plan`, persists the plan, and pre-creates the impl state
 files so `/run_phase` has something concrete to draft into.
 
 Run this once after the phase registry (`state/phases/<id>.json`) is
@@ -20,14 +20,14 @@ tiers change.
 
 ## Steps
 
-1. **Compute the plan.** Call `mcp__siegeengine__compute_plan(ref=$ref)`.
+1. **Compute the plan.** Run `python3 -m siege.cli compute-plan`.
 2. **Refuse on hard errors.** If the result's `errors` list is
    non-empty, STOP. Surface every error verbatim and do not write
    anything. Hard errors (an unassigned feature, a closure that
    changed under an already-drafted node) mean the plan is not safe
    to materialize — the user fixes the registry or regenerates the
    stale node, then re-runs `mint-plan`.
-3. **Write `state/plan.json`.** Serialize the `compute_plan` result
+3. **Write `state/plan.json`.** Serialize the `compute-plan` result
    verbatim (it already has `schema_version`, `ref`, `computed_at`,
    `phases`, `rearrangements`, `errors`, `warnings`, `aggregates`).
 4. **Surface rearrangements.** If `rearrangements` is non-empty, print
@@ -59,7 +59,7 @@ tiers change.
 
 ## Don't
 
-- Don't materialize anything when `compute_plan` reports `errors`.
+- Don't materialize anything when `compute-plan` reports `errors`.
 - Don't overwrite a `drafted` / `reviewed` / `approved` impl node —
   re-planning is additive, never destructive.
 - Don't delete the `dropped_by_plan` nodes. Surface them so the user

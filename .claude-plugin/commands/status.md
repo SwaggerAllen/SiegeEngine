@@ -17,9 +17,9 @@ Read-only project snapshot.
 
 1. For each tier in (feature_expansion, requirements, sysarch,
    comparch, subcomparch, impl, fanin):
-   - Call `mcp__siegeengine__get_structure_summary` for counts.
-   - Call `mcp__siegeengine__get_review_summary` for score histogram +
-     worst-N scopes.
+   - Run `python3 -m siege.cli get-structure-summary --tier $tier` for counts.
+   - Run `python3 -m siege.cli get-review-summary --tier $tier` for score
+     histogram + worst-N scopes.
 2. Render a single table per tier:
 
 ```

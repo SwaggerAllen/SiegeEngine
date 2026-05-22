@@ -1,6 +1,6 @@
 ---
 name: review-impl
-description: Review a impl draft. Reads `get_review_context` for the scope, produces a `<review>` XML block per the parser contract, writes it as review.md, updates state JSON, commits, and pushes. Triggers automatically after a `draft-impl` or on manual `/review_impl <id>`.
+description: Review a impl draft. Reads context via the `siege` CLI, produces a `<review>` XML block per the parser contract, writes it as review.md, updates state JSON, commits, and pushes. Triggers automatically after a `draft-impl` or on manual `/review_impl <id>`.
 thinking_effort: default
 ---
 
@@ -17,18 +17,23 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 - `parent_id` — owning comparch id ; `sub_id` — sub id under the parent
 - (optional) `phase` — phase index for a phased impl node; omit for an
   unphased (legacy) impl. Must match the `phase` the node was drafted
-  at, or `get_state` / the paths below address the wrong node.
+  at, or `get-state` / the paths below address the wrong node.
 
 ## Steps
 
-1. **Read the draft state.** Call
-   `mcp__siegeengine__get_state(ref=$ref, tier="impl", parent_id=$parent_id, sub_id=$sub_id, phase=$phase)`
-   (omit `phase` for an unphased impl) to confirm the scope is in
-   `drafted` status with a valid draft block. If it's already
-   `reviewed` or `approved`, ask the user whether to re-review (most
-   of the time this is a mistake).
-2. **Fetch review context.** Call
-   `mcp__siegeengine__get_review_context(ref=$ref, tier="impl", parent_id=$parent_id, sub_id=$sub_id, phase=$phase, draft_sha=<draft.body_sha256 from state>)`.
+1. **Read the draft state.** From the repo root, run
+   `python3 -m siege.cli get-state --tier impl --parent-id "$parent_id" --sub-id "$sub_id" ${phase:+--phase "$phase"}`
+   (the `${phase:+…}` expands to nothing for an unphased impl).
+   Confirm `status` is `drafted` with a populated `draft` block; keep
+   the `draft.body_sha256` for step 2. If `status` is `reviewed` or
+   `approved`, ask the user whether to re-review (most of the time
+   this is a mistake).
+2. **Fetch review context.** Run `python3 -m siege.cli
+   get-review-context --tier impl --parent-id "$parent_id"
+   --sub-id "$sub_id" ${phase:+--phase "$phase"}
+   --draft-sha <draft.body_sha256 from step 1>`. The `--draft-sha`
+   guards against reviewing a stale draft. It prints the review
+   context bundle as JSON on stdout.
 3. **Compose the review.** Produce one `<review>...</review>` block
    following the schema:
    - `<intro>` — 3-6 sentence "how close to finished" read (display only)

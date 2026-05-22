@@ -1,6 +1,6 @@
 ---
 name: repair-state-drift
-description: Recompute body_sha256 for a scope's state JSON when the MCP server reports drift. Use when `get_state` returns a `drift` block on a scope you trust the body of — this skill writes a new state JSON with the correct sha and bumps nonce.
+description: Recompute body_sha256 for a scope's state JSON when its body has drifted. Use when `get-state` returns a `drift` block on a scope you trust the body of — this skill writes a new state JSON with the correct sha and bumps nonce.
 ---
 
 # Repair state JSON drift

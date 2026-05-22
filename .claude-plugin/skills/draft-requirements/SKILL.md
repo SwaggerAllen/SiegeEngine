@@ -1,14 +1,15 @@
 ---
 name: draft-requirements
-description: Draft a requirements artifact. Reads `get_generation_context` for the scope, drafts the body, validates it, then commits state + body in one commit and pushes. Triggers when the user says "draft requirements <id>", "/draft_requirements <id>", or after `/scaffold` or `/run_tier requirements` enumerates pending scopes.
+description: Draft a requirements artifact. Reads context via the `siege` CLI for the scope, drafts the body, validates it, then commits state + body in one commit and pushes. Triggers when the user says "draft requirements <id>", "/draft_requirements <id>", or after `/scaffold` or `/run_tier requirements` enumerates pending scopes.
 thinking_effort: max
 ---
 
 # Draft a requirements
 
 You are drafting one requirements artifact end-to-end on the git-backed
-substrate. The MCP server gives you the bundle of context the prompt
-needs; you compose the draft, validate it, materialize the state files
+substrate. The `siege` CLI gives you the context bundle the prompt
+needs — a local projection of the committed tree, no server; you
+compose the draft, validate it, materialize the state files
 with the `siege` writer CLI, and commit + push exactly one commit
 (artifact body, state JSON, and identity ledger together).
 
@@ -20,18 +21,17 @@ with the `siege` writer CLI, and commit + push exactly one commit
 
 ## Steps
 
-1. **Fetch generation context.** Call
-   `mcp__siegeengine__get_generation_context(ref=$ref, tier="requirements", scope={"comp_id": $comp_id, "tier": "requirements"})`.
+1. **Fetch generation context.** From the repo root, run
+   `python3 -m siege.cli get-context --tier requirements --comp-id "$comp_id"`.
+   It projects the committed tree at `HEAD` and prints the context
+   bundle — instruction text + per-key inputs — as JSON on stdout.
 2. **Compose the draft.** Use the bundle's instruction text and per-key
    inputs to produce the artifact body. Section headers must use the
    `## <prefix>:<name>` convention so the body section parser can pick
    them up downstream (see `docs/migration/state-schema.md` and
    `siege/fragments.py:section_for_kind`). This is a top-of-chain tier — use the deepest thinking budget you can.
-3. **Validate.** Call `mcp__siegeengine__validate_artifact(ref=$ref, tier="requirements", scope=..., body=<draft>)`.
-   If `ok` is false, treat the errors as feedback and re-run step 2
-   (loop up to 3 times). If still failing, stop and surface the errors.
-4. **Write the body file** to `requirements/$comp_id/body.md`.
-5. **Materialize state JSON + identity ledger.** From the repo root,
+3. **Write the body file** to `requirements/$comp_id/body.md`.
+4. **Materialize state JSON + identity ledger.** From the repo root,
    call the writer CLI. It computes the body sha256, mints a nonce,
    writes `state/requirements/$comp_id.json`, and derives the slim
    identity ledger at `ids/requirements/$comp_id.json` (creating parent
@@ -52,20 +52,22 @@ with the `siege` writer CLI, and commit + push exactly one commit
 
    It prints a JSON line with `state_path`, `ids_path`,
    `body_sha256`, and `node_count`. A non-zero exit means the body
-   failed validation — treat the stderr as feedback and loop back to
-   step 2. The ledger is the node identity index the sysarch /
+   failed validation — treat the stderr as feedback, re-compose (step
+   2), and retry (up to 3 times); if it still fails, stop and surface
+   the errors. The ledger is the node identity index the sysarch /
    phasing / related-features readers consume — see
    `docs/migration/state-schema.md`.
-6. **Stage the body, state JSON, and ledger**, commit with message:
+5. **Stage the body, state JSON, and ledger**, commit with message:
    `draft(requirements/$id): <one-line summary>`
-7. **Push** with `git push -u origin $ref` (retry on network failure
+6. **Push** with `git push -u origin $ref` (retry on network failure
    up to 4 times with 2s / 4s / 8s / 16s backoff).
 
 ## Don't
 
 - Don't overwrite an existing **approved** draft without explicit
   user confirmation. If `status` is `approved`, abort.
-- Don't commit a body that fails `validate_artifact`. Loop or stop.
+- Don't commit a body the CLI rejected — `write-draft` exits non-zero
+  on a validation failure.
 - Don't push to any branch other than `$ref`.
 - Don't create a PR.
 

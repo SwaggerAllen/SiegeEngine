@@ -23,14 +23,14 @@ per-node `absent` impl state files this command drafts into.
 
 ## Steps
 
-1. **Recompute the plan live.** Call `mcp__siegeengine__compute_plan(ref=$ref)`.
+1. **Recompute the plan live.** Run `python3 -m siege.cli compute-plan`.
    - If `errors` is non-empty, STOP — surface every error. A hard
      error (unassigned feature, closure-changed-after-draft) means
      the phase is not safe to build.
 2. **Load `state/plan.json` from disk.** If it is missing, STOP and
    tell the user to run `/mint_plan` first.
 3. **Divergence guard.** Compare the on-disk `plan.json` to the live
-   `compute_plan` result for phase `<n>` — specifically its
+   `compute-plan` result for phase `<n>` — specifically its
    `impl_nodes` (parent/sub/phase + `closure_resp_ids`) and
    `build_order`. If they differ, the registry / comparch /
    subcomparch changed since `mint-plan` last ran. STOP and tell the
@@ -83,7 +83,7 @@ impl nodes commit.
 
 ## Don't
 
-- Don't build a phase when `compute_plan` reports `errors`.
+- Don't build a phase when `compute-plan` reports `errors`.
 - Don't build off a stale `plan.json` — re-run `/mint_plan` on
   divergence.
 - Don't push to a branch other than `$ref`. Don't create a PR.

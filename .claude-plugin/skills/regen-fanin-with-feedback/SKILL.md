@@ -1,6 +1,6 @@
 ---
 name: regen-fanin-with-feedback
-description: Regenerate a fan-in synthesis draft using the prior review as feedback. Reads `get_state` to pull the prior review text, runs the same flow as `draft-fanin` but threads the review in as `prior_review_text` so the LLM addresses the findings. Triggers when the user says "regen fanin <id> from review", "/regen_fanin <id>", or as part of `/regen_below`.
+description: Regenerate a fan-in synthesis draft using the prior review as feedback. Reads state via the `siege` CLI to pull the prior review text, runs the same flow as `draft-fanin` but threads the review in as `prior_review_text` so the LLM addresses the findings. Triggers when the user says "regen fanin <id> from review", "/regen_fanin <id>", or as part of `/regen_below`.
 thinking_effort: default
 ---
 
@@ -17,13 +17,13 @@ re-reviews can compare deltas.
 - `comp_id` — stable id of the scope
 - (optional) `phase` — phase index for a phased fan-in node; omit for
   an unphased (legacy) fan-in. Thread the same value through every
-  step — `get_state`, the draft-fanin call, and the paths.
+  step — `get-state`, the draft-fanin call, and the paths.
 
 ## Steps
 
-1. **Read state.** Call
-   `mcp__siegeengine__get_state(ref=$ref, tier="fanin", comp_id=$comp_id, phase=$phase)`
-   (omit `phase` for an unphased fan-in). The scope must be in
+1. **Read state.** Run
+   `python3 -m siege.cli get-state --tier fanin --comp-id "$comp_id" ${phase:+--phase "$phase"}`
+   (omit `--phase` for an unphased fan-in). The scope must be in
    `reviewed` status with a populated `review` block (the review text
    lives at `review.body_path`). If `reviewed` but no review text,
    stop and surface the inconsistency for the user to repair.

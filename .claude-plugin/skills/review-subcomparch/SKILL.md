@@ -1,6 +1,6 @@
 ---
 name: review-subcomparch
-description: Review a subcomparch draft. Reads `get_review_context` for the scope, produces a `<review>` XML block per the parser contract, writes it as review.md, updates state JSON, commits, and pushes. Triggers automatically after a `draft-subcomparch` or on manual `/review_subcomparch <id>`.
+description: Review a subcomparch draft. Reads context via the `siege` CLI, produces a `<review>` XML block per the parser contract, writes it as review.md, updates state JSON, commits, and pushes. Triggers automatically after a `draft-subcomparch` or on manual `/review_subcomparch <id>`.
 thinking_effort: default
 ---
 
@@ -18,13 +18,17 @@ exact schema). Score is 0-100; bands are 0-30 (rework), 31-60
 
 ## Steps
 
-1. **Read the draft state.** Call `mcp__siegeengine__get_state` to
-   confirm the scope is in `drafted` status with a valid draft block.
-   If it's already `reviewed` or `approved`, ask the user whether to
-   re-review (most of the time this is a mistake).
-2. **Fetch review context.** Call
-   `mcp__siegeengine__get_review_context(ref=$ref, tier="subcomparch",
-   scope={"parent_id": $parent_id, "sub_id": $sub_id, "tier": "subcomparch"}, draft_sha=<draft.body_sha256 from state>)`.
+1. **Read the draft state.** From the repo root, run
+   `python3 -m siege.cli get-state --tier subcomparch --parent-id "$parent_id" --sub-id "$sub_id"`.
+   Confirm `status` is `drafted` with a populated `draft` block; keep
+   the `draft.body_sha256` for step 2. If `status` is `reviewed` or
+   `approved`, ask the user whether to re-review (most of the time
+   this is a mistake).
+2. **Fetch review context.** Run `python3 -m siege.cli
+   get-review-context --tier subcomparch --parent-id "$parent_id"
+   --sub-id "$sub_id" --draft-sha <draft.body_sha256 from step 1>`.
+   The `--draft-sha` guards against reviewing a stale draft. It prints
+   the review context bundle as JSON on stdout.
 3. **Compose the review.** Produce one `<review>...</review>` block
    following the schema:
    - `<intro>` — 3-6 sentence "how close to finished" read (display only)
