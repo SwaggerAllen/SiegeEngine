@@ -6,7 +6,7 @@ import { ProjectCreatePage } from './ProjectCreatePage';
 
 vi.mock('../api/projects', () => ({
   createProject: vi.fn(),
-  importProject: vi.fn(),
+  createSampleProject: vi.fn(),
 }));
 
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -17,7 +17,7 @@ vi.mock('react-router-dom', async (importOriginal) => {
 import * as projectsApi from '../api/projects';
 
 const mockedCreate = projectsApi.createProject as unknown as ReturnType<typeof vi.fn>;
-const mockedImport = projectsApi.importProject as unknown as ReturnType<typeof vi.fn>;
+const mockedSample = projectsApi.createSampleProject as unknown as ReturnType<typeof vi.fn>;
 
 function renderPage() {
   return render(
@@ -33,64 +33,67 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('ProjectCreatePage mode toggle', () => {
-  it('starts in GitHub URL mode with the project-doc textarea visible', () => {
+describe('ProjectCreatePage', () => {
+  it('renders the GitHub-URL + project-doc fields by default', () => {
     renderPage();
-    // The URL input is present, the file input is not.
     expect(screen.getByPlaceholderText(/github\.com\/owner\/repo/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Project Document/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/Project archive/i)).toBeNull();
+    expect(screen.getByLabelText(/Use the built-in sample/i)).not.toBeChecked();
   });
 
-  it('toggling to Upload artifacts swaps the URL + project-doc for a file picker', () => {
+  it('hides the URL + project-doc fields once the sample checkbox is ticked', () => {
     renderPage();
-    fireEvent.click(screen.getByRole('tab', { name: /Upload artifacts/i }));
-    // File picker is now visible; URL + project-doc fields are gone.
-    expect(screen.getByLabelText(/Project archive/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/Use the built-in sample/i));
     expect(screen.queryByPlaceholderText(/github\.com\/owner\/repo/i)).toBeNull();
     expect(screen.queryByLabelText(/Project Document/i)).toBeNull();
   });
 
-  it('submitting in upload mode calls importProject with the chosen file', async () => {
-    mockedImport.mockResolvedValue({
-      id: 'proj_imported',
-      name: 'Imported',
+  it('submitting with sample checked calls createSampleProject', async () => {
+    mockedSample.mockResolvedValue({
+      id: 'proj_sample',
+      name: 'Sample',
       description: null,
-      git_repo_path: '/tmp/imported',
+      git_repo_path: '/tmp/sample',
       source: 'upload',
       created_at: '2026-05-24T00:00:00',
       updated_at: '2026-05-24T00:00:00',
     });
     renderPage();
-    fireEvent.click(screen.getByRole('tab', { name: /Upload artifacts/i }));
-
+    fireEvent.click(screen.getByLabelText(/Use the built-in sample/i));
     fireEvent.change(screen.getByLabelText(/Project Name/i), {
-      target: { value: 'Imported' },
+      target: { value: 'Sample' },
     });
-    const tarball = new File([new Uint8Array(16)], 'sample.tar.gz', {
-      type: 'application/gzip',
-    });
-    fireEvent.change(screen.getByLabelText(/Project archive/i), {
-      target: { files: [tarball] },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /Import Project/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Create Sample Project/i }));
 
     await waitFor(() => {
-      expect(mockedImport).toHaveBeenCalledTimes(1);
+      expect(mockedSample).toHaveBeenCalledTimes(1);
     });
-    expect(mockedImport.mock.calls[0][0]).toBe('Imported');
-    expect(mockedImport.mock.calls[0][2]).toBe(tarball);
+    expect(mockedSample).toHaveBeenCalledWith('Sample', null);
     expect(mockedCreate).not.toHaveBeenCalled();
   });
 
-  it('rejects an upload-mode submit with no file selected', () => {
-    renderPage();
-    fireEvent.click(screen.getByRole('tab', { name: /Upload artifacts/i }));
-    fireEvent.change(screen.getByLabelText(/Project Name/i), {
-      target: { value: 'Imported' },
+  it('submitting without sample still uses the original create flow', async () => {
+    mockedCreate.mockResolvedValue({
+      id: 'proj_normal',
+      name: 'Normal',
+      description: null,
+      git_repo_path: '/tmp/normal',
+      source: 'remote',
+      created_at: '2026-05-24T00:00:00',
+      updated_at: '2026-05-24T00:00:00',
     });
-    fireEvent.click(screen.getByRole('button', { name: /Import Project/i }));
-    expect(screen.getByText(/Choose a tarball or zip/i)).toBeInTheDocument();
-    expect(mockedImport).not.toHaveBeenCalled();
+    renderPage();
+    fireEvent.change(screen.getByLabelText(/Project Name/i), {
+      target: { value: 'Normal' },
+    });
+    fireEvent.change(screen.getByLabelText(/Project Document/i), {
+      target: { value: '# Doc' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Create Project/i }));
+
+    await waitFor(() => {
+      expect(mockedCreate).toHaveBeenCalledTimes(1);
+    });
+    expect(mockedSample).not.toHaveBeenCalled();
   });
 });

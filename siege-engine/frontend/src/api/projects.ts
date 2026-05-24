@@ -55,6 +55,17 @@ export async function importProject(
   return ProjectSchema.parse(data);
 }
 
+export async function createSampleProject(
+  name: string,
+  description: string | null,
+): Promise<Project> {
+  const { data } = await api.post('/projects/from-sample', {
+    name,
+    description,
+  });
+  return ProjectSchema.parse(data);
+}
+
 export async function updateProject(
   id: string,
   updates: { name?: string; description?: string }
