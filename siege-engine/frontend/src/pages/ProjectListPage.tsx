@@ -1,14 +1,47 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useProjects } from '../hooks/queries/useProjectQueries';
-import { useDeleteProject, useCloneProject } from '../hooks/mutations/useProjectMutations';
+import {
+  useCloneProject,
+  useDeleteProject,
+  useMigrateProjectToV3,
+} from '../hooks/mutations/useProjectMutations';
+import { describeApiError } from '../lib/describeApiError';
 import { useAuthStore } from '../store/authStore';
 
 export function ProjectListPage() {
   const { data: projects, isLoading } = useProjects();
   const deleteProjectMutation = useDeleteProject();
   const cloneProjectMutation = useCloneProject();
+  const migrateMutation = useMigrateProjectToV3();
   const { logout, user } = useAuthStore();
   const navigate = useNavigate();
+
+  const handleMigrate = async (projectId: string, name: string) => {
+    if (!confirm(`Migrate "${name}" to a new v3-substrate project? The original stays untouched.`)) {
+      return;
+    }
+    try {
+      const report = await migrateMutation.mutateAsync({ legacyProjectId: projectId });
+      const summary = [
+        `${report.feat_count} feat`,
+        `${report.resp_count} resp`,
+        `${report.comp_count} comp`,
+        `${report.subcomp_count} sub`,
+        `${report.dependency_edges} deps`,
+        `${report.domain_parent_edges} domain-parents`,
+      ].join(' / ');
+      const extra = report.warnings.length
+        ? `\n\nWarnings:\n- ${report.warnings.join('\n- ')}`
+        : '';
+      const skipped = report.skipped_tiers.length
+        ? `\nSkipped: ${report.skipped_tiers.join(', ')}`
+        : '';
+      alert(`Migrated.\n${summary}${skipped}${extra}`);
+      navigate(`/projects/${report.project.id}/v3-graph`);
+    } catch (err: unknown) {
+      alert(describeApiError(err, 'Migration failed'));
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -76,6 +109,18 @@ export function ProjectListPage() {
                     >
                       v3 graph
                     </Link>
+                    {project.source !== 'upload' && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleMigrate(project.id, project.name);
+                        }}
+                        disabled={migrateMutation.isPending}
+                        className="text-amber-400 hover:text-amber-300 disabled:opacity-50"
+                      >
+                        {migrateMutation.isPending ? 'Migrating...' : 'Migrate to v3'}
+                      </button>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

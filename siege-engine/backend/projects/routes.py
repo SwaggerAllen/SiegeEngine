@@ -12,6 +12,7 @@ from backend.models import GitHubCredential, Project, User
 from backend.projects import service
 from backend.projects.import_service import ImportError as ProjectImportError
 from backend.projects.import_service import create_sample_project, import_project
+from backend.projects.migrate_legacy import migrate_to_v3
 from backend.projects.schemas import (
     ProjectClone,
     ProjectCreate,
@@ -110,6 +111,59 @@ def import_project_endpoint(
 class CreateSampleRequest(BaseModel):
     name: str
     description: str | None = None
+
+
+class MigrateToV3Request(BaseModel):
+    name: str | None = None
+
+
+class MigrateToV3Response(BaseModel):
+    project: ProjectResponse
+    feat_count: int
+    resp_count: int
+    comp_count: int
+    decomposed_comp_count: int
+    subcomp_count: int
+    dependency_edges: int
+    domain_parent_edges: int
+    skipped_tiers: list[str]
+    warnings: list[str]
+
+
+@router.post(
+    "/{legacy_project_id}/migrate-to-v3",
+    response_model=MigrateToV3Response,
+    status_code=201,
+)
+def migrate_project_to_v3(
+    legacy_project_id: str,
+    req: MigrateToV3Request,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Clone a legacy SQL-backed project into a fresh v3 substrate project.
+
+    The legacy project is never mutated. A new ``source="upload"``
+    Project is created with the substrate written to disk; the response
+    carries both the new project and a count report so the caller can
+    sanity-check that the migration produced the expected coverage.
+    """
+    try:
+        project, report = migrate_to_v3(db, legacy_project_id, new_name=req.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return MigrateToV3Response(
+        project=_project_to_dict(project),  # type: ignore[arg-type]
+        feat_count=report.feat_count,
+        resp_count=report.resp_count,
+        comp_count=report.comp_count,
+        decomposed_comp_count=report.decomposed_comp_count,
+        subcomp_count=report.subcomp_count,
+        dependency_edges=report.dependency_edges,
+        domain_parent_edges=report.domain_parent_edges,
+        skipped_tiers=report.skipped_tiers,
+        warnings=report.warnings,
+    )
 
 
 @router.post("/from-sample", response_model=ProjectResponse, status_code=201)
