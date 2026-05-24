@@ -42,9 +42,16 @@ export async function importProject(
   form.append('name', name);
   if (description) form.append('description', description);
   form.append('artifacts_file', file);
-  // Axios sets the multipart boundary automatically when handed a
-  // FormData; do not override the Content-Type header.
-  const { data } = await api.post('/projects/import', form);
+  // The axios instance defaults to ``Content-Type: application/json``
+  // (see ``api/client.ts``). That sticky header overrides axios's
+  // FormData auto-detection — without this explicit override the
+  // request goes out as JSON, FastAPI's multipart parser sees no
+  // form fields, and the route 422s with "Field required" on every
+  // Form parameter. Setting ``multipart/form-data`` here lets axios
+  // fill in the proper boundary.
+  const { data } = await api.post('/projects/import', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
   return ProjectSchema.parse(data);
 }
 
