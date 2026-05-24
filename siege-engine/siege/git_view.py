@@ -152,11 +152,31 @@ class _ProjectClone(_GitTree):
                 ) from exc
             raise GitViewError(scrubbed) from exc
 
+    def _has_origin(self) -> bool:
+        """True iff an ``origin`` remote is configured.
+
+        Upload-imported projects have no remote — the sanitizer drops it
+        during import so the server never tries to fetch from the user's
+        actual GitHub. ``fetch_ref`` and ``resolve_ref`` consult this to
+        avoid uselessly invoking git against a non-existent remote.
+        """
+        try:
+            out = run_git(["remote"], cwd=self.path)
+        except GitViewError:
+            return False
+        return "origin" in out.split()
+
     def fetch_ref(self, ref: str) -> None:
         debounce = self._debounce_for(ref)
         with debounce.lock:
             now = time.monotonic()
             if now - debounce.last_fetched_at < settings.git_fetch_debounce_seconds:
+                return
+            if not self._has_origin():
+                # No remote (e.g. an upload-imported project) — nothing
+                # to fetch. Stamp the debounce so subsequent calls within
+                # the window skip the `git remote` check too.
+                debounce.last_fetched_at = now
                 return
             try:
                 run_git(["fetch", "origin", ref], cwd=self.path)
@@ -166,11 +186,21 @@ class _ProjectClone(_GitTree):
             debounce.last_fetched_at = now
 
     def resolve_ref(self, ref: str) -> str:
-        """Return the head sha for a ref (after fetch)."""
-        out = run_git(["rev-parse", f"origin/{ref}"], cwd=self.path).strip()
-        if not out:
-            raise GitViewError(f"Could not resolve ref {ref!r} for project {self.project_id}")
-        return out
+        """Return the head sha for a ref (after fetch).
+
+        Tries the remote-tracking ref ``origin/<ref>`` first — the common
+        case for cloned projects. Falls back to the local ref so projects
+        without a remote (upload-imported substrates) resolve their own
+        branches; mirrors ``_LocalRepo.resolve_ref``.
+        """
+        for revspec in (f"origin/{ref}", f"{ref}^{{commit}}"):
+            try:
+                out = run_git(["rev-parse", "--verify", revspec], cwd=self.path).strip()
+            except GitViewError:
+                continue
+            if out:
+                return out
+        raise GitViewError(f"Could not resolve ref {ref!r} for project {self.project_id}")
 
     def list_refs(self) -> list[RefInfo]:
         """List remote branches with their head sha + subject."""

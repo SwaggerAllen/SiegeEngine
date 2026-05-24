@@ -26,6 +26,18 @@ export function useCreateProject() {
   });
 }
 
+export function useImportProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['projects', 'import'],
+    mutationFn: (params: { name: string; description: string | null; file: File }) =>
+      projectApi.importProject(params.name, params.description, params.file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+    },
+  });
+}
+
 export function useDeleteProject() {
   const queryClient = useQueryClient();
   return useMutation({

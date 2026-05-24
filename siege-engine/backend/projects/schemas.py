@@ -30,6 +30,10 @@ class ProjectResponse(BaseModel):
     github_repo_slug: str | None = None
     auto_push_enabled: bool = False
     git_repo_path: str
+    # ``"remote"`` for projects created via the GitHub-remote flow,
+    # ``"upload"`` for tarball imports. Drives the frontend's read-only
+    # treatment of upload projects.
+    source: str = "remote"
     created_at: str
     updated_at: str
 

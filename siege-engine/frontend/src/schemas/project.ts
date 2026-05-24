@@ -11,6 +11,10 @@ export const ProjectSchema = z.object({
   // `.optional()` keeps backward-compat with the small number of test
   // fixtures that don't bother setting it.
   auto_push_enabled: z.boolean().optional(),
+  // 'remote' for the GitHub-clone create flow, 'upload' for tarball
+  // imports. `.optional()` keeps backward-compat with test fixtures
+  // and any pre-b25_project_source-migration response shape.
+  source: z.enum(['remote', 'upload']).optional(),
   created_at: z.string(),
   updated_at: z.string(),
 });

@@ -25,6 +25,10 @@ class Project(Base):
     github_repo_slug: Mapped[str | None] = mapped_column(String(200), nullable=True)
     git_repo_path: Mapped[str] = mapped_column(String(500), nullable=False)
     auto_push_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # ``"remote"`` (the GitHub-remote create flow) or ``"upload"`` (the
+    # tarball-import create flow). Drives ``is_writable`` — uploads
+    # have no remote to push to.
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="remote")
     # Free-form per-project preferences (generation timeouts, model
     # overrides, etc.). See backend.projects.settings for the typed
     # view and default values. ``None`` means "no overrides".
@@ -37,3 +41,8 @@ class Project(Base):
     input_documents: Mapped[list["InputDocument"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+
+    @property
+    def is_writable(self) -> bool:
+        """True for projects with a remote we can push to — i.e. not uploads."""
+        return self.source == "remote"

@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,8 @@ from backend.git_manager.service import git_manager
 from backend.github.service import GitHubService
 from backend.models import GitHubCredential, Project, User
 from backend.projects import service
+from backend.projects.import_service import ImportError as ProjectImportError
+from backend.projects.import_service import import_project
 from backend.projects.schemas import (
     ProjectClone,
     ProjectCreate,
@@ -33,9 +35,21 @@ def _project_to_dict(project: Project) -> dict:
         "github_repo_slug": project.github_repo_slug,
         "auto_push_enabled": project.auto_push_enabled,
         "git_repo_path": project.git_repo_path,
+        "source": project.source,
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
     }
+
+
+_UPLOAD_READ_ONLY = (
+    "Project is read-only (imported via upload); the GitHub writer endpoints don't apply."
+)
+
+
+def _require_writable(project: Project) -> None:
+    """Reject writer requests against upload-imported projects."""
+    if not project.is_writable:
+        raise HTTPException(400, _UPLOAD_READ_ONLY)
 
 
 @router.get("/", response_model=list[ProjectResponse])
@@ -61,6 +75,33 @@ def create_project(
         remote_url=req.remote_url,
         github_repo_slug=req.github_repo_slug,
     )
+    return _project_to_dict(project)
+
+
+@router.post("/import", response_model=ProjectResponse, status_code=201)
+def import_project_endpoint(
+    name: str = Form(...),
+    description: str | None = Form(None),
+    artifacts_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Create a project from an uploaded tarball/zip of an existing repo.
+
+    The archive must contain a ``.git/`` at the root and a v3 substrate
+    (``state/``, ``ids/``). The resulting project is read-only — see
+    ``_require_writable``.
+    """
+    try:
+        project = import_project(
+            db,
+            name,
+            description,
+            artifacts_file.file,
+            filename=artifacts_file.filename,
+        )
+    except ProjectImportError as exc:
+        raise HTTPException(400, str(exc)) from exc
     return _project_to_dict(project)
 
 
@@ -187,6 +228,7 @@ def set_remote(
     project = db.get(Project, project_id)
     if not project:
         raise HTTPException(404, "Project not found")
+    _require_writable(project)
 
     project.remote_url = req.remote_url
     project.github_repo_slug = req.github_repo_slug
@@ -210,6 +252,7 @@ def push_project(
     project = db.get(Project, project_id)
     if not project or not project.remote_url:
         raise HTTPException(400, "Project has no remote configured")
+    _require_writable(project)
 
     # Build one-time auth URL (never persisted in .git/config)
     cred = db.query(GitHubCredential).filter_by(user_id=user.id).first()
@@ -234,6 +277,7 @@ async def open_pr(
     project = db.get(Project, project_id)
     if not project or not project.github_repo_slug:
         raise HTTPException(400, "Project has no GitHub repo configured")
+    _require_writable(project)
 
     cred = db.query(GitHubCredential).filter_by(user_id=user.id).first()
     if not cred:
