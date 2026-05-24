@@ -43,11 +43,32 @@ export function describeApiError(err: unknown, fallback: string): string {
   }
 
   // Some backends return structured validation errors as arrays.
-  // Render the first entry so the user sees *something*.
+  // FastAPI 422 detail is ``[{loc, msg, type}, …]``: surface the
+  // first few with their field names so the user can tell which
+  // input is missing, not just *that* something is.
   if (Array.isArray(detail) && detail.length > 0) {
-    const first = detail[0];
-    if (typeof first === 'object' && first !== null && 'msg' in first) {
-      return `${fallback}: ${(first as { msg: string }).msg}`;
+    const rendered = detail
+      .slice(0, 3)
+      .map((entry) => {
+        if (typeof entry !== 'object' || entry === null || !('msg' in entry)) return null;
+        const v = entry as { loc?: unknown[]; msg?: unknown };
+        const msg = typeof v.msg === 'string' ? v.msg : '';
+        if (!msg) return null;
+        // ``loc`` is like ``['body', 'name']`` or ``['body', 'artifacts_file']``.
+        // Drop the wrapper segments — the user doesn't care that it's
+        // "body" — and keep the field name.
+        const loc = Array.isArray(v.loc)
+          ? v.loc
+              .filter((p) => p !== 'body' && p !== 'query' && p !== 'path' && p !== '__root__')
+              .join('.')
+          : '';
+        return loc ? `${loc}: ${msg}` : msg;
+      })
+      .filter((s): s is string => Boolean(s));
+    if (rendered.length > 0) {
+      const status = e.response?.status;
+      const joined = rendered.join('; ');
+      return status ? `${fallback}: ${status} ${joined}` : `${fallback}: ${joined}`;
     }
   }
 
