@@ -27,7 +27,6 @@ import configparser
 import logging
 import shutil
 import subprocess
-import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -39,11 +38,9 @@ from backend.config import settings as backend_settings
 from backend.models import Project
 from siege.git_view import local_view
 from siege.projection.graph import build_project_graph
+from siege.sample_project import build as build_sample_project
 
 logger = logging.getLogger(__name__)
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_SAMPLE_GENERATOR = _REPO_ROOT / "scripts" / "make_sample_project.py"
 
 # Defense-in-depth cap on uncompressed extraction. Real v3 substrates
 # (bodies + state JSON + identity ledgers + .git/) are at most a few MB;
@@ -127,16 +124,15 @@ def create_sample_project(
     repo_path = Path(backend_settings.git_repos_base_path) / project.id
     try:
         repo_path.parent.mkdir(parents=True, exist_ok=True)
+        # In-process call — the generator was a subprocess originally,
+        # but the script's ``from siege.cli import …`` fails in the
+        # deployed container because /app is on the server's sys.path
+        # but not on a subprocess-invoked script's. Calling the library
+        # function directly side-steps that and is faster anyway.
         try:
-            subprocess.run(
-                [sys.executable, str(_SAMPLE_GENERATOR), str(repo_path)],
-                check=True,
-                capture_output=True,
-                cwd=_REPO_ROOT,
-            )
-        except subprocess.CalledProcessError as exc:
-            stderr = exc.stderr.decode("utf-8", "replace").strip()
-            raise ImportError(f"Sample-project generator failed: {stderr or exc}") from exc
+            build_sample_project(repo_path)
+        except (ValueError, RuntimeError, subprocess.CalledProcessError) as exc:
+            raise ImportError(f"Sample-project generator failed: {exc}") from exc
         return _finalize_repo(db, project, repo_path)
     except Exception:
         _rollback(db, project, repo_path)
