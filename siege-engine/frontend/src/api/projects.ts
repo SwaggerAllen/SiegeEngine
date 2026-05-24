@@ -33,6 +33,21 @@ export async function createProject(
   return ProjectSchema.parse(data);
 }
 
+export async function importProject(
+  name: string,
+  description: string | null,
+  file: File,
+): Promise<Project> {
+  const form = new FormData();
+  form.append('name', name);
+  if (description) form.append('description', description);
+  form.append('artifacts_file', file);
+  // Axios sets the multipart boundary automatically when handed a
+  // FormData; do not override the Content-Type header.
+  const { data } = await api.post('/projects/import', form);
+  return ProjectSchema.parse(data);
+}
+
 export async function updateProject(
   id: string,
   updates: { name?: string; description?: string }
