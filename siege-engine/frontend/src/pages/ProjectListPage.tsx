@@ -56,12 +56,26 @@ export function ProjectListPage() {
                 className="bg-gray-800 rounded-lg p-5 border border-gray-700 hover:border-gray-500 cursor-pointer transition"
                 onClick={() => navigate(`/projects/${project.id}`)}
               >
-                <h3 className="font-semibold text-lg mb-1">{project.name}</h3>
+                <h3 className="font-semibold text-lg mb-1">
+                  {project.name}
+                  {project.source === 'upload' && (
+                    <span className="ml-2 inline-block px-1.5 py-0.5 rounded text-xs bg-gray-700 text-gray-300 align-middle">
+                      upload
+                    </span>
+                  )}
+                </h3>
                 <p className="text-gray-400 text-sm mb-3 line-clamp-2">
                   {project.description || 'No description'}
                 </p>
                 <div className="flex items-center justify-end text-xs text-gray-500">
                   <div className="flex gap-3">
+                    <Link
+                      to={`/projects/${project.id}/v3-graph`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-blue-400 hover:text-blue-300"
+                    >
+                      v3 graph
+                    </Link>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
