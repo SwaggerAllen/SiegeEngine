@@ -219,7 +219,8 @@ def _build_v3_substrate(
             key=lambda n: n.display_order,
         )
         frags = [
-            f for f in fragments_by_owner.get(comp.id, [])
+            f
+            for f in fragments_by_owner.get(comp.id, [])
             if f.fragment_kind in _COMPARCH_FRAGMENT_KINDS
         ]
         if not subs and not frags:
@@ -227,8 +228,7 @@ def _build_v3_substrate(
             continue
         body = _build_comparch_body(subs, frags)
         sub_manifest_nodes = [
-            {"id": sub.id, "alias": _synth_subcomp_alias(sub.id, i)}
-            for i, sub in enumerate(subs)
+            {"id": sub.id, "alias": _synth_subcomp_alias(sub.id, i)} for i, sub in enumerate(subs)
         ]
         _write_substrate(
             repo_path,
@@ -371,9 +371,7 @@ def _init_repo(repo_path: Path) -> None:
 
 
 def _git_commit(repo_path: Path, message: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(repo_path), "add", "-A"], check=True, capture_output=True
-    )
+    subprocess.run(["git", "-C", str(repo_path), "add", "-A"], check=True, capture_output=True)
     subprocess.run(
         ["git", "-C", str(repo_path), "commit", "-q", "-m", message],
         check=True,
