@@ -117,11 +117,21 @@ def _extract(stream: IO[bytes], dest: Path, filename: str | None) -> None:
 
 
 def _extract_tar(stream: IO[bytes], dest: Path) -> None:
-    total = 0
+    # Defensive — Starlette's UploadFile may or may not have its
+    # underlying file at position 0 by the time the route handler runs.
     try:
-        tf = tarfile.open(fileobj=stream, mode="r|*")
+        stream.seek(0)
+    except (OSError, AttributeError):
+        pass
+    try:
+        # ``r:*`` (seekable, transparent compression) is more robust
+        # than the streaming ``r|*`` variant — random-access reads on
+        # the SpooledTemporaryFile underlying UploadFile, auto-detects
+        # gz / bz2 / xz from the file magic.
+        tf = tarfile.open(fileobj=stream, mode="r:*")
     except tarfile.TarError as exc:
-        raise ImportError(f"Not a valid tar archive: {exc}") from exc
+        raise ImportError(_tar_open_error_msg(stream, exc)) from exc
+    total = 0
     try:
         for member in tf:
             _check_member(member.name, member.issym(), member.islnk(), member.size)
@@ -134,6 +144,43 @@ def _extract_tar(stream: IO[bytes], dest: Path) -> None:
             tf.extract(member, dest)
     finally:
         tf.close()
+
+
+def _tar_open_error_msg(stream: IO[bytes], exc: tarfile.TarError) -> str:
+    """Build a diagnosable error for a failed ``tarfile.open``.
+
+    Surfaces the first few bytes (so we can tell gzip vs zip vs random
+    junk) and the byte length, since the bare ``invalid header`` from
+    tarfile gives the user no clue what they actually uploaded.
+    """
+    head_hex = ""
+    size_hint = ""
+    try:
+        stream.seek(0)
+        head = stream.read(8) or b""
+        head_hex = head.hex()
+    except (OSError, AttributeError):
+        pass
+    try:
+        stream.seek(0, 2)
+        size_hint = f", {stream.tell()} bytes"
+    except (OSError, AttributeError):
+        pass
+    finally:
+        try:
+            stream.seek(0)
+        except (OSError, AttributeError):
+            pass
+    hint = ""
+    if head_hex.startswith("504b"):
+        hint = " — looks like a zip; rename the upload to .zip."
+    elif head_hex.startswith("1f8b"):
+        hint = " — gzip magic is correct, so the inner tar is malformed."
+    logger.warning("tar open failed: %s; head=0x%s%s", exc, head_hex, size_hint)
+    return (
+        f"Not a valid tar archive: {exc}. First bytes: 0x{head_hex or '<unreadable>'}"
+        f"{size_hint}.{hint}"
+    )
 
 
 def _extract_zip(stream: IO[bytes], dest: Path) -> None:

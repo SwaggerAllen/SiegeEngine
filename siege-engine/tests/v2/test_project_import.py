@@ -264,6 +264,27 @@ def test_import_rejects_no_git_dir(tmp_path, monkeypatch, engine_and_factory):
     assert ".git" in r.text
 
 
+def test_import_rejects_corrupted_tarball_with_diagnostic_bytes(
+    tmp_path, monkeypatch, engine_and_factory
+):
+    """Garbage bytes uploaded under a tar filename → 400 whose message
+    includes the actual first-bytes magic so the user can tell what they
+    sent (e.g. a download served with Content-Encoding: gzip that the
+    browser quietly decompressed)."""
+    _, factory = engine_and_factory
+    _redirect_base_path(monkeypatch, tmp_path)
+    junk = tmp_path / "junk.tgz"
+    junk.write_bytes(b"<!doctype html><html><body>Not a tarball.</body></html>")
+
+    r = _post_import(factory, junk)
+    assert r.status_code == 400
+    body = r.text.lower()
+    assert "not a valid tar archive" in body
+    # The HTML magic '3c21' (b'<!') shows up in the diagnostic so we
+    # know what was actually uploaded.
+    assert "0x3c21" in body or "first bytes" in body
+
+
 def test_writer_endpoints_refuse_upload_project(tmp_path, monkeypatch, engine_and_factory, db):
     """An imported project rejects /remote, /push, /open-pr with 400."""
     _, factory = engine_and_factory
