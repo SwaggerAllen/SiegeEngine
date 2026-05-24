@@ -264,6 +264,46 @@ def test_import_rejects_no_git_dir(tmp_path, monkeypatch, engine_and_factory):
     assert ".git" in r.text
 
 
+def test_from_sample_creates_a_readable_v3_project(tmp_path, monkeypatch, engine_and_factory):
+    """The /from-sample endpoint runs the in-repo generator server-side
+    and lands a project the graph projection can read — the dashboard's
+    "easy button" path that skips the tarball round-trip entirely."""
+    _, factory = engine_and_factory
+    base = _redirect_base_path(monkeypatch, tmp_path)
+
+    def _override_db():
+        s = factory()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[get_current_user] = _override_user_admin
+    app.dependency_overrides[_require_writer] = _override_user_admin
+    try:
+        client = TestClient(app)
+        r = client.post(
+            "/api/projects/from-sample",
+            json={"name": "Sample", "description": "smoke"},
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["source"] == "upload"
+        assert body["remote_url"] is None
+
+        repo_path = base / body["id"]
+        assert (repo_path / ".git").is_dir()
+        from siege.git_view import local_view
+        from siege.projection.graph import build_project_graph
+
+        graph = build_project_graph(local_view(repo_path, ref="main"))
+        kinds = {n["kind"] for n in graph["nodes"]}
+        assert "feature" in kinds and "component" in kinds
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_import_rejects_corrupted_tarball_with_diagnostic_bytes(
     tmp_path, monkeypatch, engine_and_factory
 ):

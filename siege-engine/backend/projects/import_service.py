@@ -13,6 +13,12 @@ substrate. The Project row carries ``source="upload"`` and
 The unpack is strict: per-entry traversal / symlink checks, an
 aggregate size cap. Failures roll back the on-disk dir and the
 Project row, so a rejected upload leaves no trace.
+
+The companion :func:`create_sample_project` reuses the same
+finalize path to materialize a project from the in-repo sample
+generator (``scripts/make_sample_project.py``) — the dashboard's
+"Use sample project" button feeds the same downstream machinery
+without going through a network round-trip.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ import configparser
 import logging
 import shutil
 import subprocess
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -34,6 +41,9 @@ from siege.git_view import local_view
 from siege.projection.graph import build_project_graph
 
 logger = logging.getLogger(__name__)
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_SAMPLE_GENERATOR = _REPO_ROOT / "scripts" / "make_sample_project.py"
 
 # Defense-in-depth cap on uncompressed extraction. Real v3 substrates
 # (bodies + state JSON + identity ledgers + .git/) are at most a few MB;
@@ -82,23 +92,79 @@ def import_project(
                 "Tar your project directory (`tar -czf out.tgz <project>/`) so .git/ is included."
             )
         _sanitize_repo(repo_path)
-        _ensure_main_branch(repo_path)
-        _validate_substrate(repo_path)
-        project.git_repo_path = str(repo_path)
-        db.commit()
-        db.refresh(project)
-        return project
+        return _finalize_repo(db, project, repo_path)
     except Exception:
-        # Roll back the on-disk dir and the Project row together.
-        shutil.rmtree(repo_path, ignore_errors=True)
-        db.rollback()
-        # Project was only flushed, not committed — rollback drops it
-        # from the session. Belt-and-braces: explicit delete if it's
-        # still present (some session configs may persist it).
-        if project in db:
-            db.delete(project)
-            db.commit()
+        _rollback(db, project, repo_path)
         raise
+
+
+def create_sample_project(
+    db: Session,
+    name: str,
+    description: str | None = None,
+) -> Project:
+    """Materialize the built-in sample v3 project as a read-only Project.
+
+    Runs ``scripts/make_sample_project.py`` as a subprocess so the
+    generator's stdout / git invocations don't share state with the
+    request handler. The result is a Project row with
+    ``source="upload"`` (the read-only writer-guard treatment) pointed
+    at a freshly drafted v3 substrate under
+    ``${git_repos_base_path}/<project_id>/``. The "easy button" the
+    upload flow turned out to need.
+    """
+    project = Project(
+        name=name,
+        description=description,
+        remote_url=None,
+        github_repo_slug=None,
+        auto_push_enabled=False,
+        source="upload",
+        git_repo_path="",
+    )
+    db.add(project)
+    db.flush()
+    repo_path = Path(backend_settings.git_repos_base_path) / project.id
+    try:
+        repo_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            subprocess.run(
+                [sys.executable, str(_SAMPLE_GENERATOR), str(repo_path)],
+                check=True,
+                capture_output=True,
+                cwd=_REPO_ROOT,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = exc.stderr.decode("utf-8", "replace").strip()
+            raise ImportError(f"Sample-project generator failed: {stderr or exc}") from exc
+        return _finalize_repo(db, project, repo_path)
+    except Exception:
+        _rollback(db, project, repo_path)
+        raise
+
+
+def _finalize_repo(db: Session, project: Project, repo_path: Path) -> Project:
+    """Common tail of both import paths — pin the default branch, run
+    the v3 projection as a structural check, commit the Project row."""
+    _ensure_main_branch(repo_path)
+    _validate_substrate(repo_path)
+    project.git_repo_path = str(repo_path)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def _rollback(db: Session, project: Project, repo_path: Path) -> None:
+    """Undo a failed import — rmtree the on-disk dir, drop the Project
+    row. Both paths share this so a failure leaves no half-state."""
+    shutil.rmtree(repo_path, ignore_errors=True)
+    db.rollback()
+    # Project was only flushed, not committed — rollback drops it from
+    # the session. Belt-and-braces: explicit delete if it's still
+    # present (some session configs may persist it).
+    if project in db:
+        db.delete(project)
+        db.commit()
 
 
 # ---------------- extraction ----------------

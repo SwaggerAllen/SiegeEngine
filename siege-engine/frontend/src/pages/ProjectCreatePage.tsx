@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   useCreateProject,
-  useImportProject,
+  useCreateSampleProject,
 } from '../hooks/mutations/useProjectMutations';
 import { describeApiError } from '../lib/describeApiError';
 
@@ -18,33 +18,21 @@ function deriveGithubSlug(url: string): string | null {
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
-// Match the backend's _MAX_EXTRACTED_BYTES so the user gets a fast
-// client-side reject instead of waiting on the upload + a 400.
-const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-
-function looksLikeArchive(name: string): boolean {
-  const n = name.toLowerCase();
-  return n.endsWith('.tar') || n.endsWith('.tar.gz') || n.endsWith('.tgz') || n.endsWith('.zip');
-}
-
-type Mode = 'remote' | 'upload';
-
 export function ProjectCreatePage() {
   const createProjectMutation = useCreateProject();
-  const importProjectMutation = useImportProject();
+  const createSampleMutation = useCreateSampleProject();
   const navigate = useNavigate();
-  const [mode, setMode] = useState<Mode>('remote');
+  const [useSample, setUseSample] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [content, setContent] = useState('');
   const [remoteUrl, setRemoteUrl] = useState('');
-  const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState('');
 
   const derivedSlug = deriveGithubSlug(remoteUrl);
   const remoteLooksWrong = remoteUrl.trim().length > 0 && !derivedSlug;
   const isSubmitting =
-    createProjectMutation.isPending || importProjectMutation.isPending;
+    createProjectMutation.isPending || createSampleMutation.isPending;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,7 +42,13 @@ export function ProjectCreatePage() {
     }
     setError('');
     try {
-      if (mode === 'remote') {
+      if (useSample) {
+        const project = await createSampleMutation.mutateAsync({
+          name,
+          description: description || null,
+        });
+        navigate(`/projects/${project.id}`);
+      } else {
         if (!content.trim()) {
           setError('Project document is required');
           return;
@@ -74,27 +68,6 @@ export function ProjectCreatePage() {
           githubRepoSlug: derivedSlug,
         });
         navigate(`/projects/${project.id}`);
-      } else {
-        if (!file) {
-          setError('Choose a tarball or zip to upload.');
-          return;
-        }
-        if (!looksLikeArchive(file.name)) {
-          setError('Upload must be a .tar / .tar.gz / .tgz / .zip archive.');
-          return;
-        }
-        if (file.size > MAX_UPLOAD_BYTES) {
-          setError(
-            `Archive is larger than the ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB limit.`,
-          );
-          return;
-        }
-        const project = await importProjectMutation.mutateAsync({
-          name,
-          description: description || null,
-          file,
-        });
-        navigate(`/projects/${project.id}`);
       }
     } catch (err: unknown) {
       setError(describeApiError(err, 'Failed to create project'));
@@ -111,39 +84,6 @@ export function ProjectCreatePage() {
 
       <main className="max-w-3xl mx-auto px-6 py-8">
         <h2 className="text-2xl font-semibold mb-6">New Project</h2>
-
-        <div
-          role="tablist"
-          aria-label="Create-project source"
-          className="inline-flex rounded border border-gray-600 overflow-hidden mb-6"
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'remote'}
-            onClick={() => setMode('remote')}
-            className={`px-4 py-2 text-sm ${
-              mode === 'remote'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-            }`}
-          >
-            GitHub URL
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'upload'}
-            onClick={() => setMode('upload')}
-            className={`px-4 py-2 text-sm border-l border-gray-600 ${
-              mode === 'upload'
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-            }`}
-          >
-            Upload artifacts
-          </button>
-        </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
@@ -172,7 +112,27 @@ export function ProjectCreatePage() {
             />
           </div>
 
-          {mode === 'remote' ? (
+          <div className="rounded border border-gray-700 bg-gray-800/50 px-3 py-2">
+            <label htmlFor="use-sample" className="flex items-start gap-2 text-sm text-gray-200">
+              <input
+                id="use-sample"
+                type="checkbox"
+                checked={useSample}
+                onChange={(e) => setUseSample(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Use the built-in sample project (read-only test data).{' '}
+                <span className="text-gray-400">
+                  Server-side runs <code>scripts/make_sample_project.py</code> to
+                  materialize a small v3 substrate — handy for verifying the read
+                  endpoints without standing up a real project.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          {!useSample && (
             <>
               <div>
                 <label className="block text-sm text-gray-300 mb-1">
@@ -218,26 +178,6 @@ export function ProjectCreatePage() {
                 />
               </div>
             </>
-          ) : (
-            <div>
-              <label htmlFor="project-archive" className="block text-sm text-gray-300 mb-1">
-                Project archive
-              </label>
-              <input
-                id="project-archive"
-                type="file"
-                accept=".tar,.tar.gz,.tgz,.zip"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                className="w-full text-sm text-gray-300 file:mr-3 file:rounded file:border-0 file:bg-gray-700 file:px-3 file:py-2 file:text-sm file:text-white hover:file:bg-gray-600"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Tar your project directory <em>including</em> <code>.git/</code> and
-                upload it (<code>tar -czf out.tgz &lt;project&gt;/</code>). The substrate
-                under <code>state/</code> + <code>ids/</code> must be present at HEAD. The
-                resulting project is read-only — the GitHub writer endpoints don't apply,
-                but the dashboard's read projections render normally.
-              </p>
-            </div>
           )}
 
           {error && <p className="text-red-400 text-sm">{error}</p>}
@@ -249,11 +189,11 @@ export function ProjectCreatePage() {
               className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded font-medium disabled:opacity-50"
             >
               {isSubmitting
-                ? mode === 'upload'
-                  ? 'Uploading...'
+                ? useSample
+                  ? 'Generating sample...'
                   : 'Creating...'
-                : mode === 'upload'
-                  ? 'Import Project'
+                : useSample
+                  ? 'Create Sample Project'
                   : 'Create Project'}
             </button>
             <Link

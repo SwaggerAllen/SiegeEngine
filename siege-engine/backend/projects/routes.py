@@ -11,7 +11,7 @@ from backend.github.service import GitHubService
 from backend.models import GitHubCredential, Project, User
 from backend.projects import service
 from backend.projects.import_service import ImportError as ProjectImportError
-from backend.projects.import_service import import_project
+from backend.projects.import_service import create_sample_project, import_project
 from backend.projects.schemas import (
     ProjectClone,
     ProjectCreate,
@@ -90,7 +90,9 @@ def import_project_endpoint(
 
     The archive must contain a ``.git/`` at the root and a v3 substrate
     (``state/``, ``ids/``). The resulting project is read-only — see
-    ``_require_writable``.
+    ``_require_writable``. Not surfaced in the dashboard UI today
+    (``/from-sample`` covers the actual verification use case); the
+    endpoint stays available for CLI / scripted use.
     """
     try:
         project = import_project(
@@ -100,6 +102,30 @@ def import_project_endpoint(
             artifacts_file.file,
             filename=artifacts_file.filename,
         )
+    except ProjectImportError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _project_to_dict(project)
+
+
+class CreateSampleRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+@router.post("/from-sample", response_model=ProjectResponse, status_code=201)
+def create_sample_project_endpoint(
+    req: CreateSampleRequest,
+    db: Session = Depends(get_db),
+    _user: User = Depends(_require_writer),
+):
+    """Materialize the built-in sample v3 project as a read-only Project.
+
+    Runs ``scripts/make_sample_project.py`` server-side so the dashboard
+    has a real substrate to read against without anyone uploading
+    anything. The resulting project is read-only — see ``_require_writable``.
+    """
+    try:
+        project = create_sample_project(db, req.name, req.description)
     except ProjectImportError as exc:
         raise HTTPException(400, str(exc)) from exc
     return _project_to_dict(project)

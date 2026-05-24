@@ -38,6 +38,18 @@ export function useImportProject() {
   });
 }
 
+export function useCreateSampleProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['projects', 'sample'],
+    mutationFn: (params: { name: string; description: string | null }) =>
+      projectApi.createSampleProject(params.name, params.description),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+    },
+  });
+}
+
 export function useDeleteProject() {
   const queryClient = useQueryClient();
   return useMutation({
