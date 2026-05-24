@@ -66,6 +66,32 @@ export async function createSampleProject(
   return ProjectSchema.parse(data);
 }
 
+export interface MigrationReport {
+  project: Project;
+  feat_count: number;
+  resp_count: number;
+  comp_count: number;
+  decomposed_comp_count: number;
+  subcomp_count: number;
+  dependency_edges: number;
+  domain_parent_edges: number;
+  skipped_tiers: string[];
+  warnings: string[];
+}
+
+export async function migrateProjectToV3(
+  legacyProjectId: string,
+  newName?: string | null,
+): Promise<MigrationReport> {
+  const { data } = await api.post(`/projects/${legacyProjectId}/migrate-to-v3`, {
+    name: newName ?? null,
+  });
+  return {
+    ...data,
+    project: ProjectSchema.parse(data.project),
+  } as MigrationReport;
+}
+
 export async function updateProject(
   id: string,
   updates: { name?: string; description?: string }

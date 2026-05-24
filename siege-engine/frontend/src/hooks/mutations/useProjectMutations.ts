@@ -50,6 +50,18 @@ export function useCreateSampleProject() {
   });
 }
 
+export function useMigrateProjectToV3() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: ['projects', 'migrate-v3'],
+    mutationFn: (params: { legacyProjectId: string; newName?: string | null }) =>
+      projectApi.migrateProjectToV3(params.legacyProjectId, params.newName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
+    },
+  });
+}
+
 export function useDeleteProject() {
   const queryClient = useQueryClient();
   return useMutation({

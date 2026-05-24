@@ -11,6 +11,10 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      '/siege': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
       '/healthz': {
         target: 'http://localhost:8000',
         changeOrigin: true,

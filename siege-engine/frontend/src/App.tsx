@@ -8,6 +8,7 @@ import { ProjectListPage } from './pages/ProjectListPage';
 import { ProjectCreatePage } from './pages/ProjectCreatePage';
 import { ProjectWorkspacePage } from './pages/ProjectWorkspacePage';
 import { ProjectSettingsPage } from './pages/ProjectSettingsPage';
+import { ProjectV3GraphPage } from './pages/ProjectV3GraphPage';
 import { ReviewBatchPage } from './pages/ReviewBatchPage';
 import {
   RedirectComponentComparch,
@@ -93,6 +94,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <ProjectSettingsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:id/v3-graph"
+          element={
+            <ProtectedRoute>
+              <ProjectV3GraphPage />
             </ProtectedRoute>
           }
         />
