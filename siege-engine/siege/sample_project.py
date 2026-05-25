@@ -88,7 +88,13 @@ console.
 </features>
 """
 
-_SYSARCH_BODY = """\
+
+def _sysarch_body(resp: dict[str, str]) -> str:
+    """Build the sysarch body with per-component <responsibilities>
+    blocks. The resp_* ids come from the requirements ledger so the
+    v3 graph projection emits resp → comp decomposition edges that
+    actually resolve."""
+    return f"""\
 ## project_techspec
 
 Python 3.11 on FastAPI, PostgreSQL via SQLAlchemy. Opaque server-side
@@ -96,9 +102,22 @@ session tokens; bcrypt credential hashing.
 
 <components>
   <component alias="foundation"><name>Foundation</name><foundation/></component>
-  <component alias="auth"><name>Auth Service</name></component>
-  <component alias="billing"><name>Billing Service</name></component>
-  <component alias="ui_billing"><name>Billing Console</name></component>
+  <component alias="auth"><name>Auth Service</name>
+    <responsibilities>
+      <resp id="{resp["Authentication"]}"/>
+    </responsibilities>
+  </component>
+  <component alias="billing"><name>Billing Service</name>
+    <responsibilities>
+      <resp id="{resp["Billing Lifecycle"]}"/>
+      <resp id="{resp["Audit Trail"]}"/>
+    </responsibilities>
+  </component>
+  <component alias="ui_billing"><name>Billing Console</name>
+    <responsibilities>
+      <resp id="{resp["Billing Lifecycle"]}"/>
+    </responsibilities>
+  </component>
 </components>
 <dependencies>
   <dep from="auth" to="foundation"/>
@@ -109,6 +128,7 @@ session tokens; bcrypt credential hashing.
   <parent from="ui_billing" to="billing"/>
 </domain-parent>
 """
+
 
 _COMPARCH_BODIES = {
     "auth": """\
@@ -176,9 +196,13 @@ def build(dest: Path) -> None:
     # requirements — its <feat> refs must be the minted feat ids.
     _write_body(dest, "requirements/proj/body.md", _requirements_body(feat))
     _draft(dest, "requirements", "proj", "requirements/proj/body.md")
+    resp = _ledger_ids(dest, "requirements", "proj", "name")
 
-    # sysarch — mints the comp_* ledger, declares the edges.
-    _write_body(dest, "sysarch/proj/body.md", _SYSARCH_BODY)
+    # sysarch — mints the comp_* ledger, declares the edges. The
+    # per-component <responsibilities> blocks reference resp_* ids
+    # from the ledger so the v3 graph projection emits resp → comp
+    # decomposition edges.
+    _write_body(dest, "sysarch/proj/body.md", _sysarch_body(resp))
     _draft(dest, "sysarch", "proj", "sysarch/proj/body.md")
     comp = _ledger_ids(dest, "sysarch", "proj", "alias")
 
