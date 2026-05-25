@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { DagCanvas } from '../components/graph/DagCanvas';
 import { topLevelElements } from '../components/graph/elements';
@@ -108,6 +108,8 @@ function Diagnostics({ data }: { data: ProjectGraph }) {
     () => topLevelElements(adapted.nodes, adapted.edges),
     [adapted.nodes, adapted.edges],
   );
+  const { id: projectId } = useParams<{ id: string }>();
+  const { data: project } = useProject(projectId ?? '');
 
   const adaptedTierCounts = useMemo(
     () => countBy(adapted.nodes, (n) => n.tier),
@@ -138,8 +140,34 @@ function Diagnostics({ data }: { data: ProjectGraph }) {
     return out;
   }, [elements]);
 
+  const report = useMemo(
+    () =>
+      buildReport({
+        project,
+        projectId: projectId ?? '',
+        data,
+        adapted,
+        elementTypeCounts,
+        adaptedTierCounts,
+        adaptedKindCounts,
+        adaptedEdgeCounts,
+      }),
+    [
+      project,
+      projectId,
+      data,
+      adapted,
+      elementTypeCounts,
+      adaptedTierCounts,
+      adaptedKindCounts,
+      adaptedEdgeCounts,
+    ],
+  );
+
   return (
     <div className="space-y-5">
+      <CopyButton report={report} />
+
       <section className="rounded border border-gray-700 bg-gray-800/50 p-4 text-sm">
         <h2 className="text-base font-semibold mb-2">Pipeline counts</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
@@ -348,6 +376,136 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
 
 function Th({ children }: { children: React.ReactNode }) {
   return <th className="text-left px-3 py-2 font-medium">{children}</th>;
+}
+
+function CopyButton({ report }: { report: string }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'error'>('idle');
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(report);
+      setState('copied');
+    } catch {
+      setState('error');
+    }
+    setTimeout(() => setState('idle'), 1500);
+  };
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={onCopy}
+        className="px-3 py-1.5 text-sm rounded border border-gray-600 bg-gray-800 hover:bg-gray-700"
+      >
+        {state === 'copied' ? 'Copied!' : state === 'error' ? 'Copy failed' : 'Copy diagnostics'}
+      </button>
+      <span className="text-xs text-gray-500">
+        Pastable markdown report — project info + pipeline counts + every v3 node + edge.
+      </span>
+    </div>
+  );
+}
+
+interface ReportInputs {
+  project: { id: string; name: string; source?: string } | undefined;
+  projectId: string;
+  data: ProjectGraph;
+  adapted: { nodes: { id: string; tier: string; kind: string; parent_id: string | null }[]; edges: { edge_type: string }[] };
+  elementTypeCounts: Record<string, number>;
+  adaptedTierCounts: Record<string, number>;
+  adaptedKindCounts: Record<string, number>;
+  adaptedEdgeCounts: Record<string, number>;
+}
+
+function buildReport(inp: ReportInputs): string {
+  const { project, projectId, data, adapted, elementTypeCounts } = inp;
+  const lines: string[] = [];
+
+  lines.push(`# v3 diagnostics — ${project?.name ?? '(project not found)'}`);
+  lines.push('');
+  lines.push(`project_id: ${projectId}`);
+  lines.push(`source: ${project?.source ?? '(missing)'}`);
+  lines.push(`ref: ${data.ref} @ ${data.ref_head_sha.slice(0, 8)}`);
+  lines.push('');
+
+  lines.push('## Pipeline counts');
+  lines.push(`- v3 nodes:      ${data.nodes.length}`);
+  lines.push(`- v3 edges:      ${data.edges.length}`);
+  lines.push(`- adapted nodes: ${adapted.nodes.length}`);
+  lines.push(`- adapted edges: ${adapted.edges.length}`);
+  lines.push(`- emitted nodes: ${elementTypeCounts.node ?? 0}`);
+  lines.push(`- emitted edges: ${elementTypeCounts.edge ?? 0}`);
+  lines.push('');
+
+  lines.push('## Adapted distributions');
+  lines.push(`- tier:  ${fmtKv(inp.adaptedTierCounts)}`);
+  lines.push(`- kind:  ${fmtKv(inp.adaptedKindCounts)}`);
+  lines.push(`- edges: ${fmtKv(inp.adaptedEdgeCounts)}`);
+  lines.push('');
+
+  lines.push('## topLevelElements emitted types');
+  const emitTypes = Object.entries(elementTypeCounts).filter(([k]) => k.includes(':'));
+  if (emitTypes.length === 0) {
+    lines.push('(none)');
+  } else {
+    for (const [k, v] of emitTypes.sort()) lines.push(`- ${k}: ${v}`);
+  }
+  lines.push('');
+
+  const warning =
+    adapted.nodes.length > 0 && (elementTypeCounts.node ?? 0) === 0
+      ? `⚠ Adapter has ${adapted.nodes.length} nodes but topLevelElements emitted zero — check tier mapping + parent_id alignment.`
+      : null;
+  if (warning) {
+    lines.push('## Warnings');
+    lines.push(warning);
+    lines.push('');
+  }
+
+  lines.push('## v3 nodes');
+  lines.push('| id | tier | kind | parent_id | name | status | flags |');
+  lines.push('|----|------|------|-----------|------|--------|-------|');
+  for (const n of data.nodes) {
+    const flags = [n.is_foundation && 'foundation', n.implicit && 'implicit']
+      .filter(Boolean)
+      .join(',') || '-';
+    lines.push(
+      `| ${n.id} | ${n.tier} | ${n.kind} | ${n.parent_id ?? '-'} | ${escapeMd(n.name)} | ${n.status} | ${flags} |`,
+    );
+  }
+  lines.push('');
+
+  lines.push('## v3 edges');
+  if (data.edges.length === 0) {
+    lines.push('(none)');
+  } else {
+    lines.push('| type | source | target |');
+    lines.push('|------|--------|--------|');
+    for (const e of data.edges) {
+      lines.push(`| ${e.type} | ${e.source_id} | ${e.target_id} |`);
+    }
+  }
+  lines.push('');
+
+  lines.push('## Adapted nodes (post-v3ToLegacyStructure)');
+  lines.push('| id | tier | kind | parent_id |');
+  lines.push('|----|------|------|-----------|');
+  for (const n of adapted.nodes) {
+    lines.push(`| ${n.id} | ${n.tier} | ${n.kind} | ${n.parent_id ?? '-'} |`);
+  }
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+function fmtKv(map: Record<string, number>): string {
+  const entries = Object.entries(map);
+  return entries.length ? entries.map(([k, v]) => `${k}=${v}`).join(', ') : '(none)';
+}
+
+function escapeMd(s: string): string {
+  // Pipes break markdown tables; backslash-escape them. Names are
+  // short free-form text, no other risky chars in practice.
+  return s.replace(/\|/g, '\\|');
 }
 
 function Td({
