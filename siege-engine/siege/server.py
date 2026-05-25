@@ -110,6 +110,13 @@ class ListBatchesRequest(BaseModel):
     status: str | None = None
 
 
+class ListPropagationsRequest(BaseModel):
+    project_id: str
+    ref: str
+    # "open" | "complete" | None (no filter).
+    status: str | None = None
+
+
 class ValidateArtifactRequest(BaseModel):
     project_id: str
     ref: str
@@ -342,6 +349,14 @@ def http_list_batches(
     _claims: dict[str, Any] = Depends(_require_token),
 ) -> dict[str, Any]:
     return tools.list_batches(req.project_id, req.ref, status=req.status)
+
+
+@app.post("/api/list-propagations")
+def http_list_propagations(
+    req: ListPropagationsRequest,
+    _claims: dict[str, Any] = Depends(_require_token),
+) -> dict[str, Any]:
+    return tools.list_propagations(req.project_id, req.ref, status=req.status)
 
 
 @app.post("/api/validate-artifact")

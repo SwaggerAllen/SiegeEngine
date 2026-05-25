@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -189,6 +190,27 @@ class State:
 def now_iso() -> str:
     """UTC ISO-8601 with seconds precision."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ULID is overkill for the v0 idempotency cache. A 26-char base32
+# secret has the same effective collision resistance.
+_NONCE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
+
+
+def mint_nonce() -> str:
+    """Mint a fresh 26-char base32 nonce used as a state-rev marker
+    and as the suffix on minted ids (``batch_<nonce>`` / ``prop_<nonce>``).
+
+    Lives in ``state`` (not ``cli``) so non-CLI modules can mint ids
+    without pulling the writer-side CLI's stdlib-only surface back as
+    a dependency.
+    """
+    n = secrets.randbits(128)
+    chars: list[str] = []
+    for _ in range(26):
+        chars.append(_NONCE_ALPHABET[n & 0x1F])
+        n >>= 5
+    return "".join(reversed(chars))
 
 
 def sha256_bytes(data: bytes) -> str:

@@ -32,9 +32,17 @@ worst 5:
   ...
 ```
 
-3. End with a one-line gate read: "next action: <suggestion>" — e.g.
+3. **Surface open propagations.** Run `python3 -m siege.cli list-propagations --status open`. For each open record, render one line: `propagation_id` + `op_type` + `counts.pending`/`counts.in_progress`/`counts.done`/`counts.skipped`. Users in the middle of an iteration loop want this at a glance — drained=N of M tells them whether to resume `/regen_below` (still pending entries) or pick up the next campaign.
+
+```
+=== open propagations ===
+prop_XXX (regen_below_threshold, comparch): 4 pending, 1 in_progress, 7 done, 0 skipped
+```
+
+4. End with a one-line gate read: "next action: <suggestion>" — e.g.
    "run /run_tier comparch" if everything upstream is approved and
-   comparch has absent scopes.
+   comparch has absent scopes, or "resume prop_XXX" if a propagation
+   has pending entries.
 
 ## Output
 

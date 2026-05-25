@@ -288,6 +288,38 @@ def list_batches(project_id: str, ref: str, status: str | None = None) -> dict[s
     }
 
 
+def list_propagations(project_id: str, ref: str, status: str | None = None) -> dict[str, Any]:
+    """List propagation records, optionally filtered by rolled-up status.
+
+    The dashboard renders this on the ``/status`` flow so the user can
+    see open iteration loops without grepping the repo. Same direct-
+    tree-read pattern as ``list_batches`` — propagations live at
+    ``state/propagations/<id>.json``.
+    """
+    import json as _json
+
+    from siege.propagation import dump_propagation, load_propagation
+
+    view = _open_view(project_id, ref)
+    out: list[dict[str, Any]] = []
+    for path in view.clone.ls_tree(view.head_sha, "state/propagations/"):
+        if not path.endswith(".json"):
+            continue
+        try:
+            data = _json.loads(view.clone.show_blob(view.head_sha, path).decode("utf-8"))
+            prop = load_propagation(data)
+        except Exception:  # noqa: BLE001 — skip malformed
+            continue
+        if status and prop.status != status:
+            continue
+        out.append(dump_propagation(prop))
+    return {
+        "ref": view.ref,
+        "ref_head_sha": view.head_sha,
+        "propagations": out,
+    }
+
+
 def validate_artifact(
     project_id: str,
     ref: str,
