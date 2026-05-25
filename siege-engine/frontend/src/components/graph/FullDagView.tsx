@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useProjectStructure } from '../../hooks/queries/useProjectStructure';
+import { useStructureForViz } from '../../hooks/queries/useStructureForViz';
 import { DagCanvas } from './DagCanvas';
 import { topLevelElements } from './elements';
 import { fullDagStylesheet } from './stylesheet';
@@ -36,7 +36,7 @@ interface Props {
  */
 export function FullDagView({ projectId }: Props) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { data, isLoading, error } = useProjectStructure(projectId);
+  const { data, isLoading, error } = useStructureForViz(projectId);
 
   const elements = useMemo(() => {
     if (!data) return [];
