@@ -7,7 +7,7 @@ import { NavTree } from '../components/nav/NavTree';
 import { TabStrip } from '../components/nav/TabStrip';
 import { tabScope, type Tab } from '../components/nav/tabScope';
 import { useProject } from '../hooks/queries/useProjectQueries';
-import { useProjectStructure } from '../hooks/queries/useProjectStructure';
+import { useStructureForViz } from '../hooks/queries/useStructureForViz';
 import { useOpenReviewBatchMutation } from '../hooks/queries/useReviewBatch';
 import { describeApiError } from '../lib/describeApiError';
 
@@ -47,7 +47,7 @@ function WorkspaceShell({ projectId }: { projectId: string }) {
   const view = searchParams.get('view');
 
   const { data: project, error: projectError } = useProject(projectId);
-  const { data: structure, error: navError } = useProjectStructure(projectId);
+  const { data: structure, error: navError } = useStructureForViz(projectId);
   const openReviewMutation = useOpenReviewBatchMutation(projectId);
 
   // Phase 3 migration: SSE event stream removed. Dashboard now
