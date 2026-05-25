@@ -14,6 +14,10 @@
  *   comparch→comp. The comparch sub-nodes still carry parent_id, so
  *   the topLevelElements filter on ``isTopLevel(n)`` excludes them
  *   from the main DAG view.
+ * - Policy nodes (v3 ``kind='policy'``) map to legacy ``tier='policy'``
+ *   so the DAG's existing ``policy-top`` styling + layer pinning
+ *   picks them up, and the sidebar's ``tier === 'comp'`` filter
+ *   doesn't drag them into the Components list.
  * - kind: 'domain' by default; any comp that is the *source* of a
  *   domain_parent edge is marked 'presentational' (mirrors the legacy
  *   sysarch_mint convention).
@@ -31,9 +35,22 @@ const TIER_MAP: Record<string, string> = {
 };
 
 function adaptNode(v3: V3Node, presentationalIds: Set<string>): StructureNode {
-  const tier = TIER_MAP[v3.tier] ?? v3.tier;
+  // The synthetic project-sysarch root is emitted by the v3
+  // projection but doesn't fit the per-substrate tier→legacy mapping;
+  // render it as a top-of-DAG comp so FullDagView's topLevelElements
+  // picks it up and it lands in the same band as the real comp-tops.
+  // Policies share the sysarch tier on the v3 side but the DAG +
+  // sidebar treat them as their own legacy tier ('policy').
+  let tier: string;
+  if (v3.kind === 'sysarch_root') tier = 'comp';
+  else if (v3.kind === 'policy') tier = 'policy';
+  else tier = TIER_MAP[v3.tier] ?? v3.tier;
   const kind =
-    tier === 'comp' && presentationalIds.has(v3.id) ? 'presentational' : 'domain';
+    v3.kind === 'policy'
+      ? 'policy'
+      : tier === 'comp' && presentationalIds.has(v3.id)
+        ? 'presentational'
+        : 'domain';
   return {
     id: v3.id,
     tier,

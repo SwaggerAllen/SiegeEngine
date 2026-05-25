@@ -151,6 +151,34 @@ describe('v3ToLegacyStructure', () => {
     ]);
   });
 
+  it("maps policy nodes to legacy tier='policy' with kind='policy'", () => {
+    // The v3 projection emits policies under tier='sysarch' with
+    // kind='policy'; the legacy taxonomy treats them as their own
+    // tier so the DAG's policy-top styling + sidebar's comp filter
+    // both behave correctly.
+    const out = v3ToLegacyStructure(
+      graph({
+        nodes: [
+          {
+            id: 'policy_audit',
+            tier: 'sysarch',
+            kind: 'policy',
+            name: 'Audit Every Privileged Action',
+            parent_id: null,
+            order: 0,
+            is_foundation: false,
+            implicit: false,
+            status: 'approved',
+            score: null,
+            has_body: false,
+          },
+        ],
+      }),
+    );
+    expect(out.nodes[0].tier).toBe('policy');
+    expect(out.nodes[0].kind).toBe('policy');
+  });
+
   it('fills the lifecycle defaults v3 nodes do not carry', () => {
     const out = v3ToLegacyStructure(
       graph({
