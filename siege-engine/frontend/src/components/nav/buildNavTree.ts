@@ -97,6 +97,15 @@ export const SYNTHETIC_IDS = {
   EDIT_FEAT_RESP: ':edit-feat-resp',
   EDIT_RESP_COMP: ':edit-resp-comp',
   COMPONENTS_ROOT: ':components',
+  // Upload-imported projects don't have legacy substrate-root nodes
+  // (tier='expansion'/'reqs'/'sysarch' rows in the SQL store) — the
+  // v3 adapter only emits per-item nodes (feat/resp/comp). These
+  // synthetic ids stand in for the substrate-root entries so the
+  // sidebar still has the "Feature Expansion / Requirements / Sysarch"
+  // landings; NavDetail routes them to a read-only overview panel.
+  FEATURE_EXPANSION: ':feature-expansion',
+  REQUIREMENTS: ':requirements',
+  SYSARCH: ':sysarch',
 } as const;
 
 const EMPTY_STATUS = {
@@ -183,39 +192,72 @@ export function buildNavTree(
 ): NavItem[] {
   const items: NavItem[] = [];
 
+  // Substrate-root entries. Legacy projects expose them as real
+  // backend nodes (tier='expansion' / 'reqs' / 'sysarch'); upload
+  // projects don't (the v3 adapter emits per-item nodes only), so
+  // we fall back to a synthetic entry that routes to a read-only
+  // overview panel. Either way the sidebar has the same three
+  // top-of-tree landings.
   const expansion = singleNode(nodes, (n) => n.tier === 'expansion');
-  if (expansion) {
-    items.push({
-      id: expansion.id,
-      label: 'Feature Expansion',
-      node: expansion,
-      role: 'expansion',
-      children: [],
-      status: statusFor(expansion),
-    });
-  }
+  items.push(
+    expansion
+      ? {
+          id: expansion.id,
+          label: 'Feature Expansion',
+          node: expansion,
+          role: 'expansion',
+          children: [],
+          status: statusFor(expansion),
+        }
+      : {
+          id: SYNTHETIC_IDS.FEATURE_EXPANSION,
+          label: 'Feature Expansion',
+          node: null,
+          role: 'expansion',
+          children: [],
+          status: { ...EMPTY_STATUS },
+        },
+  );
   const reqs = singleNode(nodes, (n) => n.tier === 'reqs');
-  if (reqs) {
-    items.push({
-      id: reqs.id,
-      label: 'Requirements',
-      node: reqs,
-      role: 'reqs',
-      children: [],
-      status: statusFor(reqs),
-    });
-  }
+  items.push(
+    reqs
+      ? {
+          id: reqs.id,
+          label: 'Requirements',
+          node: reqs,
+          role: 'reqs',
+          children: [],
+          status: statusFor(reqs),
+        }
+      : {
+          id: SYNTHETIC_IDS.REQUIREMENTS,
+          label: 'Requirements',
+          node: null,
+          role: 'reqs',
+          children: [],
+          status: { ...EMPTY_STATUS },
+        },
+  );
   const sysarch = singleNode(nodes, (n) => n.tier === 'sysarch');
-  if (sysarch) {
-    items.push({
-      id: sysarch.id,
-      label: 'Sysarch',
-      node: sysarch,
-      role: 'sysarch',
-      children: [],
-      status: statusFor(sysarch),
-    });
-  }
+  items.push(
+    sysarch
+      ? {
+          id: sysarch.id,
+          label: 'Sysarch',
+          node: sysarch,
+          role: 'sysarch',
+          children: [],
+          status: statusFor(sysarch),
+        }
+      : {
+          id: SYNTHETIC_IDS.SYSARCH,
+          label: 'Sysarch',
+          node: null,
+          role: 'sysarch',
+          children: [],
+          status: { ...EMPTY_STATUS },
+        },
+  );
 
   items.push({
     id: SYNTHETIC_IDS.VOCABULARY,

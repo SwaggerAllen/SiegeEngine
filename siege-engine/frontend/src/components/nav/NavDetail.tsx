@@ -25,6 +25,7 @@ import { TierOpsPanel } from '../TierOpsPanel';
 import { ReferencesList } from '../ReferencesList';
 import { RequirementsPanel } from '../RequirementsPanel';
 import { SubcomparchPanel } from '../SubcomparchPanel';
+import { SubstrateOverviewPanel } from '../SubstrateOverviewPanel';
 import { SysarchPanel } from '../SysarchPanel';
 import { VocabularyList } from '../VocabularyList';
 import { DecompositionEditorPanel } from '../editors/DecompositionEditorPanel';
@@ -160,6 +161,23 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
   }
   if (selectedId === SYNTHETIC_IDS.EDIT_ROOT) {
     return <EditorComingSoon id={selectedId} />;
+  }
+  if (
+    selectedId === SYNTHETIC_IDS.FEATURE_EXPANSION ||
+    selectedId === SYNTHETIC_IDS.REQUIREMENTS ||
+    selectedId === SYNTHETIC_IDS.SYSARCH
+  ) {
+    // Upload-imported projects: synthetic substrate-root entries.
+    // The rich editor panels (FeatureExpansionPanel / etc.) need a
+    // backing legacy node + its tier endpoints, neither of which
+    // exist here — render the read-only per-item overview instead.
+    return (
+      <SubstrateOverviewPanel
+        projectId={projectId}
+        substrateId={selectedId}
+        nodes={nodes}
+      />
+    );
   }
 
   const node = nodes.find((n) => n.id === selectedId) ?? null;

@@ -36,10 +36,17 @@ function n(
 }
 
 describe('buildNavTree', () => {
-  it('returns only synthetic entries when nodes are empty', () => {
+  it('falls back to synthetic substrate-root entries when none exist', () => {
+    // Upload-imported projects skip the legacy substrate-root rows
+    // (the v3 adapter doesn't emit them) — the tree still surfaces
+    // "Feature Expansion / Requirements / Sysarch" landings via
+    // synthetic ids that route to a read-only overview panel.
     const items = buildNavTree([]);
     const ids = items.map((i) => i.id);
     expect(ids).toEqual([
+      SYNTHETIC_IDS.FEATURE_EXPANSION,
+      SYNTHETIC_IDS.REQUIREMENTS,
+      SYNTHETIC_IDS.SYSARCH,
       SYNTHETIC_IDS.VOCABULARY,
       SYNTHETIC_IDS.REFERENCES,
       SYNTHETIC_IDS.DAG,
@@ -52,7 +59,7 @@ describe('buildNavTree', () => {
     ]);
   });
 
-  it('places singleton tiers above synthetic entries', () => {
+  it('prefers real substrate-root nodes over the synthetic fallbacks', () => {
     const items = buildNavTree([
       n('expansion_1', 'expansion', null),
       n('reqs_1', 'reqs', null),
@@ -128,6 +135,19 @@ describe('buildNavTree', () => {
   it('skips the components root when no top-level comps exist', () => {
     const items = buildNavTree([n('expansion_1', 'expansion', null)]);
     expect(items.find((i) => i.id === SYNTHETIC_IDS.COMPONENTS_ROOT)).toBeUndefined();
+  });
+
+  it('mixes real and synthetic substrate roots based on what is present', () => {
+    // Partial substrate (only sysarch_1 from legacy): the missing
+    // expansion / reqs slots fall back to their synthetic ids; the
+    // present sysarch row keeps its real id.
+    const items = buildNavTree([n('sysarch_1', 'sysarch', null)]);
+    const ids = items.map((i) => i.id);
+    expect(ids.slice(0, 3)).toEqual([
+      SYNTHETIC_IDS.FEATURE_EXPANSION,
+      SYNTHETIC_IDS.REQUIREMENTS,
+      'sysarch_1',
+    ]);
   });
 
   it('rolls up descendant-pending and descendant-running flags', () => {
