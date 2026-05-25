@@ -1,4 +1,7 @@
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import * as siegeApi from '../api/siege';
+import type { BodyScope } from '../api/siege';
 import type { StructureNode } from '../api/structure';
 import { SYNTHETIC_IDS } from './nav/buildNavTree';
 
@@ -18,16 +21,19 @@ const CONFIG = {
     label: 'Feature Expansion',
     itemLabel: 'feature',
     matches: (n: StructureNode) => n.tier === 'feat',
+    bodyScope: { tier: 'feature_expansion', comp_id: 'proj' } as BodyScope,
   },
   [SYNTHETIC_IDS.REQUIREMENTS]: {
     label: 'Requirements',
     itemLabel: 'responsibility',
     matches: (n: StructureNode) => n.tier === 'resp',
+    bodyScope: { tier: 'requirements', comp_id: 'proj' } as BodyScope,
   },
   [SYNTHETIC_IDS.SYSARCH]: {
     label: 'Sysarch',
     itemLabel: 'component',
     matches: (n: StructureNode) => n.tier === 'comp' && n.parent_id === null,
+    bodyScope: { tier: 'sysarch', comp_id: 'proj' } as BodyScope,
   },
 } as const;
 
@@ -50,10 +56,14 @@ export function SubstrateOverviewPanel({ projectId, substrateId, nodes }: Props)
     .filter(config.matches)
     .slice()
     .sort((a, b) => a.display_order - b.display_order);
+  const body = useQuery({
+    queryKey: ['v3-body', projectId, config.bodyScope],
+    queryFn: () => siegeApi.getBody(projectId, config.bodyScope),
+  });
 
   return (
     <div
-      className="h-full overflow-auto p-4 space-y-3"
+      className="h-full overflow-auto p-4 space-y-4"
       data-testid={`substrate-overview-${substrateId}`}
     >
       <header className="space-y-1">
@@ -92,6 +102,27 @@ export function SubstrateOverviewPanel({ projectId, substrateId, nodes }: Props)
           ))}
         </ul>
       )}
+      <section className="space-y-1">
+        <h3 className="text-sm font-semibold text-gray-200">Substrate body</h3>
+        {body.data?.body_path && (
+          <p className="font-mono text-[11px] text-gray-600">
+            {body.data.body_path}
+          </p>
+        )}
+        {body.isLoading && (
+          <p className="text-xs text-gray-500 italic">Loading body…</p>
+        )}
+        {body.data && !body.isLoading && !body.data.found && (
+          <p className="text-xs text-gray-500 italic">
+            No body drafted for this substrate yet.
+          </p>
+        )}
+        {body.data && body.data.found && (
+          <pre className="whitespace-pre-wrap break-words rounded border border-gray-800 bg-gray-950/60 p-3 text-xs text-gray-200 font-mono leading-relaxed">
+            {body.data.body_text}
+          </pre>
+        )}
+      </section>
     </div>
   );
 }

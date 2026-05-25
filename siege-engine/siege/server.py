@@ -237,6 +237,22 @@ def http_get_state(
     )
 
 
+@app.post("/api/get-body")
+def http_get_body(
+    req: ScopeRef,
+    _claims: dict[str, Any] = Depends(_require_token),
+) -> dict[str, Any]:
+    return tools.get_body(
+        req.project_id,
+        req.ref,
+        req.tier,  # type: ignore[arg-type]
+        comp_id=req.comp_id,
+        parent_id=req.parent_id,
+        sub_id=req.sub_id,
+        phase=req.phase,
+    )
+
+
 @app.post("/api/list-tier")
 def http_list_tier(
     req: ListTierRequest,

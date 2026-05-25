@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { StructureNode } from '../api/structure';
-import { useProjectStructure } from '../hooks/queries/useProjectStructure';
+import { useStructureForViz } from '../hooks/queries/useStructureForViz';
 
 interface Props {
   projectId: string;
@@ -24,7 +24,7 @@ interface CompRef {
  * topology before kicking off comparch.
  */
 export function ComponentOverviewPanel({ projectId, component }: Props) {
-  const { data: structure } = useProjectStructure(projectId);
+  const { data: structure } = useStructureForViz(projectId);
 
   const relations = useMemo(() => {
     if (!structure) {

@@ -99,6 +99,59 @@ def get_state(
     return payload
 
 
+def get_body(
+    project_id: str,
+    ref: str,
+    tier: Tier,
+    comp_id: str | None = None,
+    parent_id: str | None = None,
+    sub_id: str | None = None,
+    phase: int | None = None,
+) -> dict[str, Any]:
+    """Read-only body fetcher: resolves the scope's state, reads the
+    body file off the substrate, returns ``{ref, ref_head_sha,
+    body_path, body_text, found}``.
+
+    The dashboard's source-aware read panels (``V3BodyPanel``) call
+    this when ``project.source == "upload"`` so the workspace shows
+    the substrate's actual artifact instead of falling back to the
+    legacy SQL endpoints (which don't have rows for upload projects).
+
+    ``found`` is ``False`` when the scope has no state, no draft, or
+    the body file is unreadable — callers render an explanatory blank
+    instead of an error.
+    """
+    view = _open_view(project_id, ref)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase)
+    state = view.get_state(scope)
+    if state is None or state.draft is None:
+        return {
+            "ref": view.ref,
+            "ref_head_sha": view.head_sha,
+            "found": False,
+            "body_path": None,
+            "body_text": "",
+        }
+    body_path = state.draft.body_path
+    try:
+        body_text = view.read_body_text(body_path)
+    except Exception:  # noqa: BLE001 — body missing on disk → found False
+        return {
+            "ref": view.ref,
+            "ref_head_sha": view.head_sha,
+            "found": False,
+            "body_path": body_path,
+            "body_text": "",
+        }
+    return {
+        "ref": view.ref,
+        "ref_head_sha": view.head_sha,
+        "found": True,
+        "body_path": body_path,
+        "body_text": body_text,
+    }
+
+
 def list_tier(
     project_id: str,
     ref: str,
