@@ -27,8 +27,8 @@ vi.mock('./DagCanvas', () => ({
 }));
 
 const mockedStructure = vi.fn();
-vi.mock('../../hooks/queries/useProjectStructure', () => ({
-  useProjectStructure: () => mockedStructure(),
+vi.mock('../../hooks/queries/useStructureForViz', () => ({
+  useStructureForViz: () => mockedStructure(),
 }));
 
 import { FullDagView } from './FullDagView';
