@@ -1,21 +1,35 @@
+import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { DagCanvas } from '../components/graph/DagCanvas';
+import { topLevelElements } from '../components/graph/elements';
+import { fullDagStylesheet } from '../components/graph/stylesheet';
 import { useProjectGraph } from '../hooks/queries/useProjectGraph';
 import { useProject } from '../hooks/queries/useProjectQueries';
 import { describeApiError } from '../lib/describeApiError';
+import { v3ToLegacyStructure } from '../lib/v3ToLegacyStructure';
+import type { ProjectGraph, V3Edge, V3Node } from '../api/siege';
 
 /**
- * Read-only viewer for the new /siege/api/get-project-graph projection.
+ * Diagnostics page for the v3 read pipeline.
  *
- * The dashboard's main project page still reads from the legacy SQL
- * backend, which is empty for upload-imported projects. This page is
- * the bridge: hits the new endpoint directly so the v3 substrate
- * actually shows up in the UI. Surfaces the same {nodes, edges} shape
- * the future graph viz will consume, plus a raw-JSON dump for poking.
+ * Hits the same ``/siege/api/get-project-graph`` endpoint
+ * ``useStructureForViz`` does for upload projects, then walks the
+ * data through every transform in the FullDagView pipeline so a "DAG
+ * is empty" failure can be localized to a specific step:
+ *
+ *  1. Project lookup — does ``useProject`` return ``source: "upload"``?
+ *  2. v3 graph response — what does ``build_project_graph`` actually return?
+ *  3. Adapter — does ``v3ToLegacyStructure`` produce legacy-shape nodes?
+ *  4. ``topLevelElements`` — how many cytoscape elements get emitted?
+ *  5. ``DagCanvas`` — does the canvas render them?
+ *
+ * Each step's row count is shown; if a step's count drops to zero we
+ * know where the data falls off.
  */
 export function ProjectV3GraphPage() {
   const { id } = useParams<{ id: string }>();
   const projectId = id ?? '';
-  const { data: project } = useProject(projectId);
+  const { data: project, isLoading: projectLoading } = useProject(projectId);
   const { data, isLoading, error } = useProjectGraph(projectId);
 
   return (
@@ -25,99 +39,182 @@ export function ProjectV3GraphPage() {
           &larr; Back to project
         </Link>
         <span className="text-gray-500">/</span>
-        <span className="text-sm">v3 graph projection</span>
+        <span className="text-sm">v3 pipeline diagnostics</span>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-8 space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold">{project?.name ?? '…'}</h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Read-only view from <code>/siege/api/get-project-graph</code>. The dashboard's main
-            project page reads from the legacy backend (empty for upload-imported projects); this
-            page reads from the git substrate directly.
-          </p>
-        </div>
+      <main className="max-w-6xl mx-auto px-6 py-6 space-y-5">
+        <ProjectBanner
+          project={project}
+          projectLoading={projectLoading}
+          projectId={projectId}
+        />
 
-        {isLoading && <p className="text-gray-400">Loading…</p>}
+        {isLoading && <p className="text-gray-400">Loading graph…</p>}
         {error != null && (
           <p className="text-red-400 text-sm">{describeApiError(error, 'Failed to load graph')}</p>
         )}
-        {data && <GraphView data={data} />}
+        {data && <Diagnostics data={data} />}
       </main>
     </div>
   );
 }
 
-function GraphView({
-  data,
+function ProjectBanner({
+  project,
+  projectLoading,
+  projectId,
 }: {
-  data: { ref: string; ref_head_sha: string; nodes: V3Node[]; edges: V3Edge[] };
+  project: { id: string; name: string; source?: string } | undefined;
+  projectLoading: boolean;
+  projectId: string;
 }) {
-  const kindCounts = data.nodes.reduce<Record<string, number>>((acc, n) => {
-    acc[n.kind] = (acc[n.kind] ?? 0) + 1;
-    return acc;
-  }, {});
-  const edgeTypeCounts = data.edges.reduce<Record<string, number>>((acc, e) => {
-    acc[e.type] = (acc[e.type] ?? 0) + 1;
-    return acc;
-  }, {});
+  return (
+    <section className="rounded border border-gray-700 bg-gray-800/50 p-4 text-sm">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Stat label="Project" value={projectLoading ? '…' : (project?.name ?? '— not found —')} />
+        <Stat label="ID" value={<span className="font-mono text-xs">{projectId}</span>} />
+        <Stat
+          label="source"
+          value={
+            project?.source ? (
+              <SourcePill source={project.source} />
+            ) : projectLoading ? (
+              '…'
+            ) : (
+              <span className="text-amber-400">(missing — useStructureForViz will use legacy)</span>
+            )
+          }
+        />
+        <Stat
+          label="Branch"
+          value={
+            project?.source === 'upload' ? (
+              <span className="text-green-300">v3 (this page = same path)</span>
+            ) : project?.source ? (
+              <span className="text-blue-300">legacy SQL (this page bypasses to v3)</span>
+            ) : (
+              '…'
+            )
+          }
+        />
+      </div>
+    </section>
+  );
+}
+
+function Diagnostics({ data }: { data: ProjectGraph }) {
+  const adapted = useMemo(() => v3ToLegacyStructure(data), [data]);
+  const elements = useMemo(
+    () => topLevelElements(adapted.nodes, adapted.edges),
+    [adapted.nodes, adapted.edges],
+  );
+
+  const adaptedTierCounts = useMemo(
+    () => countBy(adapted.nodes, (n) => n.tier),
+    [adapted.nodes],
+  );
+  const adaptedKindCounts = useMemo(
+    () => countBy(adapted.nodes, (n) => n.kind),
+    [adapted.nodes],
+  );
+  const adaptedEdgeCounts = useMemo(
+    () => countBy(adapted.edges, (e) => e.edge_type),
+    [adapted.edges],
+  );
+  const elementTypeCounts = useMemo(() => {
+    const out: Record<string, number> = { node: 0, edge: 0 };
+    for (const el of elements) {
+      const d = el.data as { type?: string; source?: string; target?: string };
+      if (d.source && d.target) {
+        out.edge += 1;
+        const t = d['type'];
+        if (t) out[`edge:${t}`] = (out[`edge:${t}`] ?? 0) + 1;
+      } else {
+        out.node += 1;
+        const t = d.type ?? 'unknown';
+        out[`node:${t}`] = (out[`node:${t}`] ?? 0) + 1;
+      }
+    }
+    return out;
+  }, [elements]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <section className="rounded border border-gray-700 bg-gray-800/50 p-4 text-sm">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Stat label="Ref" value={`${data.ref} @ ${data.ref_head_sha.slice(0, 8)}`} />
-          <Stat label="Nodes" value={String(data.nodes.length)} />
-          <Stat label="Edges" value={String(data.edges.length)} />
+        <h2 className="text-base font-semibold mb-2">Pipeline counts</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          <Stat label="1 — v3 nodes" value={String(data.nodes.length)} />
+          <Stat label="1 — v3 edges" value={String(data.edges.length)} />
+          <Stat label="2 — adapted nodes" value={String(adapted.nodes.length)} />
+          <Stat label="2 — adapted edges" value={String(adapted.edges.length)} />
           <Stat
-            label="Kinds"
-            value={
-              Object.entries(kindCounts)
-                .map(([k, n]) => `${k}: ${n}`)
-                .join(', ') || '—'
-            }
+            label="3 — topLevelElements"
+            value={`${elementTypeCounts.node} nodes + ${elementTypeCounts.edge} edges`}
+          />
+          <Stat label="ref" value={`${data.ref} @ ${data.ref_head_sha.slice(0, 8)}`} />
+        </div>
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-gray-300">
+          <KvLine label="Adapted tier" map={adaptedTierCounts} />
+          <KvLine label="Adapted kind" map={adaptedKindCounts} />
+          <KvLine label="Adapted edges" map={adaptedEdgeCounts} />
+        </div>
+        <div className="mt-3 text-xs text-gray-300">
+          <KvLine
+            label="Emitted element types"
+            map={Object.fromEntries(
+              Object.entries(elementTypeCounts).filter(([k]) => k.includes(':')),
+            )}
           />
         </div>
-        <div className="mt-3 text-xs text-gray-400">
-          edges:{' '}
-          {Object.entries(edgeTypeCounts)
-            .map(([t, n]) => `${t}: ${n}`)
-            .join(', ') || '—'}
+        {adapted.nodes.length > 0 && elementTypeCounts.node === 0 && (
+          <p className="mt-3 text-amber-300 text-xs">
+            ⚠ Adapter produced {adapted.nodes.length} nodes but topLevelElements emitted zero —
+            check tier mapping (feat/resp/comp top-level expected) and parent_id (top-level resp /
+            comp must have parent_id=null).
+          </p>
+        )}
+      </section>
+
+      <section>
+        <h2 className="text-base font-semibold mb-2">DAG render</h2>
+        <p className="text-xs text-gray-400 mb-2">
+          The same DagCanvas the workspace's FullDagView mounts, fed from this page's adapted data.
+          If this renders correctly the v3 pipeline is fine and any "empty graph" on the workspace
+          page is upstream of FullDagView.
+        </p>
+        <div className="h-[600px] rounded border border-gray-700 bg-gray-950">
+          {elements.length > 0 ? (
+            <DagCanvas elements={elements} stylesheet={fullDagStylesheet} />
+          ) : (
+            <div className="h-full flex items-center justify-center text-sm text-gray-500">
+              topLevelElements is empty — nothing for cytoscape to draw.
+            </div>
+          )}
         </div>
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold mb-2">Nodes</h2>
+        <h2 className="text-base font-semibold mb-2">Adapted nodes (post-v3ToLegacyStructure)</h2>
         <div className="overflow-x-auto rounded border border-gray-700">
           <table className="w-full text-sm">
             <thead className="bg-gray-800 text-gray-300">
               <tr>
                 <Th>name</Th>
-                <Th>kind</Th>
                 <Th>tier</Th>
+                <Th>kind</Th>
                 <Th>parent</Th>
-                <Th>status</Th>
-                <Th>score</Th>
-                <Th>flags</Th>
+                <Th>has_pending_draft</Th>
                 <Th>id</Th>
               </tr>
             </thead>
             <tbody>
-              {data.nodes.map((n) => (
+              {adapted.nodes.map((n) => (
                 <tr key={n.id} className="border-t border-gray-700/50">
                   <Td>{n.name || <span className="text-gray-500">—</span>}</Td>
+                  <Td>{n.tier}</Td>
                   <Td>{n.kind}</Td>
-                  <Td className="text-xs text-gray-400">{n.tier}</Td>
                   <Td className="text-xs text-gray-400">{n.parent_id ?? '—'}</Td>
-                  <Td>
-                    <StatusPill status={n.status} />
-                  </Td>
-                  <Td>{n.score ?? '—'}</Td>
-                  <Td className="text-xs text-gray-400">
-                    {[n.is_foundation && 'foundation', n.implicit && 'implicit']
-                      .filter(Boolean)
-                      .join(', ') || '—'}
-                  </Td>
+                  <Td>{n.has_pending_draft ? 'true' : 'false'}</Td>
                   <Td className="font-mono text-xs text-gray-400">{n.id}</Td>
                 </tr>
               ))}
@@ -126,29 +223,19 @@ function GraphView({
         </div>
       </section>
 
-      <section>
-        <h2 className="text-lg font-semibold mb-2">Edges</h2>
-        <div className="overflow-x-auto rounded border border-gray-700">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-800 text-gray-300">
-              <tr>
-                <Th>type</Th>
-                <Th>source</Th>
-                <Th>target</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.edges.map((e) => (
-                <tr key={e.id} className="border-t border-gray-700/50">
-                  <Td>{e.type}</Td>
-                  <Td className="font-mono text-xs text-gray-400">{e.source_id}</Td>
-                  <Td className="font-mono text-xs text-gray-400">{e.target_id}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <details className="rounded border border-gray-700 bg-gray-800/30 p-3">
+        <summary className="cursor-pointer text-sm text-gray-300">
+          Raw v3 nodes ({data.nodes.length})
+        </summary>
+        <RawNodesTable nodes={data.nodes} />
+      </details>
+
+      <details className="rounded border border-gray-700 bg-gray-800/30 p-3">
+        <summary className="cursor-pointer text-sm text-gray-300">
+          Raw v3 edges ({data.edges.length})
+        </summary>
+        <RawEdgesTable edges={data.edges} />
+      </details>
 
       <details className="rounded border border-gray-700 bg-gray-800/30 p-3">
         <summary className="cursor-pointer text-sm text-gray-300">Raw JSON</summary>
@@ -160,7 +247,97 @@ function GraphView({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function RawNodesTable({ nodes }: { nodes: V3Node[] }) {
+  return (
+    <div className="overflow-x-auto mt-2">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-800/60 text-gray-300">
+          <tr>
+            <Th>name</Th>
+            <Th>kind</Th>
+            <Th>tier</Th>
+            <Th>parent</Th>
+            <Th>status</Th>
+            <Th>flags</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {nodes.map((n) => (
+            <tr key={n.id} className="border-t border-gray-700/50">
+              <Td>{n.name || <span className="text-gray-500">—</span>}</Td>
+              <Td>{n.kind}</Td>
+              <Td className="text-xs text-gray-400">{n.tier}</Td>
+              <Td className="text-xs text-gray-400">{n.parent_id ?? '—'}</Td>
+              <Td>{n.status}</Td>
+              <Td className="text-xs text-gray-400">
+                {[n.is_foundation && 'foundation', n.implicit && 'implicit']
+                  .filter(Boolean)
+                  .join(', ') || '—'}
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RawEdgesTable({ edges }: { edges: V3Edge[] }) {
+  return (
+    <div className="overflow-x-auto mt-2">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-800/60 text-gray-300">
+          <tr>
+            <Th>type</Th>
+            <Th>source</Th>
+            <Th>target</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {edges.map((e) => (
+            <tr key={e.id} className="border-t border-gray-700/50">
+              <Td>{e.type}</Td>
+              <Td className="font-mono text-xs text-gray-400">{e.source_id}</Td>
+              <Td className="font-mono text-xs text-gray-400">{e.target_id}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function countBy<T>(items: T[], key: (t: T) => string): Record<string, number> {
+  return items.reduce<Record<string, number>>((acc, item) => {
+    const k = key(item);
+    acc[k] = (acc[k] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
+function KvLine({ label, map }: { label: string; map: Record<string, number> }) {
+  const entries = Object.entries(map);
+  return (
+    <div>
+      <div className="text-xs uppercase tracking-wide text-gray-500">{label}</div>
+      <div className="mt-0.5 font-mono text-xs">
+        {entries.length
+          ? entries.map(([k, v]) => `${k}: ${v}`).join(' · ')
+          : <span className="text-gray-500">—</span>}
+      </div>
+    </div>
+  );
+}
+
+function SourcePill({ source }: { source: string }) {
+  const color =
+    source === 'upload' ? 'bg-amber-900/60 text-amber-200' : 'bg-blue-900/60 text-blue-200';
+  return (
+    <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-mono ${color}`}>{source}</span>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <div className="text-xs uppercase tracking-wide text-gray-500">{label}</div>
@@ -182,22 +359,3 @@ function Td({
 }) {
   return <td className={`px-3 py-1.5 ${className}`}>{children}</td>;
 }
-
-function StatusPill({ status }: { status: string }) {
-  const color =
-    status === 'approved'
-      ? 'bg-green-900/60 text-green-200'
-      : status === 'reviewed'
-        ? 'bg-blue-900/60 text-blue-200'
-        : status === 'drafted'
-          ? 'bg-amber-900/60 text-amber-200'
-          : 'bg-gray-700/60 text-gray-300';
-  return (
-    <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${color}`}>{status}</span>
-  );
-}
-
-// Re-export the types here so the file is self-contained; the source
-// of truth still lives in `api/siege.ts`.
-type V3Node = import('../api/siege').V3Node;
-type V3Edge = import('../api/siege').V3Edge;
