@@ -10,12 +10,15 @@ commits. Used by two callers:
   in-process so the deployed server can materialize a substrate
   without needing siege on the subprocess sys.path.
 
-The project: four features, three responsibilities, four top-level
+The project: five features, four responsibilities, four top-level
 components (a foundation, two domains, one presentational) wired with
 dependency + domain-parent edges, and a comparch decomposition for the
-two domain components. The foundation and presentational components
-are left without a comparch on purpose — they project as ``status:
-"absent"`` so the graph shows a realistic mix of lifecycle states.
+two domain components. Every comp (including foundation) owns at
+least one responsibility so the resp → comp decomposition projection
+has something to emit per top-level node. The foundation and
+presentational components are left without a comparch on purpose —
+they project as ``status: "absent"`` so the graph shows a realistic
+mix of lifecycle states.
 """
 
 # The embedded artifact bodies are XML elements kept one-per-line for
@@ -85,6 +88,7 @@ console.
   <feature><name>Subscription Management</name><intent>Customers view their plan and switch between tiers.</intent></feature>
   <feature><name>Payment Collection</name><intent>The platform charges a customer's card each billing cycle.</intent></feature>
   <feature><name>Admin Audit Log</name><intent>Operators review a log of account-affecting actions.</intent><implicit/></feature>
+  <feature><name>Durable Persistence</name><intent>System state survives restarts and disk-level recovery scenarios.</intent><implicit/></feature>
 </features>
 """
 
@@ -101,7 +105,11 @@ Python 3.11 on FastAPI, PostgreSQL via SQLAlchemy. Opaque server-side
 session tokens; bcrypt credential hashing.
 
 <components>
-  <component alias="foundation"><name>Foundation</name><foundation/></component>
+  <component alias="foundation"><name>Foundation</name><foundation/>
+    <responsibilities>
+      <resp id="{resp["Durable Storage Substrate"]}"/>
+    </responsibilities>
+  </component>
   <component alias="auth"><name>Auth Service</name>
     <responsibilities>
       <resp id="{resp["Authentication"]}"/>
@@ -168,6 +176,7 @@ def _requirements_body(feat: dict[str, str]) -> str:
   <responsibility><name>Authentication</name><feats><feat id="{feat["User Login"]}"/></feats></responsibility>
   <responsibility><name>Billing Lifecycle</name><feats><feat id="{feat["Subscription Management"]}"/><feat id="{feat["Payment Collection"]}"/></feats></responsibility>
   <responsibility><name>Audit Trail</name><feats><feat id="{feat["Admin Audit Log"]}"/></feats></responsibility>
+  <responsibility><name>Durable Storage Substrate</name><feats><feat id="{feat["Durable Persistence"]}"/></feats></responsibility>
 </requirements>
 """
 
