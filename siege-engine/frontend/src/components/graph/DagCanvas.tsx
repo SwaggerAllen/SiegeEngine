@@ -106,7 +106,15 @@ export function DagCanvas({
 
   // Apply reachable-set highlight classes whenever the selection
   // (or the element set) changes. Single ``cy.batch`` so the repaint
-  // is a single render pass.
+  // is a single render pass. The trailing ``cy.resize()`` is
+  // defensive — cytoscape sometimes caches a stale container size
+  // (the canvas was 0-width during initial flex layout, latched onto
+  // it, and never re-detected when the parent grew); without the
+  // resize, tapping a node after such a stale-mount renders the
+  // selection state into a 0-width canvas and the DAG appears to
+  // collapse. The ResizeObserver below catches the dimensions
+  // up-front; this resize is the second pass that ensures the canvas
+  // matches reality after every selection-driven repaint.
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -128,7 +136,28 @@ export function DagCanvas({
           e.addClass('dimmed');
       });
     });
+    cy.resize();
   }, [elements, selectedId]);
+
+  // Keep cytoscape's internal canvas dimensions in sync with the
+  // container's actual DOM size. The default behavior is to measure
+  // once at mount and never again — flex-layout containers that
+  // settle their size asynchronously (the workspace's nested
+  // ``flex-1`` columns are a classic case) trip that and the canvas
+  // gets stuck at whatever dimensions were resolved at first paint.
+  // A ResizeObserver on the cy container reads every subsequent box
+  // change and pokes cytoscape to re-measure.
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const container = cy.container();
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      cy.resize();
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [elements]);
 
   // Tier filter: apply ``.hidden`` to nodes whose data.type is in
   // ``hiddenNodeTypes``, then re-run layout so the visible subset
