@@ -31,6 +31,7 @@ Read subcommands (project the committed git tree at ``--ref``, default
     list-propagations         — list state/propagations/<id>.json files
     open-propagation          — write a fresh propagation record
     update-propagation-entry  — flip one worklist entry's status
+    compute-downstream        — preview a top-down worklist from a source scope
 
 The write subcommands keep ``import siege.cli`` pure-stdlib; the read
 subcommands defer their ``siege.projection`` imports (which pull
@@ -389,21 +390,39 @@ def cmd_open_propagation(args: argparse.Namespace) -> int:
     """
     from siege.propagation import (
         WorklistEntry,
+        compute_downstream_worklist,
         new_propagation,
         write_propagation,
     )
 
     repo_root = Path(args.repo).resolve()
-    raw_entries = json.loads(args.worklist_json) if args.worklist_json else []
-    entries = [
-        WorklistEntry(
-            scope=Scope(**e["scope"]),
-            status=str(e.get("status", "pending")),
-            note=e.get("note"),
-        )
-        for e in raw_entries
-    ]
     source_scope = Scope(**json.loads(args.source_scope_json)) if args.source_scope_json else None
+
+    if args.from_source_scope_json:
+        # Compute-and-open shortcut: skip the explicit worklist JSON,
+        # the source-of-truth is the source scope itself. The walk
+        # emits one entry per existing downstream scope. Mutually
+        # exclusive with --worklist-json so the skill doesn't get
+        # confusing about which input wins.
+        if args.worklist_json and args.worklist_json != "[]":
+            raise SystemExit("--from-source-scope-json and --worklist-json are mutually exclusive")
+        from siege.git_view import local_view  # noqa: PLC0415 — keep lazy
+
+        view = local_view(repo_root, "HEAD")
+        compute_source = Scope(**json.loads(args.from_source_scope_json))
+        entries = compute_downstream_worklist(view, compute_source)
+        if source_scope is None:
+            source_scope = compute_source
+    else:
+        raw_entries = json.loads(args.worklist_json) if args.worklist_json else []
+        entries = [
+            WorklistEntry(
+                scope=Scope(**e["scope"]),
+                status=str(e.get("status", "pending")),
+                note=e.get("note"),
+            )
+            for e in raw_entries
+        ]
     meta = json.loads(args.meta_json) if args.meta_json else None
     prop = new_propagation(
         op_type=args.op_type,
@@ -455,6 +474,32 @@ def cmd_update_propagation_entry(args: argparse.Namespace) -> int:
             }
         )
     )
+    return 0
+
+
+def cmd_compute_downstream(args: argparse.Namespace) -> int:
+    """Walk the tier chain top-down from a source scope and print the
+    worklist (one entry per existing downstream scope).
+
+    Standalone read — useful for previewing what an ``open-propagation
+    --from-source-scope-json`` would emit before actually writing the
+    record. Skills can also pipe this into a separate processing step
+    if they want to filter / modify the worklist before opening.
+    """
+    from dataclasses import asdict  # noqa: PLC0415 — keep lazy
+
+    from siege.propagation import compute_downstream_worklist
+
+    view = _open_local_view(args)
+    source = Scope(**json.loads(args.source_scope_json))
+    entries = compute_downstream_worklist(view, source)
+    out = {
+        "ref": view.ref,
+        "ref_head_sha": view.head_sha,
+        "source_scope": asdict(source),
+        "worklist": [{"scope": asdict(e.scope), "status": e.status} for e in entries],
+    }
+    print(json.dumps(out, indent=2))
     return 0
 
 
@@ -905,6 +950,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="[]",
         help="JSON array of {scope: {tier, comp_id?, ...}, status?, note?}",
     )
+    p_op.add_argument(
+        "--from-source-scope-json",
+        dest="from_source_scope_json",
+        default=None,
+        help=(
+            "compute the worklist top-down from this source scope "
+            "(mutually exclusive with --worklist-json). Walks the chain "
+            "feature_expansion → requirements → sysarch → comparch → "
+            "subcomparch → impl and emits one entry per existing "
+            "downstream scope. Fanin is skipped (bottom-up)."
+        ),
+    )
     p_op.add_argument("--tier", default=None, choices=list(ALL_TIERS))
     p_op.add_argument("--threshold", type=int, default=None)
     p_op.add_argument(
@@ -946,6 +1003,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_upd.add_argument("--note", default=None)
     p_upd.set_defaults(func=cmd_update_propagation_entry)
+
+    p_cd = subs.add_parser(
+        "compute-downstream",
+        help="preview the top-down worklist a propagation from this source would carry",
+    )
+    p_cd.add_argument("--repo", default=".")
+    _add_ref_arg(p_cd)
+    p_cd.add_argument(
+        "--source-scope-json",
+        dest="source_scope_json",
+        required=True,
+        help="JSON {tier, comp_id?, parent_id?, sub_id?, phase?}",
+    )
+    p_cd.set_defaults(func=cmd_compute_downstream)
 
     p_lp = subs.add_parser("list-propagations", help="list state/propagations/<id>.json files")
     p_lp.add_argument("--repo", default=".")

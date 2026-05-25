@@ -33,9 +33,12 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from siege.state import Scope, mint_nonce, now_iso
+from siege.state import Scope, Tier, mint_nonce, now_iso
+
+if TYPE_CHECKING:
+    from siege.git_view import GitView
 
 PROPAGATION_SCHEMA_VERSION = 1
 
@@ -257,6 +260,99 @@ def update_entry(
         source_scope=prop.source_scope,
         meta=prop.meta,
     )
+
+
+# ---------------- Top-down worklist computation ----------------
+
+# Top-down tier chain — the natural decomposition order each tier
+# decomposes the previous along. The propagation walk emits one entry
+# per existing scope at every tier strictly downstream of the source.
+#
+# ``fanin`` is **omitted by design**: fanin's staleness path is
+# bottom-up (it synthesizes from impl content), and the cross-tree
+# hop to presentational comparches via ``domain_parent`` rides on
+# fanin recomputation, so both belong to a future bottom-up walk
+# rather than the top-down primitive.
+TOP_DOWN_CHAIN: tuple[Tier, ...] = (
+    "feature_expansion",
+    "requirements",
+    "sysarch",
+    "comparch",
+    "subcomparch",
+    "impl",
+)
+
+_SUBSTRATE_ROOTS: frozenset[str] = frozenset({"feature_expansion", "requirements", "sysarch"})
+
+
+def _is_downstream(target: Scope, source: Scope) -> bool:
+    """True iff ``target`` is in ``source``'s top-down subtree.
+
+    Substrate-root sources (feature_expansion / requirements /
+    sysarch) cover **everything** strictly later in the chain — the
+    substrate roots are singletons-per-project so every other root +
+    every downstream component-tier scope counts.
+
+    A comparch source (``comp_id=X``) is restricted to its own
+    subtree: subcomparches and impls whose ``parent_id == X``. Sibling
+    comparches are out of scope (they're laterally related, not
+    downstream). Substrate roots above are upstream — excluded by the
+    tier-index check first.
+
+    A subcomparch source matches only impls with the same
+    ``(parent_id, sub_id)``. An impl source has no downstream — it's
+    the bottom of the top-down chain.
+    """
+    if target.tier not in TOP_DOWN_CHAIN or source.tier not in TOP_DOWN_CHAIN:
+        return False
+    src_idx = TOP_DOWN_CHAIN.index(source.tier)
+    tgt_idx = TOP_DOWN_CHAIN.index(target.tier)
+    if tgt_idx <= src_idx:
+        return False  # not downstream
+
+    if source.tier in _SUBSTRATE_ROOTS:
+        return True
+
+    if source.tier == "comparch":
+        if target.tier in ("subcomparch", "impl"):
+            return target.parent_id == source.comp_id
+        return False
+
+    if source.tier == "subcomparch":
+        if target.tier == "impl":
+            return target.parent_id == source.parent_id and target.sub_id == source.sub_id
+        return False
+
+    return False
+
+
+def compute_downstream_worklist(view: GitView, source: Scope) -> list[WorklistEntry]:
+    """Walk the tier chain top-down from ``source`` and emit one
+    worklist entry per existing downstream scope.
+
+    Enumerated from **existing state files only** (via
+    ``view.list_tier``) — scopes that haven't been generated yet are
+    cold-start work for ``/run_tier`` to handle, not regen work for a
+    propagation. The propagation is "what already exists and needs
+    re-run because something upstream changed".
+
+    Bottom-up paths (fanin synthesis, the presentational
+    ``domain_parent`` cross-tree hop) are deliberately not included —
+    those belong to a separate upward-propagation primitive when one
+    exists. See ``TOP_DOWN_CHAIN`` for the chain this walks.
+
+    A leaf source (impl) or a source outside the chain (e.g. fanin)
+    returns an empty list. Callers should special-case those if a
+    different propagation type is meaningful.
+    """
+    if source.tier not in TOP_DOWN_CHAIN:
+        return []
+    out: list[WorklistEntry] = []
+    for tier in TOP_DOWN_CHAIN:
+        for state in view.list_tier(tier):  # type: ignore[arg-type]
+            if _is_downstream(state.scope, source):
+                out.append(WorklistEntry(scope=state.scope))
+    return out
 
 
 def add_entries(prop: Propagation, entries: list[WorklistEntry]) -> Propagation:

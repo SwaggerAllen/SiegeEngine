@@ -18,7 +18,9 @@ from siege.cli import main
 from siege.propagation import (
     PROPAGATION_SCHEMA_VERSION,
     WorklistEntry,
+    _is_downstream,
     add_entries,
+    compute_downstream_worklist,
     dump_propagation,
     load_propagation,
     new_propagation,
@@ -26,7 +28,7 @@ from siege.propagation import (
     update_entry,
     write_propagation,
 )
-from siege.state import Scope, Tier
+from siege.state import DraftBlock, Scope, State, Tier
 
 
 def _entry(tier: Tier, comp_id: str, status: str = "pending") -> WorklistEntry:
@@ -294,3 +296,315 @@ def test_new_propagation_mints_id_when_unspecified():
     prop = new_propagation(op_type="regen_downstream", worklist=[])
     assert prop.propagation_id.startswith("prop_")
     assert len(prop.propagation_id) > len("prop_")
+
+
+# ---------------- Top-down worklist computation ----------------
+
+
+def _state(scope: Scope) -> State:
+    """Minimal State with a draft block — enough for list_tier to
+    surface the scope; the worklist walk only reads scope identity."""
+    return State(
+        schema_version=1,
+        scope=scope,
+        status="approved",
+        nonce="n",
+        draft=DraftBlock(body_path=scope.body_path(), body_sha256="x", generated_at=""),
+        review=None,
+    )
+
+
+class _FakeView:
+    """A tiny ``GitView`` substitute exposing only the surface
+    ``compute_downstream_worklist`` reads — ``list_tier``."""
+
+    def __init__(self, states: list[State]):
+        self.ref = "main"
+        self.head_sha = "deadbeef"
+        self._by_tier: dict[str, list[State]] = {}
+        for s in states:
+            self._by_tier.setdefault(s.scope.tier, []).append(s)
+
+    def list_tier(self, tier: str) -> list[State]:
+        return list(self._by_tier.get(tier, []))
+
+
+def _sample_states() -> list[State]:
+    """A small project: 2 top-level comps (foundation + auth) each
+    with 2 subs, each sub with one impl. All substrate roots present."""
+    out: list[State] = [
+        _state(Scope(tier="feature_expansion", comp_id="proj")),
+        _state(Scope(tier="requirements", comp_id="proj")),
+        _state(Scope(tier="sysarch", comp_id="proj")),
+        _state(Scope(tier="comparch", comp_id="comp_foundation")),
+        _state(Scope(tier="comparch", comp_id="comp_auth")),
+        _state(Scope(tier="subcomparch", parent_id="comp_foundation", sub_id="sub_storage")),
+        _state(Scope(tier="subcomparch", parent_id="comp_foundation", sub_id="sub_config")),
+        _state(Scope(tier="subcomparch", parent_id="comp_auth", sub_id="sub_session")),
+        _state(Scope(tier="subcomparch", parent_id="comp_auth", sub_id="sub_creds")),
+        _state(Scope(tier="impl", parent_id="comp_foundation", sub_id="sub_storage", phase=0)),
+        _state(Scope(tier="impl", parent_id="comp_foundation", sub_id="sub_config", phase=0)),
+        _state(Scope(tier="impl", parent_id="comp_auth", sub_id="sub_session", phase=0)),
+        _state(Scope(tier="impl", parent_id="comp_auth", sub_id="sub_creds", phase=0)),
+    ]
+    return out
+
+
+def test_sysarch_source_emits_every_downstream_scope():
+    """A substrate-root source covers everything strictly later in
+    the chain — including the other substrate roots that aren't above
+    it (requirements would be upstream of sysarch, but sysarch's
+    downstream is comparch+). For a sysarch source the worklist is:
+    every comparch + every subcomparch + every impl."""
+    view = _FakeView(_sample_states())
+    work = compute_downstream_worklist(view, Scope(tier="sysarch", comp_id="proj"))  # type: ignore[arg-type]
+    tiers = sorted({e.scope.tier for e in work})
+    assert tiers == ["comparch", "impl", "subcomparch"]
+    assert len(work) == 2 + 4 + 4  # 2 comparch + 4 sub + 4 impl
+
+
+def test_feature_expansion_source_covers_substrate_roots_below():
+    """fe source emits requirements + sysarch substrate roots in
+    addition to all component-tier scopes. The substrate-root scopes
+    are singletons-per-project."""
+    view = _FakeView(_sample_states())
+    work = compute_downstream_worklist(view, Scope(tier="feature_expansion", comp_id="proj"))  # type: ignore[arg-type]
+    tier_counts: dict[str, int] = {}
+    for e in work:
+        tier_counts[e.scope.tier] = tier_counts.get(e.scope.tier, 0) + 1
+    assert tier_counts == {
+        "requirements": 1,
+        "sysarch": 1,
+        "comparch": 2,
+        "subcomparch": 4,
+        "impl": 4,
+    }
+
+
+def test_comparch_source_restricts_to_its_own_subtree():
+    """A comparch source emits only the subcomparches and impls under
+    that one comp. Sibling comps are NOT downstream — they're laterally
+    related, not in the source's decomposition."""
+    view = _FakeView(_sample_states())
+    work = compute_downstream_worklist(view, Scope(tier="comparch", comp_id="comp_auth"))  # type: ignore[arg-type]
+    # Every emitted scope must belong to comp_auth's subtree.
+    for e in work:
+        assert e.scope.parent_id == "comp_auth", f"leaked sibling: {e.scope}"
+    tiers = sorted({e.scope.tier for e in work})
+    assert tiers == ["impl", "subcomparch"]
+    # 2 subs + 2 impls under comp_auth.
+    assert len(work) == 4
+
+
+def test_subcomparch_source_emits_only_its_impls():
+    view = _FakeView(_sample_states())
+    work = compute_downstream_worklist(
+        view,  # type: ignore[arg-type]
+        Scope(tier="subcomparch", parent_id="comp_auth", sub_id="sub_session"),
+    )
+    assert len(work) == 1
+    assert work[0].scope.tier == "impl"
+    assert work[0].scope.parent_id == "comp_auth"
+    assert work[0].scope.sub_id == "sub_session"
+
+
+def test_impl_source_has_no_downstream():
+    """Impl is the leaf of the top-down chain. Fanin is bottom-up and
+    out of scope for this walk."""
+    view = _FakeView(_sample_states())
+    work = compute_downstream_worklist(
+        view,  # type: ignore[arg-type]
+        Scope(tier="impl", parent_id="comp_auth", sub_id="sub_session", phase=0),
+    )
+    assert work == []
+
+
+def test_fanin_source_returns_empty_list():
+    """Fanin isn't in the top-down chain, so a fanin source returns
+    empty — caller should switch to a bottom-up propagation type when
+    one exists."""
+    view = _FakeView(_sample_states())
+    work = compute_downstream_worklist(view, Scope(tier="fanin", comp_id="comp_auth"))  # type: ignore[arg-type]
+    assert work == []
+
+
+def test_worklist_enumerates_only_existing_states():
+    """Only states that exist in the substrate count. A comp listed in
+    the sysarch ledger but with no comparch state isn't in the
+    propagation (it's cold-start work for /run_tier, not regen work)."""
+    states = [
+        _state(Scope(tier="sysarch", comp_id="proj")),
+        _state(Scope(tier="comparch", comp_id="comp_foundation")),
+        # comp_auth listed in ledger but no comparch state → skipped.
+    ]
+    view = _FakeView(states)
+    work = compute_downstream_worklist(view, Scope(tier="sysarch", comp_id="proj"))  # type: ignore[arg-type]
+    assert [e.scope.comp_id for e in work] == ["comp_foundation"]
+
+
+def test_empty_project_emits_empty_worklist():
+    view = _FakeView([])
+    work = compute_downstream_worklist(view, Scope(tier="sysarch", comp_id="proj"))  # type: ignore[arg-type]
+    assert work == []
+
+
+# ---------------- _is_downstream truth table ----------------
+
+
+def test_is_downstream_substrate_root_covers_everything_later():
+    """Substrate-root sources blanket-match every downstream scope —
+    the per-source filters only kick in for component-tier sources."""
+    sysarch = Scope(tier="sysarch", comp_id="proj")
+    assert _is_downstream(Scope(tier="comparch", comp_id="comp_x"), sysarch)
+    assert _is_downstream(Scope(tier="subcomparch", parent_id="comp_x", sub_id="sub_y"), sysarch)
+    # Upstream doesn't count.
+    assert not _is_downstream(Scope(tier="requirements", comp_id="proj"), sysarch)
+    # Self doesn't count.
+    assert not _is_downstream(Scope(tier="sysarch", comp_id="proj"), sysarch)
+
+
+def test_is_downstream_comparch_blocks_sibling_subtree():
+    """The comparch source ``comp_X`` rejects scopes whose
+    ``parent_id != X`` — sibling comps and their subtrees are not
+    downstream."""
+    comp_x = Scope(tier="comparch", comp_id="comp_x")
+    assert _is_downstream(Scope(tier="subcomparch", parent_id="comp_x", sub_id="sub_a"), comp_x)
+    assert not _is_downstream(Scope(tier="subcomparch", parent_id="comp_y", sub_id="sub_a"), comp_x)
+    assert _is_downstream(Scope(tier="impl", parent_id="comp_x", sub_id="sub_a", phase=0), comp_x)
+    assert not _is_downstream(
+        Scope(tier="impl", parent_id="comp_y", sub_id="sub_a", phase=0), comp_x
+    )
+
+
+def test_is_downstream_subcomparch_only_matches_same_sub():
+    """A subcomparch source matches an impl iff both ``parent_id`` and
+    ``sub_id`` align."""
+    sub = Scope(tier="subcomparch", parent_id="comp_x", sub_id="sub_a")
+    assert _is_downstream(Scope(tier="impl", parent_id="comp_x", sub_id="sub_a", phase=0), sub)
+    assert not _is_downstream(Scope(tier="impl", parent_id="comp_x", sub_id="sub_b", phase=0), sub)
+
+
+# ---------------- CLI: from-source-scope shortcut ----------------
+
+
+def test_cli_open_propagation_from_source_scope(tmp_path: Path, capsys):
+    """The skill flow: open-propagation with --from-source-scope-json
+    computes the worklist from the source and writes the record in one
+    call — no separate compute step required."""
+    repo = _git_repo(tmp_path)
+    # Lay down a single subcomparch state file so the walk has
+    # something to enumerate when source is sysarch.
+    state_dir = repo / "state" / "subcomparch" / "comp_a"
+    state_dir.mkdir(parents=True)
+    (state_dir / "sub_b.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "scope": {
+                    "tier": "subcomparch",
+                    "parent_id": "comp_a",
+                    "sub_id": "sub_b",
+                },
+                "status": "approved",
+                "nonce": "n",
+                "draft": {
+                    "body_path": "subcomparch/comp_a/sub_b/body.md",
+                    "body_sha256": "x",
+                    "generated_at": "",
+                },
+            }
+        )
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "state/"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "seed"], check=True)
+
+    capsys.readouterr()
+    rc = main(
+        [
+            "open-propagation",
+            "--repo",
+            str(repo),
+            "--op-type",
+            "propagate_downstream",
+            "--from-source-scope-json",
+            json.dumps({"tier": "sysarch", "comp_id": "proj"}),
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    # One entry (the sub_b subcomparch).
+    assert out["counts"]["pending"] == 1
+    on_disk = Path(out["state_path"])
+    payload = json.loads(on_disk.read_text())
+    assert payload["worklist"][0]["scope"]["sub_id"] == "sub_b"
+    # The source scope is recorded on the record itself.
+    assert payload["source_scope"] == {
+        "tier": "sysarch",
+        "comp_id": "proj",
+        "parent_id": None,
+        "sub_id": None,
+        "phase": None,
+    }
+
+
+def test_cli_open_propagation_rejects_mixed_worklist_and_source(tmp_path: Path):
+    """--worklist-json and --from-source-scope-json are mutually
+    exclusive. The skill picks one input strategy and sticks with it."""
+    repo = _git_repo(tmp_path)
+    with pytest.raises(SystemExit, match="mutually exclusive"):
+        main(
+            [
+                "open-propagation",
+                "--repo",
+                str(repo),
+                "--op-type",
+                "propagate_downstream",
+                "--worklist-json",
+                json.dumps([{"scope": {"tier": "comparch", "comp_id": "c"}}]),
+                "--from-source-scope-json",
+                json.dumps({"tier": "sysarch", "comp_id": "proj"}),
+            ]
+        )
+
+
+def test_cli_compute_downstream_preview(tmp_path: Path, capsys):
+    """``compute-downstream`` is the standalone preview — same walk,
+    output is JSON to stdout, no on-disk record minted."""
+    repo = _git_repo(tmp_path)
+    state_dir = repo / "state" / "comparch"
+    state_dir.mkdir(parents=True)
+    (state_dir / "comp_x.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "scope": {"tier": "comparch", "comp_id": "comp_x"},
+                "status": "approved",
+                "nonce": "n",
+                "draft": {
+                    "body_path": "comparch/comp_x/body.md",
+                    "body_sha256": "x",
+                    "generated_at": "",
+                },
+            }
+        )
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "state/"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "seed"], check=True)
+
+    capsys.readouterr()
+    rc = main(
+        [
+            "compute-downstream",
+            "--repo",
+            str(repo),
+            "--source-scope-json",
+            json.dumps({"tier": "sysarch", "comp_id": "proj"}),
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["source_scope"]["tier"] == "sysarch"
+    assert len(out["worklist"]) == 1
+    assert out["worklist"][0]["scope"]["comp_id"] == "comp_x"
+    # No propagation file written.
+    assert not (repo / "state" / "propagations").exists()
