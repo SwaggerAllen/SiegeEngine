@@ -67,6 +67,20 @@ class _FakeView:
 
 _SYSARCH_BODY = """
 <sysarch>
+  <components>
+    <component alias="billing">
+      <name>Billing</name>
+      <responsibilities>
+        <resp id="resp_x"/>
+      </responsibilities>
+    </component>
+    <component alias="ui_billing">
+      <name>BillingUI</name>
+      <responsibilities>
+        <resp id="resp_x"/>
+      </responsibilities>
+    </component>
+  </components>
   <dependencies>
     <dep from="billing" to="auth"/>
   </dependencies>
@@ -204,9 +218,12 @@ def test_node_lifecycle_from_own_substrate():
 
 
 def test_decomposition_edges():
+    """feat → resp decomposition edges projected from resp.feats. The
+    set also carries resp → comp edges from the sysarch body's
+    <responsibilities> blocks; those have their own test."""
     edges = [e for e in _graph()["edges"] if e["type"] == "decomposition"]
     pairs = {(e["source_id"], e["target_id"]) for e in edges}
-    assert pairs == {("feat_a", "resp_x"), ("feat_b", "resp_x")}
+    assert {("feat_a", "resp_x"), ("feat_b", "resp_x")}.issubset(pairs)
 
 
 def test_dependency_and_domain_parent_edges():
@@ -215,6 +232,34 @@ def test_dependency_and_domain_parent_edges():
     dps = {(e["source_id"], e["target_id"]) for e in g["edges"] if e["type"] == "domain_parent"}
     assert deps == {("comp_bil", "comp_aut")}
     assert dps == {("comp_ui", "comp_bil")}
+
+
+def test_resp_to_comp_decomposition_edges():
+    """Every <component>'s <responsibilities><resp id="resp_X"/></responsibilities>
+    block emits a decomposition resp_X → comp_id edge. A resp that
+    appears in two component blocks (the domain + presentational mirror
+    pattern) emits one edge per (resp, comp) pair, not duplicates."""
+    g = _graph()
+    decomp = {(e["source_id"], e["target_id"]) for e in g["edges"] if e["type"] == "decomposition"}
+    # feat→resp edges from resp.feats are still there too.
+    assert ("feat_a", "resp_x") in decomp
+    # resp→comp edges from the sysarch body's per-component
+    # <responsibilities> blocks — resp_x appears in both billing
+    # (domain) and ui_billing (presentational mirror).
+    assert ("resp_x", "comp_bil") in decomp
+    assert ("resp_x", "comp_ui") in decomp
+
+
+def test_resp_to_comp_edge_skips_unknown_resp():
+    """A <resp id="..."/> ref that doesn't match a known responsibility
+    node drops the edge rather than emitting a dangling one."""
+    view = _sample_view()
+    view._bodies["sysarch/proj/body.md"] = view._bodies["sysarch/proj/body.md"].replace(
+        '<resp id="resp_x"/>', '<resp id="resp_x"/><resp id="resp_ghost"/>'
+    )
+    g = build_project_graph(view)  # type: ignore[arg-type]
+    sources = {e["source_id"] for e in g["edges"] if e["type"] == "decomposition"}
+    assert "resp_ghost" not in sources
 
 
 def test_decomposition_edge_skips_unknown_feat():

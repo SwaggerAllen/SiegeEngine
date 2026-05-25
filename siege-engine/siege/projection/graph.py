@@ -17,12 +17,16 @@ Edges:
 
 - ``decomposition`` feature → responsibility, from each
   responsibility's feat set;
+- ``decomposition`` responsibility → top-level component, parsed
+  from the sysarch body's per-``<component>`` ``<responsibilities>``
+  blocks and alias-resolved via the sysarch identity ledger;
 - ``dependency`` and ``domain_parent`` between top-level components,
   parsed from the sysarch body and alias-resolved via the sysarch
   identity ledger.
 
 Deferred (see the v3 spec's projection-layer notes): subcomponent-level
-dependency edges and the comparch ``<owns>`` ownership projection.
+dependency edges and the comparch ``<owns>`` ownership projection
+(resp → subcomp + feat → subcomp).
 """
 
 from __future__ import annotations
@@ -41,6 +45,20 @@ _DEP_TAG = re.compile(r"<dep\b([^>]*)>")
 _PARENT_TAG = re.compile(r"<parent\b([^>]*)>")
 _FROM_ATTR = re.compile(r'\bfrom\s*=\s*"([^"]*)"')
 _TO_ATTR = re.compile(r'\bto\s*=\s*"([^"]*)"')
+
+# Per-component ownership of top-level responsibilities:
+#   <component alias="billing">
+#     ...
+#     <responsibilities>
+#       <resp id="resp_xxx"/>
+#       <resp id="resp_yyy"/>
+#     </responsibilities>
+#   </component>
+# Source the alias from the opening-tag attrs, then walk the inner block
+# for <resp id="..."/> refs and emit resp → comp decomposition edges.
+_COMPONENT_BLOCK = re.compile(r"<component\b([^>]*)>(.*?)</component>", re.S)
+_ALIAS_ATTR = re.compile(r'\balias\s*=\s*"([^"]*)"')
+_RESP_REF = re.compile(r'<resp\s+id="([^"]+)"')
 
 
 def _section(body: str, tag: str) -> str:
@@ -190,13 +208,16 @@ def build_project_graph(view: GitView) -> dict[str, Any]:
                 if feat_id in node_ids:
                     edges.append(_edge("decomposition", feat_id, resp_id))
 
-    # ---- dependency + domain_parent edges (top-level) ----
+    # ---- sysarch-body-derived edges (dep, domain_parent, resp → comp) ----
     if sysarch_state is not None and sysarch_state.draft is not None:
         try:
             body = view.read_body_text(sysarch_state.draft.body_path)
         except Exception:  # noqa: BLE001 — body missing → no top-level edges
             body = ""
         edges.extend(_top_level_edges(body, alias_to_comp))
+        for edge in _resp_to_comp_edges(body, alias_to_comp):
+            if edge["source_id"] in node_ids:
+                edges.append(edge)
 
     return {
         "ref": view.ref,
@@ -204,6 +225,34 @@ def build_project_graph(view: GitView) -> dict[str, Any]:
         "nodes": nodes,
         "edges": edges,
     }
+
+
+def _resp_to_comp_edges(body: str, alias_to_comp: dict[str, str]) -> list[dict[str, Any]]:
+    """For each ``<component alias="X">…<responsibilities><resp id="resp_Y"/>…``
+    in a sysarch body, emit a ``decomposition`` edge resp_Y → comp_X.
+
+    A responsibility can legitimately appear in both its owning domain
+    component and a presentational counterpart (the "mirror" pattern in
+    the sysarch prompt), so we dedupe on the (resp, comp) pair to avoid
+    emitting the same edge twice when both blocks reference the same id.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for attrs, inner in _COMPONENT_BLOCK.findall(body):
+        m = _ALIAS_ATTR.search(attrs)
+        if not m:
+            continue
+        comp_id = alias_to_comp.get(m.group(1).strip().lower())
+        if not comp_id:
+            continue
+        resps_section = _section(inner, "responsibilities")
+        for resp_id in _RESP_REF.findall(resps_section):
+            key = (resp_id, comp_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(_edge("decomposition", resp_id, comp_id))
+    return out
 
 
 def _top_level_edges(body: str, alias_to_comp: dict[str, str]) -> list[dict[str, Any]]:
