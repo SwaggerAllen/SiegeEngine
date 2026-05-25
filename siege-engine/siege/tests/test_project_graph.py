@@ -186,7 +186,10 @@ def test_nodes_span_all_tiers():
         "comp_aut",
         "comp_ui",
         "comp_s1",
+        "sysarch_root",  # synthetic project-sysarch node
     }
+    assert by_id["sysarch_root"]["kind"] == "sysarch_root"
+    assert by_id["sysarch_root"]["name"] == "Project Sysarch"
     assert by_id["feat_a"]["kind"] == "feature"
     assert by_id["feat_a"]["tier"] == "feature_expansion"
     assert by_id["resp_x"]["kind"] == "responsibility"
@@ -227,11 +230,28 @@ def test_decomposition_edges():
 
 
 def test_dependency_and_domain_parent_edges():
+    """Top-level dependency edges include the body-parsed comp→comp
+    deps + the synthetic comp→sysarch_root edges (one per top-level
+    comp). domain_parent stays body-parsed comp→comp only."""
     g = _graph()
     deps = {(e["source_id"], e["target_id"]) for e in g["edges"] if e["type"] == "dependency"}
     dps = {(e["source_id"], e["target_id"]) for e in g["edges"] if e["type"] == "domain_parent"}
-    assert deps == {("comp_bil", "comp_aut")}
+    assert ("comp_bil", "comp_aut") in deps  # body-parsed comp→comp dep
+    # synthetic root: every top-level comp emits a dep to it.
+    assert ("comp_bil", "sysarch_root") in deps
+    assert ("comp_aut", "sysarch_root") in deps
+    assert ("comp_ui", "sysarch_root") in deps
     assert dps == {("comp_ui", "comp_bil")}
+
+
+def test_synthetic_sysarch_root_lifecycle_mirrors_sysarch_state():
+    """The synthetic root carries the sysarch substrate's status —
+    'approved' in this fixture — so the dashboard treats it like a
+    regular landed top-level node rather than 'absent'."""
+    by_id = {n["id"]: n for n in _graph()["nodes"]}
+    root = by_id["sysarch_root"]
+    assert root["status"] == "approved"
+    assert root["has_body"] is True
 
 
 def test_resp_to_comp_decomposition_edges():

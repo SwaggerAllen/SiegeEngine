@@ -22,10 +22,19 @@ Edges:
   blocks and alias-resolved via the sysarch identity ledger;
 - ``dependency`` and ``domain_parent`` between top-level components,
   parsed from the sysarch body and alias-resolved via the sysarch
-  identity ledger.
+  identity ledger;
+- ``dependency`` from every top-level component to the synthetic
+  project-sysarch root node — surfaces the project-level techspec /
+  dependency-graph / policy-set baseline every component implicitly
+  rests on.
+
+A synthetic ``sysarch_root`` node is emitted when a sysarch ledger
+exists; its name is "Project Sysarch" and its lifecycle mirrors the
+sysarch substrate's own status.
 
 Deferred (see the v3 spec's projection-layer notes): subcomponent-level
-dependency edges and the comparch ``<owns>`` ownership projection
+dependency edges, per-policy nodes (one per ``<policy>`` block in the
+sysarch body), and the comparch ``<owns>`` ownership projection
 (resp → subcomp + feat → subcomp).
 """
 
@@ -157,6 +166,7 @@ def build_project_graph(view: GitView) -> dict[str, Any]:
     sysarch_state = sysarch_states[0] if sysarch_states else None
     sysarch_manifest = view.manifest_for_tier("sysarch")
     alias_to_comp: dict[str, str] = {}
+    top_level_comp_ids: list[str] = []
     if sysarch_manifest is not None:
         for raw in sysarch_manifest.nodes:
             nid = raw.get("id")
@@ -166,6 +176,7 @@ def build_project_graph(view: GitView) -> dict[str, Any]:
             if alias:
                 alias_to_comp[alias] = nid
             node_ids.add(nid)
+            top_level_comp_ids.append(nid)
             # A component's "own" substrate is its comparch.
             comparch = view.get_state(Scope(tier="comparch", comp_id=nid))
             nodes.append(
@@ -173,6 +184,26 @@ def build_project_graph(view: GitView) -> dict[str, Any]:
                     nid, "sysarch", "component", raw, parent_id=None, lifecycle=_lifecycle(comparch)
                 )
             )
+
+    # ---- synthetic project-sysarch root node ----
+    # One node per project standing for the project-level sysarch
+    # baseline — techspec, project-wide dependency graph, top-level
+    # policies. Every top-level component dep-edges to it so the DAG
+    # has a visible root every component implicitly rests on.
+    sysarch_root_id: str | None = None
+    if sysarch_state is not None:
+        sysarch_root_id = "sysarch_root"
+        node_ids.add(sysarch_root_id)
+        nodes.append(
+            _node(
+                sysarch_root_id,
+                "sysarch",
+                "sysarch_root",
+                {"name": "Project Sysarch", "order": -1},
+                parent_id=None,
+                lifecycle=_lifecycle(sysarch_state),
+            )
+        )
 
     # ---- subcomponent nodes ----
     for comparch_state in view.list_tier("comparch"):
@@ -218,6 +249,11 @@ def build_project_graph(view: GitView) -> dict[str, Any]:
         for edge in _resp_to_comp_edges(body, alias_to_comp):
             if edge["source_id"] in node_ids:
                 edges.append(edge)
+
+    # ---- comp → synthetic sysarch root dependency edges ----
+    if sysarch_root_id is not None:
+        for comp_id in top_level_comp_ids:
+            edges.append(_edge("dependency", comp_id, sysarch_root_id))
 
     return {
         "ref": view.ref,

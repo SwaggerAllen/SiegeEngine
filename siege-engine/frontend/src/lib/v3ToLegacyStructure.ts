@@ -31,7 +31,12 @@ const TIER_MAP: Record<string, string> = {
 };
 
 function adaptNode(v3: V3Node, presentationalIds: Set<string>): StructureNode {
-  const tier = TIER_MAP[v3.tier] ?? v3.tier;
+  // The synthetic project-sysarch root is emitted by the v3
+  // projection but doesn't fit the per-substrate tier→legacy mapping;
+  // render it as a top-of-DAG comp so FullDagView's topLevelElements
+  // picks it up and it lands in the same band as the real comp-tops.
+  const tier =
+    v3.kind === 'sysarch_root' ? 'comp' : (TIER_MAP[v3.tier] ?? v3.tier);
   const kind =
     tier === 'comp' && presentationalIds.has(v3.id) ? 'presentational' : 'domain';
   return {
