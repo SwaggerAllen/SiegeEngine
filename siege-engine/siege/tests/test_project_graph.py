@@ -81,6 +81,19 @@ _SYSARCH_BODY = """
       </responsibilities>
     </component>
   </components>
+  <policies>
+    <policy>
+      <name>Audit Every Privileged Action</name>
+      <trigger>any privileged write</trigger>
+      <required>resp_x</required>
+      <rationale>writes must be auditable</rationale>
+    </policy>
+    <policy>
+      <name>Encrypt Secrets at Rest</name>
+      <trigger>any persisted secret</trigger>
+      <rationale>secrets in the substrate must be encrypted</rationale>
+    </policy>
+  </policies>
   <dependencies>
     <dep from="billing" to="auth"/>
   </dependencies>
@@ -187,6 +200,8 @@ def test_nodes_span_all_tiers():
         "comp_ui",
         "comp_s1",
         "sysarch_root",  # synthetic project-sysarch node
+        "policy_audit-every-privileged-action",
+        "policy_encrypt-secrets-at-rest",
     }
     assert by_id["sysarch_root"]["kind"] == "sysarch_root"
     assert by_id["sysarch_root"]["name"] == "Project Sysarch"
@@ -300,3 +315,94 @@ def test_empty_project():
     assert g["edges"] == []
     assert g["ref"] == "main"
     assert g["ref_head_sha"] == "deadbeef"
+
+
+def test_policy_nodes_have_slugged_ids_and_sysarch_lifecycle():
+    """Each <policy> in the sysarch body becomes a kind='policy' node
+    whose id is policy_<slug-of-name>. Lifecycle mirrors the sysarch
+    substrate (approved here) — policies live and die with their body."""
+    by_id = {n["id"]: n for n in _graph()["nodes"]}
+    audit = by_id["policy_audit-every-privileged-action"]
+    encrypt = by_id["policy_encrypt-secrets-at-rest"]
+    assert audit["kind"] == "policy"
+    assert audit["tier"] == "sysarch"
+    assert audit["name"] == "Audit Every Privileged Action"
+    assert audit["status"] == "approved"  # mirrors the sysarch state
+    assert audit["parent_id"] is None
+    assert encrypt["kind"] == "policy"
+
+
+def test_every_top_level_comp_dep_edges_to_every_policy():
+    """Policies are cross-cutting — every top-level component dep-edges
+    to every policy, same pattern as the sysarch_root edge."""
+    edges = _graph()["edges"]
+    deps = {(e["source_id"], e["target_id"]) for e in edges if e["type"] == "dependency"}
+    for comp in ("comp_bil", "comp_aut", "comp_ui"):
+        assert (comp, "policy_audit-every-privileged-action") in deps
+        assert (comp, "policy_encrypt-secrets-at-rest") in deps
+
+
+def test_required_resp_decomposes_into_policy():
+    """A <policy> with <required>resp_X</required> emits a
+    decomposition edge resp_X → policy_<slug>. Policies without
+    <required> get no decomposition edge."""
+    edges = _graph()["edges"]
+    decomp = {(e["source_id"], e["target_id"]) for e in edges if e["type"] == "decomposition"}
+    assert ("resp_x", "policy_audit-every-privileged-action") in decomp
+    # 'Encrypt Secrets at Rest' has no <required> — no resp → policy edge.
+    assert not any(target == "policy_encrypt-secrets-at-rest" for (_, target) in decomp)
+
+
+def test_unknown_required_resp_drops_decomposition_edge():
+    """A <required>resp_ghost</required> that doesn't resolve drops
+    the resp → policy decomposition edge rather than emitting a dangling
+    one. The policy node itself is still emitted."""
+    view = _sample_view()
+    view._bodies["sysarch/proj/body.md"] = view._bodies["sysarch/proj/body.md"].replace(
+        "<required>resp_x</required>", "<required>resp_ghost</required>"
+    )
+    g = build_project_graph(view)  # type: ignore[arg-type]
+    ids = {n["id"] for n in g["nodes"]}
+    assert "policy_audit-every-privileged-action" in ids  # node still emitted
+    decomp_sources = {e["source_id"] for e in g["edges"] if e["type"] == "decomposition"}
+    assert "resp_ghost" not in decomp_sources
+
+
+def test_duplicate_policy_names_get_unique_ids():
+    """Two policies named identically slug to the same base id; the
+    second one gets a numeric suffix so both still appear in the graph."""
+    view = _sample_view()
+    body = view._bodies["sysarch/proj/body.md"]
+    # Append a second policy with the same name as the first.
+    extra = (
+        "  <policy>"
+        "<name>Audit Every Privileged Action</name>"
+        "<trigger>different trigger</trigger>"
+        "<rationale>different rationale</rationale>"
+        "</policy>"
+    )
+    view._bodies["sysarch/proj/body.md"] = body.replace("</policies>", f"{extra}</policies>")
+    g = build_project_graph(view)  # type: ignore[arg-type]
+    ids = {n["id"] for n in g["nodes"]}
+    assert "policy_audit-every-privileged-action" in ids
+    assert "policy_audit-every-privileged-action_2" in ids
+
+
+def test_empty_policies_block_emits_no_policy_nodes():
+    """An empty <policies></policies> emits zero policy nodes — and
+    therefore zero comp → policy edges. Sysarch_root + comp → root
+    edges keep working."""
+    view = _sample_view()
+    body = view._bodies["sysarch/proj/body.md"]
+    # Strip the whole <policies>…</policies> block.
+    import re
+
+    view._bodies["sysarch/proj/body.md"] = re.sub(
+        r"<policies>.*?</policies>", "<policies></policies>", body, flags=re.S
+    )
+    g = build_project_graph(view)  # type: ignore[arg-type]
+    policy_ids = [n["id"] for n in g["nodes"] if n["kind"] == "policy"]
+    assert policy_ids == []
+    # sysarch_root still attached.
+    deps = {(e["source_id"], e["target_id"]) for e in g["edges"] if e["type"] == "dependency"}
+    assert ("comp_bil", "sysarch_root") in deps

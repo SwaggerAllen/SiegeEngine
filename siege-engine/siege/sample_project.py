@@ -127,6 +127,19 @@ session tokens; bcrypt credential hashing.
     </responsibilities>
   </component>
 </components>
+<policies>
+  <policy>
+    <name>Audit Every Privileged Action</name>
+    <trigger>any operation touching billing or auth state</trigger>
+    <required>{resp["Audit Trail"]}</required>
+    <rationale>Every privileged mutation must land in the audit log so admins can reconstruct who did what to which subscription.</rationale>
+  </policy>
+  <policy>
+    <name>Encrypt Secrets at Rest</name>
+    <trigger>any persisted credential or payment token</trigger>
+    <rationale>Credentials and payment tokens must be encrypted in the storage substrate so a database snapshot leak does not yield plaintext secrets.</rationale>
+  </policy>
+</policies>
 <dependencies>
   <dep from="auth" to="foundation"/>
   <dep from="billing" to="auth"/>
