@@ -4,13 +4,13 @@ import type { StructureEdge, StructureNode, StructureResponse } from '../api/str
 import { TestQueryWrapper } from '../test/queryWrapper';
 import { ComponentOverviewPanel } from './ComponentOverviewPanel';
 
-vi.mock('../hooks/queries/useProjectStructure', () => ({
-  useProjectStructure: vi.fn(() => ({ data: undefined })),
+vi.mock('../hooks/queries/useStructureForViz', () => ({
+  useStructureForViz: vi.fn(() => ({ data: undefined })),
 }));
 
-import { useProjectStructure } from '../hooks/queries/useProjectStructure';
+import { useStructureForViz } from '../hooks/queries/useStructureForViz';
 
-const mockedUseStructure = useProjectStructure as unknown as ReturnType<typeof vi.fn>;
+const mockedUseStructure = useStructureForViz as unknown as ReturnType<typeof vi.fn>;
 
 function comp(overrides: Partial<StructureNode> = {}): StructureNode {
   return {

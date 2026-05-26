@@ -55,3 +55,32 @@ export async function getProjectGraph(projectId: string, ref = 'main'): Promise<
   });
   return data as ProjectGraph;
 }
+
+export interface BodyScope {
+  tier: string;
+  comp_id?: string | null;
+  parent_id?: string | null;
+  sub_id?: string | null;
+  phase?: number | null;
+}
+
+export interface BodyResponse {
+  ref: string;
+  ref_head_sha: string;
+  found: boolean;
+  body_path: string | null;
+  body_text: string;
+}
+
+export async function getBody(
+  projectId: string,
+  scope: BodyScope,
+  ref = 'main',
+): Promise<BodyResponse> {
+  const { data } = await siegeApi.post('/get-body', {
+    project_id: projectId,
+    ref,
+    ...scope,
+  });
+  return data as BodyResponse;
+}

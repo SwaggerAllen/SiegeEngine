@@ -99,6 +99,59 @@ def get_state(
     return payload
 
 
+def get_body(
+    project_id: str,
+    ref: str,
+    tier: Tier,
+    comp_id: str | None = None,
+    parent_id: str | None = None,
+    sub_id: str | None = None,
+    phase: int | None = None,
+) -> dict[str, Any]:
+    """Read-only body fetcher: resolves the scope's state, reads the
+    body file off the substrate, returns ``{ref, ref_head_sha,
+    body_path, body_text, found}``.
+
+    The dashboard's source-aware read panels (``V3BodyPanel``) call
+    this when ``project.source == "upload"`` so the workspace shows
+    the substrate's actual artifact instead of falling back to the
+    legacy SQL endpoints (which don't have rows for upload projects).
+
+    ``found`` is ``False`` when the scope has no state, no draft, or
+    the body file is unreadable — callers render an explanatory blank
+    instead of an error.
+    """
+    view = _open_view(project_id, ref)
+    scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase)
+    state = view.get_state(scope)
+    if state is None or state.draft is None:
+        return {
+            "ref": view.ref,
+            "ref_head_sha": view.head_sha,
+            "found": False,
+            "body_path": None,
+            "body_text": "",
+        }
+    body_path = state.draft.body_path
+    try:
+        body_text = view.read_body_text(body_path)
+    except Exception:  # noqa: BLE001 — body missing on disk → found False
+        return {
+            "ref": view.ref,
+            "ref_head_sha": view.head_sha,
+            "found": False,
+            "body_path": body_path,
+            "body_text": "",
+        }
+    return {
+        "ref": view.ref,
+        "ref_head_sha": view.head_sha,
+        "found": True,
+        "body_path": body_path,
+        "body_text": body_text,
+    }
+
+
 def list_tier(
     project_id: str,
     ref: str,
@@ -232,6 +285,38 @@ def list_batches(project_id: str, ref: str, status: str | None = None) -> dict[s
         "ref": view.ref,
         "ref_head_sha": view.head_sha,
         "batches": batches,
+    }
+
+
+def list_propagations(project_id: str, ref: str, status: str | None = None) -> dict[str, Any]:
+    """List propagation records, optionally filtered by rolled-up status.
+
+    The dashboard renders this on the ``/status`` flow so the user can
+    see open iteration loops without grepping the repo. Same direct-
+    tree-read pattern as ``list_batches`` — propagations live at
+    ``state/propagations/<id>.json``.
+    """
+    import json as _json
+
+    from siege.propagation import dump_propagation, load_propagation
+
+    view = _open_view(project_id, ref)
+    out: list[dict[str, Any]] = []
+    for path in view.clone.ls_tree(view.head_sha, "state/propagations/"):
+        if not path.endswith(".json"):
+            continue
+        try:
+            data = _json.loads(view.clone.show_blob(view.head_sha, path).decode("utf-8"))
+            prop = load_propagation(data)
+        except Exception:  # noqa: BLE001 — skip malformed
+            continue
+        if status and prop.status != status:
+            continue
+        out.append(dump_propagation(prop))
+    return {
+        "ref": view.ref,
+        "ref_head_sha": view.head_sha,
+        "propagations": out,
     }
 
 

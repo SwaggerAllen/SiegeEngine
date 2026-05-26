@@ -27,7 +27,9 @@ import { RequirementsPanel } from '../RequirementsPanel';
 import { SubcomparchPanel } from '../SubcomparchPanel';
 import { SubstrateOverviewPanel } from '../SubstrateOverviewPanel';
 import { SysarchPanel } from '../SysarchPanel';
+import { V3BodyPanel } from '../V3BodyPanel';
 import { VocabularyList } from '../VocabularyList';
+import { useProject } from '../../hooks/queries/useProjectQueries';
 import { DecompositionEditorPanel } from '../editors/DecompositionEditorPanel';
 import { DependencyEditorPanel } from '../editors/DependencyEditorPanel';
 import { DomainParentEditorPanel } from '../editors/DomainParentEditorPanel';
@@ -59,6 +61,8 @@ interface Props {
  * The workspace header replaces those shells.
  */
 export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
+  const { data: project } = useProject(projectId);
+  const isUpload = project?.source === 'upload';
   if (!selectedId) {
     return <EmptyState />;
   }
@@ -212,6 +216,19 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
         // and Impl tabs navigate to their own child nodes, so they
         // don't land here.
         if (view === 'comparch') {
+          // Upload projects don't have legacy SQL rows for comparch
+          // drafts — fall back to the raw substrate body so the user
+          // can read what's on disk instead of staring at a 404.
+          if (isUpload) {
+            return (
+              <V3BodyPanel
+                projectId={projectId}
+                scope={{ tier: 'comparch', comp_id: node.id }}
+                title={`${node.name} — Comparch`}
+                hint="Raw comparch artifact from the imported substrate."
+              />
+            );
+          }
           return (
             <div className="h-full overflow-auto">
               <ComparchPanel
@@ -242,7 +259,22 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
         }
         return <ComponentOverviewPanel projectId={projectId} component={node} />;
       }
-      // Subcomponent → subcomparch panel.
+      // Subcomponent → subcomparch panel. Upload projects don't have
+      // the legacy SQL row, so fall back to the substrate body.
+      if (isUpload) {
+        return (
+          <V3BodyPanel
+            projectId={projectId}
+            scope={{
+              tier: 'subcomparch',
+              parent_id: node.parent_id,
+              sub_id: node.id,
+            }}
+            title={`${node.name} — Subcomparch`}
+            hint="Raw subcomparch artifact from the imported substrate."
+          />
+        );
+      }
       return (
         <div className="h-full overflow-auto">
           <SubcomparchPanel
@@ -301,9 +333,43 @@ export function NavDetail({ projectId, selectedId, nodes, view }: Props) {
         </div>
       );
     }
+    case 'policy':
+      // Policies live inline in the sysarch body — no per-node
+      // substrate. Surface the node metadata + point the user at
+      // the sysarch body for the full <policy> block.
+      return <PolicyDetail node={node} projectId={projectId} />;
     default:
       return <UnknownTier tier={node.tier} />;
   }
+}
+
+function PolicyDetail({
+  node,
+  projectId,
+}: {
+  node: StructureNode;
+  projectId: string;
+}) {
+  return (
+    <div className="h-full overflow-auto p-6 space-y-3">
+      <header>
+        <h2 className="text-lg font-semibold text-gray-100">{node.name}</h2>
+        <p className="font-mono text-[11px] text-gray-600 mt-1">{node.id}</p>
+      </header>
+      <p className="text-xs text-gray-400">
+        Cross-cutting policy from the sysarch body. Each top-level component
+        depends on it. The full ``&lt;policy&gt;`` block — trigger, rationale,
+        and required responsibility — lives inline in the{' '}
+        <a
+          href={`/projects/${projectId}?node=${SYNTHETIC_IDS.SYSARCH}`}
+          className="text-cyan-300 hover:text-cyan-200 underline"
+        >
+          sysarch body
+        </a>
+        .
+      </p>
+    </div>
+  );
 }
 
 function EmptyState() {

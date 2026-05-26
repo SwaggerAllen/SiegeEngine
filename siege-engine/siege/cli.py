@@ -26,8 +26,12 @@ Read subcommands (project the committed git tree at ``--ref``, default
     compute-plan          — the phasing plan projection
     get-structure-summary — a tier's per-node + aggregate metrics
     get-review-summary    — a tier's score histogram + worst-N intros
-    list-scopes           — enumerate a tier's scopes from the id ledgers
-    list-batches          — list state/batches/<id>.json files
+    list-scopes               — enumerate a tier's scopes from the id ledgers
+    list-batches              — list state/batches/<id>.json files
+    list-propagations         — list state/propagations/<id>.json files
+    open-propagation          — write a fresh propagation record
+    update-propagation-entry  — flip one worklist entry's status
+    compute-downstream        — preview a top-down worklist from a source scope
 
 The write subcommands keep ``import siege.cli`` pure-stdlib; the read
 subcommands defer their ``siege.projection`` imports (which pull
@@ -43,7 +47,6 @@ import argparse
 import hashlib
 import json
 import re
-import secrets
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -67,25 +70,13 @@ from siege.state import (
     Scope,
     State,
     dump_state,
+    mint_nonce,
     now_iso,
     parse_state,
     sha256_text,
     write_state,
 )
 from siege.validate import validate_artifact
-
-# ULID is overkill for the v0 idempotency cache. A 26-char base32
-# secret has the same effective collision resistance.
-_NONCE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
-
-
-def mint_nonce() -> str:
-    n = secrets.randbits(128)
-    chars: list[str] = []
-    for _ in range(26):
-        chars.append(_NONCE_ALPHABET[n & 0x1F])
-        n >>= 5
-    return "".join(reversed(chars))
 
 
 def _scope_from_args(args: argparse.Namespace) -> Scope:
@@ -384,6 +375,157 @@ def cmd_mint_batch(args: argparse.Namespace) -> int:
 
 def cmd_mint_nonce(_args: argparse.Namespace) -> int:
     print(mint_nonce())
+    return 0
+
+
+def cmd_open_propagation(args: argparse.Namespace) -> int:
+    """Materialize a fresh ``state/propagations/<id>.json``.
+
+    The worklist is supplied as JSON because each entry is a
+    ``(scope, status)`` pair and the scope itself has up to five
+    fields — easier to round-trip through JSON than to flatten
+    onto a wide CLI surface. The skill that calls this will
+    typically compute the worklist via ``get-project-graph`` or
+    ``get-review-summary`` and pass the result in.
+    """
+    from siege.propagation import (
+        WorklistEntry,
+        compute_downstream_worklist,
+        new_propagation,
+        write_propagation,
+    )
+
+    repo_root = Path(args.repo).resolve()
+    source_scope = Scope(**json.loads(args.source_scope_json)) if args.source_scope_json else None
+
+    if args.from_source_scope_json:
+        # Compute-and-open shortcut: skip the explicit worklist JSON,
+        # the source-of-truth is the source scope itself. The walk
+        # emits one entry per existing downstream scope. Mutually
+        # exclusive with --worklist-json so the skill doesn't get
+        # confusing about which input wins.
+        if args.worklist_json and args.worklist_json != "[]":
+            raise SystemExit("--from-source-scope-json and --worklist-json are mutually exclusive")
+        from siege.git_view import local_view  # noqa: PLC0415 — keep lazy
+
+        view = local_view(repo_root, "HEAD")
+        compute_source = Scope(**json.loads(args.from_source_scope_json))
+        entries = compute_downstream_worklist(view, compute_source)
+        if source_scope is None:
+            source_scope = compute_source
+    else:
+        raw_entries = json.loads(args.worklist_json) if args.worklist_json else []
+        entries = [
+            WorklistEntry(
+                scope=Scope(**e["scope"]),
+                status=str(e.get("status", "pending")),
+                note=e.get("note"),
+            )
+            for e in raw_entries
+        ]
+    meta = json.loads(args.meta_json) if args.meta_json else None
+    prop = new_propagation(
+        op_type=args.op_type,
+        worklist=entries,
+        tier=args.tier,
+        threshold=args.threshold,
+        source_scope=source_scope,
+        meta=meta,
+        propagation_id=args.propagation_id or None,
+    )
+    path = write_propagation(repo_root, prop)
+    print(
+        json.dumps(
+            {
+                "propagation_id": prop.propagation_id,
+                "state_path": str(path),
+                "status": prop.status,
+                "counts": prop.counts,
+            }
+        )
+    )
+    return 0
+
+
+def cmd_update_propagation_entry(args: argparse.Namespace) -> int:
+    """Flip one worklist entry's status in an existing propagation.
+
+    Reads the on-disk record, swaps the matching entry, rewrites.
+    The skill calls this once per drained scope so progress is
+    visible mid-batch (and resumable if the orchestrator dies).
+    """
+    from siege.propagation import (
+        read_propagation,
+        update_entry,
+        write_propagation,
+    )
+
+    repo_root = Path(args.repo).resolve()
+    scope = Scope(**json.loads(args.scope_json))
+    prop = read_propagation(repo_root, args.propagation_id)
+    updated = update_entry(prop, scope, status=args.status, note=args.note)
+    write_propagation(repo_root, updated)
+    print(
+        json.dumps(
+            {
+                "propagation_id": updated.propagation_id,
+                "status": updated.status,
+                "counts": updated.counts,
+            }
+        )
+    )
+    return 0
+
+
+def cmd_compute_downstream(args: argparse.Namespace) -> int:
+    """Walk the tier chain top-down from a source scope and print the
+    worklist (one entry per existing downstream scope).
+
+    Standalone read — useful for previewing what an ``open-propagation
+    --from-source-scope-json`` would emit before actually writing the
+    record. Skills can also pipe this into a separate processing step
+    if they want to filter / modify the worklist before opening.
+    """
+    from dataclasses import asdict  # noqa: PLC0415 — keep lazy
+
+    from siege.propagation import compute_downstream_worklist
+
+    view = _open_local_view(args)
+    source = Scope(**json.loads(args.source_scope_json))
+    entries = compute_downstream_worklist(view, source)
+    out = {
+        "ref": view.ref,
+        "ref_head_sha": view.head_sha,
+        "source_scope": asdict(source),
+        "worklist": [{"scope": asdict(e.scope), "status": e.status} for e in entries],
+    }
+    print(json.dumps(out, indent=2))
+    return 0
+
+
+def cmd_list_propagations(args: argparse.Namespace) -> int:
+    """Enumerate ``state/propagations/<id>.json`` files."""
+    from siege.propagation import dump_propagation, load_propagation
+
+    view = _open_local_view(args)
+    out: list[dict[str, Any]] = []
+    for path in view.clone.ls_tree(view.head_sha, "state/propagations/"):
+        if not path.endswith(".json"):
+            continue
+        try:
+            data = json.loads(view.clone.show_blob(view.head_sha, path).decode("utf-8"))
+            prop = load_propagation(data)
+        except Exception:  # noqa: BLE001 — skip malformed
+            continue
+        if args.status and prop.status != args.status:
+            continue
+        out.append(dump_propagation(prop))
+    print(
+        json.dumps(
+            {"ref": view.ref, "ref_head_sha": view.head_sha, "propagations": out},
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -793,6 +935,99 @@ def build_parser() -> argparse.ArgumentParser:
     _add_ref_arg(p_lb)
     p_lb.add_argument("--status", default=None)
     p_lb.set_defaults(func=cmd_list_batches)
+
+    # ---- propagation lifecycle (step 7) ----
+
+    p_op = subs.add_parser(
+        "open-propagation",
+        help="materialize a fresh state/propagations/<id>.json from a worklist",
+    )
+    p_op.add_argument("--repo", default=".")
+    p_op.add_argument("--op-type", dest="op_type", required=True)
+    p_op.add_argument(
+        "--worklist-json",
+        dest="worklist_json",
+        default="[]",
+        help="JSON array of {scope: {tier, comp_id?, ...}, status?, note?}",
+    )
+    p_op.add_argument(
+        "--from-source-scope-json",
+        dest="from_source_scope_json",
+        default=None,
+        help=(
+            "compute the worklist top-down from this source scope "
+            "(mutually exclusive with --worklist-json). Walks the chain "
+            "feature_expansion → requirements → sysarch → comparch → "
+            "subcomparch → impl and emits one entry per existing "
+            "downstream scope. Fanin is skipped (bottom-up)."
+        ),
+    )
+    p_op.add_argument("--tier", default=None, choices=list(ALL_TIERS))
+    p_op.add_argument("--threshold", type=int, default=None)
+    p_op.add_argument(
+        "--source-scope-json",
+        dest="source_scope_json",
+        default=None,
+        help="JSON {tier, comp_id?, ...} — origin of the propagation",
+    )
+    p_op.add_argument(
+        "--meta-json",
+        dest="meta_json",
+        default=None,
+        help="optional JSON dict of free-form context (batch_id, comment, …)",
+    )
+    p_op.add_argument(
+        "--propagation-id",
+        dest="propagation_id",
+        default=None,
+        help="override the minted id (testing / idempotency)",
+    )
+    p_op.set_defaults(func=cmd_open_propagation)
+
+    p_upd = subs.add_parser(
+        "update-propagation-entry",
+        help="flip one worklist entry's status in an existing propagation",
+    )
+    p_upd.add_argument("--repo", default=".")
+    p_upd.add_argument("--propagation-id", dest="propagation_id", required=True)
+    p_upd.add_argument(
+        "--scope-json",
+        dest="scope_json",
+        required=True,
+        help="JSON {tier, comp_id?, ...} identifying the entry",
+    )
+    p_upd.add_argument(
+        "--status",
+        required=True,
+        choices=["pending", "in_progress", "done", "skipped"],
+    )
+    p_upd.add_argument("--note", default=None)
+    p_upd.set_defaults(func=cmd_update_propagation_entry)
+
+    p_cd = subs.add_parser(
+        "compute-downstream",
+        help="preview the top-down worklist a propagation from this source would carry",
+    )
+    p_cd.add_argument("--repo", default=".")
+    _add_ref_arg(p_cd)
+    p_cd.add_argument(
+        "--source-scope-json",
+        dest="source_scope_json",
+        required=True,
+        help="JSON {tier, comp_id?, parent_id?, sub_id?, phase?}",
+    )
+    p_cd.set_defaults(func=cmd_compute_downstream)
+
+    p_lp = subs.add_parser("list-propagations", help="list state/propagations/<id>.json files")
+    p_lp.add_argument("--repo", default=".")
+    _add_ref_arg(p_lp)
+    p_lp.add_argument(
+        "--status",
+        default=None,
+        choices=["open", "complete"],
+        help="filter by rolled-up status",
+    )
+    p_lp.set_defaults(func=cmd_list_propagations)
 
     return p
 
