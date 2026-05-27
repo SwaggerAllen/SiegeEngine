@@ -391,6 +391,7 @@ def cmd_open_propagation(args: argparse.Namespace) -> int:
     from siege.propagation import (
         WorklistEntry,
         compute_downstream_worklist,
+        compute_plan_change_worklist,
         new_propagation,
         write_propagation,
     )
@@ -398,14 +399,20 @@ def cmd_open_propagation(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo).resolve()
     source_scope = Scope(**json.loads(args.source_scope_json)) if args.source_scope_json else None
 
+    explicit_worklist = args.worklist_json and args.worklist_json != "[]"
+    mutex_count = sum(
+        bool(x) for x in (args.from_source_scope_json, args.from_plan_change, explicit_worklist)
+    )
+    if mutex_count > 1:
+        raise SystemExit(
+            "--from-source-scope-json, --from-plan-change, and --worklist-json are mutually "
+            "exclusive"
+        )
+
     if args.from_source_scope_json:
         # Compute-and-open shortcut: skip the explicit worklist JSON,
         # the source-of-truth is the source scope itself. The walk
-        # emits one entry per existing downstream scope. Mutually
-        # exclusive with --worklist-json so the skill doesn't get
-        # confusing about which input wins.
-        if args.worklist_json and args.worklist_json != "[]":
-            raise SystemExit("--from-source-scope-json and --worklist-json are mutually exclusive")
+        # emits one entry per existing downstream scope.
         from siege.git_view import local_view  # noqa: PLC0415 — keep lazy
 
         view = local_view(repo_root, "HEAD")
@@ -413,6 +420,17 @@ def cmd_open_propagation(args: argparse.Namespace) -> int:
         entries = compute_downstream_worklist(view, compute_source)
         if source_scope is None:
             source_scope = compute_source
+    elif args.from_plan_change:
+        # Plan-change shortcut: diff the live plan projection against
+        # existing impl state files; emit one entry per impl whose
+        # closure_resp_ids changed (status=pending), plus impls the
+        # current plan no longer covers (status=skipped, note="dropped
+        # by plan"). Cold-start impls (planned but no state file yet)
+        # are not emitted — those are /run_tier work, not regen work.
+        from siege.git_view import local_view  # noqa: PLC0415 — keep lazy
+
+        view = local_view(repo_root, "HEAD")
+        entries = compute_plan_change_worklist(view)
     else:
         raw_entries = json.loads(args.worklist_json) if args.worklist_json else []
         entries = [
@@ -529,22 +547,24 @@ def cmd_list_propagations(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_mark_drafted(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo).resolve()
-    scope = _scope_from_args(args)
-    prior = _existing_state(repo_root, scope)
-    if prior is None or prior.draft is None:
-        print("error: mark-drafted needs an existing scope with a draft", file=sys.stderr)
-        return 2
-    body_abs = repo_root / prior.draft.body_path
-    if not body_abs.exists():
-        print(f"error: body file does not exist: {body_abs}", file=sys.stderr)
-        return 2
-    body_bytes = body_abs.read_bytes()
-    body_sha = hashlib.sha256(body_bytes).hexdigest()
+def _resync_drafted_state(repo_root: Path, scope: Scope, body_bytes: bytes) -> dict[str, Any]:
+    """Flip a scope back to ``drafted`` against the body bytes on disk.
 
-    # Re-sync to the hand-edited body: new sha + generated_at, fresh
-    # nonce, status back to drafted, review/approval cleared.
+    Shared between ``mark-drafted`` (body was hand-edited out of band)
+    and the ``add-*`` / ``remove-*`` substrate-edit commands (body was
+    just mutated by this same CLI call). Both paths produce the same
+    result: new body sha, fresh ``generated_at`` + nonce, status back
+    to ``drafted``, ``review`` / ``approval`` cleared, and — for the
+    decomposing tiers — the identity ledger re-derived from the
+    current body so add/remove ops surface immediately.
+
+    Requires an existing scope with a prior ``draft`` block; the
+    caller validates that. Returns the JSON-ready summary dict the
+    callers print on stdout.
+    """
+    prior = _existing_state(repo_root, scope)
+    assert prior is not None and prior.draft is not None
+    body_sha = hashlib.sha256(body_bytes).hexdigest()
     state = State(
         schema_version=prior.schema_version,
         scope=scope,
@@ -572,7 +592,414 @@ def cmd_mark_drafted(args: argparse.Namespace) -> int:
         write_manifest(ids_path, manifest)
         out["ids_path"] = str(ids_path)
         out["node_count"] = len(manifest.nodes)
+    return out
+
+
+def cmd_mark_drafted(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    scope = _scope_from_args(args)
+    prior = _existing_state(repo_root, scope)
+    if prior is None or prior.draft is None:
+        print("error: mark-drafted needs an existing scope with a draft", file=sys.stderr)
+        return 2
+    body_abs = repo_root / prior.draft.body_path
+    if not body_abs.exists():
+        print(f"error: body file does not exist: {body_abs}", file=sys.stderr)
+        return 2
+    out = _resync_drafted_state(repo_root, scope, body_abs.read_bytes())
     print(json.dumps(out))
+    return 0
+
+
+# ---------------- substrate-edit subcommands ----------------
+#
+# Mechanical add/remove operations against a feature_expansion or
+# requirements body. The CLI does the surgery + ledger resync; the
+# calling skill handles the LLM-free framing and the git commit. No
+# auto-propagation — the user invokes ``/propagate_downstream`` after
+# batching whatever edits they want.
+
+# Per-tier block grammar — what wraps the list, what each child is, and
+# the inner ``<name>`` carry-forward key. Both decomposing-root tiers
+# (feature_expansion / requirements) use this shape; sysarch / comparch
+# have richer block grammars and aren't supported by the mechanical
+# editors (use the ``modify-*`` skills instead).
+_BLOCK_GRAMMAR: dict[str, dict[str, str]] = {
+    "feature_expansion": {
+        "wrapper": "features",
+        "child": "feature",
+        "id_prefix": "feat_",
+    },
+    "requirements": {
+        "wrapper": "requirements",
+        "child": "responsibility",
+        "id_prefix": "resp_",
+    },
+}
+
+
+def _substrate_root_scope(repo_root: Path, tier: str, comp_id: str) -> Scope:
+    scope = Scope(tier=tier, comp_id=comp_id)  # type: ignore[arg-type]
+    if _existing_state(repo_root, scope) is None:
+        raise SystemExit(
+            f"error: no existing {tier} draft at {scope.state_path()} — "
+            f"seed one via /draft_{tier} first"
+        )
+    return scope
+
+
+def _read_body_for(repo_root: Path, scope: Scope) -> tuple[Path, str]:
+    """Return (body_abs_path, body_text) for an existing drafted scope."""
+    state = _existing_state(repo_root, scope)
+    if state is None or state.draft is None:
+        raise SystemExit(f"error: scope {scope.key()} has no draft block")
+    body_abs = repo_root / state.draft.body_path
+    if not body_abs.exists():
+        raise SystemExit(f"error: body file does not exist: {body_abs}")
+    return body_abs, body_abs.read_text(encoding="utf-8")
+
+
+def _find_blocks_with_name(body: str, child_tag: str, name: str) -> list[re.Match[str]]:
+    """Return the ``<child_tag>...</child_tag>`` blocks whose inner
+    ``<name>`` matches ``name`` (case-insensitive, trimmed).
+
+    The match uses the same regex shape ``derive_manifest`` uses so the
+    ledger's "found a node by name" agrees with the editor's "found a
+    block by name" — important when ``derive_manifest`` collapsed two
+    blocks with the same name into one ledger entry.
+    """
+    block_re = re.compile(rf"<{child_tag}\b[^>]*>(.*?)</{child_tag}>", re.S)
+    target = name.strip().lower()
+    out: list[re.Match[str]] = []
+    name_re = re.compile(r"<name\b[^>]*>(.*?)</name>", re.S)
+    for m in block_re.finditer(body):
+        inner_name_m = name_re.search(m.group(1))
+        if inner_name_m and inner_name_m.group(1).strip().lower() == target:
+            out.append(m)
+    return out
+
+
+def _resolve_target_name(
+    repo_root: Path,
+    scope: Scope,
+    *,
+    target_id: str | None,
+    target_name: str | None,
+) -> str:
+    """Resolve a removal target to the body-text ``<name>`` to match.
+
+    With ``--name``, returns the input directly (preserving the user's
+    case). With ``--feat-id`` / ``--resp-id``, looks up the existing
+    ledger and returns the node's stored name. Errors out on
+    unresolved id or missing ledger.
+    """
+    if target_name is not None and target_id is not None:
+        raise SystemExit("error: pass --feat-id/--resp-id OR --name, not both")
+    if target_name is not None:
+        return target_name
+    if target_id is None:
+        raise SystemExit("error: must pass --feat-id/--resp-id or --name")
+    ids_path = repo_root / scope.ids_path()
+    if not ids_path.exists():
+        raise SystemExit(f"error: no ledger at {ids_path}; cannot resolve {target_id!r} by id")
+    manifest = load_manifest(ids_path)
+    for n in manifest.nodes:
+        if str(n.get("id", "")) == target_id:
+            name = str(n.get("name", "")).strip()
+            if not name:
+                raise SystemExit(f"error: ledger node {target_id!r} has no name")
+            return name
+    raise SystemExit(f"error: id {target_id!r} not found in {ids_path}")
+
+
+def _insert_child_before_close(body: str, wrapper: str, child_line: str) -> str:
+    """Insert ``child_line`` (already terminated with ``\\n``) immediately
+    before the ``</wrapper>`` closing tag, preserving the closing tag's
+    own leading indentation."""
+    close = f"</{wrapper}>"
+    m = re.search(rf"(^|\n)([ \t]*){re.escape(close)}", body)
+    if not m:
+        raise SystemExit(f"error: body has no <{wrapper}> closing tag")
+    insert_pos = m.start(2)
+    return body[:insert_pos] + child_line + body[insert_pos:]
+
+
+def _remove_block_with_padding(body: str, m: re.Match[str]) -> str:
+    """Drop the matched block plus its leading line indentation and one
+    trailing newline, so the surrounding body keeps its line shape."""
+    start, end = m.start(), m.end()
+    line_start = body.rfind("\n", 0, start) + 1
+    if body[line_start:start].strip() == "":
+        start = line_start
+    if end < len(body) and body[end] == "\n":
+        end += 1
+    return body[:start] + body[end:]
+
+
+def cmd_add_feature(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    scope = _substrate_root_scope(repo_root, "feature_expansion", args.comp_id)
+    body_abs, body = _read_body_for(repo_root, scope)
+    if _find_blocks_with_name(body, "feature", args.name):
+        print(f"error: a <feature> with <name>{args.name}</name> already exists", file=sys.stderr)
+        return 2
+    implicit = "<implicit/>" if args.implicit else ""
+    child = (
+        f"  <feature><name>{args.name}</name><intent>{args.intent}</intent>{implicit}</feature>\n"
+    )
+    new_body = _insert_child_before_close(body, "features", child)
+    body_bytes = new_body.encode("utf-8")
+    body_abs.write_bytes(body_bytes)
+    out = _resync_drafted_state(repo_root, scope, body_bytes)
+    # Surface the minted feat_* id so the calling skill can echo it.
+    ids = load_manifest(repo_root / scope.ids_path())
+    target_lc = args.name.strip().lower()
+    target = next(
+        (n for n in ids.nodes if str(n.get("name", "")).strip().lower() == target_lc),
+        None,
+    )
+    out["action"] = "add-feature"
+    out["feat_id"] = str(target.get("id", "")) if target else ""
+    out["name"] = args.name
+    print(json.dumps(out))
+    return 0
+
+
+def cmd_remove_feature(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    scope = _substrate_root_scope(repo_root, "feature_expansion", args.comp_id)
+    body_abs, body = _read_body_for(repo_root, scope)
+    name = _resolve_target_name(repo_root, scope, target_id=args.feat_id, target_name=args.name)
+    matches = _find_blocks_with_name(body, "feature", name)
+    if not matches:
+        print(f"error: no <feature> with <name>{name}</name> in body", file=sys.stderr)
+        return 2
+    if len(matches) > 1:
+        print(
+            f"error: {len(matches)} <feature> blocks match <name>{name}</name>; "
+            f"ambiguous — refusing to remove",
+            file=sys.stderr,
+        )
+        return 2
+    new_body = _remove_block_with_padding(body, matches[0])
+    body_bytes = new_body.encode("utf-8")
+    body_abs.write_bytes(body_bytes)
+    out = _resync_drafted_state(repo_root, scope, body_bytes)
+    out["action"] = "remove-feature"
+    out["removed_name"] = name
+    print(json.dumps(out))
+    return 0
+
+
+def cmd_add_responsibility(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    scope = _substrate_root_scope(repo_root, "requirements", args.comp_id)
+    body_abs, body = _read_body_for(repo_root, scope)
+    if _find_blocks_with_name(body, "responsibility", args.name):
+        print(
+            f"error: a <responsibility> with <name>{args.name}</name> already exists",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Validate feat-ids against the feature_expansion ledger. An empty
+    # feat list is permitted — some resps trace to no specific feature
+    # (owned platform work). A non-empty list with an unknown id is a
+    # hard error so the body never carries dangling references.
+    feat_ids = [f.strip() for f in (args.feat_ids or "").split(",") if f.strip()]
+    if feat_ids:
+        fe_scope = Scope(tier="feature_expansion", comp_id=args.comp_id)
+        fe_ids = repo_root / fe_scope.ids_path()
+        if not fe_ids.exists():
+            print(
+                f"error: feature_expansion ledger missing at {fe_ids}; cannot validate --feat-ids",
+                file=sys.stderr,
+            )
+            return 2
+        known = {str(n.get("id", "")) for n in load_manifest(fe_ids).nodes}
+        unknown = [fid for fid in feat_ids if fid not in known]
+        if unknown:
+            print(f"error: unknown feat_ids: {unknown}", file=sys.stderr)
+            return 2
+
+    feats_xml = "".join(f'<feat id="{fid}"/>' for fid in feat_ids)
+    child = (
+        f"  <responsibility><name>{args.name}</name><feats>{feats_xml}</feats></responsibility>\n"
+    )
+    new_body = _insert_child_before_close(body, "requirements", child)
+    body_bytes = new_body.encode("utf-8")
+    body_abs.write_bytes(body_bytes)
+    out = _resync_drafted_state(repo_root, scope, body_bytes)
+    ids = load_manifest(repo_root / scope.ids_path())
+    target_lc = args.name.strip().lower()
+    target = next(
+        (n for n in ids.nodes if str(n.get("name", "")).strip().lower() == target_lc),
+        None,
+    )
+    out["action"] = "add-responsibility"
+    out["resp_id"] = str(target.get("id", "")) if target else ""
+    out["name"] = args.name
+    out["feat_ids"] = feat_ids
+    print(json.dumps(out))
+    return 0
+
+
+def cmd_remove_responsibility(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    scope = _substrate_root_scope(repo_root, "requirements", args.comp_id)
+    body_abs, body = _read_body_for(repo_root, scope)
+    name = _resolve_target_name(repo_root, scope, target_id=args.resp_id, target_name=args.name)
+    matches = _find_blocks_with_name(body, "responsibility", name)
+    if not matches:
+        print(f"error: no <responsibility> with <name>{name}</name> in body", file=sys.stderr)
+        return 2
+    if len(matches) > 1:
+        print(
+            f"error: {len(matches)} <responsibility> blocks match <name>{name}</name>; "
+            f"ambiguous — refusing to remove",
+            file=sys.stderr,
+        )
+        return 2
+    new_body = _remove_block_with_padding(body, matches[0])
+    body_bytes = new_body.encode("utf-8")
+    body_abs.write_bytes(body_bytes)
+    out = _resync_drafted_state(repo_root, scope, body_bytes)
+    out["action"] = "remove-responsibility"
+    out["removed_name"] = name
+    print(json.dumps(out))
+    return 0
+
+
+# ---------------- phase registry subcommands ----------------
+#
+# The phase registry lives at ``state/phases/<phase_id>.json`` and feeds
+# ``compute_plan`` (siege/projection/plan.py). Each file is
+# ``{schema_version, phase_id, order, name, feature_ids}``. The four
+# editor subcommands keep the registry round-trippable without forcing
+# the user to hand-edit JSON files.
+
+_PHASE_SCHEMA_VERSION = 2
+
+
+def _phase_path(repo_root: Path, phase_id: str) -> Path:
+    return repo_root / "state" / "phases" / f"{phase_id}.json"
+
+
+def _load_phase(repo_root: Path, phase_id: str) -> dict[str, Any]:
+    path = _phase_path(repo_root, phase_id)
+    if not path.exists():
+        raise SystemExit(f"error: no phase at {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_phase(repo_root: Path, phase: dict[str, Any]) -> Path:
+    path = _phase_path(repo_root, phase["phase_id"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(phase, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def cmd_add_phase(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    phase_id = args.phase_id or f"phase_{mint_nonce()}"
+    if _phase_path(repo_root, phase_id).exists():
+        print(f"error: phase {phase_id} already exists", file=sys.stderr)
+        return 2
+    # Refuse to mint two phases at the same order — the plan projection
+    # sorts by order and ties are silently undefined.
+    phases_dir = repo_root / "state" / "phases"
+    existing_phases = sorted(phases_dir.glob("*.json")) if phases_dir.exists() else []
+    for path in existing_phases:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if existing.get("order") == args.order:
+            print(
+                f"error: phase order {args.order} already taken by {existing.get('phase_id')}",
+                file=sys.stderr,
+            )
+            return 2
+    phase = {
+        "schema_version": _PHASE_SCHEMA_VERSION,
+        "phase_id": phase_id,
+        "order": args.order,
+        "name": args.name,
+        "feature_ids": [],
+    }
+    path = _write_phase(repo_root, phase)
+    print(json.dumps({"action": "add-phase", "phase_id": phase_id, "state_path": str(path)}))
+    return 0
+
+
+def cmd_remove_phase(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    phase = _load_phase(repo_root, args.phase_id)
+    feat_ids = phase.get("feature_ids", [])
+    if feat_ids:
+        print(
+            f"error: phase {args.phase_id} still owns features {feat_ids}; "
+            f"unassign first or pass --force",
+            file=sys.stderr,
+        )
+        return 2
+    _phase_path(repo_root, args.phase_id).unlink()
+    print(json.dumps({"action": "remove-phase", "phase_id": args.phase_id}))
+    return 0
+
+
+def cmd_assign_feature_to_phase(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    target = _load_phase(repo_root, args.phase_id)
+    if args.feat_id in target.get("feature_ids", []):
+        print(json.dumps({"action": "noop", "reason": "feature already assigned to this phase"}))
+        return 0
+    # A feature lives in at most one phase — strip it from any other
+    # phase before adding it here. Keeps ``compute_plan``'s
+    # feature→phase map a clean function.
+    phases_dir = repo_root / "state" / "phases"
+    moved_from: str | None = None
+    if phases_dir.exists():
+        for path in sorted(phases_dir.glob("*.json")):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data["phase_id"] == args.phase_id:
+                continue
+            if args.feat_id in data.get("feature_ids", []):
+                moved_from = data["phase_id"]
+                data["feature_ids"] = [f for f in data["feature_ids"] if f != args.feat_id]
+                _write_phase(repo_root, data)
+    target.setdefault("feature_ids", []).append(args.feat_id)
+    _write_phase(repo_root, target)
+    print(
+        json.dumps(
+            {
+                "action": "assign-feature-to-phase",
+                "feat_id": args.feat_id,
+                "phase_id": args.phase_id,
+                "moved_from": moved_from,
+            }
+        )
+    )
+    return 0
+
+
+def cmd_unassign_feature_from_phase(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo).resolve()
+    phase = _load_phase(repo_root, args.phase_id)
+    if args.feat_id not in phase.get("feature_ids", []):
+        print(
+            f"error: feature {args.feat_id} not assigned to {args.phase_id}",
+            file=sys.stderr,
+        )
+        return 2
+    phase["feature_ids"] = [f for f in phase["feature_ids"] if f != args.feat_id]
+    _write_phase(repo_root, phase)
+    print(
+        json.dumps(
+            {
+                "action": "unassign-feature-from-phase",
+                "feat_id": args.feat_id,
+                "phase_id": args.phase_id,
+            }
+        )
+    )
     return 0
 
 
@@ -603,6 +1030,9 @@ def cmd_mint_plan(args: argparse.Namespace) -> int:
             if prior is not None and prior.status in ("drafted", "reviewed", "approved"):
                 skipped.append(rel)
                 continue
+            if args.dry_run:
+                (reseeded if prior else minted).append(rel)
+                continue
             meta = dict(prior.meta) if prior else {}
             meta["parent_resps"] = node["closure_resp_ids"]
             stub = State(
@@ -627,17 +1057,15 @@ def cmd_mint_plan(args: argparse.Namespace) -> int:
                 rel = str(p.relative_to(repo_root))
                 if rel not in planned:
                     dropped.append(rel)
-    print(
-        json.dumps(
-            {
-                "minted": minted,
-                "reseeded": reseeded,
-                "skipped_built": skipped,
-                "dropped_by_plan": dropped,
-            },
-            indent=2,
-        )
-    )
+    out: dict[str, Any] = {
+        "minted": minted,
+        "reseeded": reseeded,
+        "skipped_built": skipped,
+        "dropped_by_plan": dropped,
+    }
+    if args.dry_run:
+        out["dry_run"] = True
+    print(json.dumps(out, indent=2))
     return 0
 
 
@@ -745,13 +1173,25 @@ def cmd_get_state(args: argparse.Namespace) -> int:
 
 def cmd_get_context(args: argparse.Namespace) -> int:
     from siege.projection import GENERATION_BUILDERS
+    from siege.prompts import load_generation_prompt
 
     view = _open_local_view(args)
     builder = GENERATION_BUILDERS.get(args.tier)
     if builder is None:
         print(f"error: no generation context builder for tier {args.tier!r}", file=sys.stderr)
         return 2
-    print(json.dumps(builder(view, _scope_from_args(args)), indent=2))
+    bundle = builder(view, _scope_from_args(args))
+    # ``--prompt-variant modify`` swaps the bundle's ``instructions`` field
+    # for the surgical-edit prompt (``siege/prompts/modify_<tier>.md``).
+    # The per-tier context bundle is identical to the regen path — only
+    # the framing changes. Fall back silently to the default prompt for
+    # tiers without a modify variant.
+    if args.prompt_variant == "modify":
+        modify_text = load_generation_prompt(f"modify_{args.tier}")
+        if modify_text:
+            bundle["instructions"] = modify_text
+            bundle["prompt_variant"] = "modify"
+    print(json.dumps(bundle, indent=2))
     return 0
 
 
@@ -879,8 +1319,109 @@ def build_parser() -> argparse.ArgumentParser:
     _add_scope_args(p_md)
     p_md.set_defaults(func=cmd_mark_drafted)
 
+    # ---- substrate-edit subcommands (mechanical add/remove) ----
+
+    def _add_substrate_root_args(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--repo", default=".")
+        parser.add_argument(
+            "--comp-id",
+            dest="comp_id",
+            default="proj",
+            help="substrate-root comp_id (the single substrate-root scope; "
+            "the sample-project convention is 'proj')",
+        )
+
+    p_af = subs.add_parser(
+        "add-feature",
+        help="append a <feature> block to feature_expansion/<comp_id>/body.md",
+    )
+    _add_substrate_root_args(p_af)
+    p_af.add_argument("--name", required=True, help="user-facing feature name")
+    p_af.add_argument("--intent", required=True, help="one-sentence intent")
+    p_af.add_argument(
+        "--implicit",
+        action="store_true",
+        help="mark the feature as implicit (downstream tiers treat it as background)",
+    )
+    p_af.set_defaults(func=cmd_add_feature)
+
+    p_rf = subs.add_parser(
+        "remove-feature",
+        help="delete a <feature> block from feature_expansion/<comp_id>/body.md",
+    )
+    _add_substrate_root_args(p_rf)
+    p_rf.add_argument("--feat-id", dest="feat_id", default=None, help="resolve via ledger")
+    p_rf.add_argument("--name", default=None, help="match the <name> in the body directly")
+    p_rf.set_defaults(func=cmd_remove_feature)
+
+    p_ar = subs.add_parser(
+        "add-responsibility",
+        help="append a <responsibility> block to requirements/<comp_id>/body.md",
+    )
+    _add_substrate_root_args(p_ar)
+    p_ar.add_argument("--name", required=True)
+    p_ar.add_argument(
+        "--feat-ids",
+        dest="feat_ids",
+        default="",
+        help="comma-separated feat_* ids this resp serves (validated against the ledger)",
+    )
+    p_ar.set_defaults(func=cmd_add_responsibility)
+
+    p_rr = subs.add_parser(
+        "remove-responsibility",
+        help="delete a <responsibility> block from requirements/<comp_id>/body.md",
+    )
+    _add_substrate_root_args(p_rr)
+    p_rr.add_argument("--resp-id", dest="resp_id", default=None, help="resolve via ledger")
+    p_rr.add_argument("--name", default=None, help="match the <name> in the body directly")
+    p_rr.set_defaults(func=cmd_remove_responsibility)
+
+    # ---- phase registry subcommands ----
+
+    p_apz = subs.add_parser("add-phase", help="create a state/phases/<id>.json file")
+    p_apz.add_argument("--repo", default=".")
+    p_apz.add_argument("--name", required=True, help="display name")
+    p_apz.add_argument("--order", type=int, required=True, help="phase ordinal (1, 2, 3, …)")
+    p_apz.add_argument(
+        "--phase-id",
+        dest="phase_id",
+        default=None,
+        help="override the minted phase id (testing / idempotency)",
+    )
+    p_apz.set_defaults(func=cmd_add_phase)
+
+    p_rpz = subs.add_parser("remove-phase", help="delete a state/phases/<id>.json file")
+    p_rpz.add_argument("--repo", default=".")
+    p_rpz.add_argument("--phase-id", dest="phase_id", required=True)
+    p_rpz.set_defaults(func=cmd_remove_phase)
+
+    p_assign = subs.add_parser(
+        "assign-feature-to-phase",
+        help="add a feat_* id to a phase's feature_ids (strips it from any other phase first)",
+    )
+    p_assign.add_argument("--repo", default=".")
+    p_assign.add_argument("--feat-id", dest="feat_id", required=True)
+    p_assign.add_argument("--phase-id", dest="phase_id", required=True)
+    p_assign.set_defaults(func=cmd_assign_feature_to_phase)
+
+    p_unassign = subs.add_parser(
+        "unassign-feature-from-phase",
+        help="remove a feat_* id from a phase's feature_ids",
+    )
+    p_unassign.add_argument("--repo", default=".")
+    p_unassign.add_argument("--feat-id", dest="feat_id", required=True)
+    p_unassign.add_argument("--phase-id", dest="phase_id", required=True)
+    p_unassign.set_defaults(func=cmd_unassign_feature_from_phase)
+
     p_plan = subs.add_parser("mint-plan", help="materialize phased impl stubs from state/plan.json")
     p_plan.add_argument("--repo", default=".")
+    p_plan.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help="print the would-mint / would-reseed lists without writing state files",
+    )
     p_plan.set_defaults(func=cmd_mint_plan)
 
     p_ls = subs.add_parser(
@@ -900,6 +1441,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_gc = subs.add_parser("get-context", help="print the generation context bundle")
     _add_scope_args(p_gc)
     _add_ref_arg(p_gc)
+    p_gc.add_argument(
+        "--prompt-variant",
+        dest="prompt_variant",
+        default="default",
+        choices=["default", "modify"],
+        help=(
+            "swap the bundle's ``instructions`` field for the per-tier modify prompt "
+            "(siege/prompts/modify_<tier>.md). 'modify' is for surgical edits via "
+            "the /modify_* skills; falls back to the default prompt if the tier has "
+            "no modify variant. (default: default)"
+        ),
+    )
     p_gc.set_defaults(func=cmd_get_context)
 
     p_grc = subs.add_parser("get-review-context", help="print the review context bundle")
@@ -956,10 +1509,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "compute the worklist top-down from this source scope "
-            "(mutually exclusive with --worklist-json). Walks the chain "
-            "feature_expansion → requirements → sysarch → comparch → "
-            "subcomparch → impl and emits one entry per existing "
-            "downstream scope. Fanin is skipped (bottom-up)."
+            "(mutually exclusive with --worklist-json and --from-plan-change). Walks the "
+            "chain feature_expansion → requirements → sysarch → comparch → "
+            "subcomparch → impl and emits one entry per existing downstream "
+            "scope. Fanin is skipped (bottom-up)."
+        ),
+    )
+    p_op.add_argument(
+        "--from-plan-change",
+        dest="from_plan_change",
+        action="store_true",
+        help=(
+            "diff the live plan projection against existing impl state files; "
+            "emit pending entries for impls whose closure_resp_ids changed and "
+            "skipped entries for impls the current plan no longer covers. "
+            "Mutually exclusive with --worklist-json and --from-source-scope-json."
         ),
     )
     p_op.add_argument("--tier", default=None, choices=list(ALL_TIERS))
