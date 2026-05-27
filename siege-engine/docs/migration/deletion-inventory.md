@@ -1,171 +1,215 @@
 # Phase 4 — Deletion inventory
 
-This document is the punch list for the eventual deletion sweep that
-removes the old SQLAlchemy + job-queue + LLM-client stack now that
-`siege/` carries the read path and Claude Code skills carry the
-write path.
+This document is the punch list for the deletion sweep that removes
+the legacy backend modules now that `siege/` carries the read path
+and Claude Code skills carry the write path.
 
-**Don't delete yet.** Phases 1-3 are not yet validated in production.
-The new MCP server hasn't been deployed; the dashboard hasn't been
-repointed; the skills haven't been exercised end-to-end against a
-real project repo. The deletion is gated on:
+**Status: NARROWED.** The original inventory (written pre-step-4)
+assumed the dashboard could be repointed at a deployed MCP server
+before the sweep, and assumed every feature in the legacy backend
+had a v3 equivalent. Neither held:
 
-1. `siege` deployed at the target host and accepting reads from
-   the dashboard.
-2. The plugin installed on mobile CC and at least one full
-   draft → review → approve cycle completed on a real project.
-3. The dashboard fully repointed at MCP HTTP endpoints, no jobs / SSE
-   traffic for ≥ 1 working session.
+- The MCP transport was dropped (step 5) — the read API lives on
+  the existing FastAPI app at `/siege/api/*`, mounted from
+  `backend/main.py`.
+- Several legacy features (cohorts, vocabulary, references,
+  human-review batches, pending-instruction queue, feedback
+  history) have **no v3 equivalent** and keep their backend in this
+  round; their deletion is a follow-up.
 
-Once those three gates pass, the deletion below can be executed as
-one or a few commits.
+The current sweep deletes only the **per-tier generation/review
+stack**. The bigger LOC delta (models, reducer, pipeline, alembic)
+ships in a later cleanup pass.
 
-## What gets deleted
+## Gates (revised)
 
-### Persistence layer (~5K LOC)
+This sweep proceeds when:
 
-- `backend/database.py` — SQLAlchemy engine + session factory.
-- `backend/alembic/` — all 26 migration files + alembic.ini.
-- `backend/models/` (12 files):
-  - `auth.py`, `batch.py`, `cohort.py`, `cohort_sampler_config.py`,
-    `graph_event.py`, `input_document.py`, `job.py`, `node.py`,
-    `pending_instruction.py`, `project.py`, `review.py`,
-    `telemetry.py`
-- `data/siege_engine.db` (and any `.db-*` siblings) — gitignored
-  already, but verify before deleting the file.
+1. **Phase A** (doc reconciliation) lands — done in the same
+   commit as this rewrite.
+2. **Phase B** (frontend read-repoint) lands — every frontend read
+   that has a `/siege/api/*` equivalent moves off `/api/*`. Once
+   that lands, the per-tier read endpoints in `backend/graph/` are
+   genuinely unreachable.
+3. Frontend write surface is fully neutralized (Phase 3 stubbed the
+   buttons; Phase B greps for any remaining onClick handlers
+   firing legacy `/api/<tier>/<write>` calls).
 
-### Job queue + pipeline (~2K LOC)
+The original MCP-server-deployed and full-chain-end-to-end gates
+are dropped — neither is meaningful with the transport gone.
 
-- `backend/pipeline/` — queue + worker loop + rate limiter.
-- `backend/cli/manager.py` — Claude CLI subprocess wrapper. Skills
-  invoke the LLM via Claude Code directly, not via subprocess.
-- `backend/cli/` (the whole dir, if `manager.py` is the only file).
-- `backend/websocket/` — SSE event stream (the frontend mount is
-  already gone in Phase 3).
-- `backend/graph/queue.py`, `queue_routes.py`, `jobs_routes.py`,
-  `running.py`, `events.py`, `broadcast.py`, `apply_instruction.py`.
+## What gets deleted (this round, ~5-8K LOC)
 
-### FastAPI write routes (~6K LOC across handlers + routes)
+### Per-tier generation + review handlers (~3K LOC)
 
-- `backend/graph/bootstrap_routes.py` (POST endpoints that enqueued
-  jobs — `bootstrap_reset`, `bootstrap_feedback`, `bootstrap_approve`,
-  per-tier `/draft`, `/review/retry`).
-- `backend/graph/tier_ops_routes.py` (action endpoints — `reset-all`,
-  `regen-from-reviews`, `regen-below-threshold`, `full-corpus`,
-  `exploration-sample`, `cohort_regenerate`).
-- `backend/graph/cohort_routes.py` write surfaces.
-- `backend/graph/per_comp_reset.py`.
-- `backend/graph/handlers/` (entire directory — the per-tier job
-  handlers don't run in the new world).
-- `backend/graph/reducer.py` — event-sourced reducer. State lives in
-  git now.
+- `backend/graph/handlers/expansion_generation.py`
+- `backend/graph/handlers/requirements_generation.py`
+- `backend/graph/handlers/sysarch_generation.py`
+- `backend/graph/handlers/comparch_generation.py`
+- `backend/graph/handlers/subcomparch_generation.py`
+- `backend/graph/handlers/impl_generation.py`
+- `backend/graph/handlers/fanin_generation.py`
+- `backend/graph/handlers/review_{expansion,requirements,sysarch,comparch,subcomparch,impl,fanin}.py` (7 files)
+- The corresponding `_mint.py` handlers where they exist as
+  separate modules
+- Per-tier handler tests under `tests/v2/test_handlers_*.py` +
+  `test_review_*.py`
 
-### Models + projections (~3K LOC)
+### Write routes that drove the per-tier handlers (~1.5K LOC)
 
-- `backend/graph/diff.py` — node-diff projection. The new model is
+- `backend/graph/bootstrap_routes.py` — the per-tier draft /
+  feedback / approve / discard / cancel / reset / retry endpoints.
+- `backend/graph/tier_ops_routes.py` write functions — `reset-all`,
+  `review-sweep`, `resume`, `regen-below-threshold`, `full-corpus`,
+  `exploration-sample`. The read functions (`info`, `review-summary`,
+  `structure-summary`, `batches`) move to `/siege/api/*` in
+  Phase B; what's left after the move is deletable.
+
+### Per-tier read projection (~1.5K LOC)
+
+- `backend/graph/regen_context.py` — the per-tier context gatherer
+  replaced by `siege/projection/_base.py` + the seven per-tier
+  modules.
+
+### LLM subprocess + websocket (~1K LOC)
+
+- `backend/cli/manager.py` — Claude CLI subprocess wrapper. Used
+  only by the per-tier handlers being deleted; skills invoke the
+  LLM via Claude Code directly. **Verify** zero remaining callers
+  after the handler deletion (cohort regen is the last suspect —
+  if cohort regen also moves to a skill, this falls out cleanly).
+- `backend/cli/` — the whole directory if `manager.py` is its
+  only module.
+- `backend/websocket/` — the SSE event stream. Frontend mount went
+  away in Phase 3; only the deleted handlers still write to it,
+  so it falls out of the dependency graph cleanly here.
+
+### Orphaned graph projection modules
+
+- `backend/graph/diff.py` — node-diff projection; v3 model is
   "diff via git diff body.md", no projection needed.
-- `backend/graph/staleness.py` — staleness markers were a projection
-  on the old node graph; not relevant when state lives in git.
-- `backend/graph/fanout.py` — fanout dispatcher tied to the reducer.
-- `backend/graph/references.py` — reference projection.
-- `backend/graph/tier_structure.py` — replaced by `siege/structure.py`.
-- `backend/graph/review.py` + `review_summary.py` — replaced by
-  `siege/review_summary.py`.
-- `backend/graph/regen_context.py` — replaced by per-tier readers
-  in `siege/projection/`.
-- `backend/graph/queries.py` — readiness gates inline in slash
-  commands now; the structure summary handles enumeration.
-- `backend/graph/instructions.py`, `pending_instruction.py`, etc.
+- `backend/graph/staleness.py` — staleness markers were a
+  projection on the old node graph.
+- `backend/graph/fanout.py` — fanout dispatcher tied to the
+  per-tier handlers.
 
-### Schemas + auth surface
-
-- `backend/projects/routes.py` — write endpoints (create / delete
-  project) stay if dashboard still does CRUD on projects, otherwise
-  prune.
-- `backend/projects/service.py`, `schemas.py`, `settings.py` — keep
-  the read paths the dashboard uses; prune writes.
-- `backend/auth/routes.py`, `service.py`, `schemas.py` — `service.py`
-  was ported simplified to `siege/auth.py`. If login + token
-  issuance stays in the dashboard, keep the routes + password
-  helpers; otherwise prune.
+Verify zero inbound imports before deleting each. The surviving
+cohort / vocab / ref / queue routes don't reference these.
 
 ### Tests
 
-Every test file whose `import` block references any of the deleted
-modules:
+- `tests/v2/test_handlers_*.py`, `test_review_*.py`,
+  `test_regen_*.py`, `test_bootstrap_routes.py`,
+  `test_tier_ops_*.py`
+- `tests/v2/test_full_bootstrap_chain.py` — the integration test
+  exercises the deleted handlers; no v3 equivalent (the substrate's
+  chain runs through the CLI in `siege/tests/`). Acceptable loss;
+  call it out explicitly in the deletion commit.
 
-- `tests/v2/test_pipeline_*.py`
-- `tests/v2/test_queue_*.py`
-- `tests/v2/test_handlers_*.py`
-- `tests/v2/test_reducer_*.py`
-- `tests/v2/test_bootstrap_chain.py` (the full chain integration
-  test — re-targeted in `siege/tests/` at the MCP-shaped chain)
-- `tests/v2/test_review_*.py`, `test_regen_*.py`, etc.
+## What stays this round (deferred to a follow-up sweep)
 
-### Frontend (already done in Phase 3 except for these stragglers)
+Features that don't have v3 equivalents — their dashboard pages
+keep working against `/api/*`, so their backend modules + data
+plumbing stay:
 
-Phase 3 deleted the queue / SSE surfaces. Phase 4 cleans up:
+### Persistence layer (~5K LOC, deferred)
 
-- The `useQueueMutations.ts` shim left in place during Phase 3.
-- Any `.test.tsx` files that still mock the queue API.
-- The "Queue retired" landing pane introduced as a temporary
-  redirect in Phase 3.
+- `backend/database.py`
+- `backend/alembic/` + `alembic.ini`
+- `backend/models/` (12 files: `auth.py`, `batch.py`, `cohort.py`,
+  `cohort_sampler_config.py`, `graph_event.py`,
+  `input_document.py`, `job.py`, `node.py`,
+  `pending_instruction.py`, `project.py`, `review.py`,
+  `telemetry.py`)
 
-### Infrastructure
+### Job pipeline (~2K LOC, deferred)
 
-- `Dockerfile` — needs editing, not deletion: drop the alembic
-  migration step + the worker process, keep the MCP server +
-  frontend bundle.
-- `docker-entrypoint.sh` — drop alembic upgrade + worker spawn.
-- `fly.toml` — drop any process group for the worker if one exists.
+- `backend/pipeline/` — queue, worker loop, rate limiter. The
+  surviving cohort / vocab / ref / review-batch / queue paths
+  still enqueue jobs.
 
-## What survives in `backend/`
+### Surviving feature backends (~5K LOC, deferred)
 
-Post-deletion, `backend/` shrinks to:
+- `backend/graph/cohort_routes.py`, `cohort_sampler.py`
+- `backend/graph/vocabulary*`
+- `backend/graph/references*`
+- `backend/graph/queue_routes.py`, `jobs_routes.py`
+- `backend/graph/review_routes.py` (human review batches)
+- `backend/graph/feedback*` if standalone
+- `backend/graph/debug_routes.py` if any
+- The handlers those routes enqueue
+- `backend/graph/reducer.py`, `queries.py`,
+  `apply_instruction.py`, `instructions.py`,
+  `pending_instruction.py` — load-bearing for the surviving
+  features
+- `backend/graph/tier_structure.py`, `review_summary.py` — keep
+  unless Phase B fully repoints both panels at `/siege/api/*`
+  (the read endpoints exist in `siege/server.py`; the wire-up is
+  Phase B's job)
 
-- `backend/main.py` — slim FastAPI app that mounts `siege.server.app`
-  and any remaining dashboard-only routes (projects CRUD, auth login).
-- `backend/projects/` — project CRUD (read + the small set of writes
-  the dashboard needs: create, delete, update name).
-- `backend/auth/` — login / token issuance (the verification-only half
-  lives in `siege/auth.py`).
-- `backend/git_manager/` — clone + commit helpers. `siege.git_view`
-  uses these for the clone-on-first-read path.
-- `backend/github/` — GitHub OAuth + repo provisioning.
+### Frontend modules (deferred-feature shims)
+
+- `frontend/src/api/cohorts.ts`, `vocabulary.ts`, `references.ts`,
+  `queue.ts`, `review.ts`, `feedbackHistory.ts`, `debug.ts`
+- Their corresponding panels + pages
+- `useQueueMutations.ts` — kept in Phase 3 as a doomed shim;
+  stays until the queue page goes away
+
+### Schemas + auth surface (stays this round)
+
+- `backend/projects/routes.py`, `service.py`, `schemas.py`,
+  `settings.py` — project CRUD + per-project settings. The
+  dashboard still creates / deletes / renames projects through
+  these.
+- `backend/auth/routes.py`, `service.py`, `schemas.py` — login +
+  JWT issuance. `siege/auth.py` is verify-only; issuance stays
+  here.
+- `backend/github/` — OAuth + repo provisioning.
+- `backend/git_manager/` — clone + commit helpers used by both
+  `siege.git_view` and the surviving feature backends.
 - `backend/config.py` — shared env loading.
 
-That's roughly ~3K LOC remaining, down from ~30K.
+## What survives in `backend/` after this round
 
-## Cumulative LOC delta (estimate)
+- `backend/main.py` — FastAPI app mounting `siege.server.app` at
+  `/siege` plus the surviving routers.
+- `backend/projects/`, `backend/auth/`, `backend/github/`,
+  `backend/git_manager/`, `backend/config.py` — unchanged.
+- `backend/database.py`, `backend/alembic/`, `backend/models/`,
+  `backend/pipeline/` — deferred.
+- `backend/graph/` — narrowed to the deferred-feature routes +
+  their handlers + shared infrastructure (`reducer.py`,
+  `queries.py`, `apply_instruction.py`).
 
-- Lines deleted: ~30K
-- Lines added (siege + plugin contents): ~3.5K
-- Net: ~26.5K LOC removed.
+## Cumulative LOC delta
 
-The migration trades a process-heavy backend with persistence, a job
-queue, an LLM subprocess wrapper, and an SSE channel for a thin
-read-only server backed by git. The meaning-engine logic doesn't
-disappear — it moves into the MCP server's per-tier readers (the
-~1.5K-line `regen_context.py` becomes the ~270-line `_base.py` plus
-seven ~80-line per-tier modules) and the prompt text moves into the
-skills themselves.
+This round: ~5-8K removed (per-tier generation/review + tier-ops
+writes + regen_context + websocket + cli/manager + the orphaned
+projection modules).
 
-## Sequencing the actual deletion
+Deferred follow-up (when the deferred features either drop or grow
+v3 equivalents): ~20K additional removal (models, alembic, pipeline,
+reducer, cohort/vocab/ref/queue/review-batch route stacks).
 
-Do it in 4 commits, one logical chunk per commit, in this order so
-the test suite stays runnable between commits:
+## Infrastructure
 
-1. `phase 4a: drop job queue + worker loop + pipeline`
-2. `phase 4b: drop event-sourced reducer + projections`
-3. `phase 4c: drop write routes + handlers`
-4. `phase 4d: drop models + database + migrations`
+- `Dockerfile` — needs editing in a follow-up: drop the alembic
+  migration step + the worker process when the pipeline goes away.
+  This round, no changes.
+- `docker-entrypoint.sh` — same, follow-up.
 
-Tests for deleted modules disappear with each commit. The siege
-test suite stays green throughout.
+## Sequencing
+
+Two commits, in this order:
+
+1. `phase 4c1: drop per-tier generation + review handlers + bootstrap routes`
+2. `phase 4c2: drop tier-ops write surface + websocket + cli/manager + orphan projections`
+
+The siege test suite stays green throughout; legacy tests delete
+with their modules.
 
 ## Rollback
 
 The deletions live in commits on the migration branch. Rolling back
 is `git revert <commit_sha>` per chunk. Persisted data (the SQLite
-DB) is the only thing that doesn't survive a revert — back it up
-before the deletion sweep.
+DB) is unaffected — the deferred persistence layer is untouched.
