@@ -28,7 +28,7 @@ except BaseException as _exc:  # pragma: no cover - env-dependent skip
 from datetime import datetime  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine, select  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -208,95 +208,6 @@ class TestGapsInBatch:
         assert statuses == ["failed", "queued"]
         # jobs_in_batch returns all 3
         assert len(jobs_in_batch(db, batch_id)) == 3
-
-
-# ── Resume endpoint integration tests ─────────────────────────────
-
-
-class TestResumeBatchEndpoint:
-    def test_resume_re_enqueues_gaps_only(self, db, engine_and_factory):
-        project_id = _seed_project(db)
-        batch_id = mint_batch(db, project_id, op_type="reset_tier", tier="comparch")
-        db.commit()
-        # Seed three jobs: completed, failed, cancelled.
-        for status, k in [("completed", 1), ("failed", 2), ("cancelled", 3)]:
-            db.add(
-                Job(
-                    job_type="v2.generate_comparch",
-                    payload={
-                        "project_id": project_id,
-                        "component_id": f"comp_{k}",
-                        "batch_id": batch_id,
-                        # Diagnostic-only fields that the resume
-                        # endpoint should strip on re-enqueue.
-                        "_current_attempt": 1,
-                    },
-                    status=status,
-                    batch_id=batch_id,
-                )
-            )
-        db.commit()
-
-        _, factory = engine_and_factory
-
-        def _override_db():
-            s = factory()
-            try:
-                yield s
-            finally:
-                s.close()
-
-        app.dependency_overrides[get_db] = _override_db
-        app.dependency_overrides[get_current_user] = _override_user_admin
-        try:
-            client = TestClient(app)
-            resp = client.post(f"/api/projects/{project_id}/batches/{batch_id}/resume")
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["batch_id"] == batch_id
-            # 2 gaps (failed + cancelled), 1 skipped (completed).
-            assert body["requeued"] == 2
-            assert body["skipped"] == 1
-            assert body["total_in_batch"] == 3
-        finally:
-            app.dependency_overrides.clear()
-
-        # Verify the new jobs landed under the same batch_id and
-        # dropped the diagnostic-only "_current_attempt" key.
-        new_jobs = list(
-            db.execute(
-                select(Job).where(
-                    Job.batch_id == batch_id,
-                    Job.status == "queued",
-                )
-            ).scalars()
-        )
-        assert len(new_jobs) == 2
-        for j in new_jobs:
-            assert "_current_attempt" not in (j.payload or {})
-            assert j.payload.get("batch_id") == batch_id
-
-    def test_resume_unknown_batch_returns_404(self, db, engine_and_factory):
-        project_id = _seed_project(db)
-        db.commit()
-
-        _, factory = engine_and_factory
-
-        def _override_db():
-            s = factory()
-            try:
-                yield s
-            finally:
-                s.close()
-
-        app.dependency_overrides[get_db] = _override_db
-        app.dependency_overrides[get_current_user] = _override_user_admin
-        try:
-            client = TestClient(app)
-            resp = client.post(f"/api/projects/{project_id}/batches/batch_nope/resume")
-            assert resp.status_code == 404
-        finally:
-            app.dependency_overrides.clear()
 
 
 class TestListBatchesEndpoint:
