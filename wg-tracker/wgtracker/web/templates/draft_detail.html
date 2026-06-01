@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ d.draft_name }} · WG Tracker{% endblock %}
+{% block content %}
+<p class="muted"><a href="/drafts">← drafts</a></p>
+<h1>{{ d.draft_name }} {{ d.current_version or '' }}</h1>
+<p class="meta">
+  {% if d.working_group %}<span class="badge">{{ d.working_group }}</span>{% endif %}
+  {% if d.status %}<span>{{ d.status }}</span>{% endif %}
+  {% if d.rfc_number %}<span>RFC {{ d.rfc_number }}</span>{% endif %}
+</p>
+<p><strong>{{ d.title or '' }}</strong></p>
+<p class="cite"><a href="{{ d.datatracker_url }}" target="_blank" rel="noopener">View on IETF Datatracker ↗</a></p>
+{% if d.abstract %}<div class="card"><h2>Abstract</h2><p>{{ d.abstract }}</p></div>{% endif %}
+
+<div class="card">
+  <h2>Discussed in {{ d.threads|length }} threads</h2>
+  <ul class="threadlist">
+    {% for t in d.threads %}
+    <li>
+      <a href="/threads/{{ t.thread_id }}">{{ t.subject }}</a>
+      <span class="muted">({{ t.working_group }}, {{ t.date_range }}){% if t.versions_referenced %} · versions {{ t.versions_referenced|join(', ') }}{% endif %}</span>
+      <div class="brief">{{ t.summary_brief }}</div>
+      {% if t.archive_url %}<a href="{{ t.archive_url }}" target="_blank" rel="noopener">archive ↗</a>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}

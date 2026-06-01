@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Accept invite · WG Tracker{% endblock %}
+{% block content %}
+<div class="card narrow">
+  <h1>Accept invite</h1>
+  {% if not valid %}
+    <p class="error">This invite link is invalid, expired, or already used.</p>
+    <p class="muted"><a href="/login">Go to login</a></p>
+  {% else %}
+    <p class="muted">You're creating a <strong>read-only</strong> account.</p>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form method="post" action="/invite/{{ token }}">
+      <label>Email<input type="email" name="email" required autofocus></label>
+      <label>Password (min 8 chars)<input type="password" name="password" minlength="8" required></label>
+      <button type="submit">Create account &amp; sign in</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

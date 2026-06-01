@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}First-time setup · WG Tracker{% endblock %}
+{% block content %}
+<div class="card narrow">
+  <h1>Create the admin account</h1>
+  <p class="muted">No accounts exist yet. The first account you create becomes the
+  administrator and can mint read-only invite links for others.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/setup">
+    <label>Email<input type="email" name="email" required autofocus></label>
+    <label>Password (min 8 chars)<input type="password" name="password" minlength="8" required></label>
+    <button type="submit">Create admin &amp; sign in</button>
+  </form>
+</div>
+{% endblock %}

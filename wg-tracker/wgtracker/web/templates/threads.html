@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Threads · WG Tracker{% endblock %}
+{% block content %}
+<h1>Threads</h1>
+<form class="filters" method="get" action="/threads">
+  <input type="search" name="q" placeholder="full-text search…" value="{{ filters.q or '' }}">
+  <select name="topic">
+    <option value="">All topics</option>
+    {% for t in topics %}<option value="{{ t }}" {% if filters.topic==t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+  </select>
+  <select name="working_group">
+    <option value="">All WGs</option>
+    {% for w in working_groups %}<option value="{{ w }}" {% if filters.working_group==w %}selected{% endif %}>{{ w }}</option>{% endfor %}
+  </select>
+  <select name="status">
+    <option value="">Any status</option>
+    {% for s in ['active','concluded','abandoned'] %}<option value="{{ s }}" {% if filters.status==s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+  <input type="date" name="since" value="{{ filters.since or '' }}">
+  <button type="submit">Filter</button>
+</form>
+
+<table class="grid">
+  <thead><tr><th>Subject</th><th>WG</th><th>Dates</th><th>Msgs</th><th>Status</th><th>Consensus</th><th>Source</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><a href="/threads/{{ r.thread_id }}">{{ r.subject }}</a><div class="brief">{{ r.summary_brief }}</div></td>
+      <td>{{ r.working_group }}</td>
+      <td class="nowrap">{{ r.date_range }}</td>
+      <td>{{ r.message_count }}</td>
+      <td>{{ r.status or '—' }}</td>
+      <td>{{ r.consensus_state or '—' }}</td>
+      <td>{% if r.archive_url %}<a href="{{ r.archive_url }}" target="_blank" rel="noopener">archive ↗</a>{% endif %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">No threads match.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">{{ rows|length }} threads</p>
+{% endblock %}

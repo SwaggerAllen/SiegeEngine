@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ t.subject }} · WG Tracker{% endblock %}
+{% block content %}
+<p class="muted"><a href="/threads">← threads</a></p>
+<h1>{{ t.subject }}</h1>
+<p class="meta">
+  <span class="badge">{{ t.working_group }}</span>
+  <span>{{ t.date_range }}</span>
+  <span>{{ t.message_count }} messages</span>
+  <span>status: <strong>{{ t.status or '—' }}</strong></span>
+  <span>consensus: <strong>{{ t.consensus_state or '—' }}</strong></span>
+</p>
+{% if t.archive_url %}
+<p class="cite"><a href="{{ t.archive_url }}" target="_blank" rel="noopener">Verify in IETF archive ↗</a></p>
+{% endif %}
+
+<div class="card">
+  <h2>Summary</h2>
+  <p>{{ t.summary or '(not yet summarized)' }}</p>
+</div>
+
+{% if t.key_positions %}
+<div class="card">
+  <h2>Key positions</h2>
+  <ul class="positions">
+    {% for p in t.key_positions %}
+    <li><strong>{{ p.holder }}</strong>: {{ p.position }}{% if p.context %} <span class="muted">— {{ p.context }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="cols">
+  <div class="card">
+    <h2>Topics</h2>
+    {% if t.topics %}
+    <ul>{% for tp in t.topics %}<li><a href="/topics/{{ tp.topic }}">{{ tp.topic }}</a> <span class="muted">({{ '%.2f'|format(tp.confidence) }})</span></li>{% endfor %}</ul>
+    {% else %}<p class="muted">Uncategorized.</p>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Participants</h2>
+    {% if t.participants %}<ul>{% for p in t.participants %}<li>{{ p }}</li>{% endfor %}</ul>
+    {% else %}<p class="muted">—</p>{% endif %}
+  </div>
+</div>
+
+{% if t.referenced_drafts %}
+<div class="card">
+  <h2>Referenced drafts</h2>
+  <ul>
+    {% for d in t.referenced_drafts %}
+    <li>
+      <a href="/drafts/{{ d.draft_name }}">{{ d.draft_name }}</a>
+      {% if d.versions_referenced %}<span class="muted">{{ d.versions_referenced|join(', ') }}</span>{% endif %}
+      — {{ d.title or '(no title)' }}
+      {% if d.status %}<span class="badge">{{ d.status }}</span>{% endif %}
+      <a href="{{ d.datatracker_url }}" target="_blank" rel="noopener">datatracker ↗</a>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ o.topic }} · WG Tracker{% endblock %}
+{% block content %}
+<h1>Topic: {{ o.topic }}</h1>
+{% if not o.exists %}
+<p class="error">No such topic.</p>
+{% else %}
+<p class="meta">
+  <span>{{ o.thread_count }} threads</span>
+  <span>{{ o.active_thread_count }} active</span>
+</p>
+<div class="cols">
+  <div class="card">
+    <h2>By consensus</h2>
+    <ul>{% for k, v in o.by_consensus.items() %}<li>{{ k }}: {{ v }}</li>{% endfor %}</ul>
+  </div>
+  <div class="card">
+    <h2>By status</h2>
+    <ul>{% for k, v in o.by_status.items() %}<li>{{ k }}: {{ v }}</li>{% endfor %}</ul>
+  </div>
+</div>
+
+{% if o.open_questions %}
+<div class="card">
+  <h2>Open questions (active debate / no consensus)</h2>
+  <ul class="threadlist">
+    {% for r in o.open_questions %}
+    <li><a href="/threads/{{ r.thread_id }}">{{ r.subject }}</a> <span class="muted">({{ r.date_range }})</span>
+      <div class="brief">{{ r.summary_brief }}</div></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Active threads</h2>
+  <ul class="threadlist">
+    {% for r in o.active_threads %}
+    <li><a href="/threads/{{ r.thread_id }}">{{ r.subject }}</a> <span class="muted">({{ r.date_range }})</span></li>
+    {% else %}<li class="muted">None.</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

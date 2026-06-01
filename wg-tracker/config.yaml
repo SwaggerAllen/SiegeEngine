@@ -1,0 +1,87 @@
+# Application configuration for the IETF Working Group Activity Tracker.
+#
+# Secrets (DATABASE_URL, ANTHROPIC_API_KEY, SESSION_SECRET) come from the
+# environment, NOT from this file. This file holds non-secret application
+# settings and is safe to commit / ship in the container image.
+
+working_groups:
+  - name: mls
+    archive_url: https://mailarchive.ietf.org/arch/list/mls/
+  - name: mimi
+    archive_url: https://mailarchive.ietf.org/arch/list/mimi/
+  - name: cfrg
+    archive_url: https://mailarchive.ietf.org/arch/list/cfrg/
+
+topics:
+  - name: federation
+    description: Cross-server / cross-instance protocol design
+    keywords: [federation, federated, cross-server, cross-instance, interop]
+  - name: archival_and_recovery
+    description: Long-term message retention, key recovery, history sharing
+    keywords: [archival, recovery, retention, history, key escrow]
+  - name: multi_device
+    description: Support for multiple devices per user / client
+    keywords: [multi-device, multidevice, multiple devices, device sync]
+  - name: history_sharing
+    description: Sharing past conversation history with new members or devices
+    keywords: [history sharing, history, past messages, backfill]
+  - name: post_quantum
+    description: Post-quantum cryptographic primitives and migration
+    keywords: [post-quantum, pq, pqc, kyber, ml-kem, dilithium, hybrid]
+  - name: sender_keys
+    description: Sender-key style efficiency optimizations
+    keywords: [sender key, sender keys, sender-key]
+  - name: extensions
+    description: Protocol extension mechanisms and specific extensions
+    keywords: [extension, extensions, safe extensions, extension format]
+  - name: moderation_and_abuse_reporting
+    description: Moderation, abuse reporting, content reporting
+    keywords: [moderation, abuse, reporting, franking, message franking]
+  - name: threshold_signatures
+    description: Threshold and multi-party signature schemes
+    keywords: [threshold signature, threshold, frost, multi-party signature]
+  - name: key_packages
+    description: KeyPackage format, lifecycle, and distribution
+    keywords: [key package, keypackage, key packages, last resort]
+  - name: delivery_service
+    description: Delivery Service design and responsibilities
+    keywords: [delivery service, ds, delivery]
+  - name: authentication_service
+    description: Authentication Service design and responsibilities
+    keywords: [authentication service, as, auth service]
+  - name: credentials
+    description: Credential types, validation, and identity binding
+    keywords: [credential, credentials, x509, basic credential, identity]
+
+llm:
+  model_summarization: claude-sonnet-4-6
+  model_categorization: claude-haiku-4-5
+  use_batch_api: true
+  # Pricing (USD per million tokens) used for cost estimation / logging.
+  # Batch API gets a 50% discount, applied automatically when use_batch_api is true.
+  pricing:
+    claude-sonnet-4-6:
+      input_per_mtok: 3.0
+      output_per_mtok: 15.0
+    claude-haiku-4-5:
+      input_per_mtok: 1.0
+      output_per_mtok: 5.0
+
+processing:
+  active_threshold_days: 90       # threads with no activity in N days become "concluded"
+  reprocess_on_new_messages: true
+  pre_filter_admin_messages: true
+  draft_metadata_refresh_days: 30 # refresh active draft metadata if older than this
+  # Hard ceiling: pipeline refuses to dispatch a batch whose estimated cost
+  # would push cumulative spend past this without an explicit --force.
+  budget_usd: 200.0
+
+drafts:
+  datatracker_api_base: https://datatracker.ietf.org/api/v1/
+  fetch_metadata_on_first_reference: true
+  weekly_refresh_active_drafts: true
+
+ingestion:
+  request_timeout_seconds: 30
+  max_retries: 4
+  backoff_base_seconds: 2

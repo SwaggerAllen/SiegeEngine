@@ -1,0 +1,62 @@
+# Digital Ocean App Platform spec.
+# Three components share one image (ROLE switches behavior):
+#   - web service        (the authenticated UI + /healthz)
+#   - scheduled job      (weekly ingestion + processing pipeline)
+#   - pre-deploy job     (alembic migrations) — optional; the web role also
+#                          migrates on startup.
+#
+# Secrets (DATABASE_URL, ANTHROPIC_API_KEY, SESSION_SECRET) are set as encrypted
+# env vars in the App Platform UI, not committed here.
+name: wg-tracker
+region: nyc
+
+databases:
+  - name: wgtracker-db
+    engine: PG
+    version: "16"
+    production: false
+
+services:
+  - name: web
+    dockerfile_path: wg-tracker/Dockerfile
+    source_dir: wg-tracker
+    instance_size_slug: basic-xxs
+    instance_count: 1
+    http_port: 8000
+    health_check:
+      http_path: /healthz
+    envs:
+      - key: ROLE
+        value: web
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${wgtracker-db.DATABASE_URL}
+      - key: ANTHROPIC_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: SESSION_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: PUBLIC_BASE_URL
+        scope: RUN_TIME
+        value: ${APP_URL}
+      - key: LOG_LEVEL
+        value: INFO
+
+jobs:
+  - name: pipeline
+    kind: POST_DEPLOY      # also schedule weekly via the App Platform scheduler
+    dockerfile_path: wg-tracker/Dockerfile
+    source_dir: wg-tracker
+    instance_size_slug: basic-xs
+    envs:
+      - key: ROLE
+        value: pipeline
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${wgtracker-db.DATABASE_URL}
+      - key: ANTHROPIC_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: LOG_LEVEL
+        value: INFO

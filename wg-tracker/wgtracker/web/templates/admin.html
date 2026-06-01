@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Invites · WG Tracker{% endblock %}
+{% block content %}
+<h1>Invite links</h1>
+<p class="muted">Mint a single-use, read-only invite link and share it. The recipient
+sets their own email and password.</p>
+
+{% if created_url %}
+<div class="card success">
+  <strong>New invite created — copy this link:</strong>
+  <code class="copyable">{{ created_url }}</code>
+</div>
+{% endif %}
+
+<form class="inline-form card" method="post" action="/admin/invites">
+  <label>Note (optional)<input type="text" name="note" placeholder="e.g. for Alice"></label>
+  <label>Expires in (days, 0 = never)<input type="number" name="expires_in_days" value="14" min="0"></label>
+  <button type="submit">Create invite link</button>
+</form>
+
+<table class="grid">
+  <thead><tr><th>Status</th><th>Role</th><th>Note</th><th>Created</th><th>Expires</th><th>Link</th><th></th></tr></thead>
+  <tbody>
+  {% for i in invites %}
+    <tr class="{% if not i.valid %}dim{% endif %}">
+      <td>
+        {% if i.used %}<span class="badge">used</span>
+        {% elif i.revoked %}<span class="badge bad">revoked</span>
+        {% elif i.valid %}<span class="badge ok">active</span>
+        {% else %}<span class="badge bad">expired</span>{% endif %}
+      </td>
+      <td>{{ i.role }}</td>
+      <td>{{ i.note or '—' }}</td>
+      <td>{{ i.created_at }}</td>
+      <td>{{ i.expires_at or 'never' }}</td>
+      <td>{% if i.valid %}<code class="copyable small">{{ i.url }}</code>{% else %}—{% endif %}</td>
+      <td>
+        {% if i.valid %}
+        <form method="post" action="/admin/invites/{{ i.token }}/revoke">
+          <button class="link-btn" type="submit">revoke</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">No invites yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

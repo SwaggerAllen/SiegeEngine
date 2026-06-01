@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}WG Activity Tracker{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/threads">WG&nbsp;Tracker</a>
+    {% if user %}
+    <nav>
+      <a href="/threads">Threads</a>
+      <a href="/drafts">Drafts</a>
+      {% for t in topics %}{% endfor %}
+      {% if user.role.value == 'admin' %}<a href="/admin">Invites</a>{% endif %}
+    </nav>
+    <form class="logout" method="post" action="/logout">
+      <span class="who">{{ user.email }} <em>({{ user.role.value }})</em></span>
+      <button type="submit">Log out</button>
+    </form>
+    {% endif %}
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer><span>IETF Working Group Activity Tracker · summaries link to the source archive for one-click verification</span></footer>
+</body>
+</html>
