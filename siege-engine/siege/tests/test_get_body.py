@@ -9,7 +9,7 @@ to hand it back. Mirrors the pattern in test_project_graph.py.
 from __future__ import annotations
 
 import siege.tools as tools
-from siege.state import DraftBlock, Scope, State
+from siege.state import DraftBlock, ReviewBlock, Scope, State
 
 
 class _FakeView:
@@ -105,4 +105,53 @@ def test_get_body_found_false_when_body_file_missing(monkeypatch):
     out = tools.get_body("p1", "main", "sysarch", comp_id="proj")
     assert out["found"] is False
     assert out["body_path"] == body_path  # surfaced for the UI hint
+    assert out["body_text"] == ""
+
+
+def _state_with_draft_and_review(scope: Scope, draft_path: str, review_path: str) -> State:
+    return State(
+        schema_version=1,
+        scope=scope,
+        status="reviewed",
+        nonce="n",
+        draft=DraftBlock(body_path=draft_path, body_sha256="x", generated_at=""),
+        review=ReviewBlock(body_path=review_path, body_sha256="y", reviewed_at="", score=75),
+    )
+
+
+def test_get_body_review_returns_review_text(monkeypatch):
+    """``which='review'`` reads the review body, not the draft body —
+    same response shape, different source."""
+    scope = Scope(tier="comparch", comp_id="comp_a")
+    draft_path = "comparch/comp_a/body.md"
+    review_path = "comparch/comp_a/review.md"
+    view = _FakeView(
+        state=_state_with_draft_and_review(scope, draft_path, review_path),
+        bodies={
+            draft_path: "<draft>...</draft>",
+            review_path: "<review>...</review>",
+        },
+    )
+    monkeypatch.setattr(tools, "_open_view", lambda *_, **__: view)
+
+    out = tools.get_body("p1", "main", "comparch", comp_id="comp_a", which="review")
+    assert out["found"] is True
+    assert out["body_path"] == review_path
+    assert out["body_text"] == "<review>...</review>"
+
+
+def test_get_body_review_found_false_when_review_missing(monkeypatch):
+    """A drafted-but-not-yet-reviewed scope asked for the review side
+    returns ``found=False`` — same shape as the draft-missing case."""
+    scope = Scope(tier="comparch", comp_id="comp_a")
+    draft_path = "comparch/comp_a/body.md"
+    view = _FakeView(
+        state=_state_with_draft(scope, draft_path),
+        bodies={draft_path: "<draft>...</draft>"},
+    )
+    monkeypatch.setattr(tools, "_open_view", lambda *_, **__: view)
+
+    out = tools.get_body("p1", "main", "comparch", comp_id="comp_a", which="review")
+    assert out["found"] is False
+    assert out["body_path"] is None
     assert out["body_text"] == ""

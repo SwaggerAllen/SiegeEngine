@@ -355,6 +355,62 @@ def compute_downstream_worklist(view: GitView, source: Scope) -> list[WorklistEn
     return out
 
 
+def compute_plan_change_worklist(view: GitView) -> list[WorklistEntry]:
+    """Diff the live plan projection against existing impl state files.
+
+    Emits one worklist entry per impl whose ``closure_resp_ids``
+    changed (status=pending) and per impl with a state file that the
+    current plan no longer covers (status=skipped, note='dropped by
+    plan'). Newly-planned impls with no state file yet are **not**
+    emitted — those are cold-start work for ``/run_tier`` to handle,
+    not regen work for a propagation.
+
+    Pure projection — doesn't read git history. The diff compares
+    ``compute_plan(view)['phases'][*]['impl_nodes'][*]['closure_resp_ids']``
+    (the plan-driven closure each impl should carry) against
+    ``state.meta['parent_resps']`` (the closure the impl was minted
+    against).
+    """
+    # Lazy import: compute_plan lives in ``siege.projection`` which
+    # pulls bs4/pydantic; keep this module's import surface stdlib-only.
+    from siege.projection.plan import compute_plan  # noqa: PLC0415
+
+    plan = compute_plan(view)
+    planned: dict[tuple[str, str, int], list[str]] = {}
+    for phase in plan.get("phases", []):
+        for node in phase.get("impl_nodes", []):
+            key = (str(node["parent_id"]), str(node["sub_id"]), int(node["phase"]))
+            planned[key] = sorted(str(r) for r in node.get("closure_resp_ids", []))
+
+    from siege.state import State  # noqa: PLC0415 — keep import lazy
+
+    existing: dict[tuple[str, str, int], State] = {}
+    for state in view.list_tier("impl"):
+        scope = state.scope
+        if scope.parent_id is None or scope.sub_id is None or scope.phase is None:
+            # Pre-phasing (v1) impl states don't participate in the
+            # plan-change diff — those scopes don't carry a phase
+            # dimension to match against.
+            continue
+        existing[(scope.parent_id, scope.sub_id, scope.phase)] = state
+
+    out: list[WorklistEntry] = []
+    for key, planned_closure in planned.items():
+        match = existing.get(key)
+        if match is None:
+            continue  # cold-start work, not a regen
+        existing_closure = sorted(str(r) for r in match.meta.get("parent_resps", []))
+        if existing_closure != planned_closure:
+            out.append(WorklistEntry(scope=match.scope, status="pending"))
+
+    for key, state in existing.items():
+        if key in planned:
+            continue
+        out.append(WorklistEntry(scope=state.scope, status="skipped", note="dropped by plan"))
+
+    return out
+
+
 def add_entries(prop: Propagation, entries: list[WorklistEntry]) -> Propagation:
     """Return a new ``Propagation`` with extra entries appended (the
     "extend an open record on mid-drain upstream change" path).

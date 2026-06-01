@@ -17,7 +17,7 @@ for a view and read from it.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from siege.auth_context import current_user_id
 from siege.auth_lookup import lookup_project_auth
@@ -107,24 +107,30 @@ def get_body(
     parent_id: str | None = None,
     sub_id: str | None = None,
     phase: int | None = None,
+    which: Literal["draft", "review"] = "draft",
 ) -> dict[str, Any]:
     """Read-only body fetcher: resolves the scope's state, reads the
-    body file off the substrate, returns ``{ref, ref_head_sha,
-    body_path, body_text, found}``.
+    requested side's body file off the substrate, returns ``{ref,
+    ref_head_sha, body_path, body_text, found}``.
 
-    The dashboard's source-aware read panels (``V3BodyPanel``) call
-    this when ``project.source == "upload"`` so the workspace shows
-    the substrate's actual artifact instead of falling back to the
-    legacy SQL endpoints (which don't have rows for upload projects).
+    ``which="draft"`` (default) reads ``state.draft.body_path``;
+    ``which="review"`` reads ``state.review.body_path``. The response
+    shape is identical either way — only the source differs.
 
-    ``found`` is ``False`` when the scope has no state, no draft, or
-    the body file is unreadable — callers render an explanatory blank
-    instead of an error.
+    The dashboard's read-only per-tier panels call this twice when
+    rendering a reviewed scope: once for the draft body, once for the
+    review body. ``found`` is ``False`` when the requested side is
+    absent (no state, the requested block is unset, or the body file
+    is unreadable) — callers render an explanatory blank rather than
+    erroring.
     """
     view = _open_view(project_id, ref)
     scope = Scope(tier=tier, comp_id=comp_id, parent_id=parent_id, sub_id=sub_id, phase=phase)
     state = view.get_state(scope)
-    if state is None or state.draft is None:
+    block = None
+    if state is not None:
+        block = state.review if which == "review" else state.draft
+    if block is None:
         return {
             "ref": view.ref,
             "ref_head_sha": view.head_sha,
@@ -132,7 +138,7 @@ def get_body(
             "body_path": None,
             "body_text": "",
         }
-    body_path = state.draft.body_path
+    body_path = block.body_path
     try:
         body_text = view.read_body_text(body_path)
     except Exception:  # noqa: BLE001 — body missing on disk → found False

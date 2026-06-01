@@ -1,210 +1,36 @@
-import { useFanIn } from '../hooks/queries/useFanInQueries';
-import { useFanInReviewRetryMutation } from '../hooks/mutations/useFanInMutations';
-import { describeApiError } from '../lib/describeApiError';
-import { DocPageMeta } from './DocPageMeta';
-import { DocumentReviewTabs } from './DocumentReviewTabs';
-import { FeedbackHistory } from './FeedbackHistory';
-import { XmlDocument, faninRenderers } from './xml';
+import { useScopeState } from '../hooks/queries/useScopeState';
+import type { BodyScope } from '../api/siege';
+import { BootstrapDraftPanel } from './BootstrapDraftPanel';
+import { hintForStatus } from './skillHints';
 
 interface Props {
   projectId: string;
   compId: string;
   ownerName: string;
+  phase?: number | null;
 }
 
 /**
- * Read-only inspection panel for a Phase 7 fan-in node.
+ * Read-only inspection panel for a fan-in synthesis node.
  *
- * Fan-in has no draft lifecycle — content is written directly
- * via ``FanInContentUpdated``, not through the draft + approve
- * pipeline. So this panel is a slim three-state machine:
- *
- *   1. Loading / error
- *   2. Empty shell (no content yet; hasn't been regenerated once)
- *   3. Content present — render the ``<fanin>`` XML + controls
- *
- * The only user actions are Regenerate (manually enqueue a
- * fresh synthesis) and Cancel (stop one in flight). Normally
- * regen is driven by impl approvals via the backend
- * ``on_impl_approved`` hook; this panel exists for debugging
- * and for the user to re-run with updated prompt state.
+ * Fan-in carries a draft + review lifecycle in v3 like the other
+ * tiers (the legacy "writes content directly" path is gone); the
+ * panel reads through the same composite state hook as every other
+ * tier and renders the bodies verbatim.
  */
-export function FanInPanel({ projectId, compId, ownerName }: Props) {
-  const { data, error, isLoading } = useFanIn(projectId, compId);
-  const retryReview = useFanInReviewRetryMutation(projectId, compId);
-
-  if (isLoading) {
-    return (
-      <div className="p-6 text-sm text-gray-400">
-        Loading {ownerName} fan-in synthesis…
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-6 max-w-2xl">
-        <h2 className="text-lg font-semibold text-red-400 mb-2">
-          Failed to load fan-in
-        </h2>
-        <p className="text-sm text-gray-400">
-          {describeApiError(error, 'Unknown error')}
-        </p>
-        <p className="text-xs text-gray-500 mt-2">
-          Fan-in synthesis nodes only exist for fanned-out domain
-          components. Presentational or un-fanned-out components
-          don't have them.
-        </p>
-      </div>
-    );
-  }
-
-  if (!data) return null;
-
-  const isRunning = data.generation_status === 'running';
-  const isBusy = retryReview.isPending;
-  const hasContent = !!data.node.content.trim();
-
+export function FanInPanel({ projectId, compId, ownerName, phase }: Props) {
+  const scope: BodyScope = { tier: 'fanin', comp_id: compId, phase: phase ?? null };
+  const { state, draftBody, reviewBody, isLoading, error } = useScopeState(projectId, scope);
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-5">
-      <header className="flex items-center justify-between gap-4">
-        <h2 className="text-lg font-bold text-white">{ownerName} Fan-in</h2>
-        <div className="shrink-0 flex items-center gap-2">
-          {/* TODO Phase 3: replace with deep-links to CC skills
-              /regen-fanin <comp_id>, /cancel-fanin <comp_id>,
-              /reset-fanin <comp_id>. */}
-          <button
-            type="button"
-            disabled
-            className="px-3 py-1.5 text-sm rounded border border-purple-700/50 text-purple-200/60 cursor-not-allowed"
-            title="Regenerate / Cancel / Reset for fan-in moved to Claude Code skills"
-          >
-            Open in Claude Code
-          </button>
-        </div>
-      </header>
-
-      <DocPageMeta
-        lastGenerationJob={data.last_generation_job}
-        lastContentUpdatedAt={data.last_content_updated_at}
-      />
-
-      <p className="text-xs text-gray-500 max-w-2xl">
-        Bottom-up synthesis of what this component, as built,
-        exposes and does at the component level. Driven by the
-        subs' approved implementations. Presentational
-        counterparts read this alongside the top-down
-        comparch to surface drift.
-      </p>
-
-      <FanInStatusRow data={data} />
-
-      {isRunning && (
-        <div className="p-3 rounded border border-purple-800/50 bg-purple-950/30 text-sm text-purple-200">
-          Fan-in synthesis is running. The panel polls every two
-          seconds; new content will appear here when the job
-          completes.
-        </div>
-      )}
-
-      {data.last_error && (
-        <div className="p-3 rounded border border-red-800/50 bg-red-950/30 text-sm text-red-200">
-          <div className="font-semibold mb-1">Last generation failed</div>
-          <pre className="whitespace-pre-wrap font-mono text-xs text-red-300">
-            {data.last_error}
-          </pre>
-        </div>
-      )}
-
-      {hasContent ? (
-        <section className="rounded border border-gray-800 bg-gray-900/50 p-4">
-          <DocumentReviewTabs
-            idPrefix="fanin"
-            document={
-              <XmlDocument content={data.node.content} renderers={faninRenderers} />
-            }
-            review={{
-              reviewText: data.review_text,
-              reviewStatus: data.review_status,
-              reviewLastError: data.review_last_error,
-              reviewStartedAt: data.review_started_at,
-              reviewCurrentAttempt: data.review_current_attempt,
-              reviewMaxAttempts: data.review_max_attempts,
-              onRetryReview: () => retryReview.mutate(),
-              allowGenerate: true,
-              isBusy,
-              emptyGenerateHint:
-                'No AI review yet — click to run one against this fan-in.',
-            }}
-          />
-        </section>
-      ) : (
-        <section className="rounded border border-gray-800 bg-gray-900/30 p-6 text-center">
-          <p className="text-sm text-gray-400 mb-2">
-            No fan-in content yet.
-          </p>
-          <p className="text-xs text-gray-500">
-            Fan-in content is generated automatically after the
-            first descendant implementation is approved. You can
-            also click Regenerate above to kick one off manually.
-          </p>
-        </section>
-      )}
-      <FeedbackHistory projectId={projectId} nodeId={data.node.id} />
-    </div>
-  );
-}
-
-
-function FanInStatusRow({
-  data,
-}: {
-  data: {
-    generation_status: string;
-    latest_telemetry: {
-      prompt_tokens: number;
-      completion_tokens: number;
-      model: string;
-      created_at: string;
-    } | null;
-    current_attempt: number | null;
-    max_attempts: number | null;
-    node: { updated_at: string };
-  };
-}) {
-  const t = data.latest_telemetry;
-  return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-400">
-      <span>
-        Status:{' '}
-        <span
-          className={
-            data.generation_status === 'running'
-              ? 'text-purple-300'
-              : data.generation_status === 'failed'
-                ? 'text-red-300'
-                : 'text-gray-200'
-          }
-        >
-          {data.generation_status}
-        </span>
-      </span>
-      {data.current_attempt !== null && data.max_attempts !== null && (
-        <span>
-          Attempt {data.current_attempt} / {data.max_attempts}
-        </span>
-      )}
-      {t && (
-        <>
-          <span>Model: {t.model}</span>
-          <span>Tokens: {t.prompt_tokens} in / {t.completion_tokens} out</span>
-        </>
-      )}
-      {data.node.updated_at && (
-        <span>
-          Updated: {new Date(data.node.updated_at).toLocaleString()}
-        </span>
-      )}
-    </div>
+    <BootstrapDraftPanel
+      scopeName={`${ownerName} — Fan-in`}
+      tierLabel={`${ownerName} fan-in`}
+      state={state}
+      draftBody={draftBody}
+      reviewBody={reviewBody}
+      isLoading={isLoading}
+      error={error}
+      skillHint={hintForStatus('fanin', state?.status, compId)}
+    />
   );
 }

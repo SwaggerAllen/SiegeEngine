@@ -72,15 +72,79 @@ export interface BodyResponse {
   body_text: string;
 }
 
+/**
+ * ``which`` selects which side of the substrate's two-body model the
+ * server returns: ``"draft"`` (default) reads state.draft.body_path,
+ * ``"review"`` reads state.review.body_path. Same response shape; the
+ * source differs.
+ */
 export async function getBody(
   projectId: string,
   scope: BodyScope,
   ref = 'main',
+  which: 'draft' | 'review' = 'draft',
 ): Promise<BodyResponse> {
   const { data } = await siegeApi.post('/get-body', {
     project_id: projectId,
     ref,
     ...scope,
+    which,
   });
   return data as BodyResponse;
+}
+
+// ── State (full per-scope state file projection) ────────────────────
+
+export type ScopeStatus = 'absent' | 'drafted' | 'reviewed' | 'approved';
+
+export interface ScopeDraftBlock {
+  body_path: string;
+  body_sha256: string;
+  generated_at: string;
+  generator_metadata?: Record<string, unknown>;
+  prior_review_text?: string;
+}
+
+export interface ScopeReviewBlock {
+  body_path: string;
+  body_sha256: string;
+  reviewed_at: string;
+  score: number | null;
+  reviewer_metadata?: Record<string, unknown>;
+}
+
+export interface ScopeApprovalBlock {
+  approved_at: string;
+  approved_by: string;
+}
+
+export interface ScopeStateResponse {
+  ref: string;
+  ref_head_sha: string;
+  found: boolean;
+  /** Present iff ``found`` — the parsed state JSON. */
+  schema_version?: number;
+  scope?: BodyScope;
+  status?: ScopeStatus;
+  nonce?: string;
+  is_foundation?: boolean;
+  draft?: ScopeDraftBlock | null;
+  review?: ScopeReviewBlock | null;
+  approval?: ScopeApprovalBlock | null;
+  edges?: Record<string, string[]>;
+  meta?: Record<string, unknown>;
+  drift?: Record<string, unknown>;
+}
+
+export async function getScopeState(
+  projectId: string,
+  scope: BodyScope,
+  ref = 'main',
+): Promise<ScopeStateResponse> {
+  const { data } = await siegeApi.post('/get-state', {
+    project_id: projectId,
+    ref,
+    ...scope,
+  });
+  return data as ScopeStateResponse;
 }
