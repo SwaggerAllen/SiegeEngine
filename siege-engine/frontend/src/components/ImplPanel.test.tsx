@@ -1,62 +1,36 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ImplResponse } from '../api/impl';
 import { TestQueryWrapper } from '../test/queryWrapper';
 import { ImplPanel } from './ImplPanel';
+import type { BodyResponse, ScopeStateResponse } from '../api/siege';
 
-// Mock both API functions on the impl module. The ImplPanel
-// branches on `kind` to pick which hook runs, which in turn
-// picks which mocked function gets called.
-vi.mock('../api/impl', async () => {
-  const actual = await vi.importActual<typeof import('../api/impl')>('../api/impl');
+vi.mock('../api/siege', () => ({
+  getScopeState: vi.fn(),
+  getBody: vi.fn(),
+}));
+
+import * as siegeApi from '../api/siege';
+
+const mockedGetState = siegeApi.getScopeState as unknown as ReturnType<typeof vi.fn>;
+const mockedGetBody = siegeApi.getBody as unknown as ReturnType<typeof vi.fn>;
+
+function stateResponse(overrides: Partial<ScopeStateResponse> = {}): ScopeStateResponse {
   return {
-    ...actual,
-    getImplTopLevel: vi.fn(),
-    getImplSub: vi.fn(),
-    postImplTopLevelFeedback: vi.fn(),
-    postImplSubFeedback: vi.fn(),
-    approveImplTopLevelDraft: vi.fn(),
-    approveImplSubDraft: vi.fn(),
-    discardImplTopLevelDraft: vi.fn(),
-    discardImplSubDraft: vi.fn(),
-    cancelImplTopLevelGeneration: vi.fn(),
-    cancelImplSubGeneration: vi.fn(),
-  };
-});
-
-import * as implApi from '../api/impl';
-
-const mockedGetTopLevel = implApi.getImplTopLevel as unknown as ReturnType<typeof vi.fn>;
-const mockedGetSub = implApi.getImplSub as unknown as ReturnType<typeof vi.fn>;
-
-function response(overrides: Partial<ImplResponse> = {}): ImplResponse {
-  return {
-    node: {
-      id: 'impl_AAAAAAAA',
-      name: 'TopComp impl',
-      parent_id: 'comp_BBBBBBBB',
-      content: '',
-      updated_at: '2026-04-17T00:00:00',
-    },
-    pending_draft: null,
-    previous_draft_content: null,
-    auto_revision_intermediates: [],
-    generation_status: 'idle',
-    last_error: null,
-    latest_telemetry: null,
-    generation_started_at: null,
-    current_attempt: null,
-    max_attempts: null,
-    failed_raw_output: null,
-    review_text: '',
-    review_status: 'idle',
-    review_last_error: null,
-    review_started_at: null,
-    review_current_attempt: null,
-    review_max_attempts: null,
-    last_generation_job: null,
-    last_content_updated_at: null,
+    ref: 'main',
+    ref_head_sha: 'deadbeef',
+    found: true,
+    status: 'absent',
     ...overrides,
+  };
+}
+
+function bodyResponse(body_text: string): BodyResponse {
+  return {
+    ref: 'main',
+    ref_head_sha: 'deadbeef',
+    found: true,
+    body_path: 'impl/comp_a/body.md',
+    body_text,
   };
 }
 
@@ -64,72 +38,42 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('ImplPanel top-level', () => {
-  // TODO Phase 3 reinstate test once dashboard is read-only:
-  //   - renders the pending draft with approve + regenerate actions
-  //   - approves a draft via the top-level approve mutation
-  it('renders the pending draft with the Open-in-CC fallback', async () => {
-    mockedGetTopLevel.mockResolvedValue(
-      response({
-        pending_draft: {
-          id: 'draft_1',
-          content:
-            '<implementation><behavior>B</behavior>' +
-            '<invariants>I</invariants><sequencing>S</sequencing>' +
-            '<edge-cases>E</edge-cases></implementation>',
-          created_at: '2026-04-17T00:00:00',
-        },
-      }),
-    );
+describe('ImplPanel', () => {
+  it('renders top-level scope and includes the comp id in the hint', async () => {
+    mockedGetState.mockResolvedValue(stateResponse());
     render(
       <TestQueryWrapper>
-        <ImplPanel
-          kind="top-level"
-          projectId="proj_1"
-          compId="comp_BBBBBBBB"
-          ownerName="TopComp"
-        />
+        <ImplPanel kind="top-level" projectId="proj_1" compId="comp_a" ownerName="Auth" />
       </TestQueryWrapper>,
     );
     await waitFor(() =>
-      expect(
-        screen.getAllByRole('button', { name: /Open in Claude Code/i }).length,
-      ).toBeGreaterThan(0),
+      expect(screen.getByText(/No substrate state/i)).toBeInTheDocument(),
     );
-    expect(screen.queryByRole('button', { name: /Approve/i })).toBeNull();
+    expect(screen.getByText(/\/draft-impl comp_a/)).toBeInTheDocument();
   });
-});
 
-describe('ImplPanel sub', () => {
-  it('uses the sub API for a per-subcomponent impl', async () => {
-    mockedGetSub.mockResolvedValue(
-      response({
-        node: {
-          id: 'impl_S',
-          name: 'Sub impl',
-          parent_id: 'comp_SSSSSSSS',
-          content: '',
-          updated_at: '2026-04-17T00:00:00',
-        },
+  it('renders sub scope with the sub id in the hint and shows draft body', async () => {
+    mockedGetState.mockResolvedValue(
+      stateResponse({
+        status: 'drafted',
+        draft: { body_path: 'p', body_sha256: 'x', generated_at: 't' },
       }),
     );
+    mockedGetBody.mockResolvedValue(bodyResponse('<impl>OK</impl>'));
     render(
       <TestQueryWrapper>
         <ImplPanel
           kind="sub"
           projectId="proj_1"
-          parentCompId="comp_PARENTID"
-          subId="comp_SSSSSSSS"
-          ownerName="Sub"
+          parentCompId="comp_a"
+          subId="sub_b"
+          ownerName="TokenStore"
         />
       </TestQueryWrapper>,
     );
     await waitFor(() =>
-      expect(mockedGetSub).toHaveBeenCalledWith(
-        'proj_1',
-        'comp_PARENTID',
-        'comp_SSSSSSSS',
-      ),
+      expect(screen.getByTestId('body-draft')).toHaveTextContent('<impl>OK</impl>'),
     );
+    expect(screen.getByText(/\/review-impl sub_b/)).toBeInTheDocument();
   });
 });

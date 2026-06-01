@@ -1,75 +1,26 @@
-import { useExpansion } from '../hooks/queries/useExpansionQueries';
-import {
-  useApproveMutation,
-  useCancelGenerationMutation,
-  useFeedbackMutation,
-  useResetMutation,
-  useReviewRetryMutation,
-} from '../hooks/mutations/useExpansionMutations';
-import {
-  BootstrapDraftPanel,
-  type BootstrapPanelLabels,
-} from './BootstrapDraftPanel';
-import { FeatureListTab } from './FeatureListTab';
-import { featureRenderers } from './xml';
+import { useScopeState } from '../hooks/queries/useScopeState';
+import type { BodyScope } from '../api/siege';
+import { BootstrapDraftPanel } from './BootstrapDraftPanel';
+import { hintForStatus } from './skillHints';
 
 interface Props {
   projectId: string;
 }
 
-const LABELS: BootstrapPanelLabels = {
-  loadingMessage: 'Loading feature expansion…',
-  loadErrorTitle: 'Failed to load feature expansion',
-  generatingMessage: 'Generating feature expansion…',
-  draftHeading: 'Feature Expansion — Draft',
-  feedbackPlaceholder: 'e.g. Add reporting, tighten scope on auth…',
-  readOnlyExplanation:
-    'Further feature-layer edits happen on individual feature nodes once Phase 2 lands.',
-};
+const SCOPE: BodyScope = { tier: 'feature_expansion', comp_id: 'proj' };
 
 export function FeatureExpansionPanel({ projectId }: Props) {
-  const { data, error, isLoading } = useExpansion(projectId);
-  const feedbackMutation = useFeedbackMutation(projectId);
-  const approveMutation = useApproveMutation(projectId);
-  const cancelMutation = useCancelGenerationMutation(projectId);
-  const resetMutation = useResetMutation(projectId);
-  const reviewRetryMutation = useReviewRetryMutation(projectId);
-
-  const isBusy =
-    feedbackMutation.isPending ||
-    approveMutation.isPending ||
-    cancelMutation.isPending ||
-    resetMutation.isPending ||
-    reviewRetryMutation.isPending;
-
+  const { state, draftBody, reviewBody, isLoading, error } = useScopeState(projectId, SCOPE);
   return (
     <BootstrapDraftPanel
-      projectId={projectId}
-      data={data}
+      scopeName="Feature Expansion"
+      tierLabel="feature expansion"
+      state={state}
+      draftBody={draftBody}
+      reviewBody={reviewBody}
       isLoading={isLoading}
       error={error}
-      labels={LABELS}
-      callbacks={{
-        onFeedback: (f, autoRev) =>
-          feedbackMutation.mutate({ feedback: f, autoRevisionsRequested: autoRev ?? 0 }),
-        onApprove: (id) => approveMutation.mutate(id),
-        onRetry: () => feedbackMutation.mutate(''),
-        onCancel: () => cancelMutation.mutate(),
-        onReset: () => resetMutation.mutate(),
-        onRetryReview: () => reviewRetryMutation.mutate(),
-        isBusy,
-      }}
-      contentRenderers={featureRenderers}
-      docKind="expansion"
-      extraTabs={({ pendingContent, approvedContent }) => [
-        {
-          id: 'features',
-          label: 'Features',
-          content: (
-            <FeatureListTab content={pendingContent ?? approvedContent} />
-          ),
-        },
-      ]}
+      skillHint={hintForStatus('feature-expansion', state?.status, 'proj')}
     />
   );
 }

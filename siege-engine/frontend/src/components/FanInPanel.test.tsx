@@ -1,46 +1,44 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FanInResponse } from '../api/fanin';
 import { TestQueryWrapper } from '../test/queryWrapper';
 import { FanInPanel } from './FanInPanel';
+import type { BodyResponse, ScopeStateResponse } from '../api/siege';
 
-vi.mock('../api/fanin', async () => {
-  const actual = await vi.importActual<typeof import('../api/fanin')>('../api/fanin');
+vi.mock('../api/siege', () => ({
+  getScopeState: vi.fn(),
+  getBody: vi.fn(),
+}));
+
+import * as siegeApi from '../api/siege';
+
+const mockedGetState = siegeApi.getScopeState as unknown as ReturnType<typeof vi.fn>;
+const mockedGetBody = siegeApi.getBody as unknown as ReturnType<typeof vi.fn>;
+
+function renderPanel() {
+  return render(
+    <TestQueryWrapper>
+      <FanInPanel projectId="proj_1" compId="comp_a" ownerName="Auth" />
+    </TestQueryWrapper>,
+  );
+}
+
+function stateResponse(overrides: Partial<ScopeStateResponse> = {}): ScopeStateResponse {
   return {
-    ...actual,
-    getFanIn: vi.fn(),
-  };
-});
-
-import * as faninApi from '../api/fanin';
-
-const mockedGet = faninApi.getFanIn as unknown as ReturnType<typeof vi.fn>;
-
-function response(overrides: Partial<FanInResponse> = {}): FanInResponse {
-  return {
-    node: {
-      id: 'fanin_AAAAAAAA',
-      name: 'Billing fan-in',
-      owner_comp_id: 'comp_BBBBBBBB',
-      content: '',
-      updated_at: '2026-04-17T00:00:00',
-    },
-    generation_status: 'idle',
-    last_error: null,
-    latest_telemetry: null,
-    generation_started_at: null,
-    current_attempt: null,
-    max_attempts: null,
-    failed_raw_output: null,
-    review_text: '',
-    review_status: 'idle',
-    review_last_error: null,
-    review_started_at: null,
-    review_current_attempt: null,
-    review_max_attempts: null,
-    last_generation_job: null,
-    last_content_updated_at: null,
+    ref: 'main',
+    ref_head_sha: 'deadbeef',
+    found: true,
+    status: 'absent',
     ...overrides,
+  };
+}
+
+function bodyResponse(body_text: string): BodyResponse {
+  return {
+    ref: 'main',
+    ref_head_sha: 'deadbeef',
+    found: true,
+    body_path: 'fanin/comp_a/body.md',
+    body_text,
   };
 }
 
@@ -49,99 +47,26 @@ beforeEach(() => {
 });
 
 describe('FanInPanel', () => {
-  it('renders empty-shell message when content is blank', async () => {
-    mockedGet.mockResolvedValue(response());
-    render(
-      <TestQueryWrapper>
-        <FanInPanel projectId="proj_1" compId="comp_BBBBBBBB" ownerName="Billing" />
-      </TestQueryWrapper>,
-    );
+  it('shows the absent state with a draft hint', async () => {
+    mockedGetState.mockResolvedValue(stateResponse());
+    renderPanel();
     await waitFor(() =>
-      expect(screen.getByText(/No fan-in content yet/i)).toBeInTheDocument(),
+      expect(screen.getByText(/No substrate state/i)).toBeInTheDocument(),
     );
-    // TODO Phase 3 reinstate test once dashboard is read-only:
-    // Regenerate has moved to a CC skill; the fallback button reads
-    // "Open in Claude Code".
-    expect(screen.queryByRole('button', { name: /Regenerate/i })).toBeNull();
-    expect(
-      screen.getByRole('button', { name: /Open in Claude Code/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/\/draft-fanin comp_a/)).toBeInTheDocument();
   });
 
-  it('renders the fan-in XML sections when content is present', async () => {
-    mockedGet.mockResolvedValue(
-      response({
-        node: {
-          id: 'fanin_AAAAAAAA',
-          name: 'Billing fan-in',
-          owner_comp_id: 'comp_BBBBBBBB',
-          content:
-            '<fanin><summary>Billing as built.</summary>' +
-            '<exposed-surface>pay / refund</exposed-surface>' +
-            '<realized-behavior>strict ordering</realized-behavior></fanin>',
-          updated_at: '2026-04-17T00:00:00',
-        },
+  it('renders the draft body when status=drafted', async () => {
+    mockedGetState.mockResolvedValue(
+      stateResponse({
+        status: 'drafted',
+        draft: { body_path: 'p', body_sha256: 'x', generated_at: 't' },
       }),
     );
-    render(
-      <TestQueryWrapper>
-        <FanInPanel projectId="proj_1" compId="comp_BBBBBBBB" ownerName="Billing" />
-      </TestQueryWrapper>,
-    );
+    mockedGetBody.mockResolvedValue(bodyResponse('<fanin>FI</fanin>'));
+    renderPanel();
     await waitFor(() =>
-      expect(screen.getByText(/Billing as built\./)).toBeInTheDocument(),
+      expect(screen.getByTestId('body-draft')).toHaveTextContent('<fanin>FI</fanin>'),
     );
-    // All three section headers render.
-    expect(screen.getByText(/^Summary$/)).toBeInTheDocument();
-    expect(screen.getByText(/Exposed Surface/)).toBeInTheDocument();
-    expect(screen.getByText(/Realized Behavior/)).toBeInTheDocument();
-  });
-
-  // TODO Phase 3 reinstate test once dashboard is read-only:
-  //   - invokes regenerate on click
-  //   - shows Stop button while generation is running
-  // Regenerate / Cancel / Reset are now CC skills; the button is a
-  // single Open-in-CC fallback rather than a state machine.
-  it('renders the Open-in-CC fallback in both idle and running states', async () => {
-    mockedGet.mockResolvedValue(
-      response({
-        generation_status: 'running',
-        generation_started_at: '2026-04-17T00:00:00',
-        current_attempt: 2,
-        max_attempts: 3,
-      }),
-    );
-    render(
-      <TestQueryWrapper>
-        <FanInPanel projectId="proj_1" compId="comp_BBBBBBBB" ownerName="Billing" />
-      </TestQueryWrapper>,
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole('button', { name: /Open in Claude Code/i }),
-      ).toBeInTheDocument(),
-    );
-    expect(screen.queryByRole('button', { name: /Stop/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Regenerate/i })).toBeNull();
-    // Attempt counter still visible — the read-only render is intact.
-    expect(screen.getByText(/Attempt 2 \/ 3/i)).toBeInTheDocument();
-  });
-
-  it('renders last_error block when the last attempt failed', async () => {
-    mockedGet.mockResolvedValue(
-      response({
-        generation_status: 'failed',
-        last_error: 'Parse retries exhausted',
-      }),
-    );
-    render(
-      <TestQueryWrapper>
-        <FanInPanel projectId="proj_1" compId="comp_BBBBBBBB" ownerName="Billing" />
-      </TestQueryWrapper>,
-    );
-    await waitFor(() =>
-      expect(screen.getByText(/Last generation failed/i)).toBeInTheDocument(),
-    );
-    expect(screen.getByText(/Parse retries exhausted/)).toBeInTheDocument();
   });
 });
