@@ -217,36 +217,79 @@ hint; nothing auto-opens).
   edit a phase's `feature_ids` list. Assign strips the feat from
   any prior phase first (one-phase-per-feature invariant).
 
-## Phase 4 — Deletion sweep ⏸ NARROWED, IN PROGRESS
+## Phase 4 — Deletion sweep ✅ LARGELY LANDED
 
-See `docs/migration/deletion-inventory.md` for the punch list.
+See `docs/migration/deletion-inventory.md` for the original punch
+list. The bulk of Phase 4 landed across this branch — the
+dashboard's per-tier panels read from the substrate via siege, and
+the legacy backend's per-tier surface (handlers, routes,
+dashboards, supporting modules) is gone.
 
-The original Phase 4 design assumed the deployed dashboard could
-be fully repointed at `/siege/api/*` before the deletion sweep
-ran. Reality:
+**Frontend (read repoint + dead-code removal):**
 
-- The siege server is **already deployed** as part of
-  `backend/main.py` (mounted at `/siege`). No separate process.
-- The skills + plugin work end-to-end against a local repo.
-- The dashboard still calls legacy `/api/*` routes for **both**
-  reads and writes — that's the live blocker.
+- Siege `get_body` extended with `which='draft'|'review'` so the
+  read-only panels render both sides through one endpoint.
+- New `useScopeState` hook stitches `/get-state` + `/get-body` ×2
+  with conditional fetching.
+- 8 per-tier panels (RequirementsPanel / SysarchPanel /
+  FeatureExpansionPanel / ComparchPanel / SubcomparchPanel /
+  ImplPanel / FanInPanel + the shared BootstrapDraftPanel shell)
+  rewritten as v3 read-only views: status chip + draft body in
+  `<pre>` + review body when present + "Open in CC" skill-hint
+  footer. ~1500 LOC removed from these panels alone.
+- Dead frontend exports gone: 7 per-tier mutation hooks, 6
+  per-tier query hooks, 6 per-tier api modules, and their tests.
 
-The cleanup plan splits this into three loosely-coupled threads
-(see `/root/.claude/plans/pure-crafting-marshmallow.md`):
+**Backend (per-tier generation / review / mint / route deletion):**
 
-1. **Phase A (this commit)**: doc reconciliation.
-2. **Phase B**: frontend repoint of reads that have `/siege/api/*`
-   equivalents (graph, structure summary, review summary, plan,
-   batches, propagations, get-state, get-body).
-3. **Phase C**: backend deletion of the per-tier generation/review
-   stack (bootstrap routes, per-tier handlers, regen_context,
-   websocket, tier-ops write endpoints, cli/manager). ~5-8K LOC.
+- 7 per-tier generation handlers + 5 mint handlers + 7 review
+  handlers + 2 policy-application handlers — all gone.
+- `_tier_review.py`, `_bootstrap_review.py`, `_readiness.py`,
+  `review_context/*`, `prompts/review/*`, `prompts/<tier>.py`,
+  `regen_context.py` (1.5K LOC), `expansion.py` / `requirements.py`
+  / `sysarch.py`, `per_comp_reset.py` — all gone.
+- `tier_ops_routes.py` (Reset All / Regen From Reviews / etc.),
+  `cohort_routes.py`, `cohort_sampler.py`, `tier_structure.py`,
+  `review_summary.py` — all gone. Their router mounts came out of
+  `backend/main.py`.
+- `backend/graph/routes.py` shrunk from 4195 → 1700 LOC: every
+  per-tier endpoint block (EXPANSION/REQUIREMENTS/SYSARCH/
+  COMPARCH/SUBCOMPARCH/IMPL/FANIN configs + prompt-preview +
+  reset + review-retry + cancel) deleted.
+- `bootstrap_routes.py` slimmed from 996 → 689 LOC: dropped
+  `bootstrap_retry_review`, `wipe_node`, `bootstrap_reset`,
+  `bootstrap_prompt_preview`.
+- `backend/graph/__init__.py` drops 17 handler registrations;
+  only `rename_rewrite`, `expand_single_feature`, and
+  `generate_reference` survive alongside `apply_instructions`.
+- `backend/graph/running.py` rewritten as a refs-only
+  tracker — non-ref tier nodes don't get
+  generation_running/has_error badges anymore (the dashboard
+  is read-only for them).
+- `backend/projects/service.py` drops the auto-enqueue-on-create
+  path; new projects land with input doc and stop. Users kick off
+  generation via CC skills.
+- ~40 test files for the deleted per-tier surface — gone.
 
-**Deferred to a follow-up cleanup pass:** cohort / vocabulary /
-reference / human-review-batch / pending-instruction-queue /
-feedback-history backend modules. Their dashboard pages stay
-functional against `/api/*` this round; their backend (~20K LOC
-across models, alembic, reducer, pipeline, queries) stays alive.
+**What still stands (deferred to the refs+vocab preservation
+round):**
+
+- `backend/graph/bootstrap_routes.py` — the surviving
+  `BootstrapTierConfig` + `bootstrap_get_state` / `_feedback` /
+  `_approve` / `_discard` / `_cancel` helpers + `_latest_telemetry`.
+  Refs use these. Full retirement is gated on refs migrating to a
+  v3 write path (siege CLI + skill).
+- `backend/graph/handlers/generate_reference.py` +
+  `prompts/reference.py` + `references.py` + `vocabulary.py` —
+  the refs+vocab backend, untouched.
+- `backend/graph/handlers/{expand_single_feature,rename_rewrite}.py` —
+  used by the apply-instruction (pending-edit) flow.
+- `backend/graph/handlers/_tier_generation.py` +
+  `_bootstrap_generation.py` — refs uses them.
+- `backend/cli/manager.py` + `backend/pipeline/` — still needed by
+  refs + apply-instruction.
+- Legacy persistence layer (SQLAlchemy + alembic + models) —
+  untouched.
 
 ## Phase 5 — Optional polish ⏸ NOT STARTED
 
@@ -275,11 +318,19 @@ npx vite build
 
 ## Next gates (in order)
 
-1. **Phase B**: repoint the frontend's read paths at `/siege/api/*`.
-   Smoke-test on the deployed dashboard against a sample project.
-2. **Phase C**: drop the per-tier generation/review backend stack.
-   Per-commit verification per the gate above.
-3. **Future cleanup pass**: delete the deferred-feature backends
-   (cohort / vocab / reference / review-batch / queue / feedback
-   history) once the dashboard either drops those pages or grows
-   v3 equivalents.
+1. **Refs + vocab preservation pass**: design the v3 write path
+   for references and vocabulary (siege CLI subcommands + matching
+   Claude Code skills + the dashboard's read-only refs/vocab
+   panels reading through siege). Once refs writes leave
+   `bootstrap_routes.py`, the file can be deleted entirely.
+2. **Final backend shrink** (post-refs): delete the apply-
+   instruction / pending-edit machinery if the dashboard's
+   feature-proposal flow follows refs to CC skills; delete the
+   matching feature-expansion + rename-rewrite handlers; delete
+   `bootstrap_routes.py`, `_tier_generation.py`,
+   `_bootstrap_generation.py`, `backend/cli/`, `backend/pipeline/`.
+3. **Persistence retirement** (last): drop the SQLAlchemy
+   projections, alembic migrations, websocket, and the rest of
+   the SQL backend once no surviving endpoint reads or writes
+   them. End state matches `docs/migration/deletion-inventory.md`'s
+   "what survives" section.
